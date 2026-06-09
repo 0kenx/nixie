@@ -1,6 +1,6 @@
 [package]
 name = "bench-regression"
-version = "0.2.2"
+version.workspace = true
 edition = "2024"
 publish = false
 description = "Performance regression testing for OxiZ SMT solver"

@@ -12,14 +12,48 @@ OxiZ is a high-performance Satisfiability Modulo Theories (SMT) solver written e
 
 **Pure Rust is a fundamental requirement** - no C/C++ dependencies, no FFI bindings, just clean, safe Rust code.
 
-### Implementation Status (v0.2.2)
+### Implementation Status (v0.2.3)
 
 OxiZ is under active development with core theories at production quality:
 
-- **Pure Rust Implementation**: 419,576 lines of production Rust code
-- **Unit Tests**: 6,735 tests passing (100% pass rate)
+- **Pure Rust Implementation**: 337,523 lines of production Rust code (423,377 total with docs/tests)
+- **Unit Tests**: 6,826 tests passing (100% pass rate)
 - **Z3 Parity**: 100.0% accuracy across 88 benchmarks (8/8 logics at 100%) ✅
 - **Production Ready**: All core theory solvers validated against Z3
+
+## What's New in 0.2.3 (2026-06-09)
+
+### Generic Proof Writers (oxiz-sat)
+- `DratWriter<W>` and `LratWriter<W>` are now generic over any `W: Write + Send`, replacing the previous `DratProof` / `LratProof` types that were hard-coded to `BufWriter<File>`.
+- **Breaking rename**: `DratProof` → `DratWriter`, `LratProof` → `LratWriter` (avoids name collision with `oxiz-proof::DratProof`).
+- New `with_writer(w)` constructors and `enable_writer(&mut self, w)` methods enable in-memory proof capture via `Cursor<Vec<u8>>`.
+
+### NLSAT Algorithmic Completions (oxiz-nlsat)
+- `find_roots` now handles degree ≥ 3 polynomials via rational-root-theorem search and root isolation (Descartes/Sturm bisection) — no longer returns empty sets for higher-degree cases.
+- `resultant` now calls the real `Polynomial::resultant` (Sylvester/Bareiss) instead of returning zero.
+- `leading_coefficient` now delegates to `Polynomial::leading_coeff_wrt(var)` instead of cloning the full polynomial.
+- `estimate_derivative_sign` fills the univariate stub: uses root isolation for constant-sign detection plus point evaluation.
+
+### Theories: Nelson-Oppen Equality Propagation and Simplex Optimization (oxiz-theories)
+- `ArithSolver::notify_equality` now actually enforces `x − y = 0` via the simplex tableau.
+- `ArithSolver::derive_shared_equalities` implements sound model-based equality detection (probe-and-pop).
+- New `simplex_opt` module: `Simplex::optimize_linexpr` implements primal simplex optimization with Bland's rule; `LraOptimizer::optimize_min` delegates to it.
+- `Simplex::push/pop` now use tableau snapshots for correct backtracking after in-scope pivots.
+
+### Full Optimization Pipeline (oxiz-opt)
+- `OptContext::check_sat` calls the real `oxiz_solver::Solver` (was always returning `Unknown`).
+- `OptContext::optimize_maxsmt` implements selector-variable binary-search MaxSMT encoding.
+- `OptContext::optimize_single_objective` and `optimize_pareto` delegate to `oxiz_solver::Optimizer`.
+- New `OptResult::Unbounded` variant; `pareto_front()` and `config()` accessors added.
+
+### Real BMC and Sound k-Induction (oxiz-spacer)
+- `Bmc::check_bad_at_depth` builds `Init(s₀) ∧ ⋀Trans ∧ Bad(sₖ)` and calls the real SMT solver.
+- `Bmc::check_kinduction` implements sound k-induction (base case + inductive step).
+- `SmtSolver` dual-arena soundness fix: a single `TermManager` arena is now used throughout.
+- `extract_model` uses `Context::eval_in_model` for concrete counterexample extraction.
+
+### Solver: eval_in_model (oxiz-solver)
+- New `Context::eval_in_model(term: TermId) -> Option<TermId>` evaluates a term against the current SAT model.
 
 ## Theory Support Status
 
@@ -78,10 +112,10 @@ OxiZ is under active development with core theories at production quality:
 
 ### Additional Theories (Not Yet Benchmarked)
 - **QF_UF** (Uninterpreted Functions) - E-graphs with congruence closure
-- **QF_NRA** (Nonlinear Real) - CAD-based NLSAT solver
-- **AUFBV** (Arrays + UF + BV) - Theory combination via Nelson-Oppen
+- **QF_NRA** (Nonlinear Real) - CAD-based NLSAT solver (Alpha: root isolation, resultant, monotonicity completed in 0.2.3)
+- **AUFBV** (Arrays + UF + BV) - Theory combination via Nelson-Oppen (Alpha: shared-equality propagation wired in 0.2.3)
 - **UFLIA** (Quantified LIA) - MBQI infrastructure partially implemented
-- **HORN** (Horn Clauses) - PDR/IC3 engine in development
+- **HORN** (Horn Clauses) - PDR/IC3 engine; BMC and k-induction fully wired in 0.2.3
 
 ## Features
 
@@ -131,31 +165,31 @@ Starting from 64.8% (57/88), we systematically fixed:
 
 This milestone validates OxiZ as a production-ready SMT solver implementation in Pure Rust.
 
-## Project Statistics (v0.2.2)
+## Project Statistics (v0.2.3)
 
 | Metric | Value |
 |--------|-------|
-| Rust Lines of Code | 419,576 |
-| Total Lines (with docs) | ~457,000 |
-| Total Tests | 6,735 passing |
+| Rust Lines of Code (code) | 337,523 |
+| Total Rust Lines (with docs) | 423,377 |
+| Total Tests | 6,826 passing |
 | Z3 Parity | **100.0% (88/88)** ✅ |
 | Perfect Logics | **8/8 tested (QF_LIA, QF_LRA, QF_NIA, QF_S, QF_BV, QF_FP, QF_DT, QF_A)** |
 | Crates | 17 |
 
 ### Codebase Breakdown by Module
 
-| Module | Rust Lines | Description |
-|--------|-----------|-------------|
-| Core/AST/Tactics | 78,112 | Term management, sorts, tactics framework |
-| Theories (EUF/BV/Arrays) | 44,911 | Theory solvers implementation |
-| SAT Solver | 35,228 | CDCL SAT solver with optimizations |
-| Math Libraries | 33,549 | Simplex, matrix operations, polynomials |
-| Proof System | 24,806 | Resolution, interpolation, DRAT |
-| NLSAT (CAD) | 21,413 | Non-linear arithmetic via CAD |
-| Main Solver | 19,359 | CDCL(T) integration layer |
-| Optimization | 16,324 | MaxSAT, OMT, portfolio solver |
-| Model Checking | 14,387 | SPACER, PDR/IC3 engine |
-| ML Integration | 7,260 | Neural network guided heuristics |
+| Module | Description |
+|--------|-------------|
+| Core/AST/Tactics | Term management, sorts, tactics framework |
+| Theories (EUF/BV/Arrays) | Theory solvers: EUF, LRA, LIA, BV, Arrays, Strings, FP, ADT |
+| SAT Solver | CDCL SAT solver with optimizations and generic proof writers |
+| Math Libraries | Simplex, matrix operations, polynomials |
+| Proof System | Resolution, interpolation, DRAT/LRAT |
+| NLSAT (CAD) | Non-linear arithmetic via CAD; root isolation and resultant completed |
+| Main Solver | CDCL(T) integration layer; eval_in_model added |
+| Optimization | MaxSMT/OMT/Pareto wired to real solver backend |
+| Model Checking | SPACER/PDR/IC3; real BMC and sound k-induction wired |
+| ML Integration | Neural network guided heuristics |
 
 ## Workspace Structure
 
@@ -197,21 +231,21 @@ For optimal performance, we recommend:
 ```toml
 # Add to your Cargo.toml
 [dependencies]
-oxiz = "0.2.2"  # Default includes solver
+oxiz = "0.2.3"  # Default includes solver
 ```
 
 Or with specific features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.2.2", features = ["nlsat", "optimization"] }
+oxiz = { version = "0.2.3", features = ["nlsat", "optimization"] }
 ```
 
 For all features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.2.2", features = ["full"] }
+oxiz = { version = "0.2.3", features = ["full"] }
 ```
 
 ### Building from Source
@@ -309,7 +343,7 @@ fn main() {
 - Multiple branching heuristics (VSIDS, LRB, VMTF, CHB)
 - Clause learning with minimization
 - Preprocessing (BCE, BVE, subsumption)
-- DRAT proof generation
+- DRAT/LRAT proof generation via generic `DratWriter<W>` / `LratWriter<W>` (any `Write + Send` sink)
 - Local search and lookahead
 - AllSAT enumeration
 

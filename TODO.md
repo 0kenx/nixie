@@ -1,6 +1,6 @@
 # OxiZ TODO
 
-Last Updated: 2026-06-01
+Last Updated: 2026-06-09
 
 ---
 
@@ -46,17 +46,17 @@ OxiZ has achieved **100% correctness parity with Z3** across all 88 benchmark te
 
 ---
 
-## Current Statistics (v0.2.2 - 2026-06-01)
+## Current Statistics (v0.2.3 - 2026-06-09)
 
-- **Rust Lines of Code**: ~419,576 code lines (~1,012 files)
-- **Rust Files**: 1,012+
-- **Unit Tests**: 6,735 passing (16 skipped, 0 failures)
+- **Rust Lines of Code (code)**: 337,523 code lines across 1,017 files
+- **Total Rust Lines (with docs/tests)**: 423,377
+- **Unit Tests**: 6,826 passing (0 failures)
 - **Z3 Parity**: **100.0% (88/88)**
 - **Perfect Logics**: **8/8 tested**
 - **Workspace Crates**: 17 (16 Rust crates + 1 TypeScript)
-- **todo!/unimplemented! macros**: 0 (all 15 Rust crates)
+- **todo!/unimplemented! macros**: 0 (all Rust crates)
 - **Clippy Warnings**: 0
-- **Largest File**: 1,892 lines (all files under 2,000 lines)
+- **Largest File**: under 2,000 lines
 
 ---
 
@@ -546,6 +546,15 @@ oxiz-core (foundation)
 
 ## Recent Achievements
 
+### 2026-06-09 - v0.2.3 Release
+
+- **oxiz-sat**: `DratWriter<W>` / `LratWriter<W>` generic over any `W: Write + Send`; breaking rename from `DratProof` / `LratProof`
+- **oxiz-nlsat**: Real resultant (Sylvester/Bareiss), leading-coefficient extraction, degree≥3 root isolation (Descartes/Sturm), monotonicity estimation
+- **oxiz-theories**: Sound Nelson-Oppen equality propagation; simplex `optimize_linexpr`; correct push/pop tableau snapshots
+- **oxiz-opt**: Full solver-backed `check_sat`, MaxSMT selector encoding, `optimize_single_objective`/`optimize_pareto` delegation
+- **oxiz-spacer**: Real BMC formula construction; sound k-induction; dual-arena soundness fix; `extract_model` via `eval_in_model`
+- **oxiz-solver**: New `Context::eval_in_model` for model-based term evaluation
+
 ### 2026-06-01 - v0.2.2 Release
 
 - **Recursive BV term encoding**: Full nested bit-vector expression encoding in `BvSolver` with structured conflict diagnostics
@@ -703,9 +712,9 @@ oxiz-core (foundation)
 ---
 
 **Status**: Production Ready
-**Current Version**: v0.2.2
-**Tests**: 6,735 passing (16 skipped) | **LoC**: ~419,576 code | **Files**: 1,012+ | **Clippy**: 0 warnings
-**Next Milestone**: v0.3.0 - Performance Parity + SMT-COMP (Target: June 2026)
+**Current Version**: v0.2.3 (2026-06-09)
+**Tests**: 6,826 passing | **LoC**: 337,523 code (423,377 total) | **Files**: 1,017 | **Clippy**: 0 warnings
+**Next Milestone**: v0.3.0 - Performance Parity + SMT-COMP (Target: Q3 2026)
 **Long-term Goal**: v1.0.0 - Industry-Ready SMT Solver (Target: Q4 2026)
 
 ---

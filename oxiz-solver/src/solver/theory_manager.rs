@@ -88,6 +88,15 @@ pub(crate) struct TheoryManager<'a> {
     /// values in the original formula, not by the total number of term IDs
     /// created across all MBQI iterations (which grows without bound).
     interned_int_constants: FxHashMap<i64, u32>,
+    /// Canonical EUF nodes for distinct bit-vector constant *values*, keyed by
+    /// `(value, width)`.  Mirrors `interned_int_constants` but for the BV theory:
+    /// EUF has no notion that `#x00 != #x01`, so without explicit disequality
+    /// edges a congruence chain merging `g(a)` (= `#x00`) with `g(b)` (= `#x01`)
+    /// when `a = b` would not produce a conflict.  We track one canonical node
+    /// per distinct `(value, width)` pair and assert pairwise disequalities
+    /// between same-width constants, bounding the edge count by the number of
+    /// distinct BV literals in the formula.
+    interned_bv_constants: FxHashMap<(u64, u32), u32>,
     /// Canonical EUF nodes for Boolean true and false values.
     /// Used to track Bool-valued function applications in EUF:
     /// when `f(x)` is assigned true by the SAT solver, we merge its EUF node
@@ -100,6 +109,82 @@ pub(crate) struct TheoryManager<'a> {
 
 /// Post-order, memoised BV term encoding.
 ///
+/// Bit-blast every BV-sorted operand reachable through a boolean condition
+/// `cond` (the kind that appears as an `ite` selector). Walks the boolean
+/// connective/comparison structure and bit-blasts the BV terms underneath the
+/// `Eq`/comparison leaves, so that `BvSolver::encode_bool_node` can look them
+/// up. Returns `false` if any BV operand fails to encode.
+fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -> bool {
+    let term = match mgr.get(cond) {
+        Some(t) => t,
+        None => return false,
+    };
+    match &term.kind {
+        // Boolean structure: recurse into operands.
+        TermKind::Not(inner) => bit_blast_cond_operands(bv, *inner, mgr),
+        TermKind::And(args) | TermKind::Or(args) => {
+            args.iter().all(|&a| bit_blast_cond_operands(bv, a, mgr))
+        }
+        // Comparison/equality leaves: their operands are BV terms.
+        TermKind::Eq(lhs, rhs)
+        | TermKind::BvUlt(lhs, rhs)
+        | TermKind::BvUle(lhs, rhs)
+        | TermKind::BvSlt(lhs, rhs)
+        | TermKind::BvSle(lhs, rhs) => {
+            let mut encoded: FxHashSet<TermId> = FxHashSet::default();
+            let lhs_ok = encode_bv_term_recursive(bv, *lhs, mgr, &mut encoded) || {
+                if let Some(w) = mgr
+                    .get(*lhs)
+                    .and_then(|t| mgr.sorts.get(t.sort))
+                    .and_then(|s| s.bitvec_width())
+                {
+                    bv.new_bv(*lhs, w);
+                    true
+                } else {
+                    false
+                }
+            };
+            let rhs_ok = encode_bv_term_recursive(bv, *rhs, mgr, &mut encoded) || {
+                if let Some(w) = mgr
+                    .get(*rhs)
+                    .and_then(|t| mgr.sorts.get(t.sort))
+                    .and_then(|s| s.bitvec_width())
+                {
+                    bv.new_bv(*rhs, w);
+                    true
+                } else {
+                    false
+                }
+            };
+            lhs_ok && rhs_ok
+        }
+        // A bare boolean variable / constant has no BV operands to blast.
+        TermKind::Var(_) | TermKind::True | TermKind::False => true,
+        // Anything else is outside the supported condition fragment.
+        _ => false,
+    }
+}
+
+/// If `tid` is a `BitVecConst` whose value is a positive power of two, return
+/// the exponent (shift amount).  Returns `None` for zero, non-powers-of-two,
+/// and non-constant terms.
+fn bitvec_const_pow2_shift(mgr: &TermManager, tid: TermId) -> Option<u32> {
+    let term = mgr.get(tid)?;
+    if let TermKind::BitVecConst { value, .. } = &term.kind {
+        let digits: Vec<u64> = value.iter_u64_digits().collect();
+        let set_bits: u32 = digits.iter().map(|&d| d.count_ones()).sum();
+        if set_bits != 1 {
+            return None;
+        }
+        for (chunk, &d) in digits.iter().enumerate() {
+            if d != 0 {
+                return Some(chunk as u32 * 64 + d.trailing_zeros());
+            }
+        }
+    }
+    None
+}
+
 /// Recursively encodes every sub-term of `root` into the BV solver using an
 /// explicit work-stack so that arbitrarily deep nesting is handled without
 /// overflowing the call stack.  A `FxHashSet<TermId>` memo prevents duplicate
@@ -161,6 +246,40 @@ fn encode_bv_term_recursive(
                         stack.push((*a, false));
                     }
                 }
+                // Shifts: value and shift-amount operands (same width).
+                TermKind::BvShl(a, b) | TermKind::BvLshr(a, b) | TermKind::BvAshr(a, b) => {
+                    if !encoded.contains(a) {
+                        stack.push((*a, false));
+                    }
+                    if !encoded.contains(b) {
+                        stack.push((*b, false));
+                    }
+                }
+                // Concatenation: both operands (their own widths).
+                TermKind::BvConcat(a, b) => {
+                    if !encoded.contains(a) {
+                        stack.push((*a, false));
+                    }
+                    if !encoded.contains(b) {
+                        stack.push((*b, false));
+                    }
+                }
+                // Extraction: single source operand (its own width).
+                TermKind::BvExtract { arg, .. } => {
+                    if !encoded.contains(arg) {
+                        stack.push((*arg, false));
+                    }
+                }
+                // ITE over BV: bit-blast both branches; the condition's BV
+                // operands are bit-blasted separately just before encoding.
+                TermKind::Ite(_cond, then_t, else_t) => {
+                    if !encoded.contains(then_t) {
+                        stack.push((*then_t, false));
+                    }
+                    if !encoded.contains(else_t) {
+                        stack.push((*else_t, false));
+                    }
+                }
                 // Leaves: Var, BitVecConst — no children to push
                 TermKind::Var(_) | TermKind::BitVecConst { .. } => {}
                 // Unknown term kind — cannot encode, abort
@@ -175,9 +294,17 @@ fn encode_bv_term_recursive(
                     bv.bv_add(tid, *a, *b);
                 }
                 TermKind::BvMul(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_mul(tid, *a, *b);
+                    if let Some(shift) = bitvec_const_pow2_shift(mgr, *b) {
+                        bv.new_bv(*a, width);
+                        bv.bv_shl_const(tid, *a, shift, width);
+                    } else if let Some(shift) = bitvec_const_pow2_shift(mgr, *a) {
+                        bv.new_bv(*b, width);
+                        bv.bv_shl_const(tid, *b, shift, width);
+                    } else {
+                        bv.new_bv(*a, width);
+                        bv.new_bv(*b, width);
+                        bv.bv_mul(tid, *a, *b);
+                    }
                 }
                 TermKind::BvSub(a, b) => {
                     bv.new_bv(*a, width);
@@ -203,6 +330,67 @@ fn encode_bv_term_recursive(
                     bv.new_bv(*a, width);
                     bv.bv_not(tid, *a);
                 }
+                TermKind::BvShl(a, b) => {
+                    // Operands and result share `width`.
+                    bv.new_bv(*a, width);
+                    bv.new_bv(*b, width);
+                    bv.bv_shl(tid, *a, *b);
+                }
+                TermKind::BvLshr(a, b) => {
+                    bv.new_bv(*a, width);
+                    bv.new_bv(*b, width);
+                    bv.bv_lshr(tid, *a, *b);
+                }
+                TermKind::BvAshr(a, b) => {
+                    bv.new_bv(*a, width);
+                    bv.new_bv(*b, width);
+                    bv.bv_ashr(tid, *a, *b);
+                }
+                TermKind::BvConcat(a, b) => {
+                    // Operands keep their own (possibly differing) widths; the
+                    // result width is their sum (already `width` here).
+                    let aw = match mgr
+                        .get(*a)
+                        .and_then(|t| mgr.sorts.get(t.sort))
+                        .and_then(|s| s.bitvec_width())
+                    {
+                        Some(w) => w,
+                        None => return false,
+                    };
+                    let bw = match mgr
+                        .get(*b)
+                        .and_then(|t| mgr.sorts.get(t.sort))
+                        .and_then(|s| s.bitvec_width())
+                    {
+                        Some(w) => w,
+                        None => return false,
+                    };
+                    bv.new_bv(*a, aw);
+                    bv.new_bv(*b, bw);
+                    // BvConcat(high, low) — `a` is the high (most-significant) part.
+                    bv.concat(tid, *a, *b);
+                }
+                TermKind::BvExtract { high, low, arg } => {
+                    let arg_w = match mgr
+                        .get(*arg)
+                        .and_then(|t| mgr.sorts.get(t.sort))
+                        .and_then(|s| s.bitvec_width())
+                    {
+                        Some(w) => w,
+                        None => return false,
+                    };
+                    bv.new_bv(*arg, arg_w);
+                    bv.extract(tid, *arg, *high, *low);
+                }
+                TermKind::Ite(cond, then_t, else_t) => {
+                    // Branches are already bit-blasted (pushed as children). The
+                    // condition's BV operands must be bit-blasted before the
+                    // condition itself is encoded inside `bv_ite`.
+                    if !bit_blast_cond_operands(bv, *cond, mgr) {
+                        return false;
+                    }
+                    bv.bv_ite(tid, *cond, *then_t, *else_t, mgr);
+                }
                 TermKind::BvUdiv(a, b) => {
                     bv.new_bv(*a, width);
                     bv.new_bv(*b, width);
@@ -223,9 +411,18 @@ fn encode_bv_term_recursive(
                     bv.new_bv(*b, width);
                     bv.bv_srem(tid, *a, *b);
                 }
-                TermKind::Var(_) | TermKind::BitVecConst { .. } => {
-                    // Leaf: just ensure a BV variable exists
+                TermKind::Var(_) => {
+                    // Leaf variable: just ensure a BV variable exists.
                     bv.new_bv(tid, width);
+                }
+                TermKind::BitVecConst { value, .. } => {
+                    // Leaf constant: create the BV variable AND pin its bits to
+                    // the concrete value.  Without this the constant operand of a
+                    // bit-blasted op (e.g. the `#x02` in `(bvmul #x02 x)`) would be
+                    // an unconstrained free variable, silently weakening the
+                    // encoding and causing false SAT for constant-folded identities.
+                    let val_u64 = value.iter_u64_digits().next().unwrap_or(0);
+                    bv.assert_const(tid, val_u64, width);
                 }
                 _ => return false,
             }
@@ -276,6 +473,7 @@ impl<'a> TheoryManager<'a> {
             max_decisions,
             has_bv_arith_ops,
             interned_int_constants: FxHashMap::default(),
+            interned_bv_constants: FxHashMap::default(),
             bool_true_node: None,
             bool_false_node: None,
         }
@@ -580,6 +778,41 @@ impl<'a> TheoryManager<'a> {
                         [array_node, index_node],
                     );
                 }
+                TermKind::BitVecConst { value, width } => {
+                    // Register the BV constant as an EUF node and maintain pairwise
+                    // disequalities between *distinct* same-width constant values.
+                    //
+                    // EUF has no built-in notion that two different bit-vector
+                    // literals are unequal.  Without explicit disequality edges, a
+                    // congruence chain that equates a node merged with `#x00` and one
+                    // merged with `#x01` (e.g. `g(a)=#x00`, `g(b)=#x01`, `a=b`) would
+                    // not produce a conflict.  We therefore assert `#x00 ≠ #x01` etc.
+                    //
+                    // As with `interned_int_constants`, we keep one canonical EUF
+                    // node per distinct `(value, width)` pair: when the same value
+                    // reappears (a fresh TermId) we merge it into the canonical node,
+                    // bounding the number of pairwise edges by the count of distinct
+                    // BV literals rather than the total number of term IDs.
+                    let key = (value.iter_u64_digits().next().unwrap_or(0), *width);
+                    let new_node = self.euf.intern(term);
+                    if let Some(&canonical) = self.interned_bv_constants.get(&key) {
+                        let _ = self.euf.merge(new_node, canonical, term);
+                        return canonical;
+                    }
+                    // First time we see this value: assert disequality against every
+                    // other distinct constant of the SAME width (different widths are
+                    // different sorts and are never merged), then register it.
+                    let diseq_targets: Vec<u32> = self
+                        .interned_bv_constants
+                        .iter()
+                        .filter_map(|(&(_v, w), &node)| (w == *width).then_some(node))
+                        .collect();
+                    for other_node in diseq_targets {
+                        self.euf.assert_diseq(new_node, other_node, term);
+                    }
+                    self.interned_bv_constants.insert(key, new_node);
+                    return new_node;
+                }
                 _ => {}
             }
         }
@@ -624,6 +857,90 @@ impl<'a> TheoryManager<'a> {
             }
         }
         conflict
+    }
+
+    /// Look up the BV bit-width of a term from its sort, if it has a BV sort.
+    fn bv_width_of(&self, term: TermId, manager: &TermManager) -> Option<u32> {
+        manager
+            .get(term)
+            .and_then(|t| manager.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width())
+    }
+
+    /// Bit-blast both operands of a BV constraint into the embedded SAT solver.
+    ///
+    /// Each side is encoded recursively; a bare leaf that the recursive encoder
+    /// cannot handle falls back to a fresh BV variable of the operand's width.
+    /// Returns `true` if both operands are BV-sorted with equal width (so that
+    /// `assert_eq` / `assert_neq` may be called safely), `false` otherwise.
+    fn bit_blast_bv_pair(&mut self, lhs: TermId, rhs: TermId, manager: &TermManager) -> bool {
+        let (lw, rw) = match (
+            self.bv_width_of(lhs, manager),
+            self.bv_width_of(rhs, manager),
+        ) {
+            (Some(lw), Some(rw)) if lw == rw => (lw, rw),
+            _ => return false,
+        };
+        let mut encoded: FxHashSet<TermId> = FxHashSet::default();
+        if !encode_bv_term_recursive(self.bv, lhs, manager, &mut encoded) {
+            self.bv.new_bv(lhs, lw);
+        }
+        if !encode_bv_term_recursive(self.bv, rhs, manager, &mut encoded) {
+            self.bv.new_bv(rhs, rw);
+        }
+        true
+    }
+
+    /// Run the embedded BV SAT check after the caller has asserted a constraint.
+    ///
+    /// Records `constraint_term` so the conflict clause is non-empty, then
+    /// returns `Some(Conflict(..))` if the embedded solver reports UNSAT and
+    /// `None` otherwise (so the caller falls through to its conservative path).
+    fn bv_run_check(&mut self, constraint_term: TermId) -> Option<TheoryCheckResult> {
+        use oxiz_theories::Theory;
+        use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
+        self.bv.record_constraint_term(constraint_term);
+        if let Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) = self.bv.check() {
+            let conflict_lits = self.terms_to_conflict_clause(&conflict_terms);
+            return Some(TheoryCheckResult::Conflict(conflict_lits));
+        }
+        None
+    }
+
+    /// Bit-blast `lhs`/`rhs`, assert `lhs != b` at the bit level, and check.
+    ///
+    /// Returns `Some(Conflict(..))` on a detected BV theory conflict, `None`
+    /// otherwise (including when the operands are not equal-width BV terms).
+    fn bv_check_neq(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+        constraint_term: TermId,
+        manager: &TermManager,
+    ) -> Option<TheoryCheckResult> {
+        if !self.bit_blast_bv_pair(lhs, rhs, manager) {
+            return None;
+        }
+        self.bv.assert_neq(lhs, rhs);
+        self.bv_run_check(constraint_term)
+    }
+
+    /// Bit-blast `lhs`/`rhs`, assert `lhs = b` at the bit level, and check.
+    ///
+    /// Returns `Some(Conflict(..))` on a detected BV theory conflict, `None`
+    /// otherwise (including when the operands are not equal-width BV terms).
+    fn bv_check_eq(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+        constraint_term: TermId,
+        manager: &TermManager,
+    ) -> Option<TheoryCheckResult> {
+        if !self.bit_blast_bv_pair(lhs, rhs, manager) {
+            return None;
+        }
+        self.bv.assert_eq(lhs, rhs);
+        self.bv_run_check(constraint_term)
     }
 
     /// Process a theory constraint
@@ -758,19 +1075,24 @@ impl<'a> TheoryManager<'a> {
                         let lhs_is_var = is_var(lhs);
                         let rhs_is_var = is_var(rhs);
 
-                        // Track whether the current constraint involves a BV arithmetic op
-                        // (division/remainder). We only run the full BV SAT check when an
-                        // arithmetic op constraint is fully encoded. Running it on simple
-                        // var=const constraints (before the op encoding is complete) can
-                        // cause false UNSAT because intermediate states are partially encoded.
-                        let mut has_arith_op_in_constraint = false;
-
+                        // Case 0: BV operation = BV operation
+                        // (e.g. (= (bvadd x y) (bvadd y x)), (= (bvmul #x02 x) (bvadd x x))).
+                        // Both sides are fully bit-blasted and then constrained equal so
+                        // that commutativity / associativity / distributivity conflicts
+                        // are detected by the embedded SAT solver.
+                        if lhs_is_op && rhs_is_op {
+                            if let Some(_width) = get_bv_width(lhs) {
+                                encode_bv_term_recursive(self.bv, lhs, manager, &mut bv_encoded);
+                                encode_bv_term_recursive(self.bv, rhs, manager, &mut bv_encoded);
+                                self.bv.assert_eq(lhs, rhs);
+                                did_assert = true;
+                            }
+                        }
                         // Case 1: BV operation = constant (e.g., (= (bvmul x y) #x0c))
-                        if lhs_is_op {
+                        else if lhs_is_op {
                             if let Some(width) = get_bv_width(lhs) {
                                 // Recursively encode the LHS operation and all its sub-terms
                                 encode_bv_term_recursive(self.bv, lhs, manager, &mut bv_encoded);
-                                has_arith_op_in_constraint = true;
 
                                 if let Some((val, _)) = rhs_const_info {
                                     // Assert operation result = constant
@@ -789,7 +1111,6 @@ impl<'a> TheoryManager<'a> {
                             if let Some(width) = get_bv_width(rhs) {
                                 // Recursively encode the RHS operation and all its sub-terms
                                 encode_bv_term_recursive(self.bv, rhs, manager, &mut bv_encoded);
-                                has_arith_op_in_constraint = true;
 
                                 if let Some((val, _)) = lhs_const_info {
                                     // Assert operation result = constant
@@ -830,12 +1151,21 @@ impl<'a> TheoryManager<'a> {
                             did_assert = true;
                         }
 
-                        // Only run the BV SAT check when a BV arithmetic operation
-                        // (e.g. bvmul, bvudiv) was fully encoded in this constraint.
-                        // Simple var=const constraints are intermediate states; running
-                        // check() on them before the op encoding is complete produces
-                        // false UNSAT because the solver sees partial constraints.
-                        if did_assert && has_arith_op_in_constraint {
+                        // Run the BV SAT check whenever this equality was bit-blasted
+                        // and asserted.  The embedded SAT solver is pushed/popped in
+                        // lockstep with the outer CDCL decision levels (see
+                        // `on_new_level` / `on_backtrack`), and `BvSolver::check`
+                        // rolls its internal trail back to the committed (asserted)
+                        // prefix after every probe, so no model-specific assignment
+                        // from one `check()` survives to corrupt the next.  Any UNSAT
+                        // it reports is therefore a genuine theory conflict.  The
+                        // outer conflict analysis (`analyze_theory_conflict`) only
+                        // forces a top-level UNSAT when ALL conflicting literals are
+                        // fixed at decision level 0, so consulting `check()` here is
+                        // sound in both directions: it can neither manufacture a false
+                        // SAT (the previous bug was the MISSING check) nor a false
+                        // UNSAT (the previous bug was the leaked-model trail).
+                        if did_assert {
                             use oxiz_theories::Theory;
                             use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
                             // Record the constraint term so that check() can produce a
@@ -863,6 +1193,16 @@ impl<'a> TheoryManager<'a> {
                         let conflict_lits = self.terms_to_conflict_clause(&conflict_terms);
                         return TheoryCheckResult::Conflict(conflict_lits);
                     }
+
+                    // For bit-vector operands also send the disequality to the BV
+                    // solver.  Mirrors the positive branch: fully bit-blast both
+                    // operands, assert `a != b` at the bit level, then consult the
+                    // embedded SAT solver.  This catches e.g. `not(= x x)` and
+                    // `not(= (bvadd x y) (bvadd y x))`, which the EUF layer alone
+                    // cannot refute (it has no bit-level arithmetic semantics).
+                    if let Some(result) = self.bv_check_neq(lhs, rhs, constraint_term, manager) {
+                        return result;
+                    }
                 }
             }
             Constraint::Diseq(lhs, rhs) => {
@@ -878,6 +1218,12 @@ impl<'a> TheoryManager<'a> {
                         let conflict_lits = self.terms_to_conflict_clause(&conflict_terms);
                         return TheoryCheckResult::Conflict(conflict_lits);
                     }
+
+                    // BV disequality (e.g. `(distinct x x)`): bit-blast and assert
+                    // `a != b`, mirroring the negative-Eq branch.
+                    if let Some(result) = self.bv_check_neq(lhs, rhs, constraint_term, manager) {
+                        return result;
+                    }
                 } else {
                     // Negative assignment: ~(a != b) means a = b.
                     // Use the constraint term as the merge reason.
@@ -891,6 +1237,11 @@ impl<'a> TheoryManager<'a> {
                     if let Some(conflict_terms) = self.euf.check_conflicts() {
                         let conflict_lits = self.terms_to_conflict_clause(&conflict_terms);
                         return TheoryCheckResult::Conflict(conflict_lits);
+                    }
+
+                    // BV equality forced by `~(a != b)`: bit-blast and assert `a = b`.
+                    if let Some(result) = self.bv_check_eq(lhs, rhs, constraint_term, manager) {
+                        return result;
                     }
                 }
             }
@@ -943,10 +1294,32 @@ impl<'a> TheoryManager<'a> {
                                 Constraint::Le(a, b) if is_signed => {
                                     self.bv.assert_sle(a, b);
                                 }
-                                Constraint::Le(..) => {
-                                    // a <= b is equivalent to NOT(b < a) in BV
-                                    // For now, skip or encode differently
-                                    // We'll focus on strict comparisons first
+                                Constraint::Le(a, b) => {
+                                    // Unsigned a <= b ≡ NOT(b <u a).
+                                    self.bv.assert_ule(a, b);
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            // Negated assignment: the negation of the comparator
+                            // holds.  By totality of BV orders the negation is the
+                            // swapped non-strict / strict comparator:
+                            //   ¬(a <u  b) ≡ b <=u a   ¬(a <=u b) ≡ b <u  a
+                            //   ¬(a <s  b) ≡ b <=s a   ¬(a <=s b) ≡ b <s  a
+                            match constraint {
+                                Constraint::Lt(a, b) => {
+                                    if is_signed {
+                                        self.bv.assert_sle(b, a);
+                                    } else {
+                                        self.bv.assert_ule(b, a);
+                                    }
+                                }
+                                Constraint::Le(a, b) => {
+                                    if is_signed {
+                                        self.bv.assert_slt(b, a);
+                                    } else {
+                                        self.bv.assert_ult(b, a);
+                                    }
                                 }
                                 _ => {}
                             }
@@ -1227,6 +1600,10 @@ impl TheoryCallback for TheoryManager<'_> {
         let live_nodes = self.euf.node_count();
         self.interned_int_constants
             .retain(|_val, &mut canonical| (canonical as usize) < live_nodes);
+
+        // Evict stale bit-vector-constant canonicals for the same reason.
+        self.interned_bv_constants
+            .retain(|_key, &mut canonical| (canonical as usize) < live_nodes);
 
         // Evict stale Boolean canonical nodes
         if let Some(t) = self.bool_true_node {

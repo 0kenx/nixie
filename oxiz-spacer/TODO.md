@@ -1,6 +1,6 @@
 # oxiz-spacer TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-06-09 (v0.2.3)
 
 Reference: Z3's `muz/spacer/` directory at `../z3/src/muz/spacer/`
 
@@ -204,3 +204,10 @@ Implemented cached `open_count` in `PobQueue` to eliminate O(n) filtering:
   - Arithmetic comparison evaluation on integer constants (Eq, Lt, Le, Gt, Ge)
   - Recursive simplification with proper short-circuit evaluation
   - Constant folding and dead code elimination
+
+## Stub completions (2026-06-08)
+
+- [x] `SmtSolver` dual-arena soundness fix — dropped the separate `terms: &mut TermManager` field; all term building now goes through `ctx.terms` via a `pub fn terms(&mut self) -> &mut TermManager` accessor. Fixes latent unsoundness where asserted TermIds were resolved in a different arena than the solver's.
+- [x] `bmc.rs::check_bad_at_depth` — replaced hardcoded `is_sat=false` stub with real BMC: builds `Init(s0) ∧ ⋀Trans(s_i,s_{i+1}) ∧ Bad(s_k)` and calls the real `smt.check_sat()`.
+- [x] `bmc.rs::check_kinduction` — replaced bogus encoding (unconstrained fresh bools, no transition) with sound k-induction: base case (all depths 0..=k UNSAT) + inductive step `⋀P(s_i) ∧ ⋀Trans(s_i,s_{i+1}) ∧ Bad(s_k)` UNSAT → Safe; SAT → inconclusive only.
+- [x] `extract_model` — now uses new `oxiz_solver::Context::eval_in_model` to evaluate per-step state vars for concrete counterexamples.

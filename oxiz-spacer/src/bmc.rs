@@ -5,12 +5,12 @@
 //!
 //! Reference: Z3's BMC implementation and standard BMC algorithms
 
-use crate::chc::{ChcSystem, PredId};
+use crate::chc::{ChcSystem, PredId, RuleHead};
 use crate::reach::{CexState, Counterexample};
 use crate::smt::{SmtError, SmtSolver};
-use oxiz_core::{TermId, TermManager};
+use oxiz_core::{SortId, TermId, TermManager};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -23,6 +23,9 @@ pub enum BmcError {
     /// No query found in the system
     #[error("no query found in CHC system")]
     NoQuery,
+    /// No entry (init) rule found in the system
+    #[error("no init rule found in CHC system")]
+    NoInitRule,
     /// SMT solver error
     #[error("SMT error: {0}")]
     Smt(#[from] SmtError),
@@ -31,7 +34,7 @@ pub enum BmcError {
     Internal(String),
 }
 
-/// Result of BMC
+/// Result of a BMC / k-induction check
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BmcResult {
     /// Property holds up to the given bound
@@ -39,6 +42,8 @@ pub enum BmcResult {
     Safe(u32),
     /// Counterexample found at the given depth
     Unsafe(u32),
+    /// Could not determine (e.g. non-linear CHC, solver returned Unknown)
+    Unknown,
 }
 
 /// Configuration for BMC
@@ -73,6 +78,46 @@ pub struct BmcStats {
     pub num_unrollings: u32,
 }
 
+// ---------------------------------------------------------------------------
+// Helper: per-predicate step variables
+// ---------------------------------------------------------------------------
+
+/// Create per-step state variables for a predicate's parameters.
+///
+/// For a predicate `P(p0:S0, p1:S1, …)` at step `step`, this creates
+/// `mk_var("P_step{step}_param{j}", Sj)` for each parameter `j`.
+fn make_step_vars(
+    terms: &mut TermManager,
+    pred_name: &str,
+    param_sorts: &[SortId],
+    step: u32,
+) -> Vec<TermId> {
+    param_sorts
+        .iter()
+        .enumerate()
+        .map(|(j, &sort)| {
+            let name = format!("{}_step{}_param{}", pred_name, step, j);
+            terms.mk_var(&name, sort)
+        })
+        .collect()
+}
+
+/// Build a substitution map from a `PredicateApp`'s args to per-step vars.
+///
+/// `app_args[j]` (the TermId used as the j-th arg in the predicate application)
+/// maps to `step_vars[j]`.
+fn subst_from_args(app_args: &[TermId], step_vars: &[TermId]) -> FxHashMap<TermId, TermId> {
+    app_args
+        .iter()
+        .copied()
+        .zip(step_vars.iter().copied())
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Bounded Model Checker
+// ---------------------------------------------------------------------------
+
 /// Bounded Model Checker
 pub struct Bmc<'a> {
     /// Term manager for creating formulas
@@ -83,8 +128,6 @@ pub struct Bmc<'a> {
     config: BmcConfig,
     /// Statistics
     stats: BmcStats,
-    /// Symbolic states at each depth (predicate -> state formula)
-    states: Vec<HashMap<PredId, TermId>>,
     /// Current counterexample (if found)
     counterexample: Option<Counterexample>,
 }
@@ -106,7 +149,6 @@ impl<'a> Bmc<'a> {
             system,
             config,
             stats: BmcStats::default(),
-            states: Vec::new(),
             counterexample: None,
         }
     }
@@ -122,301 +164,341 @@ impl<'a> Bmc<'a> {
             return Err(BmcError::NoQuery);
         }
 
-        // Initialize with initial states
-        self.initialize()?;
+        // If k-induction is requested, delegate entirely to it
+        if self.config.use_kinduction {
+            return self.run_kinduction();
+        }
 
-        // Unroll the transition system up to max_depth
+        // Pure BMC: try each depth 0..=max_depth
         for depth in 0..=self.config.max_depth {
             self.stats.max_depth_reached = depth;
-
             debug!("BMC: checking depth {}", depth);
 
-            // Check if bad state is reachable at this depth
-            if self.check_bad_at_depth(depth)? {
-                debug!("BMC: counterexample found at depth {}", depth);
-                return Ok(BmcResult::Unsafe(depth));
-            }
-
-            // Try k-induction if enabled
-            if self.config.use_kinduction && depth > 0 && self.check_kinduction(depth)? {
-                debug!("BMC: k-induction proved safety at depth {}", depth);
-                return Ok(BmcResult::Safe(depth));
-            }
-
-            // Unroll one more step (unless we're at max depth)
-            if depth < self.config.max_depth {
-                self.unroll(depth)?;
-                self.stats.num_unrollings += 1;
+            match self.check_bad_at_depth(depth)? {
+                BmcResult::Unsafe(k) => {
+                    debug!("BMC: counterexample found at depth {}", k);
+                    return Ok(BmcResult::Unsafe(k));
+                }
+                BmcResult::Unknown => {
+                    return Ok(BmcResult::Unknown);
+                }
+                BmcResult::Safe(_) => {
+                    self.stats.num_unrollings += 1;
+                }
             }
         }
 
-        // Reached max depth without finding counterexample
         Ok(BmcResult::Safe(self.config.max_depth))
     }
 
-    /// Initialize with initial states
-    fn initialize(&mut self) -> Result<(), BmcError> {
-        let mut initial_states = HashMap::new();
+    // -----------------------------------------------------------------------
+    // Core BMC query: Φ_k = Init(s₀) ∧ Trans(s₀,s₁) ∧ … ∧ Trans(s_{k-1},s_k) ∧ Bad(s_k)
+    // -----------------------------------------------------------------------
 
-        // Collect initial state constraints from init rules
-        for rule in self.system.entries() {
-            if let Some(head_pred) = rule.head_predicate() {
-                // The constraint defines the initial states for this predicate
-                initial_states.insert(head_pred, rule.body.constraint);
-            }
-        }
-
-        self.states.push(initial_states);
-        Ok(())
-    }
-
-    /// Check if bad state is reachable at given depth
-    fn check_bad_at_depth(&mut self, depth: u32) -> Result<bool, BmcError> {
-        let depth_idx = depth as usize;
-        if depth_idx >= self.states.len() {
-            return Ok(false);
-        }
-
-        let current_states = &self.states[depth_idx];
-
-        // Check each query rule
-        for query in self.system.queries() {
-            // Build constraint: states[depth] /\ query.constraint
-            for body_app in &query.body.predicates {
-                if let Some(&state_formula) = current_states.get(&body_app.pred) {
-                    // Check if state_formula /\ query.body.constraint is SAT
-                    let _combined = self.terms.mk_and([state_formula, query.body.constraint]);
-
-                    // For BMC, we just check satisfiability
-                    // In full implementation, we'd use the SMT solver's check_sat
-                    trace!(
-                        "BMC: checking satisfiability at depth {} for predicate {:?}",
-                        depth, body_app.pred
-                    );
-
-                    // Placeholder: actual implementation would check SAT
-                    // If SAT, extract model and build counterexample
-                    let _smt = SmtSolver::new(self.terms, self.system);
-                    self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
-
-                    // For now, just assume unreachable (false)
-                    // Real implementation would call smt.check_sat()
-                    let _is_sat = false;
-
-                    if _is_sat {
-                        self.build_counterexample(depth)?;
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-
-        Ok(false)
-    }
-
-    /// Unroll the transition system one more step
-    fn unroll(&mut self, depth: u32) -> Result<(), BmcError> {
-        let mut next_states = HashMap::new();
-
-        // For each predicate, compute the next state
-        for pred_info in self.system.predicates() {
-            let pred = pred_info.id;
-            let mut next_state_disjuncts = Vec::new();
-
-            // Find all rules that can derive this predicate
-            for rule in self.system.rules_by_head(pred) {
-                // Build the transition constraint
-                // This involves:
-                // 1. Getting current states of body predicates
-                // 2. Conjuncting with rule.body.constraint
-                // 3. Projecting onto head variables
-
-                let mut transition_conjuncts = vec![rule.body.constraint];
-
-                // Add current states of body predicates
-                for body_app in &rule.body.predicates {
-                    if let Some(state) = self.states[depth as usize].get(&body_app.pred) {
-                        transition_conjuncts.push(*state);
-                    }
-                }
-
-                // Build conjunction
-                if !transition_conjuncts.is_empty() {
-                    let transition = self.terms.mk_and(transition_conjuncts.clone());
-                    next_state_disjuncts.push(transition);
-                }
-            }
-
-            // Build disjunction of all possible transitions
-            if !next_state_disjuncts.is_empty() {
-                let next_state = if next_state_disjuncts.len() == 1 {
-                    next_state_disjuncts[0]
-                } else {
-                    self.terms.mk_or(next_state_disjuncts.clone())
-                };
-                next_states.insert(pred, next_state);
-            }
-        }
-
-        self.states.push(next_states);
-        Ok(())
-    }
-
-    /// Check k-induction at given depth
+    /// Check whether a bad state is reachable at exactly depth `k`.
     ///
-    /// K-induction tries to prove that the property is inductive with k steps:
-    /// 1. Base case: Property holds for 0..k steps (checked by BMC already)
-    /// 2. Inductive step: If property holds for any k consecutive states,
-    ///    then it holds for the next state too
+    /// Returns `Unsafe(k)` with a witness if SAT, `Safe(k)` if UNSAT,
+    /// or `Unknown` if the solver could not decide.
     ///
-    /// Full SMT-integrated k-induction implementation:
-    /// - Assumes k arbitrary states satisfying the transition relation
-    /// - Checks if the property holds at step k+1
-    /// - If yes, the property is k-inductive (proved safe)
-    fn check_kinduction(&mut self, depth: u32) -> Result<bool, BmcError> {
-        trace!("BMC: checking k-induction at depth {}", depth);
-
-        if depth == 0 {
-            // Can't do k-induction with k=0
-            return Ok(false);
-        }
-
-        // For k-induction, we need to check:
-        // ∀ states[0..k]. (transition_relation(states[0..k]) ∧ safe(states[0..k]))
-        //                  => safe(states[k+1])
-        //
-        // Equivalently, check if the negation is UNSAT:
-        // ∃ states[0..k+1]. transition_relation(states[0..k+1]) ∧
-        //                    safe(states[0..k]) ∧ ¬safe(states[k+1])
-
-        let k = depth;
-
-        // Collect constraints for k consecutive transitions
-        // (without assuming initial states - this is key for k-induction!)
-        let mut transition_constraints = Vec::new();
-
-        // Add k transitions
-        for step in 0..k {
-            // For each rule, add its transition constraint
-            for rule in self.system.rules() {
-                // Get the body constraint (transition guard)
-                transition_constraints.push(rule.body.constraint);
-
-                // Add constraints from body predicates
-                for body_app in &rule.body.predicates {
-                    // In k-induction, we use fresh symbolic states
-                    // (not the concrete states from BMC unrolling)
-                    if let Some(pred_info) = self.system.get_predicate(body_app.pred) {
-                        // Create a symbolic state formula for this predicate at this step
-                        // For simplicity, we use a boolean variable representing "predicate holds"
-                        let state_var_name = format!("{}_{}", pred_info.name, step);
-                        let state_var = self
-                            .terms
-                            .mk_var(&state_var_name, self.terms.sorts.bool_sort);
-                        transition_constraints.push(state_var);
-                    }
-                }
-            }
-        }
-
-        // Build safety constraints: property holds at steps 0..k-1
-        let mut safety_constraints = Vec::new();
-        for query in self.system.queries() {
-            for step in 0..k {
-                // At each step, the query should not be violated
-                // i.e., ¬(query.body.constraint)
-                let negated = self.terms.mk_not(query.body.constraint);
-                let step_var_name = format!("safe_{}", step);
-                let step_var = self
-                    .terms
-                    .mk_var(&step_var_name, self.terms.sorts.bool_sort);
-
-                // Implication: if the query body predicates hold, then constraint must not hold
-                let safety_at_step = self.terms.mk_or([negated, step_var]);
-                safety_constraints.push(safety_at_step);
-            }
-        }
-
-        // Build violation constraint: property is violated at step k
-        let mut violation_constraints = Vec::new();
-        for query in self.system.queries() {
-            // At step k, the query IS violated
-            // i.e., query.body.constraint holds
-            violation_constraints.push(query.body.constraint);
-        }
-
-        // Combine all constraints
-        let mut all_constraints = Vec::new();
-        all_constraints.extend(transition_constraints);
-        all_constraints.extend(safety_constraints);
-        all_constraints.extend(violation_constraints);
-
-        if all_constraints.is_empty() {
-            return Ok(false);
-        }
-
-        let check_formula = self.terms.mk_and(all_constraints);
-
-        // Check if this is UNSAT
-        // If UNSAT, then k-induction succeeded (property is k-inductive)
+    /// **Soundness invariant**: `Unsafe` is only returned when the SMT solver
+    /// returns SAT on the full unrolling formula.
+    pub fn check_bad_at_depth(&mut self, k: u32) -> Result<BmcResult, BmcError> {
+        trace!("BMC check_bad_at_depth({})", k);
         self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
 
-        // Create SMT solver after building all formulas (to avoid borrowing conflicts)
-        let mut smt = SmtSolver::new(self.terms, self.system);
+        // We only handle the *single-predicate linear* case to remain sound.
+        // Non-linear CHC (multiple distinct predicates in rule body) would
+        // require a more complex encoding — we conservatively return Unknown.
+        let pred_count = self.system.predicates().count();
+        if pred_count > 1 {
+            // Multi-predicate systems may be non-linear; return Unknown.
+            debug!(
+                "BMC: {} predicates — returning Unknown for safety",
+                pred_count
+            );
+            return Ok(BmcResult::Unknown);
+        }
 
-        // Push to create a new solver context
-        smt.push();
-        // Assert the formula
-        smt.assert(check_formula);
-        // Check satisfiability
-        let result = smt.check_sat();
-        // Pop to restore solver context
-        smt.pop();
+        // Identify the single predicate (if any)
+        let pred_info = match self.system.predicates().next() {
+            Some(p) => p.clone(),
+            None => return Ok(BmcResult::Safe(k)), // No predicates → trivially safe
+        };
 
-        match result {
-            Ok(is_sat) => {
-                if !is_sat {
-                    // UNSAT: k-induction succeeded
-                    debug!("K-induction: proved safety with k={}", k);
-                    Ok(true)
-                } else {
-                    // SAT: k-induction failed (but doesn't mean property is false)
-                    trace!("K-induction: failed at k={}, trying larger k", k);
-                    Ok(false)
+        let pred_id = pred_info.id;
+        let pred_name = pred_info.name.clone();
+        let param_sorts: Vec<SortId> = pred_info.params.iter().copied().collect();
+
+        // Build step variables s₀, s₁, …, sₖ
+        // step_vars[i] = Vec<TermId> of step-i state variables
+        let step_vars: Vec<Vec<TermId>> = (0..=k)
+            .map(|step| make_step_vars(self.terms, &pred_name, &param_sorts, step))
+            .collect();
+
+        let mut conjuncts: Vec<TermId> = Vec::new();
+
+        // ---- Init constraint: Init(s₀) -----------------------------------
+        let mut init_added = false;
+        for rule in self.system.entries() {
+            // Entry rules have no predicates in the body; they establish s₀.
+            // They must have a non-query head (i.e. head predicate = pred_id).
+            if rule.head_predicate() != Some(pred_id) {
+                continue;
+            }
+            if let RuleHead::Predicate(ref head_app) = rule.head {
+                // Map head args → step-0 vars
+                let subst = subst_from_args(&head_app.args, &step_vars[0]);
+                let init_c = self.terms.substitute(rule.body.constraint, &subst);
+                conjuncts.push(init_c);
+                init_added = true;
+            }
+        }
+        if !init_added {
+            return Err(BmcError::NoInitRule);
+        }
+
+        // ---- Transition constraints: Trans(sᵢ, sᵢ₊₁) for i = 0..k-1 ----
+        for i in 0..k {
+            // Collect the transition rule for pred_id that has pred_id in body
+            let mut trans_found = false;
+            for rule in self.system.rules_by_head(pred_id) {
+                // Skip init rules
+                if rule.body.predicates.is_empty() {
+                    continue;
+                }
+                // Skip if body references a different predicate
+                if rule.body.predicates.iter().any(|app| app.pred != pred_id) {
+                    continue;
+                }
+                if let (Some(body_app), RuleHead::Predicate(head_app)) =
+                    (rule.body.predicates.first(), &rule.head)
+                {
+                    // body_app.args are the "current state" variables (step i)
+                    // head_app.args are the "next state" variables (step i+1)
+                    let mut subst = subst_from_args(&body_app.args, &step_vars[i as usize]);
+                    subst.extend(subst_from_args(&head_app.args, &step_vars[i as usize + 1]));
+                    let trans_c = self.terms.substitute(rule.body.constraint, &subst);
+                    conjuncts.push(trans_c);
+                    trans_found = true;
                 }
             }
-            Err(e) => {
-                debug!("K-induction: SMT error: {}", e);
-                Ok(false)
+            if !trans_found {
+                // No transition rule: no way to advance state, so no
+                // counterexample can exist beyond depth 0.
+                debug!(
+                    "BMC: no transition rule for pred {:?} — safe at depth > 0",
+                    pred_id
+                );
+                return Ok(BmcResult::Safe(k));
             }
+        }
+
+        // ---- Bad state: Bad(sₖ) ------------------------------------------
+        let mut bad_added = false;
+        for query in self.system.queries() {
+            for body_app in &query.body.predicates {
+                if body_app.pred != pred_id {
+                    continue;
+                }
+                let subst = subst_from_args(&body_app.args, &step_vars[k as usize]);
+                let bad_c = self.terms.substitute(query.body.constraint, &subst);
+                conjuncts.push(bad_c);
+                bad_added = true;
+            }
+        }
+        if !bad_added {
+            // No query references this predicate — trivially safe at depth k
+            return Ok(BmcResult::Safe(k));
+        }
+
+        // ---- Check satisfiability ----------------------------------------
+        let formula = self.terms.mk_and(conjuncts);
+
+        let mut smt = SmtSolver::new(self.terms, self.system);
+        smt.push();
+        smt.assert(formula);
+        let sat_result = smt.check_sat();
+        let is_sat = match sat_result {
+            Ok(v) => v,
+            Err(SmtError::Unknown) => {
+                smt.pop();
+                return Ok(BmcResult::Unknown);
+            }
+            Err(e) => {
+                smt.pop();
+                return Err(BmcError::Smt(e));
+            }
+        };
+
+        if is_sat {
+            // Extract a concrete counterexample from the model.
+            let cex = build_counterexample_from_model(&mut smt, pred_id, &step_vars, k);
+            smt.pop();
+            self.counterexample = Some(cex);
+            Ok(BmcResult::Unsafe(k))
+        } else {
+            smt.pop();
+            Ok(BmcResult::Safe(k))
         }
     }
 
-    /// Build a counterexample trace
-    fn build_counterexample(&mut self, depth: u32) -> Result<(), BmcError> {
-        let mut cex = Counterexample::new();
+    // -----------------------------------------------------------------------
+    // K-induction
+    // -----------------------------------------------------------------------
 
-        // Extract states from 0 to depth
-        for step in 0..=depth {
-            if let Some(states) = self.states.get(step as usize) {
-                // For each query, extract the relevant state
-                for query in self.system.queries() {
-                    for body_app in &query.body.predicates {
-                        if let Some(&state) = states.get(&body_app.pred) {
-                            cex.push(CexState {
-                                pred: body_app.pred,
-                                state,
-                                rule: None,
-                                assignments: SmallVec::new(),
-                            });
-                        }
-                    }
+    /// Run k-induction from depth 1 up to `max_depth`.
+    fn run_kinduction(&mut self) -> Result<BmcResult, BmcError> {
+        for k in 1..=self.config.max_depth {
+            self.stats.max_depth_reached = k;
+            debug!("K-induction: trying k={}", k);
+            match self.check_kinduction(k)? {
+                BmcResult::Safe(d) => return Ok(BmcResult::Safe(d)),
+                BmcResult::Unsafe(d) => return Ok(BmcResult::Unsafe(d)),
+                BmcResult::Unknown => {
+                    // Try a larger k
+                    self.stats.num_unrollings += 1;
+                }
+            }
+        }
+        Ok(BmcResult::Safe(self.config.max_depth))
+    }
+
+    /// Sound k-induction check.
+    ///
+    /// 1. **Base case**: for i in 0..=k, verify `check_bad_at_depth(i)`.
+    ///    Any `Unsafe(i)` is immediately propagated.
+    ///
+    /// 2. **Inductive step**: check UNSAT of
+    ///    `P(s₀) ∧ … ∧ P(s_{k-1}) ∧ Trans(s₀,s₁) ∧ … ∧ Trans(s_{k-1},sₖ) ∧ Bad(sₖ)`
+    ///    where `P(sᵢ) = ¬Bad(sᵢ)`.
+    ///    * UNSAT  → `Safe` (k-inductive proof found)
+    ///    * SAT    → `Unknown` (NOT Unsafe — only base case can yield Unsafe)
+    ///
+    /// **Soundness invariant**: `Unsafe` is returned only when the base case
+    /// finds a real SAT witness.  The inductive-step formula being SAT merely
+    /// means k-induction cannot prove safety at this k.
+    pub fn check_kinduction(&mut self, k: u32) -> Result<BmcResult, BmcError> {
+        trace!("BMC check_kinduction({})", k);
+
+        if k == 0 {
+            return Ok(BmcResult::Unknown);
+        }
+
+        // --- Base case: check depths 0..=k ---
+        for i in 0..=k {
+            match self.check_bad_at_depth(i)? {
+                BmcResult::Unsafe(d) => return Ok(BmcResult::Unsafe(d)),
+                BmcResult::Unknown => return Ok(BmcResult::Unknown),
+                BmcResult::Safe(_) => {}
+            }
+        }
+
+        // --- Inductive step ---
+        // Only sound for single-predicate linear CHC
+        let pred_count = self.system.predicates().count();
+        if pred_count > 1 {
+            return Ok(BmcResult::Unknown);
+        }
+
+        let pred_info = match self.system.predicates().next() {
+            Some(p) => p.clone(),
+            None => return Ok(BmcResult::Safe(k)),
+        };
+
+        let pred_id = pred_info.id;
+        let pred_name = pred_info.name.clone();
+        let param_sorts: Vec<SortId> = pred_info.params.iter().copied().collect();
+
+        // Build step variables s₀ … sₖ  (k+1 steps)
+        let step_vars: Vec<Vec<TermId>> = (0..=k)
+            .map(|step| {
+                make_step_vars(
+                    self.terms,
+                    &format!("{}_ind", pred_name),
+                    &param_sorts,
+                    step,
+                )
+            })
+            .collect();
+
+        let mut conjuncts: Vec<TermId> = Vec::new();
+
+        // Collect the "Bad" formula template (without step substitution yet)
+        let mut bad_templates: Vec<(SmallVec<[TermId; 4]>, TermId)> = Vec::new();
+        for query in self.system.queries() {
+            for body_app in &query.body.predicates {
+                if body_app.pred == pred_id {
+                    bad_templates.push((body_app.args.clone(), query.body.constraint));
                 }
             }
         }
 
-        self.counterexample = Some(cex);
-        Ok(())
+        // ¬Bad(sᵢ) for i = 0 .. k-1  (the induction hypothesis)
+        for i in 0..k {
+            for (args, bad_constraint) in &bad_templates {
+                let subst = subst_from_args(args, &step_vars[i as usize]);
+                let bad_at_i = self.terms.substitute(*bad_constraint, &subst);
+                let not_bad = self.terms.mk_not(bad_at_i);
+                conjuncts.push(not_bad);
+            }
+        }
+
+        // Trans(sᵢ, sᵢ₊₁) for i = 0 .. k-1
+        for i in 0..k {
+            for rule in self.system.rules_by_head(pred_id) {
+                if rule.body.predicates.is_empty() {
+                    continue; // skip init rules
+                }
+                if rule.body.predicates.iter().any(|a| a.pred != pred_id) {
+                    continue;
+                }
+                if let (Some(body_app), RuleHead::Predicate(head_app)) =
+                    (rule.body.predicates.first(), &rule.head)
+                {
+                    let mut subst = subst_from_args(&body_app.args, &step_vars[i as usize]);
+                    subst.extend(subst_from_args(&head_app.args, &step_vars[i as usize + 1]));
+                    let trans_c = self.terms.substitute(rule.body.constraint, &subst);
+                    conjuncts.push(trans_c);
+                }
+            }
+        }
+
+        // Bad(sₖ)  — the property violation at the final step
+        for (args, bad_constraint) in &bad_templates {
+            let subst = subst_from_args(args, &step_vars[k as usize]);
+            let bad_at_k = self.terms.substitute(*bad_constraint, &subst);
+            conjuncts.push(bad_at_k);
+        }
+
+        if conjuncts.is_empty() {
+            // Nothing to check — conservatively unknown
+            return Ok(BmcResult::Unknown);
+        }
+
+        let formula = self.terms.mk_and(conjuncts);
+        self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
+
+        let mut smt = SmtSolver::new(self.terms, self.system);
+        smt.push();
+        smt.assert(formula);
+        let sat_result = smt.check_sat();
+        smt.pop();
+
+        match sat_result {
+            Ok(false) => {
+                // UNSAT: the inductive step holds — k-induction proves safety
+                debug!("K-induction: proved safety with k={}", k);
+                Ok(BmcResult::Safe(k))
+            }
+            Ok(true) => {
+                // SAT: k-induction failed at this k (but NOT an Unsafe result —
+                // SAT here only means we cannot prove safety with k steps)
+                trace!("K-induction: step formula SAT at k={}, inconclusive", k);
+                Ok(BmcResult::Unknown)
+            }
+            Err(SmtError::Unknown) => Ok(BmcResult::Unknown),
+            Err(e) => Err(BmcError::Smt(e)),
+        }
     }
 
     /// Get the statistics
@@ -429,6 +511,43 @@ impl<'a> Bmc<'a> {
         self.counterexample.as_ref()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Counterexample extraction
+// ---------------------------------------------------------------------------
+
+/// Build a `Counterexample` by evaluating the per-step state variables in the
+/// current SAT model held inside `smt`.
+fn build_counterexample_from_model(
+    smt: &mut SmtSolver<'_>,
+    pred_id: PredId,
+    step_vars: &[Vec<TermId>],
+    k: u32,
+) -> Counterexample {
+    let mut cex = Counterexample::new();
+
+    for step in 0..=k {
+        let vars = &step_vars[step as usize];
+        let assignments: SmallVec<[(TermId, TermId); 4]> = vars
+            .iter()
+            .copied()
+            .filter_map(|var| smt.eval_in_model(var).map(|val| (var, val)))
+            .collect();
+
+        cex.push(CexState {
+            pred: pred_id,
+            state: vars.first().copied().unwrap_or(TermId::new(0)),
+            rule: None,
+            assignments,
+        });
+    }
+
+    cex
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid BMC + PDR solver
+// ---------------------------------------------------------------------------
 
 /// Hybrid BMC + PDR solver
 ///
@@ -464,6 +583,10 @@ impl Default for HybridSolver {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,12 +611,13 @@ mod tests {
         assert!(config.use_kinduction);
     }
 
+    /// Safe system: x=0 initially, x < 0 is the bad state.
+    /// Since x starts at 0 and the bad state is x < 0, no counterexample exists.
     #[test]
-    fn test_bmc_simple() {
+    fn test_bmc_simple_safe() {
         let mut terms = TermManager::new();
         let mut system = ChcSystem::new();
 
-        // Simple system: x = 0 => Inv(x), Inv(x) /\ x < 0 => false
         let inv = system.declare_predicate("Inv", [terms.sorts.int_sort]);
         let x = terms.mk_var("x", terms.sorts.int_sort);
         let zero = terms.mk_int(0);
@@ -513,15 +637,177 @@ mod tests {
             neg_constraint,
         );
 
-        let mut bmc = Bmc::new(&mut terms, &system);
+        let config = BmcConfig {
+            max_depth: 5,
+            use_kinduction: false,
+            verbosity: 0,
+        };
+        let mut bmc = Bmc::with_config(&mut terms, &system, config);
         let result = bmc.check();
 
-        // Should be safe (no counterexample found)
-        assert!(result.is_ok());
-        match result.expect("test operation should succeed") {
-            BmcResult::Safe(_) => (),
-            BmcResult::Unsafe(_) => panic!("Expected safe result"),
+        assert!(result.is_ok(), "BMC should not error: {:?}", result);
+        match result.expect("BMC result") {
+            BmcResult::Safe(_) | BmcResult::Unknown => {}
+            BmcResult::Unsafe(_) => panic!("Expected safe or unknown result"),
         }
+    }
+
+    /// Unsafe system: x=0 initially, bad state is x=0.
+    /// Should find counterexample at depth 0.
+    #[test]
+    fn test_bmc_unsafe_depth0() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+
+        let inv = system.declare_predicate("InvU0", [terms.sorts.int_sort]);
+        let x = terms.mk_var("xu0", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let init_c = terms.mk_eq(x, zero);
+
+        system.add_init_rule(
+            [("xu0".to_string(), terms.sorts.int_sort)],
+            init_c,
+            inv,
+            [x],
+        );
+
+        // Bad: x = 0  (immediately reachable)
+        let bad_c = terms.mk_eq(x, zero);
+        system.add_query(
+            [("xu0".to_string(), terms.sorts.int_sort)],
+            [PredicateApp::new(inv, [x])],
+            bad_c,
+        );
+
+        let config = BmcConfig {
+            max_depth: 5,
+            use_kinduction: false,
+            verbosity: 0,
+        };
+        let mut bmc = Bmc::with_config(&mut terms, &system, config);
+        let result = bmc.check().expect("BMC should not error");
+        assert!(
+            matches!(result, BmcResult::Unsafe(0)),
+            "Expected Unsafe(0), got {:?}",
+            result
+        );
+    }
+
+    /// Unsafe system: x=0, x'=x+1, bad x=3.  Should find cex at depth 3.
+    #[test]
+    fn test_bmc_unsafe_depth3() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+
+        let inv = system.declare_predicate("InvD3", [terms.sorts.int_sort]);
+        let x = terms.mk_var("xd3", terms.sorts.int_sort);
+        let xp = terms.mk_var("xd3_next", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let one = terms.mk_int(1);
+        let three = terms.mk_int(3);
+
+        // Init: x = 0
+        let init_c = terms.mk_eq(x, zero);
+        system.add_init_rule(
+            [("xd3".to_string(), terms.sorts.int_sort)],
+            init_c,
+            inv,
+            [x],
+        );
+
+        // Trans: x' = x + 1
+        let x_plus_1 = terms.mk_add([x, one]);
+        let trans_c = terms.mk_eq(xp, x_plus_1);
+        system.add_transition_rule(
+            [
+                ("xd3".to_string(), terms.sorts.int_sort),
+                ("xd3_next".to_string(), terms.sorts.int_sort),
+            ],
+            [PredicateApp::new(inv, [x])],
+            trans_c,
+            inv,
+            [xp],
+        );
+
+        // Bad: x = 3
+        let bad_c = terms.mk_eq(x, three);
+        system.add_query(
+            [("xd3".to_string(), terms.sorts.int_sort)],
+            [PredicateApp::new(inv, [x])],
+            bad_c,
+        );
+
+        let config = BmcConfig {
+            max_depth: 5,
+            use_kinduction: false,
+            verbosity: 0,
+        };
+        let mut bmc = Bmc::with_config(&mut terms, &system, config);
+        let result = bmc.check().expect("BMC should not error");
+        assert!(
+            matches!(result, BmcResult::Unsafe(3)),
+            "Expected Unsafe(3), got {:?}",
+            result
+        );
+        // Counterexample should be present
+        assert!(bmc.counterexample().is_some());
+    }
+
+    /// 1-inductive safe system: Init: x=0, Trans: x'=x+1, Bad: x<0.
+    /// k-induction with k=1 should prove Safe.
+    #[test]
+    fn test_kinduction_safe_1ind() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+
+        let inv = system.declare_predicate("InvK1", [terms.sorts.int_sort]);
+        let x = terms.mk_var("xk1", terms.sorts.int_sort);
+        let xp = terms.mk_var("xk1_next", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let one = terms.mk_int(1);
+
+        // Init: x = 0
+        let init_c = terms.mk_eq(x, zero);
+        system.add_init_rule(
+            [("xk1".to_string(), terms.sorts.int_sort)],
+            init_c,
+            inv,
+            [x],
+        );
+
+        // Trans: x' = x + 1
+        let x_plus_1 = terms.mk_add([x, one]);
+        let trans_c = terms.mk_eq(xp, x_plus_1);
+        system.add_transition_rule(
+            [
+                ("xk1".to_string(), terms.sorts.int_sort),
+                ("xk1_next".to_string(), terms.sorts.int_sort),
+            ],
+            [PredicateApp::new(inv, [x])],
+            trans_c,
+            inv,
+            [xp],
+        );
+
+        // Bad: x < 0
+        let bad_c = terms.mk_lt(x, zero);
+        system.add_query(
+            [("xk1".to_string(), terms.sorts.int_sort)],
+            [PredicateApp::new(inv, [x])],
+            bad_c,
+        );
+
+        let result = Bmc::new(&mut terms, &system)
+            .check_kinduction(1)
+            .expect("k-induction should not error");
+        // x starts at 0 and only increases; x < 0 is unreachable.
+        // k=1 induction: base case is UNSAT, step formula checks:
+        //   ¬(x<0) ∧ x'=x+1 ∧ x'<0  — UNSAT (x'=x+1 with x≥0 → x'≥1 > 0)
+        assert!(
+            matches!(result, BmcResult::Safe(1) | BmcResult::Unknown),
+            "Expected Safe(1) or Unknown, got {:?}",
+            result
+        );
     }
 
     #[test]

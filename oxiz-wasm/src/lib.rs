@@ -150,7 +150,7 @@ pub fn init() {
 ///
 /// # Returns
 ///
-/// A version string in semver format (e.g., "0.2.2")
+/// A version string in semver format (e.g., "0.2.3")
 ///
 /// # Example (JavaScript)
 ///

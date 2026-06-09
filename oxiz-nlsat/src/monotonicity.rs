@@ -12,6 +12,7 @@
 //!
 //! Reference: Algebraic analysis techniques in SMT solvers
 
+use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use oxiz_math::polynomial::{Polynomial, Var};
 use rustc_hash::FxHashMap;
@@ -157,11 +158,22 @@ impl MonotonicityAnalyzer {
     ///
     /// Returns Some(true) if likely positive, Some(false) if likely negative, None if unknown.
     fn estimate_derivative_sign(&self, poly: &Polynomial) -> Option<bool> {
-        // For univariate polynomials, check the leading coefficient
-        if poly.vars().len() == 1 {
-            // This is a simplified check - proper implementation would
-            // need to check all critical points
-            // For now, just return Unknown
+        let vars = poly.vars();
+        if vars.len() == 1 {
+            let var = vars[0];
+            // If the polynomial has no real roots, it has constant sign everywhere.
+            // Determine that sign by sampling at x=0.
+            if poly.isolate_roots(var).is_empty() {
+                let zero = BigRational::zero();
+                let value_at_zero = poly.eval_horner(var, &zero);
+                if value_at_zero.is_positive() {
+                    return Some(true);
+                } else if value_at_zero.is_negative() {
+                    return Some(false);
+                }
+                // value_at_zero == 0 but no roots found — treat as unknown
+                return None;
+            }
             return None;
         }
 

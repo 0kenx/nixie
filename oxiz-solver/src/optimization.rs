@@ -330,6 +330,7 @@ impl Optimizer {
             let result = self.solver.check(term_manager);
             if result == SolverResult::Sat {
                 // Found a better solution
+                let mut value_updated = false;
                 if let Some(model) = self.solver.model() {
                     let new_value_term = model.eval(objective.term, term_manager);
 
@@ -339,10 +340,16 @@ impl Optimizer {
                         current_value = n.clone();
                         best_value_term = new_value_term;
                         best_model = model.clone();
+                        value_updated = true;
                     }
                 }
                 // Pop and continue searching
                 self.solver.pop();
+                if !value_updated {
+                    // Model evaluation did not yield a concrete integer value —
+                    // cannot determine the next tightening bound, so stop here.
+                    break;
+                }
             } else {
                 // No better solution exists - current best is optimal
                 self.solver.pop();
@@ -431,6 +438,7 @@ impl Optimizer {
 
             let result = self.solver.check(term_manager);
             if result == SolverResult::Sat {
+                let mut value_updated = false;
                 if let Some(model) = self.solver.model() {
                     let new_value_term = model.eval(objective.term, term_manager);
 
@@ -455,10 +463,16 @@ impl Optimizer {
                             current_val = v;
                             best_value = v;
                             best_model = model.clone();
+                            value_updated = true;
                         }
                     }
                 }
                 self.solver.pop();
+                if !value_updated {
+                    // Model evaluation did not yield a concrete real/int value —
+                    // cannot determine the next tightening bound, so stop here.
+                    break;
+                }
             } else {
                 self.solver.pop();
                 break;

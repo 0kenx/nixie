@@ -154,15 +154,19 @@ impl Solver {
                 .and_then(|s| s.bitvec_width())
                 .unwrap_or(64);
 
-            // For BV comparisons handled as bounded integer arithmetic,
-            // check ArithSolver FIRST (it has the actual constraint values)
-            if let Some(arith_value) = self.arith.value(term) {
+            // Prefer the BvSolver's bit-blasted value when the term was actually
+            // bit-blasted (`get_value` returns `Some` only for terms with bit
+            // variables). The bit-level model is authoritative for BV arithmetic
+            // and bit operations, and — crucially — it carries genuine
+            // counterexample witnesses (e.g. `a != b` in `not(bvadd a b = bvsub
+            // a b)`). Falling back to ArithSolver covers BV terms that were
+            // tracked only as bounded integers (pure comparison constraints).
+            if let Some(bv_value) = self.bv.get_value(term) {
+                let value_term = manager.mk_bitvec(bv_value, width);
+                model.set(term, value_term);
+            } else if let Some(arith_value) = self.arith.value(term) {
                 let int_value = arith_value.to_integer();
                 let value_term = manager.mk_bitvec(int_value, width);
-                model.set(term, value_term);
-            } else if let Some(bv_value) = self.bv.get_value(term) {
-                // For BV bit operations, get value from BvSolver
-                let value_term = manager.mk_bitvec(bv_value, width);
                 model.set(term, value_term);
             } else {
                 // If no value from either solver, use default value (0)

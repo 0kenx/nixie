@@ -8,12 +8,13 @@
 //!
 //! Reference: Z3's `opt/opt_context.cpp`
 
-use crate::maxsat::{MaxSatConfig, MaxSatError, MaxSatResult, MaxSatSolver, Weight};
+use crate::maxsat::{MaxSatConfig, MaxSatError, MaxSatResult, Weight};
 use crate::objective::{Objective, ObjectiveId, ObjectiveKind};
 use crate::pareto::ParetoConfig;
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use oxiz_core::ast::TermId;
+use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_solver::{OptimizationResult, Optimizer, Solver, SolverResult};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
@@ -45,6 +46,8 @@ pub enum OptResult {
     Unsatisfiable,
     /// Could not determine
     Unknown,
+    /// Objective is unbounded (no finite optimum)
+    Unbounded,
 }
 
 impl From<MaxSatResult> for OptResult {
@@ -65,6 +68,7 @@ impl std::fmt::Display for OptResult {
             OptResult::Satisfiable => write!(f, "satisfiable"),
             OptResult::Unsatisfiable => write!(f, "unsatisfiable"),
             OptResult::Unknown => write!(f, "unknown"),
+            OptResult::Unbounded => write!(f, "unbounded"),
         }
     }
 }
@@ -190,6 +194,41 @@ impl std::fmt::Display for ModelValue {
     }
 }
 
+/// Convert a `TermId` value term (returned by `Model::eval`) into a `ModelValue`.
+///
+/// Returns `None` when the term is a non-constant (variable or compound expression
+/// that could not be fully evaluated in the model).
+fn term_id_to_model_value(val: TermId, tm: &TermManager) -> Option<ModelValue> {
+    let t = tm.get(val)?;
+    match &t.kind {
+        TermKind::True => Some(ModelValue::Bool(true)),
+        TermKind::False => Some(ModelValue::Bool(false)),
+        TermKind::IntConst(n) => Some(ModelValue::Int(n.clone())),
+        TermKind::RealConst(r) => {
+            // Rational64 → BigRational
+            let big_r = BigRational::new(BigInt::from(*r.numer()), BigInt::from(*r.denom()));
+            Some(ModelValue::Rational(big_r))
+        }
+        TermKind::BitVecConst { value, width } => Some(ModelValue::BitVec(*width, value.clone())),
+        _ => None,
+    }
+}
+
+/// Convert a `TermId` value term into a `Weight` (for storing objective bounds).
+fn term_id_to_weight(val: TermId, tm: &TermManager) -> Weight {
+    let Some(t) = tm.get(val) else {
+        return Weight::Infinite;
+    };
+    match &t.kind {
+        TermKind::IntConst(n) => Weight::Int(n.clone()),
+        TermKind::RealConst(r) => {
+            let big_r = BigRational::new(BigInt::from(*r.numer()), BigInt::from(*r.denom()));
+            Weight::Rational(big_r)
+        }
+        _ => Weight::Infinite,
+    }
+}
+
 /// Optimization context wrapping the SMT solver.
 ///
 /// This is the main interface for optimization problems. It supports:
@@ -223,6 +262,12 @@ pub struct OptContext {
     groups: FxHashMap<String, Vec<SoftConstraintId>>,
     /// Context stack for push/pop
     context_stack: Vec<ContextSnapshot>,
+    /// Term manager for building auxiliary terms during solving
+    pub terms: TermManager,
+    /// Counter for generating fresh selector variable names
+    next_sel_id: u32,
+    /// Cached Pareto front from last `optimize_pareto` call
+    pareto_front: Vec<FxHashMap<TermId, ModelValue>>,
 }
 
 /// Snapshot for push/pop
@@ -260,6 +305,9 @@ impl OptContext {
             upper_bounds: FxHashMap::default(),
             groups: FxHashMap::default(),
             context_stack: Vec::new(),
+            terms: TermManager::new(),
+            next_sel_id: 0,
+            pareto_front: Vec::new(),
         }
     }
 
@@ -361,9 +409,23 @@ impl OptContext {
         &self.stats
     }
 
+    /// Get the configuration
+    pub fn config(&self) -> &OptConfig {
+        &self.config
+    }
+
     /// Get the best model
     pub fn best_model(&self) -> Option<&FxHashMap<TermId, ModelValue>> {
         self.best_model.as_ref()
+    }
+
+    /// Get the Pareto front from the last `optimize()` call (multi-objective case).
+    ///
+    /// Each element is a model (variable → value map) corresponding to one
+    /// Pareto-optimal solution. Empty unless `optimize()` was called with
+    /// multiple objectives.
+    pub fn pareto_front(&self) -> &[FxHashMap<TermId, ModelValue>] {
+        &self.pareto_front
     }
 
     /// Get the value of an objective in the best model
@@ -421,8 +483,29 @@ impl OptContext {
 
     /// Check satisfiability (ignoring soft constraints and objectives)
     pub fn check_sat(&mut self) -> OptResult {
-        // For now, return Unknown - full integration with SMT solver needed
-        OptResult::Unknown
+        let mut solver = Solver::new();
+        for &term in &self.hard_constraints {
+            solver.assert(term, &mut self.terms);
+        }
+        self.stats.solver_calls += 1;
+        match solver.check(&mut self.terms) {
+            SolverResult::Sat => {
+                if let Some(model) = solver.model() {
+                    let snapshot = model
+                        .assignments()
+                        .iter()
+                        .filter_map(|(&var_term, &val_term)| {
+                            let mv = term_id_to_model_value(val_term, &self.terms)?;
+                            Some((var_term, mv))
+                        })
+                        .collect();
+                    self.best_model = Some(snapshot);
+                }
+                OptResult::Satisfiable
+            }
+            SolverResult::Unsat => OptResult::Unsatisfiable,
+            SolverResult::Unknown => OptResult::Unknown,
+        }
     }
 
     /// Optimize the problem
@@ -455,116 +538,276 @@ impl OptContext {
         Ok(OptResult::Unknown)
     }
 
-    /// Optimize using MaxSMT (soft constraints only)
+    /// Optimize using MaxSMT (soft constraints only).
+    ///
+    /// Uses selector-variable encoding:
+    ///   For each soft constraint `t_i` with weight `w_i`:
+    ///   1. Introduce fresh boolean selector `b_i`
+    ///   2. Assert `b_i → t_i` (hard)
+    ///   3. Model cost as integer: if `b_i` is false, pay weight `w_i`
+    ///
+    /// Then binary-search over the total cost budget to find the minimum
+    /// cost (= maximum satisfaction) feasible assignment.
     fn optimize_maxsmt(&mut self) -> Result<OptResult, OptError> {
-        // Create MaxSAT solver with our configuration
-        let _maxsat = MaxSatSolver::with_config(self.config.maxsat.clone());
-
-        // Add soft constraints to MaxSAT solver
-        // Note: This is a simplified encoding that treats SMT terms as propositional
-        // A full implementation would need to integrate with the SMT solver
-        // to handle theory reasoning
-        for soft in &self.soft_constraints {
-            // For now, we can't directly encode SMT terms to SAT literals
-            // This would require a proper tseitin transformation or similar
-            // So we track this as a structural placeholder
-            let _ = soft;
+        if self.soft_constraints.is_empty() {
+            return Ok(self.check_sat());
         }
 
-        self.stats.solver_calls += 1;
+        let int_sort = self.terms.sorts.int_sort;
+        let bool_sort = self.terms.sorts.bool_sort;
 
-        // In a full implementation, we would:
-        // 1. Encode SMT terms to SAT using the SMT solver's Boolean abstraction
-        // 2. Solve the MaxSAT problem
-        // 3. Extract the model and verify with SMT solver
-        // 4. Iterate if theory conflicts are found
+        // Build selector variables and implication hard constraints.
+        // Also build individual cost variables and their definitional constraints.
+        let num_soft = self.soft_constraints.len();
+        let mut sel_vars: Vec<TermId> = Vec::with_capacity(num_soft);
+        let mut cost_vars: Vec<TermId> = Vec::with_capacity(num_soft);
+        let mut selector_implications: Vec<TermId> = Vec::with_capacity(num_soft);
+        let mut cost_defs: Vec<TermId> = Vec::with_capacity(num_soft * 2);
 
-        // For now, return Unknown to indicate this needs SMT integration
-        // The actual algorithms are implemented in maxsat.rs and work correctly
-        // when given SAT-level inputs
-        Ok(OptResult::Unknown)
+        // Pre-compute total weight for upper bound of binary search.
+        let total_weight: BigInt = self
+            .soft_constraints
+            .iter()
+            .map(|sc| match &sc.weight {
+                Weight::Int(n) => n.clone(),
+                Weight::Rational(_) => BigInt::from(1), // treat rational as 1 for bound
+                Weight::Infinite => BigInt::from(i64::MAX / 2),
+            })
+            .fold(BigInt::from(0), |acc, w| acc + w);
+
+        for sc in &self.soft_constraints {
+            let sel_name = format!("__opt_sel_{}", self.next_sel_id);
+            self.next_sel_id += 1;
+            let cost_name = format!("__opt_cost_{}", self.next_sel_id);
+            self.next_sel_id += 1;
+
+            let sel = self.terms.mk_var(&sel_name, bool_sort);
+            let cost_var = self.terms.mk_var(&cost_name, int_sort);
+            sel_vars.push(sel);
+            cost_vars.push(cost_var);
+
+            // b_i → t_i
+            let implication = self.terms.mk_implies(sel, sc.term);
+            selector_implications.push(implication);
+
+            // cost_i = ite(b_i, 0, w_i)
+            // Encoded as two implications: b_i → cost_i = 0; ¬b_i → cost_i = w_i
+            let weight_int = match &sc.weight {
+                Weight::Int(n) => n.clone(),
+                Weight::Rational(_) => BigInt::from(1),
+                Weight::Infinite => BigInt::from(i64::MAX / 2),
+            };
+            let w_term = self.terms.mk_int(weight_int);
+            let zero = self.terms.mk_int(0i64);
+            let not_sel = self.terms.mk_not(sel);
+            let cost_eq_zero = self.terms.mk_eq(cost_var, zero);
+            let cost_eq_w = self.terms.mk_eq(cost_var, w_term);
+            let def_true = self.terms.mk_implies(sel, cost_eq_zero);
+            let def_false = self.terms.mk_implies(not_sel, cost_eq_w);
+            cost_defs.push(def_true);
+            cost_defs.push(def_false);
+        }
+
+        // Build sum-of-costs expression: cost_0 + cost_1 + ... + cost_{n-1}
+        let cost_sum = self.terms.mk_add(cost_vars.iter().copied());
+
+        // Binary search: find minimum cost budget K such that the problem is SAT.
+        let mut lo = BigInt::from(0i64);
+        let mut hi = total_weight.clone();
+
+        // First check feasibility with no soft constraints (hi = total cost).
+        // We need to know if hard constraints are satisfiable at all.
+        let feasible = {
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, &mut self.terms);
+            }
+            for &imp in &selector_implications {
+                solver.assert(imp, &mut self.terms);
+            }
+            for &cd in &cost_defs {
+                solver.assert(cd, &mut self.terms);
+            }
+            self.stats.solver_calls += 1;
+            solver.check(&mut self.terms) == SolverResult::Sat
+        };
+
+        if !feasible {
+            return Ok(OptResult::Unsatisfiable);
+        }
+
+        // Binary search for minimum cost.
+        let mut best_model_snapshot: Option<FxHashMap<TermId, ModelValue>> = None;
+
+        while lo < hi {
+            let mid: BigInt = (lo.clone() + hi.clone()) / 2i32;
+            let bound_term = self.terms.mk_int(mid.clone());
+            let cost_le_mid = self.terms.mk_le(cost_sum, bound_term);
+
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, &mut self.terms);
+            }
+            for &imp in &selector_implications {
+                solver.assert(imp, &mut self.terms);
+            }
+            for &cd in &cost_defs {
+                solver.assert(cd, &mut self.terms);
+            }
+            solver.assert(cost_le_mid, &mut self.terms);
+
+            self.stats.solver_calls += 1;
+            match solver.check(&mut self.terms) {
+                SolverResult::Sat => {
+                    hi = mid;
+                    if let Some(model) = solver.model() {
+                        best_model_snapshot = Some(
+                            model
+                                .assignments()
+                                .iter()
+                                .filter_map(|(&k, &v)| {
+                                    let mv = term_id_to_model_value(v, &self.terms)?;
+                                    Some((k, mv))
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+                SolverResult::Unsat => {
+                    lo = mid + BigInt::from(1i32);
+                }
+                SolverResult::Unknown => break,
+            }
+        }
+
+        // Solve once more at lo to get the actual optimal model.
+        {
+            let bound_term = self.terms.mk_int(lo.clone());
+            let cost_le_lo = self.terms.mk_le(cost_sum, bound_term);
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, &mut self.terms);
+            }
+            for &imp in &selector_implications {
+                solver.assert(imp, &mut self.terms);
+            }
+            for &cd in &cost_defs {
+                solver.assert(cd, &mut self.terms);
+            }
+            solver.assert(cost_le_lo, &mut self.terms);
+            self.stats.solver_calls += 1;
+            if solver.check(&mut self.terms) == SolverResult::Sat
+                && let Some(model) = solver.model()
+            {
+                best_model_snapshot = Some(
+                    model
+                        .assignments()
+                        .iter()
+                        .filter_map(|(&k, &v)| {
+                            let mv = term_id_to_model_value(v, &self.terms)?;
+                            Some((k, mv))
+                        })
+                        .collect(),
+                );
+            }
+        }
+
+        self.best_model = best_model_snapshot;
+        Ok(OptResult::Optimal)
     }
 
-    /// Optimize a single objective
+    /// Optimize a single objective using `oxiz_solver::Optimizer`.
     fn optimize_single_objective(&mut self) -> Result<OptResult, OptError> {
-        use crate::omt::{OmtConfig, OmtSolver, OmtStrategy};
-
-        // Get the single objective
         let obj = match self.objectives.first().cloned() {
             Some(obj) => obj,
             None => return Ok(OptResult::Unknown),
         };
 
-        // Create OMT solver with appropriate strategy
-        // Use binary search for better performance on most objectives
-        let omt_config = OmtConfig {
-            strategy: OmtStrategy::BinarySearch,
-            ..Default::default()
-        };
+        let mut opt = Optimizer::new();
 
-        let _omt = OmtSolver::with_config(omt_config);
-
-        // Add hard constraints (as arithmetic constraints)
-        // Note: This requires converting TermId to arithmetic constraints
-        // which would need integration with the SMT solver
-        for _hard in &self.hard_constraints {
-            // Would convert TermId to ArithConstraint here
+        // Assert all hard constraints.
+        for &h in &self.hard_constraints {
+            opt.assert(h);
         }
 
-        // Set the objective based on kind
-        // Note: This requires converting TermId to an arithmetic expression
-        // which would need integration with the SMT solver
-        let _objective_term = obj.term;
+        // Register the objective.
+        match obj.kind {
+            ObjectiveKind::Minimize => opt.minimize(obj.term),
+            ObjectiveKind::Maximize => opt.maximize(obj.term),
+        }
 
         self.stats.solver_calls += 1;
+        match opt.optimize(&mut self.terms) {
+            OptimizationResult::Optimal { value, model } => {
+                // Store objective bound.
+                let bound = term_id_to_weight(value, &self.terms);
+                self.lower_bounds.insert(obj.id, bound.clone());
+                self.upper_bounds.insert(obj.id, bound);
 
-        // In a full implementation, we would:
-        // 1. Convert hard constraints from TermId to ArithConstraint
-        // 2. Convert objective TermId to arithmetic expression
-        // 3. Call omt.solve() with minimize or maximize
-        // 4. Extract bounds and model
-        // 5. Update self.lower_bounds, self.upper_bounds, self.best_model
-
-        // The OMT algorithms are fully implemented in omt.rs and work correctly
-        // when given arithmetic-level inputs
-        Ok(OptResult::Unknown)
+                // Snapshot the model.
+                let snapshot = model
+                    .assignments()
+                    .iter()
+                    .filter_map(|(&k, &v)| {
+                        let mv = term_id_to_model_value(v, &self.terms)?;
+                        Some((k, mv))
+                    })
+                    .collect();
+                self.best_model = Some(snapshot);
+                Ok(OptResult::Optimal)
+            }
+            OptimizationResult::Unbounded => Ok(OptResult::Unbounded),
+            OptimizationResult::Unsat => Ok(OptResult::Unsatisfiable),
+            OptimizationResult::Unknown => Ok(OptResult::Unknown),
+        }
     }
 
-    /// Optimize using Pareto (multiple objectives)
+    /// Optimize using Pareto (multiple objectives) via `oxiz_solver::Optimizer`.
     fn optimize_pareto(&mut self) -> Result<OptResult, OptError> {
-        use crate::pareto::ParetoSolver;
-
-        // Create Pareto solver with our configuration
-        let _pareto = ParetoSolver::with_config(self.config.pareto.clone());
-
-        // Set up objectives
-        // Note: This requires converting TermId objectives to arithmetic expressions
-        // which would need integration with the SMT solver
-        for obj in &self.objectives {
-            let _obj_term = obj.term;
-            let _obj_kind = &obj.kind;
-            // Would add objectives to pareto solver here
-            // pareto.add_objective(...) based on obj.kind (Minimize/Maximize)
+        if self.objectives.is_empty() {
+            return Ok(self.check_sat());
         }
 
-        // Add constraints
-        // Note: Similar to single objective, this needs TermId -> constraint conversion
-        for _hard in &self.hard_constraints {
-            // Would convert and add constraints
+        let mut opt = Optimizer::new();
+
+        for &h in &self.hard_constraints {
+            opt.assert(h);
+        }
+
+        for obj in &self.objectives {
+            match obj.kind {
+                ObjectiveKind::Minimize => opt.minimize(obj.term),
+                ObjectiveKind::Maximize => opt.maximize(obj.term),
+            }
         }
 
         self.stats.solver_calls += 1;
+        let pareto_points = opt.pareto_optimize(&mut self.terms);
 
-        // In a full implementation, we would:
-        // 1. Convert objectives from TermId to arithmetic expressions
-        // 2. Convert constraints from TermId to appropriate constraint types
-        // 3. Call pareto.solve() to enumerate Pareto front
-        // 4. Extract all Pareto-optimal solutions
-        // 5. Update bounds and models accordingly
+        if pareto_points.is_empty() {
+            return Ok(OptResult::Unsatisfiable);
+        }
 
-        // The Pareto algorithms are fully implemented in pareto.rs and work correctly
-        // when given arithmetic-level inputs
-        Ok(OptResult::Unknown)
+        self.pareto_front.clear();
+        for point in &pareto_points {
+            let snapshot: FxHashMap<TermId, ModelValue> = point
+                .model
+                .assignments()
+                .iter()
+                .filter_map(|(&k, &v)| {
+                    let mv = term_id_to_model_value(v, &self.terms)?;
+                    Some((k, mv))
+                })
+                .collect();
+            self.pareto_front.push(snapshot);
+        }
+
+        // Use the last Pareto point as the best model.
+        if let Some(last) = self.pareto_front.last() {
+            self.best_model = Some(last.clone());
+        }
+
+        Ok(OptResult::Optimal)
     }
 
     /// Reset the context
@@ -580,6 +823,9 @@ impl OptContext {
         self.upper_bounds.clear();
         self.groups.clear();
         self.context_stack.clear();
+        self.terms = TermManager::new();
+        self.next_sel_id = 0;
+        self.pareto_front.clear();
     }
 
     /// Get all soft constraints in a group

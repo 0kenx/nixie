@@ -5,6 +5,100 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-06-09
+
+### Added
+
+#### oxiz-sat: Generic proof writers (`DratWriter` / `LratWriter`)
+- `DratWriter<W>` and `LratWriter<W>` are now generic over any `W: Write + Send`, replacing the concrete `DratProof` / `LratProof` types that were hard-coded to `BufWriter<File>`.
+- New `with_writer(w: W)` constructors and `enable_writer(&mut self, w: W)` methods enable in-memory proof capture (e.g. via `Cursor<Vec<u8>>`), which is the primary driver for the rename.
+- `Default` impls are specialized on `BufWriter<File>` so all existing call sites compile unchanged.
+
+#### oxiz-solver / oxiz-theories: BvMul constant-shift optimization
+- `BvSolver::bv_shl_const(result, a, shift, width)` added: encodes `a << shift` directly from source bits, bypassing the full multiplier circuit.
+- `encode_bv_term_recursive` in `theory_manager.rs` now detects `bvmul(x, 2^k)` and emits `bv_shl_const` instead, reducing the clause count for power-of-2 multiplications.
+
+#### oxiz-nlsat: Rational root theorem for higher-degree polynomials
+- `Evaluator::find_roots` now handles polynomials of degree ≥ 3 via a complete rational-root-theorem search (`find_rational_roots_univariate`), replacing the previous stub that returned an empty set.
+- `NlsatSolver::find_rational_roots` added to the decide module with the same algorithm, wired into `find_roots_for_var`.
+- `MonotonicityAnalyzer::estimate_derivative_sign` now samples the sign at zero for root-free univariate derivatives instead of always returning `None`.
+
+#### oxiz-nlsat: Proper resultant and leading-coefficient extraction
+- `explain.rs::leading_coefficient` now delegates to `Polynomial::leading_coeff_wrt(var)` instead of cloning the full polynomial.
+- `explain.rs::resultant` now calls `Polynomial::resultant(q, var)` instead of always returning zero.
+
+#### oxiz-opt: Full term-level optimization pipeline
+- `OptContext::check_sat` is now a real solver call via `oxiz_solver::Solver`; previously it always returned `Unknown`.
+- `OptContext::optimize_maxsmt` implements a binary-search selector-variable encoding: fresh boolean/cost variables per soft constraint, with `b_i → t_i` implications and `ite`-encoded cost functions, then binary search on the total cost budget.
+- `OptContext::optimize_single_objective` now delegates to `oxiz_solver::Optimizer::optimize`.
+- `OptContext::optimize_pareto` now delegates to `oxiz_solver::Optimizer::pareto_optimize`.
+- `OptResult::Unbounded` variant added.
+- `OptContext::pareto_front()` accessor added.
+- `OptContext::config()` accessor added.
+- `OptContext` gains a public `terms: TermManager` field, `next_sel_id`, and `pareto_front` cache.
+- Internal helpers `term_id_to_model_value` and `term_id_to_weight` added for converting solver-model `TermId`s to `ModelValue`/`Weight`.
+
+#### oxiz-theories: Simplex optimization extension (`simplex_opt.rs`)
+- New module `simplex_opt` adds `Simplex::optimize_linexpr(&mut self, obj: &LinExpr) -> SimplexOptStatus` implementing the primal simplex optimization phase with Bland's rule.
+- `SimplexOptStatus` enum (`Optimal`, `Unbounded`, `Infeasible`, `Unknown`) published from the arithmetic module.
+- `LraOptimizer::optimize_min` now calls `optimize_linexpr` instead of returning a zero placeholder.
+
+#### oxiz-theories: Correct Simplex push/pop with tableau snapshots
+- `Simplex::push` now saves a full tableau snapshot (`saved_tableaux`) alongside the assignment cache, so pivots performed during `check()` inside a pushed scope are correctly undone on `pop()`.
+- `Simplex::reset` clears both `cached_assignments` and `saved_tableaux`.
+
+#### oxiz-theories: Sound Nelson-Oppen equality propagation
+- `ArithSolver::notify_equality` now encodes `x = y` into the simplex tableau as `x - y <= 0` and `y - x <= 0` instead of ignoring the notification.
+- New `ArithSolver::derive_shared_equalities(&mut self)` performs probe-and-pop model-based equality detection: emits `x = y` only when both `x < y` and `x > y` are infeasible.
+- `ArithSolver` stores accumulated notified equalities in `shared_equalities: Vec<EqualityNotification>`, properly backed out on `pop()`.
+- `ContextState` tracks `num_shared_equalities` for rollback.
+
+#### oxiz-theories: BvSolver soundness and incremental improvements
+- `BvSolver::assert_uge(lhs, rhs)` — new unsigned-greater-than-or-equal comparator; encodes as `bool_ule(rhs, lhs)` and inserts a NOT literal.
+- `BvSolver::get_value` now reads from the `self.last_sat_model` snapshot instead of the live trail, fixing all-zero readback that occurred after backtracking.
+- `BvSolver::check()` soundness fix: captures `committed_trail` and `learned_before` before each SAT probe; calls `restore_to_trail_size` and `forget_learned_since` after every probe to discard search residue that caused false UNSAT in incremental solving.
+
+#### oxiz-solver: `Context::eval_in_model`
+- New `pub fn eval_in_model(&mut self, term: TermId) -> Option<TermId>` evaluates a term against the current SAT model; returns `None` when no model is available.
+
+#### oxiz-spacer: Real BMC and k-induction
+- `BmcResult::Unknown` variant added for inconclusive results.
+- `BmcError::NoInitRule` added.
+- `Bmc::check_bad_at_depth` replaced: now builds `Init(s₀) ∧ ⋀Trans(sᵢ,sᵢ₊₁) ∧ Bad(sₖ)` and calls `SmtSolver::check_sat`; returns `Unsafe` only when the solver confirms SAT.
+- `Bmc::check_kinduction` replaced with a sound k-induction procedure: base cases checked via BMC + inductive step `⋀P(sᵢ) ∧ ⋀Trans ∧ Bad(sₖ)` UNSAT required for `Safe`.
+- `Bmc::run_kinduction` added to loop from depth 1 to `max_depth`.
+- `extract_model` uses `Context::eval_in_model` for concrete counterexample extraction.
+- `SmtSolver::terms()` accessor added; `SmtSolver` no longer holds a duplicate `TermManager` reference.
+- Per-step variable helpers `make_step_vars` / `subst_from_args` added.
+
+### Changed
+
+#### oxiz-sat: `DratProof` / `LratProof` renamed to `DratWriter` / `LratWriter` (BREAKING)
+- All internal usages in `drat_inprocessing.rs` and `lib.rs` updated.
+- The rename avoids a name collision with `oxiz-proof::DratProof`.
+
+#### oxiz-solver: Optimizer convergence guard
+- Both integer and real objective search loops now break immediately when model evaluation does not produce a concrete value, preventing infinite looping on abstract terms.
+
+#### Dependencies
+- `oxiarc-deflate` and `oxiarc-brotli` bumped from 0.3.1 to 0.3.3.
+- `sysinfo` updated from 0.38 to 0.39.
+- `rhai` updated from 1.24 to 1.25 (in `oxiz-core`).
+- `wide` updated from 1.3 to 1.5 (in `oxiz-core`).
+- `lru` updated from 0.17 to 0.18.
+- `pdf-writer` updated from 0.14 to 0.15.
+
+### Fixed
+
+#### oxiz-sat: Hardcoded absolute proof paths replaced with `std::env::temp_dir()`
+- All four proof-logger tests now use portable temp paths instead of `/tmp/test_*.proof`.
+
+#### oxiz-theories: BvSolver incremental soundness
+- Previously, a satisfying assignment from one incremental `check()` probe would persist on the trail and contradict constants asserted in the next probe, yielding a false UNSAT. Fixed by rolling back the trail (`restore_to_trail_size`) and forgetting learned clauses (`forget_learned_since`) after every probe. Regression test: `test_incremental_mul_aux_diseq_then_const_is_sat`.
+
+#### oxiz-theories: Simplex `pop()` no longer corrupts tableau after in-scope pivots
+- The previous heuristic (filtering stale tableau entries by variable index) was insufficient when pivots changed which variables were basic. The new snapshot-based restore is correct by construction.
+
 ## [0.2.2] - 2026-06-01
 
 ### Added
@@ -420,3 +514,5 @@ OxiZ 0.1.0 marks the first public release of a Pure Rust SMT solver achieving ~9
 - Additional proof formats
 - Performance optimizations
 - Extended string theory support
+
+[0.2.3]: https://github.com/cool-japan/oxiz/releases/tag/v0.2.3

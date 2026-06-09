@@ -209,6 +209,10 @@ pub struct Simplex {
     /// Cached assignments for warm-starting (basis caching)
     /// Saves assignment state at each decision level for faster incremental solving
     cached_assignments: Vec<Vec<DeltaRational>>,
+    /// Saved tableau snapshots for correct restoration on pop.
+    /// Pivoting during check() modifies the tableau rows in-place; without saving
+    /// the full tableau at push time, pop() cannot restore the correct basis.
+    saved_tableaux: Vec<(FxHashMap<VarId, LinExpr>, Vec<bool>)>,
     /// Pivoting rule to use
     pivoting_rule: PivotingRule,
     /// Maximum number of pivot operations before giving up
@@ -244,6 +248,7 @@ impl Simplex {
             trail: Vec::new(),
             trail_limits: vec![0],
             cached_assignments: Vec::new(),
+            saved_tableaux: Vec::new(),
             pivoting_rule: config.pivoting_rule,
             max_pivots: config.max_pivots,
         }
@@ -892,7 +897,7 @@ impl Simplex {
 
     /// Check if a variable can be increased
     #[inline]
-    fn can_increase(&self, var: VarId) -> bool {
+    pub(super) fn can_increase(&self, var: VarId) -> bool {
         let idx = var as usize;
         match &self.upper[idx] {
             Some(hi) => self.assignment[idx] < hi.value,
@@ -902,7 +907,7 @@ impl Simplex {
 
     /// Check if a variable can be decreased
     #[inline]
-    fn can_decrease(&self, var: VarId) -> bool {
+    pub(super) fn can_decrease(&self, var: VarId) -> bool {
         let idx = var as usize;
         match &self.lower[idx] {
             Some(lo) => self.assignment[idx] > lo.value,
@@ -911,7 +916,7 @@ impl Simplex {
     }
 
     /// Perform a pivot operation
-    fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) {
+    pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SimplexPivot);
         let expr = self
@@ -964,7 +969,7 @@ impl Simplex {
     }
 
     /// Update variable assignments after pivot
-    fn update_assignment(&mut self) {
+    pub(super) fn update_assignment(&mut self) {
         let num_vars = self.assignment.len();
 
         // Non-basic variables keep their bounds
@@ -1309,19 +1314,25 @@ impl Simplex {
         self.trail.clear();
         self.trail_limits.clear();
         self.trail_limits.push(0);
+        self.cached_assignments.clear();
+        self.saved_tableaux.clear();
     }
 
     /// Push a new decision level
     pub fn push(&mut self) {
         self.trail_limits.push(self.trail.len());
-        // Cache current assignment for warm-starting on pop (basis caching)
+        // Cache current assignment for warm-starting on pop (basis caching).
         self.cached_assignments.push(self.assignment.clone());
+        // Save the full tableau snapshot so that pivots during check() inside
+        // the pushed scope can be correctly undone on pop().
+        self.saved_tableaux
+            .push((self.tableau.clone(), self.basic.clone()));
     }
 
     /// Pop to previous decision level
     pub fn pop(&mut self) {
         if let Some(limit) = self.trail_limits.pop() {
-            // Undo all operations since the limit
+            // Undo all operations since the limit (bounds and variable allocations).
             while self.trail.len() > limit {
                 if let Some(undo) = self.trail.pop() {
                     match undo {
@@ -1350,52 +1361,59 @@ impl Simplex {
                             self.lower.pop();
                             self.upper.pop();
                             self.basic.pop();
-                            self.tableau.remove(&id);
+                            // Tableau row removal handled by tableau snapshot restore below.
+                            let _ = id; // VarId noted but actual removal done below
                         }
                     }
                 }
             }
-            // Restore cached assignment for warm-starting (basis caching)
-            // This provides 5-10x speedup on incremental problems by reusing the basis
+
+            // Restore the full tableau snapshot saved at push time.
+            // This correctly undoes any pivots performed during check() inside
+            // the pushed scope, which is critical for sound probe-and-pop operations
+            // (e.g., Nelson-Oppen equality detection).
+            if let Some((saved_tableau, saved_basic)) = self.saved_tableaux.pop() {
+                self.tableau = saved_tableau;
+                // Restore basic flags up to current length.
+                let cur_len = self.basic.len();
+                let restore_len = saved_basic.len().min(cur_len);
+                self.basic[..restore_len].copy_from_slice(&saved_basic[..restore_len]);
+                // Ensure any remaining entries are set to false (shouldn't happen normally).
+                for item in self.basic.iter_mut().skip(restore_len) {
+                    *item = false;
+                }
+            } else {
+                // Fallback: clean up stale entries (shouldn't be reached in normal use).
+                let num_vars = self.assignment.len();
+                self.tableau.retain(|&var, expr| {
+                    if (var as usize) >= num_vars {
+                        return false;
+                    }
+                    for (v, _) in &expr.terms {
+                        if (*v as usize) >= num_vars {
+                            return false;
+                        }
+                    }
+                    true
+                });
+                for i in 0..num_vars {
+                    let var_id = i as VarId;
+                    if self.basic[i] && !self.tableau.contains_key(&var_id) {
+                        self.basic[i] = false;
+                    }
+                }
+            }
+
+            // Restore cached assignment for warm-starting.
             if let Some(cached) = self.cached_assignments.pop() {
-                // Restore assignment up to the min of cached and current length
                 let restore_len = cached.len().min(self.assignment.len());
                 self.assignment[..restore_len].copy_from_slice(&cached[..restore_len]);
-                // Zero out any new variables that weren't in the cache
                 for item in self.assignment.iter_mut().skip(restore_len) {
                     *item = DeltaRational::zero();
                 }
             } else {
-                // Fallback: reset to zero if no cache available
                 for item in self.assignment.iter_mut() {
                     *item = DeltaRational::zero();
-                }
-            }
-
-            // Clean up stale tableau entries (can happen due to pivoting before pop)
-            // Remove entries whose variable indices are out of bounds
-            let num_vars = self.assignment.len();
-            self.tableau.retain(|&var, expr| {
-                // Check if the basic variable is valid
-                if (var as usize) >= num_vars {
-                    return false;
-                }
-                // Check if all terms reference valid variables
-                for (v, _) in &expr.terms {
-                    if (*v as usize) >= num_vars {
-                        return false;
-                    }
-                }
-                true
-            });
-
-            // Also reset the basic flags for variables that might have been incorrectly
-            // marked as basic due to pivoting
-            for i in 0..num_vars {
-                let var_id = i as VarId;
-                if self.basic[i] && !self.tableau.contains_key(&var_id) {
-                    // Variable marked as basic but has no tableau entry - mark as non-basic
-                    self.basic[i] = false;
                 }
             }
 
@@ -1408,7 +1426,99 @@ impl Simplex {
     pub fn decision_level(&self) -> usize {
         self.trail_limits.len().saturating_sub(1)
     }
+
+    // ── Accessor helpers for the optimization extension (simplex_opt.rs) ─────
+
+    /// Number of allocated variable slots (original + slack).
+    #[inline]
+    pub(super) fn assignment_len(&self) -> usize {
+        self.assignment.len()
+    }
+
+    /// Real-part of the assignment at index `idx`.
+    #[inline]
+    pub(super) fn assignment_real_at(&self, idx: usize) -> Rational64 {
+        self.assignment[idx].real
+    }
+
+    /// Full `DeltaRational` assignment at index `idx`.
+    #[inline]
+    pub(super) fn assignment_at(&self, idx: usize) -> Rational64 {
+        self.assignment[idx].real
+    }
+
+    /// Whether variable at `idx` is currently basic.
+    #[inline]
+    pub(super) fn is_basic(&self, idx: usize) -> bool {
+        idx < self.basic.len() && self.basic[idx]
+    }
+
+    /// Iterate over `(basic_var, row)` pairs in the tableau.
+    pub(super) fn tableau_iter(&self) -> impl Iterator<Item = (&VarId, &LinExpr)> {
+        self.tableau.iter()
+    }
+
+    /// Iterate over basic variable IDs in the tableau.
+    pub(super) fn tableau_keys(&self) -> impl Iterator<Item = VarId> + '_ {
+        self.tableau.keys().copied()
+    }
+
+    /// Return the coefficient of `nonbasic` in the row of `basic`, or `None`.
+    pub(super) fn tableau_coef_of(&self, basic: VarId, nonbasic: VarId) -> Option<Rational64> {
+        self.tableau.get(&basic).and_then(|row| {
+            row.terms
+                .iter()
+                .find(|(v, _)| *v == nonbasic)
+                .map(|(_, c)| *c)
+        })
+    }
+
+    /// Real part of the upper bound for variable at `idx`, if any.
+    #[inline]
+    pub(super) fn upper_real_at(&self, idx: usize) -> Option<Rational64> {
+        self.upper
+            .get(idx)
+            .and_then(|b| b.as_ref().map(|b| b.value.real))
+    }
+
+    /// Real part of the lower bound for variable at `idx`, if any.
+    #[inline]
+    pub(super) fn lower_real_at(&self, idx: usize) -> Option<Rational64> {
+        self.lower
+            .get(idx)
+            .and_then(|b| b.as_ref().map(|b| b.value.real))
+    }
+
+    /// Full `DeltaRational` upper bound for variable at `idx`, if any.
+    #[inline]
+    pub(super) fn upper_delta_at(&self, idx: usize) -> Option<DeltaRational> {
+        self.upper
+            .get(idx)
+            .and_then(|b| b.as_ref().map(|b| b.value))
+    }
+
+    /// Full `DeltaRational` lower bound for variable at `idx`, if any.
+    #[inline]
+    pub(super) fn lower_delta_at(&self, idx: usize) -> Option<DeltaRational> {
+        self.lower
+            .get(idx)
+            .and_then(|b| b.as_ref().map(|b| b.value))
+    }
+
+    /// Overwrite the assignment at `idx` with `val`.
+    #[inline]
+    pub(super) fn set_assignment_at(&mut self, idx: usize, val: DeltaRational) {
+        self.assignment[idx] = val;
+    }
+
+    /// Maximum pivot count configured for this instance.
+    #[inline]
+    pub(super) fn max_pivots(&self) -> usize {
+        self.max_pivots
+    }
 }
+
+pub use super::simplex_opt::SimplexOptStatus;
 
 #[cfg(test)]
 mod tests {
@@ -1758,5 +1868,60 @@ mod tests {
         assert!(x_val >= Rational64::zero());
         assert!(y_val >= Rational64::zero());
         assert!(x_val + y_val >= Rational64::from_integer(5));
+    }
+
+    /// Test that x<=y AND y<=x makes x<y infeasible (probe test).
+    #[test]
+    fn test_bidirectional_constraints_probe() {
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        let y = simplex.new_var();
+
+        // x <= y  (x - y <= 0)
+        let mut e1 = LinExpr::new();
+        e1.add_term(x, Rational64::one());
+        e1.add_term(y, -Rational64::one());
+        simplex.add_le(e1, 0);
+
+        // y <= x  (y - x <= 0)
+        let mut e2 = LinExpr::new();
+        e2.add_term(y, Rational64::one());
+        e2.add_term(x, -Rational64::one());
+        simplex.add_le(e2, 1);
+
+        assert!(simplex.check().is_ok(), "x<=y AND y<=x should be SAT");
+
+        // Probe: x < y should be UNSAT (since x=y is forced)
+        {
+            simplex.push();
+            let mut e3 = LinExpr::new();
+            e3.add_term(x, Rational64::one());
+            e3.add_term(y, -Rational64::one());
+            simplex.add_strict_lt(e3, 99);
+            let probe1 = simplex.check();
+            simplex.pop();
+            assert!(
+                probe1.is_err(),
+                "x<y should be UNSAT when x=y is forced; got Ok"
+            );
+        }
+
+        // Re-establish SAT state.
+        assert!(simplex.check().is_ok(), "should still be SAT after probe 1");
+
+        // Probe: y < x should also be UNSAT
+        {
+            simplex.push();
+            let mut e4 = LinExpr::new();
+            e4.add_term(y, Rational64::one());
+            e4.add_term(x, -Rational64::one());
+            simplex.add_strict_lt(e4, 99);
+            let probe2 = simplex.check();
+            simplex.pop();
+            assert!(
+                probe2.is_err(),
+                "y<x should be UNSAT when x=y is forced; got Ok"
+            );
+        }
     }
 }

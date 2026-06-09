@@ -1,6 +1,6 @@
 # oxiz-opt TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-06-09 (v0.2.3)
 
 Reference: Z3's `opt/` directory at `../z3/src/opt/`
 
@@ -263,3 +263,12 @@ All major features implemented. Only one optional enhancement remains (blocked b
 - [x] Documentation examples for complex use cases (completed 2026-01-05)
 - [x] Parallel solver portfolio implementation (completed 2026-01-06 - true parallelism using rayon)
 - [x] Real-world benchmark suite from MaxSAT competitions (completed 2026-01-06 - WCNF format support)
+
+## Stub completions (2026-06-08)
+
+- [x] `OptContext::check_sat` — replaced `Unknown` stub with real SAT check via `oxiz_solver::Solver`; model snapshot with `Model::eval`.
+- [x] `OptContext::optimize_maxsmt` — replaced `Unknown` stub with selector-based MaxSMT (selector `b_i ⇒ soft_i`, LIA cost-bound binary search).
+- [x] `OptContext::optimize_single_objective` — replaced `Unknown` stub by delegating to `oxiz_solver::Optimizer::{minimize,maximize}`.
+- [x] `OptContext::optimize_pareto` — replaced `Unknown` stub by delegating to `Optimizer::pareto_optimize`.
+- [x] `MaxSmtSolver::{solve_stratified,solve_core_guided}` — now delegate to shared `solve_maxsmt` helper.
+- [x] Added `OptResult::Unbounded` variant.

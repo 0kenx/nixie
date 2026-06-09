@@ -316,9 +316,96 @@ impl NlsatSolver {
             return self.find_quadratic_roots(poly);
         }
 
-        // For higher degrees, we would need more sophisticated root isolation
-        // For now, return empty (conservative but safe)
-        Vec::new()
+        // For higher degrees, find exact rational roots via the rational root theorem.
+        // Any rational root p/q of a_n x^n + ... + a_0 satisfies p | a_0 and q | a_n.
+        self.find_rational_roots(poly, var)
+    }
+
+    /// Find all exact rational roots of a polynomial using the rational root theorem.
+    ///
+    /// Converts rational coefficients to integers and tests all divisor combinations.
+    pub(super) fn find_rational_roots(&self, poly: &Polynomial, var: Var) -> Vec<BigRational> {
+        use num_bigint::BigInt;
+        use num_traits::Zero;
+
+        // Collect univariate coefficients: coeff[k] = coefficient of var^k
+        let degree = poly.degree(var) as usize;
+        if degree == 0 {
+            return Vec::new();
+        }
+
+        // Gather rational coefficients for each power of var.
+        // Only works for truly univariate polynomials.
+        let mut rat_coeffs: Vec<BigRational> = (0..=degree)
+            .map(|k| poly.univ_coeff(var, k as u32))
+            .collect();
+
+        // Clear leading zeros (shouldn't happen but be safe)
+        while rat_coeffs.len() > 1 && rat_coeffs.last().is_some_and(|c| c.is_zero()) {
+            rat_coeffs.pop();
+        }
+        let n = rat_coeffs.len();
+        if n <= 1 {
+            return Vec::new();
+        }
+
+        // Scale all coefficients by LCM of denominators to get integer coefficients.
+        let lcm_denom: BigInt = rat_coeffs
+            .iter()
+            .fold(BigInt::from(1i64), |acc, r| lcm_bigint(&acc, r.denom()));
+
+        let int_coeffs: Vec<BigInt> = rat_coeffs
+            .iter()
+            .map(|r| r.numer() * (&lcm_denom / r.denom()))
+            .collect();
+
+        let a0 = int_coeffs[0].clone(); // constant term
+        let an = int_coeffs[n - 1].clone(); // leading coefficient
+
+        if a0.is_zero() {
+            // x=0 is a root; factor it out and recurse
+            let mut result = vec![BigRational::zero()];
+            // Deflate: divide by x (shift coefficients down)
+            let deflated_coeffs: Vec<BigInt> = int_coeffs[1..].to_vec();
+            if deflated_coeffs.len() >= 2 {
+                let deflated = poly_from_int_coeffs(&deflated_coeffs, var);
+                let mut more = self.find_rational_roots(&deflated, var);
+                result.append(&mut more);
+            }
+            result.sort();
+            result.dedup();
+            return result;
+        }
+
+        // Find divisors of a0 (constant term)
+        let divisors_a0 = integer_divisors(a0.abs());
+        // Find divisors of an (leading coeff)
+        let divisors_an = integer_divisors(an.abs());
+
+        let mut roots = Vec::new();
+
+        // Test all p/q where p | a0, q | an (both positive and negative)
+        for p in &divisors_a0 {
+            for q in &divisors_an {
+                if q.is_zero() {
+                    continue;
+                }
+                for &sign in &[1i64, -1i64] {
+                    let candidate = BigRational::new(p * BigInt::from(sign), q.clone());
+                    // Evaluate poly at candidate
+                    let mut eval_map = rustc_hash::FxHashMap::default();
+                    eval_map.insert(var, candidate.clone());
+                    let val = poly.eval(&eval_map);
+                    if val.is_zero() {
+                        roots.push(candidate);
+                    }
+                }
+            }
+        }
+
+        roots.sort();
+        roots.dedup();
+        roots
     }
 
     /// Find the root of a linear polynomial.
@@ -471,4 +558,77 @@ impl NlsatSolver {
             -1
         }
     }
+}
+
+// ─── Helpers for rational root theorem ──────────────────────────────────────
+
+/// Euclidean GCD for non-negative BigInts.
+fn gcd_bigint(mut a: num_bigint::BigInt, mut b: num_bigint::BigInt) -> num_bigint::BigInt {
+    use num_traits::Zero;
+    while !b.is_zero() {
+        let t = &a % &b;
+        a = b;
+        b = t;
+    }
+    a.abs()
+}
+
+/// Compute the least common multiple of two BigInts.
+fn lcm_bigint(a: &num_bigint::BigInt, b: &num_bigint::BigInt) -> num_bigint::BigInt {
+    use num_traits::Zero;
+    if a.is_zero() || b.is_zero() {
+        return num_bigint::BigInt::from(1i64);
+    }
+    let g = gcd_bigint(a.abs(), b.abs());
+    (a * b).abs() / g
+}
+
+/// Return all positive divisors of a positive BigInt.
+fn integer_divisors(n: num_bigint::BigInt) -> Vec<num_bigint::BigInt> {
+    use num_traits::{One, Zero};
+    if n.is_zero() {
+        return vec![num_bigint::BigInt::one()];
+    }
+    let mut divisors = Vec::new();
+    let mut i = num_bigint::BigInt::one();
+    loop {
+        if &i * &i > n {
+            break;
+        }
+        let r = &n % &i;
+        let q = &n / &i;
+        if r.is_zero() {
+            divisors.push(i.clone());
+            if q != i {
+                divisors.push(q);
+            }
+        }
+        i += num_bigint::BigInt::one();
+    }
+    divisors
+}
+
+/// Build a univariate Polynomial from a Vec of BigInt coefficients (index = power of var).
+fn poly_from_int_coeffs(
+    coeffs: &[num_bigint::BigInt],
+    var: oxiz_math::polynomial::Var,
+) -> oxiz_math::polynomial::Polynomial {
+    use num_traits::Zero;
+    use oxiz_math::polynomial::{Monomial, MonomialOrder, Polynomial, Term};
+
+    let terms: Vec<Term> = coeffs
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.is_zero())
+        .map(|(k, c)| {
+            let coeff = BigRational::new(c.clone(), num_bigint::BigInt::from(1i64));
+            let monomial = if k == 0 {
+                Monomial::unit()
+            } else {
+                Monomial::from_var_power(var, k as u32)
+            };
+            Term::new(coeff, monomial)
+        })
+        .collect();
+    Polynomial::from_terms(terms, MonomialOrder::default())
 }

@@ -7,7 +7,7 @@
 use crate::chc::{ChcSystem, PredId, Rule};
 use crate::interp::Interpolator;
 use oxiz_core::{TermId, TermManager};
-use oxiz_solver::{Context, SolverResult};
+use oxiz_solver::{Solver, SolverResult};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -24,11 +24,16 @@ pub enum SmtError {
     Internal(String),
 }
 
-/// SMT solver interface for Spacer
+/// SMT solver interface for Spacer.
+///
+/// Uses a single canonical `TermManager` (borrowed from the caller) so that
+/// all `TermId`s produced by e.g. `mk_not` / `mk_and` are valid when
+/// asserted.  The underlying `Solver` is kept separate and accepts the same
+/// manager on every call.
 pub struct SmtSolver<'a> {
-    /// The SMT context
-    ctx: Context,
-    /// Term manager (borrowed from context)
+    /// The underlying SAT/SMT solver (does NOT own a TermManager)
+    solver: Solver,
+    /// Canonical term manager — the same arena used by the CHC system
     terms: &'a mut TermManager,
     /// CHC system
     system: &'a ChcSystem,
@@ -68,13 +73,16 @@ pub struct SmtStats {
 }
 
 impl<'a> SmtSolver<'a> {
-    /// Create a new SMT solver for Spacer
+    /// Create a new SMT solver for Spacer.
+    ///
+    /// `terms` is the **single canonical** arena — all `TermId`s produced by
+    /// callers and by methods on this struct must belong to this arena.
     pub fn new(terms: &'a mut TermManager, system: &'a ChcSystem) -> Self {
-        let mut ctx = Context::new();
-        ctx.set_logic("HORN"); // Use HORN logic for CHC solving
+        let mut solver = Solver::new();
+        solver.set_logic("HORN");
 
         Self {
-            ctx,
+            solver,
             terms,
             system,
             level: 0,
@@ -84,9 +92,17 @@ impl<'a> SmtSolver<'a> {
         }
     }
 
+    /// Borrow the canonical term manager.
+    ///
+    /// Every `TermId` built via this reference is valid for use in `assert`.
+    #[inline]
+    pub fn terms(&mut self) -> &mut TermManager {
+        self.terms
+    }
+
     /// Push a solver context
     pub fn push(&mut self) {
-        self.ctx.push();
+        self.solver.push();
         self.level += 1;
         self.stats.num_push += 1;
         trace!("SMT push to level {}", self.level);
@@ -95,16 +111,19 @@ impl<'a> SmtSolver<'a> {
     /// Pop a solver context
     pub fn pop(&mut self) {
         if self.level > 0 {
-            self.ctx.pop();
+            self.solver.pop();
             self.level -= 1;
             self.stats.num_pop += 1;
             trace!("SMT pop to level {}", self.level);
         }
     }
 
-    /// Assert a formula
+    /// Assert a formula.
+    ///
+    /// `formula` **must** be a `TermId` that belongs to the canonical
+    /// `TermManager` passed to `SmtSolver::new`.
     pub fn assert(&mut self, formula: TermId) {
-        self.ctx.assert(formula);
+        self.solver.assert(formula, self.terms);
         trace!("SMT assert formula");
     }
 
@@ -114,7 +133,7 @@ impl<'a> SmtSolver<'a> {
 
         self.stats.num_queries += 1;
         let start = Instant::now();
-        let result = self.ctx.check_sat();
+        let result = self.solver.check(self.terms);
         let elapsed = start.elapsed().as_micros() as u64;
         self.stats.total_check_sat_time_us += elapsed;
 
@@ -135,6 +154,14 @@ impl<'a> SmtSolver<'a> {
                 Err(SmtError::Unknown)
             }
         }
+    }
+
+    /// Evaluate a term in the current model (only valid after a SAT result).
+    ///
+    /// Returns `None` if no model is available or the last result was not SAT.
+    pub fn eval_in_model(&mut self, term: TermId) -> Option<TermId> {
+        let model = self.solver.model()?;
+        Some(model.eval(term, self.terms))
     }
 
     /// Check if a state is reachable: F_level(pred) ∧ state is SAT?
@@ -222,19 +249,18 @@ impl<'a> SmtSolver<'a> {
         self.assert(frame_formula);
 
         // Assert all transition rules for this predicate
-        for rule in self.system.rules_by_head(pred) {
-            // Assert: body ∧ constraint => head
-            // Encode as: ¬(body ∧ constraint) ∨ head
-            // For induction check, we want:
-            // F_level ∧ body ∧ constraint => lemma'
-            // Which is equivalent to checking UNSAT of:
-            // F_level ∧ body ∧ constraint ∧ ¬lemma'
+        // Collect body constraints to assert (avoid borrow conflicts)
+        let body_constraints: Vec<TermId> = self
+            .system
+            .rules_by_head(pred)
+            .map(|rule| rule.body.constraint)
+            .collect();
 
-            // For now, simplified: just check the lemma holds
-            self.assert(rule.body.constraint);
+        for constraint in body_constraints {
+            self.assert(constraint);
         }
 
-        // Assert negation of lemma in next state
+        // Assert negation of lemma in next state (built via the canonical terms)
         let not_lemma = self.terms.mk_not(lemma);
         self.assert(not_lemma);
 
@@ -266,15 +292,19 @@ impl<'a> SmtSolver<'a> {
 
         let start = Instant::now();
 
-        // Use Context's get_model() method instead of accessing solver directly
-        let model = if let Some(_model_data) = self.ctx.get_model() {
-            let assignments = if let Some(_pred_decl) = self.system.get_predicate(_pred) {
-                // Extract term IDs from model
-                // For now, return empty - will be refined when we have proper variable tracking
-                Vec::new()
-            } else {
-                Vec::new()
-            };
+        let model = if let Some(pred_decl) = self.system.get_predicate(_pred) {
+            // Extract assignments for each predicate parameter
+            let assignments: Vec<TermId> = pred_decl
+                .params
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &sort)| {
+                    let var_name = format!("{}_{}", pred_decl.name, idx);
+                    let var = self.terms.mk_var(&var_name, sort);
+                    // Try to evaluate in the model
+                    self.solver.model().map(|m| m.eval(var, self.terms))
+                })
+                .collect();
 
             Model { assignments }
         } else {
@@ -312,7 +342,8 @@ impl<'a> SmtSolver<'a> {
             self.push();
 
             // Assert all remaining literals
-            for &lit in &generalized {
+            let remaining = generalized.clone();
+            for &lit in &remaining {
                 self.assert(lit);
             }
 
@@ -369,7 +400,7 @@ impl<'a> SmtSolver<'a> {
 
     /// Reset the solver
     pub fn reset(&mut self) {
-        self.ctx.reset();
+        self.solver.reset();
         self.level = 0;
         self.frame_cache.clear();
         self.stats = SmtStats::default();
@@ -525,5 +556,28 @@ mod tests {
 
         mbp.add_eliminated(TermId::new(2));
         assert_eq!(mbp.eliminated.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_in_model_sat() {
+        let mut terms = TermManager::new();
+        let system = ChcSystem::new();
+
+        // Build: x >= 5 and x <= 5 => x = 5
+        let x = terms.mk_var("x_eval_test", terms.sorts.int_sort);
+        let five = terms.mk_int(5i64);
+        let ge = terms.mk_ge(x, five);
+        let le = terms.mk_le(x, five);
+
+        let mut solver = SmtSolver::new(&mut terms, &system);
+        solver.assert(ge);
+        solver.assert(le);
+
+        let result = solver.check_sat().expect("should be SAT");
+        assert!(result, "x >= 5 and x <= 5 should be SAT");
+
+        // Evaluate x in the model — should yield 5
+        let val = solver.eval_in_model(x);
+        assert!(val.is_some(), "eval_in_model should return Some for x");
     }
 }

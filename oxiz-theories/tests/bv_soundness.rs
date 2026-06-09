@@ -327,3 +327,240 @@ fn test_push_pop_restores_guard_terms() {
         other => panic!("Expected SAT after pop, got {:?}", other),
     }
 }
+
+// ---------------------------------------------------------------------------
+// assert_neq: direct unit cases (the fn was previously dead code)
+// ---------------------------------------------------------------------------
+
+/// `assert_neq(x, x)` is unsatisfiable: a value cannot differ from itself.
+#[test]
+fn test_assert_neq_self_is_unsat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    solver.new_bv(x, 8);
+
+    solver.assert_neq(x, x);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Unsat(_) => {}
+        other => panic!("Expected UNSAT for assert_neq(x, x), got {:?}", other),
+    }
+}
+
+/// `x != y` with both free is satisfiable.
+#[test]
+fn test_assert_neq_distinct_is_sat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+
+    solver.assert_neq(x, y);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT for assert_neq(x, y), got {:?}", other),
+    }
+}
+
+/// `x = 5 ∧ y = 5 ∧ x != y` is unsatisfiable.
+#[test]
+fn test_assert_neq_with_equal_consts_is_unsat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+
+    solver.assert_const(x, 5, 8);
+    solver.assert_const(y, 5, 8);
+    solver.assert_neq(x, y);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Unsat(_) => {}
+        other => panic!("Expected UNSAT, got {:?}", other),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// assert_ule: direct unit cases (newly added comparator)
+// ---------------------------------------------------------------------------
+
+/// `x <= x` is satisfiable (reflexivity).
+#[test]
+fn test_assert_ule_reflexive_is_sat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    solver.new_bv(x, 8);
+
+    solver.assert_ule(x, x);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT for x <= x, got {:?}", other),
+    }
+}
+
+/// `x <= y ∧ y < x` is unsatisfiable.
+#[test]
+fn test_assert_ule_with_reverse_ult_is_unsat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+
+    solver.assert_ule(x, y);
+    solver.assert_ult(y, x);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Unsat(_) => {}
+        other => panic!("Expected UNSAT for x<=y ∧ y<x, got {:?}", other),
+    }
+}
+
+/// `x <= y ∧ y <= x` forces x = y but stays satisfiable.
+#[test]
+fn test_assert_ule_both_directions_is_sat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+
+    solver.assert_ule(x, y);
+    solver.assert_ule(y, x);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT for x<=y ∧ y<=x, got {:?}", other),
+    }
+}
+
+/// `x = 7 ∧ y = 3 ∧ x <= y` is unsatisfiable (7 <= 3 is false, unsigned).
+#[test]
+fn test_assert_ule_violated_by_consts_is_unsat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+
+    solver.assert_const(x, 7, 8);
+    solver.assert_const(y, 3, 8);
+    solver.assert_ule(x, y);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Unsat(_) => {}
+        other => panic!("Expected UNSAT for 7<=3, got {:?}", other),
+    }
+}
+
+/// `x = 3 ∧ y = 7 ∧ x <= y` is satisfiable (3 <= 7, unsigned).
+#[test]
+fn test_assert_ule_satisfied_by_consts_is_sat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+
+    solver.assert_const(x, 3, 8);
+    solver.assert_const(y, 7, 8);
+    solver.assert_ule(x, y);
+
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT for 3<=7, got {:?}", other),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Incremental-check trail-rollback regression (leaked-model false UNSAT)
+//
+// `check()` calls the embedded SAT solver's `solve()`, which does not reset the
+// persisted trail on entry.  A satisfying model from one probe (decisions and
+// their propagations, some landing at decision level 0) used to survive into
+// the next probe, where a freshly asserted constant could contradict that
+// *arbitrary* model value and yield a spurious UNSAT.  `check()` now rolls the
+// trail back to the committed (asserted) prefix after every probe.
+// ---------------------------------------------------------------------------
+
+/// Direct reproduction at the theory level: `aux = x*3`, probe SAT; `aux ≠ x`,
+/// probe SAT; then `aux = 7`.  The final state `aux = x*3 ∧ aux ≠ x ∧ aux = 7`
+/// is satisfiable (4-bit: x = 13 ⇒ 13*3 = 39 ≡ 7 (mod 16), 7 ≠ 13).  Before the
+/// fix the intermediate `aux ≠ x` probe pinned an arbitrary `aux` at level 0 and
+/// the final `assert_const(aux, 7)` reported a false UNSAT.
+#[test]
+fn test_incremental_mul_aux_diseq_then_const_is_sat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let three = TermId::new(2);
+    let prod = TermId::new(3);
+    let aux = TermId::new(4);
+
+    solver.new_bv(x, 4);
+    solver.assert_const(three, 3, 4);
+    solver.new_bv(prod, 4);
+    // prod = x * 3
+    solver.bv_mul(prod, x, three);
+    solver.new_bv(aux, 4);
+    // aux = prod
+    solver.assert_eq(aux, prod);
+
+    // Probe 1: aux = x*3 is satisfiable on its own.
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT after aux=x*3, got {:?}", other),
+    }
+
+    // Probe 2: add aux != x — still satisfiable.
+    solver.assert_neq(aux, x);
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT after adding aux!=x, got {:?}", other),
+    }
+
+    // Probe 3: pin aux = 7.  Must remain SAT (x = 13 is a witness).
+    solver.assert_const(aux, 7, 4);
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!(
+            "Expected SAT after pinning aux=7 (false UNSAT bug), got {:?}",
+            other
+        ),
+    }
+}
+
+/// Companion that MUST stay UNSAT: same shape but pin `aux` to a value the
+/// product cannot reach.  `aux = x*4 ∧ aux = 7` is UNSAT (4 is not invertible
+/// mod 16 and 7 is odd, so `x*4` is always even).
+#[test]
+fn test_incremental_mul_aux_unreachable_const_is_unsat() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let four = TermId::new(2);
+    let prod = TermId::new(3);
+    let aux = TermId::new(4);
+
+    solver.new_bv(x, 4);
+    solver.assert_const(four, 4, 4);
+    solver.new_bv(prod, 4);
+    solver.bv_mul(prod, x, four);
+    solver.new_bv(aux, 4);
+    solver.assert_eq(aux, prod);
+
+    // Probe 1: satisfiable on its own.
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Sat => {}
+        other => panic!("Expected SAT after aux=x*4, got {:?}", other),
+    }
+
+    // Probe 2: aux = 7 is unreachable for x*4 ⇒ UNSAT.
+    solver.assert_const(aux, 7, 4);
+    match solver.check().expect("check should not error") {
+        TheoryCheckResult::Unsat(_) => {}
+        other => panic!("Expected UNSAT for aux=x*4 ∧ aux=7, got {:?}", other),
+    }
+}

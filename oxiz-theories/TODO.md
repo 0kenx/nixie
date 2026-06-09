@@ -1,6 +1,6 @@
 # oxiz-theories TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-06-09 (v0.2.3)
 
 Reference: Z3's `smt/` directory at `../z3/src/smt/`
 
@@ -502,3 +502,10 @@ The oxiz-theories crate is now **100% complete + advanced optimizations** with:
 13. **Feasibility Pump**: Finds integer solutions orders of magnitude faster than pure B&B
 14. **Probing/Lookahead**: Tightens bounds and detects infeasibilities early before branching
 15. **Cut Management**: Maintains LP efficiency by aging and removing ineffective cuts
+
+## Stub completions (2026-06-08)
+
+- [x] `ArithSolver::get_shared_equalities` — replaced `Vec::new()` stub with sound Nelson-Oppen propagation: model-based candidate generation + entailment verification via push/probe_strict/pop. Only emits `x=y` if both `x<y` and `x>y` are infeasible.
+- [x] `ArithSolver::notify_equality` — now actually enforces `x−y=0` via `simplex.add_eq`.
+- [x] `simplex.rs::optimize_linexpr` — new method: reduced-cost pricing, Bland's anti-cycling, ratio test, Unbounded detection; used by `optimize_min`/`optimize_max`.
+- [x] `optimize.rs::optimize_min` — replaced hardcoded `Rational64::zero()` stub with real `simplex.optimize_linexpr()` call.

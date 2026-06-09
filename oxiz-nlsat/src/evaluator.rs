@@ -313,9 +313,9 @@ impl Evaluator {
             1 => self.find_linear_root(poly, var).into_iter().collect(),
             2 => self.find_quadratic_roots(poly, var),
             _ => {
-                // For higher degrees, use numerical methods or interval arithmetic
-                // For now, return empty (not implemented)
-                Vec::new()
+                // For higher degrees, find exact rational roots via the rational root theorem.
+                // We must verify each candidate by evaluating the polynomial.
+                find_rational_roots_univariate(poly, var)
             }
         }
     }
@@ -572,6 +572,124 @@ impl Default for Evaluator {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Find all exact rational roots of a univariate polynomial using the rational root theorem.
+///
+/// For a polynomial with rational coefficients `a_n x^n + ... + a_0`, any rational root
+/// p/q satisfies p | (numerator of a_0) and q | (numerator of a_n) after clearing denominators.
+fn find_rational_roots_univariate(poly: &Polynomial, var: Var) -> Vec<BigRational> {
+    let degree = poly.degree(var) as usize;
+    if degree == 0 {
+        return Vec::new();
+    }
+
+    // Collect rational coefficients coeff[k] = coefficient of var^k
+    let rat_coeffs: Vec<BigRational> = (0..=degree)
+        .map(|k| poly.univ_coeff(var, k as u32))
+        .collect();
+
+    // Scale by LCM of denominators to obtain integer coefficients
+    let lcm_denom: BigInt = rat_coeffs.iter().fold(BigInt::from(1i64), |acc, r| {
+        let g = gcd_bigint_eval(acc.abs(), r.denom().abs());
+        (acc.abs() / g * r.denom()).abs()
+    });
+
+    let int_coeffs: Vec<BigInt> = rat_coeffs
+        .iter()
+        .map(|r| r.numer() * (&lcm_denom / r.denom()))
+        .collect();
+
+    rational_roots_from_int_coeffs(poly, var, &int_coeffs)
+}
+
+/// GCD helper (Euclidean) for non-negative BigInts.
+fn gcd_bigint_eval(mut a: BigInt, mut b: BigInt) -> BigInt {
+    while !b.is_zero() {
+        let t = &a % &b;
+        a = b;
+        b = t;
+    }
+    if a.is_zero() { BigInt::one() } else { a }
+}
+
+/// Test rational root candidates from integer coefficients.
+fn rational_roots_from_int_coeffs(
+    poly: &Polynomial,
+    var: Var,
+    int_coeffs: &[BigInt],
+) -> Vec<BigRational> {
+    let n = int_coeffs.len();
+    if n < 2 {
+        return Vec::new();
+    }
+
+    let mut roots = Vec::new();
+    let a0 = &int_coeffs[0];
+    let an = &int_coeffs[n - 1];
+
+    if a0.is_zero() {
+        // x=0 is a root
+        roots.push(BigRational::zero());
+        // Divide polynomial by x (shift coefficients down) and recurse
+        let deflated: Vec<BigInt> = int_coeffs[1..].to_vec();
+        if deflated.len() >= 2 {
+            let mut more = rational_roots_from_int_coeffs(poly, var, &deflated);
+            roots.append(&mut more);
+        }
+        roots.sort();
+        roots.dedup();
+        return roots;
+    }
+
+    // Divisors of a0 and an
+    let divisors_a0 = pos_divisors(a0.abs());
+    let divisors_an = pos_divisors(an.abs());
+
+    let mut eval_map = rustc_hash::FxHashMap::default();
+    for p in &divisors_a0 {
+        for q in &divisors_an {
+            if q.is_zero() {
+                continue;
+            }
+            for &sign in &[1i64, -1i64] {
+                let candidate = BigRational::new(p * BigInt::from(sign), q.clone());
+                eval_map.clear();
+                eval_map.insert(var, candidate.clone());
+                if poly.eval(&eval_map).is_zero() {
+                    roots.push(candidate);
+                }
+            }
+        }
+    }
+
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// Return all positive divisors of a positive BigInt.
+fn pos_divisors(n: BigInt) -> Vec<BigInt> {
+    if n.is_zero() {
+        return vec![BigInt::one()];
+    }
+    let mut divs = Vec::new();
+    let mut i = BigInt::one();
+    loop {
+        if &i * &i > n {
+            break;
+        }
+        let r = &n % &i;
+        let q = &n / &i;
+        if r.is_zero() {
+            divs.push(i.clone());
+            if q != i {
+                divs.push(q);
+            }
+        }
+        i += BigInt::one();
+    }
+    divs
 }
 
 /// Compute the integer square root if the number is a perfect square.

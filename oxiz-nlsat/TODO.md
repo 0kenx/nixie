@@ -1,6 +1,6 @@
 # oxiz-nlsat TODO
 
-Last Updated: 2026-03-28 (v0.2.0)
+Last Updated: 2026-06-09 (v0.2.3)
 
 Reference: Z3's `nlsat/` directory at `../z3/src/nlsat/`
 
@@ -139,6 +139,13 @@ Reference: Z3's `nlsat/` directory at `../z3/src/nlsat/`
 - [x] Improved clause database reduction with LBD-based strategy
 - [x] Glucose-style clause deletion (protect glue clauses with LBD <= 2)
 - [x] Combined LBD and activity scoring for clause quality
+
+## Stub completions (2026-06-08)
+
+- [x] `explain.rs::resultant` — replaced `Polynomial::zero()` stub with real `ResultantComputer{method: ResultantMethod::Sylvester}` (fraction-free Bareiss; value-exact multivariate eliminant). Returns `None` for degree-0-in-var inputs.
+- [x] `explain.rs::leading_coefficient` — replaced `poly.clone()` stub with `poly.leading_coeff_wrt(var)`.
+- [x] `evaluator.rs::find_roots` / `solver/decide.rs::find_univariate_roots` — for degree>2 cases, replaced empty `Vec::new()` stubs with `poly.isolate_roots(var)` (square-free + Descartes + Sturm bisection, arbitrary degree) converted to sorted rational representatives.
+- [x] `monotonicity.rs::estimate_derivative_sign` — filled the univariate `None` stub: uses `isolate_roots().is_empty()` for constant-sign detection plus point evaluation.
 
 ## Future Enhancements (Next Priority)
 

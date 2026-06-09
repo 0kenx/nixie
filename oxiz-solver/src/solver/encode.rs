@@ -99,7 +99,13 @@ impl Solver {
             | TermKind::BvUlt(lhs, rhs)
             | TermKind::BvUle(lhs, rhs)
             | TermKind::BvSlt(lhs, rhs)
-            | TermKind::BvSle(lhs, rhs) => {
+            | TermKind::BvSle(lhs, rhs)
+            // Shifts and concatenation: recurse so leaf operands are tracked
+            // (and thus get model values for counterexamples).
+            | TermKind::BvShl(lhs, rhs)
+            | TermKind::BvLshr(lhs, rhs)
+            | TermKind::BvAshr(lhs, rhs)
+            | TermKind::BvConcat(lhs, rhs) => {
                 if self.tracked_compound_terms.contains(&term_id) {
                     return;
                 }
@@ -107,6 +113,15 @@ impl Solver {
                 let (l, r) = (*lhs, *rhs);
                 self.track_theory_vars(l, manager);
                 self.track_theory_vars(r, manager);
+            }
+            // Bit extraction: recurse into the single source operand.
+            TermKind::BvExtract { arg, .. } => {
+                if self.tracked_compound_terms.contains(&term_id) {
+                    return;
+                }
+                self.tracked_compound_terms.insert(term_id);
+                let a = *arg;
+                self.track_theory_vars(a, manager);
             }
             // BV arithmetic operations (division/remainder)
             // These need the has_bv_arith_ops flag for conflict detection

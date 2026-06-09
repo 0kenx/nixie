@@ -453,9 +453,7 @@ fn leading_coefficient(poly: &Polynomial, var: Var) -> Option<Polynomial> {
         return None;
     }
 
-    // Extract the leading coefficient by setting var = 0 in p / var^degree
-    // This is a simplified version - proper implementation would extract coefficient
-    Some(poly.clone())
+    Some(poly.leading_coeff_wrt(var))
 }
 
 /// Compute the resultant of two polynomials with respect to a variable.
@@ -470,17 +468,7 @@ fn resultant(p: &Polynomial, q: &Polynomial, var: Var) -> Option<Polynomial> {
         return None;
     }
 
-    // For linear polynomials, resultant is straightforward
-    if deg_p == 1 && deg_q == 1 {
-        // p = a*x + b, q = c*x + d
-        // resultant = a*d - b*c
-        // This is a placeholder - proper implementation would extract coefficients
-        return Some(Polynomial::zero());
-    }
-
-    // For higher degrees, use Sylvester matrix determinant
-    // This is a placeholder - proper implementation would compute the full resultant
-    Some(Polynomial::zero())
+    Some(p.resultant(q, var))
 }
 
 /// Implication graph for conflict analysis.

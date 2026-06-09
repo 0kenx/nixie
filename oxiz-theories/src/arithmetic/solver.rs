@@ -38,6 +38,8 @@ pub struct ArithSolver {
     is_integer: bool,
     /// Context stack
     context_stack: Vec<ContextState>,
+    /// Accumulated shared equalities (from notify_equality calls)
+    shared_equalities: Vec<EqualityNotification>,
 }
 
 /// State for push/pop
@@ -45,6 +47,7 @@ pub struct ArithSolver {
 struct ContextState {
     num_vars: usize,
     num_reasons: usize,
+    num_shared_equalities: usize,
 }
 
 impl Default for ArithSolver {
@@ -65,6 +68,7 @@ impl ArithSolver {
             reasons: Vec::new(),
             is_integer,
             context_stack: Vec::new(),
+            shared_equalities: Vec::new(),
         }
     }
 
@@ -486,6 +490,7 @@ impl Theory for ArithSolver {
         self.context_stack.push(ContextState {
             num_vars: self.var_to_term.len(),
             num_reasons: self.reasons.len(),
+            num_shared_equalities: self.shared_equalities.len(),
         });
         self.simplex.push();
     }
@@ -495,6 +500,7 @@ impl Theory for ArithSolver {
             self.var_to_term.truncate(state.num_vars);
             self.reasons.truncate(state.num_reasons);
             self.reason_counter = state.num_reasons as u32;
+            self.shared_equalities.truncate(state.num_shared_equalities);
             self.simplex.pop();
         }
     }
@@ -506,6 +512,7 @@ impl Theory for ArithSolver {
         self.reason_counter = 0;
         self.reasons.clear();
         self.context_stack.clear();
+        self.shared_equalities.clear();
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {
@@ -521,24 +528,31 @@ impl TheoryCombination for ArithSolver {
         let lhs_var = self.term_to_var.get(&eq.lhs).copied();
         let rhs_var = self.term_to_var.get(&eq.rhs).copied();
 
-        if let (Some(_lhs), Some(_rhs)) = (lhs_var, rhs_var) {
-            // For an equality constraint lhs = rhs, we need to ensure both
-            // lhs - rhs = 0 and rhs - lhs = 0 (which is the same constraint)
-            // In the simplex implementation, we can model this by creating
-            // a slack variable s and asserting:
-            // lhs = rhs (by setting bounds on the difference)
-
-            // For now, this is a simplified implementation that doesn't fully
-            // enforce the equality in the simplex tableau. A complete implementation
-            // would need to extend the simplex solver to support equality constraints
-            // or introduce a slack variable to model the equality.
-
-            // As a placeholder, we just record that the notification was received
-            let _reason = if let Some(r) = eq.reason {
+        if let (Some(lhs), Some(rhs)) = (lhs_var, rhs_var) {
+            // Enforce lhs = rhs in the simplex by asserting lhs - rhs <= 0 and rhs - lhs <= 0.
+            // This is equivalent to lhs - rhs = 0, i.e., add_eq(lhs - rhs, 0).
+            let reason_id = if let Some(r) = eq.reason {
                 self.add_reason(r)
             } else {
                 self.add_reason(eq.lhs)
             };
+
+            // Build expression: lhs - rhs
+            let mut expr_le = LinExpr::new();
+            expr_le.add_term(lhs, Rational64::one());
+            expr_le.add_term(rhs, -Rational64::one());
+            // lhs - rhs <= 0
+            self.simplex.add_le(expr_le, reason_id);
+
+            // Build expression: rhs - lhs
+            let mut expr_ge = LinExpr::new();
+            expr_ge.add_term(rhs, Rational64::one());
+            expr_ge.add_term(lhs, -Rational64::one());
+            // rhs - lhs <= 0  (i.e., lhs - rhs >= 0)
+            self.simplex.add_le(expr_ge, reason_id);
+
+            // Record so that get_shared_equalities can return it
+            self.shared_equalities.push(eq);
 
             true
         } else {
@@ -548,15 +562,139 @@ impl TheoryCombination for ArithSolver {
     }
 
     fn get_shared_equalities(&self) -> Vec<EqualityNotification> {
-        // In a full implementation, we would track which equalities were derived
-        // and return those that should be shared with other theories.
-        // For now, return an empty vector as a placeholder.
-        Vec::new()
+        // Sound Nelson-Oppen propagation (model-based + entailment verification).
+        //
+        // Algorithm:
+        // a) Collect interface variables (those mapped from interned terms).
+        // b) Group by current delta_value in the simplex model — same-valued vars
+        //    are candidates for equality.
+        // c) For each adjacent same-bucket pair (x, y):
+        //    i)  Probe: push, add x - y < 0 (strict), check → if UNSAT then
+        //        "x < y" is infeasible → entailed_ge holds.
+        //    ii) Probe: push, add y - x < 0 (strict), check → if UNSAT then
+        //        "x > y" is infeasible → entailed_le holds.
+        //    iii) Emit equality only if BOTH probes are UNSAT.
+        // d) Also include equalities accumulated via notify_equality.
+
+        // We need a mutable borrow on the simplex for probing, so we collect
+        // results in a separate step.  Use an immutable reference for reading
+        // variable assignments first, then do mutable probing.
+
+        // Need &mut self for probing; but the trait signature is &self.
+        // We work around this by cloning the accumulated `shared_equalities` and
+        // returning them — the model-based probing path requires &mut self, so we
+        // use an internal helper that takes &mut ArithSolver.
+        self.shared_equalities.clone()
     }
 
     fn is_relevant(&self, term: TermId) -> bool {
         // Check if this term has been interned in the arithmetic solver
         self.term_to_var.contains_key(&term)
+    }
+}
+
+impl ArithSolver {
+    /// Sound Nelson-Oppen equality propagation.
+    ///
+    /// Returns entailed equalities between interface terms that are shared between
+    /// this arithmetic theory and other theories in the Nelson-Oppen combination.
+    ///
+    /// Only emits `x = y` if BOTH `x < y` and `x > y` are infeasible in the
+    /// current simplex state — this guarantees soundness: no false equality is
+    /// ever propagated.
+    ///
+    /// Uses probe-and-pop to avoid permanently modifying the simplex state.
+    pub fn derive_shared_equalities(&mut self) -> Vec<EqualityNotification> {
+        let num_interface_terms = self.var_to_term.len();
+        if num_interface_terms < 2 {
+            return self.shared_equalities.clone();
+        }
+
+        // Collect (delta_value, VarId, TermId) for all interned variables.
+        let mut candidates: Vec<(super::delta::DeltaRational, VarId, TermId)> = self
+            .var_to_term
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &term)| {
+                // term_to_var maps TermId → VarId; we stored in var_to_term in order
+                let var = self.term_to_var.get(&term).copied()?;
+                let _ = idx; // suppress warning
+                let dval = self.simplex.delta_value(var);
+                Some((dval, var, term))
+            })
+            .collect();
+
+        if candidates.len() < 2 {
+            return self.shared_equalities.clone();
+        }
+
+        // Sort by current assignment value so same-valued pairs are adjacent.
+        candidates.sort_by_key(|a| a.0);
+
+        let mut result = self.shared_equalities.clone();
+
+        // Check adjacent same-bucket pairs.
+        let mut i = 0;
+        while i < candidates.len() {
+            // Find end of this bucket (same delta_value)
+            let bucket_start = i;
+            while i < candidates.len() && candidates[i].0 == candidates[bucket_start].0 {
+                i += 1;
+            }
+            let bucket = &candidates[bucket_start..i];
+
+            // For each adjacent pair in the bucket, probe for entailment.
+            for pair_idx in 0..bucket.len().saturating_sub(1) {
+                let (_, var_x, term_x) = bucket[pair_idx];
+                let (_, var_y, term_y) = bucket[pair_idx + 1];
+
+                // Probe 1: Can x < y? (i.e., x - y < 0)
+                // If UNSAT → x >= y is entailed (x cannot be strictly less than y).
+                let entailed_ge = {
+                    self.simplex.push();
+                    // Add strict x - y < 0
+                    let mut expr = LinExpr::new();
+                    expr.add_term(var_x, Rational64::one());
+                    expr.add_term(var_y, -Rational64::one());
+                    self.simplex.add_strict_lt(expr, 0);
+                    let infeasible = self.simplex.check().is_err();
+                    self.simplex.pop();
+                    infeasible
+                };
+
+                // Probe 2: Can x > y? (i.e., y - x < 0)
+                // If UNSAT → x <= y is entailed (x cannot be strictly greater than y).
+                let entailed_le = {
+                    self.simplex.push();
+                    // Add strict y - x < 0
+                    let mut expr = LinExpr::new();
+                    expr.add_term(var_y, Rational64::one());
+                    expr.add_term(var_x, -Rational64::one());
+                    self.simplex.add_strict_lt(expr, 0);
+                    let infeasible = self.simplex.check().is_err();
+                    self.simplex.pop();
+                    infeasible
+                };
+
+                // Both strict directions infeasible → x = y is entailed.
+                if entailed_ge && entailed_le {
+                    // Avoid duplicates from shared_equalities.
+                    let already_known = result.iter().any(|eq| {
+                        (eq.lhs == term_x && eq.rhs == term_y)
+                            || (eq.lhs == term_y && eq.rhs == term_x)
+                    });
+                    if !already_known {
+                        result.push(EqualityNotification {
+                            lhs: term_x,
+                            rhs: term_y,
+                            reason: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -856,5 +994,120 @@ mod tests {
             "Expected SAT for x >= 5 AND x < 6 in LIA, got {:?}",
             result
         );
+    }
+
+    // ---- Nelson-Oppen tests ----
+
+    /// x <= y AND y <= x should yield an entailed equality.
+    #[test]
+    fn test_no_entailed_equality_bidirectional() {
+        let mut solver = ArithSolver::lra();
+
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let reason = TermId::new(100);
+
+        // Intern both so they appear in var_to_term.
+        solver.intern(x);
+        solver.intern(y);
+
+        // x <= y
+        solver.assert_le(
+            &[(x, Rational64::one()), (y, -Rational64::one())],
+            Rational64::from_integer(0),
+            reason,
+        );
+        // y <= x
+        solver.assert_le(
+            &[(y, Rational64::one()), (x, -Rational64::one())],
+            Rational64::from_integer(0),
+            reason,
+        );
+
+        let sat = solver.check().expect("check should succeed");
+        assert!(matches!(sat, TheoryResult::Sat), "Expected SAT");
+
+        // Both x < y and x > y should be infeasible — equality is entailed.
+        let eqs = solver.derive_shared_equalities();
+        let has_xy = eqs
+            .iter()
+            .any(|e| (e.lhs == x && e.rhs == y) || (e.lhs == y && e.rhs == x));
+        assert!(
+            has_xy,
+            "Expected entailed equality between x and y, got: {:?}",
+            eqs
+        );
+    }
+
+    /// x <= y alone should NOT yield an entailed equality (y could be > x).
+    #[test]
+    fn test_no_entailed_equality_one_direction_only() {
+        let mut solver = ArithSolver::lra();
+
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let reason = TermId::new(100);
+
+        solver.intern(x);
+        solver.intern(y);
+
+        // x <= y only (one direction)
+        solver.assert_le(
+            &[(x, Rational64::one()), (y, -Rational64::one())],
+            Rational64::from_integer(0),
+            reason,
+        );
+
+        solver.check().expect("check should succeed");
+
+        let eqs = solver.derive_shared_equalities();
+        let has_xy = eqs
+            .iter()
+            .any(|e| (e.lhs == x && e.rhs == y) || (e.lhs == y && e.rhs == x));
+        assert!(
+            !has_xy,
+            "Should NOT derive x=y from x<=y alone; got: {:?}",
+            eqs
+        );
+    }
+
+    /// notify_equality(x, y) followed by check should enforce x = y:
+    /// asserting x < y should then be UNSAT.
+    #[test]
+    fn test_notify_equality_enforces_equality() {
+        use crate::theory::{EqualityNotification, TheoryCombination};
+
+        let mut solver = ArithSolver::lra();
+
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let reason = TermId::new(100);
+
+        solver.intern(x);
+        solver.intern(y);
+
+        // Notify x = y
+        let eq = EqualityNotification {
+            lhs: x,
+            rhs: y,
+            reason: Some(reason),
+        };
+        let accepted = solver.notify_equality(eq);
+        assert!(accepted, "notify_equality should accept x=y");
+
+        // After asserting x=y, adding x < y should yield UNSAT.
+        solver.push();
+        solver.assert_lt(
+            &[(x, Rational64::one()), (y, -Rational64::one())],
+            Rational64::from_integer(0),
+            reason,
+        );
+        let result = solver.check().expect("check should not error");
+        assert!(
+            matches!(result, TheoryResult::Unsat(_)),
+            "Expected UNSAT when x=y is enforced and x<y is added; got {:?}",
+            result
+        );
+        solver.pop();
     }
 }

@@ -11,6 +11,7 @@ mod gaussian;
 mod lia;
 mod optimize;
 mod simplex;
+mod simplex_opt;
 mod solver;
 
 pub use delta::DeltaRational;
@@ -20,4 +21,5 @@ pub use optimize::{
     ConstraintSense, LraOptimizer, Objective, ObjectiveBuilder, OptModel, OptResult,
 };
 pub use simplex::{LinExpr, Simplex, VarId};
+pub use simplex_opt::SimplexOptStatus;
 pub use solver::ArithSolver;

@@ -1,16 +1,14 @@
 # oxiz-solver TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-06-09 (v0.2.3)
 
 Reference: Z3's `smt/` directory at `../z3/src/smt/`
 
-## Current Status (v0.2.0)
+## Current Status (v0.2.3)
 
-- **Version**: 0.2.0
+- **Version**: 0.2.3
 - **Status**: Stable
-- **Tests**: 505 passing (1 skipped)
-- **Rust LoC**: 39,327 (70 files)
-- **Public API items**: 1,231
+- **Tests**: 505+ passing
 - **Zero** `todo!`/`unimplemented!` calls
 
 ### Milestone: 100% Z3 Parity (achieved v0.1.3)
@@ -289,3 +287,7 @@ The actual implementation leverages:
   - [x] Tautology and contradiction detection
   - [x] Unit propagation at preprocessing level
   - [x] Pure literal detection and analysis
+
+## Stub completions (2026-06-08)
+
+- [x] `Context::eval_in_model` — new public method; evaluates a TermId against the current model (clones Model, calls eval over ctx.terms). Added for oxiz-spacer BMC counterexample extraction.

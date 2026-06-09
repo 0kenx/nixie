@@ -2,7 +2,7 @@
 //!
 //! Implements maximize and minimize operations for LRA using the Simplex tableau.
 
-use super::simplex::{LinExpr, Simplex, VarId};
+use super::simplex::{LinExpr, Simplex, SimplexOptStatus, VarId};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::Rational64;
@@ -119,24 +119,15 @@ impl LraOptimizer {
         }
     }
 
-    fn optimize_min(&mut self, _expr: &LinExpr) -> Result<OptResult> {
-        // Simplified optimization using Simplex
-        // In a full implementation, we would:
-        // 1. Add the objective function to the tableau
-        // 2. Perform simplex iterations to find the optimal solution
-        // 3. Detect unboundedness
-
-        // For now, just return the current value as optimal
-        // This is a placeholder for the full optimization algorithm
-
-        match self.simplex.check() {
-            Ok(()) => {
-                // Compute objective value
-                let value = Rational64::zero(); // Placeholder
-                self.optimal_value = Some(value);
-                Ok(OptResult::Optimal(value))
+    fn optimize_min(&mut self, expr: &LinExpr) -> Result<OptResult> {
+        match self.simplex.optimize_linexpr(expr) {
+            SimplexOptStatus::Optimal(v) => {
+                self.optimal_value = Some(v);
+                Ok(OptResult::Optimal(v))
             }
-            Err(_) => Ok(OptResult::Infeasible),
+            SimplexOptStatus::Unbounded => Ok(OptResult::Unbounded),
+            SimplexOptStatus::Infeasible => Ok(OptResult::Infeasible),
+            SimplexOptStatus::Unknown => Ok(OptResult::Unknown),
         }
     }
 
@@ -411,5 +402,132 @@ mod tests {
         let result = model.optimize().expect("should return infeasible");
 
         assert!(matches!(result, OptResult::Infeasible));
+    }
+
+    // ---- Optimization correctness tests ----
+
+    /// Maximize 3x + 4y subject to: x + y <= 8, x >= 0, y >= 0.
+    /// Optimal: y = 8, x = 0 → value = 32.
+    #[test]
+    fn test_maximize_correct_value() {
+        let mut model = OptModel::new();
+        let x = model.new_var();
+        let y = model.new_var();
+
+        // x >= 0
+        model.set_bounds(x, Some(Rational64::zero()), None);
+        // y >= 0
+        model.set_bounds(y, Some(Rational64::zero()), None);
+        // x + y <= 8
+        let mut c = LinExpr::new();
+        c.add_term(x, Rational64::one());
+        c.add_term(y, Rational64::one());
+        c.add_constant(-Rational64::from_integer(8));
+        model.add_constraint(c, ConstraintSense::Le);
+
+        // Maximize 3x + 4y
+        let mut obj = ObjectiveBuilder::new();
+        obj.add_term(x, Rational64::from_integer(3));
+        obj.add_term(y, Rational64::from_integer(4));
+        model.set_objective(obj.maximize());
+
+        let result = model.optimize().expect("should optimize");
+        match result {
+            OptResult::Optimal(v) => {
+                assert_eq!(
+                    v,
+                    Rational64::from_integer(32),
+                    "Expected optimal 32, got {}",
+                    v
+                );
+            }
+            other => panic!("Expected Optimal(32), got {:?}", other),
+        }
+    }
+
+    /// Minimize 2x + 3y subject to: x + y >= 5, x >= 0, y >= 0.
+    /// Optimal: x = 5, y = 0 → value = 10.
+    #[test]
+    fn test_minimize_correct_value() {
+        let mut model = OptModel::new();
+        let x = model.new_var();
+        let y = model.new_var();
+
+        // x >= 0
+        model.set_bounds(x, Some(Rational64::zero()), None);
+        // y >= 0
+        model.set_bounds(y, Some(Rational64::zero()), None);
+        // x + y >= 5
+        let mut c = LinExpr::new();
+        c.add_term(x, Rational64::one());
+        c.add_term(y, Rational64::one());
+        c.add_constant(-Rational64::from_integer(5));
+        model.add_constraint(c, ConstraintSense::Ge);
+
+        // Minimize 2x + 3y
+        let mut obj = ObjectiveBuilder::new();
+        obj.add_term(x, Rational64::from_integer(2));
+        obj.add_term(y, Rational64::from_integer(3));
+        model.set_objective(obj.minimize());
+
+        let result = model.optimize().expect("should optimize");
+        match result {
+            OptResult::Optimal(v) => {
+                assert_eq!(
+                    v,
+                    Rational64::from_integer(10),
+                    "Expected optimal 10, got {}",
+                    v
+                );
+            }
+            other => panic!("Expected Optimal(10), got {:?}", other),
+        }
+    }
+
+    /// Maximize x with no upper bound on x → unbounded.
+    #[test]
+    fn test_maximize_unbounded() {
+        let mut model = OptModel::new();
+        let x = model.new_var();
+
+        // x >= 0 only, no upper bound
+        model.set_bounds(x, Some(Rational64::zero()), None);
+
+        // Maximize x
+        let mut obj = ObjectiveBuilder::new();
+        obj.add_term(x, Rational64::one());
+        model.set_objective(obj.maximize());
+
+        let result = model.optimize().expect("should run");
+        assert!(
+            matches!(result, OptResult::Unbounded),
+            "Expected Unbounded, got {:?}",
+            result
+        );
+    }
+
+    /// Infeasible system → OptResult::Infeasible.
+    #[test]
+    fn test_optimize_infeasible_explicit() {
+        let mut model = OptModel::new();
+        let x = model.new_var();
+
+        // x >= 10 AND x <= 5 — contradictory
+        model.set_bounds(
+            x,
+            Some(Rational64::from_integer(10)),
+            Some(Rational64::from_integer(5)),
+        );
+
+        let mut obj = ObjectiveBuilder::new();
+        obj.add_term(x, Rational64::one());
+        model.set_objective(obj.maximize());
+
+        let result = model.optimize().expect("should detect infeasibility");
+        assert!(
+            matches!(result, OptResult::Infeasible),
+            "Expected Infeasible, got {:?}",
+            result
+        );
     }
 }

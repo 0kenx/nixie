@@ -358,6 +358,23 @@ impl Context {
         logger.close()
     }
 
+    /// Evaluate a `term` in the current model.
+    ///
+    /// Returns `None` if no model is available (i.e. the last `check_sat` did
+    /// not return `Sat`).  Otherwise, calls `Model::eval` which traverses the
+    /// term structure, substituting variables with their model values, and
+    /// returns the simplified/concrete `TermId`.
+    ///
+    /// The returned `TermId` belongs to `self.terms` — the same `TermManager`
+    /// owned by this `Context`.
+    pub fn eval_in_model(&mut self, term: TermId) -> Option<TermId> {
+        if self.last_result != Some(SolverResult::Sat) {
+            return None;
+        }
+        let value = self.solver.model()?.eval(term, &mut self.terms);
+        Some(value)
+    }
+
     /// Get the model (if SAT)
     /// Returns a list of (name, sort, value) tuples
     pub fn get_model(&self) -> Option<Vec<(String, String, String)>> {

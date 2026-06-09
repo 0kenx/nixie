@@ -3,6 +3,7 @@
 mod conflict;
 mod decide;
 pub mod heuristic;
+mod incremental;
 mod learn;
 mod propagate;
 
