@@ -117,20 +117,52 @@ impl SimplifyContext {
     }
 
     /// Add a known equality (x = c)
+    ///
+    /// Invalidates the simplification cache: `simplify_impl` consults
+    /// `self.equalities` directly, so a term whose result was cached
+    /// BEFORE this equality became known (e.g. as `Unchanged`) must be
+    /// re-simplified rather than keep returning that now-stale answer.
     pub fn add_equality(&mut self, var: TermId, value: TermId) {
         self.equalities.insert(var, value);
+        self.invalidate_cache_for(var);
     }
 
-    /// Mark a term as known to be true
+    /// Mark a term as known to be true.
+    ///
+    /// Invalidates the simplification cache for `term` (see
+    /// [`Self::add_equality`]'s doc comment for why): a stale cached
+    /// `Unchanged` result for `term` would otherwise never reflect this
+    /// newly-learned fact.
     pub fn mark_true(&mut self, term: TermId) {
         self.true_terms.insert(term);
         self.false_terms.remove(&term);
+        self.invalidate_cache_for(term);
     }
 
-    /// Mark a term as known to be false
+    /// Mark a term as known to be false.
+    ///
+    /// Invalidates the simplification cache for `term` (see
+    /// [`Self::add_equality`]'s doc comment for why).
     pub fn mark_false(&mut self, term: TermId) {
         self.false_terms.insert(term);
         self.true_terms.remove(&term);
+        self.invalidate_cache_for(term);
+    }
+
+    /// Drop any cached simplification result that could be affected by a
+    /// newly-learned fact about `term`.
+    ///
+    /// This module has no dependency graph tracking which cached compound
+    /// results (e.g. from `simplify_and`/`simplify_or`) transitively
+    /// consulted `term`, so -- to stay honest rather than risk returning a
+    /// stale-but-plausible-looking cached result -- a new fact about `term`
+    /// clears the WHOLE cache rather than attempting (and potentially
+    /// getting wrong) a precise, single-entry invalidation. This trades
+    /// some cache-hit performance for correctness: every past `simplify`
+    /// result is repeatable from `equalities`/`true_terms`/`false_terms`
+    /// alone, so nothing is lost except having to recompute it.
+    fn invalidate_cache_for(&mut self, _term: TermId) {
+        self.cache.clear();
     }
 
     /// Check if a term is known to be true
@@ -195,7 +227,15 @@ impl SimplifyContext {
     /// - true AND x → x
     /// - false AND x → false
     /// - x AND x → x
-    /// - x AND NOT x → false
+    ///
+    /// Does NOT implement `x AND NOT x → false`: this module only ever
+    /// sees opaque `TermId`s (no AST/term-manager access), so it has no
+    /// way to recognize that `right` is syntactically `NOT left` (or vice
+    /// versa) short of a caller-supplied negation table, which does not
+    /// exist yet. Advertising that rule without implementing it would be
+    /// dishonest, so it is intentionally left out of this rule list; a
+    /// term of the form `x AND NOT x` currently simplifies only as far as
+    /// its operands do, not all the way to `false`.
     pub fn simplify_and(&mut self, left: TermId, right: TermId) -> SimplifyResult {
         let left_simp = self.simplify(left);
         let right_simp = self.simplify(right);
@@ -227,7 +267,10 @@ impl SimplifyContext {
     /// - true OR x → true
     /// - false OR x → x
     /// - x OR x → x
-    /// - x OR NOT x → true
+    ///
+    /// Does NOT implement `x OR NOT x → true`, for the same reason
+    /// documented on [`Self::simplify_and`]: no AST access, so no way to
+    /// detect that one operand is the negation of the other.
     pub fn simplify_or(&mut self, left: TermId, right: TermId) -> SimplifyResult {
         let left_simp = self.simplify(left);
         let right_simp = self.simplify(right);
@@ -258,7 +301,10 @@ impl SimplifyContext {
     /// Applies rules:
     /// - NOT true → false
     /// - NOT false → true
-    /// - NOT NOT x → x
+    ///
+    /// Does NOT implement `NOT NOT x → x`, for the same reason documented
+    /// on [`Self::simplify_and`]: recognizing that `term` is itself
+    /// syntactically `NOT y` requires AST access this module does not have.
     pub fn simplify_not(&mut self, term: TermId) -> SimplifyResult {
         let term_simp = self.simplify(term);
 
@@ -467,6 +513,53 @@ mod tests {
         let result2 = ctx.simplify(x);
         assert_eq!(result2, SimplifyResult::Simplified(c));
         assert_eq!(ctx.stats().terms_processed, 2);
+    }
+
+    // Audit regression (theories-simplify): the cache was never invalidated
+    // by later facts. Simplifying a term BEFORE anything is known about it
+    // caches `Unchanged`; if a fact is learned about that term afterward
+    // (`mark_true`/`mark_false`/`add_equality`), a later `simplify` call
+    // must reflect the new fact instead of replaying the stale cached
+    // `Unchanged` result.
+    #[test]
+    fn audit_cache_invalidated_by_mark_true_after_caching_unchanged() {
+        let mut ctx = SimplifyContext::new();
+        let term = TermId::new(1);
+
+        // Nothing known yet: caches `Unchanged`.
+        assert_eq!(ctx.simplify(term), SimplifyResult::Unchanged);
+
+        // Learn a fact about `term` AFTER it was cached.
+        ctx.mark_true(term);
+
+        assert_eq!(
+            ctx.simplify(term),
+            SimplifyResult::True,
+            "a fact learned after caching must not be masked by a stale cached result"
+        );
+    }
+
+    #[test]
+    fn audit_cache_invalidated_by_mark_false_after_caching_unchanged() {
+        let mut ctx = SimplifyContext::new();
+        let term = TermId::new(1);
+
+        assert_eq!(ctx.simplify(term), SimplifyResult::Unchanged);
+        ctx.mark_false(term);
+
+        assert_eq!(ctx.simplify(term), SimplifyResult::False);
+    }
+
+    #[test]
+    fn audit_cache_invalidated_by_add_equality_after_caching_unchanged() {
+        let mut ctx = SimplifyContext::new();
+        let x = TermId::new(1);
+        let c = TermId::new(2);
+
+        assert_eq!(ctx.simplify(x), SimplifyResult::Unchanged);
+        ctx.add_equality(x, c);
+
+        assert_eq!(ctx.simplify(x), SimplifyResult::Simplified(c));
     }
 
     #[test]

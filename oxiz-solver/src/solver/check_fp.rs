@@ -125,7 +125,7 @@ impl Solver {
                         continue;
                     };
                     if let Some(term_data) = manager.get(add_term) {
-                        if let TermKind::FpAdd(_, lhs, rhs) = &term_data.kind {
+                        if let TermKind::FpAdd(rm, lhs, rhs) = &term_data.kind {
                             // Check if one is +0 and the other is -0
                             let lhs_pos_zero =
                                 fp_is_zero.contains(lhs) && fp_is_positive.contains(lhs);
@@ -136,8 +136,14 @@ impl Solver {
                             let rhs_neg_zero =
                                 fp_is_zero.contains(rhs) && fp_is_negative.contains(rhs);
 
-                            if (lhs_pos_zero && rhs_neg_zero) || (lhs_neg_zero && rhs_pos_zero) {
-                                // +0 + -0 = +0 in RNE mode, so result is positive not negative
+                            // +0 + -0 = +0 for every IEEE-754 rounding mode EXCEPT
+                            // roundTowardNegative (RTN), where it is -0.  Only claim
+                            // a contradiction when the sum is provably +0, i.e. rm != RTN.
+                            if *rm != RoundingMode::RTN
+                                && ((lhs_pos_zero && rhs_neg_zero)
+                                    || (lhs_neg_zero && rhs_pos_zero))
+                            {
+                                // Result is +0 (positive), so asserting isNegative is UNSAT.
                                 return true;
                             }
                         }
@@ -1280,67 +1286,77 @@ impl Solver {
             }
             // Equality
             TermKind::Eq(lhs, rhs) => {
-                fp_equalities.push((*lhs, *rhs));
+                // Equality-derived facts (a = b, literal assignments, operation
+                // results, conversions) only hold when the equality is asserted
+                // positively.  Under a `Not`, `(not (= a b))` is a DISequality and
+                // must NOT be recorded as `a = b`; treating it as an equality
+                // previously produced spurious UNSAT answers (e.g. Check 3 firing
+                // on a negated `y = fp.div 0 0`).
+                if in_positive_context {
+                    fp_equalities.push((*lhs, *rhs));
 
-                // Check for FP literal assignment
-                if let Some(val) = self.get_fp_literal_value_from_eq(*rhs, manager, fp_equalities) {
-                    fp_literals.insert(*lhs, val);
-                } else if let Some(val) =
-                    self.get_fp_literal_value_from_eq(*lhs, manager, fp_equalities)
-                {
-                    fp_literals.insert(*rhs, val);
-                }
+                    // Check for FP literal assignment
+                    if let Some(val) =
+                        self.get_fp_literal_value_from_eq(*rhs, manager, fp_equalities)
+                    {
+                        fp_literals.insert(*lhs, val);
+                    } else if let Some(val) =
+                        self.get_fp_literal_value_from_eq(*lhs, manager, fp_equalities)
+                    {
+                        fp_literals.insert(*rhs, val);
+                    }
 
-                // Check for FP operation results
-                if let Some(rhs_data) = manager.get(*rhs) {
-                    match &rhs_data.kind {
-                        TermKind::FpAdd(rm, x, y) => {
-                            fp_additions.push((*lhs, *x, *y, *lhs, *rm));
-                            rounding_add_results.insert((*x, *y, *rm), *lhs);
+                    // Check for FP operation results
+                    if let Some(rhs_data) = manager.get(*rhs) {
+                        match &rhs_data.kind {
+                            TermKind::FpAdd(rm, x, y) => {
+                                fp_additions.push((*lhs, *x, *y, *lhs, *rm));
+                                rounding_add_results.insert((*x, *y, *rm), *lhs);
+                            }
+                            TermKind::FpDiv(rm, x, y) => {
+                                fp_divisions.push((*lhs, *x, *y, *lhs, *rm));
+                            }
+                            TermKind::FpMul(rm, x, y) => {
+                                fp_multiplications.push((*lhs, *x, *y, *lhs, *rm));
+                            }
+                            TermKind::FpSub(_, x, y) => {
+                                // Track: (lhs_operand, rhs_operand, result)
+                                fp_subtractions.push((*x, *y, *lhs));
+                            }
+                            TermKind::FpToFp { arg, eb, sb, .. } => {
+                                fp_conversions.push((*arg, *eb, *sb, *lhs));
+                            }
+                            TermKind::RealToFp { arg, eb, sb, .. } => {
+                                real_to_fp_conversions.push((*arg, *eb, *sb, *lhs));
+                            }
+                            _ => {}
                         }
-                        TermKind::FpDiv(rm, x, y) => {
-                            fp_divisions.push((*lhs, *x, *y, *lhs, *rm));
-                        }
-                        TermKind::FpMul(rm, x, y) => {
-                            fp_multiplications.push((*lhs, *x, *y, *lhs, *rm));
-                        }
-                        TermKind::FpSub(_, x, y) => {
-                            // Track: (lhs_operand, rhs_operand, result)
-                            fp_subtractions.push((*x, *y, *lhs));
-                        }
-                        TermKind::FpToFp { arg, eb, sb, .. } => {
-                            fp_conversions.push((*arg, *eb, *sb, *lhs));
-                        }
-                        TermKind::RealToFp { arg, eb, sb, .. } => {
-                            real_to_fp_conversions.push((*arg, *eb, *sb, *lhs));
-                        }
-                        _ => {}
                     }
-                }
-                if let Some(lhs_data) = manager.get(*lhs) {
-                    match &lhs_data.kind {
-                        TermKind::FpAdd(rm, x, y) => {
-                            fp_additions.push((*rhs, *x, *y, *rhs, *rm));
-                            rounding_add_results.insert((*x, *y, *rm), *rhs);
+                    if let Some(lhs_data) = manager.get(*lhs) {
+                        match &lhs_data.kind {
+                            TermKind::FpAdd(rm, x, y) => {
+                                fp_additions.push((*rhs, *x, *y, *rhs, *rm));
+                                rounding_add_results.insert((*x, *y, *rm), *rhs);
+                            }
+                            TermKind::FpDiv(rm, x, y) => {
+                                fp_divisions.push((*rhs, *x, *y, *rhs, *rm));
+                            }
+                            TermKind::FpMul(rm, x, y) => {
+                                fp_multiplications.push((*rhs, *x, *y, *rhs, *rm));
+                            }
+                            TermKind::FpSub(_, x, y) => {
+                                fp_subtractions.push((*x, *y, *rhs));
+                            }
+                            TermKind::FpToFp { arg, eb, sb, .. } => {
+                                fp_conversions.push((*arg, *eb, *sb, *rhs));
+                            }
+                            TermKind::RealToFp { arg, eb, sb, .. } => {
+                                real_to_fp_conversions.push((*arg, *eb, *sb, *rhs));
+                            }
+                            _ => {}
                         }
-                        TermKind::FpDiv(rm, x, y) => {
-                            fp_divisions.push((*rhs, *x, *y, *rhs, *rm));
-                        }
-                        TermKind::FpMul(rm, x, y) => {
-                            fp_multiplications.push((*rhs, *x, *y, *rhs, *rm));
-                        }
-                        TermKind::FpSub(_, x, y) => {
-                            fp_subtractions.push((*x, *y, *rhs));
-                        }
-                        TermKind::FpToFp { arg, eb, sb, .. } => {
-                            fp_conversions.push((*arg, *eb, *sb, *rhs));
-                        }
-                        TermKind::RealToFp { arg, eb, sb, .. } => {
-                            real_to_fp_conversions.push((*arg, *eb, *sb, *rhs));
-                        }
-                        _ => {}
                     }
-                }
+                } // end `if in_positive_context`
 
                 self.collect_fp_constraints_extended_recurse(
                     *lhs,
@@ -1900,5 +1916,74 @@ impl Solver {
             }
             _ => {}
         }
+    }
+
+    /// Returns `true` if `kind` is a floating-point theory atom (predicate,
+    /// arithmetic operation, or conversion) whose truth value / result the
+    /// current incomplete FP reasoning cannot soundly certify.
+    ///
+    /// Bare FP constants and FP-sorted variables are intentionally excluded:
+    /// they only participate through structural equality, which the EUF core
+    /// handles soundly.
+    fn is_fp_theory_atom(kind: &TermKind) -> bool {
+        matches!(
+            kind,
+            TermKind::FpAbs(_)
+                | TermKind::FpNeg(_)
+                | TermKind::FpSqrt(_, _)
+                | TermKind::FpRoundToIntegral(_, _)
+                | TermKind::FpAdd(_, _, _)
+                | TermKind::FpSub(_, _, _)
+                | TermKind::FpMul(_, _, _)
+                | TermKind::FpDiv(_, _, _)
+                | TermKind::FpRem(_, _)
+                | TermKind::FpMin(_, _)
+                | TermKind::FpMax(_, _)
+                | TermKind::FpFma(_, _, _, _)
+                | TermKind::FpLeq(_, _)
+                | TermKind::FpLt(_, _)
+                | TermKind::FpGeq(_, _)
+                | TermKind::FpGt(_, _)
+                | TermKind::FpEq(_, _)
+                | TermKind::FpIsNormal(_)
+                | TermKind::FpIsSubnormal(_)
+                | TermKind::FpIsZero(_)
+                | TermKind::FpIsInfinite(_)
+                | TermKind::FpIsNaN(_)
+                | TermKind::FpIsNegative(_)
+                | TermKind::FpIsPositive(_)
+                | TermKind::FpToFp { .. }
+                | TermKind::FpToSBV { .. }
+                | TermKind::FpToUBV { .. }
+                | TermKind::FpToReal(_)
+                | TermKind::RealToFp { .. }
+                | TermKind::SBVToFp { .. }
+                | TermKind::UBVToFp { .. }
+        )
+    }
+
+    /// Returns `true` when the current assertion set contains any FP theory
+    /// atom that the (incomplete) FP conflict checks above cannot decide.
+    ///
+    /// When this holds and no definite FP conflict was found, the solver MUST
+    /// answer `Unknown` rather than let the SAT core treat the atom as a free
+    /// Boolean — the latter would report `Sat` for formulas such as
+    /// `fp.lt x y ∧ fp.lt y x`, which are unsatisfiable.
+    pub(super) fn fp_atoms_need_theory(&self, manager: &TermManager) -> bool {
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = self.assertions.clone();
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
+            if Self::is_fp_theory_atom(&term_data.kind) {
+                return true;
+            }
+            super::term_walk::collect_structural_children(&term_data.kind, &mut stack);
+        }
+        false
     }
 }

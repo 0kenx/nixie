@@ -387,15 +387,17 @@ impl EMatchEngine {
         self.model.clear();
     }
 
-    /// Perform Model-Based Quantifier Instantiation
+    /// Perform Model-Based Quantifier Instantiation.
     ///
-    /// For each quantified formula:
-    /// 1. Evaluate it in the current model
-    /// 2. If it's false, extract witness values that make it false
-    /// 3. Generate an instantiation using those witness values
-    ///
-    /// This is much more targeted than E-matching since it only generates
-    /// instantiations that are actually violated in the current model.
+    /// For each quantified formula, generates an instantiation whose
+    /// bindings are drawn from the ground terms the current model actually
+    /// assigns values to (see `Self::find_counter_example`). This is
+    /// model-*informed* candidate selection, not full model-based conflict
+    /// detection: this module has no term evaluator, so it cannot itself
+    /// verify a candidate substitution actually falsifies the formula body
+    /// in the model. Downstream consumers (the theory/solver driving
+    /// instantiation) are responsible for checking whether an instantiated
+    /// formula is actually violated before relying on it.
     pub fn mbqi_instantiate(&mut self) {
         if !self.use_mbqi || self.model.is_empty() {
             return;
@@ -414,42 +416,51 @@ impl EMatchEngine {
         }
     }
 
-    /// Find a counter-example for a quantified formula in the current model
+    /// Find a counter-example CANDIDATE for a quantified formula, informed
+    /// by the current model.
     ///
-    /// Returns a substitution that makes the formula false in the model,
-    /// or None if the formula is satisfied by the model.
+    /// Audit note (honesty): this module tracks only opaque `TermId`s and a
+    /// `TermId -> TermId` value map (`self.model`) -- it has no AST
+    /// manager/evaluator, so it cannot actually substitute into and
+    /// re-evaluate `formula.body()` to PROVE a candidate falsifies the
+    /// formula in the model. What this function CAN honestly do -- and
+    /// previously did not -- is *consult the model*: candidate bindings are
+    /// restricted to ground terms the model actually assigns a value to,
+    /// instead of blindly cycling through every registered ground term
+    /// (model-known or not). This makes the search meaningfully
+    /// model-directed rather than blind, but it is still a heuristic
+    /// candidate selector, not a proof; callers must independently confirm
+    /// a returned witness is a genuine counter-example (e.g. by asserting
+    /// the instantiated body and observing a conflict) rather than treating
+    /// `Some(_)` as verified.
     fn find_counter_example(&self, formula: &QuantifiedFormula) -> Option<Substitution> {
-        // For each combination of ground terms, try to find one that
-        // makes the formula false in the current model
-        //
-        // In a full implementation, this would:
-        // 1. Evaluate the formula body with different assignments
-        // 2. Check if the result contradicts the model
-        // 3. Return the assignment that creates the conflict
-        //
-        // For now, we use a simplified approach: try combinations of ground terms
-
         if formula.vars().is_empty() {
             return None;
         }
 
-        // Collect all ground terms as candidates
-        let candidates: Vec<TermId> = self.ground_terms.iter().copied().collect();
+        // Only ground terms the model has an actual value for: this is
+        // what makes candidate selection "model-based" rather than an
+        // arbitrary cycle through every ground term ever registered.
+        let mut candidates: Vec<TermId> = self
+            .ground_terms
+            .iter()
+            .copied()
+            .filter(|t| self.model.contains_key(t))
+            .collect();
+        // `FxHashSet` iteration order is unspecified; sort for a
+        // deterministic, reproducible instantiation choice.
+        candidates.sort_unstable();
 
         if candidates.is_empty() {
             return None;
         }
 
-        // Try a simple heuristic: bind all variables to the first available ground term
-        // A full implementation would systematically search for counter-examples
         let mut witness = Substitution::new();
         for (idx, &var) in formula.vars().iter().enumerate() {
             let term = candidates[idx % candidates.len()];
             witness.bind(var, term);
         }
 
-        // Check if this witness actually violates the formula in the model
-        // (In a full implementation, we would evaluate the formula body)
         Some(witness)
     }
 
@@ -989,6 +1000,70 @@ mod tests {
 
         // Should produce one instantiation
         assert!(!engine.instantiations().is_empty());
+    }
+
+    // Audit regression (theories-euf): MBQI's `find_counter_example` used
+    // to cycle through EVERY registered ground term regardless of whether
+    // the model actually assigned it a value, despite being gated on
+    // `!self.model.is_empty()` and documented as "model-based". It must now
+    // genuinely consult the model: only ground terms present in the model
+    // may be used as candidate bindings.
+    #[test]
+    fn audit_mbqi_only_uses_model_known_ground_terms() {
+        let mut engine = EMatchEngine::new();
+        engine.enable_mbqi(true);
+
+        // Register two ground terms, but give the model a value for only
+        // ONE of them.
+        let known = TermId::new(10);
+        let unknown = TermId::new(20);
+        engine.add_ground_term(known);
+        engine.add_ground_term(unknown);
+        engine.set_model_value(known, TermId::new(999));
+
+        let x = VarId::new(0);
+        let formula = QuantifiedFormula::new(vec![x], TermId::new(200), vec![]);
+        engine.add_formula(formula);
+
+        engine.mbqi_instantiate();
+
+        assert_eq!(
+            engine.instantiations().len(),
+            1,
+            "a model-known ground term exists, so an instantiation should be produced"
+        );
+        let (_, witness) = &engine.instantiations()[0];
+        assert_eq!(
+            witness.get(x),
+            Some(known),
+            "the witness must bind to the model-known ground term, not the model-unknown one"
+        );
+    }
+
+    // Audit regression (theories-euf): companion case -- if NO ground term
+    // has a model value, MBQI must not fabricate an instantiation out of
+    // model-unknown terms.
+    #[test]
+    fn audit_mbqi_produces_nothing_when_no_ground_term_has_model_value() {
+        let mut engine = EMatchEngine::new();
+        engine.enable_mbqi(true);
+
+        let unknown = TermId::new(20);
+        engine.add_ground_term(unknown);
+        // The model is non-empty (gating condition) but assigns a value to
+        // a DIFFERENT term than the one registered as a ground term.
+        engine.set_model_value(TermId::new(999), TermId::new(1));
+
+        let x = VarId::new(0);
+        let formula = QuantifiedFormula::new(vec![x], TermId::new(200), vec![]);
+        engine.add_formula(formula);
+
+        engine.mbqi_instantiate();
+
+        assert!(
+            engine.instantiations().is_empty(),
+            "no ground term has a model value, so no witness should be fabricated"
+        );
     }
 
     #[test]

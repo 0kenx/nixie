@@ -9,8 +9,8 @@
 //!
 //! Reference: Z3's maxhs implementation and the MaxHS paper by Davies & Bacchus
 
-use crate::maxsat::{MaxSatResult, SoftClause, SoftId, Weight};
-use oxiz_sat::{Lit, Solver as SatSolver, SolverResult};
+use crate::maxsat::{MaxSatError, MaxSatResult, MaxSatSolver, SoftClause, SoftId, Weight};
+use oxiz_sat::{Lit, Solver as SatSolver, SolverResult, Var};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
@@ -162,8 +162,13 @@ impl MaxHsSolver {
                     self.stats.mcses_found += 1;
                     self.mcses.push(mcs);
 
-                    // Compute minimum hitting set
-                    let hitting_set = self.compute_hitting_set()?;
+                    // Compute the true minimum-cost hitting set. `None`
+                    // means the inner exact solve couldn't certify an
+                    // optimum -- report that honestly rather than
+                    // fabricating a result from a partial computation.
+                    let Some(hitting_set) = self.compute_hitting_set()? else {
+                        return Ok(MaxSatResult::Unknown);
+                    };
 
                     // Update best cost
                     let cost: Weight = hitting_set
@@ -243,36 +248,105 @@ impl MaxHsSolver {
         self.soft_clauses.iter().map(|c| c.id).collect()
     }
 
-    /// Compute minimum-cost hitting set of all MCSes
-    fn compute_hitting_set(&mut self) -> Result<FxHashSet<SoftId>, MaxHsError> {
+    /// Compute the true minimum-cost hitting set of all MCSes found so far.
+    ///
+    /// This used to greedily hit each MCS with its own locally-cheapest
+    /// clause (skipping MCSes already hit by an earlier, unrelated
+    /// choice), which is a well-known suboptimal heuristic for weighted
+    /// hitting set/set-cover: it can miss a globally cheaper selection
+    /// that hits several MCSes at once. `solve()` nonetheless reported
+    /// `MaxSatResult::Optimal` on convergence, certifying a cost bound
+    /// that was not actually proven minimal.
+    ///
+    /// This is now solved *exactly*: minimizing the total weight of
+    /// selected clauses subject to "every MCS has >=1 selected member" is
+    /// itself a weighted MaxSAT instance (one boolean `sel_s` per
+    /// candidate clause, one hard "at least one selected" clause per MCS,
+    /// one soft `¬sel_s` clause per candidate weighted by its cost), so it
+    /// is delegated to [`MaxSatSolver`] -- the same core-guided solver
+    /// this crate already proves correct -- rather than reusing the
+    /// unsound greedy shortcut.
+    ///
+    /// Returns `Ok(None)` (never a fabricated hitting set) if the inner
+    /// solve can't certify an exact optimum within its own resource
+    /// limits.
+    fn compute_hitting_set(&mut self) -> Result<Option<FxHashSet<SoftId>>, MaxHsError> {
         self.stats.hitting_sets += 1;
 
-        // Hitting set constraint: for each MCS, at least one of its clauses must be in the hitting set
-        // We want to minimize the total weight of clauses in the hitting set
+        let mut candidate_ids: Vec<SoftId> = self
+            .mcses
+            .iter()
+            .flat_map(|m| m.clauses.iter().copied())
+            .collect();
+        candidate_ids.sort_unstable_by_key(|id| id.0);
+        candidate_ids.dedup();
 
-        // For simplicity, use a greedy approach
-        // A real implementation would use MaxSAT or ILP
-
-        let mut hitting_set = FxHashSet::default();
-
-        for mcs in &self.mcses {
-            // Check if this MCS is already hit
-            let is_hit = mcs.clauses.iter().any(|id| hitting_set.contains(id));
-
-            if !is_hit {
-                // Add the minimum-weight clause from this MCS
-                if let Some(&min_id) = mcs.clauses.iter().min_by_key(|&&id| {
-                    self.soft_map
-                        .get(&id)
-                        .and_then(|&idx| self.soft_clauses.get(idx))
-                        .map(|c| &c.weight)
-                }) {
-                    hitting_set.insert(min_id);
-                }
-            }
+        if candidate_ids.is_empty() {
+            return Ok(Some(FxHashSet::default()));
         }
 
-        Ok(hitting_set)
+        let mut sel_var: FxHashMap<SoftId, Var> = FxHashMap::default();
+        for (i, &id) in candidate_ids.iter().enumerate() {
+            sel_var.insert(id, Var(i as u32));
+        }
+
+        let mut hs_solver = MaxSatSolver::new();
+
+        // Hard: every MCS must have at least one selected member.
+        for mcs in &self.mcses {
+            let clause: Vec<Lit> = mcs
+                .clauses
+                .iter()
+                .filter_map(|id| sel_var.get(id).map(|&v| Lit::pos(v)))
+                .collect();
+            if clause.is_empty() {
+                // An MCS with no candidates mapped to a selection variable
+                // can never be hit -- the hitting-set problem itself is
+                // infeasible; report honestly rather than silently
+                // proceeding.
+                return Ok(None);
+            }
+            hs_solver.add_hard(clause);
+        }
+
+        // Soft: prefer NOT selecting each clause, weighted by its cost --
+        // minimizing total selected weight is exactly maximizing
+        // satisfaction of these negated-selection soft clauses.
+        let mut hs_soft_to_id: FxHashMap<SoftId, SoftId> = FxHashMap::default();
+        for &id in &candidate_ids {
+            let var = sel_var[&id];
+            let weight = self
+                .soft_map
+                .get(&id)
+                .and_then(|&idx| self.soft_clauses.get(idx))
+                .map(|c| c.weight.clone())
+                .unwrap_or_else(Weight::one);
+            let hs_soft_id = hs_solver.add_soft_weighted([Lit::neg(var)], weight);
+            hs_soft_to_id.insert(hs_soft_id, id);
+        }
+
+        let solve_result = hs_solver.solve();
+        match solve_result {
+            Ok(MaxSatResult::Optimal) => {
+                // A candidate's "don't select" soft clause being
+                // unsatisfied means it was forced selected.
+                let hitting_set: FxHashSet<SoftId> = hs_solver
+                    .unsatisfied_soft()
+                    .filter_map(|hs_id| hs_soft_to_id.get(&hs_id).copied())
+                    .collect();
+                Ok(Some(hitting_set))
+            }
+            // Every MCS is non-empty and contributes a hard clause with
+            // >=1 literal (checked above), so the hitting-set formula is
+            // always satisfiable (select every candidate); a genuine
+            // `Unsatisfiable` here would indicate an internal
+            // inconsistency, not a real hitting-set failure.
+            Ok(MaxSatResult::Unknown) | Err(MaxSatError::Unsatisfiable) => Ok(None),
+            Ok(other) => Err(MaxHsError::SolverError(format!(
+                "unexpected hitting-set solver result: {other}"
+            ))),
+            Err(e) => Err(MaxHsError::SolverError(e.to_string())),
+        }
     }
 
     /// Block a hitting set from being found again
@@ -354,5 +428,95 @@ mod tests {
         let solver = MaxHsSolver::with_config(config);
         assert_eq!(solver.config.max_iterations, 5000);
         assert!(!solver.config.use_cores);
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression tests for the `sweep-backend-misc` triage sweep.
+    // -----------------------------------------------------------------------
+
+    /// `compute_hitting_set` used to greedily hit each MCS with its own
+    /// locally-cheapest member, ignoring cross-MCS synergy -- a
+    /// textbook-suboptimal heuristic for weighted hitting set. Three
+    /// MCSes `{a,z}`, `{b,z}`, `{c,z}` (a/b/c weight 1 each, z weight 2)
+    /// have a shared element `z` that alone hits all three for cost 2,
+    /// but the old greedy algorithm picked the "locally cheapest" `a`,
+    /// `b`, `c` for each MCS in turn (never reconsidering once `z` was
+    /// passed over), landing on cost 3 while still reporting
+    /// `MaxSatResult::Optimal`.
+    #[test]
+    fn test_compute_hitting_set_finds_true_minimum_not_greedy_suboptimal() {
+        let mut solver = MaxHsSolver::new();
+        solver.add_soft(SoftId(0), [Lit::from_dimacs(1)], Weight::from(1)); // a
+        solver.add_soft(SoftId(1), [Lit::from_dimacs(2)], Weight::from(1)); // b
+        solver.add_soft(SoftId(2), [Lit::from_dimacs(3)], Weight::from(1)); // c
+        solver.add_soft(SoftId(3), [Lit::from_dimacs(4)], Weight::from(2)); // z
+
+        solver.mcses.push(Mcs {
+            clauses: [SoftId(0), SoftId(3)].into_iter().collect(),
+            weight: Weight::from(1),
+        });
+        solver.mcses.push(Mcs {
+            clauses: [SoftId(1), SoftId(3)].into_iter().collect(),
+            weight: Weight::from(1),
+        });
+        solver.mcses.push(Mcs {
+            clauses: [SoftId(2), SoftId(3)].into_iter().collect(),
+            weight: Weight::from(1),
+        });
+
+        let hitting_set = solver
+            .compute_hitting_set()
+            .expect("exact solve should not error")
+            .expect("exact solve should certify an optimum");
+
+        let cost: Weight = hitting_set
+            .iter()
+            .filter_map(|id| solver.soft_map.get(id))
+            .filter_map(|&idx| solver.soft_clauses.get(idx))
+            .map(|c| &c.weight)
+            .fold(Weight::zero(), |acc, w| acc.add(w));
+
+        assert_eq!(
+            hitting_set,
+            [SoftId(3)].into_iter().collect::<FxHashSet<_>>(),
+            "the true minimum hitting set is just {{z}}"
+        );
+        assert_eq!(
+            cost,
+            Weight::from(2),
+            "optimal hitting-set cost is 2 (just z), not the greedy 3 (a+b+c)"
+        );
+    }
+
+    /// `update_soft_values` used to have the `Lit::sign()` polarity
+    /// backwards (`sign()` is true for *positive* literals, not
+    /// negative), so a soft clause built from a single negative unit
+    /// literal had its satisfaction reported inverted. This is exactly
+    /// the shape `compute_hitting_set`'s internal `¬sel_s` soft clauses
+    /// use, so this exercises the full `MaxHsSolver::solve` path (not
+    /// just the isolated hitting-set computation) to confirm the fix
+    /// holds end-to-end.
+    #[test]
+    fn test_maxhs_negative_literal_soft_clause_reports_correct_cost() {
+        let mut solver = MaxHsSolver::new();
+        // Hard: at least one of x0, x1, x2 must be true.
+        solver.add_hard([
+            Lit::from_dimacs(1),
+            Lit::from_dimacs(2),
+            Lit::from_dimacs(3),
+        ]);
+        // Soft: all three should be false (negative unit literals).
+        solver.add_soft(SoftId(0), [Lit::from_dimacs(-1)], Weight::from(1));
+        solver.add_soft(SoftId(1), [Lit::from_dimacs(-2)], Weight::from(1));
+        solver.add_soft(SoftId(2), [Lit::from_dimacs(-3)], Weight::from(1));
+
+        let result = solver.solve();
+        assert!(result.is_ok(), "solve should not error: {result:?}");
+        assert_eq!(
+            *solver.best_cost(),
+            Weight::from(1),
+            "exactly one of the three negative-literal soft clauses must \
+             be violated at the optimum"
+        );
     }
 }

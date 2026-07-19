@@ -5,8 +5,10 @@
 //! and NNF (Negation Normal Form). Also includes Skolemization for quantifier elimination.
 
 use super::{TermId, TermKind, TermManager};
+use crate::interner::Spur;
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::sort::SortId;
 use smallvec::SmallVec;
 
 /// Convert a boolean formula to Conjunctive Normal Form (CNF)
@@ -747,129 +749,235 @@ fn is_nnf_impl(term_id: TermId, manager: &TermManager, visited: &mut FxHashSet<T
     }
 }
 
-/// Skolemize a formula by eliminating existential quantifiers
+/// Skolemize a formula by eliminating existential quantifiers.
 ///
 /// Skolemization replaces existentially quantified variables with fresh
-/// function symbols (Skolem functions). For example:
-/// - ∃x. P(x) becomes P(sk_0)
-/// - ∀y. ∃x. P(x, y) becomes ∀y. P(f_sk_0(y), y)
+/// function symbols (Skolem functions) closed over the enclosing universally
+/// quantified variables, preserving equisatisfiability. For example:
+/// - `∃x. P(x)` becomes `P(sk!0)`
+/// - `∀y. ∃x. P(x, y)` becomes `∀y. P(sk!0(y), y)`
 ///
-/// The formula should be in NNF for best results.
+/// This mirrors the polarity-aware Skolemization tactic in
+/// [`crate::tactic::quantifier::SkolemizationTactic`]. Two correctness
+/// requirements are handled:
+///
+/// 1. **Polarity.** Only *effectively existential* quantifiers are
+///    Skolemized: an `Exists` at positive polarity, or a `Forall` at
+///    negative polarity (since `¬∀x.φ ≡ ∃x.¬φ`). Effectively *universal*
+///    quantifiers keep their binder, and their bound variables become
+///    arguments of any inner Skolem functions. Ignoring polarity would turn
+///    `¬(∃x.P(x))` into `¬P(sk!0)`, flipping UNSAT into SAT.
+/// 2. **Real argument sorts.** Skolem function arguments use the actual
+///    sorts of the governing universal variables, not a fixed sort.
+///
+/// Skolemization only descends through Boolean structure (`Not`, `And`,
+/// `Or`, `Implies`, `Ite` branches, and quantifiers). Sub-formulas at
+/// genuinely mixed polarity (an `Ite` condition, a Boolean equality) are
+/// left untouched rather than Skolemized unsoundly.
+///
+/// For a single formula this is sufficient. To Skolemize *several*
+/// assertions belonging to the same goal, use [`skolemize_with_counter`]
+/// with one shared counter across all calls: resetting the counter per
+/// assertion would let distinct existentials collide on the same Skolem
+/// symbol (e.g. `{∃x.P(x), ∃x.¬P(x)}` collapsing to `{P(sk!0), ¬P(sk!0)}`,
+/// flipping SAT into UNSAT).
 pub fn skolemize(term_id: TermId, manager: &mut TermManager) -> TermId {
     let mut counter = 0;
-    let universal_vars = Vec::new();
-    skolemize_impl(term_id, manager, &universal_vars, &mut counter)
+    skolemize_with_counter(term_id, manager, &mut counter)
 }
 
-fn skolemize_impl(
+/// Skolemize a formula, threading an external fresh-name counter.
+///
+/// See [`skolemize`] for the algorithm. Use this entry point instead of
+/// [`skolemize`] when Skolemizing multiple assertions of the same goal:
+/// pass the same `counter` to every call so that Skolem symbols never
+/// collide across assertions.
+pub fn skolemize_with_counter(
     term_id: TermId,
     manager: &mut TermManager,
-    universal_vars: &[crate::interner::Spur],
     counter: &mut usize,
 ) -> TermId {
-    match manager.get(term_id).map(|t| t.kind.clone()) {
-        None
-        | Some(
-            TermKind::True
-            | TermKind::False
-            | TermKind::Var(_)
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. },
-        ) => term_id,
+    let governing: Vec<(Spur, SortId)> = Vec::new();
+    skolemize_polar(term_id, manager, true, &governing, counter)
+}
 
-        Some(TermKind::Not(arg)) => {
-            let sk_arg = skolemize_impl(arg, manager, universal_vars, counter);
-            manager.mk_not(sk_arg)
+/// Polarity-aware Skolemization.
+///
+/// `positive` is the polarity of `term_id` in the enclosing formula
+/// (top-level formulas start positive). `governing` lists the
+/// effectively-universal variables currently in scope, with their real
+/// sorts, used as Skolem-function arguments.
+fn skolemize_polar(
+    term_id: TermId,
+    manager: &mut TermManager,
+    positive: bool,
+    governing: &[(Spur, SortId)],
+    counter: &mut usize,
+) -> TermId {
+    let kind = match manager.get(term_id) {
+        Some(t) => t.kind.clone(),
+        None => return term_id,
+    };
+
+    match kind {
+        TermKind::Not(arg) => {
+            let sk = skolemize_polar(arg, manager, !positive, governing, counter);
+            manager.mk_not(sk)
         }
 
-        Some(TermKind::And(args)) => {
-            let sk_args: SmallVec<[TermId; 4]> = args
+        TermKind::And(args) => {
+            let new_args: SmallVec<[TermId; 4]> = args
                 .iter()
-                .map(|&a| skolemize_impl(a, manager, universal_vars, counter))
+                .map(|&a| skolemize_polar(a, manager, positive, governing, counter))
                 .collect();
-            manager.mk_and(sk_args)
+            manager.mk_and(new_args)
         }
 
-        Some(TermKind::Or(args)) => {
-            let sk_args: SmallVec<[TermId; 4]> = args
+        TermKind::Or(args) => {
+            let new_args: SmallVec<[TermId; 4]> = args
                 .iter()
-                .map(|&a| skolemize_impl(a, manager, universal_vars, counter))
+                .map(|&a| skolemize_polar(a, manager, positive, governing, counter))
                 .collect();
-            manager.mk_or(sk_args)
+            manager.mk_or(new_args)
         }
 
-        Some(TermKind::Implies(lhs, rhs)) => {
-            let sk_lhs = skolemize_impl(lhs, manager, universal_vars, counter);
-            let sk_rhs = skolemize_impl(rhs, manager, universal_vars, counter);
+        TermKind::Implies(lhs, rhs) => {
+            // Antecedent is at flipped polarity, consequent keeps polarity.
+            let sk_lhs = skolemize_polar(lhs, manager, !positive, governing, counter);
+            let sk_rhs = skolemize_polar(rhs, manager, positive, governing, counter);
             manager.mk_implies(sk_lhs, sk_rhs)
         }
 
-        Some(TermKind::Forall { vars, body, .. }) => {
-            // Add universal vars to context
-            let mut new_universal_vars = universal_vars.to_vec();
-            new_universal_vars.extend(vars.iter().map(|(s, _)| *s));
-
-            let sk_body = skolemize_impl(body, manager, &new_universal_vars, counter);
-
-            // Recreate forall with skolemized body
-            // Resolve strings first to avoid borrowing issues
-            let var_names: Vec<_> = vars
-                .iter()
-                .map(|(s, sort)| (manager.resolve_str(*s).to_string(), *sort))
-                .collect();
-            manager.mk_forall(
-                var_names.iter().map(|(s, sort)| (s.as_str(), *sort)),
-                sk_body,
-            )
+        TermKind::Ite(cond, then_br, else_br) => {
+            // `cond` occurs at mixed polarity (both c and ¬c); leave it
+            // untouched. Both branches preserve the ambient polarity.
+            let sk_then = skolemize_polar(then_br, manager, positive, governing, counter);
+            let sk_else = skolemize_polar(else_br, manager, positive, governing, counter);
+            manager.mk_ite(cond, sk_then, sk_else)
         }
 
-        Some(TermKind::Exists { vars, body, .. }) => {
-            // Create Skolem substitution for existential vars
-            let mut subst = FxHashMap::default();
-
-            for (var_name, var_sort) in &vars {
-                let skolem_name = format!("sk_{}", counter);
-                *counter += 1;
-
-                // Resolve string first to avoid borrowing issues
-                let var_name_str = manager.resolve_str(*var_name).to_string();
-
-                // Get the term ID for this variable
-                let var_id = manager.mk_var(&var_name_str, *var_sort);
-
-                // Create Skolem function/constant
-                let skolem_term = if universal_vars.is_empty() {
-                    // No universal vars: create Skolem constant
-                    manager.mk_var(&skolem_name, *var_sort)
-                } else {
-                    // Has universal vars: create Skolem function
-                    // Resolve universal var names first
-                    let univ_var_names: Vec<_> = universal_vars
-                        .iter()
-                        .map(|s| manager.resolve_str(*s).to_string())
-                        .collect();
-
-                    let univ_var_ids: SmallVec<[TermId; 4]> = univ_var_names
-                        .iter()
-                        .map(|s| manager.mk_var(s, manager.sorts.bool_sort))
-                        .collect();
-
-                    manager.mk_apply(&skolem_name, univ_var_ids, *var_sort)
-                };
-
-                subst.insert(var_id, skolem_term);
+        TermKind::Forall {
+            vars,
+            body,
+            patterns,
+        } => {
+            if positive {
+                // Effectively universal: keep binder, extend governing set.
+                skolemize_universal(
+                    &vars, body, &patterns, true, positive, manager, governing, counter,
+                )
+            } else {
+                // ¬∀x.φ ≡ ∃x.¬φ: effectively existential, Skolemize it.
+                skolemize_existential(&vars, body, positive, manager, governing, counter)
             }
-
-            // Apply substitution to body
-            let substituted = manager.substitute(body, &subst);
-
-            // Recursively skolemize the result
-            skolemize_impl(substituted, manager, universal_vars, counter)
         }
 
-        // For other terms, recurse on children
+        TermKind::Exists {
+            vars,
+            body,
+            patterns,
+        } => {
+            if positive {
+                // Effectively existential: Skolemize.
+                skolemize_existential(&vars, body, positive, manager, governing, counter)
+            } else {
+                // ¬∃x.φ ≡ ∀x.¬φ: effectively universal, keep binder.
+                skolemize_universal(
+                    &vars, body, &patterns, false, positive, manager, governing, counter,
+                )
+            }
+        }
+
+        // Atoms and mixed-polarity contexts (Boolean equalities, arithmetic,
+        // uninterpreted applications, …) are left unchanged: they cannot be
+        // Skolemized soundly without polarity information we do not have
+        // here, and leaving them intact keeps the result equisatisfiable.
         _ => term_id,
+    }
+}
+
+/// Skolemize an effectively-existential quantifier: replace each bound
+/// variable with a fresh Skolem term over the governing universals, drop
+/// the binder, and recurse into the substituted body.
+fn skolemize_existential(
+    vars: &[(Spur, SortId)],
+    body: TermId,
+    positive: bool,
+    manager: &mut TermManager,
+    governing: &[(Spur, SortId)],
+    counter: &mut usize,
+) -> TermId {
+    let mut subst = FxHashMap::default();
+    for &(var_name, var_sort) in vars {
+        let var_name_str = manager.resolve_str(var_name).to_string();
+        let var_id = manager.mk_var(&var_name_str, var_sort);
+        let skolem_term = make_skolem_term(var_sort, manager, governing, counter);
+        subst.insert(var_id, skolem_term);
+    }
+
+    // Substitution is capture-avoiding, so Skolem terms (closed over the
+    // governing universals) cannot be captured by inner binders.
+    let substituted = manager.substitute(body, &subst);
+    skolemize_polar(substituted, manager, positive, governing, counter)
+}
+
+/// Handle an effectively-universal quantifier: keep the binder, add its
+/// variables to the governing set, and recurse into the body.
+#[allow(clippy::too_many_arguments)]
+fn skolemize_universal(
+    vars: &[(Spur, SortId)],
+    body: TermId,
+    patterns: &[SmallVec<[TermId; 2]>],
+    is_forall: bool,
+    positive: bool,
+    manager: &mut TermManager,
+    governing: &[(Spur, SortId)],
+    counter: &mut usize,
+) -> TermId {
+    let mut gov = governing.to_vec();
+    gov.extend(vars.iter().copied());
+    let sk_body = skolemize_polar(body, manager, positive, &gov, counter);
+
+    let var_names: Vec<_> = vars
+        .iter()
+        .map(|(n, s)| (manager.resolve_str(*n).to_string(), *s))
+        .collect();
+    let var_strs: Vec<_> = var_names
+        .iter()
+        .map(|(name, sort)| (name.as_str(), *sort))
+        .collect();
+    let patterns_owned: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns.iter().cloned().collect();
+    if is_forall {
+        manager.mk_forall_with_patterns(var_strs, sk_body, patterns_owned)
+    } else {
+        manager.mk_exists_with_patterns(var_strs, sk_body, patterns_owned)
+    }
+}
+
+/// Build the Skolem term for a variable of sort `var_sort`: a fresh
+/// constant when no universals govern it, otherwise a fresh function
+/// applied to the governing universal variables (using their real sorts).
+fn make_skolem_term(
+    var_sort: SortId,
+    manager: &mut TermManager,
+    governing: &[(Spur, SortId)],
+    counter: &mut usize,
+) -> TermId {
+    let skolem_name = format!("sk!{}", *counter);
+    *counter += 1;
+
+    if governing.is_empty() {
+        manager.mk_var(&skolem_name, var_sort)
+    } else {
+        let gov_names: Vec<_> = governing
+            .iter()
+            .map(|(n, s)| (manager.resolve_str(*n).to_string(), *s))
+            .collect();
+        let arg_ids: SmallVec<[TermId; 4]> = gov_names
+            .iter()
+            .map(|(name, sort)| manager.mk_var(name, *sort))
+            .collect();
+        manager.mk_apply(&skolem_name, arg_ids, var_sort)
     }
 }
 

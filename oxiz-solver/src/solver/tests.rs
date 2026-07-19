@@ -243,11 +243,16 @@ fn test_model_evaluation_implies() {
 
 /// Test BV comparison model extraction: 5 < x < 10 should give x in [6, 9].
 ///
-/// Known issue: BV model extraction currently returns default value (0) instead of
-/// the actual satisfying assignment. The solver correctly returns SAT, but model
-/// extraction for BV variables needs to be improved.
+/// Regression test for the BV comparison wrong-model bug: the solver returns SAT
+/// for `5 <_u x ∧ x <_u 10`, but model extraction used to yield a non-satisfying
+/// value for `x` (122, violating `x <_u 10`). The BV comparison variable is
+/// registered in both `BvSolver` and `ArithSolver`; the BV comparison path
+/// allocates *unpinned* bits for the constant operands, so `bv.get_value`
+/// returned an arbitrary value ignoring the bound, while the `ArithSolver` (which
+/// parses the constants) held the real bounds. `model_builder::build_model` now
+/// establishes sort/usage-based theory ownership: for a comparison-only BV
+/// problem the ArithSolver value is authoritative, so `x` lands in `[6, 9]`.
 #[test]
-#[ignore = "Known BV model extraction issue - solver returns SAT but model extraction returns 0"]
 fn test_bv_comparison_model_generation() {
     // Test BV comparison: 5 < x < 10 should give x in range [6, 9]
     let mut solver = Solver::new();
@@ -277,19 +282,26 @@ fn test_bv_comparison_model_generation() {
     // Check that we get a valid model
     let model = solver.model().expect("Should have model");
 
-    // Get the value of x
-    if let Some(x_value_id) = model.get(x)
-        && let Some(x_term) = manager.get(x_value_id)
-        && let TermKind::BitVecConst { value, .. } = &x_term.kind
-    {
-        let x_val = value.to_u64().unwrap_or(0);
-        // x should be in range [6, 9]
-        assert!(
-            (6..=9).contains(&x_val),
-            "Expected x in [6,9], got {}",
-            x_val
+    // The model MUST assign x (a non-vacuous check): build_model always emits a
+    // BitVecConst for every tracked BV term, so a missing or non-const value is
+    // itself a regression, not a reason to skip the range assertion.
+    let x_value_id = model.get(x).expect("model must assign a value to x");
+    let x_term = manager
+        .get(x_value_id)
+        .expect("x's model value must be a live term");
+    let TermKind::BitVecConst { value, .. } = &x_term.kind else {
+        panic!(
+            "x's model value must be a BitVecConst, got {:?}",
+            x_term.kind
         );
-    }
+    };
+    let x_val = value.to_u64().expect("8-bit value fits in u64");
+    // x should be in range [6, 9]
+    assert!(
+        (6..=9).contains(&x_val),
+        "Expected x in [6,9], got {}",
+        x_val
+    );
 }
 
 #[test]

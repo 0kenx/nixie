@@ -151,14 +151,38 @@ impl<'a> ModelEvaluator<'a> {
             TermKind::True => EvalResult::Ok(Value::Bool(true)),
             TermKind::False => EvalResult::Ok(Value::Bool(false)),
             TermKind::IntConst(n) => {
-                // Convert BigInt to i64 if possible
-                let val: i64 = n.try_into().unwrap_or(0);
-                EvalResult::Ok(Value::Int(val))
+                // Convert BigInt to i64, without silently truncating out-of-range
+                // values to 0. `Value::Int` is a fixed-width i64 representation
+                // (see model/mod.rs); a BigInt that does not fit cannot be
+                // represented faithfully, so surface an explicit error instead
+                // of fabricating a wrong value.
+                match i64::try_from(n) {
+                    Ok(val) => EvalResult::Ok(Value::Int(val)),
+                    Err(_) => EvalResult::Error(format!(
+                        "IntConst {n} does not fit in i64; wide integer model \
+                         values are not yet representable by ModelEvaluator"
+                    )),
+                }
             }
             TermKind::RealConst(r) => EvalResult::Ok(Value::Rational(*r)),
             TermKind::BitVecConst { value, width } => {
-                let val: u64 = value.try_into().unwrap_or(0);
-                EvalResult::Ok(Value::BitVec(*width, val))
+                // Convert BigInt to u64, without silently truncating out-of-range
+                // values to 0. `Value::BitVec` stores its payload as a u64
+                // magnitude alongside a (possibly >64) declared width — see
+                // `Value`'s Display impl in model/mod.rs, which zero-extends
+                // the u64 magnitude out to `width` bits. That representation
+                // is exact as long as the constant's magnitude fits in u64;
+                // when it does not (e.g. a >64-bit constant whose value
+                // itself exceeds u64::MAX), surface an explicit error instead
+                // of fabricating a wrong (truncated-to-something-else) value.
+                match u64::try_from(value) {
+                    Ok(val) => EvalResult::Ok(Value::BitVec(*width, val)),
+                    Err(_) => EvalResult::Error(format!(
+                        "BitVecConst {value} (width {width}) does not fit in u64; \
+                         wide bitvector model values with magnitude beyond u64::MAX \
+                         are not yet representable by ModelEvaluator"
+                    )),
+                }
             }
 
             // Variables - look up in model
@@ -215,6 +239,7 @@ impl<'a> ModelEvaluator<'a> {
             TermKind::Sub(a, b) => self.eval_sub(*a, *b, manager),
             TermKind::Mul(args) => self.eval_mul(args.as_slice(), manager),
             TermKind::Div(a, b) => self.eval_div(*a, *b, manager),
+            TermKind::Mod(a, b) => self.eval_mod(*a, *b, manager),
             TermKind::Neg(a) => self.eval_neg(*a, manager),
             TermKind::Lt(a, b) => self.eval_lt(*a, *b, manager),
             TermKind::Le(a, b) => self.eval_le(*a, *b, manager),
@@ -335,13 +360,41 @@ impl<'a> ModelEvaluator<'a> {
         }
     }
 
+    /// Evaluate a division node.
+    ///
+    /// The shared [`TermKind::Div`] carries SMT-LIB semantics chosen by the
+    /// operand sort: Int operands mean Euclidean integer division `(div a b)`
+    /// (`a = b*q + r`, `0 <= r < |b|`, via [`i64::div_euclid`], e.g.
+    /// `(div -7 2) = -4`); Real operands mean exact rational division. The
+    /// dispatch keys off the *sort* of the numerator term — not the evaluated
+    /// value's runtime shape — because a Real-sorted quotient such as
+    /// `(/ 3.0 2.0)` can have integer-valued operands yet must not truncate.
     fn eval_div(&mut self, a: TermId, b: TermId, manager: &TermManager) -> EvalResult {
+        let int_sorted = manager
+            .get(a)
+            .and_then(|t| manager.sorts.get(t.sort))
+            .is_some_and(|s| s.is_int());
         match (self.eval(a, manager), self.eval(b, manager)) {
             (EvalResult::Ok(v1), EvalResult::Ok(v2)) => {
                 match (v1.as_rational(), v2.as_rational()) {
                     (Some(r1), Some(r2)) => {
                         if r2 == Rational64::from_integer(0) {
+                            // Division by zero is total-but-unspecified in
+                            // SMT-LIB; the evaluator cannot invent the value.
                             EvalResult::Error("Division by zero".to_string())
+                        } else if int_sorted {
+                            if !r1.is_integer() || !r2.is_integer() {
+                                return EvalResult::Error(
+                                    "Div: integer division requires integer operands".to_string(),
+                                );
+                            }
+                            // `div_euclid` panics on the one overflowing
+                            // case (`i64::MIN.div_euclid(-1)`); report it
+                            // honestly instead.
+                            match r1.numer().checked_div_euclid(*r2.numer()) {
+                                Some(q) => EvalResult::Ok(Value::Int(q)),
+                                None => EvalResult::Error("Div: result overflows i64".to_string()),
+                            }
                         } else {
                             let r = r1 / r2;
                             if *r.denom() == 1 {
@@ -352,6 +405,43 @@ impl<'a> ModelEvaluator<'a> {
                         }
                     }
                     _ => EvalResult::Error("Div: expected numbers".to_string()),
+                }
+            }
+            (e @ EvalResult::Undefined(_), _) | (_, e @ EvalResult::Undefined(_)) => e,
+            (e @ EvalResult::Error(_), _) | (_, e @ EvalResult::Error(_)) => e,
+        }
+    }
+
+    /// Evaluate an integer modulo node.
+    ///
+    /// `mod` is integer-only in SMT-LIB and always denotes the Euclidean
+    /// remainder: `(mod a b) = a - b*(div a b)` with `0 <= (mod a b) < |b|`
+    /// (via [`i64::rem_euclid`], e.g. `(mod -7 2) = 1`). Modulo by zero is
+    /// unspecified, so the evaluator surfaces an explicit error rather than a
+    /// fabricated value.
+    fn eval_mod(&mut self, a: TermId, b: TermId, manager: &TermManager) -> EvalResult {
+        match (self.eval(a, manager), self.eval(b, manager)) {
+            (EvalResult::Ok(v1), EvalResult::Ok(v2)) => {
+                match (v1.as_rational(), v2.as_rational()) {
+                    (Some(r1), Some(r2)) => {
+                        if !r1.is_integer() || !r2.is_integer() {
+                            return EvalResult::Error("Mod: expected integer operands".to_string());
+                        }
+                        let divisor = *r2.numer();
+                        if divisor == 0 {
+                            EvalResult::Error("Modulo by zero".to_string())
+                        } else {
+                            // `rem_euclid` panics on the one overflowing case
+                            // (`i64::MIN.rem_euclid(-1)`) in both debug and
+                            // release; report it honestly instead, mirroring
+                            // `eval_div`'s `checked_div_euclid` arm.
+                            match r1.numer().checked_rem_euclid(divisor) {
+                                Some(r) => EvalResult::Ok(Value::Int(r)),
+                                None => EvalResult::Error("Mod: result overflows i64".to_string()),
+                            }
+                        }
+                    }
+                    _ => EvalResult::Error("Mod: expected numbers".to_string()),
                 }
             }
             (e @ EvalResult::Undefined(_), _) | (_, e @ EvalResult::Undefined(_)) => e,
@@ -549,5 +639,131 @@ mod tests {
         let undef = EvalResult::Undefined(TermId::from(1u32));
         assert!(!undef.is_ok());
         assert_eq!(undef.value(), None);
+    }
+
+    // Regression tests for: "Model evaluator silently truncates big integer
+    // and wide BV constants to 0" — a BigInt IntConst or BitVecConst that
+    // does not fit the fixed-width `Value` representation must surface an
+    // explicit `EvalResult::Error`, never a fabricated 0.
+
+    #[test]
+    fn test_eval_int_const_in_range_still_works() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        let t = manager.mk_int(num_bigint::BigInt::from(42));
+        let result = evaluator.eval(t, &manager);
+        assert!(matches!(result, EvalResult::Ok(Value::Int(42))));
+    }
+
+    #[test]
+    fn test_eval_int_const_too_big_for_i64_errors_not_zero() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        // 2^100 does not fit in i64; previously this silently evaluated to 0.
+        let huge = num_bigint::BigInt::from(2u64).pow(100);
+        let t = manager.mk_int(huge);
+        let result = evaluator.eval(t, &manager);
+        match result {
+            EvalResult::Error(_) => {}
+            other => panic!("expected EvalResult::Error for oversized IntConst, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_eval_int_const_negative_too_big_errors_not_zero() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        let huge_neg = -num_bigint::BigInt::from(2u64).pow(100);
+        let t = manager.mk_int(huge_neg);
+        let result = evaluator.eval(t, &manager);
+        match result {
+            EvalResult::Error(_) => {}
+            other => {
+                panic!("expected EvalResult::Error for oversized negative IntConst, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_eval_bitvec_const_in_range_still_works() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        let t = manager.mk_bitvec(num_bigint::BigInt::from(7), 8);
+        let result = evaluator.eval(t, &manager);
+        assert!(matches!(result, EvalResult::Ok(Value::BitVec(8, 7))));
+    }
+
+    #[test]
+    fn test_eval_wide_bitvec_const_errors_not_zero() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        // 128-bit constant with a value that doesn't fit u64; previously
+        // this silently evaluated to 0 via `unwrap_or(0)`.
+        let wide_val = num_bigint::BigInt::from(2u64).pow(100);
+        let t = manager.mk_bitvec(wide_val, 128);
+        let result = evaluator.eval(t, &manager);
+        match result {
+            EvalResult::Error(_) => {}
+            other => panic!("expected EvalResult::Error for wide BitVecConst, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_eval_bitvec_const_width_over_64_with_small_value_still_works() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        // Width > 64 with a magnitude that fits u64 is exactly representable
+        // (Value::BitVec's Display zero-extends the u64 magnitude out to
+        // `width` bits), so this must evaluate successfully, not error.
+        let t = manager.mk_bitvec(num_bigint::BigInt::from(3), 128);
+        let result = evaluator.eval(t, &manager);
+        assert!(matches!(result, EvalResult::Ok(Value::BitVec(128, 3))));
+    }
+
+    #[test]
+    fn test_eval_mod_min_by_neg_one_errors_not_panic() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        // `(mod i64::MIN -1)` triggers `i64::MIN.rem_euclid(-1)`, which
+        // overflows and panics in BOTH debug and release. It must surface an
+        // explicit error rather than aborting the process.
+        let min = manager.mk_int(num_bigint::BigInt::from(i64::MIN));
+        let neg_one = manager.mk_int(num_bigint::BigInt::from(-1));
+        let m = manager.mk_mod(min, neg_one);
+        let result = evaluator.eval(m, &manager);
+        match result {
+            EvalResult::Error(_) => {}
+            other => panic!("expected EvalResult::Error for (mod i64::MIN -1), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_eval_mod_euclidean_still_works() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        // (mod -7 2) = 1 under Euclidean semantics.
+        let a = manager.mk_int(num_bigint::BigInt::from(-7));
+        let b = manager.mk_int(num_bigint::BigInt::from(2));
+        let m = manager.mk_mod(a, b);
+        assert!(matches!(
+            evaluator.eval(m, &manager),
+            EvalResult::Ok(Value::Int(1))
+        ));
     }
 }

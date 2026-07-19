@@ -172,11 +172,13 @@ fn test_nia_triple_product_xyz_sat() {
     ctx.assert(y_ge);
     ctx.assert(z_ge);
 
-    // May be SAT or Unknown (the NIA solver handles it if possible)
+    // Audit fix: the NIA solver correctly finds a witness here (e.g.
+    // x=2,y=3,z=4); accepting `Unknown` was over-lenient and would silently
+    // mask a real regression in triple-product handling.
     let result = ctx.check_sat();
     assert!(
-        matches!(result, SolverResult::Sat | SolverResult::Unknown),
-        "x*y*z=24 should be SAT or Unknown, got {:?}",
+        matches!(result, SolverResult::Sat),
+        "x*y*z=24 should be SAT, got {:?}",
         result
     );
 }
@@ -205,10 +207,12 @@ fn test_nia_factored_product_xp1_ym2_sat() {
     ctx.assert(x_ge);
     ctx.assert(y_ge);
 
+    // Audit fix: the NIA solver correctly finds a witness here (e.g.
+    // x=1,y=5); accepting `Unknown` was over-lenient.
     let result = ctx.check_sat();
     assert!(
-        matches!(result, SolverResult::Sat | SolverResult::Unknown),
-        "(x+1)*(y-2)=6 with bounds should be SAT or Unknown, got {:?}",
+        matches!(result, SolverResult::Sat),
+        "(x+1)*(y-2)=6 with bounds should be SAT, got {:?}",
         result
     );
 }
@@ -251,6 +255,12 @@ fn test_nra_x_squared_eq_2_sat() {
     let eq = ctx.terms.mk_eq(square, two);
     ctx.assert(eq);
 
+    // NOTE: unlike the other `Sat | Unknown` cases in this file, this one is
+    // a genuine, currently-verified incompleteness gap rather than stale
+    // leniency: the only witnesses are the irrational algebraic numbers
+    // `x = ±sqrt(2)`, and the NRA backend currently reports `Unknown`
+    // instead of a full CAD-based algebraic witness. Tightening this to
+    // `Sat` would be dishonest until that gap is closed.
     let result = ctx.check_sat();
     assert!(
         matches!(result, SolverResult::Sat | SolverResult::Unknown),
@@ -275,10 +285,12 @@ fn test_nra_circle_inside_sat() {
     let lt = ctx.terms.mk_lt(sum, one);
     ctx.assert(lt);
 
+    // Audit fix: `(0, 0)` is a rational witness the solver correctly finds;
+    // accepting `Unknown` was over-lenient.
     let result = ctx.check_sat();
     assert!(
-        matches!(result, SolverResult::Sat | SolverResult::Unknown),
-        "x^2+y^2<1 should be SAT or Unknown, got {:?}",
+        matches!(result, SolverResult::Sat),
+        "x^2+y^2<1 should be SAT, got {:?}",
         result
     );
 }
@@ -301,10 +313,12 @@ fn test_nra_polynomial_x2_minus_2x_plus_1_sat() {
     let eq = ctx.terms.mk_eq(poly, zero);
     ctx.assert(eq);
 
+    // Audit fix: `x=1` is a rational witness the solver correctly finds;
+    // accepting `Unknown` was over-lenient.
     let result = ctx.check_sat();
     assert!(
-        matches!(result, SolverResult::Sat | SolverResult::Unknown),
-        "x^2-2x+1=0 over reals should be SAT or Unknown, got {:?}",
+        matches!(result, SolverResult::Sat),
+        "x^2-2x+1=0 over reals should be SAT, got {:?}",
         result
     );
 }
@@ -334,32 +348,32 @@ fn test_nia_push_pop_backtrack() {
     let zero = ctx.terms.mk_int(0);
     let x_lt = ctx.terms.mk_lt(x, zero);
     ctx.assert(x_lt);
-    // x*x=4 and x<0 → x=-2 is SAT
-    assert!(matches!(
-        ctx.check_sat(),
-        SolverResult::Sat | SolverResult::Unknown
-    ));
+    // x*x=4 and x<0 → x=-2 is SAT. Audit fix: the solver correctly finds
+    // this witness; accepting `Unknown` was over-lenient.
+    assert!(matches!(ctx.check_sat(), SolverResult::Sat));
 
     ctx.push();
 
     // Level 2: add x > 0 — conflicts with x < 0
     let x_gt = ctx.terms.mk_gt(x, zero);
     ctx.assert(x_gt);
-    // x<0 AND x>0 → UNSAT
+    // x<0 AND x>0 → UNSAT. This is a direct propositional contradiction on
+    // linear atoms (independent of the nonlinear x*x=4 constraint also in
+    // scope), so it requires no nonlinear-arithmetic completeness at all.
+    // Audit fix: the solver correctly detects this; accepting `Unknown`
+    // here would silently mask a real regression in basic conflict
+    // detection.
     let result_l2 = ctx.check_sat();
     assert!(
-        matches!(result_l2, SolverResult::Unsat | SolverResult::Unknown),
-        "x<0 AND x>0 should be UNSAT or Unknown, got {:?}",
+        matches!(result_l2, SolverResult::Unsat),
+        "x<0 AND x>0 should be UNSAT, got {:?}",
         result_l2
     );
 
     // Pop back to level 1
     ctx.pop();
-    // x*x=4 and x<0 is still SAT
-    assert!(matches!(
-        ctx.check_sat(),
-        SolverResult::Sat | SolverResult::Unknown
-    ));
+    // x*x=4 and x<0 is still SAT.
+    assert!(matches!(ctx.check_sat(), SolverResult::Sat));
 
     // Pop back to level 0
     ctx.pop();

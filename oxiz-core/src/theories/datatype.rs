@@ -2,7 +2,7 @@
 //!
 //! Implements the theory of algebraic datatypes with constructors, testers, and selectors.
 //!
-//! Reference: Z3's `src/smt/theory_datatype.cpp` at `../z3/src/smt/`
+//! Reference: Z3's `src/smt/theory_datatype.cpp`
 
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]

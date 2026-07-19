@@ -114,6 +114,22 @@ impl GF2Row {
     }
 }
 
+/// Record of a single `GF2Matrix::propagate` call's mutations, needed to
+/// undo them when the corresponding assignment is later retracted
+/// (backtracked) by the SAT solver.
+#[derive(Debug, Clone)]
+struct PropagateUndo {
+    /// The variable that was propagated.
+    var: Var,
+    /// The value it was propagated to (needed to know whether `rhs` was
+    /// flipped and must be flipped back).
+    value: bool,
+    /// Row indices that had `var`'s column cleared by this call. Rows are
+    /// never removed or reordered once pushed, so these indices remain
+    /// valid for the lifetime of the matrix.
+    touched_rows: Vec<usize>,
+}
+
 /// GF(2) matrix for efficient Gaussian elimination
 #[derive(Debug, Clone)]
 pub struct GF2Matrix {
@@ -127,6 +143,10 @@ pub struct GF2Matrix {
     col_to_var: Vec<Var>,
     /// Pivot row for each column (-1 if none)
     pivots: Vec<Option<usize>>,
+    /// Undo trail for `propagate`, one entry per call, in call order.
+    /// `undo_propagate` pops it LIFO, mirroring how the SAT solver
+    /// backtracks its own assignment trail.
+    undo_stack: Vec<PropagateUndo>,
 }
 
 impl GF2Matrix {
@@ -138,6 +158,7 @@ impl GF2Matrix {
             var_to_col: HashMap::new(),
             col_to_var: Vec::new(),
             pivots: Vec::new(),
+            undo_stack: Vec::new(),
         }
     }
 
@@ -220,18 +241,39 @@ impl GF2Matrix {
         XorAddResult::Added
     }
 
-    /// Back-substitute an assignment to find implied units
+    /// Back-substitute an assignment to find implied units.
+    ///
+    /// This destructively folds `var`'s value into every row that mentions
+    /// it (clearing the column and, if `value` is true, flipping `rhs`).
+    /// That mutation is only valid for as long as `var` stays assigned to
+    /// `value` on the live SAT trail; when the solver later backtracks past
+    /// this assignment, [`Self::undo_propagate`] must be called (once, in
+    /// exact LIFO order relative to other `propagate` calls) to restore the
+    /// affected rows — otherwise the matrix silently keeps reasoning as if
+    /// a retracted (or now differently-valued) assignment still held,
+    /// producing wrong unit/conflict results for the rest of the search.
+    /// Every call — even one for an unregistered variable that touches no
+    /// rows — pushes an undo-trail entry, so `undo_propagate` calls stay in
+    /// 1:1 lockstep with `propagate` calls regardless of how many rows (if
+    /// any) were actually touched.
     pub fn propagate(&mut self, var: Var, value: bool) -> Vec<XorAddResult> {
         let mut results = Vec::new();
 
-        let col = match self.var_to_col.get(&var) {
-            Some(&c) => c,
-            None => return results,
+        let Some(&col) = self.var_to_col.get(&var) else {
+            self.undo_stack.push(PropagateUndo {
+                var,
+                value,
+                touched_rows: Vec::new(),
+            });
+            return results;
         };
 
+        let mut touched_rows = Vec::new();
+
         // Update all rows containing this variable
-        for row in &mut self.rows {
+        for (row_idx, row) in self.rows.iter_mut().enumerate() {
             if row.is_set(col) {
+                touched_rows.push(row_idx);
                 row.clear(col);
                 if value {
                     row.rhs = !row.rhs;
@@ -255,7 +297,49 @@ impl GF2Matrix {
             }
         }
 
+        self.undo_stack.push(PropagateUndo {
+            var,
+            value,
+            touched_rows,
+        });
+
         results
+    }
+
+    /// Undo the most recently applied `propagate` call, restoring the rows
+    /// it touched to their pre-propagation state: re-setting the
+    /// propagated variable's column bit in each affected row and, if the
+    /// propagated value was `true`, flipping `rhs` back.
+    ///
+    /// Must be called in the same LIFO order the SAT solver backtracks its
+    /// trail (undo the most recently propagated assignment first, mirroring
+    /// `Solver`'s own phase-saving backtrack) — `propagate` destructively
+    /// folds each assignment's effect into the matrix rows, so calling this
+    /// out of order (or skipping an entry) would leave rows reflecting a
+    /// mix of assignments that never coexisted on the trail.
+    ///
+    /// Returns the `(Var, bool)` that was undone, or `None` if the undo
+    /// trail is empty.
+    pub fn undo_propagate(&mut self) -> Option<(Var, bool)> {
+        let entry = self.undo_stack.pop()?;
+
+        if let Some(&col) = self.var_to_col.get(&entry.var) {
+            for &row_idx in &entry.touched_rows {
+                let row = &mut self.rows[row_idx];
+                if entry.value {
+                    row.rhs = !row.rhs;
+                }
+                row.set(col);
+            }
+        }
+
+        Some((entry.var, entry.value))
+    }
+
+    /// Number of `propagate` calls that can currently be undone.
+    #[must_use]
+    pub fn undo_depth(&self) -> usize {
+        self.undo_stack.len()
     }
 
     /// Get the number of rows
@@ -546,8 +630,12 @@ impl XorDetector {
 
     /// Detect XOR constraints from clauses
     /// An XOR constraint x1 ⊕ x2 ⊕ ... ⊕ xn = rhs is represented as 2^(n-1) clauses
-    /// For example, x1 ⊕ x2 = 0 is represented as:
+    /// whose negative-literal parity encodes the rhs: every clause of the encoding
+    /// has the same parity of negative literals, equal to `1 - rhs`.
+    /// For example, x1 ⊕ x2 = 1 is represented as:
     ///   (x1 ∨ x2) ∧ (¬x1 ∨ ¬x2)
+    /// (each clause has an even number of negatives ⇒ parity 0 ⇒ rhs = 1), while
+    /// x1 ⊕ x2 = 0 is represented as (¬x1 ∨ x2) ∧ (x1 ∨ ¬x2) (odd parity ⇒ rhs = 0).
     pub fn detect_xor(&self, clauses: &[(Vec<Lit>, ClauseId)]) -> Vec<XorConstraint> {
         let mut xor_constraints = Vec::new();
         let mut used_clauses: HashSet<ClauseId> = HashSet::new();
@@ -663,12 +751,17 @@ impl XorDetector {
 
     /// Compute XOR RHS from polarity groups
     fn compute_xor_rhs(&self, polarity_groups: &[(Vec<bool>, ClauseId)]) -> bool {
-        // The RHS is determined by the parity of negative literals
-        // If all clauses have an even number of negatives, RHS = false
-        // If all clauses have an odd number of negatives, RHS = true
+        // A CNF encoding of x1 ⊕ ... ⊕ xn = c consists of clauses whose
+        // negative-literal parity equals `1 - c` (every falsifying assignment
+        // has parity c, so each clause forbids one parity-`1-c` assignment).
+        // Hence c = 1 - parity, i.e. rhs is true exactly when the parity of
+        // negatives is even.
+        //
+        // If all clauses have an even number of negatives, RHS = true (c = 1).
+        // If all clauses have an odd number of negatives, RHS = false (c = 0).
         let (pols, _) = &polarity_groups[0];
         let neg_count = pols.iter().filter(|&&p| !p).count();
-        neg_count % 2 == 1
+        neg_count % 2 == 0
     }
 }
 
@@ -986,6 +1079,23 @@ impl XorPropagator {
             }
             self.assignment.remove(&var);
             self.trail.pop();
+
+            // Undo this assignment's effect on the GF(2) matrix.
+            // `GF2Matrix::propagate` destructively folds each assignment
+            // into its rows (clearing the variable's column and flipping
+            // `rhs`); without this, the matrix would keep reflecting a
+            // retracted assignment after backtracking, producing wrong
+            // unit/conflict results the next time the solver explores a
+            // different branch. `propagate` and `undo_propagate` are
+            // 1:1 (one undo-trail entry per propagate call, even when no
+            // rows were touched), so popping once per retracted trail
+            // entry here stays in exact lockstep.
+            if let Some((undone_var, _)) = self.matrix.undo_propagate() {
+                debug_assert_eq!(
+                    undone_var, var,
+                    "GF2Matrix undo stack desynchronized from XorPropagator trail"
+                );
+            }
         }
         self.decision_level = level;
         self.conflict = None;
@@ -1021,8 +1131,21 @@ pub enum PropagateResult {
 
 /// XOR subsumption checker
 pub struct XorSubsumption {
-    /// Signature map for fast subsumption checking
+    /// Signature map used purely as a fast *pre-filter* for candidate
+    /// lookup: two constraints with different signatures can never be a
+    /// subset/superset match (the signature is a linear function of the
+    /// variable set), but two constraints with the *same* signature are not
+    /// guaranteed to be related — a 64-bit XOR fingerprint collides
+    /// whenever the same bit position is touched an even number of times
+    /// (e.g. `Var(0)` and `Var(64)` both map to bit 0), so an unrelated
+    /// variable set can share a signature by chance. Every candidate pulled
+    /// from this map is therefore re-verified against its real, stored
+    /// variable set in [`Self::find_subsumed`] before being reported.
     signatures: HashMap<u64, Vec<usize>>,
+    /// The actual variable set for each registered constraint index, needed
+    /// to verify (rather than merely guess from the lossy signature)
+    /// whether a candidate is genuinely subsumed.
+    var_sets: HashMap<usize, HashSet<Var>>,
 }
 
 impl XorSubsumption {
@@ -1030,6 +1153,7 @@ impl XorSubsumption {
     pub fn new() -> Self {
         Self {
             signatures: HashMap::new(),
+            var_sets: HashMap::new(),
         }
     }
 
@@ -1046,21 +1170,42 @@ impl XorSubsumption {
     pub fn add(&mut self, idx: usize, vars: &[Var]) {
         let sig = Self::compute_signature(vars);
         self.signatures.entry(sig).or_default().push(idx);
+        self.var_sets.insert(idx, vars.iter().copied().collect());
     }
 
-    /// Check if a constraint subsumes any existing constraints
-    /// Returns indices of subsumed constraints
+    /// Find previously-registered constraints subsumed by a constraint over
+    /// `vars`.
+    ///
+    /// Mirrors CNF clause subsumption: an existing constraint at index
+    /// `idx` is subsumed by (i.e. rendered redundant by) `vars` when
+    /// `vars`'s variable set is a subset of `idx`'s registered variable set
+    /// — `vars` is at least as general, so `idx` need not be kept
+    /// separately. Every signature-bucket candidate is checked against its
+    /// *real* stored variable set (see the `signatures` field doc) before
+    /// being reported, so this never returns an unverified hash collision
+    /// as if it were a genuine subsumption.
+    ///
+    /// Note this can only find matches whose variable sets share the same
+    /// 64-bit signature — in practice this reliably covers exact-duplicate
+    /// variable sets (always same signature) plus the rare deliberate
+    /// signature collision, but is not a full O(n) subset scan against
+    /// every registered constraint.
     pub fn find_subsumed(&self, vars: &[Var]) -> Vec<usize> {
         let sig = Self::compute_signature(vars);
-        let _var_set: HashSet<Var> = vars.iter().copied().collect();
+        let query: HashSet<Var> = vars.iter().copied().collect();
         let mut subsumed = Vec::new();
 
         // Check constraints with matching signature
         if let Some(candidates) = self.signatures.get(&sig) {
             for &idx in candidates {
-                // Would need access to constraints to verify subset relationship
-                // For now, just return candidates
-                subsumed.push(idx);
+                // Re-verify against the real variable set: the signature
+                // alone cannot distinguish a genuine subset relationship
+                // from an unrelated hash collision.
+                if let Some(existing_vars) = self.var_sets.get(&idx)
+                    && query.is_subset(existing_vars)
+                {
+                    subsumed.push(idx);
+                }
             }
         }
 
@@ -1197,8 +1342,9 @@ mod tests {
     fn test_xor_detector_basic() {
         let detector = XorDetector::new(2, 4);
 
-        // Create clauses for x0 ⊕ x1 = 0
-        // (x0 ∨ x1) ∧ (¬x0 ∨ ¬x1)
+        // Create clauses for x0 ⊕ x1 = 1
+        // (x0 ∨ x1) ∧ (¬x0 ∨ ¬x1) — each clause has an even number of negatives,
+        // so the encoded RHS is 1 (the two variables must differ).
         let clauses = vec![
             (vec![Lit::pos(Var(0)), Lit::pos(Var(1))], ClauseId(0)),
             (vec![Lit::neg(Var(0)), Lit::neg(Var(1))], ClauseId(1)),
@@ -1207,7 +1353,24 @@ mod tests {
         let xors = detector.detect_xor(&clauses);
         assert_eq!(xors.len(), 1);
         assert_eq!(xors[0].vars.len(), 2);
-        assert!(!xors[0].rhs);
+        assert!(xors[0].rhs);
+    }
+
+    #[test]
+    fn test_xor_detector_rhs_zero_encoding() {
+        // Finding 6: the =0 encoding (¬x0 ∨ x1) ∧ (x0 ∨ ¬x1) has an ODD number
+        // of negatives per clause, so the recovered RHS must be false (0).
+        let detector = XorDetector::new(2, 4);
+        let clauses = vec![
+            (vec![Lit::neg(Var(0)), Lit::pos(Var(1))], ClauseId(0)),
+            (vec![Lit::pos(Var(0)), Lit::neg(Var(1))], ClauseId(1)),
+        ];
+        let xors = detector.detect_xor(&clauses);
+        assert_eq!(xors.len(), 1);
+        assert!(
+            !xors[0].rhs,
+            "odd-negative-parity encoding must decode to RHS = 0"
+        );
     }
 
     #[test]
@@ -1389,6 +1552,46 @@ mod tests {
         assert!(!subsumed.is_empty());
     }
 
+    // Regression test for the subsumption item: `find_subsumed` used to
+    // report *every* signature-bucket candidate as subsumed without
+    // verifying the actual variable sets, so two totally unrelated
+    // constraints whose 64-bit XOR signatures happen to collide would be
+    // falsely reported as subsuming one another. `Var(0)` and `Var(64)`
+    // collide on the same signature bit (`var.0 as usize % 64`), so
+    // `{Var(64)}` and `{Var(0)}` share a signature despite being disjoint.
+    #[test]
+    fn test_xor_subsumption_rejects_unverified_hash_collision() {
+        let mut subsumption = XorSubsumption::new();
+        subsumption.add(0, &[Var(0)]);
+
+        // Same signature as `{Var(0)}` (both touch signature bit 0), but a
+        // completely different, non-subset variable set.
+        let subsumed = subsumption.find_subsumed(&[Var(64)]);
+        assert!(
+            subsumed.is_empty(),
+            "a bare signature collision must not be reported as subsumed: {subsumed:?}"
+        );
+    }
+
+    // A genuine subset relationship that happens to land in the same
+    // signature bucket (via the same Var(0)/Var(64) collision, this time
+    // used deliberately so the *existing* constraint's signature reduces to
+    // just Var(1)'s bit) must still be correctly detected.
+    #[test]
+    fn test_xor_subsumption_detects_true_positive_within_colliding_bucket() {
+        let mut subsumption = XorSubsumption::new();
+        // Var(0) and Var(64) cancel out in the XOR signature, leaving only
+        // Var(1)'s bit -- same signature as `{Var(1)}` alone.
+        subsumption.add(0, &[Var(0), Var(1), Var(64)]);
+
+        let subsumed = subsumption.find_subsumed(&[Var(1)]);
+        assert_eq!(
+            subsumed,
+            vec![0],
+            "{{Var(1)}} is a genuine subset of {{Var(0), Var(1), Var(64)}} and must be reported"
+        );
+    }
+
     #[test]
     fn test_xor_clause_watched() {
         let clause = XorClause::new(vec![Var(0), Var(1), Var(2)], false, vec![ClauseId(0)]);
@@ -1415,5 +1618,122 @@ mod tests {
         // After x1=true: x2 = true (from second constraint)
         // Results may contain these implications
         assert!(!results.is_empty() || matrix.num_rows() > 0);
+    }
+
+    fn assert_single_unit(results: &[XorAddResult], expected_var: Var, expected_value: bool) {
+        assert_eq!(
+            results.len(),
+            1,
+            "expected exactly one result, got {results:?}"
+        );
+        match &results[0] {
+            XorAddResult::Unit(v, val, _) => {
+                assert_eq!(*v, expected_var);
+                assert_eq!(*val, expected_value);
+            }
+            other => panic!("expected Unit, got {other:?}"),
+        }
+    }
+
+    // Regression test for the backtracking item: `GF2Matrix::propagate`
+    // destructively clears the propagated variable's column (and flips
+    // `rhs`) in every row that mentions it, with no way to undo that once
+    // the corresponding SAT assignment is retracted. Verify
+    // `undo_propagate` exactly restores row state, so re-propagating the
+    // same (or a different) value from the restored matrix reproduces the
+    // correct implication rather than silently doing nothing (which is
+    // what happens if the row's bit was left permanently cleared).
+    #[test]
+    fn test_gf2_matrix_undo_propagate_restores_row_state() {
+        let mut matrix = GF2Matrix::new();
+        // x0 + x1 = 0
+        matrix.add_constraint(&[Var(0), Var(1)], false, 0);
+        // x1 + x2 = 0
+        matrix.add_constraint(&[Var(1), Var(2)], false, 1);
+
+        assert_eq!(matrix.undo_depth(), 0);
+
+        // Propagate x0 = true: row0 (x0+x1=0) folds to x1=1 (unit).
+        let results_true = matrix.propagate(Var(0), true);
+        assert_single_unit(&results_true, Var(1), true);
+        assert_eq!(matrix.undo_depth(), 1);
+
+        // Undo it; the matrix must report exactly what was undone.
+        assert_eq!(matrix.undo_propagate(), Some((Var(0), true)));
+        assert_eq!(matrix.undo_depth(), 0);
+
+        // Re-propagating x0 = true from the restored state must reproduce
+        // the identical implication (row wasn't permanently corrupted by
+        // the first propagate/undo cycle).
+        let results_true_again = matrix.propagate(Var(0), true);
+        assert_single_unit(&results_true_again, Var(1), true);
+
+        // Undo again and propagate the *opposite* value: this must derive
+        // the opposite implication (x1 = false), proving the row's `rhs`
+        // was correctly restored too, not just the column bit.
+        assert_eq!(matrix.undo_propagate(), Some((Var(0), true)));
+        let results_false = matrix.propagate(Var(0), false);
+        assert_single_unit(&results_false, Var(1), false);
+    }
+
+    // Undo trail must stay in lockstep with `propagate` calls even for
+    // variables that were never registered in the matrix (no rows touched),
+    // since callers pop it purely by call count, not by which calls did
+    // anything.
+    #[test]
+    fn test_gf2_matrix_undo_propagate_unregistered_var_is_still_tracked() {
+        let mut matrix = GF2Matrix::new();
+        matrix.add_constraint(&[Var(0), Var(1)], false, 0);
+
+        // Var(5) is never part of any constraint.
+        let results = matrix.propagate(Var(5), true);
+        assert!(results.is_empty());
+        assert_eq!(matrix.undo_depth(), 1);
+
+        assert_eq!(matrix.undo_propagate(), Some((Var(5), true)));
+        assert_eq!(matrix.undo_depth(), 0);
+    }
+
+    // Integration-level regression test: `XorPropagator::backtrack` must
+    // restore the GF(2) matrix, not just its own assignment/trail maps, so
+    // that re-deciding a backtracked variable the *other* way produces the
+    // correct (opposite) implication instead of silently no implication at
+    // all.
+    #[test]
+    fn test_xor_propagator_backtrack_restores_matrix_for_reassignment() {
+        let mut prop = XorPropagator::new();
+
+        // x0 + x1 + x2 = 0
+        prop.add_clause(vec![Var(0), Var(1), Var(2)], false, vec![ClauseId(0)]);
+
+        // Level 1: x0 = true. Matrix row becomes x1 + x2 = 1 (not yet unit).
+        prop.propagate(Var(0), true, 1);
+
+        // Level 2: x1 = false. Row becomes unit: x2 = true.
+        prop.propagate(Var(1), false, 2);
+        let pending_first = prop.get_pending();
+        assert!(
+            pending_first.iter().any(|&(v, val, _)| v == Var(2) && val),
+            "expected x2 = true to be implied, got {pending_first:?}"
+        );
+
+        // Backtrack to level 1, undoing x1's effect on the matrix.
+        prop.backtrack(1);
+
+        // Re-decide the opposite way at level 2: x1 = true. This must
+        // derive the opposite implication for x2 (x2 = false). Before the
+        // fix, the matrix row's x1 bit had already been permanently
+        // cleared by the first (level-2) propagate call and was never
+        // restored on backtrack, so this second call would silently find
+        // nothing to update and produce no implication at all.
+        prop.propagate(Var(1), true, 2);
+        let pending_second = prop.get_pending();
+        assert!(
+            pending_second
+                .iter()
+                .any(|&(v, val, _)| v == Var(2) && !val),
+            "expected x2 = false to be implied after re-deciding x1 = true \
+             post-backtrack, got {pending_second:?}"
+        );
     }
 }

@@ -210,7 +210,7 @@ impl WasmSolver {
     /// }
     /// ```
     #[wasm_bindgen(js_name = getUnsatCore)]
-    pub fn get_unsat_core(&self) -> Result<JsValue, JsValue> {
+    pub fn get_unsat_core(&mut self) -> Result<JsValue, JsValue> {
         if self.last_result.as_deref() != Some("unsat") {
             return Err(WasmError::new(
                 WasmErrorKind::NoUnsatCore,
@@ -219,9 +219,31 @@ impl WasmSolver {
             .into());
         }
 
-        // Get the formatted unsat core from context
-        let core_str = self.ctx.format_assertions();
-        Ok(JsValue::from_str(&core_str))
+        // Ask the solver for the real unsat core (a subset of the named
+        // assertions that were actually used to derive unsatisfiability),
+        // rather than returning every assertion. This requires
+        // `produce-unsat-cores` to have been enabled before `checkSat()`.
+        match self.ctx.execute_script("(get-unsat-core)") {
+            Ok(output) => {
+                let core_str = output.join("\n");
+                if core_str.trim_start().starts_with("(error") {
+                    return Err(WasmError::new(
+                        WasmErrorKind::NoUnsatCore,
+                        format!(
+                            "Unsat core not available ({}). Call setOption('produce-unsat-cores', 'true') before checkSat()",
+                            core_str
+                        ),
+                    )
+                    .into());
+                }
+                Ok(JsValue::from_str(&core_str))
+            }
+            Err(e) => Err(WasmError::new(
+                WasmErrorKind::Unknown,
+                format!("Failed to compute unsat core: {}", e),
+            )
+            .into()),
+        }
     }
 
     /// Get a proof of unsatisfiability

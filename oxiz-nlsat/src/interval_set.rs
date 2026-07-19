@@ -464,41 +464,48 @@ impl IntervalSet {
 
     /// Restrict to integers (for integer arithmetic).
     /// Returns the interval set of integers within this set.
+    ///
+    /// For a closed lower bound `lo`, the smallest admissible integer is
+    /// `ceil(lo)`. For an *open* lower bound, `ceil(lo)` is wrong whenever
+    /// `lo` is itself an integer (it would return `lo`, which the open
+    /// bound excludes), so the smallest admissible integer is instead
+    /// `floor(lo) + 1` (equivalent to `ceil(lo)` when `lo` is non-integer,
+    /// and always `> lo`). The mirror argument applies to the upper bound:
+    /// closed uses `floor(hi)`, open uses `ceil(hi) - 1`.
     pub fn restrict_to_integers(&self) -> IntervalSet {
         let mut result = Vec::new();
+
+        let lo_bound_int = |lo: &BigRational, lo_open: bool| -> BigRational {
+            if lo_open {
+                lo.floor() + BigRational::one()
+            } else {
+                lo.ceil()
+            }
+        };
+        let hi_bound_int = |hi: &BigRational, hi_open: bool| -> BigRational {
+            if hi_open {
+                hi.ceil() - BigRational::one()
+            } else {
+                hi.floor()
+            }
+        };
 
         for interval in &self.intervals {
             match (&interval.lo, &interval.hi) {
                 (Bound::Finite(lo), Bound::Finite(hi)) => {
-                    let lo_int = if interval.lo_open {
-                        lo.ceil()
-                    } else {
-                        lo.floor()
-                    };
-                    let hi_int = if interval.hi_open {
-                        hi.floor()
-                    } else {
-                        hi.ceil()
-                    };
+                    let lo_int = lo_bound_int(lo, interval.lo_open);
+                    let hi_int = hi_bound_int(hi, interval.hi_open);
 
                     if lo_int <= hi_int {
                         result.push(Interval::closed(lo_int, hi_int));
                     }
                 }
                 (Bound::NegInf, Bound::Finite(hi)) => {
-                    let hi_int = if interval.hi_open {
-                        hi.floor()
-                    } else {
-                        hi.ceil()
-                    };
+                    let hi_int = hi_bound_int(hi, interval.hi_open);
                     result.push(Interval::at_most(hi_int));
                 }
                 (Bound::Finite(lo), Bound::PosInf) => {
-                    let lo_int = if interval.lo_open {
-                        lo.ceil()
-                    } else {
-                        lo.floor()
-                    };
+                    let lo_int = lo_bound_int(lo, interval.lo_open);
                     result.push(Interval::at_least(lo_int));
                 }
                 (Bound::NegInf, Bound::PosInf) => {
@@ -777,6 +784,72 @@ mod tests {
         assert!(ne.contains(&rat(2)));
         assert!(!ne.contains(&rat(3))); // Root excluded
         assert!(ne.contains(&rat(4)));
+    }
+
+    // Regression tests for `restrict_to_integers`: open bounds landing
+    // exactly on an integer must exclude that integer, and closed bounds
+    // must not admit integers outside the original range.
+    #[test]
+    fn test_restrict_to_integers_open_bounds_on_integer_endpoints() {
+        // (1, 5) open on both ends, both endpoints are integers.
+        let set = IntervalSet::from_interval(Interval::open(rat(1), rat(5)));
+        let ints = set.restrict_to_integers();
+
+        // 1 and 5 must be excluded (they were the open endpoints).
+        assert!(!ints.contains(&rat(1)));
+        assert!(!ints.contains(&rat(5)));
+        // 2, 3, 4 must be included.
+        assert!(ints.contains(&rat(2)));
+        assert!(ints.contains(&rat(3)));
+        assert!(ints.contains(&rat(4)));
+        // Nothing outside [1, 5] should ever appear.
+        assert!(!ints.contains(&rat(0)));
+        assert!(!ints.contains(&rat(6)));
+    }
+
+    #[test]
+    fn test_restrict_to_integers_closed_bounds_on_integer_endpoints() {
+        // [1, 5] closed on both ends.
+        let set = IntervalSet::from_interval(Interval::closed(rat(1), rat(5)));
+        let ints = set.restrict_to_integers();
+
+        assert!(ints.contains(&rat(1)));
+        assert!(ints.contains(&rat(5)));
+        assert!(ints.contains(&rat(3)));
+        assert!(!ints.contains(&rat(0)));
+        assert!(!ints.contains(&rat(6)));
+    }
+
+    #[test]
+    fn test_restrict_to_integers_open_bounds_on_non_integer_endpoints() {
+        // (1.5, 4.5) open; ceil/floor coincide with the naive formula here,
+        // so this exercises the non-integer path stays correct too.
+        let half = BigRational::new(num_bigint::BigInt::from(1), num_bigint::BigInt::from(2));
+        let lo = rat(1) + half.clone();
+        let hi = rat(4) + half;
+        let set = IntervalSet::from_interval(Interval::open(lo, hi));
+        let ints = set.restrict_to_integers();
+
+        assert!(!ints.contains(&rat(1)));
+        assert!(ints.contains(&rat(2)));
+        assert!(ints.contains(&rat(3)));
+        assert!(ints.contains(&rat(4)));
+        assert!(!ints.contains(&rat(5)));
+    }
+
+    #[test]
+    fn test_restrict_to_integers_half_open_at_most_at_least() {
+        // (-inf, 5) open upper bound at an integer: 5 excluded, 4 included.
+        let below = IntervalSet::from_interval(Interval::less_than(rat(5)));
+        let ints_below = below.restrict_to_integers();
+        assert!(!ints_below.contains(&rat(5)));
+        assert!(ints_below.contains(&rat(4)));
+
+        // (1, +inf) open lower bound at an integer: 1 excluded, 2 included.
+        let above = IntervalSet::from_interval(Interval::greater_than(rat(1)));
+        let ints_above = above.restrict_to_integers();
+        assert!(!ints_above.contains(&rat(1)));
+        assert!(ints_above.contains(&rat(2)));
     }
 
     // Property-based tests using proptest

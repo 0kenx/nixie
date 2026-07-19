@@ -90,10 +90,10 @@ mod backtrack_basic_properties {
 
             solver.pop();
 
-            // Original assertion should still be active
-            // (we can't directly check, but solver should not crash)
+            // Original assertion (x = n) is a single satisfiable equality;
+            // after popping the y-scope the solver must decide it as SAT.
             let result = solver.check(&mut tm);
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result, SolverResult::Sat);
         }
 
         /// Test that popping below initial level is prevented
@@ -109,10 +109,12 @@ mod backtrack_basic_properties {
                 solver.pop();
             }));
 
-            // Should either panic or handle gracefully
-            // Level should not go negative
+            // Should either panic or handle gracefully.  If pop was handled
+            // gracefully, the level must remain exactly at the initial level
+            // (asserting `>= 0` on a usize is vacuously true and proves
+            // nothing).
             if pop_result.is_ok() {
-                prop_assert!(solver.context_level() >= 0);
+                prop_assert_eq!(solver.context_level(), initial_level);
             }
         }
 
@@ -139,16 +141,16 @@ mod backtrack_basic_properties {
             // Level 1: x = c1
             solver.assert(eq1, &mut tm);
 
-            // Check
+            // (x=c1 ∨ x=c2) ∧ x=c1 is satisfiable (x=c1).
             let result1 = solver.check(&mut tm);
-            prop_assert!(matches!(result1, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result1, SolverResult::Sat);
 
             // Pop back to level 0
             solver.pop();
 
-            // Should still be satisfiable at level 0
+            // The bare disjunction (x=c1 ∨ x=c2) remains satisfiable.
             let result0 = solver.check(&mut tm);
-            prop_assert!(matches!(result0, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result0, SolverResult::Sat);
         }
     }
 }
@@ -170,9 +172,10 @@ mod trail_consistency_properties {
 
             solver.assert(assertion, &mut tm);
 
-            // Trail should have exactly one assertion
+            // After exactly one assertion the trail must hold at least that
+            // assertion (asserting `>= 0` on a usize proves nothing).
             let trail_size = solver.num_assertions();
-            prop_assert!(trail_size >= 0);
+            prop_assert!(trail_size >= 1);
         }
 
         /// Test that trail grows monotonically within a scope
@@ -371,16 +374,16 @@ mod backtrack_conflict_properties {
             let eq1 = tm.mk_eq(x, one);
             solver.assert(eq1, &mut tm);
 
-            // This should be unsat
+            // x=0 ∧ x=1 is a decidable contradiction → UNSAT.
             let result = solver.check(&mut tm);
-            prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+            prop_assert_eq!(result, SolverResult::Unsat);
 
             // Backtrack to level 1
             solver.pop();
 
-            // Should be sat again at level 1
+            // Only x=0 remains → SAT.
             let result1 = solver.check(&mut tm);
-            prop_assert!(matches!(result1, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result1, SolverResult::Sat);
         }
 
         /// Test that learned clauses survive backtracking
@@ -402,17 +405,16 @@ mod backtrack_conflict_properties {
             let not_x = tm.mk_not(x);
             solver.assert(not_x, &mut tm);
 
-            // Should learn that y must be true
+            // (x ∨ y) ∧ ¬x forces y = true → SAT.
             let result1 = solver.check(&mut tm);
-            prop_assert!(matches!(result1, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result1, SolverResult::Sat);
 
             // Backtrack
             solver.pop();
 
-            // The learned clause (that y follows from ¬x) may still apply
-            // At level 0, should still be sat
+            // At level 0 the bare clause (x ∨ y) is still satisfiable → SAT.
             let result0 = solver.check(&mut tm);
-            prop_assert!(matches!(result0, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result0, SolverResult::Sat);
         }
 
         /// Test that backtracking handles theory conflicts
@@ -440,16 +442,17 @@ mod backtrack_conflict_properties {
                 let le = tm.mk_le(x, tb);
                 solver.assert(le, &mut tm);
 
-                // Should be unsat
+                // x >= a ∧ x <= b with a > b is a decidable QF_LIA
+                // contradiction → UNSAT.
                 let result = solver.check(&mut tm);
-                prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+                prop_assert_eq!(result, SolverResult::Unsat);
 
                 // Backtrack
                 solver.pop();
 
-                // Should be sat at level 0
+                // Only x >= a remains → SAT.
                 let result0 = solver.check(&mut tm);
-                prop_assert!(matches!(result0, SolverResult::Sat | SolverResult::Unknown));
+                prop_assert_eq!(result0, SolverResult::Sat);
             }
         }
     }
@@ -474,19 +477,19 @@ mod backtrack_incremental_properties {
             let ge = tm.mk_ge(x, zero);
             solver.assert(ge, &mut tm);
             let result1 = solver.check(&mut tm);
-            prop_assert!(matches!(result1, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result1, SolverResult::Sat);
 
-            // Push and check 2: x <= n
+            // Push and check 2: x >= 0 ∧ x <= n with n >= 1 is satisfiable.
             solver.push();
             let le = tm.mk_le(x, c);
             solver.assert(le, &mut tm);
             let result2 = solver.check(&mut tm);
-            prop_assert!(matches!(result2, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result2, SolverResult::Sat);
 
-            // Pop and check 3: should still be sat
+            // Pop and check 3: only x >= 0 remains → SAT.
             solver.pop();
             let result3 = solver.check(&mut tm);
-            prop_assert!(matches!(result3, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result3, SolverResult::Sat);
         }
 
         /// Test that multiple check calls are consistent
@@ -521,18 +524,19 @@ mod backtrack_incremental_properties {
             solver.assert(tm.mk_eq(x, zero), &mut tm);
             solver.assert(tm.mk_eq(x, one), &mut tm);
 
+            // x=0 ∧ x=1 is a decidable contradiction → UNSAT.
             let result_before = solver.check(&mut tm);
-            prop_assert!(matches!(result_before, SolverResult::Unsat | SolverResult::Unknown));
+            prop_assert_eq!(result_before, SolverResult::Unsat);
 
             // Reset
             solver.reset();
 
-            // After reset, should be able to solve fresh problems
+            // After reset, the fresh single equality y=0 is satisfiable → SAT.
             let y = tm.mk_var("y", tm.sorts.int_sort);
             solver.assert(tm.mk_eq(y, zero), &mut tm);
 
             let result_after = solver.check(&mut tm);
-            prop_assert!(matches!(result_after, SolverResult::Sat | SolverResult::Unknown));
+            prop_assert_eq!(result_after, SolverResult::Sat);
         }
     }
 }

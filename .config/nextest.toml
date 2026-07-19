@@ -1,0 +1,26 @@
+# nextest configuration for the oxiz workspace.
+#
+# `oxiz-cli` ships a handful of tests that spawn the real `oxiz` binary as a
+# subprocess and race it against a wall-clock deadline (the `--timeout`
+# regression tests in `tests/audit_cli_p2.rs` and
+# `tests/audit_sweep_frontends.rs`) or measure its wall-clock duration
+# (`tests/benchmark.rs`'s `bench_*` tests). Under nextest's default
+# concurrency, many of these can run at once, each spawning its own
+# CPU-bound child solver; the resulting CPU oversubscription was observed to
+# turn a 2s `--timeout` into tens to hundreds of seconds of real wall time,
+# which starves the very timing margins these tests rely on and makes them
+# flaky. `supervise_timeout` (oxiz-cli/src/main.rs) already mitigates the
+# *supervisor* side of this (a dedicated, non-solving watchdog process), but
+# it cannot help once the machine itself is oversubscribed by many parallel
+# test processes each spawning their own solver child.
+#
+# Force this subset into a single-threaded serial group so at most one such
+# subprocess-racing/timing test runs at a time, regardless of the overall
+# `--test-threads` nextest is running with.
+[test-groups]
+oxiz-cli-subprocess = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(oxiz-cli) and (test(timeout) or test(bench))'
+test-group = 'oxiz-cli-subprocess'
+threads-required = 1

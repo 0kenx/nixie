@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
 //! Inprocessing techniques for clause database optimization.
 //!
 //! This module implements various inprocessing techniques that can be

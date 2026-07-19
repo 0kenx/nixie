@@ -79,3 +79,10 @@ path = "fuzz_targets/fuzz_tactics.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_parse_and_solve"
+path = "fuzz_targets/fuzz_parse_and_solve.rs"
+test = false
+doc = false
+bench = false

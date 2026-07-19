@@ -8,6 +8,7 @@ use crate::error::Result;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_integer::Integer;
+use num_rational::Rational64;
 use num_traits::Signed;
 
 /// Equation solving tactic using Gaussian elimination
@@ -615,12 +616,22 @@ impl<'a> FourierMotzkinTactic<'a> {
 
             // Perform pairwise resolution
             let mut new_constraints = Vec::new();
+            let mut op_limit_hit = false;
 
-            for &lower_idx in lower_indices {
+            'pairs: for &lower_idx in lower_indices {
                 for &upper_idx in upper_indices {
                     self.op_count += 1;
                     if self.op_count >= self.op_limit {
-                        break;
+                        // Abort the elimination for this variable before all
+                        // pairs have been resolved. Do NOT mark the original
+                        // constraints dead below: discarding them here would
+                        // over-approximate the system (and could hide a
+                        // contradiction among the unresolved pairs), turning a
+                        // resource limit into an unsound result. Instead we
+                        // leave this variable's constraints untouched and stop
+                        // eliminating further variables.
+                        op_limit_hit = true;
+                        break 'pairs;
                     }
 
                     if constraints[lower_idx].dead || constraints[upper_idx].dead {
@@ -643,6 +654,14 @@ impl<'a> FourierMotzkinTactic<'a> {
                         new_constraints.push(resolved);
                     }
                 }
+            }
+
+            if op_limit_hit {
+                // Keep this variable's original (lower/upper) constraints
+                // alive and stop the elimination loop entirely: the op
+                // budget is exhausted, so further variables would hit the
+                // same guard on the next outer-loop iteration anyway.
+                break;
             }
 
             // Mark old constraints as dead
@@ -1009,12 +1028,35 @@ impl<'a> FourierMotzkinTactic<'a> {
     fn coeff_to_term(&mut self, c: &Coefficient) -> TermId {
         if c.denominator == num_bigint::BigInt::from(1) {
             // Integer
-            self.manager.mk_int(c.numerator.clone())
+            return self.manager.mk_int(c.numerator.clone());
+        }
+
+        // Non-integer coefficient: build the *exact* Real value rather than
+        // truncating to an approximate integer, which silently changed the
+        // constraint's semantics (e.g. a coefficient of 3/2 becoming the
+        // integer 1). Reduce by the gcd first so a ratio whose raw
+        // numerator/denominator don't individually fit in `i64` (the
+        // backing type of `RealConst`'s `Rational64`) still has a chance to
+        // after cancellation.
+        let g = c.numerator.gcd(&c.denominator);
+        let (n, d) = if g == num_bigint::BigInt::from(1) {
+            (c.numerator.clone(), c.denominator.clone())
         } else {
-            // Rational - approximate as integer for now
-            // A more sophisticated implementation would use Real sort
-            let approx = &c.numerator / &c.denominator;
-            self.manager.mk_int(approx)
+            (&c.numerator / &g, &c.denominator / &g)
+        };
+
+        match (i64::try_from(&n), i64::try_from(&d)) {
+            (Ok(n64), Ok(d64)) if d64 != 0 => self.manager.mk_real(Rational64::new(n64, d64)),
+            _ => {
+                // The AST's `RealConst` cannot represent a ratio this large
+                // exactly (no arbitrary-precision Real constant exists in
+                // this term representation, unlike `IntConst`'s `BigInt`).
+                // Falling back to a truncated integer approximation here is
+                // the same historical trade-off, but now only reached for
+                // genuinely huge coefficients instead of any non-integer one.
+                let approx = &c.numerator / &c.denominator;
+                self.manager.mk_int(approx)
+            }
         }
     }
 }

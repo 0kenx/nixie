@@ -10,7 +10,7 @@
 //!
 //! Reference: Modern MaxSAT solvers and Z3's optimization framework
 
-use crate::solver::NlsatSolver;
+use crate::solver::{NlsatSolver, SolverResult};
 use crate::types::{BoolVar, Literal};
 use rustc_hash::FxHashMap;
 
@@ -93,8 +93,6 @@ pub struct MaxSatSolver {
     best_cost: Option<usize>,
     /// Best model found so far.
     best_model: Option<FxHashMap<BoolVar, bool>>,
-    /// Next fresh boolean variable ID.
-    next_bool_var: BoolVar,
 }
 
 impl MaxSatSolver {
@@ -108,8 +106,19 @@ impl MaxSatSolver {
             stats: MaxSatStats::default(),
             best_cost: None,
             best_model: None,
-            next_bool_var: 1,
         }
+    }
+
+    /// Allocate a fresh boolean variable in the underlying solver.
+    ///
+    /// Callers MUST use this (rather than inventing arbitrary
+    /// [`BoolVar`] indices) to build the [`Literal`]s passed to
+    /// [`Self::add_hard`]/[`Self::add_soft`], since [`Self::solve`] also
+    /// allocates fresh relaxation variables internally; only variables
+    /// obtained from the same underlying solver are guaranteed not to
+    /// collide with them.
+    pub fn new_bool_var(&mut self) -> BoolVar {
+        self.solver.new_bool_var()
     }
 
     /// Add a hard constraint (must be satisfied).
@@ -123,7 +132,30 @@ impl MaxSatSolver {
             .push(SoftConstraint::new(clause, weight));
     }
 
-    /// Solve MaxSAT using simplified linear search approach.
+    /// Solve MaxSAT using a linear search with model-blocking.
+    ///
+    /// Each soft constraint `c` with weight `w` is relaxed into
+    /// `(c OR relax_var)`, so any satisfying assignment of
+    /// `hard_constraints AND relaxed_soft_constraints` exists (relax_vars
+    /// can always be forced true). The search repeatedly:
+    ///
+    /// 1. Solves for *some* satisfying assignment.
+    /// 2. Computes its true cost (sum of weights of soft constraints whose
+    ///    relaxation variable was assigned `true`, i.e. genuinely
+    ///    violated) by reading the solver's actual model.
+    /// 3. Records it if it improves on the best cost found so far.
+    /// 4. Asserts a *blocking clause* that excludes exactly this
+    ///    relaxation-variable assignment, forcing the next iteration to
+    ///    find a different one.
+    ///
+    /// The relaxation-variable assignment space is finite
+    /// (`2^num_soft_constraints`), so this search is a sound (if not
+    /// asymptotically optimal) enumeration: it terminates either by
+    /// exhausting every distinct assignment (solver returns `Unsat`, which
+    /// proves the best cost found is the true optimum) or by finding cost
+    /// `0` (which is trivially optimal). If the iteration budget is
+    /// exhausted before either happens, the result is honestly reported as
+    /// `Unknown` rather than an unproven `Optimal`.
     pub fn solve(&mut self) -> MaxSatResult {
         // Initialize by adding relaxation variables
         self.initialize_relaxations();
@@ -143,68 +175,112 @@ impl MaxSatSolver {
             }
         }
 
-        // Linear search: try to minimize cost by forcing relaxation vars to false
         let total_weight: usize = self.soft_constraints.iter().map(|s| s.weight).sum();
+        let mut proven_optimal = false;
 
-        // Start with all soft constraints enabled (relaxation vars = false)
-        // and incrementally allow violations
-        // Note: Currently breaks on first SAT result; future iterations will add constraint strengthening
-        #[allow(clippy::never_loop)]
         while self.stats.iterations < self.config.max_iterations {
             self.stats.iterations += 1;
             self.stats.sat_calls += 1;
 
-            // Try to solve with current configuration
             let result = self.solver.solve();
 
             match result {
-                crate::solver::SolverResult::Sat => {
-                    // Found a model - calculate its cost
+                SolverResult::Sat => {
+                    // Found a model - calculate its REAL cost from the
+                    // solver's actual relaxation-variable assignments.
                     let current_cost = self.calculate_current_cost();
 
-                    if self.best_cost.is_none()
-                        || current_cost < self.best_cost.expect("best_cost set during optimization")
-                    {
+                    if self.best_cost.is_none_or(|best| current_cost < best) {
                         self.best_cost = Some(current_cost);
                         self.stats.upper_bound = Some(current_cost);
                         self.best_model = Some(self.extract_model());
                     }
 
-                    // Found optimal solution
+                    if current_cost == 0 {
+                        // No soft constraint was violated: this is
+                        // trivially globally optimal, no need to search
+                        // further.
+                        proven_optimal = true;
+                        break;
+                    }
+
+                    let block_clause = self.blocking_clause();
+                    if block_clause.is_empty() {
+                        // No relaxable soft constraints; nothing left to
+                        // search (cost is fixed at `current_cost`).
+                        proven_optimal = true;
+                        break;
+                    }
+                    // Forbid this exact relaxation-variable assignment so
+                    // the next iteration must find a genuinely different
+                    // (and thus potentially cheaper) one.
+                    self.solver.add_clause(block_clause);
+                }
+                SolverResult::Unsat => {
+                    let Some(best_cost) = self.best_cost else {
+                        // Even with every soft constraint fully relaxed,
+                        // no satisfying assignment exists: the hard
+                        // constraints themselves are unsatisfiable.
+                        self.stats.lower_bound = total_weight;
+                        return MaxSatResult::Unsatisfiable;
+                    };
+                    // Every distinct relaxation-variable assignment has
+                    // now been enumerated and blocked, so the best cost
+                    // found is provably the global optimum.
+                    proven_optimal = true;
+                    self.stats.lower_bound = best_cost;
                     break;
                 }
-                crate::solver::SolverResult::Unsat => {
-                    // Hard constraints are unsatisfiable
-                    self.stats.lower_bound = total_weight;
-                    return MaxSatResult::Unsatisfiable;
-                }
-                crate::solver::SolverResult::Unknown => {
+                SolverResult::Unknown => {
                     return MaxSatResult::Unknown;
                 }
             }
         }
 
-        if let Some(cost) = self.best_cost {
-            MaxSatResult::Optimal {
+        match (proven_optimal, self.best_cost) {
+            (true, Some(cost)) => MaxSatResult::Optimal {
                 cost,
                 model: self.best_model.clone().unwrap_or_default(),
-            }
-        } else {
-            MaxSatResult::Unknown
+            },
+            // The iteration budget was exhausted before optimality could
+            // be proven (or before any feasible assignment was even
+            // found): honestly report Unknown rather than fabricating an
+            // unproven "optimal" cost.
+            _ => MaxSatResult::Unknown,
         }
+    }
+
+    /// Build a clause that excludes exactly the CURRENT relaxation-variable
+    /// assignment (as read from the underlying solver's model), forcing
+    /// the next `solve()` call to find a different one. Returns an empty
+    /// vector if there are no relaxable soft constraints.
+    fn blocking_clause(&self) -> Vec<Literal> {
+        let model = self.solver.get_model();
+        self.soft_constraints
+            .iter()
+            .filter_map(|soft| {
+                let relax_var = soft.relax_var?;
+                let current = model
+                    .as_ref()
+                    .and_then(|m| m.bool_value(relax_var))
+                    .unwrap_or(false);
+                Some(if current {
+                    Literal::negative(relax_var)
+                } else {
+                    Literal::positive(relax_var)
+                })
+            })
+            .collect()
     }
 
     /// Initialize relaxation variables for soft constraints.
     fn initialize_relaxations(&mut self) {
-        // For each soft constraint, create a fresh boolean variable
+        // For each soft constraint, allocate a fresh boolean variable
+        // directly from the solver that will actually track it, so the ID
+        // is guaranteed consistent (no separate counter to fall out of
+        // sync with the solver's own variable allocation).
         for soft in &mut self.soft_constraints {
-            let relax_var = self.next_bool_var;
-            self.next_bool_var += 1;
-
-            // Allocate the variable in the solver
-            let solver_var = self.solver.new_bool_var();
-            assert_eq!(solver_var, relax_var, "Variable allocation mismatch");
-
+            let relax_var = self.solver.new_bool_var();
             soft.add_relaxation(relax_var);
         }
     }
@@ -222,26 +298,33 @@ impl MaxSatSolver {
         assumptions
     }
 
-    /// Calculate the cost of the current model.
+    /// Calculate the true cost of the solver's current model: the sum of
+    /// weights of soft constraints whose relaxation variable is assigned
+    /// `true` (meaning the original, unrelaxed clause was NOT required to
+    /// hold, i.e. the soft constraint was violated).
     fn calculate_current_cost(&self) -> usize {
-        // For simplified version, we assume all soft constraints are satisfied
-        // In a real implementation, we would query the solver for variable assignments
-        // and calculate the total weight of violated soft constraints
-        let cost = 0;
-        for soft in &self.soft_constraints {
-            if let Some(_relax_var) = soft.relax_var {
-                // Check if relaxation variable is true (constraint is violated)
-                // If violated, add soft.weight to cost
-            }
-        }
-        cost
+        let Some(model) = self.solver.get_model() else {
+            return 0;
+        };
+        self.soft_constraints
+            .iter()
+            .filter_map(|soft| {
+                let relax_var = soft.relax_var?;
+                match model.bool_value(relax_var) {
+                    Some(true) => Some(soft.weight),
+                    _ => None,
+                }
+            })
+            .sum()
     }
 
-    /// Extract the current model from the solver.
+    /// Extract the current model (all boolean variable assignments) from
+    /// the underlying solver.
     fn extract_model(&self) -> FxHashMap<BoolVar, bool> {
-        // In a real implementation, we'd query the solver for variable assignments
-        // For now, return an empty model
-        FxHashMap::default()
+        self.solver
+            .get_model()
+            .map(|model| model.bool_values.into_iter().collect())
+            .unwrap_or_default()
     }
 
     /// Extract unsat core from the solver.
@@ -354,5 +437,90 @@ mod tests {
         solver.add_soft(vec![Literal::positive(2)], 5);
         assert_eq!(solver.soft_constraints.len(), 1);
         assert_eq!(solver.soft_constraints[0].weight, 5);
+    }
+
+    /// Regression test for the audit finding: `calculate_current_cost` used
+    /// to hardcode `cost = 0` unconditionally, and `extract_model` always
+    /// returned an empty map. This constructs a problem where satisfying
+    /// ALL soft constraints is impossible (they directly contradict each
+    /// other), so the true optimal cost must be strictly positive: the
+    /// old stub would have wrongly reported `Optimal { cost: 0, .. }`.
+    #[test]
+    fn test_maxsat_reports_real_nonzero_cost_when_soft_constraints_conflict() {
+        let config = MaxSatConfig {
+            max_iterations: 100,
+            minimize_cores: true,
+            stratify: false,
+        };
+        let mut solver = MaxSatSolver::new(config);
+
+        // No hard constraints: `v` is completely free.
+        // Soft constraints directly contradict each other: "v is true"
+        // (weight 3) vs "v is false" (weight 1). Both cannot hold
+        // simultaneously, so at least one must be violated; the optimal
+        // strategy violates the cheaper one (weight 1), for a true optimal
+        // cost of 1.
+        let v = solver.new_bool_var();
+        solver.add_soft(vec![Literal::positive(v)], 3);
+        solver.add_soft(vec![Literal::negative(v)], 1);
+
+        let result = solver.solve();
+
+        match result {
+            MaxSatResult::Optimal { cost, model } => {
+                assert_eq!(
+                    cost, 1,
+                    "optimal cost must reflect the cheaper violated soft constraint"
+                );
+                assert!(
+                    !model.is_empty(),
+                    "model must be a real, non-empty assignment"
+                );
+            }
+            other => panic!("expected Optimal{{cost: 1, ..}}, got {other:?}"),
+        }
+    }
+
+    /// Regression test: when all soft constraints CAN be jointly satisfied,
+    /// the true optimal cost is 0 and the returned model must actually
+    /// satisfy them (not just claim to via a hardcoded cost).
+    #[test]
+    fn test_maxsat_zero_cost_when_all_soft_constraints_satisfiable() {
+        let config = MaxSatConfig::default();
+        let mut solver = MaxSatSolver::new(config);
+
+        let v1 = solver.new_bool_var();
+        let v2 = solver.new_bool_var();
+        solver.add_soft(vec![Literal::positive(v1)], 5);
+        solver.add_soft(vec![Literal::positive(v2)], 2);
+
+        let result = solver.solve();
+
+        match result {
+            MaxSatResult::Optimal { cost, model } => {
+                assert_eq!(cost, 0);
+                assert_eq!(model.get(&v1), Some(&true));
+                assert_eq!(model.get(&v2), Some(&true));
+            }
+            other => panic!("expected Optimal{{cost: 0, ..}}, got {other:?}"),
+        }
+    }
+
+    /// Regression test: hard constraints that are themselves unsatisfiable
+    /// must be reported as `Unsatisfiable`, independent of any soft
+    /// constraints.
+    #[test]
+    fn test_maxsat_unsat_hard_constraints() {
+        let config = MaxSatConfig::default();
+        let mut solver = MaxSatSolver::new(config);
+
+        let v1 = solver.new_bool_var();
+        let v2 = solver.new_bool_var();
+        solver.add_hard(vec![Literal::positive(v1)]);
+        solver.add_hard(vec![Literal::negative(v1)]);
+        solver.add_soft(vec![Literal::positive(v2)], 10);
+
+        let result = solver.solve();
+        assert!(matches!(result, MaxSatResult::Unsatisfiable));
     }
 }

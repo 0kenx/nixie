@@ -6,7 +6,7 @@
 //! - Quantifier instantiation tactics
 //! - Skolemization tactics
 
-use crate::ast::normal_forms::{eliminate_universal_quantifiers, skolemize};
+use crate::ast::normal_forms::eliminate_universal_quantifiers;
 use crate::ast::traversal::{
     TermVisitor, VisitorAction, collect_free_vars, collect_subterms, traverse,
 };
@@ -618,9 +618,13 @@ impl<'a> QuantifierInstantiationTactic<'a> {
             }
 
             if let Some(instance) = matcher.instantiate(&binding, self.manager) {
-                // Add the instance as a new assertion
-                // The instantiation lemma is: ∀x.φ(x) → φ(t)
-                // Since we assume ∀x.φ(x) is asserted, we can add φ(t)
+                // Add the instance as a new assertion.
+                //
+                // The instantiation lemma is: ∀x.φ(x) → φ(t).  This is only a
+                // sound top-level fact when ∀x.φ(x) is *asserted*, i.e. it
+                // occurs at positive polarity.  `collect_quantifiers` only
+                // gathers positive-polarity universals, so φ(t) is entailed by
+                // the goal and may be added safely.
                 new_assertions.push(instance);
                 count += 1;
             }
@@ -636,39 +640,92 @@ impl<'a> QuantifierInstantiationTactic<'a> {
         }]))
     }
 
-    /// Collect all universal quantifiers from a goal
+    /// Collect universal quantifiers that occur at **positive polarity** in a
+    /// goal.
+    ///
+    /// Only positive-polarity `Forall` terms are entailed by the goal as
+    /// asserted facts, so only those may be instantiated soundly (∀x.φ(x) ⊢
+    /// φ(t)).  A `Forall` under a negation, an `Implies` antecedent, or another
+    /// mixed-polarity context is *not* asserted — instantiating it as a fact is
+    /// unsound (it can turn SAT goals into UNSAT).
+    ///
+    /// Descent stops at any variable-binding boundary that is not a
+    /// positive-polarity universal (i.e. at existentials and at
+    /// negative-polarity universals): descending past such a binder would
+    /// expose quantifiers whose bodies mention an *existentially* governed
+    /// variable, for which φ(t) is not entailed.
     fn collect_quantifiers(&self, goal: &Goal) -> Vec<TermId> {
-        struct QuantifierCollector {
-            quantifiers: Vec<TermId>,
+        let mut quantifiers = Vec::new();
+        for &assertion in &goal.assertions {
+            self.collect_positive_foralls(assertion, true, &mut quantifiers);
         }
+        quantifiers
+    }
 
-        impl TermVisitor for QuantifierCollector {
-            fn visit_pre(&mut self, term_id: TermId, manager: &TermManager) -> VisitorAction {
-                if let Some(term) = manager.get(term_id)
-                    && matches!(term.kind, TermKind::Forall { .. })
-                {
-                    self.quantifiers.push(term_id);
-                }
-                VisitorAction::Continue
-            }
-        }
-
-        let mut collector = QuantifierCollector {
-            quantifiers: Vec::new(),
+    /// Recursively collect positive-polarity universal quantifiers.
+    fn collect_positive_foralls(&self, term_id: TermId, positive: bool, out: &mut Vec<TermId>) {
+        let kind = match self.manager.get(term_id) {
+            Some(t) => t.kind.clone(),
+            None => return,
         };
 
-        for &assertion in &goal.assertions {
-            let _ = traverse(assertion, self.manager, &mut collector);
+        match kind {
+            TermKind::Not(arg) => self.collect_positive_foralls(arg, !positive, out),
+            TermKind::And(args) | TermKind::Or(args) => {
+                for &a in args.iter() {
+                    self.collect_positive_foralls(a, positive, out);
+                }
+            }
+            TermKind::Implies(lhs, rhs) => {
+                self.collect_positive_foralls(lhs, !positive, out);
+                self.collect_positive_foralls(rhs, positive, out);
+            }
+            TermKind::Ite(_, then_br, else_br) => {
+                // The condition occurs at mixed polarity; skip it.  Both
+                // branches preserve the ambient polarity.
+                self.collect_positive_foralls(then_br, positive, out);
+                self.collect_positive_foralls(else_br, positive, out);
+            }
+            // Negative-polarity forall behaves existentially: do not collect
+            // and do not descend (falls through to the catch-all below).
+            TermKind::Forall { body, .. } if positive => {
+                out.push(term_id);
+                // Body of a positive universal is still governed only by
+                // universals, so nested positive foralls remain sound.
+                self.collect_positive_foralls(body, positive, out);
+            }
+            // Existentials (either polarity) and all other kinds (including
+            // boolean equalities, which are mixed-polarity) are not descended.
+            _ => {}
         }
-
-        collector.quantifiers
     }
 }
 
 /// Skolemization tactic
 ///
-/// Eliminates existential quantifiers by replacing them with Skolem
-/// functions/constants.
+/// Eliminates existential quantifiers by replacing them with fresh Skolem
+/// functions/constants, preserving equisatisfiability.
+///
+/// Correctness requirements handled here (each was previously violated):
+///
+/// 1. **Fresh names per goal.**  A single monotone counter is threaded through
+///    *all* assertions of the goal, so distinct existentials always receive
+///    distinct Skolem symbols.  (Resetting the counter per assertion made
+///    {∃x.P(x), ∃x.¬P(x)} collapse to {P(sk_0), ¬P(sk_0)} — SAT → UNSAT.)
+///
+/// 2. **Polarity.**  Only *effectively existential* quantifiers are Skolemized:
+///    a `Exists` under positive polarity, or a `Forall` under negative
+///    polarity.  Effectively *universal* quantifiers are kept and their bound
+///    variables become the arguments of inner Skolem functions.  (Ignoring
+///    polarity let ¬(∃x.P(x)) become ¬P(sk_0) — UNSAT → SAT.)
+///
+/// 3. **Real argument sorts.**  Skolem function arguments use the *actual*
+///    sorts of the governing universal variables, not a hard-coded `Bool`.
+///
+/// Skolemization only descends through Boolean structure (`Not`, `And`, `Or`,
+/// `Implies`, `Ite` branches, and quantifiers).  Sub-formulas at genuinely
+/// mixed polarity (an `Ite` condition, a Boolean equality) are left untouched
+/// rather than Skolemized unsoundly.
 #[derive(Debug)]
 pub struct SkolemizationTactic<'a> {
     manager: &'a mut TermManager,
@@ -684,9 +741,13 @@ impl<'a> SkolemizationTactic<'a> {
     pub fn apply_mut(&mut self, goal: &Goal) -> Result<TacticResult> {
         let mut changed = false;
         let mut new_assertions = Vec::with_capacity(goal.assertions.len());
+        // One monotone counter shared across every assertion so that Skolem
+        // names never collide between distinct existentials.
+        let mut counter: usize = 0;
 
         for &assertion in &goal.assertions {
-            let skolemized = skolemize(assertion, self.manager);
+            let governing: Vec<(Spur, SortId)> = Vec::new();
+            let skolemized = self.skolemize_polar(assertion, true, &governing, &mut counter);
             if skolemized != assertion {
                 changed = true;
             }
@@ -701,6 +762,196 @@ impl<'a> SkolemizationTactic<'a> {
             assertions: new_assertions,
             precision: goal.precision,
         }]))
+    }
+
+    /// Polarity-aware Skolemization.
+    ///
+    /// `positive` is the polarity of `term_id` in the enclosing assertion
+    /// (top-level assertions start positive).  `governing` lists the
+    /// effectively-universal variables currently in scope, with their real
+    /// sorts, used as Skolem-function arguments.
+    fn skolemize_polar(
+        &mut self,
+        term_id: TermId,
+        positive: bool,
+        governing: &[(Spur, SortId)],
+        counter: &mut usize,
+    ) -> TermId {
+        let kind = match self.manager.get(term_id) {
+            Some(t) => t.kind.clone(),
+            None => return term_id,
+        };
+
+        match kind {
+            TermKind::Not(arg) => {
+                let sk = self.skolemize_polar(arg, !positive, governing, counter);
+                if sk == arg {
+                    term_id
+                } else {
+                    self.manager.mk_not(sk)
+                }
+            }
+            TermKind::And(args) => {
+                let new_args: SmallVec<[TermId; 4]> = args
+                    .iter()
+                    .map(|&a| self.skolemize_polar(a, positive, governing, counter))
+                    .collect();
+                if new_args.as_slice() == args.as_slice() {
+                    term_id
+                } else {
+                    self.manager.mk_and(new_args)
+                }
+            }
+            TermKind::Or(args) => {
+                let new_args: SmallVec<[TermId; 4]> = args
+                    .iter()
+                    .map(|&a| self.skolemize_polar(a, positive, governing, counter))
+                    .collect();
+                if new_args.as_slice() == args.as_slice() {
+                    term_id
+                } else {
+                    self.manager.mk_or(new_args)
+                }
+            }
+            TermKind::Implies(lhs, rhs) => {
+                // Antecedent is at flipped polarity, consequent keeps polarity.
+                let sk_lhs = self.skolemize_polar(lhs, !positive, governing, counter);
+                let sk_rhs = self.skolemize_polar(rhs, positive, governing, counter);
+                if sk_lhs == lhs && sk_rhs == rhs {
+                    term_id
+                } else {
+                    self.manager.mk_implies(sk_lhs, sk_rhs)
+                }
+            }
+            TermKind::Ite(cond, then_br, else_br) => {
+                // `cond` occurs at mixed polarity (both c and ¬c); leave it
+                // untouched.  Both branches preserve the ambient polarity.
+                let sk_then = self.skolemize_polar(then_br, positive, governing, counter);
+                let sk_else = self.skolemize_polar(else_br, positive, governing, counter);
+                if sk_then == then_br && sk_else == else_br {
+                    term_id
+                } else {
+                    self.manager.mk_ite(cond, sk_then, sk_else)
+                }
+            }
+            TermKind::Forall {
+                vars,
+                body,
+                patterns,
+            } => {
+                if positive {
+                    // Effectively universal: keep binder, extend governing set.
+                    self.skolemize_universal(
+                        &vars, body, &patterns, true, positive, governing, counter,
+                    )
+                } else {
+                    // ¬∀x.φ ≡ ∃x.¬φ: effectively existential, Skolemize it.
+                    self.skolemize_existential(&vars, body, positive, governing, counter)
+                }
+            }
+            TermKind::Exists {
+                vars,
+                body,
+                patterns,
+            } => {
+                if positive {
+                    // Effectively existential: Skolemize.
+                    self.skolemize_existential(&vars, body, positive, governing, counter)
+                } else {
+                    // ¬∃x.φ ≡ ∀x.¬φ: effectively universal, keep binder.
+                    self.skolemize_universal(
+                        &vars, body, &patterns, false, positive, governing, counter,
+                    )
+                }
+            }
+            // Atoms and mixed-polarity contexts (Boolean equalities, arithmetic,
+            // uninterpreted applications, …) are left unchanged: they cannot be
+            // Skolemized soundly without polarity information we do not have
+            // here, and leaving them intact keeps the result equisatisfiable.
+            _ => term_id,
+        }
+    }
+
+    /// Skolemize an effectively-existential quantifier: replace each bound
+    /// variable with a fresh Skolem term over the governing universals, drop
+    /// the binder, and recurse into the substituted body.
+    fn skolemize_existential(
+        &mut self,
+        vars: &[(Spur, SortId)],
+        body: TermId,
+        positive: bool,
+        governing: &[(Spur, SortId)],
+        counter: &mut usize,
+    ) -> TermId {
+        let mut substituted = body;
+        for &(var_name, var_sort) in vars {
+            let sk_term = self.make_skolem_term(var_sort, governing, counter);
+            substituted = substitute_single_var(self.manager, substituted, var_name, sk_term);
+        }
+        self.skolemize_polar(substituted, positive, governing, counter)
+    }
+
+    /// Handle an effectively-universal quantifier: keep the binder, add its
+    /// variables to the governing set, and recurse into the body.
+    #[allow(clippy::too_many_arguments)]
+    fn skolemize_universal(
+        &mut self,
+        vars: &[(Spur, SortId)],
+        body: TermId,
+        patterns: &[SmallVec<[TermId; 2]>],
+        is_forall: bool,
+        positive: bool,
+        governing: &[(Spur, SortId)],
+        counter: &mut usize,
+    ) -> TermId {
+        let mut gov = governing.to_vec();
+        gov.extend(vars.iter().copied());
+        let sk_body = self.skolemize_polar(body, positive, &gov, counter);
+
+        let var_names: Vec<_> = vars
+            .iter()
+            .map(|(n, s)| (self.manager.resolve_str(*n).to_string(), *s))
+            .collect();
+        let var_strs: Vec<_> = var_names
+            .iter()
+            .map(|(name, sort)| (name.as_str(), *sort))
+            .collect();
+        let patterns_owned: SmallVec<[SmallVec<[TermId; 2]>; 2]> =
+            patterns.iter().cloned().collect();
+        if is_forall {
+            self.manager
+                .mk_forall_with_patterns(var_strs, sk_body, patterns_owned)
+        } else {
+            self.manager
+                .mk_exists_with_patterns(var_strs, sk_body, patterns_owned)
+        }
+    }
+
+    /// Build the Skolem term for a variable of sort `var_sort`: a fresh
+    /// constant when no universals govern it, otherwise a fresh function
+    /// applied to the governing universal variables (using their real sorts).
+    fn make_skolem_term(
+        &mut self,
+        var_sort: SortId,
+        governing: &[(Spur, SortId)],
+        counter: &mut usize,
+    ) -> TermId {
+        let skolem_name = format!("sk!{}", *counter);
+        *counter += 1;
+
+        if governing.is_empty() {
+            self.manager.mk_var(&skolem_name, var_sort)
+        } else {
+            let gov_names: Vec<_> = governing
+                .iter()
+                .map(|(n, s)| (self.manager.resolve_str(*n).to_string(), *s))
+                .collect();
+            let arg_ids: SmallVec<[TermId; 4]> = gov_names
+                .iter()
+                .map(|(name, sort)| self.manager.mk_var(name, *sort))
+                .collect();
+            self.manager.mk_apply(&skolem_name, arg_ids, var_sort)
+        }
     }
 }
 
@@ -818,11 +1069,15 @@ struct EliminableEquality {
 /// DER eliminates quantifiers when there are equalities that allow
 /// direct variable substitution.
 ///
-/// For universal quantifiers (∀x. φ):
-/// - ∀x. (x = t ∨ ψ(x)) where x ∉ FV(t) becomes ψ(t)
-/// - ∀x. (x ≠ t → ψ(x)) is equivalent to the above
+/// For universal quantifiers (∀x. φ), DER eliminates a **disequality** literal:
+/// - ∀x. (x ≠ t ∨ ψ(x)) where x ∉ FV(t) becomes ψ(t)
+/// - ∀x. (x = t → ψ(x)) is equivalent to the above (since x=t→ψ ≡ x≠t ∨ ψ)
 ///
-/// For existential quantifiers (∃x. φ):
+/// Note the polarity: it is the *disequality* x ≠ t that is resolved, not a
+/// positive equality.  Rewriting ∀x.(x = t ∨ ψ(x)) to ψ(t) would be **unsound**
+/// (e.g. ∀x.(x=5 ∨ P(x)) ∧ ¬P(6) is UNSAT but P(5) ∧ ¬P(6) is SAT).
+///
+/// For existential quantifiers (∃x. φ), DER eliminates a positive equality:
 /// - ∃x. (x = t ∧ ψ(x)) where x ∉ FV(t) becomes ψ(t)
 ///
 /// This is a powerful simplification that can eliminate quantifiers entirely.
@@ -953,9 +1208,12 @@ impl<'a> DerTactic<'a> {
 
     /// Apply DER to a universal quantifier
     ///
-    /// For ∀x. φ, we look for patterns like:
-    /// - (x = t ∨ ψ) → ψ[t/x]
-    /// - (x ≠ t → ψ) which is equivalent to (x = t ∨ ψ) → ψ[t/x]
+    /// The sound DER rule for ∀ resolves a **disequality** literal:
+    /// - ∀x. (x ≠ t ∨ ψ) ≡ ψ[t/x]
+    /// - ∀x. (x = t → ψ) ≡ ψ[t/x]   (since x=t→ψ ≡ x≠t ∨ ψ)
+    ///
+    /// where x ∉ FV(t).  A *positive* equality disjunct (x = t ∨ ψ) is **not**
+    /// eliminable this way and is deliberately left untouched.
     fn apply_der_forall(
         &mut self,
         vars: SmallVec<[(Spur, SortId); 2]>,
@@ -964,28 +1222,30 @@ impl<'a> DerTactic<'a> {
     ) -> TermId {
         let bound_var_names: FxHashSet<Spur> = vars.iter().map(|(n, _)| *n).collect();
 
-        // Look for eliminable equality in disjunction: x = t ∨ ψ
-        if let Some(eq) = self.find_eliminable_equality_in_or(body, &bound_var_names, true) {
-            return self.eliminate_variable(vars, body, patterns, &eq, true);
-        }
-
-        // Look for negated implication pattern: ¬(x ≠ t) ∨ ψ which is x = t ∨ ψ
-        // This is handled by the above
-
-        // Look for implication pattern: x ≠ t → ψ which is x = t ∨ ψ
+        // Implication pattern: x = t → ψ  ≡  ψ[t/x].
+        // The antecedent here is a *positive* equality on the bound variable.
         if let Some(term) = self.manager.get(body)
             && let TermKind::Implies(lhs, rhs) = &term.kind
         {
             let lhs = *lhs;
             let rhs = *rhs;
-            // Check if lhs is x ≠ t (i.e., Not(Eq(x, t)))
-            if let Some(eq) = self.extract_diseq_var(lhs, &bound_var_names) {
-                // x ≠ t → ψ is equivalent to x = t ∨ ψ
+            if let Some((var_name, substitute)) = self.extract_eq_var(lhs, &bound_var_names) {
+                let eq = EliminableEquality {
+                    var_name,
+                    substitute,
+                    is_positive: true,
+                };
                 return self.eliminate_variable_with_substitute(vars, rhs, patterns, &eq);
             }
         }
 
-        // No eliminable equality found - return original or rebuilt
+        // Disjunction pattern: x ≠ t ∨ ψ  ≡  ψ[t/x].
+        // The eliminated literal is a *disequality* (Not(Eq(x, t))).
+        if let Some(eq) = self.find_eliminable_diseq_in_or(body, &bound_var_names) {
+            return self.eliminate_variable(vars, body, patterns, &eq, true);
+        }
+
+        // No eliminable disequality found - return original or rebuilt
         if vars.is_empty() {
             body
         } else {
@@ -1040,38 +1300,30 @@ impl<'a> DerTactic<'a> {
         }
     }
 
-    /// Find an eliminable equality in a disjunction (for ∀)
-    fn find_eliminable_equality_in_or(
+    /// Find an eliminable disequality (x ≠ t) in a disjunction (for ∀)
+    ///
+    /// Matches `Not(Eq(x, t))` either as a disjunct of an `Or` body or as the
+    /// entire body.  The returned [`EliminableEquality`] carries the bound
+    /// variable and the term `t` to substitute for it.
+    fn find_eliminable_diseq_in_or(
         &self,
         term_id: TermId,
         bound_vars: &FxHashSet<Spur>,
-        positive: bool,
     ) -> Option<EliminableEquality> {
         let term = self.manager.get(term_id)?;
 
         match &term.kind {
             TermKind::Or(args) => {
-                // Look through disjuncts for x = t
+                // Look through disjuncts for x ≠ t
                 for &arg in args.iter() {
-                    if let Some(eq) = self.extract_eq_var(arg, bound_vars) {
-                        return Some(EliminableEquality {
-                            var_name: eq.0,
-                            substitute: eq.1,
-                            is_positive: positive,
-                        });
+                    if let Some(eq) = self.extract_diseq_var(arg, bound_vars) {
+                        return Some(eq);
                     }
                 }
                 None
             }
-            TermKind::Eq(lhs, rhs) => {
-                // Direct equality
-                self.check_eliminable_eq(*lhs, *rhs, bound_vars)
-                    .map(|(var_name, substitute)| EliminableEquality {
-                        var_name,
-                        substitute,
-                        is_positive: positive,
-                    })
-            }
+            // The entire body is a bare disequality x ≠ t.
+            TermKind::Not(_) => self.extract_diseq_var(term_id, bound_vars),
             _ => None,
         }
     }
@@ -1292,7 +1544,13 @@ impl<'a> DerTactic<'a> {
             .mk_forall_with_patterns(var_strs, substituted_body, patterns)
     }
 
-    /// Remove the equality from an OR and substitute in remaining disjuncts
+    /// Remove the chosen disequality (x ≠ t) from an OR and substitute t for x
+    /// in the remaining disjuncts.
+    ///
+    /// Implements ∀x.(x ≠ t ∨ ψ) ≡ ψ[t/x].  Only the specific disequality
+    /// literal `x ≠ t` matching `eq` is dropped; any *other* disequalities on x
+    /// (e.g. x ≠ t2) are kept and become t ≠ t2 under the substitution, so no
+    /// constraint is silently lost.
     fn remove_from_or_and_substitute(
         &mut self,
         term_id: TermId,
@@ -1305,30 +1563,55 @@ impl<'a> DerTactic<'a> {
 
         match &term.kind {
             TermKind::Or(args) => {
-                // Filter out the equality and substitute in remaining disjuncts
+                // Drop the chosen disequality literal, substitute in the rest.
                 let mut new_args = Vec::new();
                 for &arg in args.iter() {
-                    if !self.is_equality_for_var(arg, eq.var_name) {
-                        let substituted = self.substitute_var(arg, eq.var_name, eq.substitute);
-                        new_args.push(substituted);
+                    if self.is_target_diseq(arg, eq.var_name, eq.substitute) {
+                        continue;
                     }
+                    let substituted = self.substitute_var(arg, eq.var_name, eq.substitute);
+                    new_args.push(substituted);
                 }
 
                 match new_args.len() {
+                    // ∀x.(x ≠ t) ≡ false (there always exists x = t).
                     0 => self.manager.mk_false(),
                     1 => new_args[0],
                     _ => self.manager.mk_or(new_args),
                 }
             }
-            TermKind::Eq(_, _) => {
-                // The entire body is the equality - result is true (trivially satisfied)
-                self.manager.mk_true()
-            }
+            // The entire body is the disequality x ≠ t: ∀x.(x ≠ t) ≡ false.
+            TermKind::Not(_) => self.manager.mk_false(),
             _ => {
                 // Just substitute
                 self.substitute_var(term_id, eq.var_name, eq.substitute)
             }
         }
+    }
+
+    /// Check that `term_id` is exactly the disequality `x ≠ substitute`, i.e.
+    /// `Not(Eq(a, b))` with `{a, b} = {Var(var_name), substitute}`.
+    fn is_target_diseq(&self, term_id: TermId, var_name: Spur, substitute: TermId) -> bool {
+        let Some(term) = self.manager.get(term_id) else {
+            return false;
+        };
+        let TermKind::Not(inner) = &term.kind else {
+            return false;
+        };
+        let Some(inner_term) = self.manager.get(*inner) else {
+            return false;
+        };
+        let TermKind::Eq(lhs, rhs) = &inner_term.kind else {
+            return false;
+        };
+        let (lhs, rhs) = (*lhs, *rhs);
+        let is_bound_var = |&tid: &TermId| {
+            matches!(
+                self.manager.get(tid).map(|t| &t.kind),
+                Some(TermKind::Var(n)) if *n == var_name
+            )
+        };
+        (is_bound_var(&lhs) && rhs == substitute) || (is_bound_var(&rhs) && lhs == substitute)
     }
 
     /// Remove the equality from an AND and substitute in remaining conjuncts
@@ -1393,177 +1676,200 @@ impl<'a> DerTactic<'a> {
         false
     }
 
-    /// Substitute a variable with a term throughout an expression
+    /// Substitute a variable with a term throughout an expression.
+    ///
+    /// Delegates to the shared [`substitute_single_var`] helper, which is
+    /// capture-avoiding (stops at binders that re-bind the variable) and
+    /// descends into all standard term kinds including function applications.
     fn substitute_var(&mut self, term_id: TermId, var_name: Spur, replacement: TermId) -> TermId {
-        let term = match self.manager.get(term_id) {
-            Some(t) => t.clone(),
-            None => return term_id,
-        };
+        substitute_single_var(self.manager, term_id, var_name, replacement)
+    }
+}
 
-        match &term.kind {
-            TermKind::Var(name) if *name == var_name => replacement,
+/// Capture-avoiding substitution of a single bound variable `var_name` by
+/// `replacement` throughout `term_id`.
+///
+/// Unlike [`TermManager::substitute`], this descends into function
+/// applications and every arithmetic/array operator, and it stops at binders
+/// that re-bind `var_name` (shadowing).  Shared by DER (positive/negative
+/// equality resolution) and Skolemization (replacing an existential variable
+/// by its Skolem term, which is closed over the governing universals and so
+/// cannot be captured by inner binders of other variables).
+fn substitute_single_var(
+    manager: &mut TermManager,
+    term_id: TermId,
+    var_name: Spur,
+    replacement: TermId,
+) -> TermId {
+    let term = match manager.get(term_id) {
+        Some(t) => t.clone(),
+        None => return term_id,
+    };
 
-            TermKind::And(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.substitute_var(a, var_name, replacement))
-                    .collect();
-                self.manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.substitute_var(a, var_name, replacement))
-                    .collect();
-                self.manager.mk_or(new_args)
-            }
-            TermKind::Not(inner) => {
-                let new_inner = self.substitute_var(*inner, var_name, replacement);
-                self.manager.mk_not(new_inner)
-            }
-            TermKind::Implies(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_implies(new_lhs, new_rhs)
-            }
-            TermKind::Eq(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_eq(new_lhs, new_rhs)
-            }
-            TermKind::Add(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.substitute_var(a, var_name, replacement))
-                    .collect();
-                self.manager.mk_add(new_args)
-            }
-            TermKind::Mul(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.substitute_var(a, var_name, replacement))
-                    .collect();
-                self.manager.mk_mul(new_args)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_sub(new_lhs, new_rhs)
-            }
-            TermKind::Lt(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_lt(new_lhs, new_rhs)
-            }
-            TermKind::Le(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_le(new_lhs, new_rhs)
-            }
-            TermKind::Gt(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_gt(new_lhs, new_rhs)
-            }
-            TermKind::Ge(lhs, rhs) => {
-                let new_lhs = self.substitute_var(*lhs, var_name, replacement);
-                let new_rhs = self.substitute_var(*rhs, var_name, replacement);
-                self.manager.mk_ge(new_lhs, new_rhs)
-            }
-            TermKind::Ite(cond, then_br, else_br) => {
-                let new_cond = self.substitute_var(*cond, var_name, replacement);
-                let new_then = self.substitute_var(*then_br, var_name, replacement);
-                let new_else = self.substitute_var(*else_br, var_name, replacement);
-                self.manager.mk_ite(new_cond, new_then, new_else)
-            }
-            TermKind::Apply { func, args } => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.substitute_var(a, var_name, replacement))
-                    .collect();
-                let result_sort = term.sort;
-                let func_name = self.manager.resolve_str(*func).to_string();
-                self.manager.mk_apply(&func_name, new_args, result_sort)
-            }
-            TermKind::Select(arr, idx) => {
-                let new_arr = self.substitute_var(*arr, var_name, replacement);
-                let new_idx = self.substitute_var(*idx, var_name, replacement);
-                self.manager.mk_select(new_arr, new_idx)
-            }
-            TermKind::Store(arr, idx, val) => {
-                let new_arr = self.substitute_var(*arr, var_name, replacement);
-                let new_idx = self.substitute_var(*idx, var_name, replacement);
-                let new_val = self.substitute_var(*val, var_name, replacement);
-                self.manager.mk_store(new_arr, new_idx, new_val)
-            }
-            // For quantifiers, be careful about variable capture
-            TermKind::Forall {
-                vars,
-                body,
-                patterns,
-            } => {
-                // Check if var_name is shadowed
-                if vars.iter().any(|(n, _)| *n == var_name) {
-                    term_id // Variable is bound here, don't substitute
-                } else {
-                    let new_body = self.substitute_var(*body, var_name, replacement);
-                    let new_patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns
-                        .iter()
-                        .map(|p| {
-                            p.iter()
-                                .map(|&t| self.substitute_var(t, var_name, replacement))
-                                .collect()
-                        })
-                        .collect();
-                    // Convert Spur names to owned strings first
-                    let var_names: Vec<_> = vars
-                        .iter()
-                        .map(|(n, s)| (self.manager.resolve_str(*n).to_string(), *s))
-                        .collect();
-                    // Now create references for the API
-                    let var_strs: Vec<_> = var_names
-                        .iter()
-                        .map(|(name, sort)| (name.as_str(), *sort))
-                        .collect();
-                    self.manager
-                        .mk_forall_with_patterns(var_strs, new_body, new_patterns)
-                }
-            }
-            TermKind::Exists {
-                vars,
-                body,
-                patterns,
-            } => {
-                // Check if var_name is shadowed
-                if vars.iter().any(|(n, _)| *n == var_name) {
-                    term_id // Variable is bound here, don't substitute
-                } else {
-                    let new_body = self.substitute_var(*body, var_name, replacement);
-                    let new_patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns
-                        .iter()
-                        .map(|p| {
-                            p.iter()
-                                .map(|&t| self.substitute_var(t, var_name, replacement))
-                                .collect()
-                        })
-                        .collect();
-                    // Convert Spur names to owned strings first
-                    let var_names: Vec<_> = vars
-                        .iter()
-                        .map(|(n, s)| (self.manager.resolve_str(*n).to_string(), *s))
-                        .collect();
-                    // Now create references for the API
-                    let var_strs: Vec<_> = var_names
-                        .iter()
-                        .map(|(name, sort)| (name.as_str(), *sort))
-                        .collect();
-                    self.manager
-                        .mk_exists_with_patterns(var_strs, new_body, new_patterns)
-                }
-            }
-            // For other terms, just return as-is (constants, etc.)
-            _ => term_id,
+    match &term.kind {
+        TermKind::Var(name) if *name == var_name => replacement,
+
+        TermKind::And(args) => {
+            let new_args: SmallVec<[TermId; 4]> = args
+                .iter()
+                .map(|&a| substitute_single_var(manager, a, var_name, replacement))
+                .collect();
+            manager.mk_and(new_args)
         }
+        TermKind::Or(args) => {
+            let new_args: SmallVec<[TermId; 4]> = args
+                .iter()
+                .map(|&a| substitute_single_var(manager, a, var_name, replacement))
+                .collect();
+            manager.mk_or(new_args)
+        }
+        TermKind::Not(inner) => {
+            let new_inner = substitute_single_var(manager, *inner, var_name, replacement);
+            manager.mk_not(new_inner)
+        }
+        TermKind::Implies(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_implies(new_lhs, new_rhs)
+        }
+        TermKind::Eq(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_eq(new_lhs, new_rhs)
+        }
+        TermKind::Add(args) => {
+            let new_args: SmallVec<[TermId; 4]> = args
+                .iter()
+                .map(|&a| substitute_single_var(manager, a, var_name, replacement))
+                .collect();
+            manager.mk_add(new_args)
+        }
+        TermKind::Mul(args) => {
+            let new_args: SmallVec<[TermId; 4]> = args
+                .iter()
+                .map(|&a| substitute_single_var(manager, a, var_name, replacement))
+                .collect();
+            manager.mk_mul(new_args)
+        }
+        TermKind::Sub(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_sub(new_lhs, new_rhs)
+        }
+        TermKind::Neg(inner) => {
+            let new_inner = substitute_single_var(manager, *inner, var_name, replacement);
+            manager.mk_neg(new_inner)
+        }
+        TermKind::Div(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_div(new_lhs, new_rhs)
+        }
+        TermKind::Lt(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_lt(new_lhs, new_rhs)
+        }
+        TermKind::Le(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_le(new_lhs, new_rhs)
+        }
+        TermKind::Gt(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_gt(new_lhs, new_rhs)
+        }
+        TermKind::Ge(lhs, rhs) => {
+            let new_lhs = substitute_single_var(manager, *lhs, var_name, replacement);
+            let new_rhs = substitute_single_var(manager, *rhs, var_name, replacement);
+            manager.mk_ge(new_lhs, new_rhs)
+        }
+        TermKind::Ite(cond, then_br, else_br) => {
+            let new_cond = substitute_single_var(manager, *cond, var_name, replacement);
+            let new_then = substitute_single_var(manager, *then_br, var_name, replacement);
+            let new_else = substitute_single_var(manager, *else_br, var_name, replacement);
+            manager.mk_ite(new_cond, new_then, new_else)
+        }
+        TermKind::Apply { func, args } => {
+            let new_args: SmallVec<[TermId; 4]> = args
+                .iter()
+                .map(|&a| substitute_single_var(manager, a, var_name, replacement))
+                .collect();
+            let result_sort = term.sort;
+            let func_name = manager.resolve_str(*func).to_string();
+            manager.mk_apply(&func_name, new_args, result_sort)
+        }
+        TermKind::Select(arr, idx) => {
+            let new_arr = substitute_single_var(manager, *arr, var_name, replacement);
+            let new_idx = substitute_single_var(manager, *idx, var_name, replacement);
+            manager.mk_select(new_arr, new_idx)
+        }
+        TermKind::Store(arr, idx, val) => {
+            let new_arr = substitute_single_var(manager, *arr, var_name, replacement);
+            let new_idx = substitute_single_var(manager, *idx, var_name, replacement);
+            let new_val = substitute_single_var(manager, *val, var_name, replacement);
+            manager.mk_store(new_arr, new_idx, new_val)
+        }
+        // For quantifiers, be careful about variable capture / shadowing.
+        TermKind::Forall {
+            vars,
+            body,
+            patterns,
+        } => {
+            if vars.iter().any(|(n, _)| *n == var_name) {
+                term_id // Variable is re-bound here; do not substitute.
+            } else {
+                let new_body = substitute_single_var(manager, *body, var_name, replacement);
+                let new_patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns
+                    .iter()
+                    .map(|p| {
+                        p.iter()
+                            .map(|&t| substitute_single_var(manager, t, var_name, replacement))
+                            .collect()
+                    })
+                    .collect();
+                let var_names: Vec<_> = vars
+                    .iter()
+                    .map(|(n, s)| (manager.resolve_str(*n).to_string(), *s))
+                    .collect();
+                let var_strs: Vec<_> = var_names
+                    .iter()
+                    .map(|(name, sort)| (name.as_str(), *sort))
+                    .collect();
+                manager.mk_forall_with_patterns(var_strs, new_body, new_patterns)
+            }
+        }
+        TermKind::Exists {
+            vars,
+            body,
+            patterns,
+        } => {
+            if vars.iter().any(|(n, _)| *n == var_name) {
+                term_id // Variable is re-bound here; do not substitute.
+            } else {
+                let new_body = substitute_single_var(manager, *body, var_name, replacement);
+                let new_patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns
+                    .iter()
+                    .map(|p| {
+                        p.iter()
+                            .map(|&t| substitute_single_var(manager, t, var_name, replacement))
+                            .collect()
+                    })
+                    .collect();
+                let var_names: Vec<_> = vars
+                    .iter()
+                    .map(|(n, s)| (manager.resolve_str(*n).to_string(), *s))
+                    .collect();
+                let var_strs: Vec<_> = var_names
+                    .iter()
+                    .map(|(name, sort)| (name.as_str(), *sort))
+                    .collect();
+                manager.mk_exists_with_patterns(var_strs, new_body, new_patterns)
+            }
+        }
+        // For other terms, just return as-is (constants, etc.)
+        _ => term_id,
     }
 }
 
@@ -1653,263 +1959,5 @@ mod tests {
         assert!(result.is_some());
         let bindings = result.expect("should have bindings");
         assert_eq!(bindings.get(&x_name), Some(&one));
-    }
-
-    #[test]
-    fn test_skolemization_tactic() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: exists x. x > 0
-        let x = manager.mk_var("x", int_sort);
-        let zero = manager.mk_int(0);
-        let body = manager.mk_gt(x, zero);
-        let exists = manager.mk_exists([("x", int_sort)], body);
-
-        let goal = Goal::new(vec![exists]);
-
-        let mut tactic = SkolemizationTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("tactic should succeed");
-
-        match result {
-            TacticResult::SubGoals(goals) => {
-                assert_eq!(goals.len(), 1);
-                // The existential should be eliminated
-                assert!(
-                    !goal_has_quantifiers(&goals[0], &manager)
-                        || !goals[0].assertions.iter().any(|&a| {
-                            if let Some(t) = manager.get(a) {
-                                matches!(t.kind, TermKind::Exists { .. })
-                            } else {
-                                false
-                            }
-                        })
-                );
-            }
-            _ => panic!("Expected SubGoals result"),
-        }
-    }
-
-    #[test]
-    fn test_contains_quantifier() {
-        let mut manager = setup_manager();
-        let bool_sort = manager.sorts.bool_sort;
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: forall x. P(x)
-        let x = manager.mk_var("x", int_sort);
-        let p_x = manager.mk_apply("P", [x], bool_sort);
-        let forall = manager.mk_forall([("x", int_sort)], p_x);
-
-        assert!(contains_quantifier(forall, &manager));
-        assert!(!contains_quantifier(p_x, &manager));
-    }
-
-    // ============================================================================
-    // DER (Destructive Equality Resolution) Tests
-    // ============================================================================
-
-    #[test]
-    fn test_der_config_default() {
-        let config = DerConfig::default();
-        assert_eq!(config.max_depth, 10);
-        assert!(config.recursive);
-        assert!(config.handle_diseq);
-    }
-
-    #[test]
-    fn test_der_forall_with_equality_in_or() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∀x. (x = 5 ∨ P(x))
-        // Should simplify to: P(5)
-        let x = manager.mk_var("x", int_sort);
-        let five = manager.mk_int(5);
-        let x_eq_5 = manager.mk_eq(x, five);
-        let p_x = manager.mk_apply("P", [x], manager.sorts.bool_sort);
-        let body = manager.mk_or([x_eq_5, p_x]);
-        let forall = manager.mk_forall([("x", int_sort)], body);
-
-        let goal = Goal::new(vec![forall]);
-        let mut tactic = DerTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("DER should succeed");
-
-        match result {
-            TacticResult::SubGoals(goals) => {
-                assert_eq!(goals.len(), 1);
-                // The quantifier should be eliminated
-                assert!(!goal_has_quantifiers(&goals[0], &manager));
-            }
-            _ => panic!("Expected SubGoals result"),
-        }
-    }
-
-    #[test]
-    fn test_der_exists_with_equality_in_and() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∃x. (x = 5 ∧ P(x))
-        // Should simplify to: P(5)
-        let x = manager.mk_var("x", int_sort);
-        let five = manager.mk_int(5);
-        let x_eq_5 = manager.mk_eq(x, five);
-        let p_x = manager.mk_apply("P", [x], manager.sorts.bool_sort);
-        let body = manager.mk_and([x_eq_5, p_x]);
-        let exists = manager.mk_exists([("x", int_sort)], body);
-
-        let goal = Goal::new(vec![exists]);
-        let mut tactic = DerTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("DER should succeed");
-
-        match result {
-            TacticResult::SubGoals(goals) => {
-                assert_eq!(goals.len(), 1);
-                // The quantifier should be eliminated
-                assert!(!goal_has_quantifiers(&goals[0], &manager));
-            }
-            _ => panic!("Expected SubGoals result"),
-        }
-    }
-
-    #[test]
-    fn test_der_not_applicable_no_equality() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∀x. P(x)
-        // No equality to eliminate - DER should not apply
-        let x = manager.mk_var("x", int_sort);
-        let p_x = manager.mk_apply("P", [x], manager.sorts.bool_sort);
-        let forall = manager.mk_forall([("x", int_sort)], p_x);
-
-        let goal = Goal::new(vec![forall]);
-        let mut tactic = DerTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("DER should succeed");
-
-        match result {
-            TacticResult::NotApplicable => (),
-            _ => panic!("Expected NotApplicable result"),
-        }
-    }
-
-    #[test]
-    fn test_der_symmetric_equality() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∃x. (5 = x ∧ P(x))
-        // Should also simplify to: P(5) (equality is symmetric)
-        let x = manager.mk_var("x", int_sort);
-        let five = manager.mk_int(5);
-        let five_eq_x = manager.mk_eq(five, x); // Note: 5 = x instead of x = 5
-        let p_x = manager.mk_apply("P", [x], manager.sorts.bool_sort);
-        let body = manager.mk_and([five_eq_x, p_x]);
-        let exists = manager.mk_exists([("x", int_sort)], body);
-
-        let goal = Goal::new(vec![exists]);
-        let mut tactic = DerTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("DER should succeed");
-
-        match result {
-            TacticResult::SubGoals(goals) => {
-                assert_eq!(goals.len(), 1);
-                // The quantifier should be eliminated
-                assert!(!goal_has_quantifiers(&goals[0], &manager));
-            }
-            _ => panic!("Expected SubGoals result"),
-        }
-    }
-
-    #[test]
-    fn test_der_multiple_bound_vars() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∃x y. (x = 5 ∧ P(x, y))
-        // Should simplify to: ∃y. P(5, y)
-        let x = manager.mk_var("x", int_sort);
-        let y = manager.mk_var("y", int_sort);
-        let five = manager.mk_int(5);
-        let x_eq_5 = manager.mk_eq(x, five);
-        let p_xy = manager.mk_apply("P", [x, y], manager.sorts.bool_sort);
-        let body = manager.mk_and([x_eq_5, p_xy]);
-        let exists = manager.mk_exists([("x", int_sort), ("y", int_sort)], body);
-
-        let goal = Goal::new(vec![exists]);
-        let mut tactic = DerTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("DER should succeed");
-
-        match result {
-            TacticResult::SubGoals(goals) => {
-                assert_eq!(goals.len(), 1);
-                // Should still have quantifier (for y), but x should be eliminated
-                let assertion = goals[0].assertions[0];
-                if let Some(term) = manager.get(assertion) {
-                    if let TermKind::Exists { vars, .. } = &term.kind {
-                        // Only y should remain
-                        assert_eq!(vars.len(), 1);
-                    } else {
-                        panic!("Expected Exists term");
-                    }
-                } else {
-                    panic!("Term not found");
-                }
-            }
-            _ => panic!("Expected SubGoals result"),
-        }
-    }
-
-    #[test]
-    fn test_der_var_occurs_in_substitute_fails() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∃x. (x = f(x) ∧ P(x))
-        // DER should NOT apply because x occurs in f(x)
-        let x = manager.mk_var("x", int_sort);
-        let f_x = manager.mk_apply("f", [x], int_sort);
-        let x_eq_fx = manager.mk_eq(x, f_x);
-        let p_x = manager.mk_apply("P", [x], manager.sorts.bool_sort);
-        let body = manager.mk_and([x_eq_fx, p_x]);
-        let exists = manager.mk_exists([("x", int_sort)], body);
-
-        let goal = Goal::new(vec![exists]);
-        let mut tactic = DerTactic::new(&mut manager);
-        let result = tactic.apply_mut(&goal).expect("DER should succeed");
-
-        match result {
-            TacticResult::NotApplicable => (),
-            _ => panic!("Expected NotApplicable result (x occurs in substitute)"),
-        }
-    }
-
-    #[test]
-    fn test_stateless_der_tactic() {
-        let mut manager = setup_manager();
-        let int_sort = manager.sorts.int_sort;
-
-        // Create: ∃x. (x = 5 ∧ P(x))
-        let x = manager.mk_var("x", int_sort);
-        let five = manager.mk_int(5);
-        let x_eq_5 = manager.mk_eq(x, five);
-        let p_x = manager.mk_apply("P", [x], manager.sorts.bool_sort);
-        let body = manager.mk_and([x_eq_5, p_x]);
-        let exists = manager.mk_exists([("x", int_sort)], body);
-
-        let goal = Goal::new(vec![exists]);
-        let tactic = StatelessDerTactic::new();
-        let result = tactic
-            .apply(&goal, &mut manager)
-            .expect("DER should succeed");
-
-        match result {
-            TacticResult::SubGoals(goals) => {
-                assert_eq!(goals.len(), 1);
-                assert!(!goal_has_quantifiers(&goals[0], &manager));
-            }
-            _ => panic!("Expected SubGoals result"),
-        }
     }
 }

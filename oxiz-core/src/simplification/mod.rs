@@ -11,6 +11,21 @@ use smallvec::SmallVec;
 /// LRU eviction prevents unbounded growth on large formulas.
 const SIMPLIFICATION_MEMO_CAPACITY: usize = 4096;
 
+/// Maximum recursion depth for `simplify_cached`. Mirrors the depth-cap
+/// approach used by `rewrite/combined.rs`'s `RewriteContext` (see
+/// `enter`/`exit` there): on a pathologically deep (but valid) term, bail
+/// out returning the term unchanged rather than overflowing the stack. This
+/// is sound -- no rewrite applied below the cap is still a valid (if
+/// less-simplified) result -- and avoids memoizing the capped, unsimplified
+/// result so a shallower call on the same term can still simplify it fully.
+///
+/// `simplify_cached`'s match arm is significantly larger than
+/// `rewrite_bottom_up`'s (many `BigInt`/`SmallVec` locals across its
+/// branches), so its stack frame is much bigger per level; 1000 (the value
+/// `combined.rs` uses safely) already overflows a default 2 MiB test-thread
+/// stack here, so this cap is kept well below that.
+const SIMPLIFICATION_MAX_DEPTH: usize = 200;
+
 /// Configuration for tactic-driven simplification passes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SimplificationConfig {
@@ -29,6 +44,20 @@ pub struct AggressiveSimplifier<'a> {
     config: SimplificationConfig,
     /// Persistent bounded memo table: maps `TermId` to simplified `TermId`.
     memo_cache: LruCache<TermId, TermId>,
+    /// Current recursion depth of `simplify_cached`, bounded by
+    /// `SIMPLIFICATION_MAX_DEPTH`.
+    depth: usize,
+    /// Set once the depth cap has triggered during the current top-level
+    /// `simplify_term` call. While set, `manager_simplify` (the only path
+    /// into `TermManager::simplify`, itself an *unbounded*-depth recursive
+    /// traversal in `ast/manager/query.rs`) becomes a no-op passthrough:
+    /// once some subterm has been returned unprocessed by the depth cap, it
+    /// may still be arbitrarily deep, and handing it to another unbounded
+    /// recursive traversal would simply move the stack overflow one layer
+    /// out instead of preventing it. Reset at the start of every top-level
+    /// call so capping in one call cannot degrade later, unrelated calls on
+    /// the same (memo-cache-sharing) instance.
+    capped: bool,
 }
 
 impl<'a> AggressiveSimplifier<'a> {
@@ -38,6 +67,8 @@ impl<'a> AggressiveSimplifier<'a> {
             manager,
             config,
             memo_cache: LruCache::new(SIMPLIFICATION_MEMO_CAPACITY),
+            depth: 0,
+            capped: false,
         }
     }
 
@@ -50,13 +81,34 @@ impl<'a> AggressiveSimplifier<'a> {
     /// Simplify a term recursively.
     /// Results are memoized in an LRU cache shared across all calls on this instance.
     pub fn simplify_term(&mut self, term: TermId) -> TermId {
+        self.capped = false;
         self.simplify_cached(term)
+    }
+
+    /// Call `TermManager::simplify`, unless the depth cap has already
+    /// triggered somewhere in the current top-level call (see `capped`), in
+    /// which case this is a no-op passthrough. See `capped` for why.
+    fn manager_simplify(&mut self, id: TermId) -> TermId {
+        if self.capped {
+            return id;
+        }
+        self.manager.simplify(id)
     }
 
     fn simplify_cached(&mut self, term: TermId) -> TermId {
         if let Some(cached) = self.memo_cache.get(&term) {
             return cached;
         }
+
+        // Bound recursion depth (see `SIMPLIFICATION_MAX_DEPTH`). Deliberately
+        // not memoized: a shallower future call on the same term must still
+        // be able to simplify it fully rather than reusing an unsimplified
+        // capped result.
+        if self.depth >= SIMPLIFICATION_MAX_DEPTH {
+            self.capped = true;
+            return term;
+        }
+        self.depth += 1;
 
         let simplified = match self.manager.get(term).map(|t| t.kind.clone()) {
             None
@@ -111,47 +163,47 @@ impl<'a> AggressiveSimplifier<'a> {
             Some(TermKind::Add(args)) => {
                 let args = self.simplify_all(args);
                 let rebuilt = self.manager.mk_add(args);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Sub(lhs, rhs)) => {
                 let lhs = self.simplify_cached(lhs);
                 let rhs = self.simplify_cached(rhs);
                 let rebuilt = self.manager.mk_sub(lhs, rhs);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Mul(args)) => {
                 let args = self.simplify_all(args);
                 let rebuilt = self.manager.mk_mul(args);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Neg(arg)) => {
                 let arg = self.simplify_cached(arg);
                 let rebuilt = self.manager.mk_neg(arg);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Lt(lhs, rhs)) => {
                 let lhs = self.simplify_cached(lhs);
                 let rhs = self.simplify_cached(rhs);
                 let rebuilt = self.manager.mk_lt(lhs, rhs);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Le(lhs, rhs)) => {
                 let lhs = self.simplify_cached(lhs);
                 let rhs = self.simplify_cached(rhs);
                 let rebuilt = self.manager.mk_le(lhs, rhs);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Gt(lhs, rhs)) => {
                 let lhs = self.simplify_cached(lhs);
                 let rhs = self.simplify_cached(rhs);
                 let rebuilt = self.manager.mk_gt(lhs, rhs);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             Some(TermKind::Ge(lhs, rhs)) => {
                 let lhs = self.simplify_cached(lhs);
                 let rhs = self.simplify_cached(rhs);
                 let rebuilt = self.manager.mk_ge(lhs, rhs);
-                self.manager.simplify(rebuilt)
+                self.manager_simplify(rebuilt)
             }
             // BV identity rules -- mk_bv_* does no simplification so we handle here.
             Some(TermKind::BvNot(arg)) => {
@@ -173,9 +225,10 @@ impl<'a> AggressiveSimplifier<'a> {
                 let rhs = self.simplify_cached(rhs);
                 self.simplify_bv_xor(lhs, rhs)
             }
-            Some(_) => self.manager.simplify(term),
+            Some(_) => self.manager_simplify(term),
         };
 
+        self.depth -= 1;
         self.memo_cache.insert(term, simplified);
         simplified
     }
@@ -193,7 +246,7 @@ impl<'a> AggressiveSimplifier<'a> {
         }
 
         if let Some(absorbed) = self.try_boolean_absorption_in_and(&args) {
-            return self.manager.simplify(absorbed);
+            return self.manager_simplify(absorbed);
         }
 
         baseline
@@ -206,11 +259,11 @@ impl<'a> AggressiveSimplifier<'a> {
         }
 
         if let Some(absorbed) = self.try_boolean_absorption_in_or(&args) {
-            return self.manager.simplify(absorbed);
+            return self.manager_simplify(absorbed);
         }
 
         if let Some(factored) = self.try_factor_or_of_ands(&args) {
-            return self.manager.simplify(factored);
+            return self.manager_simplify(factored);
         }
 
         baseline
@@ -261,10 +314,10 @@ impl<'a> AggressiveSimplifier<'a> {
         }
 
         if let Some(rewritten) = self.try_solve_add_constant_eq(lhs, rhs) {
-            return self.manager.simplify(rewritten);
+            return self.manager_simplify(rewritten);
         }
         if let Some(rewritten) = self.try_solve_add_constant_eq(rhs, lhs) {
-            return self.manager.simplify(rewritten);
+            return self.manager_simplify(rewritten);
         }
 
         baseline
@@ -286,40 +339,66 @@ impl<'a> AggressiveSimplifier<'a> {
         baseline
     }
 
+    /// Boolean absorption inside a conjunction: `a AND (a OR b) = a`.
+    ///
+    /// When a conjunct `candidate` absorbs another conjunct `other = Or(.., candidate, ..)`,
+    /// only the absorbed `Or` term may be dropped -- every *other* conjunct (including
+    /// `candidate` itself and any unrelated conjuncts such as `c` in `And(a, Or(a,b), c)`)
+    /// must be preserved, otherwise the conjunction is illegally weakened.
     fn try_boolean_absorption_in_and(&mut self, args: &[TermId]) -> Option<TermId> {
-        for &candidate in args {
-            for &other in args {
-                if candidate == other {
-                    continue;
-                }
-                if let Some(term) = self.manager.get(other)
-                    && let TermKind::Or(or_args) = &term.kind
-                    && or_args.contains(&candidate)
-                {
-                    return Some(candidate);
-                }
+        for (other_idx, &other) in args.iter().enumerate() {
+            let or_args = match self.manager.get(other).map(|t| &t.kind) {
+                Some(TermKind::Or(or_args)) => or_args.clone(),
+                _ => continue,
+            };
+            let absorbed = args
+                .iter()
+                .any(|&candidate| candidate != other && or_args.contains(&candidate));
+            if absorbed {
+                let remaining: SmallVec<[TermId; 4]> = args
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &t)| (i != other_idx).then_some(t))
+                    .collect();
+                return Some(self.mk_bool_join_or_true(remaining, true));
             }
         }
         None
     }
 
+    /// Boolean absorption inside a disjunction: `a OR (a AND b) = a`.
+    ///
+    /// When a disjunct `candidate` absorbs another disjunct `other = And(.., candidate, ..)`,
+    /// only the absorbed `And` term may be dropped -- every *other* disjunct (including
+    /// `candidate` itself and any unrelated disjuncts such as `c` in `Or(a, And(a,b), c)`)
+    /// must be preserved, otherwise the disjunction is illegally strengthened.
     fn try_boolean_absorption_in_or(&mut self, args: &[TermId]) -> Option<TermId> {
-        for &candidate in args {
-            for &other in args {
-                if candidate == other {
-                    continue;
-                }
-                if let Some(term) = self.manager.get(other)
-                    && let TermKind::And(and_args) = &term.kind
-                    && and_args.contains(&candidate)
-                {
-                    return Some(candidate);
-                }
+        for (other_idx, &other) in args.iter().enumerate() {
+            let and_args = match self.manager.get(other).map(|t| &t.kind) {
+                Some(TermKind::And(and_args)) => and_args.clone(),
+                _ => continue,
+            };
+            let absorbed = args
+                .iter()
+                .any(|&candidate| candidate != other && and_args.contains(&candidate));
+            if absorbed {
+                let remaining: SmallVec<[TermId; 4]> = args
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &t)| (i != other_idx).then_some(t))
+                    .collect();
+                return Some(self.mk_bool_join_or_true(remaining, false));
             }
         }
         None
     }
 
+    /// Factor a common conjunct out of two `And` disjuncts:
+    /// `(x AND a) OR (x AND b) = x AND (a OR b)`.
+    ///
+    /// Only the two factored disjuncts are replaced by the factored term -- every
+    /// other disjunct (such as `c` in `Or(And(x,a), And(x,b), c)`) must be carried
+    /// through unchanged, otherwise the disjunction is illegally strengthened.
     fn try_factor_or_of_ands(&mut self, args: &[TermId]) -> Option<TermId> {
         for (left_idx, &left_term) in args.iter().enumerate() {
             let left_args = match self.manager.get(left_term).map(|term| &term.kind) {
@@ -327,7 +406,8 @@ impl<'a> AggressiveSimplifier<'a> {
                 _ => continue,
             };
 
-            for &right_term in &args[left_idx + 1..] {
+            for (offset, &right_term) in args[left_idx + 1..].iter().enumerate() {
+                let right_idx = left_idx + 1 + offset;
                 let right_args = match self.manager.get(right_term).map(|term| &term.kind) {
                     Some(TermKind::And(and_args)) => and_args.clone(),
                     _ => continue,
@@ -340,7 +420,17 @@ impl<'a> AggressiveSimplifier<'a> {
                         let left_inner = self.mk_bool_join_or_true(left_rest, true);
                         let right_inner = self.mk_bool_join_or_true(right_rest, true);
                         let combined = self.manager.mk_or([left_inner, right_inner]);
-                        return Some(self.manager.mk_and([common, combined]));
+                        let factored = self.manager.mk_and([common, combined]);
+
+                        // Preserve every disjunct other than the two we just factored,
+                        // then re-join them with the factored term into an `Or`.
+                        let mut rebuilt: SmallVec<[TermId; 4]> = args
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, &t)| (i != left_idx && i != right_idx).then_some(t))
+                            .collect();
+                        rebuilt.push(factored);
+                        return Some(self.mk_bool_join_or_true(rebuilt, false));
                     }
                 }
             }
@@ -563,6 +653,31 @@ mod tests {
             evictions > 0,
             "expected LRU evictions when inserting more than capacity"
         );
+    }
+
+    #[test]
+    fn aggressive_simplifier_deep_term_does_not_overflow_stack() {
+        // Regression (wave-1 deferral): simplify_cached used to recurse one
+        // AST level per call with no depth limit, mirroring the pre-fix
+        // rewrite_bottom_up bug in rewrite/combined.rs. A pathologically deep
+        // (but valid) term used to overflow the stack; it must now bail out
+        // and return a sound (if only partially simplified) result instead.
+        let mut manager = TermManager::new();
+        let x = manager.mk_var("x", manager.sorts.int_sort);
+        let mut term = x;
+        const CHAIN_LEN: usize = 20_000;
+        for _ in 0..CHAIN_LEN {
+            term = manager.mk_neg(term);
+        }
+
+        let mut simplifier =
+            AggressiveSimplifier::new(&mut manager, SimplificationConfig { aggressive: true });
+
+        // Must return without stack-overflow/abort.
+        let result = simplifier.simplify_term(term);
+
+        // The result must still be a well-formed, retrievable term.
+        assert!(simplifier.manager.get(result).is_some());
     }
 
     #[test]

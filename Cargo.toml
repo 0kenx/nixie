@@ -42,8 +42,16 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
+# Edition 2024 itself only requires rustc 1.85, but the workspace makes
+# pervasive use of let-chains (`if ... && let Some(x) = ... { }`, ~350
+# occurrences across 156 files as of this release) in production code (e.g.
+# `oxiz-sat/src/solver/conflict.rs`, `oxiz-theories/src/euf/solver.rs`), which
+# were only stabilized in 1.88. Set as a conservative, evidence-based floor;
+# lower it only after removing/rewriting every let-chain use, and raise it if
+# a future feature demands a newer compiler.
+rust-version = "1.88"
 authors = ["COOLJAPAN OU (Team KitaSan)"]
 license = "Apache-2.0"
 repository = "https://github.com/cool-japan/oxiz"
@@ -62,20 +70,20 @@ collapsible_if = "allow"
 
 [workspace.dependencies]
 # Meta crate
-oxiz = { version = "0.2.3", path = "oxiz" }
+oxiz = { version = "0.2.4", path = "oxiz" }
 
 # Core crates (default-features = false so downstream can control std)
-oxiz-core = { version = "0.2.3", path = "oxiz-core", default-features = false }
-oxiz-math = { version = "0.2.3", path = "oxiz-math", default-features = false }
-oxiz-sat = { version = "0.2.3", path = "oxiz-sat", default-features = false }
-oxiz-nlsat = { version = "0.2.3", path = "oxiz-nlsat" }
-oxiz-theories = { version = "0.2.3", path = "oxiz-theories", default-features = false }
-oxiz-solver = { version = "0.2.3", path = "oxiz-solver", default-features = false }
-oxiz-opt = { version = "0.2.3", path = "oxiz-opt" }
-oxiz-spacer = { version = "0.2.3", path = "oxiz-spacer" }
-oxiz-proof = { version = "0.2.3", path = "oxiz-proof" }
-oxiz-smtcomp = { version = "0.2.3", path = "oxiz-smtcomp" }
-oxiz-ml = { version = "0.2.3", path = "oxiz-ml" }
+oxiz-core = { version = "0.2.4", path = "oxiz-core", default-features = false }
+oxiz-math = { version = "0.2.4", path = "oxiz-math", default-features = false }
+oxiz-sat = { version = "0.2.4", path = "oxiz-sat", default-features = false }
+oxiz-nlsat = { version = "0.2.4", path = "oxiz-nlsat" }
+oxiz-theories = { version = "0.2.4", path = "oxiz-theories", default-features = false }
+oxiz-solver = { version = "0.2.4", path = "oxiz-solver", default-features = false }
+oxiz-opt = { version = "0.2.4", path = "oxiz-opt" }
+oxiz-spacer = { version = "0.2.4", path = "oxiz-spacer" }
+oxiz-proof = { version = "0.2.4", path = "oxiz-proof" }
+oxiz-smtcomp = { version = "0.2.4", path = "oxiz-smtcomp" }
+oxiz-ml = { version = "0.2.4", path = "oxiz-ml" }
 
 # Memory & Interning
 bumpalo = "3.20"
@@ -118,7 +126,7 @@ tower-lsp = "0.20"
 tokio = "1.52"
 axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.7", features = ["cors"] }
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
 
@@ -127,8 +135,8 @@ wasm-bindgen = "0.2"
 js-sys = "0.3"
 
 # Compression (OxiARC - Pure Rust)
-oxiarc-deflate = "0.3.3"
-oxiarc-brotli = "0.3.3"
+oxiarc-deflate = "0.3.6"
+oxiarc-brotli = "0.3.6"
 
 # PDF (Pure Rust)
 pdf-writer = "0.15"

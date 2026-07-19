@@ -6,12 +6,59 @@ use crate::ast::TermId;
 use crate::error::{OxizError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::sort::SortKind;
 use num_bigint::BigInt;
+use num_rational::Rational64;
 use smallvec::SmallVec;
+use std::cell::Cell;
+
+/// Maximum recursive nesting depth accepted by the recursive-descent term
+/// parser. Adversarial inputs with pathologically deep nesting (e.g. millions
+/// of `(- (- (- ...)))`) would otherwise overflow the native call stack; once
+/// this bound is exceeded we surface an honest [`OxizError::ParseError`]
+/// instead of aborting the process.
+const MAX_PARSE_DEPTH: u32 = 1024;
+
+thread_local! {
+    /// Current recursion depth of [`Parser::parse_term`] on this thread.
+    static PARSE_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// RAII guard that decrements the [`PARSE_DEPTH`] counter when it leaves scope,
+/// including on error unwinding, so the depth stays accurate across every
+/// return path of `parse_term`.
+struct DepthGuard;
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        PARSE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
 
 impl<'a> Parser<'a> {
-    /// Parse a term
+    /// Parse a term.
+    ///
+    /// This wraps the actual recursive-descent logic in a depth guard so that
+    /// deeply nested input cannot overflow the stack; see [`MAX_PARSE_DEPTH`].
     pub fn parse_term(&mut self) -> Result<TermId> {
+        let depth = PARSE_DEPTH.with(|d| {
+            let next = d.get().saturating_add(1);
+            d.set(next);
+            next
+        });
+        let _guard = DepthGuard;
+        if depth > MAX_PARSE_DEPTH {
+            return Err(OxizError::ParseError {
+                position: self.lexer.position(),
+                message: "term nesting too deep".to_string(),
+            });
+        }
+        self.parse_term_inner()
+    }
+
+    /// Inner term parser; callers must go through [`Parser::parse_term`] so the
+    /// recursion-depth guard stays in effect.
+    fn parse_term_inner(&mut self) -> Result<TermId> {
         let token = self
             .lexer
             .next_token()
@@ -121,10 +168,236 @@ impl<'a> Parser<'a> {
                         return Ok(self.manager.mk_int(-value));
                     }
                 }
-                // Default to boolean variable
+                // At this point `s` is not a bound variable, a datatype
+                // constructor, a declared constant, or a negative numeric
+                // literal. In a genuine SMT-LIB script every symbol must be
+                // declared before use, so an unknown symbol here is a typo or
+                // a missing `declare-const`/`declare-fun`. Silently minting a
+                // fresh Bool-sorted variable (the old behavior) makes such a
+                // script solve a *different* problem and can report `sat` with
+                // a meaningless model. Reject it, matching Z3's "unknown
+                // constant" error.
+                //
+                // The one exception is the bare `parse_term` convenience path
+                // used to build ad-hoc terms with no declarations at all: when
+                // parsing an isolated term (not a script) we stay lenient so
+                // that free variables can still be constructed.
+                if self.script_mode {
+                    return Err(OxizError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!("unknown constant or symbol: {s}"),
+                    });
+                }
+                // Lenient fallback (bare-term mode): boolean variable.
                 let sort = self.manager.sorts.bool_sort;
                 Ok(self.manager.mk_var(s, sort))
             }
+        }
+    }
+
+    /// Returns `true` if the given term has Real sort.
+    fn is_real_term(&self, term: TermId) -> bool {
+        self.manager
+            .get(term)
+            .and_then(|t| self.manager.sorts.get(t.sort))
+            .is_some_and(|s| matches!(s.kind, SortKind::Real))
+    }
+
+    /// Returns the bit-vector width of `term`, if it has a bit-vector sort.
+    fn bv_width(&self, term: TermId) -> Option<u32> {
+        let sort = self.manager.get(term)?.sort;
+        self.manager.sorts.get(sort)?.bitvec_width()
+    }
+
+    /// Build the conjunction of the boolean atoms produced by a chainable
+    /// operator (`=`, `<`, `<=`, `>`, `>=`). SMT-LIB defines these operators as
+    /// *chainable*: `(op a b c)` means `(and (op a b) (op b c))`. When there is
+    /// a single atom (the binary case) it is returned directly so that ordinary
+    /// binary uses keep their exact term kind (e.g. `Lt`, `Eq`) rather than
+    /// being wrapped in a one-element `and`.
+    fn chain_conjunction(&mut self, atoms: Vec<TermId>) -> TermId {
+        if atoms.len() == 1 {
+            atoms[0]
+        } else {
+            self.manager.mk_and(atoms)
+        }
+    }
+
+    /// Two-operand XOR lowered to `and`/`or`/`not`, used to fold the
+    /// left-associative n-ary `xor`.
+    fn mk_xor2(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let not_lhs = self.manager.mk_not(lhs);
+        let not_rhs = self.manager.mk_not(rhs);
+        let and1 = self.manager.mk_and([lhs, not_rhs]);
+        let and2 = self.manager.mk_and([not_lhs, rhs]);
+        self.manager.mk_or([and1, and2])
+    }
+
+    /// Construct an honest arity error for a core operator that requires at
+    /// least `min` operands but received `got`.
+    fn min_arity_err(&self, op: &str, min: usize, got: usize) -> OxizError {
+        OxizError::ParseError {
+            position: self.lexer.position(),
+            message: format!("{op} requires at least {min} arguments, got {got}"),
+        }
+    }
+
+    /// If the next token is a closing `)`, consume it and return `true`;
+    /// otherwise leave the stream untouched and return `false`.
+    ///
+    /// The n-ary/chainable core operators use this to parse their first operand
+    /// with a *direct* [`Parser::parse_term`] call and then loop over the rest,
+    /// mirroring the existing `div` / `/` / `str.++` idiom. Parsing the first
+    /// operand directly (rather than through [`Parser::parse_term_list`]) keeps
+    /// the recursive-descent stack-frame count per nesting level identical to
+    /// the original binary handlers, so deeply nested input still trips the
+    /// [`MAX_PARSE_DEPTH`] guard before it can overflow the native stack.
+    fn try_consume_rparen(&mut self) -> bool {
+        if let Some(token) = self.lexer.peek()
+            && matches!(token.kind, TokenKind::RParen)
+        {
+            self.lexer.next_token();
+            return true;
+        }
+        false
+    }
+
+    /// Attempt to build an indexed operator whose name/indices/arguments have
+    /// already been parsed.
+    ///
+    /// Handles the indexed bit-vector operators that have no dedicated
+    /// [`crate::ast::TermKind`] (`zero_extend`, `sign_extend`, `rotate_left`,
+    /// `rotate_right`, `repeat`) by lowering them to existing primitives
+    /// (`concat`, `extract`), and the arithmetic `divisible` predicate.
+    ///
+    /// Returns `Ok(Some(term))` when the operator was recognized and built,
+    /// `Ok(None)` when it is not one of these operators (so the caller can fall
+    /// back to a generic application), or `Err(..)` on a malformed use.
+    fn build_indexed_op(
+        &mut self,
+        name: &str,
+        index_parts: &[String],
+        args: &[TermId],
+    ) -> Result<Option<TermId>> {
+        // Parse the leading numeric index shared by every operator here.
+        let single_index = |parts: &[String]| -> Result<u32> {
+            if parts.len() != 1 {
+                return Err(OxizError::ParseError {
+                    position: 0,
+                    message: format!(
+                        "(_ {name} ...) requires exactly 1 index, got {}",
+                        parts.len()
+                    ),
+                });
+            }
+            parts[0].parse::<u32>().map_err(|_| OxizError::ParseError {
+                position: 0,
+                message: format!("invalid index for (_ {name} ...): {}", parts[0]),
+            })
+        };
+        let single_arg = |args: &[TermId]| -> Result<TermId> {
+            if args.len() != 1 {
+                return Err(OxizError::ParseError {
+                    position: 0,
+                    message: format!(
+                        "(_ {name} ...) requires exactly 1 argument, got {}",
+                        args.len()
+                    ),
+                });
+            }
+            Ok(args[0])
+        };
+
+        match name {
+            "zero_extend" => {
+                let n = single_index(index_parts)?;
+                let arg = single_arg(args)?;
+                if n == 0 {
+                    return Ok(Some(arg));
+                }
+                // Prepend `n` zero bits: concat(0:n, arg).
+                let zeros = self.manager.mk_bitvec(0, n);
+                Ok(Some(self.manager.mk_bv_concat(zeros, arg)))
+            }
+            "sign_extend" => {
+                let n = single_index(index_parts)?;
+                let arg = single_arg(args)?;
+                if n == 0 {
+                    return Ok(Some(arg));
+                }
+                let width = self.bv_width(arg).ok_or_else(|| OxizError::ParseError {
+                    position: 0,
+                    message: "sign_extend requires a bit-vector argument".to_string(),
+                })?;
+                // Replicate the sign bit `n` times, then concat with the arg.
+                let sign_bit = self.manager.mk_bv_extract(width - 1, width - 1, arg);
+                let mut ext = sign_bit;
+                for _ in 1..n {
+                    ext = self.manager.mk_bv_concat(ext, sign_bit);
+                }
+                Ok(Some(self.manager.mk_bv_concat(ext, arg)))
+            }
+            "rotate_left" | "rotate_right" => {
+                let raw = single_index(index_parts)?;
+                let arg = single_arg(args)?;
+                let width = self.bv_width(arg).ok_or_else(|| OxizError::ParseError {
+                    position: 0,
+                    message: format!("{name} requires a bit-vector argument"),
+                })?;
+                if width == 0 {
+                    return Ok(Some(arg));
+                }
+                // Effective left-rotation amount in 0..width.
+                let amount = if name == "rotate_left" {
+                    raw % width
+                } else {
+                    (width - (raw % width)) % width
+                };
+                if amount == 0 {
+                    return Ok(Some(arg));
+                }
+                // rol(x, a) = concat(x[width-1-a : 0], x[width-1 : width-a]).
+                let low = self.manager.mk_bv_extract(width - 1 - amount, 0, arg);
+                let high = self.manager.mk_bv_extract(width - 1, width - amount, arg);
+                Ok(Some(self.manager.mk_bv_concat(low, high)))
+            }
+            "repeat" => {
+                let n = single_index(index_parts)?;
+                let arg = single_arg(args)?;
+                if n == 0 {
+                    return Err(OxizError::ParseError {
+                        position: 0,
+                        message: "(_ repeat 0 ...) is not a valid bit-vector".to_string(),
+                    });
+                }
+                let mut result = arg;
+                for _ in 1..n {
+                    result = self.manager.mk_bv_concat(result, arg);
+                }
+                Ok(Some(result))
+            }
+            "divisible" => {
+                // ((_ divisible n) x) <=> (= (mod x n) 0).
+                if index_parts.len() != 1 {
+                    return Err(OxizError::ParseError {
+                        position: 0,
+                        message: format!(
+                            "(_ divisible ...) requires exactly 1 index, got {}",
+                            index_parts.len()
+                        ),
+                    });
+                }
+                let arg = single_arg(args)?;
+                let n: BigInt = index_parts[0].parse().map_err(|_| OxizError::ParseError {
+                    position: 0,
+                    message: format!("invalid divisor for divisible: {}", index_parts[0]),
+                })?;
+                let divisor = self.manager.mk_int(n);
+                let modulo = self.manager.mk_mod(arg, divisor);
+                let zero = self.manager.mk_int(0);
+                Ok(Some(self.manager.mk_eq(modulo, zero)))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -220,17 +493,21 @@ impl<'a> Parser<'a> {
                 return Ok(self.manager.mk_dt_tester(constructor_name, arg));
             }
 
-            // Now parse the arguments and closing paren
-            // Build the indexed identifier name
+            // Parse arguments first so indexed operators with real handling
+            // (BV extend/rotate/repeat, divisible) can be lowered to concrete
+            // terms instead of degrading to a Bool-sorted uninterpreted apply.
+            let args = self.parse_term_list()?;
+            if let Some(term) = self.build_indexed_op(&name, &index_parts, &args)? {
+                return Ok(term);
+            }
+
+            // Build the indexed identifier name for the generic fallback.
             let indices_str = index_parts.join(" ");
             let func_name = if index_parts.is_empty() {
                 format!("(_ {name})")
             } else {
                 format!("(_ {name} {indices_str})")
             };
-
-            // Parse arguments
-            let args = self.parse_term_list()?;
             let sort = self.manager.sorts.bool_sort; // Default
             return Ok(self.manager.mk_apply(&func_name, args, sort));
         }
@@ -333,21 +610,26 @@ impl<'a> Parser<'a> {
                     return Ok(self.manager.mk_dt_tester(constructor_name, arg));
                 }
                 _ => {
-                    // For unrecognized indexed identifiers (like to_fp, is, etc.),
-                    // treat them as function applications and parse arguments
-                    // Expect closing paren for the indexed identifier
+                    // For unrecognized indexed identifiers, expect the closing
+                    // paren of the `(_ name indices)` head, then parse args.
                     self.expect_rparen()?;
 
-                    // Build the indexed identifier name
+                    // Parse arguments first so indexed operators with real
+                    // handling (BV extend/rotate/repeat, divisible) can be
+                    // lowered to concrete terms rather than degrading to a
+                    // Bool-sorted uninterpreted apply.
+                    let args = self.parse_term_list()?;
+                    if let Some(term) = self.build_indexed_op(&name, &index_parts, &args)? {
+                        return Ok(term);
+                    }
+
+                    // Build the indexed identifier name for the generic fallback.
                     let indices_str = index_parts.join(" ");
                     let func_name = if index_parts.is_empty() {
                         format!("(_ {name})")
                     } else {
                         format!("(_ {name} {indices_str})")
                     };
-
-                    // Parse arguments
-                    let args = self.parse_term_list()?;
                     let sort = self.manager.sorts.bool_sort; // Default
                     return Ok(self.manager.mk_apply(&func_name, args, sort));
                 }
@@ -393,21 +675,39 @@ impl<'a> Parser<'a> {
                 self.manager.mk_or(args)
             }
             "=>" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_implies(lhs, rhs)
+                // `=>` is right-associative n-ary in SMT-LIB:
+                // `(=> a b c)` means `(=> a (=> b c))`. Parse the first operand
+                // directly (recursion-friendly), collect the rest, then fold
+                // from the right.
+                let first = self.parse_term()?;
+                let mut rest = Vec::new();
+                while !self.try_consume_rparen() {
+                    rest.push(self.parse_term()?);
+                }
+                if rest.is_empty() {
+                    return Err(self.min_arity_err("=>", 2, 1));
+                }
+                let mut result = rest[rest.len() - 1];
+                for &lhs in rest[..rest.len() - 1].iter().rev() {
+                    result = self.manager.mk_implies(lhs, result);
+                }
+                self.manager.mk_implies(first, result)
             }
             "xor" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                // XOR = (a and not b) or (not a and b)
-                let not_lhs = self.manager.mk_not(lhs);
-                let not_rhs = self.manager.mk_not(rhs);
-                let and1 = self.manager.mk_and([lhs, not_rhs]);
-                let and2 = self.manager.mk_and([not_lhs, rhs]);
-                self.manager.mk_or([and1, and2])
+                // `xor` is left-associative n-ary in SMT-LIB:
+                // `(xor a b c)` means `(xor (xor a b) c)`.
+                let first = self.parse_term()?;
+                let mut result = first;
+                let mut count = 1usize;
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    result = self.mk_xor2(result, next);
+                    count += 1;
+                }
+                if count < 2 {
+                    return Err(self.min_arity_err("xor", 2, count));
+                }
+                result
             }
             "ite" => {
                 let cond = self.parse_term()?;
@@ -417,10 +717,19 @@ impl<'a> Parser<'a> {
                 self.manager.mk_ite(cond, then_branch, else_branch)
             }
             "=" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_eq(lhs, rhs)
+                // `=` is chainable: `(= a b c)` means `(and (= a b) (= b c))`.
+                let first = self.parse_term()?;
+                let mut prev = first;
+                let mut atoms: Vec<TermId> = Vec::new();
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    atoms.push(self.manager.mk_eq(prev, next));
+                    prev = next;
+                }
+                if atoms.is_empty() {
+                    return Err(self.min_arity_err("=", 2, 1));
+                }
+                self.chain_conjunction(atoms)
             }
             "distinct" => {
                 let args = self.parse_term_list()?;
@@ -431,59 +740,200 @@ impl<'a> Parser<'a> {
                 self.manager.mk_add(args)
             }
             "-" => {
+                // `-` is unary negation with one operand and left-associative
+                // n-ary subtraction otherwise: `(- a b c)` means `(- (- a b) c)`.
                 let first = self.parse_term()?;
-                if let Some(token) = self.lexer.peek()
-                    && matches!(token.kind, TokenKind::RParen)
-                {
-                    self.lexer.next_token();
-                    // Unary minus - use mk_neg for proper negation
+                if self.try_consume_rparen() {
+                    // Unary minus - use mk_neg for proper negation.
                     return Ok(self.manager.mk_neg(first));
                 }
-                let second = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_sub(first, second)
+                let mut result = first;
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    result = self.manager.mk_sub(result, next);
+                }
+                result
             }
             "*" => {
                 let args = self.parse_term_list()?;
                 self.manager.mk_mul(args)
             }
             "div" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                // For now, treat div as subtraction placeholder
-                self.manager.mk_sub(lhs, rhs)
+                // Integer (Euclidean) division. `div`/`mod` are left-
+                // associative n-ary in SMT-LIB; fold left over the operands.
+                let mut result = self.parse_term()?;
+                loop {
+                    if let Some(token) = self.lexer.peek()
+                        && matches!(token.kind, TokenKind::RParen)
+                    {
+                        self.lexer.next_token();
+                        break;
+                    }
+                    let next = self.parse_term()?;
+                    result = self.manager.mk_div(result, next);
+                }
+                result
             }
             "mod" => {
                 let lhs = self.parse_term()?;
                 let rhs = self.parse_term()?;
                 self.expect_rparen()?;
-                // For now, treat mod as subtraction placeholder
-                self.manager.mk_sub(lhs, rhs)
+                self.manager.mk_mod(lhs, rhs)
+            }
+            "/" => {
+                // Real division. Left-associative n-ary. Routed to the general
+                // division term kind (which the rewriter/evaluator interpret as
+                // exact rational division) so QF_LRA constraints stay in the
+                // arithmetic theory instead of degrading to a Bool apply.
+                let mut result = self.parse_term()?;
+                loop {
+                    if let Some(token) = self.lexer.peek()
+                        && matches!(token.kind, TokenKind::RParen)
+                    {
+                        self.lexer.next_token();
+                        break;
+                    }
+                    let next = self.parse_term()?;
+                    result = self.manager.mk_div(result, next);
+                }
+                result
+            }
+            "abs" => {
+                // (abs x) = (ite (>= x 0) x (- x)), with the zero literal typed
+                // to match the operand sort so mixed Int/Real reasoning stays
+                // consistent.
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                let zero = if self.is_real_term(arg) {
+                    self.manager.mk_real(Rational64::from_integer(0))
+                } else {
+                    self.manager.mk_int(0)
+                };
+                let cond = self.manager.mk_ge(arg, zero);
+                let neg = self.manager.mk_neg(arg);
+                self.manager.mk_ite(cond, arg, neg)
+            }
+            "to_real" => {
+                // Int -> Real injection. The arithmetic engine represents both
+                // sorts as rationals and the value is preserved exactly, so the
+                // injection is the identity on the term; the operand keeps its
+                // (integer) constraints, which is exactly `to_real` semantics.
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                arg
+            }
+            "to_int" => {
+                // (to_int r) is the floor of a real. For a *constant* operand
+                // we can compute the exact Euclidean floor
+                // (`numer.div_euclid(denom)`, denom always positive in a
+                // normalized rational); an already-integer constant maps to
+                // itself. For a *symbolic* real there is no floor operator in
+                // this term representation, so rather than emit a silently
+                // wrong term we surface an honest parse error.
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                let kind = self.manager.get(arg).map(|t| t.kind.clone());
+                match kind {
+                    Some(crate::ast::TermKind::IntConst(_)) => arg,
+                    Some(crate::ast::TermKind::RealConst(r)) => {
+                        let floor = r.numer().div_euclid(*r.denom());
+                        self.manager.mk_int(floor)
+                    }
+                    _ => {
+                        return Err(OxizError::ParseError {
+                            position: self.lexer.position(),
+                            message: "unsupported to_int on a symbolic real (no floor operator)"
+                                .to_string(),
+                        });
+                    }
+                }
+            }
+            "is_int" => {
+                // (is_int r) tests whether a real is integer-valued. For a
+                // constant operand this is decidable exactly; for a symbolic
+                // real we have no integrality predicate to lower to, so we
+                // surface an honest parse error instead of a wrong term.
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                let kind = self.manager.get(arg).map(|t| t.kind.clone());
+                match kind {
+                    Some(crate::ast::TermKind::IntConst(_)) => self.manager.mk_true(),
+                    Some(crate::ast::TermKind::RealConst(r)) => {
+                        if r.is_integer() {
+                            self.manager.mk_true()
+                        } else {
+                            self.manager.mk_false()
+                        }
+                    }
+                    _ => {
+                        return Err(OxizError::ParseError {
+                            position: self.lexer.position(),
+                            message:
+                                "unsupported is_int on a symbolic real (no integrality predicate)"
+                                    .to_string(),
+                        });
+                    }
+                }
             }
             "<" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_lt(lhs, rhs)
+                // Chainable: `(< a b c)` means `(and (< a b) (< b c))`.
+                let first = self.parse_term()?;
+                let mut prev = first;
+                let mut atoms: Vec<TermId> = Vec::new();
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    atoms.push(self.manager.mk_lt(prev, next));
+                    prev = next;
+                }
+                if atoms.is_empty() {
+                    return Err(self.min_arity_err("<", 2, 1));
+                }
+                self.chain_conjunction(atoms)
             }
             "<=" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_le(lhs, rhs)
+                // Chainable: `(<= a b c)` means `(and (<= a b) (<= b c))`.
+                let first = self.parse_term()?;
+                let mut prev = first;
+                let mut atoms: Vec<TermId> = Vec::new();
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    atoms.push(self.manager.mk_le(prev, next));
+                    prev = next;
+                }
+                if atoms.is_empty() {
+                    return Err(self.min_arity_err("<=", 2, 1));
+                }
+                self.chain_conjunction(atoms)
             }
             ">" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_gt(lhs, rhs)
+                // Chainable: `(> a b c)` means `(and (> a b) (> b c))`.
+                let first = self.parse_term()?;
+                let mut prev = first;
+                let mut atoms: Vec<TermId> = Vec::new();
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    atoms.push(self.manager.mk_gt(prev, next));
+                    prev = next;
+                }
+                if atoms.is_empty() {
+                    return Err(self.min_arity_err(">", 2, 1));
+                }
+                self.chain_conjunction(atoms)
             }
             ">=" => {
-                let lhs = self.parse_term()?;
-                let rhs = self.parse_term()?;
-                self.expect_rparen()?;
-                self.manager.mk_ge(lhs, rhs)
+                // Chainable: `(>= a b c)` means `(and (>= a b) (>= b c))`.
+                let first = self.parse_term()?;
+                let mut prev = first;
+                let mut atoms: Vec<TermId> = Vec::new();
+                while !self.try_consume_rparen() {
+                    let next = self.parse_term()?;
+                    atoms.push(self.manager.mk_ge(prev, next));
+                    prev = next;
+                }
+                if atoms.is_empty() {
+                    return Err(self.min_arity_err(">=", 2, 1));
+                }
+                self.chain_conjunction(atoms)
             }
             "select" => {
                 let array = self.parse_term()?;

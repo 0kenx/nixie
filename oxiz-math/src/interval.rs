@@ -471,14 +471,32 @@ impl Interval {
         // Find min and max
         bounds.sort_by(|a, b| a.0.cmp_bound(&b.0));
 
-        let (lo, lo_open) = bounds
-            .first()
-            .expect("collection validated to be non-empty")
-            .clone();
-        let (hi, hi_open) = bounds
-            .last()
-            .expect("collection validated to be non-empty")
-            .clone();
+        // Multiple corners can tie at the same extremal *value* while
+        // disagreeing on whether it is attained. The classic example is a
+        // factor pinned at exactly 0: `0 * y = 0` is attained for every `y`
+        // regardless of the openness of the *other* corner's bound, so if
+        // any tied corner is closed, the extremum is attained (closed) even
+        // though another corner produces the same numeric value only as an
+        // unattained limit. Picking an arbitrary tied corner (e.g. the first
+        // after sorting) can therefore mark an attainable value like 0 as
+        // open, excluding it from the result interval.
+        let (lo, lo_open) = {
+            let min_val = bounds[0].0.clone();
+            let is_open = bounds
+                .iter()
+                .take_while(|(b, _)| b.cmp_bound(&min_val) == Ordering::Equal)
+                .all(|(_, open)| *open);
+            (min_val, is_open)
+        };
+        let (hi, hi_open) = {
+            let max_val = bounds[bounds.len() - 1].0.clone();
+            let is_open = bounds
+                .iter()
+                .rev()
+                .take_while(|(b, _)| b.cmp_bound(&max_val) == Ordering::Equal)
+                .all(|(_, open)| *open);
+            (max_val, is_open)
+        };
 
         Interval {
             lo,

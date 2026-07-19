@@ -498,10 +498,18 @@ impl CombinedRewriter {
             return cached;
         }
 
+        // Bound recursion depth. On a pathologically deep (but valid) term
+        // this bails out returning the term unchanged rather than blowing
+        // the stack -- sound (no rewrite applied) instead of a crash.
+        if !ctx.enter() {
+            return term;
+        }
+
         self.stats.terms_visited += 1;
 
         // First rewrite children
         let Some(t) = manager.get(term).cloned() else {
+            ctx.exit();
             return term;
         };
 
@@ -510,6 +518,8 @@ impl CombinedRewriter {
         // Then apply rewriter to the result
         let kind = self.get_rewriter_for_term(after_children, manager);
         let result = self.apply_rewriter(kind, after_children, ctx, manager);
+
+        ctx.exit();
 
         let simplified = result.term();
         self.insert_cache(term, simplified);
@@ -847,5 +857,38 @@ mod tests {
 
         rewriter.reset();
         assert_eq!(rewriter.stats().terms_visited, 0);
+    }
+
+    #[test]
+    fn test_rewrite_bottom_up_deep_term_does_not_overflow_stack() {
+        // Regression: rewrite_bottom_up used to recurse per AST level with
+        // no depth limit, so a deep (but valid) term could overflow the
+        // stack and abort the process. Build a chain far deeper than the
+        // RewriteContext's max_depth (1000) and confirm we get back a sound
+        // (unchanged-below-the-cap) result instead of crashing.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let int_sort = manager.sorts.int_sort;
+        let mut term = manager.mk_var("x", int_sort);
+        const CHAIN_LEN: usize = 20_000;
+        for _ in 0..CHAIN_LEN {
+            term = manager.mk_neg(term);
+        }
+
+        // Must return without stack-overflow/abort.
+        let result = rewriter.rewrite(term, &mut ctx, &mut manager);
+
+        // The result must still be a well-formed, retrievable term.
+        assert!(manager.get(result.term()).is_some());
+
+        // The depth cap must actually have engaged: far fewer terms visited
+        // than the full chain length (otherwise the cap is not bounding
+        // recursion at all).
+        assert!(
+            rewriter.stats().terms_visited < CHAIN_LEN as u64,
+            "expected the depth cap to bound recursion (visited {}, chain len {})",
+            rewriter.stats().terms_visited,
+            CHAIN_LEN
+        );
     }
 }

@@ -343,7 +343,10 @@ impl EGraph {
     /// This finds the "best" representative term from an e-class
     /// (typically the smallest or simplest)
     pub fn extract(&self, id: EClassId) -> Option<&ENode> {
-        let root_id = self.unionfind.get(&id).copied().unwrap_or(id);
+        // `find_canonical` walks the full parent chain to the root; a
+        // single `unionfind.get(&id)` hop only resolves one merge step and
+        // returns a stale (non-root) id after two or more chained merges.
+        let root_id = self.find_canonical(id);
         self.classes
             .get(&root_id)
             .and_then(|class| class.nodes.first())
@@ -352,7 +355,7 @@ impl EGraph {
     /// Get all e-nodes in an e-class
     #[must_use]
     pub fn get_class(&self, id: EClassId) -> Option<&EClass> {
-        let root_id = self.unionfind.get(&id).copied().unwrap_or(id);
+        let root_id = self.find_canonical(id);
         self.classes.get(&root_id)
     }
 
@@ -386,24 +389,34 @@ impl EGraph {
                 (ENodeKind::Var(name_str.to_string()), Vec::new())
             }
             TermKind::IntConst(val) => {
-                // Convert BigInt to i64 (truncate if needed)
-                let val_i64 = val.to_string().parse::<i64>().unwrap_or(0);
+                // `ENodeKind::IntConst` is `i64`-backed (unlike the AST's
+                // `BigInt`-backed `IntConst`). An out-of-i64-range constant
+                // previously silently became `0`, which would unsoundly
+                // merge an arbitrary huge constant into the same congruence
+                // class as the literal `0`. Bail out honestly instead — the
+                // term simply cannot be represented in this e-graph.
+                let val_i64 = i64::try_from(val).ok()?;
                 (ENodeKind::IntConst(val_i64), Vec::new())
             }
             TermKind::True => (ENodeKind::BoolConst(true), Vec::new()),
             TermKind::False => (ENodeKind::BoolConst(false), Vec::new()),
             TermKind::Add(args) => {
-                let child_ids: Vec<_> = args
+                // Propagate a child failure to the whole node instead of
+                // `filter_map`'s silent drop, which would otherwise corrupt
+                // the e-node by shrinking its arity (e.g. turning `a+b+c`
+                // into a 2-child `Add` if `b` couldn't be represented),
+                // creating spurious congruences.
+                let child_ids = args
                     .iter()
-                    .filter_map(|&arg| self.add_term(arg, manager))
-                    .collect();
+                    .map(|&arg| self.add_term(arg, manager))
+                    .collect::<Option<Vec<_>>>()?;
                 (ENodeKind::Add, child_ids)
             }
             TermKind::Mul(args) => {
-                let child_ids: Vec<_> = args
+                let child_ids = args
                     .iter()
-                    .filter_map(|&arg| self.add_term(arg, manager))
-                    .collect();
+                    .map(|&arg| self.add_term(arg, manager))
+                    .collect::<Option<Vec<_>>>()?;
                 (ENodeKind::Mul, child_ids)
             }
             TermKind::Sub(a, b) => {
@@ -416,17 +429,17 @@ impl EGraph {
                 (ENodeKind::Neg, vec![a_id])
             }
             TermKind::And(args) => {
-                let child_ids: Vec<_> = args
+                let child_ids = args
                     .iter()
-                    .filter_map(|&arg| self.add_term(arg, manager))
-                    .collect();
+                    .map(|&arg| self.add_term(arg, manager))
+                    .collect::<Option<Vec<_>>>()?;
                 (ENodeKind::And, child_ids)
             }
             TermKind::Or(args) => {
-                let child_ids: Vec<_> = args
+                let child_ids = args
                     .iter()
-                    .filter_map(|&arg| self.add_term(arg, manager))
-                    .collect();
+                    .map(|&arg| self.add_term(arg, manager))
+                    .collect::<Option<Vec<_>>>()?;
                 (ENodeKind::Or, child_ids)
             }
             TermKind::Not(a) => {
@@ -494,7 +507,7 @@ impl EGraph {
     where
         F: Fn(&ENodeKind, &[EClassId]) -> u64,
     {
-        let canonical_id = *self.unionfind.get(&eclass_id).unwrap_or(&eclass_id);
+        let canonical_id = self.find_canonical(eclass_id);
         let eclass = self.classes.get(&canonical_id)?;
 
         eclass

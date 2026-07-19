@@ -5,13 +5,20 @@ use oxiz_theories::Theory;
 use oxiz_theories::bv::BvSolver;
 
 /// bv_10: dividend = 100, quotient = 5, find divisor
-/// Should be SAT with divisor = 20
+/// Should be SAT (any divisor in `[17, 20]` makes `100 / divisor == 5`
+/// under unsigned integer division; `check()` is free to find any of them).
 ///
-/// NOTE: This test uses the BV solver directly (not through SMT interface).
-/// The Z3 parity benchmark passes for bv_10.smt2, which uses the full SMT solver.
-/// The direct BV solver interface has a known limitation with inverse constraints.
+/// Audit regression (theories-bv): this test used to be `#[ignore]`d,
+/// attributing the failure to "a known limitation with inverse constraints"
+/// in the direct BV solver API. The real cause was a `BvSolver::check()`
+/// bug: an `Unsat` verdict from the SAT solver's *first* internal `solve()`
+/// call could be unsound (a learned clause resolved through a bare,
+/// clause-less level-0 decision literal installed by `assert_const`), which
+/// a subsequent probe's cleanup would silently "fix" for the NEXT probe but
+/// not for the current one. `check()` now defensively re-verifies an
+/// `Unsat` result by discarding this probe's learned clauses and retrying
+/// once before trusting the verdict (see `BvSolver::check()`).
 #[test]
-#[ignore = "Direct BV solver API limitation - Z3 parity benchmark passes for bv_10.smt2"]
 fn test_bv10_udiv() {
     let mut solver = BvSolver::new();
     let width = 8u32;

@@ -127,6 +127,11 @@ pub enum Message {
         script: String,
         /// Optional logic setting
         logic: Option<String>,
+        /// Names of the actual Boolean-sorted variables declared in `script`
+        /// (in declaration order), used to interpret cube literals' `var`
+        /// index against the real problem -- see [`solve_cube`].
+        #[serde(default)]
+        bool_vars: Vec<String>,
     },
 }
 
@@ -199,13 +204,23 @@ pub struct DistributedResult {
 
 /// Generate cubes using simple binary splitting
 ///
-/// This is a basic cube generation strategy that creates 2^depth cubes
-/// by splitting on the first `depth` boolean variables.
+/// This is a basic cube generation strategy that creates 2^depth cubes by
+/// splitting on the first `depth` of the problem's actual Boolean variables
+/// (indices into the `bool_vars` list built by [`extract_bool_vars`]; see
+/// [`solve_cube`] for how a cube's literals get mapped back onto those real
+/// variables). `num_vars` is therefore the number of *real*, splittable
+/// Boolean variables in the script -- if it is `0`, cube-and-conquer has
+/// nothing to split on, and a single trivial cube (the whole problem,
+/// unconstrained) is returned so solving still proceeds correctly, just
+/// without parallel speedup, rather than fabricating a split.
 fn generate_cubes(num_cubes: usize, num_vars: u32) -> Vec<Vec<Literal>> {
-    let depth = (num_cubes as f64).log2().ceil() as u32;
-    let actual_num_cubes = 1usize << depth;
+    if num_vars == 0 || num_cubes <= 1 {
+        return vec![Vec::new()];
+    }
 
+    let depth = (num_cubes as f64).log2().ceil() as u32;
     let vars_to_use = depth.min(num_vars);
+    let actual_num_cubes = 1usize << vars_to_use;
 
     let mut cubes = Vec::with_capacity(actual_num_cubes);
 
@@ -220,6 +235,95 @@ fn generate_cubes(num_cubes: usize, num_vars: u32) -> Vec<Vec<Literal>> {
     }
 
     cubes
+}
+
+/// Strip `;`-comments from an SMT-LIB2 script (to end of line).
+fn strip_comments(script: &str) -> String {
+    let mut out = String::with_capacity(script.len());
+    let mut chars = script.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ';' {
+            for c2 in chars.by_ref() {
+                if c2 == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Minimal SMT-LIB2 tokenizer: splits into `(`, `)`, and atoms. Sufficient
+/// for locating top-level `declare-const`/`declare-fun` forms; it does not
+/// build a full parse tree.
+fn tokenize_smtlib(script: &str) -> Vec<String> {
+    let cleaned = strip_comments(script);
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+
+    for c in cleaned.chars() {
+        match c {
+            '(' | ')' => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                tokens.push(c.to_string());
+            }
+            c if c.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// Extract the names of every Boolean-sorted variable declared in an
+/// SMT-LIB2 script (via `declare-const` or nullary `declare-fun`), in
+/// declaration order.
+///
+/// These are the *only* variables cube-and-conquer can legitimately split
+/// the search space on: they are the real variables that occur in the
+/// user's problem, unlike the previous implementation's `__cube_var_N`
+/// Booleans, which did not occur anywhere in the script and therefore left
+/// every cube's "assumptions" vacuous.
+fn extract_bool_vars(script: &str) -> Vec<String> {
+    let tokens = tokenize_smtlib(script);
+    let mut vars = Vec::new();
+
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == "declare-const" {
+            if let (Some(name), Some(sort)) = (tokens.get(i + 1), tokens.get(i + 2))
+                && sort == "Bool"
+            {
+                vars.push(name.clone());
+            }
+        } else if tokens[i] == "declare-fun"
+            && let (Some(name), Some(lp), Some(rp), Some(sort)) = (
+                tokens.get(i + 1),
+                tokens.get(i + 2),
+                tokens.get(i + 3),
+                tokens.get(i + 4),
+            )
+            && lp == "("
+            && rp == ")"
+            && sort == "Bool"
+        {
+            vars.push(name.clone());
+        }
+        i += 1;
+    }
+
+    vars
 }
 
 /// Run as coordinator node
@@ -247,8 +351,11 @@ pub fn run_coordinator(
 
     println!("Coordinator listening on {}", config.address);
 
-    // Generate cubes (using a simple heuristic for number of variables)
-    let num_vars = estimate_num_vars(script);
+    // Generate cubes by splitting on the problem's actual Boolean variables
+    // (not a synthetic count), so cube assumptions can be mapped back onto
+    // real script variables in `solve_cube`.
+    let bool_vars = Arc::new(extract_bool_vars(script));
+    let num_vars = bool_vars.len() as u32;
     let cubes = generate_cubes(config.num_cubes, num_vars);
 
     let cube_states: Arc<Mutex<HashMap<u64, CubeState>>> = Arc::new(Mutex::new(
@@ -322,6 +429,7 @@ pub fn run_coordinator(
             let workers_clone = Arc::clone(&workers);
             let cube_states_clone = Arc::clone(&cube_states);
             let script_clone = Arc::clone(&script);
+            let bool_vars_clone = Arc::clone(&bool_vars);
             let result_tx_clone = result_tx.clone();
             let found_sat_clone = Arc::clone(&found_sat);
             let all_done_clone = Arc::clone(&all_done);
@@ -337,6 +445,7 @@ pub fn run_coordinator(
                     workers_clone,
                     cube_states_clone,
                     &script_clone,
+                    &bool_vars_clone,
                     result_tx_clone,
                     found_sat_clone,
                     all_done_clone,
@@ -430,6 +539,7 @@ fn handle_worker(
     workers: Arc<Mutex<HashMap<String, WorkerState>>>,
     cube_states: Arc<Mutex<HashMap<u64, CubeState>>>,
     script: &str,
+    bool_vars: &[String],
     result_tx: Sender<(u64, CubeSolverResult)>,
     found_sat: Arc<AtomicBool>,
     all_done: Arc<AtomicBool>,
@@ -468,6 +578,7 @@ fn handle_worker(
         &Message::Problem {
             script: script.to_string(),
             logic: None,
+            bool_vars: bool_vars.to_vec(),
         },
     )?;
 
@@ -632,6 +743,7 @@ pub fn run_worker(config: &DistributedConfig) -> Result<(), String> {
 
     let mut ctx: Option<Context> = None;
     let mut script: Option<String> = None;
+    let mut bool_vars: Vec<String> = Vec::new();
 
     // Main worker loop
     loop {
@@ -650,9 +762,17 @@ pub fn run_worker(config: &DistributedConfig) -> Result<(), String> {
                     .map_err(|e| format!("Failed to parse message: {}", e))?;
 
                 match msg {
-                    Message::Problem { script: s, logic } => {
-                        println!("Received problem from coordinator");
+                    Message::Problem {
+                        script: s,
+                        logic,
+                        bool_vars: vars,
+                    } => {
+                        println!(
+                            "Received problem from coordinator ({} splittable Boolean variable(s))",
+                            vars.len()
+                        );
                         script = Some(s.clone());
+                        bool_vars = vars;
 
                         // Initialize context
                         let mut new_ctx = Context::new();
@@ -675,7 +795,7 @@ pub fn run_worker(config: &DistributedConfig) -> Result<(), String> {
                         );
 
                         let status = if let (Some(s), Some(c)) = (&script, &mut ctx) {
-                            solve_cube(c, s, &assumptions, config.cube_timeout)
+                            solve_cube(c, s, &bool_vars, &assumptions, config.cube_timeout)
                         } else {
                             CubeSolverResult::Unknown
                         };
@@ -724,9 +844,17 @@ pub fn run_worker(config: &DistributedConfig) -> Result<(), String> {
 }
 
 /// Solve a cube (partial assignment) under the given assumptions
+///
+/// `bool_vars` must be the same list (in the same order) that the
+/// coordinator used in [`generate_cubes`] to build `assumptions` -- each
+/// `Literal::var` is an index into it, naming one of the *real* Boolean
+/// variables the script itself declares. Constraining that actual variable
+/// (rather than a synthetic one absent from the problem) is what makes a
+/// cube genuinely restrict the search space instead of being vacuous.
 fn solve_cube(
     ctx: &mut Context,
     script: &str,
+    bool_vars: &[String],
     assumptions: &[Literal],
     _timeout: u64,
 ) -> CubeSolverResult {
@@ -738,13 +866,24 @@ fn solve_cube(
         return CubeSolverResult::Unknown;
     }
 
-    // Add assumptions as assertions
-    // In a real implementation, we would use check-sat-assuming or
-    // properly map literals to actual term variables
+    let bool_sort = ctx.terms.sorts.bool_sort;
     for lit in assumptions {
-        let var_name = format!("__cube_var_{}", lit.var);
-        let bool_sort = ctx.terms.sorts.bool_sort;
-        let var_term = ctx.declare_const(&var_name, bool_sort);
+        let Some(name) = bool_vars.get(lit.var as usize) else {
+            // The cube references a variable index outside the script's
+            // declared Boolean variables. This should not happen because
+            // `generate_cubes` only ever creates literals over
+            // `bool_vars.len()`, but guard defensively: report `Unknown`
+            // rather than silently fabricating a variable that constrains
+            // nothing (which is exactly the bug this function fixes).
+            return CubeSolverResult::Unknown;
+        };
+
+        // `TermManager::mk_var` hash-conses on (name, sort), so this
+        // resolves to the SAME term the script's own
+        // `(declare-const <name> Bool)` / `(declare-fun <name> () Bool)`
+        // already produced -- it does not introduce a fresh, disconnected
+        // variable.
+        let var_term = ctx.terms.mk_var(name, bool_sort);
 
         let assumption = if lit.negated {
             ctx.terms.mk_not(var_term)
@@ -796,23 +935,6 @@ fn send_message_locked(stream: &Arc<Mutex<TcpStream>>, msg: &Message) -> Result<
         .map_err(|e| format!("Failed to flush stream: {}", e))?;
 
     Ok(())
-}
-
-/// Estimate the number of boolean variables in the problem
-fn estimate_num_vars(script: &str) -> u32 {
-    // Simple heuristic: count declare-const statements with Bool type
-    let mut count = 0u32;
-    for line in script.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("declare-const") && trimmed.contains("Bool") {
-            count += 1;
-        }
-        if trimmed.contains("declare-fun") && trimmed.contains("Bool") {
-            count += 1;
-        }
-    }
-    // Return at least 1 to avoid division by zero
-    count.max(1)
 }
 
 /// Format a distributed result for display
@@ -889,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_num_vars() {
+    fn test_extract_bool_vars_finds_real_variable_names() {
         let script = r#"
             (set-logic QF_UF)
             (declare-const p Bool)
@@ -898,8 +1020,89 @@ mod tests {
             (assert (or p q r))
         "#;
 
-        let count = estimate_num_vars(script);
-        assert_eq!(count, 3);
+        let vars = extract_bool_vars(script);
+        assert_eq!(
+            vars,
+            vec!["p".to_string(), "q".to_string(), "r".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_extract_bool_vars_ignores_non_bool_and_declare_fun_with_args() {
+        let script = r#"
+            (declare-const x Int)
+            (declare-const p Bool)
+            (declare-fun f (Int) Bool)
+            (declare-fun q () Bool)
+        "#;
+        let vars = extract_bool_vars(script);
+        assert_eq!(vars, vec!["p".to_string(), "q".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_bool_vars_handles_multiline_declarations() {
+        let script = "(declare-const\n  p\n  Bool)\n";
+        let vars = extract_bool_vars(script);
+        assert_eq!(vars, vec!["p".to_string()]);
+    }
+
+    #[test]
+    fn test_generate_cubes_no_splittable_variables_falls_back_to_single_cube() {
+        // Honest fallback: with zero real Boolean variables to split on,
+        // cube-and-conquer cannot fabricate a split, so it must degrade to
+        // one trivial (unconstrained) cube rather than pretending to
+        // parallelize.
+        let cubes = generate_cubes(64, 0);
+        assert_eq!(cubes.len(), 1);
+        assert!(cubes[0].is_empty());
+    }
+
+    #[test]
+    fn test_generate_cubes_does_not_duplicate_when_vars_are_scarce() {
+        // Requesting far more cubes than there are variables to split on
+        // must not produce duplicate cubes (previously `actual_num_cubes`
+        // used the unclamped `depth` instead of `vars_to_use`, so many `i`
+        // values collapsed onto the same literal set).
+        let cubes = generate_cubes(64, 2);
+        assert_eq!(cubes.len(), 4); // 2^2, not 2^6
+        let unique: std::collections::HashSet<Vec<Literal>> = cubes.iter().cloned().collect();
+        assert_eq!(unique.len(), cubes.len(), "generated duplicate cubes");
+    }
+
+    #[test]
+    fn test_solve_cube_actually_constrains_the_real_variable() {
+        // A single Boolean variable `p`; the "positive" cube (p) must force
+        // `p = true` in the real problem, and the "negative" cube (¬p) must
+        // force `p = false` -- proving the cube is not vacuous.
+        let script = "(declare-const p Bool)\n";
+        let bool_vars = vec!["p".to_string()];
+
+        let mut ctx = Context::new();
+        let sat_true = solve_cube(&mut ctx, script, &bool_vars, &[Literal::pos(0)], 0);
+        assert_eq!(sat_true, CubeSolverResult::Sat);
+
+        let mut ctx2 = Context::new();
+        let sat_false = solve_cube(&mut ctx2, script, &bool_vars, &[Literal::neg(0)], 0);
+        assert_eq!(sat_false, CubeSolverResult::Sat);
+
+        // Now make the underlying problem force p = true; the negative cube
+        // must now be UNSAT, proving the assumption genuinely constrains
+        // the real script variable rather than an unrelated fresh one.
+        let forced_script = "(declare-const p Bool)\n(assert p)\n";
+        let mut ctx3 = Context::new();
+        let must_be_unsat = solve_cube(&mut ctx3, forced_script, &bool_vars, &[Literal::neg(0)], 0);
+        assert_eq!(must_be_unsat, CubeSolverResult::Unsat);
+    }
+
+    #[test]
+    fn test_solve_cube_out_of_range_var_is_honest_unknown() {
+        let script = "(declare-const p Bool)\n";
+        let bool_vars = vec!["p".to_string()];
+        let mut ctx = Context::new();
+        // Var index 5 does not exist in `bool_vars` -- must not silently
+        // fabricate a disconnected variable.
+        let result = solve_cube(&mut ctx, script, &bool_vars, &[Literal::pos(5)], 0);
+        assert_eq!(result, CubeSolverResult::Unknown);
     }
 
     #[test]

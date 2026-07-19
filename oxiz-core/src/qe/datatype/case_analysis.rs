@@ -41,7 +41,17 @@ pub struct Constructor {
 pub struct CaseAnalysisResult {
     /// Cases (one per constructor).
     pub cases: Vec<Term>,
-    /// Whether analysis was complete.
+    /// Whether `cases` is a *semantically* complete, sound case split —
+    /// i.e. each entry actually substitutes its constructor's fresh
+    /// selector arguments into the original formula (`φ(C_i(fresh...))`)
+    /// per the module-level strategy. `CaseAnalyzer::generate_case`
+    /// currently does not perform that substitution (it returns the
+    /// original formula unchanged for every constructor, since it isn't
+    /// even given a term manager to build fresh variables/substitutions
+    /// with), so `cases` is presently `constructors.len()` identical
+    /// copies of the input formula, not a real case split. Callers must
+    /// not treat `complete == true` as "safe to use `cases` in place of
+    /// the quantified formula" until that substitution is implemented.
     pub complete: bool,
 }
 
@@ -150,9 +160,14 @@ impl CaseAnalyzer {
             cases = self.merge_cases(cases);
         }
 
+        // NOT actually complete: see the `complete` field's doc comment —
+        // `generate_case` doesn't yet substitute per-constructor, so this
+        // would previously report a successful, sound case split when
+        // `cases` in fact just repeats the untouched input formula once
+        // per constructor.
         CaseAnalysisResult {
             cases,
-            complete: true,
+            complete: false,
         }
     }
 

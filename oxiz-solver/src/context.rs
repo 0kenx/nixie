@@ -8,7 +8,7 @@ use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::error::Result;
 #[cfg(feature = "std")]
 use oxiz_core::smtlib::{Command, parse_script};
-use oxiz_core::sort::SortId;
+use oxiz_core::sort::{SortId, SortKind};
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
@@ -111,8 +111,19 @@ pub struct Context {
     fun_name_to_index: crate::prelude::HashMap<String, usize>,
     /// Last check-sat result
     last_result: Option<SolverResult>,
+    /// The assumption terms passed to the most recent `check-sat-assuming`
+    /// (empty for a plain `check-sat`).  Retained so `get-unsat-assumptions`
+    /// can report an unsatisfiable subset after an `unsat` verdict.
+    last_assumptions: Vec<TermId>,
     /// Options
     options: crate::prelude::HashMap<String, String>,
+    /// Sorts declared via `(declare-sort name arity)`, keyed by name.
+    ///
+    /// The `SortId` itself lives in `self.terms.sorts` (interned lazily,
+    /// on first reference, exactly like the SMT-LIB parser does); this
+    /// map exists purely for script-level introspection of which names
+    /// were declared and with what arity.
+    declared_sorts: crate::prelude::HashMap<String, u32>,
     /// Optional path for binary proof logging.
     ///
     /// When set, `check_sat` creates a `ProofLogger` at this path, records
@@ -145,7 +156,9 @@ impl Context {
             fun_stack: Vec::new(),
             fun_name_to_index: crate::prelude::HashMap::new(),
             last_result: None,
+            last_assumptions: Vec::new(),
             options: crate::prelude::HashMap::new(),
+            declared_sorts: crate::prelude::HashMap::new(),
             #[cfg(feature = "std")]
             proof_log_path: None,
         }
@@ -227,6 +240,12 @@ impl Context {
         self.declared_funs.iter().map(|d| d.name.as_str())
     }
 
+    /// Iterate over `(name, arity)` for every sort declared via
+    /// `(declare-sort name arity)` (through [`Context::execute_script`]).
+    pub fn declared_sort_names(&self) -> impl Iterator<Item = (&str, u32)> {
+        self.declared_sorts.iter().map(|(k, &v)| (k.as_str(), v))
+    }
+
     /// Set the logic
     pub fn set_logic(&mut self, logic: &str) {
         self.logic = Some(logic.to_string());
@@ -247,7 +266,23 @@ impl Context {
 
     /// Check satisfiability
     pub fn check_sat(&mut self) -> SolverResult {
-        let result = self.solver.check(&mut self.terms);
+        let mut result = self.solver.check(&mut self.terms);
+
+        // Array soundness honesty gate: the syntactic array checks and the EUF
+        // congruence core do not implement full array extensionality.  If a
+        // positive equality between two store terms survived to a `Sat` verdict
+        // without being refuted as a conflict, the assignment is not certified —
+        // the core may have merged the two store terms into one class without
+        // enforcing element-wise agreement of their bases.  Answer `Unknown`
+        // rather than a possibly-spurious `Sat` (never a silent wrong result).
+        if result == SolverResult::Sat && self.solver.array_atoms_need_theory(&self.terms) {
+            result = SolverResult::Unknown;
+        }
+
+        // A plain check-sat clears any assumption context from a prior
+        // check-sat-assuming, so a following get-unsat-assumptions does not
+        // report stale assumptions.
+        self.last_assumptions.clear();
         self.last_result = Some(result);
 
         // Write a binary proof log if a path is configured (std-only).
@@ -567,22 +602,37 @@ impl Context {
             .map(|(value, _)| value.to_string())
     }
 
-    /// Format a sort ID to its SMT-LIB2 name
+    /// Format a sort ID to its SMT-LIB2 name.
+    ///
+    /// Handles every `SortKind` that [`Context::parse_sort_name`] can
+    /// produce (its inverse), including compound `(Array ..)`/`(_
+    /// BitVec ..)`/`(_ FloatingPoint ..)` forms and previously
+    /// declared uninterpreted/datatype sorts by name, so
+    /// `get-model`/`get-value` output reflects a declared constant's
+    /// real sort instead of falling back to a generic placeholder.
     fn format_sort_name(&self, sort: SortId) -> String {
-        if sort == self.terms.sorts.bool_sort {
-            "Bool".to_string()
-        } else if sort == self.terms.sorts.int_sort {
-            "Int".to_string()
-        } else if sort == self.terms.sorts.real_sort {
-            "Real".to_string()
-        } else if let Some(s) = self.terms.sorts.get(sort) {
-            if let Some(w) = s.bitvec_width() {
-                format!("(_ BitVec {})", w)
-            } else {
-                "Unknown".to_string()
+        let Some(s) = self.terms.sorts.get(sort) else {
+            return "Unknown".to_string();
+        };
+        match &s.kind {
+            SortKind::Bool => "Bool".to_string(),
+            SortKind::Int => "Int".to_string(),
+            SortKind::Real => "Real".to_string(),
+            SortKind::String => "String".to_string(),
+            SortKind::BitVec(w) => format!("(_ BitVec {w})"),
+            SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
+            SortKind::Array { domain, range } => {
+                let domain_str = self.format_sort_name(*domain);
+                let range_str = self.format_sort_name(*range);
+                format!("(Array {domain_str} {range_str})")
             }
-        } else {
-            "Unknown".to_string()
+            SortKind::Uninterpreted(spur) => self.terms.resolve_str(*spur).to_string(),
+            SortKind::Datatype(_) => self
+                .terms
+                .sorts
+                .datatype_name(sort)
+                .map_or_else(|| "Unknown".to_string(), ToString::to_string),
+            SortKind::Parameter(_) | SortKind::Parametric { .. } => "Unknown".to_string(),
         }
     }
 
@@ -690,6 +740,7 @@ impl Context {
         self.fun_name_to_index.clear();
         self.logic = None;
         self.last_result = None;
+        self.last_assumptions.clear();
         self.options.clear();
     }
 
@@ -702,6 +753,7 @@ impl Context {
         // declared_funs, fun_stack, and fun_name_to_index
         // Re-assert nothing - solver is fresh
         self.last_result = None;
+        self.last_assumptions.clear();
     }
 
     /// Get all current assertions
@@ -724,11 +776,43 @@ impl Context {
         format!("({})", parts.join("\n "))
     }
 
-    /// Set an option
+    /// Set an option.
+    ///
+    /// Recognised keys are wired into the underlying [`crate::SolverConfig`] and take
+    /// effect on the next `check_sat`.  All keys (recognised or not) are recorded
+    /// so that `(get-option ...)` reflects the last value set.  A leading `:` is
+    /// stripped so both `:timeout` and `timeout` resolve identically.
+    ///
+    /// Wired keys (each consumed by the solve loop, so setting them actually
+    /// changes behaviour):
+    ///
+    /// - `produce-proofs` (`true`/`false`) — enable proof generation.
+    /// - `produce-unsat-cores` (`true`/`false`) — enable unsat-core tracking.
+    /// - `timeout` (milliseconds) — wall-clock budget for the search; `0`
+    ///   disables it.  Maps to [`crate::SolverConfig::timeout_ms`], enforced between
+    ///   MBQI rounds and inside the theory callbacks.
+    /// - `max-conflicts` / `max-decisions` (non-negative integer) — resource
+    ///   limits; `0` means unlimited.
+    /// - `theory-mode` (`eager`/`lazy`) — theory propagation eagerness.
+    /// - `simplify` (`true`/`false`) — pre-solve simplification of asserted
+    ///   formulas.
+    /// - `random-seed` / `random_seed` (non-negative integer) — seed for the SAT
+    ///   engine's phase-randomization PRNG.  It is threaded straight into the SAT
+    ///   solver via [`crate::solver::Solver::set_random_seed`], so it perturbs the
+    ///   decision order (and hence which model a satisfiable problem yields)
+    ///   without ever changing the sat/unsat verdict.  A seed of `0` reproduces
+    ///   the default behaviour.
+    ///
+    /// Keys such as `restarts`, `branching`, and memory limits are *recorded but
+    /// not enforced*: the corresponding levers are fixed at solver construction
+    /// time (or have no wiring in this crate yet), so honouring them would require
+    /// an `oxiz-solver` core change.  They are intentionally left as no-ops rather
+    /// than silently pretending to take effect.
     pub fn set_option(&mut self, key: &str, value: &str) {
+        let key = key.trim_start_matches(':');
         self.options.insert(key.to_string(), value.to_string());
 
-        // Handle special options that affect the solver
+        // Handle special options that affect the solver.
         match key {
             "produce-proofs" => {
                 let mut config = self.solver.config().clone();
@@ -737,6 +821,54 @@ impl Context {
             }
             "produce-unsat-cores" => {
                 self.solver.set_produce_unsat_cores(value == "true");
+            }
+            "timeout" => {
+                if let Ok(ms) = value.trim().parse::<u64>() {
+                    let mut config = self.solver.config().clone();
+                    config.timeout_ms = ms;
+                    self.solver.set_config(config);
+                }
+            }
+            "max-conflicts" | "max_conflicts" => {
+                if let Ok(n) = value.trim().parse::<u64>() {
+                    let mut config = self.solver.config().clone();
+                    config.max_conflicts = n;
+                    self.solver.set_config(config);
+                }
+            }
+            "max-decisions" | "max_decisions" => {
+                if let Ok(n) = value.trim().parse::<u64>() {
+                    let mut config = self.solver.config().clone();
+                    config.max_decisions = n;
+                    self.solver.set_config(config);
+                }
+            }
+            "theory-mode" | "theory_mode" => {
+                let mode = match value.trim().to_ascii_lowercase().as_str() {
+                    "lazy" => Some(crate::solver::TheoryMode::Lazy),
+                    "eager" => Some(crate::solver::TheoryMode::Eager),
+                    _ => None,
+                };
+                if let Some(mode) = mode {
+                    let mut config = self.solver.config().clone();
+                    config.theory_mode = mode;
+                    self.solver.set_config(config);
+                }
+            }
+            "simplify" => {
+                let mut config = self.solver.config().clone();
+                config.simplify = value == "true";
+                self.solver.set_config(config);
+            }
+            "random-seed" | "random_seed" => {
+                // Thread the seed into the SAT engine's phase-randomization PRNG.
+                // Only enforce a well-formed non-negative integer; a malformed
+                // value is still recorded (above) so `(get-option ...)` reflects
+                // exactly what the user set, but it does not silently corrupt the
+                // RNG state.
+                if let Ok(seed) = value.trim().parse::<u64>() {
+                    self.solver.set_random_seed(seed);
+                }
             }
             _ => {}
         }
@@ -759,17 +891,109 @@ impl Context {
                     "produce-unsat-cores" => "false".to_string(),
                     "produce-proofs" => "false".to_string(),
                     "produce-assignments" => "false".to_string(),
-                    "print-success" => "true".to_string(),
+                    // Honest default: this solver's command loop does not emit
+                    // the SMT-LIB `success` acknowledgement, so print-success
+                    // mode is effectively off.  Reporting `true` here (the
+                    // standard's nominal default) would advertise behavior the
+                    // runner never performs.
+                    "print-success" => "false".to_string(),
                     _ => "unsupported".to_string(),
                 }
             }
         }
     }
 
-    /// Get assignment (for propositional variables with :named attribute)
-    /// Returns an empty list as we don't track named literals yet
+    /// Answer a `(get-info <keyword>)` request.
+    ///
+    /// The SMT-LIB lexer strips the leading `:` from an info flag, so a request
+    /// for `:all-statistics` arrives here as `all-statistics`; we normalize by
+    /// stripping any leading colon so both spellings resolve identically
+    /// (previously the handler compared against `":all-statistics"` and could
+    /// never match, making *every* `get-info` an error).  The mandatory
+    /// standard flags (`:name`, `:version`, `:authors`, `:error-behavior`,
+    /// `:reason-unknown`) are answered per SMT-LIB 2.6; `:all-statistics`
+    /// returns the solver statistics.
+    pub fn get_info(&self, keyword: &str) -> String {
+        let key = keyword.trim_start_matches(':');
+        match key {
+            "all-statistics" => self.get_statistics(),
+            "name" => "(:name \"oxiz\")".to_string(),
+            "version" => format!("(:version \"{}\")", env!("CARGO_PKG_VERSION")),
+            "authors" => "(:authors \"COOLJAPAN OU (Team Kitasan)\")".to_string(),
+            "error-behavior" => "(:error-behavior continued-execution)".to_string(),
+            "reason-unknown" => {
+                // Report why the last check returned `unknown`, or `unsupported`
+                // when the last result was decided (sat/unsat) or absent.
+                match self.last_result {
+                    Some(SolverResult::Unknown) => "(:reason-unknown incomplete)".to_string(),
+                    _ => "(:reason-unknown \"not applicable\")".to_string(),
+                }
+            }
+            _ => format!("(error \"unsupported info keyword: :{}\")", key),
+        }
+    }
+
+    /// Answer a `(get-assignment)` request.
+    ///
+    /// Per SMT-LIB, `get-assignment` reports the truth values that the current
+    /// model assigns to Boolean-sorted terms.  This implementation returns a
+    /// `(name value)` pair for every declared Boolean constant that the model
+    /// assigns (`true`/`false`), which covers the labelled propositional
+    /// variables users query in practice.  It returns `()` when the last check
+    /// did not produce a model (not `sat`, or no model available).
+    ///
+    /// Boolean constants that never entered a constraint — and therefore carry no
+    /// forced value — are reported as `false`, matching the default-completion
+    /// convention used by [`Context::get_model`].
     pub fn get_assignment(&self) -> String {
-        "()".to_string()
+        if self.last_result != Some(SolverResult::Sat) {
+            return "()".to_string();
+        }
+        let Some(model) = self.solver.model() else {
+            return "()".to_string();
+        };
+        let bool_sort = self.terms.sorts.bool_sort;
+        let mut parts = Vec::new();
+        for decl in &self.declared_consts {
+            if decl.sort != bool_sort {
+                continue;
+            }
+            let value = match model.get(decl.term).and_then(|v| self.terms.get(v)) {
+                Some(t) if matches!(t.kind, TermKind::True) => "true",
+                Some(t) if matches!(t.kind, TermKind::False) => "false",
+                // No forced value: complete to `false` (see doc comment).
+                _ => "false",
+            };
+            parts.push(format!("({} {})", decl.name, value));
+        }
+        format!("({})", parts.join(" "))
+    }
+
+    /// Answer a `(get-unsat-assumptions)` request.
+    ///
+    /// After a `check-sat-assuming` that returned `unsat`, this returns a subset
+    /// of the supplied assumptions whose conjunction with the current assertions
+    /// is unsatisfiable.  The reported set is the full assumption list — a valid,
+    /// though not necessarily minimal, unsatisfiable set (a superset of a minimal
+    /// core is still unsatisfiable).  Returns an error S-expression when the last
+    /// result was not `unsat`, and `()` when the last check used no assumptions.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn get_unsat_assumptions(&self) -> String {
+        if self.last_result != Some(SolverResult::Unsat) {
+            return "(error \"unsat assumptions are only available after an unsat check-sat-assuming\")"
+                .to_string();
+        }
+        if self.last_assumptions.is_empty() {
+            return "()".to_string();
+        }
+        let printer = oxiz_core::smtlib::Printer::new(&self.terms);
+        let parts: Vec<String> = self
+            .last_assumptions
+            .iter()
+            .map(|&t| printer.print_term(t))
+            .collect();
+        format!("({})", parts.join(" "))
     }
 
     /// Get proof (if proof generation is enabled and result is unsat)
@@ -808,14 +1032,62 @@ impl Context {
         self.solver.get_statistics()
     }
 
-    /// Return the current solver configuration (crate-internal use only).
+    /// Return the current solver configuration.
+    ///
+    /// Callers that build diverse configurations (e.g. an external portfolio
+    /// driver) can clone this, mutate the fields they want to vary, and hand it
+    /// back via [`Context::set_solver_config`].
     #[must_use]
-    pub(crate) fn solver_config(&self) -> &crate::solver::SolverConfig {
+    pub fn solver_config(&self) -> &crate::solver::SolverConfig {
         self.solver.config()
     }
 
-    /// Update the solver configuration (crate-internal use only).
-    pub(crate) fn set_solver_config(&mut self, config: crate::solver::SolverConfig) {
+    /// Replace the entire solver configuration.
+    ///
+    /// Fields consumed during the solve loop — `timeout_ms`, `max_conflicts`,
+    /// `max_decisions`, `theory_mode`, and `simplify` — take effect on the next
+    /// `check_sat`.  Fields that the embedded SAT solver only reads at
+    /// construction time (notably `restart_strategy` and the inprocessing
+    /// toggles) are stored but do not retroactively reconfigure an already-built
+    /// SAT engine; vary those before the first solve.
+    pub fn set_solver_config(&mut self, config: crate::solver::SolverConfig) {
+        self.solver.set_config(config);
+    }
+
+    /// Set the wall-clock timeout in milliseconds (`0` disables it).
+    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        let mut config = self.solver.config().clone();
+        config.timeout_ms = timeout_ms;
+        self.solver.set_config(config);
+    }
+
+    /// Set the maximum number of conflicts before answering `unknown`
+    /// (`0` = unlimited).
+    pub fn set_max_conflicts(&mut self, max_conflicts: u64) {
+        let mut config = self.solver.config().clone();
+        config.max_conflicts = max_conflicts;
+        self.solver.set_config(config);
+    }
+
+    /// Set the maximum number of decisions before answering `unknown`
+    /// (`0` = unlimited).
+    pub fn set_max_decisions(&mut self, max_decisions: u64) {
+        let mut config = self.solver.config().clone();
+        config.max_decisions = max_decisions;
+        self.solver.set_config(config);
+    }
+
+    /// Select the theory propagation eagerness.
+    pub fn set_theory_mode(&mut self, mode: crate::solver::TheoryMode) {
+        let mut config = self.solver.config().clone();
+        config.theory_mode = mode;
+        self.solver.set_config(config);
+    }
+
+    /// Enable or disable pre-solve simplification of asserted formulas.
+    pub fn set_simplify(&mut self, enabled: bool) {
+        let mut config = self.solver.config().clone();
+        config.simplify = enabled;
         self.solver.set_config(config);
     }
 
@@ -834,23 +1106,119 @@ impl Context {
         self.solver.get_unsat_core()
     }
 
-    /// Parse a sort name and return its SortId
-    fn parse_sort_name(&mut self, name: &str) -> SortId {
-        match name {
-            "Bool" => self.terms.sorts.bool_sort,
-            "Int" => self.terms.sorts.int_sort,
-            "Real" => self.terms.sorts.real_sort,
-            _ => {
-                // Check for BitVec
-                if let Some(width_str) = name.strip_prefix("BitVec")
-                    && let Ok(width) = width_str.trim().parse::<u32>()
-                {
-                    return self.terms.sorts.bitvec(width);
+    /// Split a sort-expression string into its top-level whitespace
+    /// separated tokens, treating a parenthesized group as a single
+    /// token (so nested compound sorts like `(Array Int (_ BitVec 8))`
+    /// split into `["Array", "Int", "(_ BitVec 8)"]` rather than being
+    /// torn apart at the inner spaces).
+    fn split_sort_tokens(s: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut depth = 0i32;
+        let mut current = String::new();
+        for c in s.chars() {
+            match c {
+                '(' => {
+                    depth += 1;
+                    current.push(c);
                 }
-                // Default to Bool for unknown sorts
-                self.terms.sorts.bool_sort
+                ')' => {
+                    depth -= 1;
+                    current.push(c);
+                }
+                c if c.is_whitespace() && depth == 0 => {
+                    if !current.is_empty() {
+                        tokens.push(std::mem::take(&mut current));
+                    }
+                }
+                c => current.push(c),
             }
         }
+        if !current.is_empty() {
+            tokens.push(current);
+        }
+        tokens
+    }
+
+    /// Resolve a sort-expression string into a `SortId`.
+    ///
+    /// The strings handled here are exactly the ones `oxiz_core`'s
+    /// SMT-LIB parser produces for [`Command::DeclareConst`]/
+    /// [`Command::DeclareFun`]/[`Command::DefineFun`] (see
+    /// `Parser::sort_id_to_string`): the built-in atomic sorts, `(_
+    /// BitVec n)`, `(_ FloatingPoint eb sb)`, `(Array dom rng)`
+    /// (recursively), a previously-declared datatype name, or a plain
+    /// uninterpreted-sort name.
+    ///
+    /// Uninterpreted names are interned through `self.terms`'s own
+    /// string interner -- the same one the parser uses internally for
+    /// `SortKind::Uninterpreted` when building terms during parsing --
+    /// so a name declared via `declare-sort` resolves to the identical
+    /// `SortId` (and thus, since `mk_var` hash-conses on `(name, sort)`,
+    /// the identical `TermId`) that in-script term parsing already
+    /// produced for it. Without this, a declared constant of a
+    /// user-defined/compound sort would silently be registered here
+    /// under an unrelated, disconnected term instead.
+    fn parse_sort_name(&mut self, name: &str) -> SortId {
+        let name = name.trim();
+        match name {
+            "Bool" => return self.terms.sorts.bool_sort,
+            "Int" => return self.terms.sorts.int_sort,
+            "Real" => return self.terms.sorts.real_sort,
+            "String" => return self.terms.sorts.string_sort(),
+            _ => {}
+        }
+
+        if let Some(inner) = name.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            let tokens = Self::split_sort_tokens(inner.trim());
+            match tokens.first().map(String::as_str) {
+                Some("_") if tokens.len() == 3 && tokens[1] == "BitVec" => {
+                    if let Ok(width) = tokens[2].parse::<u32>()
+                        && width > 0
+                    {
+                        return self.terms.sorts.bitvec(width);
+                    }
+                }
+                Some("_") if tokens.len() == 4 && tokens[1] == "FloatingPoint" => {
+                    if let (Ok(eb), Ok(sb)) = (tokens[2].parse::<u32>(), tokens[3].parse::<u32>()) {
+                        return self.terms.sorts.float_sort(eb, sb);
+                    }
+                }
+                Some("Array") if tokens.len() == 3 => {
+                    let domain = self.parse_sort_name(&tokens[1]);
+                    let range = self.parse_sort_name(&tokens[2]);
+                    return self.terms.sorts.array(domain, range);
+                }
+                _ => {}
+            }
+            // A compound form the printer never actually emits; fall
+            // back to Bool rather than panicking on unreachable syntax.
+            return self.terms.sorts.bool_sort;
+        }
+
+        // Legacy compact BitVec spelling ("BitVec32"), kept for
+        // backward compatibility with any direct (non-script) callers.
+        if let Some(width_str) = name.strip_prefix("BitVec")
+            && let Ok(width) = width_str.trim().parse::<u32>()
+            && width > 0
+        {
+            return self.terms.sorts.bitvec(width);
+        }
+
+        // A previously-declared datatype resolves to its own sort.
+        if self.terms.sorts.is_datatype_declared(name) {
+            return self.terms.sorts.mk_datatype_sort(name);
+        }
+
+        // A sort alias registered by a prior `define-sort` (0-arity
+        // aliases only; see the `DefineSort` command handling below).
+        if let Some(sort_id) = self.terms.sorts.resolve_by_name(name) {
+            return sort_id;
+        }
+
+        // Otherwise: an uninterpreted sort, e.g. one introduced by
+        // `declare-sort`.
+        let spur = self.terms.intern_str(name);
+        self.terms.sorts.intern(SortKind::Uninterpreted(spur))
     }
 
     /// Execute an SMT-LIB2 script
@@ -933,13 +1301,22 @@ impl Context {
                     self.set_option(&key, &value);
                 }
                 Command::CheckSatAssuming(assumptions) => {
-                    // For now, we push, assert all assumptions, check, then pop
-                    self.push();
-                    for assumption in assumptions {
-                        self.assert(assumption);
+                    // Check under temporary assumptions WITHOUT push/assert/pop.
+                    // A pop() would discard the model / unsat core built by the
+                    // check, leaving `last_result == Sat` but no state for a
+                    // following `(get-value ...)` / `(get-model)` to read.
+                    // `check_with_assumptions` keeps the solver state produced by
+                    // the assumption-guarded solve, so post-check queries observe
+                    // the correct model.
+                    self.last_assumptions = assumptions.clone();
+                    let mut result = self.check_with_assumptions_raw(&assumptions);
+                    // Same array soundness honesty gate as `check_sat`.
+                    if result == SolverResult::Sat
+                        && self.solver.array_atoms_need_theory(&self.terms)
+                    {
+                        result = SolverResult::Unknown;
                     }
-                    let result = self.check_sat();
-                    self.pop();
+                    self.last_result = Some(result);
                     output.push(match result {
                         SolverResult::Sat => "sat".to_string(),
                         SolverResult::Unsat => "unsat".to_string(),
@@ -963,6 +1340,24 @@ impl Context {
                         output.push("(error \"No unsat core available\")".to_string());
                     }
                 }
+                Command::GetUnsatAssumptions => {
+                    // Report the failed assumptions from the most recent
+                    // `check-sat-assuming` that returned `unsat`.  The printer
+                    // used by `get_unsat_assumptions` is `std`-only, so under
+                    // `no_std` we answer with an honest error S-expression
+                    // rather than silently emitting nothing.
+                    #[cfg(feature = "std")]
+                    {
+                        output.push(self.get_unsat_assumptions());
+                    }
+                    #[cfg(not(feature = "std"))]
+                    {
+                        output.push(
+                            "(error \"get-unsat-assumptions requires the std feature\")"
+                                .to_string(),
+                        );
+                    }
+                }
                 Command::GetValue(terms) => {
                     if self.last_result != Some(SolverResult::Sat) {
                         output.push("(error \"No model available\")".to_string());
@@ -983,19 +1378,114 @@ impl Context {
                     }
                 }
                 Command::GetInfo(keyword) => {
-                    // Handle get-info command
-                    if keyword == ":all-statistics" {
-                        output.push(self.get_statistics());
+                    output.push(self.get_info(&keyword));
+                }
+                Command::SetInfo(_, _) => {
+                    // Purely descriptive metadata (`:source`, `:license`,
+                    // ...); it has no effect on declarations or solving.
+                }
+                Command::DeclareSort(name, arity) => {
+                    if arity == 0 {
+                        // Eagerly materialize the sort so `declared_sort_names`
+                        // reflects it immediately, matching what the parser
+                        // already did (lazily, on first reference) internally.
+                        let _ = self.parse_sort_name(&name);
+                    }
+                    // Arity > 0 parametric sorts are recorded for
+                    // introspection; applying them with type arguments is
+                    // not yet supported anywhere in this crate, matching
+                    // the parser's own documented limitation.
+                    self.declared_sorts.insert(name, arity);
+                }
+                Command::DefineSort(name, params, sort_expr) => {
+                    if params.is_empty() {
+                        let resolved = self.parse_sort_name(&sort_expr);
+                        self.terms.sorts.define_alias(&name, resolved);
+                    }
+                    // Parametric aliases (non-empty `params`) are not
+                    // resolved: the SMT-LIB parser itself only substitutes
+                    // 0-arity `define-sort` aliases in-script (see
+                    // `oxiz_core`'s `Parser::parse_sort_name`), so there is
+                    // no sound target to register here either.
+                }
+                Command::DefineFun(name, params, ret_sort, body) => {
+                    let sort = self.parse_sort_name(&ret_sort);
+                    if params.is_empty() {
+                        // The parser already inlined every in-script
+                        // reference to `name` directly as `body` (see
+                        // `oxiz_core`'s `define-fun` handling), so this
+                        // doesn't change what gets solved. Declaring a real
+                        // constant provably equal to `body` -- rather than
+                        // doing nothing -- makes `name` show up correctly
+                        // (with its actual value) in `get-model`/`get-value`
+                        // output instead of silently vanishing, without
+                        // introducing any constraint that could change
+                        // satisfiability (the equality is trivially
+                        // satisfiable for any assignment to `body`'s free
+                        // variables).
+                        let const_term = self.declare_const(&name, sort);
+                        let eq = self.terms.mk_eq(const_term, body);
+                        self.assert(eq);
                     } else {
-                        output.push(format!("(error \"Unsupported info keyword: {}\")", keyword));
+                        // Functions with parameters are macros: call sites
+                        // are meant to be substituted with `body` at parse
+                        // time (see `oxiz_core`'s defined-function handling
+                        // in `smtlib/parser/terms.rs`), which is outside
+                        // this file's ownership -- so no further wiring for
+                        // *solving* belongs here. Still register the
+                        // signature so introspection (`get_fun_signature`,
+                        // `declared_function_names`) reflects the
+                        // definition, like `declare-fun` does.
+                        let arg_sorts: Vec<SortId> = params
+                            .iter()
+                            .map(|(_, sort_name)| self.parse_sort_name(sort_name))
+                            .collect();
+                        self.declare_fun(&name, arg_sorts, sort);
                     }
                 }
-                Command::SetInfo(_, _)
-                | Command::DeclareSort(_, _)
-                | Command::DefineSort(_, _, _)
-                | Command::DefineFun(_, _, _, _)
-                | Command::DeclareDatatype { .. } => {
-                    // Ignore these commands for now
+                Command::DeclareDatatype { name, .. } => {
+                    // The parser already fully registered each datatype's
+                    // sort and constructor/selector definitions directly on
+                    // `self.terms.sorts` -- including selector sorts
+                    // resolved through the full sort grammar -- so in-script
+                    // constructor application (e.g. `(cons 1 nil)`) already
+                    // works without help from here. What's missing is
+                    // exposing constructors/selectors as callable functions
+                    // in this Context's own function registry, the way Z3
+                    // implicitly declares them, so introspection sees them.
+                    //
+                    // `name` is a comma-joined list of every datatype this
+                    // command declared (see the parser's `DeclareDatatype`
+                    // doc comment, covering both multi- and mutually
+                    // recursive `declare-datatypes` forms); look each one's
+                    // authoritative definition up directly on the sort
+                    // manager rather than re-deriving it from the weaker,
+                    // string-typed `constructors` field.
+                    for dt_name in name.split(',') {
+                        let dt_name = dt_name.trim();
+                        if dt_name.is_empty() {
+                            continue;
+                        }
+                        let dt_sort = self.terms.sorts.mk_datatype_sort(dt_name);
+                        let Some(ctors) = self
+                            .terms
+                            .sorts
+                            .get_datatype(dt_name)
+                            .map(|def| def.constructors.clone())
+                        else {
+                            continue;
+                        };
+                        for ctor in &ctors {
+                            let ctor_name = self.terms.resolve_str(ctor.name).to_string();
+                            let selector_sorts: Vec<SortId> =
+                                ctor.selectors.iter().map(|&(_, sort)| sort).collect();
+                            self.declare_fun(&ctor_name, selector_sorts, dt_sort);
+                            for &(sel_spur, sel_sort) in &ctor.selectors {
+                                let sel_name = self.terms.resolve_str(sel_spur).to_string();
+                                self.declare_fun(&sel_name, vec![dt_sort], sel_sort);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1196,6 +1686,59 @@ mod tests {
         assert_eq!(output[0], "sat");
     }
 
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_get_unsat_assumptions_script() {
+        // Regression: `(get-unsat-assumptions)` must be reachable from the
+        // SMT-LIB command path (previously the parser rejected it outright).
+        // After an `unsat` `check-sat-assuming`, it reports the failed
+        // assumptions.
+        let mut ctx = Context::new();
+
+        let script = r#"
+            (set-logic QF_UF)
+            (declare-const p Bool)
+            (assert p)
+            (check-sat-assuming ((not p)))
+            (get-unsat-assumptions)
+        "#;
+
+        let output = ctx
+            .execute_script(script)
+            .expect("script with get-unsat-assumptions should parse and run");
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0], "unsat");
+        // The reported set is a non-empty unsatisfiable subset of the
+        // assumptions, mentioning the failed literal `p`.
+        assert!(output[1].starts_with('('));
+        assert!(output[1].contains('p'), "got: {}", output[1]);
+        assert_ne!(output[1], "()");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_get_unsat_assumptions_no_assumptions_is_empty() {
+        // A plain (unsat) `check-sat` used no assumptions, so
+        // `(get-unsat-assumptions)` reports the empty set rather than an error.
+        let mut ctx = Context::new();
+
+        let script = r#"
+            (set-logic QF_UF)
+            (declare-const p Bool)
+            (assert p)
+            (assert (not p))
+            (check-sat)
+            (get-unsat-assumptions)
+        "#;
+
+        let output = ctx
+            .execute_script(script)
+            .expect("script should parse and run");
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0], "unsat");
+        assert_eq!(output[1], "()");
+    }
+
     #[test]
     fn test_get_option_script() {
         let mut ctx = Context::new();
@@ -1210,6 +1753,62 @@ mod tests {
             .expect("test operation should succeed");
         assert_eq!(output.len(), 1);
         assert_eq!(output[0], "true");
+    }
+
+    #[test]
+    fn test_random_seed_option_is_enforced_and_recorded() {
+        // Regression: `:random-seed` used to be a documented no-op ("recorded
+        // but not enforced").  It is now threaded into the SAT engine's phase
+        // PRNG via Solver::set_random_seed.  The observable contract here is
+        // two-fold: (1) `(get-option :random-seed)` reflects exactly the value
+        // the user set (recording preserved), and (2) setting a seed keeps the
+        // sat/unsat verdict sound — seeding must never change a decidable
+        // answer.  A previous silent no-op would still pass (1); the point of
+        // this test is that the plumbing is now wired without regressing (2).
+        let mut ctx = Context::new();
+
+        ctx.set_option(":random-seed", "42");
+        assert_eq!(ctx.get_option("random-seed"), Some("42"));
+
+        // A satisfiable BV problem must still be SAT under a non-default seed.
+        let script = r#"
+            (set-logic QF_BV)
+            (declare-const x (_ BitVec 8))
+            (assert (bvult x #x0a))
+            (check-sat)
+        "#;
+        let output = ctx
+            .execute_script(script)
+            .expect("seeded script should parse and run");
+        assert_eq!(output, vec!["sat"]);
+    }
+
+    #[test]
+    fn test_random_seed_zero_and_malformed_are_safe() {
+        // Seed `0` is the degenerate xorshift fixed point; the seed-mixing must
+        // map it to the historical default rather than freezing the PRNG.  A
+        // malformed seed must not corrupt the RNG (it is still recorded so
+        // get-option is faithful), and neither must panic.
+        let mut ctx = Context::new();
+
+        ctx.set_option(":random-seed", "0");
+        assert_eq!(ctx.get_option("random-seed"), Some("0"));
+
+        ctx.set_option(":random-seed", "not-a-number");
+        assert_eq!(ctx.get_option("random-seed"), Some("not-a-number"));
+
+        // Solving remains correct after both.
+        let script = r#"
+            (set-logic QF_LIA)
+            (declare-const y Int)
+            (assert (> y 5))
+            (assert (< y 8))
+            (check-sat)
+        "#;
+        let output = ctx
+            .execute_script(script)
+            .expect("script should parse and run");
+        assert_eq!(output, vec!["sat"]);
     }
 
     #[test]

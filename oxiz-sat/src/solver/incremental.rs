@@ -43,6 +43,14 @@ impl Solver {
         }
         let to_remove: Vec<ClauseId> = self.learned_clause_ids.split_off(checkpoint);
         for id in to_remove {
+            // Purge the retracted clause's binary-implication-graph edges before
+            // removing it. The binary graph is a direct fast-path index that (at
+            // its hot-loop call sites) trusts its edges; leaving a stale edge for
+            // a forgotten binary learned clause would let it keep implying/​
+            // conflicting after the clause is gone. Also record the deletion in
+            // the DRAT proof (no-op unless enabled) while the literals are live.
+            self.purge_binary_edges(id);
+            self.drat_delete(id);
             self.clauses.remove(id);
         }
     }

@@ -572,8 +572,22 @@ impl MultiPatternCoordinator {
             .push(PatternSet::from_patterns(patterns, manager));
     }
 
-    /// Find matches for all pattern sets
-    pub fn find_matches(&mut self, _manager: &TermManager) -> Vec<MultiMatch> {
+    /// Find matches for all pattern sets against a pool of candidate ground
+    /// terms (e.g. subterms collected from the current e-graph / asserted
+    /// formulas), populating the per-trigger-term `match_cache` on demand.
+    ///
+    /// E-matching support covers `TermKind::Apply` trigger shapes -- the
+    /// overwhelmingly common case for quantifier triggers -- with exact
+    /// structural/id equality as a conservative fallback for every other
+    /// term shape (see `unify_trigger`). A candidate is only ever reported
+    /// as a match when every non-variable position agrees exactly with the
+    /// pattern, so this can under-match relative to a full E-matching engine
+    /// but never fabricates an unsound binding.
+    pub fn find_matches(
+        &mut self,
+        ground_terms: &[TermId],
+        manager: &TermManager,
+    ) -> Vec<MultiMatch> {
         let mut multi_matches = Vec::new();
 
         for pattern_set in &self.pattern_sets {
@@ -582,8 +596,31 @@ impl MultiPatternCoordinator {
 
             for pattern in &pattern_set.patterns {
                 for &term in &pattern.terms {
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        self.match_cache.entry(term)
+                    {
+                        let mut found = Vec::new();
+                        for &candidate in ground_terms {
+                            let mut bindings = FxHashMap::default();
+                            if unify_trigger(
+                                term,
+                                candidate,
+                                &pattern.variables,
+                                manager,
+                                &mut bindings,
+                            ) {
+                                found.push(PatternMatch {
+                                    pattern: pattern.clone(),
+                                    matched_term: candidate,
+                                    bindings,
+                                });
+                            }
+                        }
+                        entry.insert(found);
+                    }
+
                     if let Some(cached) = self.match_cache.get(&term) {
-                        set_matches.extend(cached.clone());
+                        set_matches.extend(cached.iter().cloned());
                     }
                 }
             }
@@ -609,6 +646,68 @@ impl MultiPatternCoordinator {
 impl Default for MultiPatternCoordinator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Attempt to unify a (possibly variable-containing) pattern/trigger term
+/// against a concrete ground candidate term, recording bindings for the
+/// pattern's bound variables as they are discovered.
+///
+/// Returns `true` (with `bindings` populated) iff `candidate` is a valid
+/// E-matching instance of `pattern_term`. A pattern variable binds to the
+/// first candidate subterm found at its position (subject to sort
+/// agreement) and every subsequent occurrence of that variable must bind to
+/// the identical term, matching standard E-matching semantics.
+fn unify_trigger(
+    pattern_term: TermId,
+    candidate: TermId,
+    pattern_vars: &FxHashSet<Spur>,
+    manager: &TermManager,
+    bindings: &mut FxHashMap<Spur, TermId>,
+) -> bool {
+    if pattern_term == candidate {
+        // Identical (possibly ground) subterm shared between pattern and
+        // candidate -- always a valid match, whatever its shape.
+        return true;
+    }
+
+    let (Some(p), Some(c)) = (manager.get(pattern_term), manager.get(candidate)) else {
+        return false;
+    };
+
+    if let TermKind::Var(name) = &p.kind {
+        if pattern_vars.contains(name) {
+            return match bindings.get(name) {
+                Some(&bound) => bound == candidate,
+                None if p.sort == c.sort => {
+                    bindings.insert(*name, candidate);
+                    true
+                }
+                None => false,
+            };
+        }
+        // A `Var` that is not one of the pattern's own bound variables is a
+        // free reference (e.g. a declared constant); it only matches an
+        // identical term, already handled by the `pattern_term == candidate`
+        // check above.
+        return false;
+    }
+
+    match (&p.kind, &c.kind) {
+        (TermKind::Apply { func: pf, args: pa }, TermKind::Apply { func: cf, args: ca }) => {
+            pf == cf
+                && pa.len() == ca.len()
+                && pa
+                    .iter()
+                    .zip(ca.iter())
+                    .all(|(&pt, &ct)| unify_trigger(pt, ct, pattern_vars, manager, bindings))
+        }
+        // Every other term shape falls back to exact structural equality,
+        // which was already ruled out by the `pattern_term == candidate`
+        // fast path above -- so no other shape can match here. This keeps
+        // the matcher conservative (never a spurious binding) for shapes
+        // beyond uninterpreted function application.
+        _ => false,
     }
 }
 
@@ -686,6 +785,77 @@ mod tests {
         let manager = TermManager::new();
         coord.add_pattern_set(vec![], &manager);
         assert_eq!(coord.pattern_sets.len(), 1);
+    }
+
+    /// Regression test for the audit finding that `find_matches` always
+    /// returned an empty result because `match_cache` was read but never
+    /// populated. With a trigger `f(x)` and ground candidates `f(1)` and
+    /// `g(1)`, only `f(1)` (same function symbol) should match, binding `x`
+    /// to the integer literal `1`.
+    #[test]
+    fn test_audit_find_matches_populates_cache_and_matches_apply_trigger() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+
+        let x = manager.mk_var("x", int_sort);
+        let trigger = manager.mk_apply("f", [x], int_sort);
+
+        let one = manager.mk_int(1);
+        let f_one = manager.mk_apply("f", [one], int_sort);
+        let g_one = manager.mk_apply("g", [one], int_sort);
+
+        let mut pattern = Pattern::new(vec![trigger]);
+        pattern.extract_variables(&manager);
+        assert_eq!(pattern.variables.len(), 1, "x should be a pattern variable");
+
+        let mut coord = MultiPatternCoordinator::new();
+        coord.add_pattern_set(vec![pattern], &manager);
+
+        let ground_terms = [f_one, g_one];
+        let matches = coord.find_matches(&ground_terms, &manager);
+
+        assert_eq!(matches.len(), 1, "one pattern set should produce matches");
+        assert_eq!(
+            matches[0].matches.len(),
+            1,
+            "only f(1) should match the f(x) trigger, not g(1)"
+        );
+        assert_eq!(matches[0].matches[0].matched_term, f_one);
+
+        // The bound variable `x` must be mapped to the literal `1`.
+        let x_name = match manager.get(x).map(|t| t.kind.clone()) {
+            Some(TermKind::Var(name)) => name,
+            _ => panic!("x must be a Var term"),
+        };
+        assert_eq!(matches[0].matches[0].bindings.get(&x_name), Some(&one));
+
+        // The match cache must now actually contain the populated entry
+        // (this is the crux of the original bug: it was read but never
+        // written).
+        assert!(coord.match_cache.contains_key(&trigger));
+        assert_eq!(coord.match_cache[&trigger].len(), 1);
+
+        // A second call must reuse the cache rather than recomputing an
+        // empty result.
+        let matches_again = coord.find_matches(&ground_terms, &manager);
+        assert_eq!(matches_again[0].matches.len(), 1);
+    }
+
+    #[test]
+    fn test_audit_find_matches_no_candidates_no_matches() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let trigger = manager.mk_apply("f", [x], int_sort);
+
+        let mut pattern = Pattern::new(vec![trigger]);
+        pattern.extract_variables(&manager);
+
+        let mut coord = MultiPatternCoordinator::new();
+        coord.add_pattern_set(vec![pattern], &manager);
+
+        let matches = coord.find_matches(&[], &manager);
+        assert!(matches.is_empty());
     }
 
     #[test]

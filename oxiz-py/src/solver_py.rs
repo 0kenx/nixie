@@ -2,7 +2,8 @@
 
 use ::oxiz::core::ast::{TermId, TermKind, TermManager};
 use ::oxiz::core::smtlib::parse_term as smtlib_parse_term;
-use ::oxiz::solver::{SolverConfig, SolverResult};
+use ::oxiz::solver::SolverResult;
+use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -23,7 +24,10 @@ pub(crate) enum PyModelValue {
     BigInt(String),
     Real(f64),
     RealRational(String),
-    BitVec(u64, u32),
+    /// Bitvector value (arbitrary precision) and its declared width in bits.
+    /// The full value is kept (never truncated to a single `u64` limb) so
+    /// bitvectors wider than 64 bits round-trip exactly to Python.
+    BitVec(BigInt, u32),
     Str(String),
 }
 
@@ -240,7 +244,8 @@ impl PySolver {
     ///   - Large integers → `str` (decimal)
     ///   - Whole-number rationals → `int`
     ///   - Non-whole rationals → `str` ("numer/denom")
-    ///   - Bitvectors → `int` (unsigned, ≤ 64 bits)
+    ///   - Bitvectors → `int` (unsigned, arbitrary width - full precision,
+    ///     never truncated even beyond 64 bits)
     ///   - Other terms → `str`
     fn model<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let cache = self.cached_model.borrow();
@@ -253,7 +258,9 @@ impl PySolver {
                 PyModelValue::BigInt(s) => dict.set_item(name.as_str(), s.as_str())?,
                 PyModelValue::Real(f) => dict.set_item(name.as_str(), *f)?,
                 PyModelValue::RealRational(s) => dict.set_item(name.as_str(), s.as_str())?,
-                PyModelValue::BitVec(v, _width) => dict.set_item(name.as_str(), *v)?,
+                PyModelValue::BitVec(v, _width) => {
+                    dict.set_item(name.as_str(), bigint_to_pyobject(py, v)?)?
+                }
                 PyModelValue::Str(s) => dict.set_item(name.as_str(), s.as_str())?,
             }
         }
@@ -317,7 +324,12 @@ impl PySolver {
                         value
                     ))
                 })?;
-                let new_config = SolverConfig::default().with_timeout(ms);
+                // Preserve every other already-configured option (e.g.
+                // `produce-unsat-cores`/`logic` set via earlier
+                // `set_option()`/`set_logic()` calls) - clone the current
+                // config rather than starting from `SolverConfig::default()`,
+                // which would silently reset them all back to defaults.
+                let new_config = solver.config().clone().with_timeout(ms);
                 solver.set_config(new_config);
                 Ok(())
             }
@@ -332,9 +344,14 @@ impl PySolver {
     ///
     /// When the timeout expires the solver returns SolverResult.Unknown.
     /// Pass 0 to disable the timeout.
+    ///
+    /// Preserves every other already-configured option (e.g.
+    /// `produce-unsat-cores`/`logic` set via earlier `set_option()`/
+    /// `set_logic()` calls) rather than resetting the whole `SolverConfig`
+    /// back to its defaults.
     fn set_timeout(&self, milliseconds: u64) {
         let mut solver = self.inner.borrow_mut();
-        let new_config = SolverConfig::default().with_timeout(milliseconds);
+        let new_config = solver.config().clone().with_timeout(milliseconds);
         solver.set_config(new_config);
     }
 
@@ -420,15 +437,31 @@ fn build_model_value(value_id: TermId, manager: &TermManager) -> PyModelValue {
                     PyModelValue::RealRational(format!("{}/{}", r.numer(), r.denom()))
                 }
             }
-            TermKind::BitVecConst { value, .. } => {
-                let lo = value.iter_u64_digits().next().unwrap_or(0);
-                PyModelValue::BitVec(lo, 0)
+            TermKind::BitVecConst { value, width } => {
+                // Keep the FULL value (never just the low u64 limb) and the
+                // real declared width so bitvectors wider than 64 bits
+                // (e.g. QF_BV crypto queries) round-trip exactly rather
+                // than silently returning a truncated/wrong integer.
+                PyModelValue::BitVec(value.clone(), *width)
             }
             other => PyModelValue::Str(format!("{:?}", other)),
         }
     } else {
         PyModelValue::Str(format!("Term({})", value_id.raw()))
     }
+}
+
+/// Convert an arbitrary-precision [`BigInt`] to an exact Python `int`.
+///
+/// Uses PyO3's native `num-bigint` conversion (`IntoPyObject for &BigInt`,
+/// enabled via the `num-bigint` feature on the `pyo3` dependency), which
+/// builds the `PyLong` directly from the value's sign/magnitude digits -
+/// exact for any width and without the string-round-trip / `builtins.int`
+/// lookup the previous implementation needed to work around PyO3's
+/// built-in numeric conversions topping out at `i128`/`u128` (not enough
+/// for arbitrary-width `(_ BitVec n)` values).
+fn bigint_to_pyobject(py: Python<'_>, value: &BigInt) -> PyResult<Py<PyAny>> {
+    Ok(value.into_pyobject(py)?.into_any().unbind())
 }
 
 fn parse_bool_value(key: &str, value: &str) -> PyResult<bool> {
@@ -440,4 +473,124 @@ fn parse_bool_value(key: &str, value: &str) -> PyResult<bool> {
             key, other
         ))),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for audit finding infra-p3 / oxiz-py::solver_py.rs:
+    /// `build_model_value` used to do
+    /// `value.iter_u64_digits().next().unwrap_or(0)` and hardcode width to
+    /// 0, silently truncating any bitvector value that needs more than 64
+    /// bits to represent (e.g. QF_BV crypto-style queries) to its low limb.
+    ///
+    /// This exercises the conversion directly against a hand-built
+    /// `BitVecConst` term so the test does not depend on the solver's own
+    /// (much deeper, out-of-scope) wide-bitvector reasoning - it isolates
+    /// exactly the Python-binding value-extraction bug the finding
+    /// describes.
+    #[test]
+    fn build_model_value_preserves_bitvec_wider_than_64_bits() {
+        let mut tm = TermManager::new();
+
+        // 2^100 + 12345 requires far more than 64 bits to represent
+        // exactly, so `iter_u64_digits().next()` alone would silently
+        // return only the low 64-bit limb (12345, dropping the 2^100
+        // term entirely) instead of erroring or preserving the value.
+        let wide_value = BigInt::from(2).pow(100) + BigInt::from(12345);
+        let width = 128u32;
+        let term = tm.mk_bitvec(wide_value.clone(), width);
+
+        match build_model_value(term, &tm) {
+            PyModelValue::BitVec(value, w) => {
+                assert_eq!(
+                    value, wide_value,
+                    "BV value must round-trip exactly, not be truncated to the low u64 limb"
+                );
+                assert_eq!(w, width, "BV width must be preserved, not hardcoded to 0");
+            }
+            other => panic!("expected PyModelValue::BitVec, got {other:?}"),
+        }
+    }
+
+    /// Values that DO fit in a u64 must still be preserved exactly (no
+    /// regression for the common/fast-path case).
+    #[test]
+    fn build_model_value_bitvec_within_64_bits_round_trips() {
+        let mut tm = TermManager::new();
+        let term = tm.mk_bitvec(BigInt::from(200), 8);
+
+        match build_model_value(term, &tm) {
+            PyModelValue::BitVec(value, w) => {
+                assert_eq!(value, BigInt::from(200));
+                assert_eq!(w, 8);
+            }
+            other => panic!("expected PyModelValue::BitVec, got {other:?}"),
+        }
+    }
+
+    /// Regression test for audit finding infra-final / oxiz-py::solver_py.rs:
+    /// `set_timeout()` used to build its new config via
+    /// `SolverConfig::default().with_timeout(ms)`, silently resetting every
+    /// other already-configured `SolverConfig` field (e.g.
+    /// `max_conflicts`, `proof`, `simplify`, ...) back to its default value
+    /// instead of only touching `timeout_ms`.
+    #[test]
+    fn set_timeout_preserves_other_config_fields() {
+        let py_solver = PySolver::new();
+
+        // Simulate some other, non-timeout config field having been
+        // customized away from its default before `set_timeout()` runs.
+        {
+            let mut solver = py_solver.inner.borrow_mut();
+            let mut config = solver.config().clone();
+            config.max_conflicts = 12_345;
+            solver.set_config(config);
+        }
+
+        py_solver.set_timeout(500);
+
+        let solver = py_solver.inner.borrow();
+        assert_eq!(solver.config().timeout_ms, 500);
+        assert_eq!(
+            solver.config().max_conflicts,
+            12_345,
+            "set_timeout() must not reset unrelated SolverConfig fields to their defaults"
+        );
+    }
+
+    /// Same regression, via the `set_option("timeout", ...)` entry point.
+    #[test]
+    fn set_option_timeout_preserves_other_config_fields() {
+        let py_solver = PySolver::new();
+
+        {
+            let mut solver = py_solver.inner.borrow_mut();
+            let mut config = solver.config().clone();
+            config.max_conflicts = 54_321;
+            solver.set_config(config);
+        }
+
+        py_solver
+            .set_option("timeout", "700")
+            .expect("valid integer timeout must be accepted");
+
+        let solver = py_solver.inner.borrow();
+        assert_eq!(solver.config().timeout_ms, 700);
+        assert_eq!(
+            solver.config().max_conflicts,
+            54_321,
+            "set_option(\"timeout\", ...) must not reset unrelated SolverConfig fields to their defaults"
+        );
+    }
+
+    // `bigint_to_pyobject` (the Python-int-producing half of the fix) is
+    // exercised end-to-end via the `oxiz-py/tests/test_model_bitvec_widths.py`
+    // pytest suite (run through `maturin develop`), not here: this crate is
+    // built with PyO3's `extension-module` feature and no `auto-initialize`,
+    // so a `cargo test` binary cannot embed/initialize a Python interpreter
+    // itself (the whole point of the `.cargo/config.toml` fix in this same
+    // audit wave was to stop papering over exactly that kind of missing-symbol
+    // situation with an `-undefined dynamic_lookup` link hack).
 }

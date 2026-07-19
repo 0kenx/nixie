@@ -5,7 +5,7 @@
 //! - I ∧ B is UNSAT
 //! - I only contains symbols common to A and B
 //!
-//! Reference: Z3's interpolation in `../z3/src/smt/theory_interpolant.cpp`
+//! Reference: Z3's interpolation in `src/smt/theory_interpolant.cpp`
 
 use crate::ast::proof::{Proof, ProofId, ProofRule};
 use crate::ast::{TermId, TermKind, TermManager};

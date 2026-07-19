@@ -6,6 +6,102 @@ use crate::string_utils;
 use crate::{WasmError, WasmErrorKind};
 use wasm_bindgen::prelude::*;
 
+/// Split an SMT-LIB2 script into complete top-level command strings.
+///
+/// Each returned chunk is a balanced parenthesized `(...)` s-expression
+/// (plus any leading comments/whitespace immediately preceding it), so a
+/// script can be chunked for progressive/async execution without ever
+/// cutting a command in half the way naive line-based slicing does. This
+/// mirrors what `oxiz_core`'s SMT-LIB tokenizer treats as syntax:
+///
+/// - Line comments (`;` to end of line) are passed through verbatim.
+/// - String literals (`"..."`), with `""` as an escaped quote inside one,
+///   are scanned as opaque spans so parentheses inside them don't affect
+///   nesting depth.
+/// - Quoted symbols (`|...|`) are likewise scanned as opaque spans.
+///
+/// Any trailing, never-balanced content (e.g. malformed input, or bare
+/// non-parenthesized text) is returned as a final chunk so `execute()`
+/// can surface a proper parse error instead of the text being silently
+/// dropped.
+fn split_into_commands(script: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    let mut current = String::new();
+    let mut depth: i32 = 0;
+    let mut chars = script.chars().peekable();
+    let mut in_string = false;
+    let mut in_quoted_symbol = false;
+
+    while let Some(c) = chars.next() {
+        if in_string {
+            current.push(c);
+            if c == '"' {
+                // SMT-LIB2 escapes a quote inside a string literal by
+                // doubling it ("" -> a literal ").
+                if chars.peek() == Some(&'"') {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                } else {
+                    in_string = false;
+                }
+            }
+            continue;
+        }
+        if in_quoted_symbol {
+            current.push(c);
+            if c == '|' {
+                in_quoted_symbol = false;
+            }
+            continue;
+        }
+        match c {
+            ';' => {
+                // Line comment: consume through end of line verbatim.
+                current.push(c);
+                for nc in chars.by_ref() {
+                    current.push(nc);
+                    if nc == '\n' {
+                        break;
+                    }
+                }
+            }
+            '"' => {
+                in_string = true;
+                current.push(c);
+            }
+            '|' => {
+                in_quoted_symbol = true;
+                current.push(c);
+            }
+            '(' => {
+                depth += 1;
+                current.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(c);
+                if depth <= 0 {
+                    let trimmed = current.trim();
+                    if !trimmed.is_empty() {
+                        commands.push(trimmed.to_string());
+                    }
+                    current.clear();
+                    depth = 0; // guard against stray/unbalanced closers
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+
+    let trailing = current.trim();
+    if !trailing.is_empty() {
+        commands.push(trailing.to_string());
+    }
+
+    commands
+}
+
 #[wasm_bindgen]
 impl WasmSolver {
     /// Create a new solver instance
@@ -132,6 +228,21 @@ impl WasmSolver {
     /// ```
     #[wasm_bindgen(js_name = checkSat)]
     pub fn check_sat(&mut self) -> String {
+        // Honor a pending `cancel()` request. Previously this flag was only
+        // ever consulted by the chunked `executeAsync`/`executeWithProgress`
+        // loops; a cancelled solver's `checkSat()`/`checkSatAsync()` (the
+        // latter simply delegates to this method) would run the full solve
+        // to completion regardless, silently ignoring the documented
+        // cancellation contract. Report the honest "we did not actually
+        // solve this" answer -- "unknown" -- instead of either fabricating
+        // "sat"/"unsat" or running an operation the caller asked to abort.
+        // The flag is sticky (matching `execute_async`'s existing
+        // interpretation) until `reset()` clears it.
+        if self.cancelled {
+            self.last_result = Some("unknown".to_string());
+            return "unknown".to_string();
+        }
+
         let result = match self.ctx.check_sat() {
             oxiz_solver::SolverResult::Sat => "sat",
             oxiz_solver::SolverResult::Unsat => "unsat",
@@ -418,24 +529,27 @@ impl WasmSolver {
         // Yield to event loop before starting
         async_utils::yield_now().await;
 
-        // Split script into lines and process with periodic yields
-        let lines: Vec<&str> = script.lines().collect();
-        let total_lines = lines.len();
+        // Split the script into complete top-level commands (never mid
+        // s-expression) so chunking for responsiveness cannot break
+        // multi-line commands the way naive line-slicing did.
+        let commands = split_into_commands(&script);
+        let total_commands = commands.len();
 
-        // For small scripts (< 10 lines), just execute directly
-        if total_lines < 10 {
+        // For small scripts (< 10 commands), just execute directly.
+        if total_commands < 10 {
             let result = self.execute(&script);
             async_utils::yield_now().await;
             return result;
         }
 
-        // For larger scripts, yield periodically
-        // Process script in chunks to maintain responsiveness
-        let chunk_size = 20; // Process 20 lines before yielding
+        // For larger scripts, yield periodically.
+        // Process script in chunks of complete commands to maintain
+        // responsiveness without ever splitting a command in half.
+        let chunk_size = 20; // Process 20 commands before yielding
         let mut result_parts = Vec::new();
 
-        for (i, chunk) in lines.chunks(chunk_size).enumerate() {
-            // Yield every 5 chunks (every ~100 lines)
+        for (i, chunk) in commands.chunks(chunk_size).enumerate() {
+            // Yield every 5 chunks (every ~100 commands)
             if i > 0 && i % 5 == 0 {
                 async_utils::yield_now().await;
 
@@ -445,7 +559,7 @@ impl WasmSolver {
                 }
             }
 
-            // Execute this chunk
+            // Execute this chunk of complete commands.
             let chunk_script = chunk.join("\n");
             match self.execute(&chunk_script) {
                 Ok(output) => {
@@ -475,7 +589,9 @@ impl WasmSolver {
     ///
     /// * `script` - An SMT-LIB2 script string
     /// * `progress_callback` - Optional callback function that receives progress updates
-    ///   The callback receives two arguments: (current_line, total_lines)
+    ///   The callback receives two arguments: (commands_processed, total_commands),
+    ///   counted in complete top-level SMT-LIB2 commands rather than lines,
+    ///   since a single command may span multiple lines.
     ///
     /// # Returns
     ///
@@ -513,31 +629,34 @@ impl WasmSolver {
         // Yield to event loop before starting
         async_utils::yield_now().await;
 
-        // Split script into lines
-        let lines: Vec<&str> = script.lines().collect();
-        let total_lines = lines.len();
+        // Split the script into complete top-level commands (never mid
+        // s-expression) so chunking for progress reporting cannot break
+        // multi-line commands the way naive line-slicing did.
+        let commands = split_into_commands(&script);
+        let total_commands = commands.len();
 
         // For small scripts, just execute directly
-        if total_lines < 10 {
+        if total_commands < 10 {
             let result = self.execute(&script);
             if let Some(callback) = progress_callback {
                 let this = JsValue::NULL;
                 let _ = callback.call2(
                     &this,
-                    &JsValue::from(total_lines),
-                    &JsValue::from(total_lines),
+                    &JsValue::from(total_commands),
+                    &JsValue::from(total_commands),
                 );
             }
             async_utils::yield_now().await;
             return result;
         }
 
-        // For larger scripts, process in chunks with progress updates
+        // For larger scripts, process in chunks of complete commands with
+        // progress updates.
         let chunk_size = 20;
         let mut result_parts = Vec::new();
-        let mut lines_processed = 0;
+        let mut commands_processed = 0;
 
-        for (i, chunk) in lines.chunks(chunk_size).enumerate() {
+        for (i, chunk) in commands.chunks(chunk_size).enumerate() {
             // Yield every 5 chunks
             if i > 0 && i % 5 == 0 {
                 async_utils::yield_now().await;
@@ -548,7 +667,7 @@ impl WasmSolver {
                 }
             }
 
-            // Execute this chunk
+            // Execute this chunk of complete commands.
             let chunk_script = chunk.join("\n");
             match self.execute(&chunk_script) {
                 Ok(output) => {
@@ -562,13 +681,13 @@ impl WasmSolver {
             }
 
             // Update progress
-            lines_processed += chunk.len();
+            commands_processed += chunk.len();
             if let Some(ref callback) = progress_callback {
                 let this = JsValue::NULL;
                 let _ = callback.call2(
                     &this,
-                    &JsValue::from(lines_processed),
-                    &JsValue::from(total_lines),
+                    &JsValue::from(commands_processed),
+                    &JsValue::from(total_commands),
                 );
             }
         }
@@ -578,8 +697,8 @@ impl WasmSolver {
             let this = JsValue::NULL;
             let _ = callback.call2(
                 &this,
-                &JsValue::from(total_lines),
-                &JsValue::from(total_lines),
+                &JsValue::from(total_commands),
+                &JsValue::from(total_commands),
             );
         }
 
@@ -587,5 +706,133 @@ impl WasmSolver {
         async_utils::yield_now().await;
 
         Ok(JsValue::from_str(&result_parts.join("\n")))
+    }
+}
+
+/// Regression tests for the `cancel()`/`checkSat()` interaction (audit
+/// finding: "cancel() flag is never observed by checkSat/checkSatAsync").
+/// `checkSat()` returns a plain `String` (never touches `js_sys`/`JsValue`),
+/// so -- unlike most of this crate's `Result<_, JsValue>`-returning API --
+/// it can run natively without a real wasm32/JS engine.
+#[cfg(test)]
+mod cancel_tests {
+    use crate::WasmSolver;
+
+    #[test]
+    fn check_sat_honors_a_pending_cancellation() {
+        let mut solver = WasmSolver::new();
+        solver.set_logic("QF_UF");
+        solver
+            .declare_const("p", "Bool")
+            .expect("declare_const should succeed");
+        solver
+            .assert_formula("p")
+            .expect("assert_formula should succeed");
+
+        // Without cancellation, this trivially satisfiable problem reports sat.
+        assert_eq!(solver.check_sat(), "sat");
+
+        solver.cancel();
+        assert!(solver.is_cancelled());
+        // A cancelled solver must not silently report "sat"/"unsat" for a
+        // check it was asked not to perform.
+        assert_eq!(solver.check_sat(), "unknown");
+        // The cancellation is sticky across repeated checkSat() calls...
+        assert_eq!(solver.check_sat(), "unknown");
+    }
+
+    #[test]
+    fn reset_clears_a_pending_cancellation() {
+        let mut solver = WasmSolver::new();
+        solver.set_logic("QF_UF");
+        solver.declare_const("p", "Bool").unwrap();
+        solver.assert_formula("p").unwrap();
+
+        solver.cancel();
+        assert_eq!(solver.check_sat(), "unknown");
+
+        // ...until an explicit reset() clears it, matching `cancelled`'s
+        // existing documented reset-clears-it contract.
+        solver.reset();
+        assert!(!solver.is_cancelled());
+        solver.set_logic("QF_UF");
+        solver.declare_const("p", "Bool").unwrap();
+        solver.assert_formula("p").unwrap();
+        assert_eq!(solver.check_sat(), "sat");
+    }
+}
+
+#[cfg(test)]
+mod split_into_commands_tests {
+    use super::split_into_commands;
+
+    #[test]
+    fn splits_simple_single_line_commands() {
+        let script = "(set-logic QF_LIA)\n(declare-const x Int)\n(check-sat)";
+        let commands = split_into_commands(script);
+        assert_eq!(commands.len(), 3);
+        assert_eq!(commands[0], "(set-logic QF_LIA)");
+        assert_eq!(commands[2], "(check-sat)");
+    }
+
+    /// Regression: a command whose parentheses span many lines must stay
+    /// intact as a single chunk, even when the script is much longer than
+    /// the old fixed 20-line chunk boundary.
+    fn multiline_assert(depth: usize) -> String {
+        // Build `(assert (and true (and true (and true ... ))))` deep
+        // enough that a naive 20-line chunker would previously have cut
+        // straight through the middle of it.
+        let mut s = String::from("(assert\n  (and true\n");
+        for _ in 0..depth {
+            s.push_str("    (and true\n");
+        }
+        for _ in 0..depth {
+            s.push_str("    )\n");
+        }
+        s.push_str("  )\n)");
+        s
+    }
+
+    #[test]
+    fn keeps_deeply_nested_multiline_command_intact() {
+        let assertion = multiline_assert(30); // spans well over 20 lines
+        let script = format!(
+            "(set-logic QF_LIA)\n(declare-const x Int)\n{}\n(check-sat)",
+            assertion
+        );
+        let commands = split_into_commands(&script);
+        assert_eq!(commands.len(), 4);
+        assert_eq!(commands[2], assertion);
+        assert_eq!(commands[3], "(check-sat)");
+    }
+
+    #[test]
+    fn ignores_parens_inside_string_literals() {
+        let script = r#"(assert (= s "a ( b ) c"))(check-sat)"#;
+        let commands = split_into_commands(script);
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0], r#"(assert (= s "a ( b ) c"))"#);
+    }
+
+    #[test]
+    fn handles_escaped_quotes_in_string_literals() {
+        let script = r#"(assert (= s "a ""quoted"" b"))(check-sat)"#;
+        let commands = split_into_commands(script);
+        assert_eq!(commands.len(), 2);
+    }
+
+    #[test]
+    fn ignores_parens_inside_quoted_symbols() {
+        let script = "(declare-const |a ( weird ) name| Int)(check-sat)";
+        let commands = split_into_commands(script);
+        assert_eq!(commands.len(), 2);
+    }
+
+    #[test]
+    fn ignores_parens_inside_line_comments() {
+        let script = "; a comment with ( unbalanced parens\n(check-sat)";
+        let commands = split_into_commands(script);
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].ends_with("(check-sat)"));
     }
 }

@@ -165,7 +165,14 @@ impl ModelEntry {
 }
 
 /// Stream controller for managing data flow
+///
+/// Cloning a `StreamController` produces a second handle to the *same*
+/// underlying buffer/state (all fields are `Rc`-shared), not an
+/// independent copy. This lets a producer keep one handle internally
+/// while returning another to the caller, with both observing the same
+/// enqueued/dequeued data.
 #[wasm_bindgen]
+#[derive(Clone)]
 pub struct StreamController {
     /// Buffered chunks
     buffer: Rc<RefCell<VecDeque<DataChunk>>>,
@@ -273,6 +280,12 @@ pub struct StreamingSolver {
     controller: Option<StreamController>,
     /// Chunk size for streaming
     chunk_size: usize,
+    /// Cached model entries for incremental `nextModelEntry` iteration.
+    /// Populated lazily on the first call after a "sat" `checkSat()`, and
+    /// invalidated whenever the solver state changes.
+    model_cache: RefCell<Option<Vec<(String, String, String)>>>,
+    /// Cursor into `model_cache` for `nextModelEntry`.
+    model_cursor: RefCell<usize>,
 }
 
 #[wasm_bindgen]
@@ -284,6 +297,8 @@ impl StreamingSolver {
             ctx: oxiz_solver::Context::new(),
             controller: None,
             chunk_size: 4096,
+            model_cache: RefCell::new(None),
+            model_cursor: RefCell::new(0),
         }
     }
 
@@ -304,6 +319,7 @@ impl StreamingSolver {
     pub fn declare_const(&mut self, name: &str, sort_name: &str) -> Result<(), JsValue> {
         let sort = self.parse_sort(sort_name)?;
         self.ctx.declare_const(name, sort);
+        self.invalidate_model_cache();
         Ok(())
     }
 
@@ -314,12 +330,14 @@ impl StreamingSolver {
         self.ctx
             .execute_script(&script)
             .map_err(|e| JsValue::from_str(&format!("Failed to assert: {}", e)))?;
+        self.invalidate_model_cache();
         Ok(())
     }
 
     /// Check satisfiability
     #[wasm_bindgen(js_name = checkSat)]
     pub fn check_sat(&mut self) -> String {
+        self.invalidate_model_cache();
         let result = self.ctx.check_sat();
         match result {
             oxiz_solver::SolverResult::Sat => "sat",
@@ -330,19 +348,52 @@ impl StreamingSolver {
     }
 
     /// Start streaming model
+    ///
+    /// Returns a [`StreamController`] handle that shares state with the
+    /// controller retained internally (both are clones of the same
+    /// `Rc`-backed controller), so data enqueued internally is visible to
+    /// the caller's handle rather than being enqueued into a disconnected
+    /// instance.
     #[wasm_bindgen(js_name = startModelStream)]
     pub fn start_model_stream(&mut self) -> StreamController {
         let controller = StreamController::new(100);
-        self.controller = Some(controller);
-        StreamController::new(100)
+        self.controller = Some(controller.clone());
+        controller
     }
 
     /// Get next model entry
+    ///
+    /// Streams the current model one `(name, sort, value)` entry at a
+    /// time. The model is fetched (and cached) from the solver on the
+    /// first call after a successful "sat" `checkSat()`; the cache is
+    /// invalidated by any subsequent `declareConst`/`assertFormula`/
+    /// `checkSat()` call. Returns `None` once all entries have been
+    /// yielded, or if no "sat" model is available.
     #[wasm_bindgen(js_name = nextModelEntry)]
     pub fn next_model_entry(&self) -> Option<ModelEntry> {
-        // In a real implementation, this would parse the model incrementally
-        // For now, return None
-        None
+        if self.model_cache.borrow().is_none() {
+            let model = self.ctx.get_model()?;
+            *self.model_cache.borrow_mut() = Some(model);
+            *self.model_cursor.borrow_mut() = 0;
+        }
+
+        let mut cursor = self.model_cursor.borrow_mut();
+        let cache = self.model_cache.borrow();
+        let entries = cache.as_ref()?;
+        let entry = entries.get(*cursor)?;
+        *cursor += 1;
+        Some(ModelEntry::new(
+            entry.0.clone(),
+            entry.2.clone(),
+            entry.1.clone(),
+        ))
+    }
+
+    /// Reset the `nextModelEntry` iterator back to the first entry without
+    /// re-fetching the model from the solver.
+    #[wasm_bindgen(js_name = resetModelStream)]
+    pub fn reset_model_stream(&self) {
+        *self.model_cursor.borrow_mut() = 0;
     }
 
     /// Stream model to chunks
@@ -382,6 +433,13 @@ impl StreamingSolver {
         }
 
         controller.close();
+    }
+
+    /// Drop any cached model / reset the streaming cursor. Called whenever
+    /// solver state changes so `nextModelEntry` never serves a stale model.
+    fn invalidate_model_cache(&self) {
+        *self.model_cache.borrow_mut() = None;
+        *self.model_cursor.borrow_mut() = 0;
     }
 
     // Helper to parse sorts - returns SortId
@@ -549,5 +607,94 @@ mod tests {
     fn test_streaming_solver() {
         let solver = StreamingSolver::new();
         assert_eq!(solver.chunk_size, 4096);
+    }
+
+    // NOTE on test setup below: `WasmSolver`/`StreamingSolver`'s public
+    // `declareConst()` (a direct `Context::declare_const` call) and a
+    // *separate* subsequent `assertFormula()` call (which reparses via
+    // `Context::execute_script`) do not currently compose -- each
+    // `execute_script` call gets a brand-new `oxiz_core` parser whose
+    // declared-symbol table starts empty, so a symbol declared outside
+    // that same script/parse is reported as "unknown constant or
+    // symbol". This is a pre-existing defect in `oxiz-core`'s
+    // parser/`oxiz-solver::Context::execute_script` (outside this
+    // package's owned files), not something introduced or fixed here.
+    // To keep these tests focused on `next_model_entry`/cache-invalidation
+    // behavior rather than tripping over that unrelated bug, fixture
+    // declare+assert pairs are issued together in a single
+    // `execute_script` call via the (module-private, so accessible from
+    // this same-module `tests` submodule) `ctx` field.
+
+    #[test]
+    fn test_next_model_entry_streams_real_entries() {
+        let mut solver = StreamingSolver::new();
+        solver.set_logic("QF_LIA");
+        solver
+            .ctx
+            .execute_script("(declare-const x Int)(declare-const y Int)(assert (> x 0))")
+            .expect("setup script");
+        assert_eq!(solver.check_sat(), "sat");
+
+        let mut names = Vec::new();
+        while let Some(entry) = solver.next_model_entry() {
+            names.push(entry.get_name());
+        }
+        // Both declared variables must show up in the streamed model.
+        names.sort();
+        assert_eq!(names, vec!["x", "y"]);
+
+        // Exhausted: further calls yield None instead of looping/panicking.
+        assert!(solver.next_model_entry().is_none());
+    }
+
+    #[test]
+    fn test_next_model_entry_none_without_sat_model() {
+        let solver = StreamingSolver::new();
+        assert!(solver.next_model_entry().is_none());
+    }
+
+    #[test]
+    fn test_next_model_entry_invalidated_by_new_assertion() {
+        let mut solver = StreamingSolver::new();
+        solver.set_logic("QF_LIA");
+        solver
+            .ctx
+            .execute_script("(declare-const x Int)(assert (> x 0))")
+            .expect("setup script");
+        assert_eq!(solver.check_sat(), "sat");
+
+        // Partially consume the stream, then mutate solver state through
+        // the real public API (this is what's actually under test: that
+        // `declareConst` invalidates a cached/in-progress model stream).
+        assert!(solver.next_model_entry().is_some());
+        solver.declare_const("z", "Bool").expect("declare z");
+
+        // A stale cursor/model must not leak across the state change: the
+        // cache must be re-derived (via a fresh checkSat) rather than
+        // silently resuming a defunct iteration.
+        assert_eq!(solver.check_sat(), "sat");
+        assert!(solver.next_model_entry().is_some());
+    }
+
+    #[test]
+    fn test_start_model_stream_returns_connected_controller() {
+        let mut solver = StreamingSolver::new();
+        let controller = solver.start_model_stream();
+
+        // The controller stored internally must be the *same* shared
+        // state as the one handed back to the caller: enqueueing on the
+        // internal controller must be observable through the returned
+        // handle.
+        solver
+            .controller
+            .as_ref()
+            .expect("controller stored")
+            .enqueue(DataChunk::new(vec![1, 2, 3], 0));
+
+        assert_eq!(controller.buffer_length(), 1);
+        let chunk = controller
+            .dequeue()
+            .expect("chunk visible via returned handle");
+        assert_eq!(chunk.sequence(), 0);
     }
 }

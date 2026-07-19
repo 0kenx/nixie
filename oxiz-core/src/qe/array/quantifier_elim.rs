@@ -1,12 +1,25 @@
-//! Array Quantifier Elimination
+//! Array Quantifier Elimination (EXPERIMENTAL / NOT SOUND FOR GENERAL USE)
 #![allow(missing_docs, dead_code)] // Under development
 //!
-//! This module implements quantifier elimination for the theory of arrays,
-//! including:
-//! - Index set abstraction
-//! - Conditional term rewriting
-//! - Array property templates
-//! - Skolemization for existential quantifiers
+//! This module sketches quantifier elimination for the theory of arrays
+//! (index set abstraction, conditional term rewriting, array property
+//! templates, Skolemization) but operates entirely on a placeholder
+//! [`TermId`] = `usize` with **no** connection to a real
+//! [`crate::ast::TermManager`]. Consequently it *cannot* actually
+//! analyze formula structure, substitute terms, or mint fresh constants.
+//!
+//! Every code path that would require real term construction or
+//! substitution honestly returns `Err(..)` rather than fabricating a
+//! plausible-looking but meaningless `TermId`/formula. The only sound,
+//! non-error results this module can produce are the trivial identity
+//! cases (eliminating zero quantified variables, or matching a template
+//! that legitimately never fires).
+//!
+//! The functioning, `TermManager`-backed array quantifier eliminator lives
+//! in `oxiz_theories::array::quantifier_elim::ArrayQuantifierEliminator` —
+//! prefer that implementation for real elimination work. This module is
+//! kept only as a design scratchpad and should not be relied upon for
+//! sound results.
 
 /// Placeholder term identifier
 #[allow(unused_imports)]
@@ -273,49 +286,97 @@ impl ArrayQuantifierEliminator {
     }
 
     /// Instantiate quantifier with a specific value
+    ///
+    /// # Honesty note
+    /// Without a real `TermManager` this module cannot substitute `value`
+    /// for `var` inside `formula`. Silently returning `formula` unchanged
+    /// would fabricate a "successful" instantiation that never actually
+    /// happened (the quantifier would be dropped without ever being
+    /// restricted to `value`), so this honestly reports failure instead.
     fn instantiate_quantifier(
         &self,
-        formula: TermId,
-        _var: &str,
+        _formula: TermId,
+        var: &str,
         _value: TermId,
     ) -> Result<TermId, String> {
-        // Placeholder: substitute var with value in formula
-        Ok(formula)
+        Err(format!(
+            "array QE: cannot instantiate quantified variable '{var}' — this module has no \
+             TermManager to perform substitution; use \
+             oxiz_theories::array::ArrayQuantifierEliminator instead"
+        ))
     }
 
     /// Generate case for fresh value (distinct from all concrete indices)
+    ///
+    /// # Honesty note
+    /// Would need to add `var ≠ idx` constraints for every concrete index,
+    /// which requires building real disequality terms. Returning `formula`
+    /// unchanged would silently drop those constraints, which is unsound.
     fn fresh_value_case(
         &self,
-        formula: TermId,
-        _var: &str,
+        _formula: TermId,
+        var: &str,
         _concrete_indices: &FxHashSet<TermId>,
     ) -> Result<TermId, String> {
-        // Placeholder: generate formula with fresh value
-        // Would add constraints: var ≠ idx for all idx in concrete_indices
-        Ok(formula)
+        Err(format!(
+            "array QE: cannot build the fresh-value case for '{var}' — this module has no \
+             TermManager to construct disequality constraints; use \
+             oxiz_theories::array::ArrayQuantifierEliminator instead"
+        ))
     }
 
-    /// Skolemize existential quantifiers
+    /// Skolemize existential quantifiers.
+    ///
+    /// # Honesty note
+    /// Skolemizing `quantified_vars` and then substituting the resulting
+    /// constants into `formula` both require a real `TermManager`. Without
+    /// one, this can only honestly handle the trivial case of zero
+    /// variables (identity); any non-empty variable list reports failure
+    /// instead of silently returning `formula` unchanged (which used to
+    /// claim a successful Skolemization that never took place).
     fn skolemize(&mut self, formula: TermId, quantified_vars: &[String]) -> Result<TermId, String> {
-        self.stats.skolemizations += quantified_vars.len() as u64;
+        if quantified_vars.is_empty() {
+            return Ok(formula);
+        }
 
         for var in quantified_vars {
-            // Create a Skolem constant
-            let skolem = self.mk_skolem_constant(var);
+            // Creating a Skolem constant requires a TermManager; propagate
+            // the honest error rather than fabricating an id.
+            let skolem = self.mk_skolem_constant(var)?;
             self.skolem_functions.insert(var.clone(), skolem);
         }
 
-        // Placeholder: substitute skolem constants
-        Ok(formula)
+        self.stats.skolemizations += quantified_vars.len() as u64;
+
+        Err(format!(
+            "array QE: cannot substitute Skolem constants into the formula for {} variable(s) — \
+             this module has no TermManager to perform substitution; use \
+             oxiz_theories::array::ArrayQuantifierEliminator instead",
+            quantified_vars.len()
+        ))
     }
 
-    /// Create a Skolem constant
-    fn mk_skolem_constant(&self, var: &str) -> TermId {
-        // Placeholder: would create fresh constant in term manager
-        var.len() // Dummy value
+    /// Create a Skolem constant.
+    ///
+    /// # Honesty note
+    /// A sound Skolem constant must be a genuinely fresh term minted by a
+    /// `TermManager`. This module has no such manager, so it cannot
+    /// fabricate one (e.g. `var.len()`) without risking accidental
+    /// collisions with real term ids.
+    fn mk_skolem_constant(&self, var: &str) -> Result<TermId, String> {
+        Err(format!(
+            "array QE: cannot create a Skolem constant for '{var}' — this module has no \
+             TermManager to mint a fresh term"
+        ))
     }
 
-    /// Create disjunction of terms
+    /// Create disjunction of terms.
+    ///
+    /// # Honesty note
+    /// For more than one term this requires building a real `Or` term. The
+    /// previous placeholder silently returned only `terms[0]`, discarding
+    /// every other disjunct — an unsound simplification. We now report
+    /// failure instead.
     fn mk_or(&self, terms: &[TermId]) -> Result<TermId, String> {
         if terms.is_empty() {
             return Err("Cannot create empty disjunction".to_string());
@@ -325,62 +386,82 @@ impl ArrayQuantifierEliminator {
             return Ok(terms[0]);
         }
 
-        // Placeholder: would create OR term
-        Ok(terms[0])
+        Err(format!(
+            "array QE: cannot build a disjunction of {} case-split terms — this module has no \
+             TermManager to construct an Or term",
+            terms.len()
+        ))
     }
 
-    /// Simplify array formula using extensionality
+    /// Simplify array formula using extensionality.
+    ///
+    /// Extensionality: `(∀i. select(a,i) = select(b,i)) ↔ a = b`. Generating
+    /// the index-wise conjunction requires inspecting the real term
+    /// structure of `lhs`/`rhs` and building real `select`/`=`/`And` terms,
+    /// none of which this placeholder-only module can do honestly (see the
+    /// module-level note). `stats.rewrites` is only incremented on genuine
+    /// success, never for a failed/fabricated attempt.
     pub fn simplify_extensionality(&mut self, lhs: TermId, rhs: TermId) -> Result<TermId, String> {
-        self.stats.rewrites += 1;
-
-        // Extensionality: (∀i. select(a,i) = select(b,i)) ↔ a = b
-        // If lhs and rhs are array expressions, generate index-wise equality
-
-        // Placeholder: collect all relevant indices
         let indices = self.collect_relevant_indices(lhs, rhs)?;
 
-        // Generate conjunction: ∧_i (select(lhs,i) = select(rhs,i))
-        let mut conjuncts = Vec::new();
+        let mut conjuncts = Vec::with_capacity(indices.len());
         for index in indices {
-            let lhs_select = self.mk_select(lhs, index);
-            let rhs_select = self.mk_select(rhs, index);
-            let eq = self.mk_eq(lhs_select, rhs_select);
+            let lhs_select = self.mk_select(lhs, index)?;
+            let rhs_select = self.mk_select(rhs, index)?;
+            let eq = self.mk_eq(lhs_select, rhs_select)?;
             conjuncts.push(eq);
         }
 
-        self.mk_and(&conjuncts)
+        let result = self.mk_and(&conjuncts)?;
+        self.stats.rewrites += 1;
+        Ok(result)
     }
 
-    /// Collect all indices relevant for extensionality
+    /// Collect all indices relevant for extensionality.
+    ///
+    /// # Honesty note
+    /// The previous placeholder returned a hardcoded `[0, 1]` regardless of
+    /// `lhs`/`rhs`, fabricating an index set unrelated to the actual
+    /// formula. Without a `TermManager` to inspect the real array term
+    /// structure, this cannot be done soundly, so it now fails explicitly.
     fn collect_relevant_indices(&self, _lhs: TermId, _rhs: TermId) -> Result<Vec<TermId>, String> {
-        // Placeholder: extract all indices from array operations
-        Ok(vec![0, 1])
+        Err(
+            "array QE: cannot analyze array term structure to collect relevant indices — this \
+             module has no TermManager"
+                .to_string(),
+        )
     }
 
-    /// Create select term
-    fn mk_select(&self, _array: TermId, _index: TermId) -> TermId {
-        // Placeholder
-        0
+    /// Create select term.
+    fn mk_select(&self, _array: TermId, _index: TermId) -> Result<TermId, String> {
+        Err("array QE: cannot build a select term — this module has no TermManager".to_string())
     }
 
-    /// Create equality term
-    fn mk_eq(&self, _lhs: TermId, _rhs: TermId) -> TermId {
-        // Placeholder
-        0
+    /// Create equality term.
+    fn mk_eq(&self, _lhs: TermId, _rhs: TermId) -> Result<TermId, String> {
+        Err("array QE: cannot build an equality term — this module has no TermManager".to_string())
     }
 
-    /// Create conjunction of terms
+    /// Create conjunction of terms.
+    ///
+    /// # Honesty note
+    /// An empty conjunction is logically `true`, but minting a valid `true`
+    /// `TermId` still requires a real `TermManager` (this module's ids are
+    /// not interned against any manager). Returning a bare sentinel like
+    /// `0` would collide with `mk_select`/`mk_eq`'s (also fabricated)
+    /// output and be indistinguishable from a real term id, so we report
+    /// failure instead. The `len() > 1` case previously silently dropped
+    /// every conjunct but the first — an unsound simplification.
     fn mk_and(&self, terms: &[TermId]) -> Result<TermId, String> {
-        if terms.is_empty() {
-            return Ok(0); // True
-        }
-
         if terms.len() == 1 {
             return Ok(terms[0]);
         }
 
-        // Placeholder: would create AND term
-        Ok(terms[0])
+        Err(format!(
+            "array QE: cannot build a conjunction of {} term(s) — this module has no \
+             TermManager to construct a True/And term",
+            terms.len()
+        ))
     }
 
     /// Get statistics
@@ -506,27 +587,65 @@ mod tests {
     }
 
     #[test]
-    fn test_skolemization() {
+    fn test_skolemization_of_empty_vars_is_identity() {
+        // Skolemizing zero variables is trivially sound: the formula is
+        // returned unchanged.
+        let config = ArrayQeConfig::default();
+        let mut eliminator = ArrayQuantifierEliminator::new(config);
+
+        let result = eliminator.skolemize(42, &[]);
+        assert_eq!(result, Ok(42));
+        assert_eq!(eliminator.stats.skolemizations, 0);
+    }
+
+    #[test]
+    fn test_skolemization_is_honest_about_being_unimplemented() {
+        // Regression: skolemize() used to silently return the formula
+        // unchanged and claim success (incrementing stats.skolemizations)
+        // without ever substituting a Skolem constant into the formula.
+        // That fabricated a "successful" elimination that never happened.
+        // With a real variable to eliminate it must now surface an
+        // explicit error instead of a fabricated formula.
         let config = ArrayQeConfig::default();
         let mut eliminator = ArrayQuantifierEliminator::new(config);
 
         let vars = vec!["x".to_string()];
         let result = eliminator.skolemize(42, &vars);
 
-        assert!(result.is_ok());
-        assert_eq!(eliminator.stats.skolemizations, 1);
-        assert!(eliminator.skolem_functions.contains_key("x"));
+        assert!(result.is_err());
+        assert!(eliminator.skolem_functions.is_empty());
     }
 
     #[test]
-    fn test_extensionality_simplification() {
+    fn test_extensionality_simplification_is_honest_about_being_unimplemented() {
+        // Regression: simplify_extensionality() used to fabricate a
+        // hardcoded index set ([0, 1]) and dummy select/eq/and terms
+        // regardless of the actual lhs/rhs, reporting a meaningless
+        // "successful" rewrite. It must now surface an explicit error
+        // rather than a fabricated answer.
         let config = ArrayQeConfig::default();
         let mut eliminator = ArrayQuantifierEliminator::new(config);
 
         let result = eliminator.simplify_extensionality(1, 2);
 
-        assert!(result.is_ok());
-        assert_eq!(eliminator.stats.rewrites, 1);
+        assert!(result.is_err());
+        assert_eq!(eliminator.stats.rewrites, 0);
+    }
+
+    #[test]
+    fn test_eliminate_nontrivial_vars_does_not_fabricate_result() {
+        // Regression: with a genuinely quantified variable, this
+        // placeholder-only module cannot honestly produce an eliminated
+        // formula (no TermManager, no real formula analysis). It must
+        // error rather than silently returning an unchanged/fabricated
+        // formula as if elimination had succeeded.
+        let config = ArrayQeConfig::default();
+        let mut eliminator = ArrayQuantifierEliminator::new(config);
+
+        let formula = 42;
+        let result = eliminator.eliminate(formula, &["i".to_string()]);
+
+        assert!(result.is_err());
     }
 
     #[test]

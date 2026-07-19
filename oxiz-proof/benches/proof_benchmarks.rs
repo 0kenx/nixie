@@ -3,7 +3,7 @@ use oxiz_proof::alethe::AletheProof;
 use oxiz_proof::compress::ProofCompressor;
 use oxiz_proof::conversion::FormatConverter;
 use oxiz_proof::diff::{compute_similarity, diff_proofs};
-use oxiz_proof::drat::DratProof;
+use oxiz_proof::drat::{Clause as DratClause, DratProof};
 use oxiz_proof::merge::{merge_proofs, slice_proof};
 use oxiz_proof::minimize::{MinimizeConfig, ProofMinimizer};
 use oxiz_proof::proof::Proof;
@@ -400,10 +400,15 @@ fn bench_drat_to_alethe_conversion(c: &mut Criterion) {
 
     for num_clauses in [10, 50, 100, 200].iter() {
         let mut drat = DratProof::new();
+        let mut input_clauses: Vec<DratClause> = Vec::new();
 
-        // Create a DRAT proof with many clauses
+        // Create a DRAT proof with many clauses; since every step here is a
+        // plain Add (no derived/RAT steps), each added clause is also an
+        // "input" clause as far as `drat_to_alethe` is concerned.
         for i in 0..*num_clauses {
-            drat.add_clause(vec![i, -(i + 1)]);
+            let clause: DratClause = vec![i, -(i + 1)];
+            drat.add_clause(clause.clone());
+            input_clauses.push(clause);
         }
 
         group.bench_with_input(
@@ -411,7 +416,7 @@ fn bench_drat_to_alethe_conversion(c: &mut Criterion) {
             num_clauses,
             |b, _| {
                 let converter = FormatConverter::new();
-                b.iter(|| black_box(converter.drat_to_alethe(&drat)));
+                b.iter(|| black_box(converter.drat_to_alethe(&drat, &input_clauses)));
             },
         );
     }

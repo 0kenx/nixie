@@ -6,6 +6,7 @@ use crate::cube::{Cube, CubeResult, CubeStats};
 /// cubes to parallel workers and aggregating results.
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::solver::{Solver, SolverResult};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -139,10 +140,18 @@ impl ParallelCubeSolver {
 
         let total_time = start_time.elapsed();
 
-        // Determine overall result
-        let overall_result = if self.sat_count.load(Ordering::Relaxed) > 0 {
+        // Determine overall result.
+        //
+        // Cube-and-Conquer only proves UNSAT when EVERY cube in a covering set
+        // was examined and found UNSAT. An empty cube list examines nothing, so
+        // it must report Unknown rather than a fabricated UNSAT (the previous
+        // `unsat_count == cubes.len()` check was `0 == 0` for the empty case).
+        let num_cubes = cubes.len();
+        let overall_result = if num_cubes == 0 {
+            CubeResult::Unknown
+        } else if self.sat_count.load(Ordering::Relaxed) > 0 {
             CubeResult::Sat
-        } else if self.unsat_count.load(Ordering::Relaxed) == cubes.len() {
+        } else if self.unsat_count.load(Ordering::Relaxed) == num_cubes {
             CubeResult::Unsat
         } else {
             CubeResult::Unknown
@@ -165,30 +174,52 @@ impl ParallelCubeSolver {
         (overall_result, results)
     }
 
-    /// Solves a single cube (simplified solver for demonstration).
+    /// Solves a single cube by running a full CDCL solver over `clauses` with the
+    /// cube literals fixed as assumptions.
     ///
-    /// In a real implementation, this would invoke a full CDCL solver with the
-    /// cube literals as assumptions.
-    fn solve_cube(&self, cube: &Cube, _clauses: &[Clause]) -> CubeSolveResult {
+    /// This is the actual "conquer" step of Cube-and-Conquer: the cube pins a
+    /// partial assignment and the solver decides the remaining variables. The
+    /// result maps directly onto [`CubeResult`] (Sat / Unsat / Unknown).
+    fn solve_cube(&self, cube: &Cube, clauses: &[Clause]) -> CubeSolveResult {
         let start = Instant::now();
 
-        // Simplified solving logic for demonstration
-        // In practice, this would call a real SAT solver with cube as assumptions
+        // An internally inconsistent cube (a literal and its negation) is
+        // unsatisfiable regardless of the clause set — short-circuit it.
+        if !cube.is_consistent() {
+            return CubeSolveResult {
+                cube: cube.clone(),
+                result: CubeResult::Unsat,
+                time: start.elapsed(),
+                conflicts: 0,
+                decisions: cube.len() as u64,
+            };
+        }
 
-        // For now, just simulate some work
-        let result = if cube.is_consistent() {
-            // Check for trivial conflicts
-            CubeResult::Unknown
-        } else {
-            CubeResult::Unsat
+        // Build a CDCL solver over the clause set and solve under the cube
+        // literals as assumptions. `add_clause`/`solve_with_assumptions` grow the
+        // variable set on demand, so no explicit `ensure_vars` is required.
+        let mut solver = Solver::new();
+        for clause in clauses {
+            solver.add_clause(clause.lits.iter().copied());
+        }
+
+        let (result, _core) = solver.solve_with_assumptions(&cube.literals);
+        let stats = solver.stats();
+        let conflicts = stats.conflicts;
+        let decisions = stats.decisions;
+
+        let result = match result {
+            SolverResult::Sat => CubeResult::Sat,
+            SolverResult::Unsat => CubeResult::Unsat,
+            SolverResult::Unknown => CubeResult::Unknown,
         };
 
         CubeSolveResult {
             cube: cube.clone(),
             result,
             time: start.elapsed(),
-            conflicts: 0,
-            decisions: cube.len() as u64,
+            conflicts,
+            decisions,
         }
     }
 
@@ -303,7 +334,9 @@ mod tests {
 
         let (result, results) = solver.solve(cubes, &clauses);
 
-        assert_eq!(result, CubeResult::Unsat); // All (zero) cubes are UNSAT
+        // An empty cube set examines nothing, so the honest verdict is Unknown
+        // (not a fabricated UNSAT).
+        assert_eq!(result, CubeResult::Unknown);
         assert_eq!(results.len(), 0);
     }
 
@@ -324,7 +357,10 @@ mod tests {
         let (result, results) = solver.solve(cubes, &clauses);
 
         assert_eq!(results.len(), 1);
-        assert!(matches!(result, CubeResult::Unknown | CubeResult::Unsat));
+        // No clauses + a consistent cube: the formula is satisfiable, so the
+        // real solver returns SAT for the cube (the old stub could never do so).
+        assert_eq!(result, CubeResult::Sat);
+        assert_eq!(results[0].result, CubeResult::Sat);
     }
 
     #[test]
@@ -368,7 +404,8 @@ mod tests {
         let (result, results) = solver.solve(cubes, &clauses);
 
         assert_eq!(results.len(), 3);
-        assert!(matches!(result, CubeResult::Unknown | CubeResult::Unsat));
+        // No clauses: every consistent cube is SAT, so the aggregate is SAT.
+        assert_eq!(result, CubeResult::Sat);
     }
 
     #[test]
@@ -408,7 +445,8 @@ mod tests {
 
         assert_eq!(cube_stats.total_cubes, 2);
         assert_eq!(solve_results.len(), 2);
-        assert!(matches!(result, CubeResult::Unknown | CubeResult::Unsat));
+        // No clauses: consistent cubes are SAT, so Cube-and-Conquer reports SAT.
+        assert_eq!(result, CubeResult::Sat);
     }
 
     #[test]

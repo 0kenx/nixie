@@ -2,7 +2,7 @@
 //!
 //! Implements the theory of arrays with extensionality and read-over-write axioms.
 //!
-//! Reference: Z3's `src/smt/theory_array.cpp` at `../z3/src/smt/`
+//! Reference: Z3's `src/smt/theory_array.cpp`
 
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]

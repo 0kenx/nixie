@@ -12,6 +12,7 @@ use super::{RewriteContext, RewriteResult, Rewriter};
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
+use num_bigint::BigInt;
 
 /// String rewriter
 #[derive(Debug, Clone)]
@@ -111,10 +112,12 @@ impl StringRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
-        // len("abc") → 3
+        // len("abc") → 3. SMT-LIB `str.len` counts codepoints, not UTF-8
+        // bytes; `s.len()` (Rust's byte length) is only correct for
+        // all-ASCII strings.
         if let Some(s) = self.get_str_const(arg, manager) {
             ctx.stats_mut().record_rule("str_len_const");
-            return RewriteResult::Rewritten(manager.mk_int(s.len() as i64));
+            return RewriteResult::Rewritten(manager.mk_int(s.chars().count() as i64));
         }
 
         // len(concat(s1, s2)) → len(s1) + len(s2)
@@ -149,8 +152,14 @@ impl StringRewriter {
         {
             let start_idx = st as usize;
             let length = ln as usize;
-            if start_idx <= s.len() {
-                let end_idx = (start_idx + length).min(s.len());
+            // Bound against the codepoint count, matching the codepoint
+            // (not byte) semantics that `.chars().skip()/.take()` below
+            // already use — `s.len()` is a byte count and would let a
+            // codepoint-out-of-range `start_idx` through for any
+            // multi-byte-character string.
+            let char_count = s.chars().count();
+            if start_idx <= char_count {
+                let end_idx = (start_idx + length).min(char_count);
                 let result: String = s
                     .chars()
                     .skip(start_idx)
@@ -297,13 +306,59 @@ impl StringRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
-        // indexof(s, "", i) → i (if i >= 0 and i <= len(s))
+        // indexof(s, "", i) → i, but only under the SMT-LIB side condition
+        // 0 <= i <= len(s); otherwise the result is -1. We must not fire the
+        // rewrite unconditionally for symbolic/out-of-range starts.
         if self.is_empty_str(needle, manager) {
-            ctx.stats_mut().record_rule("str_indexof_empty");
-            return RewriteResult::Rewritten(start);
+            match (
+                self.get_int_const(start, manager),
+                self.get_str_const(haystack, manager),
+            ) {
+                (Some(st), Some(h)) => {
+                    // Fully constant: decide the side condition directly.
+                    // `len(s)` in the SMT-LIB side condition is the
+                    // codepoint count, not the Rust (byte) `String::len()`.
+                    ctx.stats_mut().record_rule("str_indexof_empty_const");
+                    return RewriteResult::Rewritten(
+                        if st >= 0 && (st as usize) <= h.chars().count() {
+                            start
+                        } else {
+                            manager.mk_int(-1)
+                        },
+                    );
+                }
+                (Some(st), None) if st < 0 => {
+                    // Negative start always fails the side condition, regardless
+                    // of the (symbolic) haystack.
+                    ctx.stats_mut().record_rule("str_indexof_empty_neg");
+                    return RewriteResult::Rewritten(manager.mk_int(-1));
+                }
+                _ => {
+                    // Symbolic start and/or haystack length: encode the side
+                    // condition explicitly rather than dropping it.
+                    let zero = manager.mk_int(0);
+                    let len_h = manager.mk_str_len(haystack);
+                    let ge_zero = manager.mk_leq(zero, start);
+                    let le_len = manager.mk_leq(start, len_h);
+                    let cond = manager.mk_and([ge_zero, le_len]);
+                    let neg_one = manager.mk_int(-1);
+                    ctx.stats_mut().record_rule("str_indexof_empty_ite");
+                    return RewriteResult::Rewritten(manager.mk_ite(cond, start, neg_one));
+                }
+            }
         }
 
         // Constant folding
+        //
+        // SMT-LIB `str.indexof` indices are *codepoint* offsets, not byte
+        // offsets. `st as usize` naively used as a Rust byte index into
+        // `h[start_idx..]` was both wrong for any non-ASCII haystack (a
+        // codepoint count generally differs from the byte count) and could
+        // outright panic (Rust string slicing requires the index to land on
+        // a UTF-8 character boundary, which a codepoint-counted `start_idx`
+        // need not do for multi-byte characters). The returned position had
+        // the same problem in reverse: `str.find`'s byte offset was reported
+        // directly instead of being converted back to a codepoint offset.
         if let (Some(h), Some(n), Some(st)) = (
             self.get_str_const(haystack, manager),
             self.get_str_const(needle, manager),
@@ -311,10 +366,22 @@ impl StringRewriter {
         ) && st >= 0
         {
             let start_idx = st as usize;
-            if start_idx <= h.len() {
+            let h_char_count = h.chars().count();
+            if start_idx <= h_char_count {
                 ctx.stats_mut().record_rule("str_indexof_const");
-                if let Some(pos) = h[start_idx..].find(&n) {
-                    return RewriteResult::Rewritten(manager.mk_int((start_idx + pos) as i64));
+                // Byte offset of the `start_idx`-th codepoint (always a
+                // valid char boundary); falls back to `h.len()` exactly
+                // when `start_idx == h_char_count`.
+                let byte_start = h
+                    .char_indices()
+                    .nth(start_idx)
+                    .map(|(b, _)| b)
+                    .unwrap_or(h.len());
+                if let Some(byte_pos) = h[byte_start..].find(&n) {
+                    // Convert the byte offset of the match back to a
+                    // codepoint offset relative to the whole haystack.
+                    let char_pos = h[..byte_start + byte_pos].chars().count();
+                    return RewriteResult::Rewritten(manager.mk_int(char_pos as i64));
                 } else {
                     return RewriteResult::Rewritten(manager.mk_int(-1));
                 }
@@ -397,15 +464,25 @@ impl StringRewriter {
         manager: &mut TermManager,
     ) -> RewriteResult {
         // str.to.int("123") → 123
+        //
+        // Per SMT-LIB, `str.to_int s` is the non-negative integer `s`
+        // denotes in decimal if `s` consists solely of digit characters
+        // (leading zeros allowed), and `-1` otherwise. Two things `s.parse
+        // ::<i64>()` got wrong: (1) it accepts a leading `+`/`-` sign,
+        // which is not a digit and must make the result `-1` (e.g. `"+5"`
+        // is not `5`); (2) it rejects any all-digit string whose value
+        // overflows `i64`, folding it to `-1` even though such a string
+        // *does* denote a (large but valid) non-negative integer.
         if let Some(s) = self.get_str_const(arg, manager) {
             ctx.stats_mut().record_rule("str_to_int_const");
-            if s.is_empty() {
-                return RewriteResult::Rewritten(manager.mk_int(-1));
-            }
-            if let Ok(n) = s.parse::<i64>()
-                && n >= 0
-            {
-                return RewriteResult::Rewritten(manager.mk_int(n));
+            if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
+                // All-digit and non-empty: always a valid non-negative
+                // integer, arbitrary precision (matches `IntConst`'s
+                // `BigInt` representation, so no size limit is imposed
+                // here that SMT-LIB itself doesn't impose).
+                if let Ok(n) = s.parse::<BigInt>() {
+                    return RewriteResult::Rewritten(manager.mk_int(n));
+                }
             }
             return RewriteResult::Rewritten(manager.mk_int(-1));
         }
@@ -724,5 +801,91 @@ mod tests {
         } else {
             panic!("Expected StringLit");
         }
+    }
+
+    #[test]
+    fn test_indexof_empty_in_range_constant() {
+        // indexof("abc", "", 2) -> 2  (0 <= 2 <= len("abc")=3)
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let s = manager.mk_string_lit("abc");
+        let empty = manager.mk_string_lit("");
+        let start = manager.mk_int(2);
+        let indexof = manager.mk_str_indexof(s, empty, start);
+
+        let result = rewriter.rewrite(indexof, &mut ctx, &mut manager);
+        assert!(result.was_rewritten());
+        let t = manager.get(result.term()).expect("term should exist");
+        assert!(matches!(&t.kind, TermKind::IntConst(n) if n == &BigInt::from(2)));
+    }
+
+    #[test]
+    fn test_indexof_empty_out_of_range_constant() {
+        // Regression: indexof("abc", "", 10) must fold to -1, per SMT-LIB
+        // side condition 0 <= i <= len(s), NOT to 10.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let s = manager.mk_string_lit("abc");
+        let empty = manager.mk_string_lit("");
+        let start = manager.mk_int(10);
+        let indexof = manager.mk_str_indexof(s, empty, start);
+
+        let result = rewriter.rewrite(indexof, &mut ctx, &mut manager);
+        assert!(result.was_rewritten());
+        let t = manager.get(result.term()).expect("term should exist");
+        assert!(
+            matches!(&t.kind, TermKind::IntConst(n) if n == &BigInt::from(-1)),
+            "expected -1 for out-of-range start, got {:?}",
+            t.kind
+        );
+    }
+
+    #[test]
+    fn test_indexof_empty_negative_start_constant() {
+        // indexof(s, "", -1) must fold to -1 regardless of haystack.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let str_sort = manager.sorts.string_sort();
+        let s = manager.mk_var("s", str_sort);
+        let empty = manager.mk_string_lit("");
+        let start = manager.mk_int(-1);
+        let indexof = manager.mk_str_indexof(s, empty, start);
+
+        let result = rewriter.rewrite(indexof, &mut ctx, &mut manager);
+        assert!(result.was_rewritten());
+        let t = manager.get(result.term()).expect("term should exist");
+        assert!(matches!(&t.kind, TermKind::IntConst(n) if n == &BigInt::from(-1)));
+    }
+
+    #[test]
+    fn test_indexof_empty_symbolic_start_not_unconditional() {
+        // Regression: indexof(s, "", i) with symbolic i must NOT
+        // unconditionally fold to `i` -- the 0<=i<=len(s) side condition
+        // must be encoded (e.g. via ite), never dropped.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let str_sort = manager.sorts.string_sort();
+        let int_sort = manager.sorts.int_sort;
+        let s = manager.mk_var("s", str_sort);
+        let i = manager.mk_var("i", int_sort);
+        let empty = manager.mk_string_lit("");
+        let indexof = manager.mk_str_indexof(s, empty, i);
+
+        let result = rewriter.rewrite(indexof, &mut ctx, &mut manager);
+        let t = manager.get(result.term()).expect("term should exist");
+        // Must not be the bare variable `i` (that would drop the side
+        // condition entirely, e.g. wrongly folding indexof(s,"",-5) to -5).
+        assert_ne!(
+            result.term(),
+            i,
+            "symbolic indexof(s, \"\", i) must not collapse to `i` unconditionally"
+        );
+        // The side condition must be represented explicitly (an Ite guarding
+        // the [0, len(s)] range), not silently dropped.
+        assert!(
+            matches!(t.kind, TermKind::Ite(_, _, _)),
+            "expected an Ite encoding the side condition, got {:?}",
+            t.kind
+        );
     }
 }

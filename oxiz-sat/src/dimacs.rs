@@ -48,10 +48,21 @@ impl From<io::Error> for DimacsError {
     }
 }
 
+/// Default upper bound on the variable count accepted from a `p cnf` header.
+///
+/// The header value is attacker-controlled and is used to eagerly allocate
+/// per-variable state (`Solver::ensure_vars`), so an unbounded value turns a
+/// tiny file such as `p cnf 999999999999 1` into an effectively infinite loop
+/// and OOM. `2^31` both fits the `u32` variable index space and caps the eager
+/// allocation. Callers needing more can raise it with
+/// [`DimacsParser::set_max_vars`].
+pub const DEFAULT_MAX_VARS: usize = 1 << 31;
+
 /// DIMACS CNF parser
 pub struct DimacsParser {
     num_vars: usize,
     num_clauses: usize,
+    max_vars: usize,
 }
 
 impl DimacsParser {
@@ -61,7 +72,18 @@ impl DimacsParser {
         Self {
             num_vars: 0,
             num_clauses: 0,
+            max_vars: DEFAULT_MAX_VARS,
         }
+    }
+
+    /// Set the maximum accepted variable count from the `p cnf` header.
+    ///
+    /// A header declaring more than this many variables is rejected with
+    /// [`DimacsError::InvalidProblem`] instead of triggering an unbounded
+    /// allocation. Values above `u32::MAX` are clamped to `u32::MAX` because
+    /// variable indices must fit in a `u32`.
+    pub fn set_max_vars(&mut self, max_vars: usize) {
+        self.max_vars = max_vars.min(u32::MAX as usize);
     }
 
     /// Parse a DIMACS file and load into solver
@@ -165,6 +187,14 @@ impl DimacsParser {
         self.num_clauses = parts[3]
             .parse()
             .map_err(|_| DimacsError::Parse("Invalid number of clauses".to_string()))?;
+
+        // Reject an adversarial variable count before it is handed to
+        // `Solver::ensure_vars`, which would otherwise allocate per-variable
+        // state in a loop (hang / OOM). Variable indices must also fit in a
+        // `u32`, so `max_vars` never exceeds `u32::MAX`.
+        if self.num_vars > self.max_vars {
+            return Err(DimacsError::InvalidProblem);
+        }
 
         Ok(())
     }

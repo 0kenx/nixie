@@ -1,8 +1,8 @@
 # oxiz-spacer TODO
 
-Last Updated: 2026-06-09 (v0.2.3)
+Last Updated: 2026-07-19 (v0.2.4)
 
-Reference: Z3's `muz/spacer/` directory at `../z3/src/muz/spacer/`
+Reference: Z3's `muz/spacer/` directory
 
 ## Progress: 100% Complete
 

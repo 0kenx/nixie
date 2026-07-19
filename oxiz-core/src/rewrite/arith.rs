@@ -21,7 +21,7 @@ use crate::ast::{TermId, TermKind, TermManager};
 use crate::prelude::*;
 use num_bigint::BigInt;
 use num_rational::Rational64;
-use num_traits::{One, Zero};
+use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, One, Zero};
 use smallvec::SmallVec;
 
 /// Arithmetic expression rewriter
@@ -134,6 +134,30 @@ impl ArithRewriter {
             .is_some_and(|r| r == Rational64::from_integer(-1))
     }
 
+    /// Returns `true` when `term` has Int sort.
+    ///
+    /// This drives the SMT-LIB semantics of the shared [`TermKind::Div`] /
+    /// [`TermKind::Mod`] nodes: when the operands are Int-sorted, `div`/`mod`
+    /// denote Euclidean division/remainder (`0 <= r < |b|`); when Real-sorted,
+    /// `/` denotes exact rational division. `Mod` is only defined on integers.
+    fn is_int_sorted(&self, term: TermId, manager: &TermManager) -> bool {
+        manager
+            .get(term)
+            .and_then(|t| manager.sorts.get(t.sort))
+            .is_some_and(|s| s.is_int())
+    }
+
+    /// Build a zero literal matching the sort of `term` (Real when `term` is
+    /// Real-sorted, Int otherwise). Keeps a folded `0/x` result in the right
+    /// theory instead of silently retyping a real quotient to `Int`.
+    fn mk_zero_like(&self, term: TermId, manager: &mut TermManager) -> TermId {
+        if self.is_int_sorted(term, manager) {
+            manager.mk_int(0)
+        } else {
+            manager.mk_real(Rational64::zero())
+        }
+    }
+
     /// Rewrite addition
     fn rewrite_add(
         &mut self,
@@ -141,14 +165,36 @@ impl ArithRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
+        // The sort of an n-ary Add is fixed by its first operand (see
+        // `TermManager::mk_add`); constant folding must reconstruct a
+        // constant of that same sort, never guess from whether the folded
+        // sum happens to be an integral value (an Int result of a Real-sorted
+        // fold would produce an ill-sorted term).
+        let want_int = args
+            .first()
+            .is_some_and(|&a| self.is_int_sorted(a, manager));
+
         let mut sum = Rational64::zero();
         let mut non_const: SmallVec<[TermId; 8]> = SmallVec::new();
         let mut changed = false;
 
         for &arg in args {
             if let Some(val) = self.get_rat_constant(arg, manager) {
-                sum += val;
-                changed = true;
+                // `Rational64` is i64-backed: unchecked `+=` can silently
+                // wrap in release builds or abort on overflow in debug
+                // builds. Use the checked path and, if the fold would
+                // overflow, leave the term unrewritten rather than produce
+                // (or panic trying to produce) a wrong constant.
+                match sum.checked_add(&val) {
+                    Some(new_sum) => {
+                        sum = new_sum;
+                        changed = true;
+                    }
+                    None => {
+                        ctx.stats_mut().record_rule("arith_add_overflow_skip");
+                        return RewriteResult::Unchanged(manager.mk_add(args.to_vec()));
+                    }
+                }
             } else {
                 non_const.push(arg);
             }
@@ -168,7 +214,7 @@ impl ArithRewriter {
         let mut result_args: Vec<TermId> = filtered.into_iter().collect();
 
         if !sum.is_zero() || result_args.is_empty() {
-            if sum.is_integer() {
+            if want_int {
                 result_args.push(manager.mk_int(*sum.numer()));
             } else {
                 result_args.push(manager.mk_real(sum));
@@ -195,6 +241,13 @@ impl ArithRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
+        // As in `rewrite_add`, the fold result must keep the sort of the
+        // Mul term itself (driven by its first operand), not whatever the
+        // folded value's shape happens to look like.
+        let want_int = args
+            .first()
+            .is_some_and(|&a| self.is_int_sorted(a, manager));
+
         let mut product = Rational64::one();
         let mut non_const: SmallVec<[TermId; 8]> = SmallVec::new();
         let mut changed = false;
@@ -203,12 +256,25 @@ impl ArithRewriter {
             // Check for zero - short circuit
             if self.is_zero(arg, manager) {
                 ctx.stats_mut().record_rule("arith_mul_zero");
-                return RewriteResult::Rewritten(manager.mk_int(0));
+                let zero = self.mk_zero_like(arg, manager);
+                return RewriteResult::Rewritten(zero);
             }
 
             if let Some(val) = self.get_rat_constant(arg, manager) {
-                product *= val;
-                changed = true;
+                // Same overflow hazard as addition: `Rational64` multiplication
+                // can overflow its i64 numerator/denominator. Bail out to an
+                // unrewritten (but correct) term instead of wrapping silently
+                // or aborting.
+                match product.checked_mul(&val) {
+                    Some(new_product) => {
+                        product = new_product;
+                        changed = true;
+                    }
+                    None => {
+                        ctx.stats_mut().record_rule("arith_mul_overflow_skip");
+                        return RewriteResult::Unchanged(manager.mk_mul(args.to_vec()));
+                    }
+                }
             } else {
                 non_const.push(arg);
             }
@@ -228,7 +294,7 @@ impl ArithRewriter {
         let mut result_args: Vec<TermId> = filtered.into_iter().collect();
 
         if product != Rational64::one() || result_args.is_empty() {
-            if product.is_integer() {
+            if want_int {
                 result_args.insert(0, manager.mk_int(*product.numer()));
             } else {
                 result_args.insert(0, manager.mk_real(product));
@@ -279,13 +345,19 @@ impl ArithRewriter {
             self.get_rat_constant(lhs, manager),
             self.get_rat_constant(rhs, manager),
         ) {
-            let result = l - r;
-            ctx.stats_mut().record_rule("arith_sub_const");
-            if result.is_integer() {
-                return RewriteResult::Rewritten(manager.mk_int(*result.numer()));
-            } else {
-                return RewriteResult::Rewritten(manager.mk_real(result));
+            // Checked subtraction: an i64-overflowing fold must not silently
+            // wrap (release) or abort (debug); leave the term unrewritten.
+            if let Some(result) = l.checked_sub(&r) {
+                ctx.stats_mut().record_rule("arith_sub_const");
+                // Result sort follows the Sub term's own sort (that of
+                // `lhs`), not whatever the folded value happens to look like.
+                if self.is_int_sorted(lhs, manager) {
+                    return RewriteResult::Rewritten(manager.mk_int(*result.numer()));
+                } else {
+                    return RewriteResult::Rewritten(manager.mk_real(result));
+                }
             }
+            ctx.stats_mut().record_rule("arith_sub_overflow_skip");
         }
 
         RewriteResult::Unchanged(manager.mk_sub(lhs, rhs))
@@ -331,7 +403,19 @@ impl ArithRewriter {
         }
     }
 
-    /// Rewrite division
+    /// Rewrite division.
+    ///
+    /// The single [`TermKind::Div`] node is interpreted per SMT-LIB according
+    /// to the operand sort:
+    /// * Int operands → Euclidean integer division `(div a b)`: the unique `q`
+    ///   with `a = b*q + r` and `0 <= r < |b|` (implemented via
+    ///   [`i64::div_euclid`], whose result matches this definition exactly,
+    ///   e.g. `(div 7 2) = 3`, `(div -7 2) = -4`).
+    /// * Real operands → exact rational division.
+    ///
+    /// Division by zero is left uninterpreted (never folded), matching the
+    /// SMT-LIB semantics where `div`/`/` by `0` is a total but unspecified
+    /// function.
     fn rewrite_div(
         &mut self,
         lhs: TermId,
@@ -339,43 +423,71 @@ impl ArithRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
-        // x / 1 → x
+        let int_sorted = self.is_int_sorted(lhs, manager);
+
+        // x / 1 → x   (sound for both theories: (div x 1) = x, x/1 = x)
         if self.is_one(rhs, manager) {
             ctx.stats_mut().record_rule("arith_div_one");
             return RewriteResult::Rewritten(lhs);
         }
 
-        // 0 / x → 0 (when x ≠ 0)
-        if self.is_zero(lhs, manager) && !self.is_zero(rhs, manager) {
-            ctx.stats_mut().record_rule("arith_div_zero_num");
-            return RewriteResult::Rewritten(manager.mk_int(0));
-        }
-
-        // x / -1 → -x
+        // x / -1 → -x  (sound: (div x -1) = -x since the remainder is 0)
         if self.is_neg_one(rhs, manager) {
             ctx.stats_mut().record_rule("arith_div_neg_one");
             return RewriteResult::Rewritten(manager.mk_neg(lhs));
         }
 
-        // Constant folding for rationals
-        if let (Some(l), Some(r)) = (
+        // 0 / x → 0, but ONLY when the divisor is a known non-zero constant.
+        // For a symbolic (or zero) divisor, (div 0 x) is uninterpreted at x = 0,
+        // so folding it to 0 would be unsound.
+        if self.is_zero(lhs, manager)
+            && self
+                .get_rat_constant(rhs, manager)
+                .is_some_and(|r| !r.is_zero())
+        {
+            ctx.stats_mut().record_rule("arith_div_zero_num");
+            let zero = self.mk_zero_like(lhs, manager);
+            return RewriteResult::Rewritten(zero);
+        }
+
+        if int_sorted {
+            // Euclidean integer division. Leave division by zero uninterpreted.
+            // `checked_div_euclid` also guards the one overflowing case
+            // (`i64::MIN.div_euclid(-1)`), which `div_euclid` itself panics on.
+            if let (Some(l), Some(r)) = (
+                self.get_int_constant(lhs, manager),
+                self.get_int_constant(rhs, manager),
+            ) && r != 0
+                && let Some(q) = l.checked_div_euclid(r)
+            {
+                ctx.stats_mut().record_rule("arith_div_const");
+                return RewriteResult::Rewritten(manager.mk_int(q));
+            }
+        } else if let (Some(l), Some(r)) = (
             self.get_rat_constant(lhs, manager),
             self.get_rat_constant(rhs, manager),
         ) && !r.is_zero()
         {
-            let result = l / r;
-            ctx.stats_mut().record_rule("arith_div_const");
-            if result.is_integer() {
-                return RewriteResult::Rewritten(manager.mk_int(*result.numer()));
-            } else {
+            // Real division: exact rational quotient. Checked to avoid
+            // silently wrapping/aborting on i64 numerator/denominator
+            // overflow; the result always keeps Real sort since we're in
+            // the non-int-sorted branch.
+            if let Some(result) = l.checked_div(&r) {
+                ctx.stats_mut().record_rule("arith_div_const");
                 return RewriteResult::Rewritten(manager.mk_real(result));
             }
+            ctx.stats_mut().record_rule("arith_div_overflow_skip");
         }
 
         RewriteResult::Unchanged(manager.mk_div(lhs, rhs))
     }
 
-    /// Rewrite modulo
+    /// Rewrite modulo.
+    ///
+    /// `mod` is defined on integers only, so it always denotes the Euclidean
+    /// remainder: `(mod a b) = a - b*(div a b)` with `0 <= (mod a b) < |b|`
+    /// (implemented via [`i64::rem_euclid`], e.g. `(mod -7 2) = 1`). Modulo by
+    /// zero is left uninterpreted (never folded).
     fn rewrite_mod(
         &mut self,
         lhs: TermId,
@@ -383,27 +495,31 @@ impl ArithRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
-        // 0 mod x → 0
-        if self.is_zero(lhs, manager) {
-            ctx.stats_mut().record_rule("arith_mod_zero_num");
-            return RewriteResult::Rewritten(manager.mk_int(0));
-        }
-
-        // x mod 1 → 0
+        // x mod 1 → 0   (sound: (mod x 1) = 0 for every x)
         if self.is_one(rhs, manager) {
             ctx.stats_mut().record_rule("arith_mod_one");
             return RewriteResult::Rewritten(manager.mk_int(0));
         }
 
-        // Constant folding
+        // 0 mod x → 0, but ONLY when the divisor is a known non-zero constant.
+        // (mod 0 x) is uninterpreted at x = 0, so a symbolic divisor cannot fold.
+        if self.is_zero(lhs, manager) && self.get_int_constant(rhs, manager).is_some_and(|r| r != 0)
+        {
+            ctx.stats_mut().record_rule("arith_mod_zero_num");
+            return RewriteResult::Rewritten(manager.mk_int(0));
+        }
+
+        // Constant folding (Euclidean remainder). Leave modulo by zero alone.
+        // `checked_rem_euclid` also guards the one overflowing case
+        // (`i64::MIN.rem_euclid(-1)`), which `rem_euclid` itself panics on.
         if let (Some(l), Some(r)) = (
             self.get_int_constant(lhs, manager),
             self.get_int_constant(rhs, manager),
         ) && r != 0
+            && let Some(m) = l.checked_rem_euclid(r)
         {
-            let result = l % r;
             ctx.stats_mut().record_rule("arith_mod_const");
-            return RewriteResult::Rewritten(manager.mk_int(result));
+            return RewriteResult::Rewritten(manager.mk_int(m));
         }
 
         RewriteResult::Unchanged(manager.mk_mod(lhs, rhs))

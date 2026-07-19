@@ -1,6 +1,6 @@
 # oxiz-cli TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-07-19 (v0.2.4)
 
 ## Progress: ~100% Complete
 

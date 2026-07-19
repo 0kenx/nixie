@@ -471,12 +471,42 @@ impl CadProjection {
 /// Root isolation using Sturm sequences.
 ///
 /// Counts and isolates real roots of univariate polynomials.
+///
+/// Safety-net recursion depth for [`SturmSequence::isolate_in_interval_bounded`].
+/// See [`SturmSequence::isolate_roots`] for why this is a defensive bound
+/// rather than a correctness-affecting one.
+const MAX_ROOT_ISOLATION_DEPTH: u32 = 4096;
+
 #[derive(Debug)]
 pub struct SturmSequence {
     /// The Sturm sequence (p, p', p % p', ...).
     sequence: Vec<Polynomial>,
     /// The variable.
     var: Var,
+}
+
+/// Sign (`1`, `-1`, or `0`) of `poly`'s leading coefficient with respect to
+/// `var`, treated as a free function so it can be used before a
+/// [`SturmSequence`] exists (e.g. while still building `sequence`) as well
+/// as from instance methods.
+fn poly_lc_sign(poly: &Polynomial, var: Var) -> i8 {
+    let lc_poly = poly.leading_coeff_wrt(var);
+
+    // If the LC is a constant, get its sign
+    let lc = if lc_poly.is_constant() {
+        lc_poly.leading_coeff()
+    } else {
+        // For multivariate, assume we're dealing with univariate at this level
+        poly.leading_coeff()
+    };
+
+    if lc.is_positive() {
+        1
+    } else if lc.is_negative() {
+        -1
+    } else {
+        0
+    }
 }
 
 impl SturmSequence {
@@ -515,12 +545,38 @@ impl SturmSequence {
                 break;
             }
 
-            let remainder = a.pseudo_remainder(b, var);
+            // `Polynomial::pseudo_remainder(divisor, var)` returns `r`
+            // satisfying `lc(divisor)^d * a = q * divisor + r` for some
+            // `d >= 0` that depends on internal reduction steps not
+            // exposed to callers. Whenever that implicit scale factor
+            // `lc(divisor)^d` is negative, `r` has the OPPOSITE sign of
+            // the true (unscaled) polynomial remainder `rem(a, b)` that
+            // Sturm's sign-change theorem requires at every point,
+            // corrupting `count_roots`/`isolate_roots` for any polynomial
+            // with a negative leading coefficient (audit finding: e.g.
+            // `p = 4 - x^2` produces a chain with zero net sign changes
+            // despite having two real roots).
+            //
+            // Since `d`'s parity isn't observable from outside
+            // `pseudo_remainder`, sidestep it entirely: dividing by `b` or
+            // by `-b` yields the same remainder (up to sign), so instead
+            // divide by a version of `b` whose leading coefficient is
+            // always positive. Then `lc(divisor)^d` is positive for every
+            // `d`, so the returned remainder is guaranteed to be a
+            // *positive* scalar multiple of the true `rem(a, b)`,
+            // preserving its sign everywhere.
+            let divisor = if poly_lc_sign(b, var) < 0 {
+                b.neg()
+            } else {
+                b.clone()
+            };
+
+            let remainder = a.pseudo_remainder(&divisor, var);
             if remainder.is_zero() {
                 break;
             }
 
-            // Negate and make primitive
+            // Negate and make primitive (Sturm's recurrence).
             let neg_rem = remainder.neg().primitive();
             sequence.push(neg_rem);
         }
@@ -563,30 +619,7 @@ impl SturmSequence {
     /// Get the sign of leading coefficient with respect to the variable at infinity.
     /// For univariate polynomials, this is just the sign of the leading coeff.
     fn lc_sign(&self, poly: &Polynomial) -> i8 {
-        // Get the leading coefficient with respect to the variable
-        let lc_poly = poly.leading_coeff_wrt(self.var);
-
-        // If the LC is a constant, get its sign
-        if lc_poly.is_constant() {
-            let lc = lc_poly.leading_coeff();
-            if lc.is_positive() {
-                1
-            } else if lc.is_negative() {
-                -1
-            } else {
-                0
-            }
-        } else {
-            // For multivariate, assume we're dealing with univariate at this level
-            let lc = poly.leading_coeff();
-            if lc.is_positive() {
-                1
-            } else if lc.is_negative() {
-                -1
-            } else {
-                0
-            }
-        }
+        poly_lc_sign(poly, self.var)
     }
 
     /// Count sign changes at negative infinity.
@@ -685,9 +718,28 @@ impl SturmSequence {
         let bound = self.root_bound();
         let neg_bound = -bound.clone();
 
-        // Bisection to isolate roots, with depth limit
-        let max_depth = 100; // Prevent infinite recursion
-        self.isolate_in_interval_bounded(neg_bound, bound, num_roots, max_depth)
+        // Bisection to isolate roots. `BigRational` bisection is EXACT (no
+        // floating-point precision loss: halving a rational just grows its
+        // denominator), and Sturm's theorem guarantees `count_roots_in`
+        // correctly reports the number of *distinct* real roots in any
+        // sub-interval. Since distinct real roots always have a positive
+        // (if possibly tiny) minimum pairwise separation, repeated
+        // bisection is mathematically guaranteed to eventually isolate
+        // each one into its own interval -- there is no principled width
+        // threshold below which "close enough" roots may be merged (the
+        // audit finding this fixes: the previous 1e-6 width cutoff would
+        // silently merge roots closer together than that, breaking the
+        // "each interval contains exactly one root" contract and
+        // corrupting downstream root-index lookups).
+        //
+        // `MAX_ROOT_ISOLATION_DEPTH` is therefore a pure safety net against
+        // runaway recursion (e.g. a latent bug elsewhere producing a
+        // non-square-free/inconsistent sequence), not a correctness
+        // parameter: at depth 2^-MAX_ROOT_ISOLATION_DEPTH the interval
+        // width is astronomically smaller than any root separation
+        // reachable by realistic rational-coefficient polynomials, so this
+        // limit should never actually be hit for well-formed input.
+        self.isolate_in_interval_bounded(neg_bound, bound, num_roots, MAX_ROOT_ISOLATION_DEPTH)
     }
 
     /// Compute a bound on the absolute value of all roots.
@@ -726,7 +778,15 @@ impl SturmSequence {
         BigRational::one() + max_ratio
     }
 
-    /// Isolate roots within an interval using bisection with depth limit.
+    /// Isolate roots within an interval using exact-rational bisection.
+    ///
+    /// Recurses until every returned interval contains exactly one root
+    /// (`expected_roots == 1`), with `depth` acting purely as a defensive
+    /// recursion-depth ceiling (see [`Self::isolate_roots`]). There is
+    /// deliberately NO width-based early-out: any such threshold would
+    /// (unsoundly) merge together distinct roots closer together than it,
+    /// breaking the "one root per interval" contract that callers rely on
+    /// for root-index lookups.
     fn isolate_in_interval_bounded(
         &self,
         lo: BigRational,
@@ -734,7 +794,7 @@ impl SturmSequence {
         expected_roots: u32,
         depth: u32,
     ) -> Vec<(BigRational, BigRational)> {
-        if expected_roots == 0 || depth == 0 {
+        if expected_roots == 0 {
             return Vec::new();
         }
 
@@ -742,16 +802,18 @@ impl SturmSequence {
             return vec![(lo, hi)];
         }
 
-        if depth <= 1 {
-            // Depth limit reached but multiple roots - return single interval
-            return vec![(lo, hi)];
-        }
-
-        // Check if interval is too small
-        let width = &hi - &lo;
-        let epsilon = BigRational::new(1.into(), 1_000_000.into());
-        if width < epsilon {
-            return vec![(lo, hi)];
+        if depth == 0 {
+            // Defensive-only fallback: with a correct Sturm chain and
+            // exact rational bisection, `MAX_ROOT_ISOLATION_DEPTH` should
+            // never actually be exhausted while `expected_roots > 1` (see
+            // `isolate_roots`). Reaching this branch indicates either a
+            // pathologically ill-conditioned input or a bug upstream
+            // (e.g. an incorrect root count); rather than panicking or
+            // fabricating a single interval that falsely claims to
+            // isolate multiple roots, return no intervals for this
+            // sub-range so callers observe a short result (already-handled
+            // by downstream root-index lookups) instead of a wrong one.
+            return Vec::new();
         }
 
         // Bisect
@@ -1426,6 +1488,84 @@ mod tests {
 
         let intervals = sturm.isolate_roots();
         assert_eq!(intervals.len(), 2);
+    }
+
+    /// Regression test for the audit finding: `SturmSequence` built its
+    /// chain from sign-unnormalized pseudo-remainders, so a NEGATIVE
+    /// leading coefficient corrupted the sign-change count. `4 - x^2`
+    /// (leading coefficient -1) has roots at x = -2 and x = 2, but the
+    /// pre-fix chain `(-x^2+4, -x, +1)` gave zero net sign changes
+    /// (`count_roots() == 0`) despite the two real roots.
+    #[test]
+    fn test_sturm_sequence_negative_leading_coefficient() {
+        // 4 - x^2 = -x^2 + 4, roots at x = -2 and x = 2.
+        let poly = Polynomial::from_coeffs_int(&[(-1, &[(0, 2)]), (4, &[])]);
+        let sturm = SturmSequence::new(&poly, 0);
+
+        assert_eq!(
+            sturm.count_roots(),
+            2,
+            "4 - x^2 has two real roots (-2 and 2)"
+        );
+
+        let intervals = sturm.isolate_roots();
+        assert_eq!(intervals.len(), 2);
+    }
+
+    /// Same shape but cubic, to check the fix isn't accidentally specific
+    /// to a single degree/parity combination: `-(x^3 - x) = -x^3 + x` has
+    /// roots at -1, 0, 1 (leading coefficient -1, odd degree).
+    #[test]
+    fn test_sturm_sequence_negative_leading_coefficient_cubic() {
+        let poly = Polynomial::from_coeffs_int(&[(-1, &[(0, 3)]), (1, &[(0, 1)])]);
+        let sturm = SturmSequence::new(&poly, 0);
+
+        assert_eq!(sturm.count_roots(), 3, "-x^3 + x has three real roots");
+
+        let intervals = sturm.isolate_roots();
+        assert_eq!(intervals.len(), 3);
+    }
+
+    /// Regression test for the audit finding: `isolate_in_interval_bounded`
+    /// used to silently return a single "isolating" interval once its
+    /// width dropped below a hardcoded `1e-6` epsilon, even when it still
+    /// contained multiple distinct roots. This constructs two roots
+    /// (`x = 0` and `x = 1/2_000_000`) separated by `5e-7` -- closer
+    /// together than that removed cutoff -- and checks they are still
+    /// isolated into two disjoint intervals.
+    #[test]
+    fn test_sturm_sequence_isolates_roots_closer_than_legacy_epsilon() {
+        let x = Polynomial::from_var(0);
+        let r2 = BigRational::new(1.into(), 2_000_000.into());
+        let factor2 = Polynomial::sub(&x, &Polynomial::constant(r2));
+        let poly = Polynomial::mul(&x, &factor2);
+
+        let sturm = SturmSequence::new(&poly, 0);
+        assert_eq!(
+            sturm.count_roots(),
+            2,
+            "two distinct roots at 0 and 1/2_000_000"
+        );
+
+        let intervals = sturm.isolate_roots();
+        assert_eq!(
+            intervals.len(),
+            2,
+            "roots closer than the old 1e-6 cutoff must still be isolated separately, got {intervals:?}"
+        );
+
+        // Each interval must be genuinely non-degenerate (lo < hi) and the
+        // two intervals must be disjoint (no overlap) -- i.e. actually
+        // isolating, not just two copies of the same merged range.
+        for (lo, hi) in &intervals {
+            assert!(lo < hi, "interval must be non-degenerate: ({lo}, {hi})");
+        }
+        let (lo0, hi0) = &intervals[0];
+        let (lo1, hi1) = &intervals[1];
+        assert!(
+            hi0 <= lo1 || hi1 <= lo0,
+            "intervals must be disjoint: {intervals:?}"
+        );
     }
 
     #[test]

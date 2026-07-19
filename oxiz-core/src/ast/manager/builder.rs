@@ -10,6 +10,16 @@ use smallvec::SmallVec;
 
 use super::TermManager;
 
+/// Canonicalize operand order for commutative binary operators so that
+/// `op(a, b)` and `op(b, a)` hash-cons to the same term.
+fn canonical_pair(lhs: TermId, rhs: TermId) -> (TermId, TermId) {
+    if lhs.0 <= rhs.0 {
+        (lhs, rhs)
+    } else {
+        (rhs, lhs)
+    }
+}
+
 impl TermManager {
     /// Create the boolean true constant
     #[must_use]
@@ -943,9 +953,21 @@ impl TermManager {
         self.intern(TermKind::BvConcat(lhs, rhs), sort)
     }
 
-    /// Create a bit vector extraction
+    /// Create a bit vector extraction.
+    ///
+    /// Callers (in particular the SMT-LIB parser lowering `(_ extract i j)`)
+    /// must ensure `low <= high` and `high < width(arg)` *before* calling this
+    /// so the resulting term is semantically meaningful. As defense in depth
+    /// against malformed indices reaching this far (which would otherwise
+    /// underflow `high - low + 1` — a panic in debug builds and a ~4-billion
+    /// bit sort in release builds), the width computation uses checked
+    /// arithmetic and falls back to a minimal 1-bit result instead of
+    /// panicking or wrapping.
     pub fn mk_bv_extract(&mut self, high: u32, low: u32, arg: TermId) -> TermId {
-        let width = high - low + 1;
+        let width = high
+            .checked_sub(low)
+            .and_then(|span| span.checked_add(1))
+            .unwrap_or(1);
         let sort = self.sorts.bitvec(width);
         self.intern(TermKind::BvExtract { high, low, arg }, sort)
     }
@@ -959,6 +981,7 @@ impl TermManager {
 
     /// Create a bit vector AND
     pub fn mk_bv_and(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let (lhs, rhs) = canonical_pair(lhs, rhs);
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvAnd(lhs, rhs), sort)
@@ -966,6 +989,7 @@ impl TermManager {
 
     /// Create a bit vector OR
     pub fn mk_bv_or(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let (lhs, rhs) = canonical_pair(lhs, rhs);
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvOr(lhs, rhs), sort)
@@ -973,6 +997,7 @@ impl TermManager {
 
     /// Create a bit vector addition
     pub fn mk_bv_add(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let (lhs, rhs) = canonical_pair(lhs, rhs);
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvAdd(lhs, rhs), sort)
@@ -987,6 +1012,7 @@ impl TermManager {
 
     /// Create a bit vector multiplication
     pub fn mk_bv_mul(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let (lhs, rhs) = canonical_pair(lhs, rhs);
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvMul(lhs, rhs), sort)
@@ -1056,6 +1082,7 @@ impl TermManager {
 
     /// Create a bit vector XOR
     pub fn mk_bv_xor(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let (lhs, rhs) = canonical_pair(lhs, rhs);
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvXor(lhs, rhs), sort)

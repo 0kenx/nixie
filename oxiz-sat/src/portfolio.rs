@@ -11,6 +11,7 @@ use crate::solver::{RestartStrategy, Solver, SolverConfig, SolverResult};
 
 #[cfg(test)]
 use crate::literal::Var;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -161,18 +162,25 @@ impl PortfolioSolver {
 
         let (tx, rx): (Sender<PortfolioResult>, Receiver<PortfolioResult>) = channel();
         let should_stop = Arc::new(Mutex::new(false));
+        // Cooperative interrupt shared with every worker's solver. Setting it
+        // makes an in-progress `solve()` return Unknown at its next check, so a
+        // configured timeout is actually enforced and `join()` returns promptly
+        // instead of blocking on hard instances that ignore `should_stop`.
+        let interrupt = Arc::new(AtomicBool::new(false));
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
 
         // Spawn solver threads
         for config in &self.configs {
             let tx = tx.clone();
             let should_stop = Arc::clone(&should_stop);
+            let interrupt = Arc::clone(&interrupt);
             let clauses = clauses.clone();
             let config = config.clone();
 
             let handle = thread::spawn(move || {
                 // Create solver with configuration
                 let mut solver = Solver::with_config(config.solver_config);
+                solver.set_interrupt(interrupt);
 
                 // Add variables
                 for _ in 0..num_vars {
@@ -205,11 +213,15 @@ impl PortfolioSolver {
                     conflicts: stats.conflicts,
                 };
 
-                // Notify other threads to stop
-                *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
-
-                // Send result
-                let _ = tx.send(portfolio_result);
+                // Only a definitive Sat/Unsat is worth reporting. An Unknown
+                // means this worker exhausted its budget or was interrupted, so
+                // let the others keep going (all senders dropping ends recv()).
+                if !matches!(result, SolverResult::Unknown) {
+                    // Notify other threads to stop
+                    *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                    // Send result
+                    let _ = tx.send(portfolio_result);
+                }
             });
 
             handles.push(handle);
@@ -232,6 +244,12 @@ impl PortfolioSolver {
             rx.recv().ok()
         };
 
+        // Interrupt every worker so join() returns promptly: without this a hard
+        // instance would keep a thread in solve() past the timeout / past the
+        // point another worker already won.
+        interrupt.store(true, Ordering::Relaxed);
+        *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
+
         // Wait for all threads to finish
         for handle in handles {
             let _ = handle.join();
@@ -253,18 +271,21 @@ impl PortfolioSolver {
 
         let (tx, rx): (Sender<PortfolioResult>, Receiver<PortfolioResult>) = channel();
         let should_stop = Arc::new(Mutex::new(false));
+        let interrupt = Arc::new(AtomicBool::new(false));
         let mut handles: Vec<JoinHandle<()>> = Vec::new();
 
         // Spawn solver threads
         for config in &self.configs {
             let tx = tx.clone();
             let should_stop = Arc::clone(&should_stop);
+            let interrupt = Arc::clone(&interrupt);
             let clauses = clauses.clone();
             let assumptions = assumptions.to_vec();
             let config = config.clone();
 
             let handle = thread::spawn(move || {
                 let mut solver = Solver::with_config(config.solver_config);
+                solver.set_interrupt(interrupt);
 
                 for _ in 0..num_vars {
                     solver.new_var();
@@ -292,8 +313,11 @@ impl PortfolioSolver {
                     conflicts: stats.conflicts,
                 };
 
-                *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
-                let _ = tx.send(portfolio_result);
+                // Skip Unknown (budget exhausted / interrupted) — let others win.
+                if !matches!(result, SolverResult::Unknown) {
+                    *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                    let _ = tx.send(portfolio_result);
+                }
             });
 
             handles.push(handle);
@@ -312,6 +336,10 @@ impl PortfolioSolver {
         } else {
             rx.recv().ok()
         };
+
+        // Interrupt every worker so join() returns promptly after timeout / win.
+        interrupt.store(true, Ordering::Relaxed);
+        *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
         for handle in handles {
             let _ = handle.join();

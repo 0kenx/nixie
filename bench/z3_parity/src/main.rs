@@ -47,12 +47,16 @@ struct ResultRow {
     correct: usize,
     #[tabled(rename = "Wrong")]
     wrong: usize,
+    #[tabled(rename = "Inconclusive")]
+    inconclusive: usize,
     #[tabled(rename = "Timeout")]
     timeout: usize,
     #[tabled(rename = "Error")]
     error: usize,
-    #[tabled(rename = "Accuracy")]
-    accuracy: String,
+    #[tabled(rename = "Parity %")]
+    parity: String,
+    #[tabled(rename = "Solved %")]
+    solved: String,
 }
 
 fn discover_benchmarks(base_path: &Path) -> Result<Vec<(String, PathBuf)>> {
@@ -124,9 +128,15 @@ fn generate_report(results: &[ParityResult]) {
             .push(result);
     }
 
+    // Parity % is computed ONLY over "decisive" comparisons (both solvers
+    // gave a definite Sat/Unsat answer, i.e. Correct or Wrong). Unknown
+    // answers are reported separately as "Inconclusive" and never inflate
+    // the parity number - a solver that always answers unknown scores
+    // "N/A" parity, not 100%.
     let mut rows = Vec::new();
     let mut total_correct = 0;
     let mut total_wrong = 0;
+    let mut total_inconclusive = 0;
     let mut total_timeout = 0;
     let mut total_error = 0;
     let mut total_tests = 0;
@@ -141,6 +151,10 @@ fn generate_report(results: &[ParityResult]) {
             .iter()
             .filter(|r| matches!(r.match_status, MatchStatus::Wrong))
             .count();
+        let inconclusive = logic_results
+            .iter()
+            .filter(|r| matches!(r.match_status, MatchStatus::Inconclusive))
+            .count();
         let timeout = logic_results
             .iter()
             .filter(|r| matches!(r.match_status, MatchStatus::Timeout))
@@ -150,14 +164,21 @@ fn generate_report(results: &[ParityResult]) {
             .filter(|r| matches!(r.match_status, MatchStatus::Error))
             .count();
 
-        let accuracy = if total > 0 {
-            format!("{:.1}%", (correct as f64 / total as f64) * 100.0)
+        let decisive = correct + wrong;
+        let parity = if decisive > 0 {
+            format!("{:.1}%", (correct as f64 / decisive as f64) * 100.0)
+        } else {
+            "N/A".to_string()
+        };
+        let solved = if total > 0 {
+            format!("{:.1}%", (decisive as f64 / total as f64) * 100.0)
         } else {
             "N/A".to_string()
         };
 
         total_correct += correct;
         total_wrong += wrong;
+        total_inconclusive += inconclusive;
         total_timeout += timeout;
         total_error += error;
         total_tests += total;
@@ -167,17 +188,28 @@ fn generate_report(results: &[ParityResult]) {
             total,
             correct,
             wrong,
+            inconclusive,
             timeout,
             error,
-            accuracy,
+            parity,
+            solved,
         });
     }
 
     // Add total row
-    let overall_accuracy = if total_tests > 0 {
+    let total_decisive = total_correct + total_wrong;
+    let overall_parity = if total_decisive > 0 {
         format!(
             "{:.1}%",
-            (total_correct as f64 / total_tests as f64) * 100.0
+            (total_correct as f64 / total_decisive as f64) * 100.0
+        )
+    } else {
+        "N/A".to_string()
+    };
+    let overall_solved = if total_tests > 0 {
+        format!(
+            "{:.1}%",
+            (total_decisive as f64 / total_tests as f64) * 100.0
         )
     } else {
         "N/A".to_string()
@@ -188,22 +220,35 @@ fn generate_report(results: &[ParityResult]) {
         total: total_tests,
         correct: total_correct,
         wrong: total_wrong,
+        inconclusive: total_inconclusive,
         timeout: total_timeout,
         error: total_error,
-        accuracy: overall_accuracy,
+        parity: overall_parity,
+        solved: overall_solved,
     });
 
     println!("\n{}", Table::new(rows));
+    println!(
+        "\n{}",
+        "Parity % = agreement rate over DECISIVE (Sat/Unsat) comparisons only.".dimmed()
+    );
+    println!(
+        "{}",
+        "Solved % = share of benchmarks where both solvers gave a decisive answer \
+         (Unknown/Timeout/Error excluded)."
+            .dimmed()
+    );
 
-    // Print failures
-    let failures: Vec<_> = results
+    // Real soundness failures: both solvers gave a decisive answer and they
+    // disagreed. These are the only results that indicate an actual bug.
+    let wrong: Vec<_> = results
         .iter()
-        .filter(|r| !matches!(r.match_status, MatchStatus::Correct))
+        .filter(|r| matches!(r.match_status, MatchStatus::Wrong))
         .collect();
 
-    if !failures.is_empty() {
-        println!("\n{}", "FAILURES:".bright_red().bold());
-        for failure in failures {
+    if !wrong.is_empty() {
+        println!("\n{}", "SOUNDNESS FAILURES (Sat vs Unsat disagreement):".bright_red().bold());
+        for failure in &wrong {
             println!(
                 "\n  {} [{}]",
                 failure.benchmark.bright_yellow(),
@@ -220,6 +265,46 @@ fn generate_report(results: &[ParityResult]) {
                 failure.z3_time.as_secs_f64()
             );
             println!("    Status: {:?}", failure.match_status);
+        }
+    }
+
+    // Everything else that isn't a confirmed decisive match (Inconclusive,
+    // Timeout, Error) is reported separately from soundness failures: it is
+    // not evidence of a wrong answer, only of an unresolved comparison.
+    let unresolved: Vec<_> = results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.match_status,
+                MatchStatus::Inconclusive | MatchStatus::Timeout | MatchStatus::Error
+            )
+        })
+        .collect();
+
+    if !unresolved.is_empty() {
+        println!(
+            "\n{}",
+            "UNRESOLVED (no parity evidence - Unknown/Timeout/Error):"
+                .bright_yellow()
+                .bold()
+        );
+        for entry in unresolved {
+            println!(
+                "\n  {} [{}]",
+                entry.benchmark.bright_yellow(),
+                entry.logic
+            );
+            println!(
+                "    OxiZ:  {:?} ({:.3}s)",
+                entry.oxiz_result,
+                entry.oxiz_time.as_secs_f64()
+            );
+            println!(
+                "    Z3:    {:?} ({:.3}s)",
+                entry.z3_result,
+                entry.z3_time.as_secs_f64()
+            );
+            println!("    Status: {:?}", entry.match_status);
         }
     }
 

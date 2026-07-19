@@ -28,9 +28,10 @@
 //! let runner = ParallelRunner::new(config);
 //!
 //! // Start the server and run benchmarks concurrently.
-//! let _handle = server.serve().await;
+//! let _handle = server.serve().await?;
 //! // runner.run_all_with_progress(&benchmarks, Some(callback));
-//! # });
+//! # std::io::Result::Ok(())
+//! # }).unwrap();
 //! # }
 //! ```
 
@@ -100,11 +101,20 @@ mod inner {
             })
         }
 
-        /// Spawn the WebSocket server as a background [`tokio::task::JoinHandle`].
+        /// Bind the listener and spawn the WebSocket server as a background
+        /// [`tokio::task::JoinHandle`].
         ///
-        /// The handle can be awaited to detect server termination, or simply
+        /// The bind happens synchronously before this function returns, so
+        /// callers are guaranteed the listener is bound and the OS is
+        /// accepting connections as soon as `serve()` resolves. Only the
+        /// accept loop itself runs in the background task. The returned
+        /// handle can be awaited to detect server termination, or simply
         /// dropped to let the task run until the process exits.
-        pub async fn serve(&self) -> tokio::task::JoinHandle<()> {
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if binding to the configured address fails.
+        pub async fn serve(&self) -> std::io::Result<tokio::task::JoinHandle<()>> {
             let state = Arc::new(ServerState {
                 sender: self.sender.clone(),
             });
@@ -112,19 +122,13 @@ mod inner {
                 .route("/progress", get(ws_handler))
                 .with_state(state);
             let addr = self.addr;
-            tokio::spawn(async move {
-                let listener = match tokio::net::TcpListener::bind(addr).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        tracing::error!("ws-progress: failed to bind {addr}: {e}");
-                        return;
-                    }
-                };
-                tracing::info!("ws-progress: listening on ws://{addr}/progress");
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            tracing::info!("ws-progress: listening on ws://{addr}/progress");
+            Ok(tokio::spawn(async move {
                 if let Err(e) = axum::serve(listener, app).await {
                     tracing::error!("ws-progress: server error: {e}");
                 }
-            })
+            }))
         }
     }
 

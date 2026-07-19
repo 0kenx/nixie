@@ -1,7 +1,7 @@
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::error::Result;
 use oxiz_core::tactic::{Goal, TacticResult};
-use smallvec::SmallVec;
+use rustc_hash::FxHashMap;
 
 /// Minimal BMC unrolling engine over `(init, trans, property)` formulas.
 pub struct BmcEngine<'a> {
@@ -36,109 +36,35 @@ impl<'a> BmcEngine<'a> {
         Some(flattened)
     }
 
+    /// Rename every variable occurring in `term` to its step-indexed form.
+    ///
+    /// The renaming is expressed as a substitution from each free variable to
+    /// its `{base}@{target_step}` counterpart and then applied with
+    /// [`TermManager::substitute`], which handles *every* [`TermKind`] variant
+    /// exhaustively (there is deliberately no catch-all arm in the core
+    /// substitution).  A previous hand-written per-kind walk had a `_ => term`
+    /// fallthrough that left `Div`/`Mod`/`Neg`/`Distinct`/`Xor`/`Select`/`Store`
+    /// (and their variable subterms) unrenamed, silently mixing time frames and
+    /// producing wrong SAT/UNSAT results — this delegation makes it impossible
+    /// for any variable to escape renaming.
     fn rename_term(&mut self, term: TermId, step: usize) -> TermId {
-        let mut cache = std::collections::HashMap::new();
-        self.rename_term_cached(term, step, &mut cache)
-    }
-
-    fn rename_term_cached(
-        &mut self,
-        term: TermId,
-        step: usize,
-        cache: &mut std::collections::HashMap<(TermId, usize), TermId>,
-    ) -> TermId {
-        if let Some(&cached) = cache.get(&(term, step)) {
-            return cached;
+        let vars = self.manager.free_vars(term);
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for var in vars {
+            let Some(node) = self.manager.get(var).cloned() else {
+                continue;
+            };
+            let TermKind::Var(name) = node.kind else {
+                continue;
+            };
+            let source = self.manager.resolve_str(name).to_string();
+            let (base, target_step) = next_state_name(&source, step);
+            let renamed = self
+                .manager
+                .mk_var(&format!("{base}@{target_step}"), node.sort);
+            subst.insert(var, renamed);
         }
-
-        let renamed = match self.manager.get(term).cloned() {
-            Some(node) => match node.kind {
-                TermKind::Var(name) => {
-                    let source = self.manager.resolve_str(name);
-                    let (base, target_step) = next_state_name(source, step);
-                    self.manager
-                        .mk_var(&format!("{base}@{target_step}"), node.sort)
-                }
-                TermKind::Not(arg) => {
-                    let arg = self.rename_term_cached(arg, step, cache);
-                    self.manager.mk_not(arg)
-                }
-                TermKind::And(args) => {
-                    let args: SmallVec<[TermId; 4]> = args
-                        .into_iter()
-                        .map(|arg| self.rename_term_cached(arg, step, cache))
-                        .collect();
-                    self.manager.mk_and(args)
-                }
-                TermKind::Or(args) => {
-                    let args: SmallVec<[TermId; 4]> = args
-                        .into_iter()
-                        .map(|arg| self.rename_term_cached(arg, step, cache))
-                        .collect();
-                    self.manager.mk_or(args)
-                }
-                TermKind::Implies(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_implies(lhs, rhs)
-                }
-                TermKind::Eq(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_eq(lhs, rhs)
-                }
-                TermKind::Ite(cond, then_branch, else_branch) => {
-                    let cond = self.rename_term_cached(cond, step, cache);
-                    let then_branch = self.rename_term_cached(then_branch, step, cache);
-                    let else_branch = self.rename_term_cached(else_branch, step, cache);
-                    self.manager.mk_ite(cond, then_branch, else_branch)
-                }
-                TermKind::Add(args) => {
-                    let args: SmallVec<[TermId; 4]> = args
-                        .into_iter()
-                        .map(|arg| self.rename_term_cached(arg, step, cache))
-                        .collect();
-                    self.manager.mk_add(args)
-                }
-                TermKind::Sub(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_sub(lhs, rhs)
-                }
-                TermKind::Mul(args) => {
-                    let args: SmallVec<[TermId; 4]> = args
-                        .into_iter()
-                        .map(|arg| self.rename_term_cached(arg, step, cache))
-                        .collect();
-                    self.manager.mk_mul(args)
-                }
-                TermKind::Lt(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_lt(lhs, rhs)
-                }
-                TermKind::Le(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_le(lhs, rhs)
-                }
-                TermKind::Gt(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_gt(lhs, rhs)
-                }
-                TermKind::Ge(lhs, rhs) => {
-                    let lhs = self.rename_term_cached(lhs, step, cache);
-                    let rhs = self.rename_term_cached(rhs, step, cache);
-                    self.manager.mk_ge(lhs, rhs)
-                }
-                _ => term,
-            },
-            None => term,
-        };
-
-        cache.insert((term, step), renamed);
-        renamed
+        self.manager.substitute(term, &subst)
     }
 }
 

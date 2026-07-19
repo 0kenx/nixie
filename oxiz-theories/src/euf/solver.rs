@@ -215,6 +215,30 @@ pub struct EufSolver {
     sig_trail: Vec<SigTrailEntry>,
     /// Scope checkpoints into sig_trail, parallel to uf.trail_limits.
     sig_trail_limits: Vec<usize>,
+    /// Undo trail for proof-forest edge insertions.
+    ///
+    /// Each entry is the node index onto whose `proof_forest` adjacency list an
+    /// edge was pushed while a scope was active.  `pop()` replays these in LIFO
+    /// order, popping exactly one edge off the recorded node's list, so that merge
+    /// edges appended to *pre-existing* nodes during a popped scope are removed
+    /// (truncation alone only reclaims edges belonging to nodes created in the
+    /// scope, leaving stale edges on older nodes that would let `explain_equality`
+    /// cite retracted assertions).
+    proof_trail: Vec<u32>,
+    /// Scope checkpoints into proof_trail, parallel to sig_trail_limits.
+    proof_trail_limits: Vec<usize>,
+    /// Undo trail for `use_list` appends.
+    ///
+    /// Each entry is the node index onto whose `use_list` an entry was pushed
+    /// while a scope was active. `pop()` replays these in LIFO order, popping
+    /// exactly one entry off the recorded node's list. This removes use-list
+    /// entries appended to *pre-existing* nodes during a popped scope
+    /// (truncation alone only reclaims the lists of nodes created in the scope,
+    /// leaving stale entries on older nodes — which would corrupt congruence
+    /// once a popped node index is reused by a later `intern`).
+    use_list_trail: Vec<u32>,
+    /// Scope checkpoints into use_list_trail, parallel to sig_trail_limits.
+    use_list_trail_limits: Vec<usize>,
     /// Reusable BFS queue for explain_equality — avoids per-call VecDeque allocation.
     explain_queue: crate::prelude::VecDeque<u32>,
     /// Reusable visited flags for explain_equality — resized to proof_forest.len() and cleared at entry.
@@ -262,6 +286,10 @@ impl EufSolver {
             propagation_buf: Vec::new(),
             sig_trail: Vec::new(),
             sig_trail_limits: Vec::new(),
+            proof_trail: Vec::new(),
+            proof_trail_limits: Vec::new(),
+            use_list_trail: Vec::new(),
+            use_list_trail_limits: Vec::new(),
             explain_queue: crate::prelude::VecDeque::new(),
             explain_visited: Vec::new(),
             explain_parent: Vec::new(),
@@ -401,9 +429,10 @@ impl EufSolver {
         self.proof_forest.push(SmallVec::new());
         self.term_to_node.insert(term, idx);
 
-        // Add to use lists
+        // Add to use lists. Trailed so pop() removes these appends from
+        // pre-existing argument nodes (idx itself is truncated wholesale).
         for &arg in &flattened_args {
-            self.use_list[arg as usize].push(idx);
+            self.use_list_push(arg, idx);
         }
 
         // Add to signature table. When inside a push scope, record the insertion
@@ -424,6 +453,30 @@ impl EufSolver {
         }
 
         idx
+    }
+
+    /// Append a merge edge to `node`'s proof-forest adjacency list, recording the
+    /// insertion on `proof_trail` when a scope is active so `pop()` can remove it.
+    ///
+    /// Trailing is gated on `proof_trail_limits` being non-empty (i.e. at least one
+    /// `push` outstanding), mirroring the sig-trail discipline: at the base level
+    /// edges are permanent and need no undo record.
+    #[inline]
+    fn add_proof_edge(&mut self, node: u32, edge: MergeEdge) {
+        self.proof_forest[node as usize].push(edge);
+        if !self.proof_trail_limits.is_empty() {
+            self.proof_trail.push(node);
+        }
+    }
+
+    /// Append `entry` to `node`'s use-list, recording the append on
+    /// `use_list_trail` when a scope is active so `pop()` can remove it.
+    #[inline]
+    fn use_list_push(&mut self, node: u32, entry: u32) {
+        self.use_list[node as usize].push(entry);
+        if !self.use_list_trail_limits.is_empty() {
+            self.use_list_trail.push(node);
+        }
     }
 
     /// Merge two equivalence classes
@@ -453,15 +506,23 @@ impl EufSolver {
                 continue;
             }
 
-            // Record the merge in the proof forest (for explanation generation)
-            self.proof_forest[a as usize].push(MergeEdge {
-                other: b,
-                reason: MergeReason::Assertion(reason),
-            });
-            self.proof_forest[b as usize].push(MergeEdge {
-                other: a,
-                reason: MergeReason::Assertion(reason),
-            });
+            // Record the merge in the proof forest (for explanation generation).
+            // Trailed so pop() removes these edges even when a and b pre-existed
+            // the current scope.
+            self.add_proof_edge(
+                a,
+                MergeEdge {
+                    other: b,
+                    reason: MergeReason::Assertion(reason),
+                },
+            );
+            self.add_proof_edge(
+                b,
+                MergeEdge {
+                    other: a,
+                    reason: MergeReason::Assertion(reason),
+                },
+            );
 
             // Union the classes
             self.uf.union(root_a, root_b);
@@ -537,21 +598,28 @@ impl EufSolver {
                 let sig = (func, canon_buf.clone());
                 if let Some(&existing) = self.sig_table.get(&sig) {
                     if !self.uf.same(user, existing) {
-                        // Congruence detected: record proof edges
-                        self.proof_forest[user as usize].push(MergeEdge {
-                            other: existing,
-                            reason: MergeReason::Congruence {
-                                term1: user,
-                                term2: existing,
+                        // Congruence detected: record proof edges (trailed so pop()
+                        // removes them from pre-existing nodes too).
+                        self.add_proof_edge(
+                            user,
+                            MergeEdge {
+                                other: existing,
+                                reason: MergeReason::Congruence {
+                                    term1: user,
+                                    term2: existing,
+                                },
                             },
-                        });
-                        self.proof_forest[existing as usize].push(MergeEdge {
-                            other: user,
-                            reason: MergeReason::Congruence {
-                                term1: user,
-                                term2: existing,
+                        );
+                        self.add_proof_edge(
+                            existing,
+                            MergeEdge {
+                                other: user,
+                                reason: MergeReason::Congruence {
+                                    term1: user,
+                                    term2: existing,
+                                },
                             },
-                        });
+                        );
 
                         propagation_buf.push((user, existing, TermId::new(0)));
                     }
@@ -601,13 +669,14 @@ impl EufSolver {
                 self.pending.push((user, existing, term));
             }
 
-            // Merge use lists: extend new_root's use-list with other_root's entries
-            // Using index-based copy to avoid borrow conflicts
-            let mut other_uses: SmallVec<[u32; 8]> = SmallVec::with_capacity(use_len);
+            // Merge use lists: extend new_root's use-list with other_root's
+            // entries. Each append is trailed (via use_list_push) so pop() undoes
+            // exactly these entries from new_root — a pre-existing node whose list
+            // would otherwise not be reclaimed by truncation.
             for i in 0..use_len {
-                other_uses.push(self.use_list[other_root as usize][i]);
+                let entry = self.use_list[other_root as usize][i];
+                self.use_list_push(new_root, entry);
             }
-            self.use_list[new_root as usize].extend(other_uses);
         }
 
         propagation_buf.clear();
@@ -953,17 +1022,34 @@ impl Theory for EufSolver {
         true
     }
 
+    // Audit note (theories-euf): `EufSolver` (like `crate::simplify` and
+    // the MBQI matcher) only ever sees opaque `TermId`s here -- it has no
+    // AST/term-manager access, so it cannot parse an arbitrary boolean
+    // `term` into the `(lhs, rhs)` pair a "term is a true/false equality"
+    // assertion needs. The production integration
+    // (`oxiz-solver`'s theory manager) knows this and never calls these
+    // two generic `Theory` methods: it always resolves `lhs`/`rhs` itself
+    // and calls `merge`/`assert_diseq` directly with the correctly parsed
+    // nodes. These two methods exist only to satisfy the `Theory` trait
+    // for callers that go through the generic interface; interning `term`
+    // is the only thing they can honestly do without term structure.
     fn assert_true(&mut self, term: TermId) -> Result<TheoryResult> {
-        // Assuming term is an equality a = b
-        // In a full implementation, we'd parse the term
         let _ = self.intern(term);
         Ok(TheoryResult::Sat)
     }
 
     fn assert_false(&mut self, term: TermId) -> Result<TheoryResult> {
-        // Assuming term is an equality a = b, assert a != b
-        let node = self.intern(term);
-        self.assert_diseq(node, node, term); // Simplified - real impl needs parsing
+        // Previously called `self.assert_diseq(node, node, term)` here --
+        // asserting a node disequal to ITSELF, which is unconditionally
+        // false in any congruence closure. That made every call to this
+        // method (regardless of what `term` actually meant) an instant,
+        // fabricated contradiction. Since this method cannot honestly
+        // determine `term`'s actual negated meaning without term
+        // structure (see the note above), the correct, non-fabricating
+        // behavior is to record the term without asserting anything false
+        // about it -- mirroring `assert_true`'s equally honest limitation
+        // above -- rather than poison every subsequent `check()`.
+        let _ = self.intern(term);
         Ok(TheoryResult::Sat)
     }
 
@@ -983,6 +1069,12 @@ impl Theory for EufSolver {
         self.uf.push();
         // Record sig_trail checkpoint, mirroring uf.trail_limits.push(...)
         self.sig_trail_limits.push(self.sig_trail.len());
+        // Record proof_trail checkpoint so pop() can rewind proof-forest edges
+        // appended during this scope.
+        self.proof_trail_limits.push(self.proof_trail.len());
+        // Record use_list_trail checkpoint so pop() can rewind use-list appends
+        // to pre-existing nodes made during this scope.
+        self.use_list_trail_limits.push(self.use_list_trail.len());
     }
 
     fn pop(&mut self) {
@@ -993,9 +1085,44 @@ impl Theory for EufSolver {
             self.diseqs.truncate(state.num_diseqs);
             self.uf.pop();
 
-            // Also truncate related structures
+            // Also truncate related structures. Truncation removes the adjacency
+            // lists of nodes created in the popped scope, but NOT edges appended to
+            // pre-existing nodes' lists — those are undone via proof_trail below.
             self.use_list.truncate(num_nodes);
             self.proof_forest.truncate(num_nodes);
+
+            // Rewind use_list_trail: for each append recorded during the popped
+            // scope, pop exactly one entry off the recorded node's use-list.
+            // Nodes created in this scope (index >= num_nodes) were already
+            // dropped by the truncate above, so guard against them.
+            if let Some(use_list_limit) = self.use_list_trail_limits.pop() {
+                while self.use_list_trail.len() > use_list_limit {
+                    let Some(node) = self.use_list_trail.pop() else {
+                        break;
+                    };
+                    if (node as usize) < self.use_list.len() {
+                        self.use_list[node as usize].pop();
+                    }
+                }
+            }
+
+            // Rewind proof_trail: for each edge recorded during the popped scope,
+            // pop exactly one edge off the recorded node's adjacency list. Nodes
+            // created in this scope (index >= num_nodes) were already dropped by
+            // the truncate above, so guard against out-of-range indices.
+            if let Some(proof_limit) = self.proof_trail_limits.pop() {
+                while self.proof_trail.len() > proof_limit {
+                    let Some(node) = self.proof_trail.pop() else {
+                        break;
+                    };
+                    if (node as usize) < self.proof_forest.len() {
+                        self.proof_forest[node as usize].pop();
+                    }
+                }
+            }
+
+            // Any cached explanation may reference edges just removed; drop them.
+            self.expl_cache.clear();
 
             // Remove term_to_node mappings that point to removed nodes
             self.term_to_node
@@ -1042,6 +1169,11 @@ impl Theory for EufSolver {
         self.function_properties.clear();
         self.sig_trail.clear();
         self.sig_trail_limits.clear();
+        self.proof_trail.clear();
+        self.proof_trail_limits.clear();
+        self.use_list_trail.clear();
+        self.use_list_trail_limits.clear();
+        self.expl_cache.clear();
     }
 }
 
@@ -1082,6 +1214,36 @@ mod tests {
         assert!(solver.check_conflicts().is_some());
     }
 
+    // Audit regression (theories-euf): `Theory::assert_false` used to call
+    // `assert_diseq(node, node, term)` -- a node asserted disequal to
+    // ITSELF, which is unconditionally false in any congruence closure.
+    // That made every `assert_false` call an instant, fabricated
+    // contradiction regardless of what the term actually meant. It must no
+    // longer poison the solver this way.
+    #[test]
+    fn audit_assert_false_does_not_fabricate_self_contradiction() {
+        use crate::theory::Theory;
+
+        let mut solver = EufSolver::new();
+        let term = TermId::new(1);
+
+        let result = solver
+            .assert_false(term)
+            .expect("assert_false must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "assert_false must not itself report Unsat"
+        );
+
+        // And `check()` afterward must not find a fabricated conflict
+        // either -- previously it always did, for any term.
+        let checked = solver.check().expect("check must not error");
+        assert!(
+            matches!(checked, TheoryResult::Sat),
+            "check() after assert_false(term) must not be a fabricated Unsat; got {checked:?}"
+        );
+    }
+
     #[test]
     fn test_euf_congruence() {
         let mut solver = EufSolver::new();
@@ -1098,6 +1260,57 @@ mod tests {
         // Merge a and b -> f(a) = f(b) by congruence
         solver.merge(a, b, TermId::new(0)).unwrap_or(());
         assert!(solver.are_equal(fa, fb));
+    }
+
+    #[test]
+    fn test_use_list_append_undone_by_pop() {
+        // Regression (audit theories-p3, deferral a): an application interned in a
+        // scope appends its index to the use-list of its pre-existing argument;
+        // pop() must remove that entry so a reused node index cannot corrupt
+        // congruence later.
+        let mut solver = EufSolver::new();
+        let a = solver.intern(TermId::new(1));
+        let before = solver.use_list[a as usize].len();
+
+        solver.push();
+        let _fa = solver.intern_app(TermId::new(2), 0, [a]);
+        assert_eq!(
+            solver.use_list[a as usize].len(),
+            before + 1,
+            "interning f(a) must extend a's use-list"
+        );
+        solver.pop();
+        assert_eq!(
+            solver.use_list[a as usize].len(),
+            before,
+            "pop() must undo the use-list append on the pre-existing arg"
+        );
+    }
+
+    #[test]
+    fn test_use_list_merge_extension_undone_by_pop() {
+        // Regression (audit theories-p3, deferral a): merge() splices one class's
+        // use-list into the survivor's. A scoped merge must be fully undone by
+        // pop(), including the use-list extension on the pre-existing root.
+        let mut solver = EufSolver::new();
+        let a = solver.intern(TermId::new(1));
+        let b = solver.intern(TermId::new(2));
+        let _fa = solver.intern_app(TermId::new(3), 0, [a]);
+        let _fb = solver.intern_app(TermId::new(4), 0, [b]);
+
+        let la = solver.use_list[a as usize].len();
+        let lb = solver.use_list[b as usize].len();
+
+        solver.push();
+        solver
+            .merge(a, b, TermId::new(0))
+            .expect("merge must not error");
+        solver.pop();
+
+        assert_eq!(solver.use_list[a as usize].len(), la);
+        assert_eq!(solver.use_list[b as usize].len(), lb);
+        // After pop the merge is fully retracted: a and b are distinct again.
+        assert!(!solver.are_equal(a, b));
     }
 
     #[test]

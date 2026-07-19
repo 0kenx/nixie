@@ -540,6 +540,28 @@ impl Solver {
             }
         }
 
+        // Overflow guard (soundness): a term nested far deeper than the encoder
+        // can safely handle would overflow the native call stack in one of the
+        // recursive passes below (simplification, polarity collection, or the
+        // Tseitin encoder).  Detect excessive depth with an explicit-stack scan
+        // and, when exceeded, skip every deep recursive pass for this assertion
+        // and flag the incomplete encoding so `check` answers `Unknown` rather
+        // than crashing the process.
+        if self.term_exceeds_encode_depth(term, manager) {
+            self.encode_depth_exceeded = true;
+            if self.produce_unsat_cores {
+                let na_index = self.named_assertions.len();
+                self.named_assertions.push(NamedAssertion {
+                    term,
+                    name: None,
+                    index: index as u32,
+                });
+                self.trail
+                    .push(TrailOp::NamedAssertionAdded { index: na_index });
+            }
+            return;
+        }
+
         // Apply simplification if enabled
         let term_to_encode = if self.config.simplify {
             self.simplifier.simplify(term, manager)
@@ -661,6 +683,24 @@ impl Solver {
             }
         }
 
+        // Overflow guard (soundness): see `assert`.  Skip all deep recursive
+        // passes for a pathologically deep term and flag the incomplete
+        // encoding so `check` answers `Unknown` instead of overflowing.
+        if self.term_exceeds_encode_depth(term, manager) {
+            self.encode_depth_exceeded = true;
+            if self.produce_unsat_cores {
+                let na_index = self.named_assertions.len();
+                self.named_assertions.push(NamedAssertion {
+                    term,
+                    name: Some(name.to_string()),
+                    index: index as u32,
+                });
+                self.trail
+                    .push(TrailOp::NamedAssertionAdded { index: na_index });
+            }
+            return;
+        }
+
         // Collect polarity information if polarity-aware encoding is enabled
         if self.polarity_aware {
             self.collect_polarities(term, Polarity::Positive, manager);
@@ -691,8 +731,33 @@ impl Solver {
         self.unsat_core.as_ref()
     }
 
-    /// Encode a term into SAT clauses using Tseitin transformation
+    /// Encode a term into SAT clauses using Tseitin transformation.
+    ///
+    /// Thin wrapper over [`Solver::encode_depth`] that starts the recursion at
+    /// depth 0.  The depth counter guards against native-stack overflow on
+    /// adversarially deep formulas (see [`ENCODE_DEPTH_LIMIT`]).
     pub(super) fn encode(&mut self, term: TermId, manager: &mut TermManager) -> Lit {
+        self.encode_depth(term, manager, 0)
+    }
+
+    /// Depth-tracked recursive Tseitin encoder.
+    ///
+    /// When the structural recursion exceeds [`ENCODE_DEPTH_LIMIT`] we stop
+    /// descending, set [`Solver::encode_depth_exceeded`], and return a fresh
+    /// literal for the sub-term.  The truncated encoding is deliberately
+    /// incomplete: `check` observes the flag and answers `Unknown` rather than
+    /// crashing the process with a stack overflow or trusting a partial model.
+    pub(super) fn encode_depth(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+        depth: u32,
+    ) -> Lit {
+        if depth > super::ENCODE_DEPTH_LIMIT {
+            self.encode_depth_exceeded = true;
+            let var = self.get_or_create_var(term);
+            return Lit::pos(var);
+        }
         // Clone the term data to avoid borrowing issues
         let Some(t) = manager.get(term).cloned() else {
             let var = self.get_or_create_var(term);
@@ -738,7 +803,7 @@ impl Solver {
                 Lit::pos(var)
             }
             TermKind::Not(arg) => {
-                let arg_lit = self.encode(*arg, manager);
+                let arg_lit = self.encode_depth(*arg, manager, depth + 1);
                 arg_lit.negate()
             }
             TermKind::And(args) => {
@@ -747,7 +812,7 @@ impl Solver {
 
                 let mut arg_lits: Vec<Lit> = Vec::new();
                 for &arg in args {
-                    arg_lits.push(self.encode(arg, manager));
+                    arg_lits.push(self.encode_depth(arg, manager, depth + 1));
                 }
 
                 // Get polarity for optimization
@@ -784,7 +849,7 @@ impl Solver {
 
                 let mut arg_lits: Vec<Lit> = Vec::new();
                 for &arg in args {
-                    arg_lits.push(self.encode(arg, manager));
+                    arg_lits.push(self.encode_depth(arg, manager, depth + 1));
                 }
 
                 // Get polarity for optimization
@@ -816,8 +881,8 @@ impl Solver {
                 result
             }
             TermKind::Xor(lhs, rhs) => {
-                let lhs_lit = self.encode(*lhs, manager);
-                let rhs_lit = self.encode(*rhs, manager);
+                let lhs_lit = self.encode_depth(*lhs, manager, depth + 1);
+                let rhs_lit = self.encode_depth(*rhs, manager, depth + 1);
 
                 let result_var = self.get_or_create_var(term);
                 let result = Lit::pos(result_var);
@@ -839,8 +904,8 @@ impl Solver {
                 result
             }
             TermKind::Implies(lhs, rhs) => {
-                let lhs_lit = self.encode(*lhs, manager);
-                let rhs_lit = self.encode(*rhs, manager);
+                let lhs_lit = self.encode_depth(*lhs, manager, depth + 1);
+                let rhs_lit = self.encode_depth(*rhs, manager, depth + 1);
 
                 let result_var = self.get_or_create_var(term);
                 let result = Lit::pos(result_var);
@@ -858,9 +923,9 @@ impl Solver {
                 result
             }
             TermKind::Ite(cond, then_br, else_br) => {
-                let cond_lit = self.encode(*cond, manager);
-                let then_lit = self.encode(*then_br, manager);
-                let else_lit = self.encode(*else_br, manager);
+                let cond_lit = self.encode_depth(*cond, manager, depth + 1);
+                let then_lit = self.encode_depth(*then_br, manager, depth + 1);
+                let else_lit = self.encode_depth(*else_br, manager, depth + 1);
 
                 let result_var = self.get_or_create_var(term);
                 let result = Lit::pos(result_var);
@@ -887,8 +952,8 @@ impl Solver {
 
                 if is_bool_eq {
                     // Boolean equality: encode as iff
-                    let lhs_lit = self.encode(*lhs, manager);
-                    let rhs_lit = self.encode(*rhs, manager);
+                    let lhs_lit = self.encode_depth(*lhs, manager, depth + 1);
+                    let rhs_lit = self.encode_depth(*rhs, manager, depth + 1);
 
                     let result_var = self.get_or_create_var(term);
                     let result = Lit::pos(result_var);
@@ -956,7 +1021,7 @@ impl Solver {
                 for i in 0..args.len() {
                     for j in (i + 1)..args.len() {
                         let eq = manager.mk_eq(args[i], args[j]);
-                        let eq_lit = self.encode(eq, manager);
+                        let eq_lit = self.encode_depth(eq, manager, depth + 1);
                         diseq_lits.push(eq_lit.negate());
                     }
                 }
@@ -983,7 +1048,7 @@ impl Solver {
                     // For now, just encode the body directly
                     let _ = (name, value);
                 }
-                self.encode(substituted, manager)
+                self.encode_depth(substituted, manager, depth + 1)
             }
             // Theory atoms (arithmetic, bitvec, arrays, UF)
             // These get fresh boolean variables - the theory solver handles the semantics
@@ -1131,32 +1196,42 @@ impl Solver {
                 Lit::pos(var)
             }
             TermKind::BvSlt(lhs, rhs) => {
-                // Bitvector signed less-than: treat as integer comparison
+                // Bitvector *signed* less-than.  The `Constraint::Lt` recorded
+                // here is consumed by the BV theory path in
+                // `TheoryManager::process_constraint`, which recovers the
+                // signedness from this term's `TermKind` and asserts a proper
+                // two's-complement `assert_slt` into the BV solver.
+                //
+                // We deliberately do NOT populate `var_to_parsed_arith`: that
+                // path parses BV operands as plain *unsigned* non-negative
+                // integers and asserts them into the linear ArithSolver.  For a
+                // signed comparison that is wrong — mixing signed and unsigned
+                // orders over the same shared integer variable yields spurious
+                // UNSAT (e.g. `(bvslt x #b0000) ∧ (bvult #b0100 x)` is SAT with
+                // x = 9, but the unsigned arith parse derives x < 0 ∧ x > 4).
+                // Signed BV comparisons therefore stay purely in the BV solver.
                 let var = self.get_or_create_var(term);
                 self.var_to_constraint
                     .insert(var, Constraint::Lt(*lhs, *rhs));
                 self.trail.push(TrailOp::ConstraintAdded { var });
-                if let Some(parsed) =
-                    self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Lt, term, manager)
-                {
-                    self.var_to_parsed_arith.insert(var, parsed);
-                }
                 // Track theory variables for model extraction
                 self.track_theory_vars(*lhs, manager);
                 self.track_theory_vars(*rhs, manager);
                 Lit::pos(var)
             }
             TermKind::BvSle(lhs, rhs) => {
-                // Bitvector signed less-than-or-equal: treat as integer comparison
+                // Bitvector *signed* less-than-or-equal.  As for `BvSlt`, the
+                // recorded `Constraint::Le` is handled with correct signed
+                // (two's-complement) semantics by the BV theory path.  We do NOT
+                // create a `var_to_parsed_arith` entry, because the linear-arith
+                // parse treats BV operands as unsigned non-negative integers and
+                // would mix signed/unsigned orders in one integer space,
+                // producing spurious UNSAT.  Signed BV comparisons stay purely
+                // in the BV solver.
                 let var = self.get_or_create_var(term);
                 self.var_to_constraint
                     .insert(var, Constraint::Le(*lhs, *rhs));
                 self.trail.push(TrailOp::ConstraintAdded { var });
-                if let Some(parsed) =
-                    self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Le, term, manager)
-                {
-                    self.var_to_parsed_arith.insert(var, parsed);
-                }
                 // Track theory variables for model extraction
                 self.track_theory_vars(*lhs, manager);
                 self.track_theory_vars(*rhs, manager);

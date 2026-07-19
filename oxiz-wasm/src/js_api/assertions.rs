@@ -44,9 +44,21 @@ impl WasmSolver {
             );
         }
 
-        // Use push/pop to validate without modifying the assertion stack
+        // Use push/pop to validate without modifying the assertion stack.
+        //
+        // The prefix re-declares every symbol previously registered through
+        // `declareConst`/`declareFun` (see `js_api::optimize`'s module docs)
+        // in the *same* `execute_script` call: `oxiz_solver::Context::
+        // execute_script` parses with a brand-new parser whose declared-
+        // symbol table starts empty, so a symbol declared via a separate,
+        // earlier call (whether `declareConst` or a previous `execute_script`)
+        // would otherwise be rejected as unknown here.
         self.ctx.push();
-        let script = format!("(assert {})", formula);
+        let script = format!(
+            "{}(assert {})",
+            self.declared_symbols_script_prefix(),
+            formula
+        );
         let result = self.ctx.execute_script(&script);
         self.ctx.pop();
 
@@ -96,7 +108,13 @@ impl WasmSolver {
             );
         }
 
-        let script = format!("(assert {})", formula);
+        // See `validate_formula`'s comment above on why the declared-symbol
+        // prefix is required here.
+        let script = format!(
+            "{}(assert {})",
+            self.declared_symbols_script_prefix(),
+            formula
+        );
         self.ctx.execute_script(&script).map_err(|e| -> JsValue {
             WasmError::new(
                 WasmErrorKind::ParseError,
@@ -271,7 +289,14 @@ impl WasmSolver {
             );
         }
 
-        let script = format!("(assert (! {} :named {}))", formula, name);
+        // See `validate_formula`'s comment above on why the declared-symbol
+        // prefix is required here.
+        let script = format!(
+            "{}(assert (! {} :named {}))",
+            self.declared_symbols_script_prefix(),
+            formula,
+            name
+        );
         self.ctx.execute_script(&script).map_err(|e| -> JsValue {
             WasmError::new(
                 WasmErrorKind::ParseError,

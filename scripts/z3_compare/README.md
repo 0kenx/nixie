@@ -84,7 +84,7 @@ The scripts expect Z3 source at `../z3/src` relative to the script directory,
 which means:
 
 ```
-/media/kitasan/Backup/
+<workspace>/
   z3/
     src/
       smt/
@@ -201,7 +201,7 @@ You can override this with the `--z3-src` option.
 ## Quick Start
 
 ```bash
-cd /media/kitasan/Backup/oxiz/scripts/z3_compare
+cd scripts/z3_compare
 
 # Clone Z3 if you don't have it
 git clone https://github.com/Z3Prover/z3.git ../../z3

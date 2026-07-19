@@ -419,258 +419,41 @@ pub fn contains_term(haystack: TermId, needle: TermId, manager: &TermManager) ->
     checker.found
 }
 
-/// Map a function over all subterms (bottom-up)
+/// Map a function over all subterms (bottom-up).
+///
+/// `f` is offered every subterm (post-order, each visited once); returning
+/// `Some(new_id)` replaces that subterm everywhere it occurs, `None` leaves
+/// it as-is (its own children may still have been replaced).
+///
+/// This delegates the actual rebuild to `TermManager::substitute` -- the
+/// single exhaustive, capture-avoiding implementation of "rebuild a term
+/// given a subterm replacement map" in `TermManager::substitute`.
+/// Previously this function carried its own parallel match over every
+/// `TermKind` variant (`transform_children`); keeping two such matches in
+/// sync is a soundness hazard (a variant added to one and missed in the
+/// other silently drops rewrites), and the duplicate additionally lacked
+/// `substitute`'s capture-avoidance for `Forall`/`Exists`/`Let`/`Match`
+/// binders, so replacing a subterm that happens to share a hash-consed
+/// `Var` id with some binder's bound variable name could have captured it.
 pub fn map_terms<F>(term_id: TermId, manager: &mut TermManager, mut f: F) -> TermId
 where
     F: FnMut(TermId, &TermManager) -> Option<TermId>,
 {
     use crate::prelude::FxHashMap;
 
-    let mut cache: FxHashMap<TermId, TermId> = FxHashMap::default();
     let subterms = collect_subterms(term_id, manager);
-
+    let mut direct: FxHashMap<TermId, TermId> = FxHashMap::default();
     for &subterm_id in &subterms {
         if let Some(new_id) = f(subterm_id, manager) {
-            cache.insert(subterm_id, new_id);
-        } else if let Some(term) = manager.get(subterm_id) {
-            // Rebuild the term with potentially transformed children
-            let new_kind = transform_children(&term.kind, &cache);
-            if new_kind != term.kind {
-                let new_id = manager.intern(new_kind, term.sort);
-                cache.insert(subterm_id, new_id);
-            }
+            direct.insert(subterm_id, new_id);
         }
     }
 
-    cache.get(&term_id).copied().unwrap_or(term_id)
-}
-
-/// Transform children of a term kind using a substitution cache
-fn transform_children(
-    kind: &TermKind,
-    cache: &crate::prelude::FxHashMap<TermId, TermId>,
-) -> TermKind {
-    let subst = |id: &TermId| cache.get(id).copied().unwrap_or(*id);
-
-    match kind {
-        // Nullary - no changes
-        k @ (TermKind::True
-        | TermKind::False
-        | TermKind::IntConst(_)
-        | TermKind::RealConst(_)
-        | TermKind::BitVecConst { .. }
-        | TermKind::StringLit(_)
-        | TermKind::Var(_)) => k.clone(),
-
-        // Unary
-        TermKind::Not(a) => TermKind::Not(subst(a)),
-        TermKind::Neg(a) => TermKind::Neg(subst(a)),
-        TermKind::BvNot(a) => TermKind::BvNot(subst(a)),
-        TermKind::StrLen(a) => TermKind::StrLen(subst(a)),
-        TermKind::StrToInt(a) => TermKind::StrToInt(subst(a)),
-        TermKind::IntToStr(a) => TermKind::IntToStr(subst(a)),
-
-        TermKind::BvExtract { high, low, arg } => TermKind::BvExtract {
-            high: *high,
-            low: *low,
-            arg: subst(arg),
-        },
-
-        // Binary
-        TermKind::Implies(a, b) => TermKind::Implies(subst(a), subst(b)),
-        TermKind::Xor(a, b) => TermKind::Xor(subst(a), subst(b)),
-        TermKind::Eq(a, b) => TermKind::Eq(subst(a), subst(b)),
-        TermKind::Sub(a, b) => TermKind::Sub(subst(a), subst(b)),
-        TermKind::Div(a, b) => TermKind::Div(subst(a), subst(b)),
-        TermKind::Mod(a, b) => TermKind::Mod(subst(a), subst(b)),
-        TermKind::Lt(a, b) => TermKind::Lt(subst(a), subst(b)),
-        TermKind::Le(a, b) => TermKind::Le(subst(a), subst(b)),
-        TermKind::Gt(a, b) => TermKind::Gt(subst(a), subst(b)),
-        TermKind::Ge(a, b) => TermKind::Ge(subst(a), subst(b)),
-        TermKind::Select(a, b) => TermKind::Select(subst(a), subst(b)),
-        TermKind::BvConcat(a, b) => TermKind::BvConcat(subst(a), subst(b)),
-        TermKind::BvAnd(a, b) => TermKind::BvAnd(subst(a), subst(b)),
-        TermKind::BvOr(a, b) => TermKind::BvOr(subst(a), subst(b)),
-        TermKind::BvXor(a, b) => TermKind::BvXor(subst(a), subst(b)),
-        TermKind::BvAdd(a, b) => TermKind::BvAdd(subst(a), subst(b)),
-        TermKind::BvSub(a, b) => TermKind::BvSub(subst(a), subst(b)),
-        TermKind::BvMul(a, b) => TermKind::BvMul(subst(a), subst(b)),
-        TermKind::BvUdiv(a, b) => TermKind::BvUdiv(subst(a), subst(b)),
-        TermKind::BvSdiv(a, b) => TermKind::BvSdiv(subst(a), subst(b)),
-        TermKind::BvUrem(a, b) => TermKind::BvUrem(subst(a), subst(b)),
-        TermKind::BvSrem(a, b) => TermKind::BvSrem(subst(a), subst(b)),
-        TermKind::BvShl(a, b) => TermKind::BvShl(subst(a), subst(b)),
-        TermKind::BvLshr(a, b) => TermKind::BvLshr(subst(a), subst(b)),
-        TermKind::BvAshr(a, b) => TermKind::BvAshr(subst(a), subst(b)),
-        TermKind::BvUlt(a, b) => TermKind::BvUlt(subst(a), subst(b)),
-        TermKind::BvUle(a, b) => TermKind::BvUle(subst(a), subst(b)),
-        TermKind::BvSlt(a, b) => TermKind::BvSlt(subst(a), subst(b)),
-        TermKind::BvSle(a, b) => TermKind::BvSle(subst(a), subst(b)),
-        TermKind::StrConcat(a, b) => TermKind::StrConcat(subst(a), subst(b)),
-        TermKind::StrAt(a, b) => TermKind::StrAt(subst(a), subst(b)),
-        TermKind::StrContains(a, b) => TermKind::StrContains(subst(a), subst(b)),
-        TermKind::StrPrefixOf(a, b) => TermKind::StrPrefixOf(subst(a), subst(b)),
-        TermKind::StrSuffixOf(a, b) => TermKind::StrSuffixOf(subst(a), subst(b)),
-        TermKind::StrInRe(a, b) => TermKind::StrInRe(subst(a), subst(b)),
-
-        // Ternary
-        TermKind::Ite(c, t, e) => TermKind::Ite(subst(c), subst(t), subst(e)),
-        TermKind::Store(a, i, v) => TermKind::Store(subst(a), subst(i), subst(v)),
-        TermKind::StrSubstr(s, i, n) => TermKind::StrSubstr(subst(s), subst(i), subst(n)),
-        TermKind::StrIndexOf(s, t, o) => TermKind::StrIndexOf(subst(s), subst(t), subst(o)),
-        TermKind::StrReplace(s, p, r) => TermKind::StrReplace(subst(s), subst(p), subst(r)),
-        TermKind::StrReplaceAll(s, p, r) => TermKind::StrReplaceAll(subst(s), subst(p), subst(r)),
-
-        // N-ary
-        TermKind::And(args) => TermKind::And(args.iter().map(subst).collect()),
-        TermKind::Or(args) => TermKind::Or(args.iter().map(subst).collect()),
-        TermKind::Add(args) => TermKind::Add(args.iter().map(subst).collect()),
-        TermKind::Mul(args) => TermKind::Mul(args.iter().map(subst).collect()),
-        TermKind::Distinct(args) => TermKind::Distinct(args.iter().map(subst).collect()),
-
-        // Function application
-        TermKind::Apply { func, args } => TermKind::Apply {
-            func: *func,
-            args: args.iter().map(subst).collect(),
-        },
-
-        // Algebraic datatypes
-        TermKind::DtConstructor { constructor, args } => TermKind::DtConstructor {
-            constructor: *constructor,
-            args: args.iter().map(subst).collect(),
-        },
-        TermKind::DtTester { constructor, arg } => TermKind::DtTester {
-            constructor: *constructor,
-            arg: subst(arg),
-        },
-        TermKind::DtSelector { selector, arg } => TermKind::DtSelector {
-            selector: *selector,
-            arg: subst(arg),
-        },
-
-        // Quantifiers
-        TermKind::Forall {
-            vars,
-            body,
-            patterns,
-        } => TermKind::Forall {
-            vars: vars.clone(),
-            body: subst(body),
-            patterns: patterns
-                .iter()
-                .map(|p| p.iter().map(subst).collect())
-                .collect(),
-        },
-        TermKind::Exists {
-            vars,
-            body,
-            patterns,
-        } => TermKind::Exists {
-            vars: vars.clone(),
-            body: subst(body),
-            patterns: patterns
-                .iter()
-                .map(|p| p.iter().map(subst).collect())
-                .collect(),
-        },
-
-        // Let bindings
-        TermKind::Let { bindings, body } => TermKind::Let {
-            bindings: bindings
-                .iter()
-                .map(|(name, value)| (*name, subst(value)))
-                .collect(),
-            body: subst(body),
-        },
-
-        // Floating-point literals - no transformation needed
-        k @ (TermKind::FpLit { .. }
-        | TermKind::FpPlusInfinity { .. }
-        | TermKind::FpMinusInfinity { .. }
-        | TermKind::FpPlusZero { .. }
-        | TermKind::FpMinusZero { .. }
-        | TermKind::FpNaN { .. }) => k.clone(),
-
-        // Unary FP operations
-        TermKind::FpAbs(a) => TermKind::FpAbs(subst(a)),
-        TermKind::FpNeg(a) => TermKind::FpNeg(subst(a)),
-        TermKind::FpSqrt(rm, a) => TermKind::FpSqrt(*rm, subst(a)),
-        TermKind::FpRoundToIntegral(rm, a) => TermKind::FpRoundToIntegral(*rm, subst(a)),
-        TermKind::FpIsNormal(a) => TermKind::FpIsNormal(subst(a)),
-        TermKind::FpIsSubnormal(a) => TermKind::FpIsSubnormal(subst(a)),
-        TermKind::FpIsZero(a) => TermKind::FpIsZero(subst(a)),
-        TermKind::FpIsInfinite(a) => TermKind::FpIsInfinite(subst(a)),
-        TermKind::FpIsNaN(a) => TermKind::FpIsNaN(subst(a)),
-        TermKind::FpIsNegative(a) => TermKind::FpIsNegative(subst(a)),
-        TermKind::FpIsPositive(a) => TermKind::FpIsPositive(subst(a)),
-        TermKind::FpToReal(a) => TermKind::FpToReal(subst(a)),
-
-        // Binary FP operations
-        TermKind::FpAdd(rm, a, b) => TermKind::FpAdd(*rm, subst(a), subst(b)),
-        TermKind::FpSub(rm, a, b) => TermKind::FpSub(*rm, subst(a), subst(b)),
-        TermKind::FpMul(rm, a, b) => TermKind::FpMul(*rm, subst(a), subst(b)),
-        TermKind::FpDiv(rm, a, b) => TermKind::FpDiv(*rm, subst(a), subst(b)),
-        TermKind::FpRem(a, b) => TermKind::FpRem(subst(a), subst(b)),
-        TermKind::FpMin(a, b) => TermKind::FpMin(subst(a), subst(b)),
-        TermKind::FpMax(a, b) => TermKind::FpMax(subst(a), subst(b)),
-        TermKind::FpLeq(a, b) => TermKind::FpLeq(subst(a), subst(b)),
-        TermKind::FpLt(a, b) => TermKind::FpLt(subst(a), subst(b)),
-        TermKind::FpGeq(a, b) => TermKind::FpGeq(subst(a), subst(b)),
-        TermKind::FpGt(a, b) => TermKind::FpGt(subst(a), subst(b)),
-        TermKind::FpEq(a, b) => TermKind::FpEq(subst(a), subst(b)),
-
-        // Ternary FP operations
-        TermKind::FpFma(rm, a, b, c) => TermKind::FpFma(*rm, subst(a), subst(b), subst(c)),
-
-        // FP conversions
-        TermKind::FpToFp { rm, arg, eb, sb } => TermKind::FpToFp {
-            rm: *rm,
-            arg: subst(arg),
-            eb: *eb,
-            sb: *sb,
-        },
-        TermKind::FpToSBV { rm, arg, width } => TermKind::FpToSBV {
-            rm: *rm,
-            arg: subst(arg),
-            width: *width,
-        },
-        TermKind::FpToUBV { rm, arg, width } => TermKind::FpToUBV {
-            rm: *rm,
-            arg: subst(arg),
-            width: *width,
-        },
-        TermKind::RealToFp { rm, arg, eb, sb } => TermKind::RealToFp {
-            rm: *rm,
-            arg: subst(arg),
-            eb: *eb,
-            sb: *sb,
-        },
-        TermKind::SBVToFp { rm, arg, eb, sb } => TermKind::SBVToFp {
-            rm: *rm,
-            arg: subst(arg),
-            eb: *eb,
-            sb: *sb,
-        },
-        TermKind::UBVToFp { rm, arg, eb, sb } => TermKind::UBVToFp {
-            rm: *rm,
-            arg: subst(arg),
-            eb: *eb,
-            sb: *sb,
-        },
-
-        // Match expression
-        TermKind::Match { scrutinee, cases } => TermKind::Match {
-            scrutinee: subst(scrutinee),
-            cases: cases
-                .iter()
-                .map(|c| crate::ast::term::MatchCase {
-                    constructor: c.constructor,
-                    bindings: c.bindings.clone(),
-                    body: subst(&c.body),
-                })
-                .collect(),
-        },
+    if direct.is_empty() {
+        return term_id;
     }
+
+    manager.substitute(term_id, &direct)
 }
 
 #[cfg(test)]
@@ -752,6 +535,70 @@ mod tests {
 
         // Should count: 1, 2, 3, (+ 1 2 3) = 4 nodes
         assert_eq!(count_nodes(sum, &manager), 4);
+    }
+
+    #[test]
+    fn test_map_terms_basic_substitution() {
+        let mut manager = TermManager::new();
+        let x = manager.mk_var("x", manager.sorts.int_sort);
+        let y = manager.mk_var("y", manager.sorts.int_sort);
+        let one = manager.mk_int(1);
+        let expr = manager.mk_add([x, one]);
+
+        let result = map_terms(
+            expr,
+            &mut manager,
+            |id, _mgr| {
+                if id == x { Some(y) } else { None }
+            },
+        );
+
+        let expected = manager.mk_add([y, one]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_map_terms_does_not_capture_bound_variable() {
+        // Regression: map_terms used to rebuild children via a flat, private
+        // TermId -> TermId cache (`transform_children`) with no binder-scope
+        // awareness. Since bound and free occurrences of a same-named
+        // variable share one hash-consed `TermId`, replacing the free
+        // occurrence of `x` used to also silently rewrite the *bound* `x`
+        // inside `forall ((x Int)) ...`, capturing it. map_terms now
+        // delegates to `TermManager::substitute`, the shared exhaustive,
+        // capture-avoiding implementation, which must leave the bound
+        // occurrence untouched.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        // Outer: P(x) -- free occurrence of x.
+        let p_outer = manager.mk_apply("P", [x], bool_sort);
+        // Inner: forall x. Q(x) -- x is bound here, shadowing the outer x.
+        let q_inner = manager.mk_apply("Q", [x], bool_sort);
+        let forall = manager.mk_forall([("x", int_sort)], q_inner);
+        let term = manager.mk_and([p_outer, forall]);
+
+        // Replace every occurrence of the `x` TermId with `y`.
+        let result = map_terms(
+            term,
+            &mut manager,
+            |id, _mgr| {
+                if id == x { Some(y) } else { None }
+            },
+        );
+
+        // The free occurrence must be rewritten: P(x) -> P(y).
+        let p_outer_new = manager.mk_apply("P", [y], bool_sort);
+        // The bound occurrence must NOT be captured: the forall body must
+        // stay Q(x), not become Q(y).
+        let q_inner_same = manager.mk_apply("Q", [x], bool_sort);
+        let forall_same = manager.mk_forall([("x", int_sort)], q_inner_same);
+        let expected = manager.mk_and([p_outer_new, forall_same]);
+
+        assert_eq!(result, expected);
     }
 
     #[test]

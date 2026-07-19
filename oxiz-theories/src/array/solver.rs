@@ -97,6 +97,13 @@ pub struct ArraySolver {
     /// Shared equalities derived by array axioms for Nelson-Oppen combination.
     /// These arise from read-over-write and extensionality axioms.
     shared_equalities: Vec<EqualityNotification>,
+    /// Append-only log of every `merge(a, b, reason)` call, used by
+    /// `explain_equal` to reconstruct the actual chain of reasons that
+    /// makes two nodes equal (the live `parent` union-find is path
+    /// -compressed for fast `find()`, which discards the intermediate
+    /// hops a proof/explanation would need). See `explain_equal`'s doc
+    /// comment for the full rationale.
+    merge_log: Vec<(u32, u32, TermId)>,
 }
 
 /// State for push/pop
@@ -108,6 +115,7 @@ struct ContextState {
     num_diseqs: usize,
     num_pending_lemmas: usize,
     num_trail: usize,
+    num_merge_log: usize,
 }
 
 impl Default for ArraySolver {
@@ -134,6 +142,7 @@ impl ArraySolver {
             context_stack: Vec::new(),
             current_conflict: None,
             shared_equalities: Vec::new(),
+            merge_log: Vec::new(),
         }
     }
 
@@ -256,10 +265,33 @@ impl ArraySolver {
         self.find(a) == self.find(b)
     }
 
+    /// Check if two nodes are PROVEN disequal (an explicit disequality was
+    /// asserted between their equivalence classes), as opposed to merely
+    /// "not currently known equal". These are different: two nodes with no
+    /// asserted disequality can still become equal later (e.g. once
+    /// Nelson-Oppen propagates an arithmetic equality between the index
+    /// expressions they represent), so `!are_equal(a, b)` is NOT a sound
+    /// stand-in for "a and b are different indices" -- only an explicit
+    /// disequality is.
+    fn is_proven_disequal(&self, a: u32, b: u32) -> bool {
+        let (ra, rb) = (self.find(a), self.find(b));
+        self.diseqs.iter().any(|&(lhs, rhs, _)| {
+            (self.find(lhs) == ra && self.find(rhs) == rb)
+                || (self.find(lhs) == rb && self.find(rhs) == ra)
+        })
+    }
+
     /// Merge two equivalence classes
     pub fn merge(&mut self, a: u32, b: u32, reason: TermId) -> Result<()> {
         let root_a = self.find_compress(a);
         let root_b = self.find_compress(b);
+
+        // Recorded regardless of whether `a`/`b` were already in the same
+        // class: `explain_equal` replays this log to reconstruct the full
+        // reason chain between any two nodes, so every asserted merge
+        // needs to be in it (a merge between already-equal nodes is still
+        // a valid alternate edge/reason for that equality).
+        self.merge_log.push((a, b, reason));
 
         if root_a != root_b {
             // Record old parent for undo
@@ -268,9 +300,20 @@ impl ArraySolver {
             self.parent[root_b as usize] = root_a;
 
             // Check for conflicts with disequalities
-            for (lhs, rhs, diseq_reason) in &self.diseqs {
-                if self.find(*lhs) == self.find(*rhs) {
-                    self.current_conflict = Some(vec![reason, *diseq_reason]);
+            for &(lhs, rhs, diseq_reason) in self.diseqs.clone().iter() {
+                if self.find(lhs) == self.find(rhs) {
+                    // The conflict is `lhs = rhs` (via the merge chain
+                    // that connects them) AND `lhs != rhs` (`diseq_reason`).
+                    // Previously only the single merge reason that
+                    // happened to trigger this check (`reason`) and
+                    // `diseq_reason` were recorded, omitting every OTHER
+                    // merge in the chain that actually makes `lhs` and
+                    // `rhs` equal -- an over-strong (unsound) learned
+                    // conflict clause, since it implicitly claimed the
+                    // conflict follows from just those two facts alone.
+                    let mut conflict = self.explain_equal(lhs, rhs);
+                    conflict.push(diseq_reason);
+                    self.current_conflict = Some(conflict);
                     return Ok(());
                 }
             }
@@ -283,10 +326,73 @@ impl ArraySolver {
     pub fn assert_diseq(&mut self, a: u32, b: u32, reason: TermId) {
         self.diseqs.push((a, b, reason));
 
-        // Check for immediate conflict
+        // Check for immediate conflict: `a` and `b` might already be
+        // forced equal by a PRIOR chain of merges. Include that whole
+        // chain in the conflict, not just this disequality's own reason
+        // (which alone does not explain why `a` and `b` were equal).
         if self.find(a) == self.find(b) {
-            self.current_conflict = Some(vec![reason]);
+            let mut conflict = self.explain_equal(a, b);
+            conflict.push(reason);
+            self.current_conflict = Some(conflict);
         }
+    }
+
+    /// Reconstruct the chain of merge reasons that makes `a` and `b` equal.
+    ///
+    /// The live `parent` union-find is path-compressed for fast `find()`
+    /// (see `find_compress`), which rewires a node directly to its root
+    /// and discards the intermediate hops -- exactly the information a
+    /// conflict EXPLANATION needs (which specific asserted equalities are
+    /// actually responsible for `a = b`). Instead of compressing, this
+    /// replays `merge_log` (every `merge` call ever made, regardless of
+    /// whether it changed the union-find) as an undirected graph of
+    /// `(node, node, reason)` edges and does a BFS from `a` to `b`,
+    /// collecting the reasons of the edges on the path found. If `a` and
+    /// `b` are not (yet) in the same class, or no path is found in the
+    /// log for some reason, this returns whatever partial chain BFS
+    /// reached rather than fabricating a reason.
+    fn explain_equal(&self, a: u32, b: u32) -> Vec<TermId> {
+        if a == b {
+            return Vec::new();
+        }
+
+        let mut adjacency: FxHashMap<u32, Vec<(u32, TermId)>> = FxHashMap::default();
+        for &(x, y, reason) in &self.merge_log {
+            adjacency.entry(x).or_default().push((y, reason));
+            adjacency.entry(y).or_default().push((x, reason));
+        }
+
+        let mut visited: FxHashSet<u32> = FxHashSet::default();
+        visited.insert(a);
+        let mut queue: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+        queue.push_back(a);
+        // came_from[node] = (predecessor, reason for the edge used to reach it)
+        let mut came_from: FxHashMap<u32, (u32, TermId)> = FxHashMap::default();
+
+        while let Some(node) = queue.pop_front() {
+            if node == b {
+                break;
+            }
+            if let Some(neighbors) = adjacency.get(&node) {
+                for &(next, reason) in neighbors {
+                    if visited.insert(next) {
+                        came_from.insert(next, (node, reason));
+                        queue.push_back(next);
+                    }
+                }
+            }
+        }
+
+        let mut chain = Vec::new();
+        let mut cur = b;
+        while let Some(&(prev, reason)) = came_from.get(&cur) {
+            chain.push(reason);
+            cur = prev;
+            if cur == a {
+                break;
+            }
+        }
+        chain
     }
 
     /// Process pending lemmas
@@ -326,8 +432,19 @@ impl ArraySolver {
                     select_index,
                 } => {
                     // If i ≠ j, then select(store(a, i, v), j) = select(a, j)
-                    // Check if indices are proven different
-                    if !self.are_equal(store.index, select_index) {
+                    //
+                    // This must fire only when the indices are PROVEN
+                    // disequal, not merely "not currently known equal"
+                    // (`!self.are_equal(...)`): the latter is also true
+                    // while the indices' equality is simply undecided, and
+                    // they could still be merged equal later (e.g. via a
+                    // Nelson-Oppen arithmetic propagation). Firing on that
+                    // weaker condition could force `select(store(a,i,v),j)
+                    // = select(a,j)` for indices that turn out equal,
+                    // where the correct value is actually `v` (the
+                    // read-over-write-SAME case) -- a soundness bug, not
+                    // just an incompleteness one.
+                    if self.is_proven_disequal(store.index, select_index) {
                         // Find the select we need to equate
                         for (select_node, select) in &self.selects {
                             if self.find(select.array) == self.find(store_result)
@@ -367,9 +484,15 @@ impl ArraySolver {
 
     /// Check for conflicts
     pub fn check_conflicts(&self) -> Option<Vec<TermId>> {
-        for (lhs, rhs, reason) in &self.diseqs {
-            if self.find(*lhs) == self.find(*rhs) {
-                return Some(vec![*reason]);
+        for &(lhs, rhs, reason) in &self.diseqs {
+            if self.find(lhs) == self.find(rhs) {
+                // Include the full merge chain that makes `lhs`/`rhs`
+                // equal, not just the disequality's own reason (see
+                // `merge`/`assert_diseq`'s doc comments for why a partial
+                // reason set is an unsound, over-strong conflict clause).
+                let mut conflict = self.explain_equal(lhs, rhs);
+                conflict.push(reason);
+                return Some(conflict);
             }
         }
         None
@@ -489,6 +612,7 @@ impl Theory for ArraySolver {
             num_diseqs: self.diseqs.len(),
             num_pending_lemmas: self.pending_lemmas.len(),
             num_trail: self.trail.len(),
+            num_merge_log: self.merge_log.len(),
         });
     }
 
@@ -516,6 +640,7 @@ impl Theory for ArraySolver {
             self.stores.truncate(state.num_stores);
             self.diseqs.truncate(state.num_diseqs);
             self.pending_lemmas.truncate(state.num_pending_lemmas);
+            self.merge_log.truncate(state.num_merge_log);
 
             // Clear conflict
             self.current_conflict = None;
@@ -888,5 +1013,96 @@ mod tests {
 
         solver.pop();
         assert_eq!(solver.pending_lemmas.len(), 0);
+    }
+
+    // Audit regression (theories-array): the read-over-write-DIFFERENT
+    // axiom (`select(store(a,i,v),j) = select(a,j)` when `i != j`) used to
+    // fire whenever the indices were merely "not currently known equal"
+    // (`!self.are_equal(...)`), rather than PROVEN disequal. Indices with
+    // no asserted relationship at all must NOT trigger this axiom, since
+    // they could still become equal later.
+    #[test]
+    fn audit_read_over_write_diff_requires_proven_disequal() {
+        let mut solver = ArraySolver::new();
+
+        let a = solver.intern_array(TermId::new(1));
+        let i = solver.intern(TermId::new(2));
+        let j = solver.intern(TermId::new(3));
+        let v = solver.intern(TermId::new(4));
+
+        // No relationship asserted between `i` and `j` at all.
+        let a_store = solver.intern_store(TermId::new(10), a, i, v);
+        let select_a_j = solver.intern_select(TermId::new(11), a, j);
+        let select_store_j = solver.intern_select(TermId::new(12), a_store, j);
+
+        let result = solver.check().expect("check should succeed");
+        assert!(matches!(result, TheoryResult::Sat));
+
+        // Must NOT have been merged: `i` and `j` are not proven disequal,
+        // so asserting `select(store(a,i,v),j) = select(a,j)` would be
+        // unsound if `i` and `j` later turn out equal (where the correct
+        // value is `v`, not `select(a,j)`).
+        assert!(
+            !solver.are_equal(select_a_j, select_store_j),
+            "read-over-write-diff must not fire without a proven disequality"
+        );
+
+        // Once `i != j` is actually proven, the axiom (queued eagerly at
+        // `intern_select` time) must fire on the next `check()`.
+        solver.assert_diseq(i, j, TermId::new(100));
+        // Re-trigger axiom discovery: a fresh select forces
+        // `check_read_over_write` to re-scan with the new disequality
+        // in place (the original selects were queued before the
+        // disequality existed).
+        let _ = solver.intern_select(TermId::new(13), a_store, j);
+        let result2 = solver.check().expect("check should succeed");
+        assert!(matches!(result2, TheoryResult::Sat));
+        assert!(
+            solver.are_equal(select_a_j, select_store_j),
+            "read-over-write-diff must fire once the indices are proven disequal"
+        );
+    }
+
+    // Audit regression (theories-array): conflict explanations only cited
+    // the single merge reason that happened to trigger the check plus the
+    // disequality's own reason, omitting every OTHER merge in the chain
+    // that actually makes the two sides equal -- an over-strong (unsound)
+    // learned clause. The full chain must now be included.
+    #[test]
+    fn audit_conflict_includes_full_equality_chain() {
+        let mut solver = ArraySolver::new();
+
+        let a = solver.intern(TermId::new(1));
+        let b = solver.intern(TermId::new(2));
+        let c = solver.intern(TermId::new(3));
+        let d = solver.intern(TermId::new(4));
+
+        let r_ab = TermId::new(101);
+        let r_bc = TermId::new(102);
+        let r_cd = TermId::new(103);
+        let r_diseq = TermId::new(200);
+
+        // a != d
+        solver.assert_diseq(a, d, r_diseq);
+
+        // Chain: a = b = c = d (each an independent merge with its own
+        // reason), which transitively forces a = d, contradicting a != d.
+        solver.merge(a, b, r_ab).expect("merge should succeed");
+        solver.merge(b, c, r_bc).expect("merge should succeed");
+        solver.merge(c, d, r_cd).expect("merge should succeed");
+
+        let result = solver.check().expect("check should succeed");
+        match result {
+            TheoryResult::Unsat(conflict) => {
+                for r in [r_ab, r_bc, r_cd, r_diseq] {
+                    assert!(
+                        conflict.contains(&r),
+                        "conflict {conflict:?} must include every reason in the \
+                         equality chain plus the disequality, missing {r:?}"
+                    );
+                }
+            }
+            other => panic!("expected Unsat, got {other:?}"),
+        }
     }
 }

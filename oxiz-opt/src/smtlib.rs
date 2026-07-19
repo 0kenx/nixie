@@ -115,6 +115,12 @@ pub struct SmtLibOptimizer {
     objective_names: FxHashMap<ObjectiveId, String>,
     /// Soft constraint IDs
     soft_ids: FxHashMap<String, SoftConstraintId>,
+    /// Result of the most recent `(check-sat)`/`optimize()` call, if any has
+    /// run since the optimizer was created (or last reset/mutated). This is
+    /// what `get_objectives` consults to report each objective's `optimal`
+    /// flag honestly -- `(get-objectives)` reflects the *last proven*
+    /// optimization state, not a blanket assumption.
+    last_result: Option<OptResult>,
 }
 
 impl Default for SmtLibOptimizer {
@@ -130,6 +136,7 @@ impl SmtLibOptimizer {
             context: OptContext::new(),
             objective_names: FxHashMap::default(),
             soft_ids: FxHashMap::default(),
+            last_result: None,
         }
     }
 
@@ -141,6 +148,10 @@ impl SmtLibOptimizer {
                 if let Some(n) = name {
                     self.objective_names.insert(id, n);
                 }
+                // A newly added objective invalidates whatever optimality
+                // was previously proven: the problem has changed and the
+                // old model/bounds no longer necessarily apply to it.
+                self.last_result = None;
                 Ok(CommandResult::ObjectiveId(id))
             }
             OptCommand::Maximize { term, name } => {
@@ -148,6 +159,7 @@ impl SmtLibOptimizer {
                 if let Some(n) = name {
                     self.objective_names.insert(id, n);
                 }
+                self.last_result = None;
                 Ok(CommandResult::ObjectiveId(id))
             }
             OptCommand::AssertSoft {
@@ -160,6 +172,7 @@ impl SmtLibOptimizer {
                 if let Some(sid) = soft_id {
                     self.soft_ids.insert(sid, id);
                 }
+                self.last_result = None;
                 Ok(CommandResult::SoftId(id))
             }
             OptCommand::GetObjectives => {
@@ -171,6 +184,7 @@ impl SmtLibOptimizer {
                     .context
                     .optimize()
                     .map_err(|e| SmtLibError::ContextError(e.to_string()))?;
+                self.last_result = Some(result.clone());
                 Ok(CommandResult::Result(result))
             }
         }
@@ -179,6 +193,16 @@ impl SmtLibOptimizer {
     /// Get all objective values
     fn get_objectives(&self) -> Vec<ObjectiveValue> {
         let mut result = Vec::new();
+
+        // An objective's value is only certified *optimal* when the most
+        // recent `(check-sat)` actually proved optimality
+        // (`OptResult::Optimal`). Any other outcome -- no check-sat run
+        // yet, `Satisfiable` (optimality unproven), `Unknown`, `Unbounded`,
+        // or a check-sat that ran before the objective/soft-constraint set
+        // was last mutated -- must not be reported as optimal, since the
+        // numeric value (if any is even available) is then only a
+        // best-effort bound rather than a certified optimum.
+        let proven_optimal = matches!(self.last_result, Some(OptResult::Optimal));
 
         for i in 0..self.context.num_objectives() {
             let id = ObjectiveId(i as u32);
@@ -198,7 +222,7 @@ impl SmtLibOptimizer {
                 id,
                 name,
                 value,
-                optimal: true, // For now, assume optimal if we have a value
+                optimal: proven_optimal,
             });
         }
 
@@ -220,6 +244,7 @@ impl SmtLibOptimizer {
         self.context.reset();
         self.objective_names.clear();
         self.soft_ids.clear();
+        self.last_result = None;
     }
 }
 

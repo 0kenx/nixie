@@ -543,22 +543,43 @@ impl super::Polynomial {
     }
 
     /// Evaluate the polynomial completely (all variables assigned).
+    ///
+    /// (Numeric substitution of `assignment` into the polynomial's terms —
+    /// no code/expression execution of any kind is involved.)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `assignment` does not cover every variable occurring in
+    /// `self`. Callers that cannot guarantee a complete assignment ahead of
+    /// time (e.g. because it was built incrementally, or comes from
+    /// untrusted/partial input) should use [`Self::try_eval`] instead, which
+    /// reports the same condition as `None` rather than aborting.
     pub fn eval(&self, assignment: &FxHashMap<Var, BigRational>) -> BigRational {
+        match self.try_eval(assignment) {
+            Some(v) => v,
+            None => panic!(
+                "Polynomial::eval: assignment does not cover every variable in the polynomial \
+                 (use try_eval for a non-panicking partial-assignment check)"
+            ),
+        }
+    }
+
+    /// Evaluate the polynomial completely (all variables assigned),
+    /// returning `None` instead of panicking if `assignment` is missing a
+    /// variable that occurs in `self`.
+    pub fn try_eval(&self, assignment: &FxHashMap<Var, BigRational>) -> Option<BigRational> {
         let mut result = BigRational::zero();
 
         for term in &self.terms {
             let mut val = term.coeff.clone();
             for vp in term.monomial.vars() {
-                if let Some(v) = assignment.get(&vp.var) {
-                    val *= v.pow(vp.power as i32);
-                } else {
-                    panic!("Variable x{} not in assignment", vp.var);
-                }
+                let v = assignment.get(&vp.var)?;
+                val *= v.pow(vp.power as i32);
             }
             result += val;
         }
 
-        result
+        Some(result)
     }
 
     /// Evaluate a univariate polynomial using Horner's method.
@@ -891,6 +912,16 @@ impl super::Polynomial {
     }
 
     /// Resultant of two univariate polynomials with respect to a variable.
+    ///
+    /// For genuinely univariate inputs (the documented use case — polynomials
+    /// containing only `var`), this computes the *exact* subresultant PRS
+    /// value via rational scalar normalization. If either input contains
+    /// other variables, the leading-coefficient normalization at each step
+    /// can itself be a non-constant polynomial; exact multivariate
+    /// polynomial division is not implemented, so that (undocumented, non
+    /// univariate) case falls back to a `primitive()`-based approximation
+    /// that may not equal the true resultant, though it still detects
+    /// exact-zero resultants correctly.
     pub fn resultant(&self, other: &Polynomial, var: Var) -> Polynomial {
         if self.is_zero() || other.is_zero() {
             return Polynomial::zero();
@@ -948,14 +979,21 @@ impl super::Polynomial {
             let h_pow = h.pow(delta as u32);
             b = r;
 
-            // Simplify b by dividing out common factors
-            // Since exact division is not implemented, use primitive() to prevent growth
+            // Normalize b by the subresultant divisor g^(delta+1... ) * h.
             if delta > 0 {
                 let denom = Polynomial::mul(&g_pow, &h_pow);
-                // Try to cancel common content by making primitive
-                b = b.primitive();
-                // Note: This is an approximation and may not give the exact mathematical resultant
-                let _ = denom; // Acknowledge we should divide by this
+                if denom.is_constant() && !denom.constant_value().is_zero() {
+                    // Univariate case (g, h reduce to plain rationals): exact
+                    // rational scaling, not an approximation.
+                    b = b.scale(&(BigRational::one() / denom.constant_value()));
+                } else {
+                    // Non-constant divisor: exact multivariate polynomial
+                    // division is not implemented. Fall back to stripping
+                    // the coefficient content instead, which keeps the
+                    // sequence's zero/non-zero structure correct but is not
+                    // guaranteed to equal the true (scaled) resultant value.
+                    b = b.primitive();
+                }
             }
 
             g = a.leading_coeff_wrt(var);
@@ -1043,8 +1081,66 @@ impl super::Polynomial {
         }
     }
 
+    /// Exact univariate polynomial remainder over the rationals.
+    ///
+    /// Returns `r` with `deg(r) < deg(divisor)` such that
+    /// `self = q * divisor + r` for some quotient `q`, using exact rational
+    /// coefficient division (no leading-coefficient scaling factor).
+    ///
+    /// Unlike [`pseudo_remainder`](Self::pseudo_remainder), this introduces no
+    /// `lc(divisor)^k` multiplier, so the sign of the result is exactly the
+    /// sign of the true remainder. This sign fidelity is essential for Sturm
+    /// sequences: a spurious negative scale factor (which arises whenever
+    /// `lc(divisor)` is negative and `k` is odd) would corrupt sign-variation
+    /// counts and hence real-root counts.
+    fn exact_remainder_univariate(&self, divisor: &Polynomial, var: Var) -> Polynomial {
+        if divisor.is_zero() {
+            // Degenerate divisor: nothing to reduce by, remainder is self.
+            return self.clone();
+        }
+        if self.is_zero() {
+            return Polynomial::zero();
+        }
+
+        let deg_b = divisor.degree(var);
+        let lc_b = divisor.univ_coeff(var, deg_b);
+        if lc_b.is_zero() {
+            return self.clone();
+        }
+
+        let mut r = self.clone();
+        // Each iteration strictly lowers deg(r) by at least one; bound the loop
+        // by the initial degree gap plus slack for safety.
+        let deg_a = self.degree(var);
+        let max_iters = deg_a.saturating_sub(deg_b) as usize + 2;
+        let mut iters = 0;
+
+        while !r.is_zero() && r.degree(var) >= deg_b && iters < max_iters {
+            iters += 1;
+            let deg_r = r.degree(var);
+            let lc_r = r.univ_coeff(var, deg_r);
+            let shift = deg_r - deg_b;
+
+            // factor = lc_r / lc_b (exact rational)
+            let factor = lc_r / &lc_b;
+            let subtractor = divisor
+                .scale(&factor)
+                .mul_monomial(&Monomial::from_var_power(var, shift));
+            r = Polynomial::sub(&r, &subtractor);
+        }
+
+        r
+    }
+
     /// Compute the Sturm sequence for a univariate polynomial.
     /// The Sturm sequence is used for counting real roots in an interval.
+    ///
+    /// The chain is built as `p_{i+1} = -rem(p_{i-1}, p_i)` using the *exact*
+    /// rational remainder. The pseudo-remainder must not be used here: it
+    /// scales by `lc(p_i)^k`, whose sign flips when the leading coefficient is
+    /// negative, which would break the Sturm sign invariant and yield wrong
+    /// root counts (e.g. `-x^2 + 1` on `(-2, 2)` would report 0 roots instead
+    /// of 2).
     pub fn sturm_sequence(&self, var: Var) -> Vec<Polynomial> {
         if self.is_zero() || self.degree(var) == 0 {
             return vec![self.clone()];
@@ -1066,7 +1162,7 @@ impl super::Polynomial {
         {
             iterations += 1;
             let n = seq.len();
-            let rem = seq[n - 2].pseudo_remainder(&seq[n - 1], var);
+            let rem = seq[n - 2].exact_remainder_univariate(&seq[n - 1], var);
             if rem.is_zero() {
                 break;
             }
@@ -1152,6 +1248,20 @@ impl super::Polynomial {
         // Use interval bisection with Sturm's theorem
         let mut intervals = Vec::new();
         let mut queue = Vec::new();
+
+        // `count_roots_in_interval` counts roots in the *open* interval
+        // (a, b) (standard Sturm's theorem convention). The search below
+        // seeds (0, bound) for positive roots and (-bound, 0) for negative
+        // roots, so a root at exactly x=0 — the shared boundary of both
+        // ranges — falls outside both open intervals and would otherwise be
+        // silently dropped. Check for it explicitly up front, the same way
+        // an exact root found at a bisection midpoint is recorded below.
+        if p.eval_at(var, &BigRational::zero())
+            .constant_term()
+            .is_zero()
+        {
+            intervals.push((BigRational::zero(), BigRational::zero()));
+        }
 
         // Only search in positive interval if there might be positive roots
         if pos_upper > 0 {
@@ -1308,8 +1418,15 @@ impl super::Polynomial {
         if self.is_zero() {
             return Some(vec![0i64]);
         }
-        // Allow univariate-in-var polynomials
-        if !self.is_univariate() && self.max_var() != var {
+        // Require the polynomial to be univariate *in `var`* specifically:
+        // at most one variable overall (`is_univariate()`), and that
+        // variable — if any (a nonzero constant has none, `max_var() ==
+        // NULL_VAR`) — must be `var` itself. The previous `&&` accepted any
+        // multivariate polynomial whose *highest-indexed* variable happened
+        // to equal `var`, silently dropping every other variable's
+        // contribution when the coefficients below are extracted purely by
+        // `var`-degree.
+        if !self.is_univariate() || (self.max_var() != var && self.max_var() != NULL_VAR) {
             return None;
         }
 

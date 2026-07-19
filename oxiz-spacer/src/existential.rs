@@ -19,7 +19,7 @@
 //!
 //! Reference: Existential handling in Z3's Spacer
 
-use crate::chc::{PredId, Rule};
+use crate::chc::{PredId, PredicateApp, Rule, RuleHead};
 use crate::pdr::SpacerError;
 use oxiz_core::{SortId, TermId, TermKind, TermManager};
 use smallvec::SmallVec;
@@ -58,34 +58,55 @@ pub struct ExistentialInfo {
 }
 
 impl ExistentialInfo {
-    /// Analyze a rule for existential variables
-    pub fn analyze(rule: &Rule) -> Self {
-        // Enhanced implementation: properly identify existential variables
-        // Existentials are variables that appear in the head but not declared in rule.vars
-
+    /// Analyze a rule for existential variables.
+    ///
+    /// Existentials are variables that appear in the head's predicate
+    /// arguments but are not among the rule's declared universal
+    /// variables (`rule.vars`). Actually walking the head's argument
+    /// terms (rather than just comparing argument *counts*) requires
+    /// resolving each argument's `TermId` back to a variable name/sort,
+    /// hence the `terms` parameter.
+    ///
+    /// This used to leave `existential_vars` permanently empty (`SmallVec::new()`,
+    /// never pushed to) and only derive `has_existentials` from a crude
+    /// `arg_count > declared_var_count` heuristic -- so any caller that
+    /// fed `existential_vars` into [`ExistentialProjector::project`] or
+    /// [`SkolemContext::skolemize`] would silently skolemize/project
+    /// *nothing*, even on a rule `has_existentials` correctly flagged as
+    /// having them.
+    pub fn analyze(rule: &Rule, terms: &TermManager) -> Self {
         // Start with all declared universal variables
         let universal_vars: SmallVec<[(String, SortId); 4]> = rule.vars.clone();
 
         // Collect all variable names that are universal (declared)
-        let universal_names: rustc_hash::FxHashSet<String> =
-            rule.vars.iter().map(|(name, _)| name.clone()).collect();
+        let universal_names: rustc_hash::FxHashSet<&str> =
+            rule.vars.iter().map(|(name, _)| name.as_str()).collect();
 
-        // For existentials, we analyze the head predicate application
-        // Variables not in the universal set are existential
-        let existential_vars = SmallVec::new();
-        let has_existentials = match &rule.head {
-            crate::chc::RuleHead::Predicate(app) => {
-                // Check if head has arguments that could be existentials
-                // In a full implementation with term AST traversal, we would:
-                // 1. Extract all variables from head arguments
-                // 2. Filter out those already in universal_names
-                // 3. The rest are existentials
-
-                // Heuristic: if head has more args than declared vars, likely has existentials
-                app.args.len() > universal_names.len()
+        // For existentials, walk the head predicate application's
+        // argument terms: any argument that is itself a plain variable
+        // not among the declared universals is existential.
+        let mut existential_vars: SmallVec<[(String, SortId); 4]> = SmallVec::new();
+        if let crate::chc::RuleHead::Predicate(app) = &rule.head {
+            let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+            for &arg in &app.args {
+                let Some(term) = terms.get(arg) else {
+                    continue;
+                };
+                let TermKind::Var(name_spur) = &term.kind else {
+                    // A compound (non-variable) head argument cannot itself
+                    // be *the* existentially-bound variable; any existentials
+                    // nested inside it are out of scope for this per-argument
+                    // scan.
+                    continue;
+                };
+                let name = terms.resolve_str(*name_spur);
+                if !universal_names.contains(name) && seen.insert(name.to_string()) {
+                    existential_vars.push((name.to_string(), term.sort));
+                }
             }
-            crate::chc::RuleHead::Query => false,
-        };
+        }
+
+        let has_existentials = !existential_vars.is_empty();
 
         Self {
             existential_vars,
@@ -608,26 +629,21 @@ impl ExistentialProjector {
 pub struct WitnessExtractor;
 
 impl WitnessExtractor {
-    /// Extract witnesses for existential variables from a model
+    /// Extract witnesses for existential variables from a model.
+    ///
+    /// Matching a witness value to the variable it belongs to requires
+    /// inspecting each model-key term's [`TermKind::Var`] name, which in turn
+    /// needs the owning [`TermManager`]. This method therefore delegates to
+    /// [`WitnessExtractor::extract_witnesses_with_terms`]. A previous version
+    /// assigned an arbitrary (hash-ordered) model entry to every existential
+    /// variable, producing wrong values under wrong names — an unsound result
+    /// that this delegation removes.
     pub fn extract_witnesses(
+        terms: &TermManager,
         model: &HashMap<TermId, TermId>,
         existential_vars: &[(String, SortId)],
     ) -> HashMap<String, TermId> {
-        // Extract concrete values for existential variables from the model
-        let mut witnesses = HashMap::new();
-
-        for (var_name, _sort) in existential_vars {
-            // Try to find the variable in the model
-            // We need to search for a term with this variable name
-            if let Some((&_term_id, &value)) = model.iter().next() {
-                // Check if this term corresponds to the variable
-                // In a real implementation, we would check the term's variable name
-                // For now, we use a simple heuristic
-                witnesses.insert(var_name.clone(), value);
-            }
-        }
-
-        witnesses
+        Self::extract_witnesses_with_terms(terms, model, existential_vars)
     }
 
     /// Extract witnesses with term manager access for better name matching
@@ -678,10 +694,15 @@ impl ExistentialHandler {
     }
 
     /// Analyze a rule for existentials
-    pub fn analyze_rule(&mut self, rule_id: usize, rule: &Rule) -> &ExistentialInfo {
+    pub fn analyze_rule(
+        &mut self,
+        rule_id: usize,
+        rule: &Rule,
+        terms: &TermManager,
+    ) -> &ExistentialInfo {
         self.rule_cache
             .entry(rule_id)
-            .or_insert_with(|| ExistentialInfo::analyze(rule))
+            .or_insert_with(|| ExistentialInfo::analyze(rule, terms))
     }
 
     /// Preprocess a rule by eliminating existentials
@@ -698,7 +719,9 @@ impl ExistentialHandler {
     ) -> ExistentialResult<Rule> {
         // Step 1: Analyze rule for existential variables
         // Clone the info to avoid borrow checker issues
-        let info = self.analyze_rule(rule.id.raw() as usize, rule).clone();
+        let info = self
+            .analyze_rule(rule.id.raw() as usize, rule, terms)
+            .clone();
 
         // If no existentials, return rule unchanged
         if !info.has_existentials || info.existential_vars.is_empty() {
@@ -719,11 +742,13 @@ impl ExistentialHandler {
             skolem_substitution.insert(ex_var_name.clone(), skolem_term);
         }
 
-        // Step 3: Transform the rule by replacing existentials with Skolem terms
-        // For a full implementation, we would traverse the term AST and substitute
-        // For now, we create a new rule with updated variables
-
-        // Add Skolem variables to the universal quantifiers
+        // Step 3: Transform the rule by replacing every existential's
+        // occurrence in the head with its Skolem term, and adding the
+        // Skolem variables to the universal quantifiers.
+        //
+        // Existentials appear only in the head (per this module's own
+        // documented contract), so only the head's predicate-application
+        // arguments need rewriting -- the body never references them.
         let mut new_vars = rule.vars.clone();
         for (ex_var_name, ex_var_sort) in &info.existential_vars {
             if let Some(&skolem_term) = skolem_substitution.get(ex_var_name)
@@ -735,14 +760,40 @@ impl ExistentialHandler {
             }
         }
 
-        // Create the transformed rule
-        // Note: In a full implementation, we would also need to apply the substitution
-        // to the rule body and head constraints/arguments
+        let new_head = match &rule.head {
+            RuleHead::Predicate(app) => {
+                let new_args: SmallVec<[TermId; 4]> = app
+                    .args
+                    .iter()
+                    .map(|&arg| {
+                        // Replace an argument only if it's itself a plain
+                        // variable matching one of the existentials this
+                        // rule was just Skolemized for; every other
+                        // argument (a universal variable, or any compound
+                        // term) passes through unchanged.
+                        let Some(term) = terms.get(arg) else {
+                            return arg;
+                        };
+                        let TermKind::Var(name_spur) = &term.kind else {
+                            return arg;
+                        };
+                        let name = terms.resolve_str(*name_spur);
+                        skolem_substitution.get(name).copied().unwrap_or(arg)
+                    })
+                    .collect();
+                RuleHead::Predicate(PredicateApp {
+                    pred: app.pred,
+                    args: new_args,
+                })
+            }
+            RuleHead::Query => RuleHead::Query,
+        };
+
         let transformed_rule = Rule {
             id: rule.id,
             vars: new_vars,
             body: rule.body.clone(),
-            head: rule.head.clone(),
+            head: new_head,
             name: rule.name.clone(),
         };
 
@@ -806,5 +857,128 @@ mod tests {
 
         assert_eq!(info.num_existentials(), 2);
         assert!(info.has_existentials);
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression tests for the `sweep-backend-misc` triage sweep:
+    // `ExistentialInfo::analyze` used to leave `existential_vars` always
+    // empty (an unpopulated `SmallVec::new()`), so it was structurally
+    // impossible for `ExistentialHandler::preprocess_rule` to ever
+    // actually Skolemize anything, regardless of `has_existentials`.
+    // -----------------------------------------------------------------------
+
+    /// Build a rule whose head references one declared universal
+    /// variable (`univ_x`) and one variable that is *not* declared in
+    /// `vars` (`exist_y`) -- exactly the shape of a genuine existential.
+    fn build_existential_rule() -> (
+        TermManager,
+        crate::chc::ChcSystem,
+        crate::chc::RuleId,
+        TermId,
+        TermId,
+    ) {
+        let mut terms = TermManager::new();
+        let mut system = crate::chc::ChcSystem::new();
+        let pred =
+            system.declare_predicate("ExistInv", [terms.sorts.int_sort, terms.sorts.int_sort]);
+
+        let x = terms.mk_var("univ_x", terms.sorts.int_sort);
+        let y = terms.mk_var("exist_y", terms.sorts.int_sort);
+        let true_term = terms.mk_true();
+
+        let rule_id = system.add_init_rule(
+            [("univ_x".to_string(), terms.sorts.int_sort)],
+            true_term,
+            pred,
+            [x, y],
+        );
+
+        (terms, system, rule_id, x, y)
+    }
+
+    #[test]
+    fn test_analyze_populates_existential_vars_from_head() {
+        let (terms, system, rule_id, _x, _y) = build_existential_rule();
+        let rule = system.get_rule(rule_id).expect("rule must exist");
+
+        let info = ExistentialInfo::analyze(rule, &terms);
+
+        assert!(
+            info.has_existentials,
+            "a head argument absent from `vars` must be flagged existential"
+        );
+        assert_eq!(
+            info.num_existentials(),
+            1,
+            "exactly one head argument (exist_y) is undeclared"
+        );
+        assert_eq!(info.existential_vars[0].0, "exist_y");
+
+        // The declared universal `univ_x` must NOT be misclassified as
+        // existential.
+        assert!(
+            !info
+                .existential_vars
+                .iter()
+                .any(|(name, _)| name == "univ_x")
+        );
+    }
+
+    #[test]
+    fn test_preprocess_rule_applies_skolem_substitution_to_head() {
+        let (mut terms, system, rule_id, x, y) = build_existential_rule();
+        let rule = system.get_rule(rule_id).expect("rule must exist").clone();
+        let pred = rule
+            .head
+            .as_predicate()
+            .expect("head is a predicate application")
+            .pred;
+
+        let mut handler = ExistentialHandler::new();
+        let transformed = handler
+            .preprocess_rule(&mut terms, pred, &rule)
+            .expect("preprocessing should not error");
+
+        let RuleHead::Predicate(app) = &transformed.head else {
+            panic!("transformed head must still be a predicate application");
+        };
+
+        // The universal argument (x) must be left untouched...
+        assert_eq!(
+            app.args[0], x,
+            "a declared universal variable must not be rewritten"
+        );
+        // ...but the existential argument (y) must have been replaced by
+        // a genuinely different (Skolem) term -- this is the exact
+        // substitution the old code's own comment admitted never
+        // happened ("we would also need to apply the substitution to
+        // the rule body and head constraints/arguments").
+        assert_ne!(
+            app.args[1], y,
+            "the existential argument must be replaced by its Skolem term, \
+             not left as the original (unbound, out-of-scope) variable"
+        );
+
+        let skolem_term = terms.get(app.args[1]).expect("skolem term must exist");
+        let TermKind::Var(spur) = &skolem_term.kind else {
+            panic!("skolem term must be a variable");
+        };
+        let skolem_name = terms.resolve_str(*spur).to_string();
+        assert!(
+            skolem_name.starts_with("sk_exist_y"),
+            "expected a Skolem name derived from exist_y, got {skolem_name:?}"
+        );
+
+        // The Skolem variable must be declared in the transformed rule's
+        // universal variables so the rule remains well-formed (every
+        // variable referenced in head/body is declared).
+        assert!(
+            transformed
+                .vars
+                .iter()
+                .any(|(name, _)| *name == skolem_name),
+            "the Skolem variable must be added to the transformed rule's \
+             declared variables"
+        );
     }
 }

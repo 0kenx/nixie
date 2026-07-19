@@ -130,7 +130,13 @@ enum SpecialValue {
 /// Represents a floating-point number with configurable precision.
 /// The internal representation uses a sign, mantissa (BigInt), and exponent.
 ///
-/// Value = (-1)^sign * mantissa * 2^(exponent - precision + 1)
+/// Value = (-1)^sign * mantissa * 2^exponent
+///
+/// A normalized value (as produced by `Self::normalize`, [`Self::from_f64`],
+/// [`Self::add`], [`Self::mul`], [`Self::div`], ...) has `mantissa.bits() ==
+/// precision.bits()`, i.e. the mantissa itself already occupies exactly
+/// `precision` bits (no separate `- precision + 1` offset folded into the
+/// exponent).
 #[derive(Clone)]
 pub struct ArbitraryFloat {
     /// Sign: true for negative, false for positive.
@@ -143,6 +149,42 @@ pub struct ArbitraryFloat {
     precision: Precision,
     /// Special value indicator.
     special: SpecialValue,
+}
+
+/// Right-shift `value` by `shift` bits, OR-ing a "sticky" bit into the LSB
+/// of the result whenever any of the shifted-out bits were set.
+///
+/// A plain `value >> shift` silently discards the low bits, which loses the
+/// "this value was truncated, not exact" information that directed rounding
+/// (`RoundUp` / `RoundDown`) in [`ArbitraryFloat::normalize`] depends on: if
+/// exponent alignment before an add/sub truncates a nonzero low part without
+/// leaving a trace, the subsequent rounding step can observe a spuriously
+/// exact (zero) remainder and round as if no information had been lost,
+/// producing a result on the wrong side of the true value. Folding a sticky
+/// bit into the LSB (the standard guard/round/sticky-bit technique) keeps
+/// the "inexact" fact alive through the shift without needing extra state.
+fn shift_right_sticky(value: &BigUint, shift: usize) -> BigUint {
+    if shift == 0 {
+        return value.clone();
+    }
+    let value_bits = value.bits() as usize;
+    if shift >= value_bits {
+        // Every bit is shifted out; the shifted value is 0, but the sticky
+        // bit itself survives (unless there was nothing to lose).
+        return if value.is_zero() {
+            BigUint::zero()
+        } else {
+            BigUint::one()
+        };
+    }
+    let shifted = value >> shift;
+    let mask = (BigUint::one() << shift) - BigUint::one();
+    let dropped = value & &mask;
+    if dropped.is_zero() {
+        shifted
+    } else {
+        shifted | BigUint::one()
+    }
 }
 
 impl ArbitraryFloat {
@@ -170,8 +212,14 @@ impl ArbitraryFloat {
 
     /// Create a one value with the given precision.
     pub fn one(precision: Precision) -> Self {
+        // Normalized mantissa (top bit set, `precision` bits wide) is
+        // `2^(precision-1)`; since the representation is `mantissa *
+        // 2^exponent` (see the struct docs), representing the value `1`
+        // requires `exponent = 1 - precision`, not `0` — `exponent = 0`
+        // here previously produced `2^(precision-1)` instead of `1`.
         let mantissa = BigUint::one() << (precision.bits() - 1);
-        Self::new(false, mantissa, 0, precision)
+        let exponent = 1 - precision.bits() as i64;
+        Self::new(false, mantissa, exponent, precision)
     }
 
     /// Create positive infinity.
@@ -682,7 +730,7 @@ impl ArbitraryFloat {
 
         if exp_diff >= 0 {
             // self has larger exponent - shift other's mantissa right
-            let shifted_other = &other.mantissa >> (exp_diff as usize);
+            let shifted_other = shift_right_sticky(&other.mantissa, exp_diff as usize);
             (
                 self.mantissa.clone(),
                 shifted_other,
@@ -693,7 +741,7 @@ impl ArbitraryFloat {
         } else {
             // other has larger exponent - shift self's mantissa right
             let shift = (-exp_diff) as usize;
-            let shifted_self = &self.mantissa >> shift;
+            let shifted_self = shift_right_sticky(&self.mantissa, shift);
             (
                 shifted_self,
                 other.mantissa.clone(),

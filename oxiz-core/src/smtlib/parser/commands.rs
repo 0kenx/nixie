@@ -8,6 +8,15 @@ use crate::error::{OxizError, Result};
 use crate::prelude::*;
 #[cfg(feature = "profiling")]
 use crate::profiling::{ProfilingCategory, ScopedTimer};
+use crate::sort::DataTypeConstructor;
+
+/// String-typed constructors for [`Command::DeclareDatatype`] paired with
+/// the fully sort-resolved constructor definitions registered with the
+/// sort manager, as produced by [`Parser::parse_datatype_constructor_group`].
+type DatatypeConstructorGroup = (
+    Vec<(String, Vec<(String, String)>)>,
+    Vec<DataTypeConstructor>,
+);
 
 impl<'a> Parser<'a> {
     /// Expect an opening parenthesis '('
@@ -86,6 +95,123 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Resolve a sort reference, preferring a fully-resolved `define-sort`
+    /// alias registered in the sort manager (see the `"define-sort"` command
+    /// handler below) over the parser's own textual, symbol-only alias table
+    /// consulted deep inside [`Parser::parse_sort_name`].
+    ///
+    /// This lets `(define-sort IA () (Array Int Int))` followed by
+    /// `(declare-fun f () IA)` resolve `IA` to a genuine `Array` sort
+    /// instead of falling through to a fresh, semantically-unrelated
+    /// `Uninterpreted` sort with no diagnostic. Nested references (e.g.
+    /// `(Array IA Int)`) still go through `parse_sort`'s ordinary recursive
+    /// descent and therefore don't see this table -- a narrower, documented
+    /// gap that would require changes to `parse_sort_name` itself.
+    pub(super) fn resolve_sort(&mut self) -> Result<crate::sort::SortId> {
+        if let Some(token) = self.lexer.peek()
+            && let TokenKind::Symbol(name) = &token.kind
+            && let Some(sort_id) = self.manager.sorts.resolve_alias(name)
+        {
+            self.lexer.next_token();
+            return Ok(sort_id);
+        }
+        self.parse_sort()
+    }
+
+    /// Parse a single SMT-LIB attribute value (as used by `set-info` and
+    /// similar commands), accepting any faithful token shape -- symbol,
+    /// numeral, decimal, string, hex/binary literal, or a parenthesized
+    /// s-expression -- and returning it as a verbatim string.
+    ///
+    /// Attribute values are solver metadata (e.g. `:smt-lib-version 2.6`,
+    /// `:pattern (...)`) that never participate in solving semantics, so a
+    /// textual round-trip is faithful. The s-expression case uses an
+    /// explicit depth counter rather than recursion so a maliciously deep
+    /// attribute value cannot exhaust the stack.
+    pub(super) fn parse_info_attribute_value(&mut self) -> Result<String> {
+        let first = self
+            .lexer
+            .next_token()
+            .ok_or_else(|| OxizError::ParseError {
+                position: self.lexer.position(),
+                message: "expected attribute value, found end of input".to_string(),
+            })?;
+
+        if !matches!(first.kind, TokenKind::LParen) {
+            let start = first.start;
+            return Self::attribute_token_text(first.kind).ok_or_else(|| OxizError::ParseError {
+                position: start,
+                message: "unsupported attribute value token".to_string(),
+            });
+        }
+
+        let mut parts = vec!["(".to_string()];
+        let mut depth = 1usize;
+        while depth > 0 {
+            let token = self
+                .lexer
+                .next_token()
+                .ok_or_else(|| OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: "unterminated s-expression in attribute value".to_string(),
+                })?;
+            match token.kind {
+                TokenKind::LParen => {
+                    depth += 1;
+                    parts.push("(".to_string());
+                }
+                TokenKind::RParen => {
+                    depth -= 1;
+                    parts.push(")".to_string());
+                }
+                TokenKind::Eof => {
+                    return Err(OxizError::ParseError {
+                        position: token.start,
+                        message: "unterminated s-expression in attribute value".to_string(),
+                    });
+                }
+                other => {
+                    let start = token.start;
+                    let text =
+                        Self::attribute_token_text(other).ok_or_else(|| OxizError::ParseError {
+                            position: start,
+                            message: "unsupported attribute value token".to_string(),
+                        })?;
+                    parts.push(text);
+                }
+            }
+        }
+
+        let mut out = String::new();
+        for p in &parts {
+            if p == ")" {
+                out.push(')');
+            } else if out.is_empty() || out.ends_with('(') {
+                out.push_str(p);
+            } else {
+                out.push(' ');
+                out.push_str(p);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Render a single (non-paren) attribute-value token as verbatim text,
+    /// or `None` if the token kind can never carry a scalar attribute value
+    /// (`LParen`/`RParen`/`Eof`, all handled by the caller separately).
+    fn attribute_token_text(kind: TokenKind) -> Option<String> {
+        match kind {
+            TokenKind::Symbol(s) => Some(s),
+            TokenKind::Numeral(n) => Some(n),
+            TokenKind::Decimal(d) => Some(d),
+            TokenKind::StringLit(s) => Some(s),
+            TokenKind::Hexadecimal(h) => Some(h),
+            TokenKind::Binary(b) => Some(b),
+            TokenKind::Keyword(k) => Some(format!(":{k}")),
+            TokenKind::LParen | TokenKind::RParen | TokenKind::Eof => None,
+        }
+    }
+
     /// Parse an IEEE 754 rounding mode symbol (RNE, RNA, RTP, RTN, RTZ or long forms)
     pub(super) fn parse_rounding_mode(&mut self) -> Result<RoundingMode> {
         let token = self
@@ -143,14 +269,41 @@ impl<'a> Parser<'a> {
             }
             "set-option" => {
                 let opt = self.expect_keyword()?;
-                // option value is optional / may be missing
-                let val = self.expect_symbol().unwrap_or_default();
+                // Accept any faithful value token (symbol/bool, numeral,
+                // decimal, string, hex or binary literal) instead of only
+                // symbols; error out rather than silently dropping the
+                // value as an empty string when it doesn't fit that shape.
+                let value_token = self
+                    .lexer
+                    .next_token()
+                    .ok_or_else(|| OxizError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!(
+                            "set-option ':{opt}': expected a value, found end of input"
+                        ),
+                    })?;
+                let val = match value_token.kind {
+                    TokenKind::Symbol(s) => s,
+                    TokenKind::Numeral(n) => n,
+                    TokenKind::Decimal(d) => d,
+                    TokenKind::StringLit(s) => s,
+                    TokenKind::Hexadecimal(h) => h,
+                    TokenKind::Binary(b) => b,
+                    other => {
+                        return Err(OxizError::ParseError {
+                            position: value_token.start,
+                            message: format!(
+                                "set-option ':{opt}': unsupported value token {other:?}"
+                            ),
+                        });
+                    }
+                };
                 self.expect_rparen()?;
                 Command::SetOption(opt, val)
             }
             "declare-const" => {
                 let name = self.expect_symbol()?;
-                let sort_id = self.parse_sort()?;
+                let sort_id = self.resolve_sort()?;
                 self.expect_rparen()?;
                 self.constants.insert(name.clone(), sort_id);
                 let sort_str = self.sort_id_to_string(sort_id);
@@ -168,11 +321,11 @@ impl<'a> Parser<'a> {
                         self.lexer.next_token();
                         break;
                     }
-                    let sort_id = self.parse_sort()?;
+                    let sort_id = self.resolve_sort()?;
                     arg_sort_ids.push(sort_id);
                     arg_sorts.push(self.sort_id_to_string(sort_id));
                 }
-                let ret_sort_id = self.parse_sort()?;
+                let ret_sort_id = self.resolve_sort()?;
                 let ret_sort = self.sort_id_to_string(ret_sort_id);
                 self.expect_rparen()?;
 
@@ -282,15 +435,14 @@ impl<'a> Parser<'a> {
             }
             "set-info" => {
                 let keyword = self.expect_keyword()?;
-                // Peek to decide whether the value is a string literal or a symbol
-                // without consuming the token on a failed match.
-                let value = if let Some(tok) = self.lexer.peek()
-                    && matches!(tok.kind, TokenKind::StringLit(_))
-                {
-                    self.expect_string()?
-                } else {
-                    self.expect_symbol()?
-                };
+                // Accept any faithful attribute value shape (string, symbol,
+                // numeral, decimal, hex/binary literal, or a parenthesized
+                // s-expression) instead of only string/symbol. The standard
+                // `(set-info :smt-lib-version 2.6)` header lexes its value as
+                // a `Decimal` token, and rejecting it here used to abort
+                // parsing of the *entire* script since `parse_script` parses
+                // commands eagerly.
+                let value = self.parse_info_attribute_value()?;
                 self.expect_rparen()?;
                 Command::SetInfo(keyword, value)
             }
@@ -313,11 +465,62 @@ impl<'a> Parser<'a> {
                     }
                     params.push(self.expect_symbol()?);
                 }
-                let sort_expr = self.expect_symbol()?;
-                self.expect_rparen()?;
 
-                self.sort_aliases
-                    .insert(name.clone(), (params.clone(), sort_expr.clone()));
+                if !params.is_empty() {
+                    // Parametric aliases (e.g. `(define-sort Pair (X Y) ...)`)
+                    // require substituting X/Y at each instantiation site.
+                    // Neither this parser's flat name -> name alias table
+                    // (`sort_aliases`, consulted by `parse_sort_name`) nor the
+                    // sort manager's `define_alias` registry (one fixed
+                    // `SortId` per name) can express that. Registering the
+                    // definition anyway would let a later reference to the
+                    // alias silently fall through to a fresh, unrelated
+                    // `Uninterpreted` sort with no diagnostic -- exactly the
+                    // miscompilation this rejects. Consume the body so the
+                    // token stream stays in sync, then fail honestly instead
+                    // of fabricating a wrong sort.
+                    let position = self.lexer.position();
+                    self.parse_sort()?;
+                    self.expect_rparen()?;
+                    return Err(OxizError::ParseError {
+                        position,
+                        message: format!(
+                            "define-sort '{name}': parametric sort aliases ({} parameter(s)) are not supported",
+                            params.len()
+                        ),
+                    });
+                }
+
+                // A bare-symbol body (e.g. `Int`, `MyOtherAlias`) round-trips
+                // correctly through the parser's existing name -> name alias
+                // table, so keep registering it there too: that lets nested
+                // references (e.g. `(Array MyInt Int)`, resolved by
+                // `parse_sort`'s ordinary recursive descent rather than
+                // `resolve_sort`) still see it.
+                let is_bare_symbol = matches!(
+                    self.lexer.peek().map(|t| t.kind),
+                    Some(TokenKind::Symbol(_))
+                );
+
+                // Parse the body with the full sort grammar (not just a bare
+                // symbol) so compound bodies like `(Array Int Int)` or
+                // `(_ BitVec 32)` parse instead of erroring, and resolve to a
+                // concrete `SortId` up front.
+                let sort_id = self.parse_sort()?;
+                self.expect_rparen()?;
+                let sort_expr = self.sort_id_to_string(sort_id);
+
+                if is_bare_symbol {
+                    self.sort_aliases
+                        .insert(name.clone(), (params.clone(), sort_expr.clone()));
+                }
+                // Always register the fully-resolved sort in the sort
+                // manager's general alias table so top-level references to
+                // the alias (via `resolve_sort`, used by `declare-const`,
+                // `declare-fun`, and `define-fun`) recover the exact sort
+                // even for a compound body that the name -> name table
+                // cannot express.
+                self.manager.sorts.define_alias(&name, sort_id);
 
                 Command::DefineSort(name, params, sort_expr)
             }
@@ -327,6 +530,16 @@ impl<'a> Parser<'a> {
                 self.expect_lparen()?;
 
                 let mut params: Vec<(String, String)> = Vec::new();
+                // Parallel to `params`, keeps the already-resolved `SortId`
+                // for each parameter so placeholder-var creation below can
+                // reuse it directly instead of re-resolving the stringified
+                // sort. Re-resolving `sort_id_to_string(param_sort_id)`
+                // through `parse_sort_name` cannot round-trip a compound
+                // sort like `(Array Int Int)` (that function only
+                // understands flat sort *names*), which would silently give
+                // the placeholder variable an unrelated `Uninterpreted`
+                // sort and break sort-checking while parsing the body.
+                let mut param_sort_ids: Vec<crate::sort::SortId> = Vec::new();
                 loop {
                     if let Some(t) = self.lexer.peek()
                         && matches!(t.kind, TokenKind::RParen)
@@ -336,13 +549,14 @@ impl<'a> Parser<'a> {
                     }
                     self.expect_lparen()?;
                     let param_name = self.expect_symbol()?;
-                    let param_sort_id = self.parse_sort()?;
+                    let param_sort_id = self.resolve_sort()?;
                     let param_sort = self.sort_id_to_string(param_sort_id);
                     self.expect_rparen()?;
                     params.push((param_name, param_sort));
+                    param_sort_ids.push(param_sort_id);
                 }
 
-                let ret_sort_id = self.parse_sort()?;
+                let ret_sort_id = self.resolve_sort()?;
                 let ret_sort = self.sort_id_to_string(ret_sort_id);
 
                 // Save any shadowed bindings
@@ -351,9 +565,9 @@ impl<'a> Parser<'a> {
                     .filter_map(|(pname, _)| self.bindings.get(pname).map(|&t| (pname.clone(), t)))
                     .collect();
 
-                // Create placeholder vars for parameters
-                for (pname, psort) in &params {
-                    let sort_id = self.parse_sort_name(psort)?;
+                // Create placeholder vars for parameters, reusing the
+                // already-resolved sort rather than re-parsing it from text.
+                for ((pname, _psort), &sort_id) in params.iter().zip(param_sort_ids.iter()) {
                     let param_term = self.manager.mk_var(pname, sort_id);
                     self.bindings.insert(pname.clone(), param_term);
                 }
@@ -383,8 +597,44 @@ impl<'a> Parser<'a> {
             }
             "declare-datatypes" => self.parse_declare_datatypes()?,
             "declare-datatype" => self.parse_declare_datatype()?,
+            "declare-sort" => {
+                // (declare-sort <symbol> <numeral>)
+                let name = self.expect_symbol()?;
+                let arity = self.parse_optional_numeral(0)?;
+                self.expect_rparen()?;
+                // Record the parametric-sort declaration (arity 0 is the
+                // common "uninterpreted sort" case; arity > 0 is recorded
+                // for well-formedness but application of such sorts beyond
+                // `Array`/`BitVec`/`FloatingPoint` is not yet supported and
+                // will surface its own honest parse error at use-site).
+                self.manager
+                    .sorts
+                    .declare_parametric_sort(&name, arity as usize);
+                Command::DeclareSort(name, arity)
+            }
+            "define-fun-rec" | "define-funs-rec" => {
+                // Recursively-defined functions are not evaluated: silently
+                // treating the function as an unconstrained uninterpreted
+                // function (the previous "skip unknown command" behavior)
+                // can produce wrong sat/unsat answers with no diagnostic.
+                // Surface an explicit, honest error instead.
+                self.reject_command(
+                    &cmd_name,
+                    "recursive function definitions are not supported",
+                )?
+            }
+            "get-unsat-assumptions" => {
+                // The assumptions passed to the most recent
+                // `check-sat-assuming` are tracked by the solver context, which
+                // reports an unsatisfiable subset after an `unsat` verdict.
+                self.expect_rparen()?;
+                Command::GetUnsatAssumptions
+            }
             _ => {
-                // Skip unknown command (balanced paren skipping)
+                // Genuinely unrecognized (e.g. vendor/tooling-specific)
+                // commands are skipped for lenient interoperability, same
+                // as before. Commands with real solving-semantics impact
+                // are special-cased above and rejected honestly instead.
                 let mut depth = 1;
                 while depth > 0 {
                     match self.lexer.next_token().map(|t| t.kind) {
@@ -399,6 +649,30 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Some(cmd))
+    }
+
+    /// Consume the remainder of a recognized-but-unsupported command's
+    /// token stream (balanced-paren skip, mirroring the fallback used for
+    /// genuinely unrecognized commands) and then fail with an explicit,
+    /// honest error. Used for commands whose semantics we understand well
+    /// enough to know that silently ignoring them would risk a wrong
+    /// sat/unsat answer (e.g. `define-fun-rec`), so — unlike truly unknown
+    /// commands — they must never be balance-skipped and continued past.
+    fn reject_command(&mut self, cmd_name: &str, reason: &str) -> Result<Command> {
+        let position = self.lexer.position();
+        let mut depth = 1;
+        while depth > 0 {
+            match self.lexer.next_token().map(|t| t.kind) {
+                Some(TokenKind::LParen) => depth += 1,
+                Some(TokenKind::RParen) => depth -= 1,
+                Some(TokenKind::Eof) | None => break,
+                _ => {}
+            }
+        }
+        Err(OxizError::ParseError {
+            position,
+            message: format!("unsupported command '{cmd_name}': {reason}"),
+        })
     }
 
     /// Parse an optional numeral from the token stream; return `default` if none present
@@ -443,13 +717,55 @@ impl<'a> Parser<'a> {
             datatype_names.push(dt_name);
         }
 
-        // Parse constructors list
+        // Parse the constructor-group list: exactly one group per declared
+        // datatype name, in the same order (this correctly handles both
+        // multiple independent datatypes and mutually recursive ones,
+        // since all `datatype_names` are known before any group's
+        // selectors are parsed).
         self.expect_lparen()?;
 
+        let mut constructors: Vec<(String, Vec<(String, String)>)> = Vec::new();
+
+        for dt_name in &datatype_names {
+            self.expect_lparen()?;
+
+            let (dt_constructors, ctor_defs) = self.parse_datatype_constructor_group()?;
+
+            let dt_sort = self.manager.sorts.mk_datatype_sort(dt_name);
+            for (ctor_name, _selectors) in &dt_constructors {
+                self.dt_constructors.insert(ctor_name.clone(), dt_sort);
+            }
+            self.manager.sorts.declare_datatype(dt_name, ctor_defs);
+
+            constructors.extend(dt_constructors);
+        }
+
+        // Close the constructor-group list and the whole command.
+        self.expect_rparen()?;
+        self.expect_rparen()?;
+
+        // `Command::DeclareDatatype` only carries a single (name,
+        // constructors) pair. Join all declared names so a multi/mutual
+        // datatype script's summary doesn't silently drop which datatypes
+        // were declared; the authoritative per-datatype sort definitions
+        // and constructor->sort bindings above are already correctly
+        // registered on the parser/sort-manager state regardless of how
+        // this summary command is shaped.
+        let name = datatype_names.join(",");
+
+        Ok(Command::DeclareDatatype { name, constructors })
+    }
+
+    /// Parse one `(ctor (selector sort) ...) ...` constructor group for a
+    /// single datatype, i.e. the body between an already-consumed opening
+    /// '(' and its matching closing ')'. Returns both the string-typed
+    /// form (used by [`Command::DeclareDatatype`]) and the fully-typed
+    /// [`crate::sort::DataTypeConstructor`] form (used to register the
+    /// datatype's real definition, including selector sorts, with the
+    /// sort manager).
+    fn parse_datatype_constructor_group(&mut self) -> Result<DatatypeConstructorGroup> {
         let mut constructors = Vec::new();
-
-        // Opening paren for the first datatype's constructors
-        self.expect_lparen()?;
+        let mut ctor_defs = Vec::new();
 
         loop {
             if let Some(t) = self.lexer.peek()
@@ -463,6 +779,7 @@ impl<'a> Parser<'a> {
             let ctor_name = self.expect_symbol()?;
 
             let mut selectors = Vec::new();
+            let mut selector_defs = Vec::new();
             loop {
                 if let Some(t) = self.lexer.peek()
                     && matches!(t.kind, TokenKind::RParen)
@@ -473,29 +790,24 @@ impl<'a> Parser<'a> {
 
                 self.expect_lparen()?;
                 let selector_name = self.expect_symbol()?;
-                let selector_sort = self.expect_symbol()?;
+                // Parse a full sort expression (not just a bare symbol) so
+                // parametric selector sorts like `(Array Int Int)` or
+                // `(_ BitVec 8)` parse correctly instead of erroring.
+                let selector_sort_id = self.resolve_sort()?;
+                let selector_sort = self.sort_id_to_string(selector_sort_id);
                 self.expect_rparen()?;
+                selector_defs.push((self.manager.intern_str(&selector_name), selector_sort_id));
                 selectors.push((selector_name, selector_sort));
             }
 
+            ctor_defs.push(DataTypeConstructor {
+                name: self.manager.intern_str(&ctor_name),
+                selectors: selector_defs.into_iter().collect(),
+            });
             constructors.push((ctor_name, selectors));
         }
 
-        // Close outer constructor list and outer command list
-        self.expect_rparen()?;
-        self.expect_rparen()?;
-
-        let name = datatype_names
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "UnknownDatatype".to_string());
-
-        let dt_sort = self.manager.sorts.mk_datatype_sort(&name);
-        for (ctor_name, _selectors) in &constructors {
-            self.dt_constructors.insert(ctor_name.clone(), dt_sort);
-        }
-
-        Ok(Command::DeclareDatatype { name, constructors })
+        Ok((constructors, ctor_defs))
     }
 
     /// Parse `(declare-datatype name (...))` — single-datatype form
@@ -503,36 +815,7 @@ impl<'a> Parser<'a> {
         let name = self.expect_symbol()?;
         self.expect_lparen()?;
 
-        let mut constructors = Vec::new();
-        loop {
-            if let Some(t) = self.lexer.peek()
-                && matches!(t.kind, TokenKind::RParen)
-            {
-                self.lexer.next_token();
-                break;
-            }
-
-            self.expect_lparen()?;
-            let ctor_name = self.expect_symbol()?;
-
-            let mut selectors = Vec::new();
-            loop {
-                if let Some(t) = self.lexer.peek()
-                    && matches!(t.kind, TokenKind::RParen)
-                {
-                    self.lexer.next_token();
-                    break;
-                }
-
-                self.expect_lparen()?;
-                let selector_name = self.expect_symbol()?;
-                let selector_sort = self.expect_symbol()?;
-                self.expect_rparen()?;
-                selectors.push((selector_name, selector_sort));
-            }
-
-            constructors.push((ctor_name, selectors));
-        }
+        let (constructors, ctor_defs) = self.parse_datatype_constructor_group()?;
 
         self.expect_rparen()?;
 
@@ -540,6 +823,7 @@ impl<'a> Parser<'a> {
         for (ctor_name, _selectors) in &constructors {
             self.dt_constructors.insert(ctor_name.clone(), dt_sort);
         }
+        self.manager.sorts.declare_datatype(&name, ctor_defs);
 
         Ok(Command::DeclareDatatype { name, constructors })
     }

@@ -2,7 +2,7 @@
 //!
 //! Implements the theory of fixed-width bit-vectors with arithmetic and bitwise operations.
 //!
-//! Reference: Z3's `src/smt/theory_bv.cpp` at `../z3/src/smt/`
+//! Reference: Z3's `src/smt/theory_bv.cpp`
 
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]

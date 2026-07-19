@@ -7,8 +7,11 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
-use oxiz::{Solver, TermManager};
-use oxiz::core::tactic::*;
+use oxiz::TermManager;
+use oxiz::core::tactic::{
+    CtxSolverSimplifyTactic, EliminateUnconstrainedTactic, Goal, PropagateValuesTactic,
+    SimplifyTactic, SolveEqsTactic, SplitTactic, TacticResult,
+};
 
 #[derive(Debug, Arbitrary)]
 enum TacticType {
@@ -30,7 +33,7 @@ struct TacticApplication {
 fuzz_target!(|data: &[u8]| {
     let mut unstructured = Unstructured::new(data);
 
-    let num_applications: u8 = match unstructured.arbitrary() {
+    let num_applications: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 10) + 1,
         Err(_) => return,
     };
@@ -70,21 +73,16 @@ fuzz_target!(|data: &[u8]| {
             _ => tm.mk_bool(true),
         };
 
-        // Apply tactic
-        let _result = match app.tactic {
-            TacticType::Simplify => simplify::apply_simplify(&mut tm, formula),
-            TacticType::Propagate => propagate::apply_propagate(&mut tm, formula),
-            TacticType::SolveEqs => solve_eqs::apply_solve_eqs(&mut tm, formula),
-            TacticType::Eliminate => eliminate::apply_eliminate(&mut tm, formula),
-            TacticType::Split => {
-                let branches = split::apply_split(&mut tm, formula);
-                if !branches.is_empty() {
-                    branches[0]
-                } else {
-                    formula
-                }
-            }
-            TacticType::CtxSimplify => ctx_simplify::apply_ctx_simplify(&mut tm, formula),
+        // Apply tactic - we don't care about the transformed goal, only that
+        // the tactic doesn't crash or panic on arbitrary input.
+        let goal = Goal::new(vec![formula]);
+        let _result: Result<TacticResult, _> = match app.tactic {
+            TacticType::Simplify => SimplifyTactic::new(&mut tm).apply_mut(&goal),
+            TacticType::Propagate => PropagateValuesTactic::new(&mut tm).apply_mut(&goal),
+            TacticType::SolveEqs => SolveEqsTactic::new(&mut tm).apply_mut(&goal),
+            TacticType::Eliminate => EliminateUnconstrainedTactic::new(&mut tm).apply_mut(&goal),
+            TacticType::Split => SplitTactic::new(&mut tm).apply_mut(&goal),
+            TacticType::CtxSimplify => CtxSolverSimplifyTactic::new(&mut tm).apply_mut(&goal),
         };
     }
 });

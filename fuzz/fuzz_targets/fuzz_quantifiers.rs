@@ -7,7 +7,7 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
-use oxiz::{Solver, TermManager};
+use oxiz::{Solver, SortId, TermManager};
 
 #[derive(Debug, Arbitrary)]
 enum Quantifier {
@@ -26,7 +26,7 @@ struct QuantifiedFormula {
 fuzz_target!(|data: &[u8]| {
     let mut unstructured = Unstructured::new(data);
 
-    let num_formulas: u8 = match unstructured.arbitrary() {
+    let num_formulas: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 8) + 1,
         Err(_) => return,
     };
@@ -44,11 +44,17 @@ fuzz_target!(|data: &[u8]| {
 
         let num_quant_vars = (formula.num_vars % 3) + 1;
 
-        // Create quantified variables
+        // Create quantified variables. `var_names` mirrors `quant_vars` by
+        // name/sort: `mk_forall`/`mk_exists` bind free variables in `body`
+        // by matching this (name, sort) list against the free-variable
+        // terms created via `mk_var` below.
         let mut quant_vars = Vec::new();
+        let mut var_names: Vec<(String, SortId)> = Vec::new();
         for i in 0..num_quant_vars {
-            let v = tm.mk_var(&format!("q{}", i), tm.sorts.int_sort);
+            let name = format!("q{}", i);
+            let v = tm.mk_var(&name, tm.sorts.int_sort);
             quant_vars.push(v);
+            var_names.push((name, tm.sorts.int_sort));
         }
 
         // Create body based on body_type
@@ -82,9 +88,11 @@ fuzz_target!(|data: &[u8]| {
         };
 
         // Create quantified formula
+        let var_refs: Vec<(&str, SortId)> =
+            var_names.iter().map(|(n, s)| (n.as_str(), *s)).collect();
         let quantified = match formula.quantifier {
-            Quantifier::Forall => tm.mk_forall(quant_vars, body),
-            Quantifier::Exists => tm.mk_exists(quant_vars, body),
+            Quantifier::Forall => tm.mk_forall(var_refs, body),
+            Quantifier::Exists => tm.mk_exists(var_refs, body),
         };
 
         solver.assert(quantified, &mut tm);

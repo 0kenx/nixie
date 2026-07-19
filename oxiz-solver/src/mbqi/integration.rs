@@ -8,9 +8,10 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use core::fmt;
+use oxiz_core::ast::traversal::collect_free_vars;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::interner::Spur;
-use oxiz_core::sort::SortId;
+use oxiz_core::sort::{SortId, SortKind};
 use smallvec::SmallVec;
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
@@ -21,8 +22,38 @@ use super::finite_model::FiniteModelFinder;
 use super::heuristics::MBQIBudget;
 use super::instantiation::InstantiationEngine;
 use super::lazy_instantiation::LazyInstantiator;
+use super::model_completion::CompletedModel;
 use super::model_completion::ModelCompleter;
 use super::{Instantiation, MBQIResult, MBQIStats, QuantifiedFormula, QuantifierId};
+
+/// Upper bound on the number of candidate values the counterexample generator
+/// enumerates per bound variable.
+///
+/// This MUST stay in sync with
+/// [`CounterExampleGenerator::max_candidates_per_var`](super::counterexample).
+/// It is used to decide whether a *finite* domain (e.g. a small uninterpreted
+/// sort universe) was enumerated *exhaustively*: only then can the absence of a
+/// counterexample be reported as a genuine `Satisfied` (sat) result. A finite
+/// sample over an infinite or incompletely-enumerated domain proves nothing.
+const FINITE_ENUM_LIMIT: usize = 10;
+
+/// Upper bound on the number of candidate *tuples* (cartesian-product
+/// combinations across all bound variables) the counterexample generator
+/// enumerates for a single quantifier.
+///
+/// This MUST stay in sync with the `max_cex_per_quantifier * 20` bound passed
+/// to [`CounterExampleGenerator::enumerate_combinations`](super::counterexample)
+/// from `generate` (currently `5 * 20 = 100`).
+///
+/// Enumeration is truncated once this many combinations have been produced, and
+/// the generator does **not** lower `all_evaluations_ground` on that truncation
+/// (the odometer varies variable 0 fastest, so trailing variables never leave
+/// their first candidate).  Therefore, even when every individual bound variable
+/// ranges over a genuinely finite domain, the absence of a counterexample proves
+/// satisfaction **only** when the *product* of the per-variable candidate-domain
+/// sizes does not exceed this cap -- otherwise some tuples were never tried and
+/// `Satisfied` (sat) would be unsound.
+const COMBINATION_ENUM_CAP: usize = 100;
 
 /// Callback trait for solver communication
 pub trait SolverCallback: fmt::Debug {
@@ -146,7 +177,6 @@ impl MBQIIntegration {
         {
             self.start_time = Some(Instant::now());
         }
-        self.current_round = 0;
 
         if self.quantifiers.is_empty() {
             return MBQIResult::NoQuantifiers;
@@ -157,7 +187,12 @@ impl MBQIIntegration {
         // previous instantiation rounds are discovered as fresh candidates.
         self.cex_generator.clear_cache();
 
-        // Check round limit
+        // Check round limit. `current_round` is deliberately NOT reset here:
+        // `run()` is invoked once per outer solver iteration (see
+        // `check_with_model`), so the counter must accumulate across calls
+        // for `max_rounds` to bound the *total* number of MBQI rounds for a
+        // single `solve()` invocation. It is reset only by `clear()` (a new
+        // solve) or `MBQIIntegration::new()`.
         if self.current_round >= self.max_rounds {
             self.update_final_stats();
             return MBQIResult::Unknown;
@@ -213,6 +248,23 @@ impl MBQIIntegration {
 
         // Collect quantifiers first to avoid borrow checker issues
         let quantifiers: Vec<_> = self.quantifiers.to_vec();
+
+        // Fast path: if every instantiable quantifier has a body that
+        // simplifies to `true` independently of its bound variables (e.g.
+        // `forall x. f(x) = f(x)`), the whole quantified block is valid over
+        // its entire domain — infinite or not — so the model already satisfies
+        // it.  Recognizing this up front (before any enumerative
+        // instantiation) restores `Satisfied` (sat) in a single round for
+        // simple UFLIA-style tautological quantifiers that the finite-domain
+        // sampler alone cannot certify because the bound variable ranges over
+        // the infinite Int domain.
+        if self.all_quantifiers_trivially_valid(&quantifiers, manager) {
+            let result = MBQIResult::Satisfied;
+            callback.on_round_end(self.current_round, &result);
+            self.update_final_stats();
+            return result;
+        }
+
         for quantifier in &quantifiers {
             if !quantifier.can_instantiate() {
                 continue;
@@ -239,9 +291,15 @@ impl MBQIIntegration {
                 if !self.budget.consume(quantifier.term, 1) {
                     break;
                 }
-                // Build the instantiation lemma: body[x1/v1, ..., xn/vn]
-                let ground_body =
-                    self.apply_substitution(quantifier.body, &cex.assignment, manager);
+                // Build the instantiation lemma: body[x1/v1, ..., xn/vn].
+                // A `None` result means the substituted body still contained a
+                // bound variable of this quantifier as a free occurrence -- an
+                // internal error; such a lemma must never be emitted.
+                let Some(ground_body) =
+                    self.apply_substitution(quantifier, &cex.assignment, manager)
+                else {
+                    continue;
+                };
 
                 let inst = cex.to_instantiation(ground_body);
 
@@ -289,17 +347,28 @@ impl MBQIIntegration {
 
         // Step 3: Check result
         if all_instantiations.is_empty() {
-            if all_evaluations_fully_ground {
+            if all_evaluations_fully_ground
+                && self.all_domains_finitely_exhausted(&quantifiers, &completed_model, manager)
+            {
                 // Every quantifier body evaluated to concrete True under every
-                // candidate assignment.  The completed model genuinely satisfies
-                // all quantifiers.
+                // candidate assignment AND every bound variable ranged over a
+                // genuinely finite domain that was enumerated *exhaustively*
+                // (e.g. Bool, or a small uninterpreted-sort universe).  Only
+                // then does the completed model provably satisfy all
+                // quantifiers, so `Satisfied` (sat) is sound.
                 let result = MBQIResult::Satisfied;
                 callback.on_round_end(self.current_round, &result);
                 self.update_final_stats();
                 return result;
             }
-            // Some evaluations produced symbolic residuals -- we cannot
-            // conclusively say the model satisfies all quantifiers.
+            // Otherwise: either some evaluations produced symbolic residuals,
+            // OR a bound variable ranged over an infinite domain (Int, Real,
+            // String, ...) or a domain that was only *sampled* rather than
+            // fully enumerated (BitVec, large universes, ...).  A finite sample
+            // over such a domain proves nothing -- for example every candidate
+            // in `-2..=5` satisfies `(>= x (- 10))` even though the universal
+            // is false at `x = -11`.  We must NOT claim `Satisfied` here; we
+            // fall through to enumerative seeding and ultimately `Unknown`.
             // Generate enumerative instantiations to seed the solver with
             // ground terms (e.g. select(a,0), select(a,1) etc.) so that
             // subsequent rounds have model values for these terms.
@@ -367,150 +436,212 @@ impl MBQIIntegration {
         result
     }
 
-    /// Apply substitution to a term (used for building instantiation lemmas)
+    /// Build an instantiation lemma by substituting a quantifier's bound
+    /// variables with concrete witness terms.
+    ///
+    /// Substitution is delegated to [`TermManager::substitute`], which handles
+    /// **every** `TermKind` (Xor, Distinct, all bit-vector / string /
+    /// floating-point operators, nested quantifiers with capture-avoiding
+    /// alpha-renaming, ...).  A previous local copy fell through with a
+    /// catch-all `_ => term` arm and therefore silently *skipped* substitution
+    /// inside those constructs, leaving bound variables in the resulting lemma
+    /// -- which, because declared constants share the `TermKind::Var`
+    /// representation, could constrain a stray global constant and yield
+    /// spurious UNSAT.
+    ///
+    /// The map is keyed on the interned `(name, sort)` variable term rather
+    /// than the bare name, so a constant that merely shares a name but has a
+    /// different sort is left untouched.
+    ///
+    /// Returns `None` when the substituted body still contains one of this
+    /// quantifier's bound variables as a *free* occurrence.  That is an
+    /// internal error (the substitution failed to reach some position), and
+    /// such a lemma must never be emitted.
     fn apply_substitution(
         &self,
-        term: TermId,
+        quantifier: &QuantifiedFormula,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
-    ) -> TermId {
-        let mut cache = FxHashMap::default();
-        self.apply_substitution_cached(term, subst, manager, &mut cache)
-    }
-
-    fn apply_substitution_cached(
-        &self,
-        term: TermId,
-        subst: &FxHashMap<Spur, TermId>,
-        manager: &mut TermManager,
-        cache: &mut FxHashMap<TermId, TermId>,
-    ) -> TermId {
-        if let Some(&cached) = cache.get(&term) {
-            return cached;
+    ) -> Option<TermId> {
+        let mut term_subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for &(name, sort) in quantifier.bound_vars.iter() {
+            if let Some(&value) = subst.get(&name) {
+                let name_str = manager.resolve_str(name).to_string();
+                let var_id = manager.mk_var(&name_str, sort);
+                term_subst.insert(var_id, value);
+            }
         }
 
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
+        if term_subst.is_empty() {
+            // Nothing to substitute: the body is already the lemma (this also
+            // covers propositional quantifiers with zero bound variables).
+            return Some(quantifier.body);
+        }
 
-        let result = match &t.kind {
-            TermKind::Var(name) => subst.get(name).copied().unwrap_or(term),
-            TermKind::Not(arg) => {
-                let new_arg = self.apply_substitution_cached(*arg, subst, manager, cache);
-                manager.mk_not(new_arg)
-            }
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_or(new_args)
-            }
-            TermKind::Implies(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_implies(new_lhs, new_rhs)
-            }
-            TermKind::Eq(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_eq(new_lhs, new_rhs)
-            }
-            TermKind::Lt(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_lt(new_lhs, new_rhs)
-            }
-            TermKind::Le(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_le(new_lhs, new_rhs)
-            }
-            TermKind::Gt(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_gt(new_lhs, new_rhs)
-            }
-            TermKind::Ge(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_ge(new_lhs, new_rhs)
-            }
-            TermKind::Add(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_add(new_args)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_sub(new_lhs, new_rhs)
-            }
-            TermKind::Mul(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_mul(new_args)
-            }
-            TermKind::Div(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_div(new_lhs, new_rhs)
-            }
-            TermKind::Mod(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_mod(new_lhs, new_rhs)
-            }
-            TermKind::Neg(arg) => {
-                let new_arg = self.apply_substitution_cached(*arg, subst, manager, cache);
-                manager.mk_neg(new_arg)
-            }
-            TermKind::Ite(cond, then_br, else_br) => {
-                let new_cond = self.apply_substitution_cached(*cond, subst, manager, cache);
-                let new_then = self.apply_substitution_cached(*then_br, subst, manager, cache);
-                let new_else = self.apply_substitution_cached(*else_br, subst, manager, cache);
-                manager.mk_ite(new_cond, new_then, new_else)
-            }
-            TermKind::Apply { func, args } => {
-                let func_name = manager.resolve_str(*func).to_string();
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_apply(&func_name, new_args, t.sort)
-            }
-            // Array select: recurse into both array and index so that bound
-            // variables appearing in the index (e.g., `select(a, i)`) are
-            // properly substituted.
-            TermKind::Select(array, index) => {
-                let new_array = self.apply_substitution_cached(*array, subst, manager, cache);
-                let new_index = self.apply_substitution_cached(*index, subst, manager, cache);
-                manager.mk_select(new_array, new_index)
-            }
-            // Array store: substitute in all three sub-terms.
-            TermKind::Store(array, index, value) => {
-                let new_array = self.apply_substitution_cached(*array, subst, manager, cache);
-                let new_index = self.apply_substitution_cached(*index, subst, manager, cache);
-                let new_value = self.apply_substitution_cached(*value, subst, manager, cache);
-                manager.mk_store(new_array, new_index, new_value)
-            }
-            // Constants and other terms don't need substitution
-            _ => term,
-        };
+        let result = manager.substitute(quantifier.body, &term_subst);
 
-        cache.insert(term, result);
-        result
+        // Soundness guard: a free occurrence of any bound variable that we set
+        // out to replace means the lemma is not properly grounded.  Reject it
+        // rather than emit a lemma that mentions a stray variable.  This is
+        // shadowing-aware because `collect_free_vars` respects inner binders,
+        // so a nested quantifier legitimately re-binding the same name is not
+        // flagged.
+        let free = collect_free_vars(result, manager);
+        if term_subst.keys().any(|k| free.contains(k)) {
+            return None;
+        }
+
+        Some(result)
+    }
+
+    /// Determine whether every tracked, instantiable quantifier has a body that
+    /// simplifies to the constant `true` regardless of its bound variables.
+    ///
+    /// Such a quantifier (`forall x. body` or `exists x. body` with `body ≡ ⊤`)
+    /// is valid over its whole domain — infinite or not — so reporting
+    /// `Satisfied` is sound without any finite-domain enumeration.  Returns
+    /// `false` when there is no instantiable quantifier, or when any of them has
+    /// a body that does not provably collapse to `true`; that keeps the check
+    /// conservative (it can only ever *grant* sat for genuine tautologies).
+    fn all_quantifiers_trivially_valid(
+        &self,
+        quantifiers: &[QuantifiedFormula],
+        manager: &mut TermManager,
+    ) -> bool {
+        let mut saw_quantifier = false;
+        for quantifier in quantifiers {
+            if !quantifier.can_instantiate() {
+                continue;
+            }
+            saw_quantifier = true;
+            let simplified = self.deep_simplify(quantifier.body, manager);
+            let is_true = manager
+                .get(simplified)
+                .is_some_and(|t| matches!(t.kind, TermKind::True));
+            if !is_true {
+                return false;
+            }
+        }
+        saw_quantifier
+    }
+
+    /// Determine whether every tracked, instantiable quantifier ranges only
+    /// over genuinely finite domains that the counterexample generator
+    /// enumerates *exhaustively*.
+    ///
+    /// This gates the `Satisfied` (sat) result: the counterexample generator
+    /// only samples a bounded set of candidate values per bound variable, so
+    /// "no counterexample found" is a proof of satisfaction **only** when that
+    /// sample covered the entire domain.  Over an infinite domain (Int, Real,
+    /// String) or a merely-sampled one (BitVec, large universes), the absence
+    /// of a counterexample proves nothing and the honest answer is `Unknown`.
+    fn all_domains_finitely_exhausted(
+        &self,
+        quantifiers: &[QuantifiedFormula],
+        model: &CompletedModel,
+        manager: &TermManager,
+    ) -> bool {
+        for quantifier in quantifiers {
+            if !quantifier.can_instantiate() {
+                continue;
+            }
+            // Every bound variable must range over a genuinely finite domain
+            // AND the *product* of those domain sizes must fit within the
+            // generator's per-quantifier combination cap.  The counterexample
+            // generator enumerates only the first `COMBINATION_ENUM_CAP` tuples
+            // (odometer order, variable 0 fastest) and does not flag the
+            // truncation, so a cartesian product larger than the cap would leave
+            // some tuples untried -- e.g. `forall x,y,z:U. P` with |U| = 5 has
+            // 125 > 100 combinations, and P could be false only at an
+            // un-enumerated tuple.  In that case "no counterexample found" does
+            // NOT prove satisfaction and we must fall through to `Unknown`.
+            let mut product: usize = 1;
+            for &(_name, sort) in quantifier.bound_vars.iter() {
+                let Some(count) = self.sort_candidate_count(sort, model, manager) else {
+                    // Infinite (Int/Real/String) or merely-sampled (BitVec, ...)
+                    // domain, or an oversized universe: not exhaustively covered.
+                    return false;
+                };
+                product = product.saturating_mul(count);
+                if product > COMBINATION_ENUM_CAP {
+                    // The cartesian product exceeds what the generator enumerates;
+                    // enumeration was truncated, so absence of a counterexample
+                    // proves nothing.
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether a single sort denotes a finite domain that the counterexample
+    /// generator enumerates exhaustively (see [`FINITE_ENUM_LIMIT`]).
+    ///
+    /// A sort is "finitely exhausted" exactly when
+    /// [`sort_candidate_count`](Self::sort_candidate_count) yields a bounded
+    /// per-variable candidate count.
+    fn sort_finitely_exhausted(
+        &self,
+        sort: SortId,
+        model: &CompletedModel,
+        manager: &TermManager,
+    ) -> bool {
+        self.sort_candidate_count(sort, model, manager).is_some()
+    }
+
+    /// Upper bound on the number of distinct candidate values the counterexample
+    /// generator enumerates for a bound variable of `sort`, or `None` when the
+    /// sort is not exhaustively enumerable (infinite, only sampled, or a
+    /// universe larger than [`FINITE_ENUM_LIMIT`]).
+    ///
+    /// The returned count is a sound *upper* bound on the length of the
+    /// per-variable candidate list built by
+    /// [`CounterExampleGenerator::build_candidate_lists`](super::counterexample)
+    /// (universe elements plus same-sort model values, truncated to
+    /// [`FINITE_ENUM_LIMIT`]).  Using an upper bound keeps the product test in
+    /// [`all_domains_finitely_exhausted`](Self::all_domains_finitely_exhausted)
+    /// conservative: if the bound fits the combination cap, the real enumeration
+    /// does too, so no tuple is silently skipped.
+    fn sort_candidate_count(
+        &self,
+        sort: SortId,
+        model: &CompletedModel,
+        manager: &TermManager,
+    ) -> Option<usize> {
+        let s = manager.sorts.get(sort)?;
+        match &s.kind {
+            // Bool has exactly two elements (true / false), both always present
+            // in the generator's default candidate list; same-sort model values
+            // can only ever be true or false, so the list never exceeds 2.
+            SortKind::Bool => Some(2),
+            // An uninterpreted sort is finite only when the completed model has
+            // pinned a finite universe for it, small enough that every element
+            // survives the generator's `FINITE_ENUM_LIMIT` truncation.  The
+            // candidate list is `universe ∪ {same-sort model values}` (dupes
+            // dropped) truncated to `FINITE_ENUM_LIMIT`; `universe.len() +
+            // model-value count` is a sound upper bound on its length.
+            SortKind::Uninterpreted(_) => {
+                let universe = model.universe(sort)?;
+                if universe.is_empty() || universe.len() > FINITE_ENUM_LIMIT {
+                    return None;
+                }
+                let model_values = model
+                    .assignments
+                    .keys()
+                    .filter(|&&term| manager.get(term).is_some_and(|t| t.sort == sort))
+                    .count();
+                Some(
+                    universe
+                        .len()
+                        .saturating_add(model_values)
+                        .min(FINITE_ENUM_LIMIT),
+                )
+            }
+            // Int / Real / String are infinite; BitVec / FloatingPoint /
+            // Array / Datatype / parametric sorts are not exhaustively
+            // enumerated by the finite candidate sampler.
+            _ => None,
+        }
     }
 
     /// Clear the deduplication cache so that fresh instantiations (e.g.
@@ -571,10 +702,46 @@ impl MBQIIntegration {
         self.lazy_instantiator.clear();
     }
 
-    /// Collect ground terms from trigger patterns
-    pub fn collect_ground_terms(&mut self, _term: TermId, _manager: &TermManager) {
-        // Stub implementation - would collect ground terms for E-matching
-        // This is a placeholder for future E-matching integration
+    /// Collect ground terms from a trigger pattern and seed them as MBQI
+    /// instantiation candidates.
+    ///
+    /// A trigger such as `f(x, g(0))` is a bare subterm lifted out of the
+    /// enclosing `forall`/`exists`, so this function has no access to which
+    /// `TermKind::Var` occurrences are the quantifier's bound variables
+    /// (bound variables and declared constants share the same `Var`
+    /// representation; see `Self::apply_substitution`). To stay sound
+    /// without that context, a subterm is only registered when its entire
+    /// subtree contains **no** `Var` node at all -- i.e. it is a genuinely
+    /// closed/ground term (numeric and other literals, and applications
+    /// built purely from such literals, e.g. `g(0)`). Such terms evaluate to
+    /// the same value under every model and are always safe instantiation
+    /// candidates. Declared free constants are seeded separately via
+    /// [`Self::register_declared_const`].
+    pub fn collect_ground_terms(&mut self, term: TermId, manager: &TermManager) {
+        // `collect_subterms` returns every subterm (including `term` itself)
+        // in post-order, so children are visited before their parents and a
+        // single forward pass can compute groundness bottom-up.
+        let subterms = oxiz_core::ast::traversal::collect_subterms(term, manager);
+        let mut is_ground: FxHashMap<TermId, bool> = FxHashMap::default();
+
+        for &sub in &subterms {
+            let Some(t) = manager.get(sub) else {
+                is_ground.insert(sub, false);
+                continue;
+            };
+            let ground = if matches!(t.kind, TermKind::Var(_)) {
+                false
+            } else {
+                oxiz_core::ast::traversal::get_children(&t.kind)
+                    .iter()
+                    .all(|c| is_ground.get(c).copied().unwrap_or(false))
+            };
+            is_ground.insert(sub, ground);
+
+            if ground {
+                self.add_candidate(sub, t.sort);
+            }
+        }
     }
 
     /// Check quantifiers with a given model
@@ -728,7 +895,10 @@ impl MBQIIntegration {
                         subst.insert(var_name, val);
                     }
                 }
-                let ground_body = self.apply_substitution(quantifier.body, &subst, manager);
+                let Some(ground_body) = self.apply_substitution(quantifier, &subst, manager) else {
+                    // Internal error: substitution left a free bound variable.
+                    continue;
+                };
                 let inst = Instantiation::new(
                     quantifier.term,
                     subst,
@@ -890,7 +1060,10 @@ impl MBQIIntegration {
                     }
                 }
 
-                let ground_body = self.apply_substitution(quantifier.body, &subst, manager);
+                let Some(ground_body) = self.apply_substitution(quantifier, &subst, manager) else {
+                    // Internal error: substitution left a free bound variable.
+                    continue;
+                };
                 // Simplify arithmetic comparisons of constants (e.g. 0 >= 0 → True)
                 // and boolean simplifications so the SAT solver sees clean lemmas.
                 let simplified = self.deep_simplify(ground_body, manager);
@@ -1263,11 +1436,458 @@ mod tests {
         assert_eq!(integration.max_rounds, 50);
     }
 
+    /// Regression test for the audit finding that `set_max_rounds` was
+    /// ineffective: `run()` used to reset `current_round` to `0` on every
+    /// call, so `current_round >= max_rounds` could never fire (barring
+    /// `max_rounds == 0`). `run()` is invoked once per outer solver
+    /// iteration (see `check_with_model`, called from `solver::mod::solve`),
+    /// so `current_round` must accumulate *across* calls for the limit to
+    /// bound the total number of MBQI rounds for a single solve.
+    #[test]
+    fn test_audit_max_rounds_accumulates_and_is_enforced() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let zero = manager.mk_int(0);
+        // `forall x. f(x) > 0` over the infinite Int domain: neither
+        // trivially valid nor finitely exhaustible, so successive `run()`
+        // calls never resolve to `Satisfied` and keep consuming rounds.
+        let f_x = manager.mk_apply("f", [x], int_sort);
+        let body = manager.mk_gt(f_x, zero);
+        let forall = manager.mk_forall([("x", int_sort)], body);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+        integration.set_max_rounds(2);
+
+        let model = FxHashMap::default();
+        for _ in 0..2 {
+            let _ = integration.check_with_model(&model, &mut manager);
+        }
+        assert_eq!(
+            integration.current_round, 2,
+            "current_round must persist/accumulate across calls, not reset to 0 each run()"
+        );
+
+        // A further call must now be refused purely on the round limit,
+        // without incrementing current_round any further.
+        let result = integration.check_with_model(&model, &mut manager);
+        assert!(
+            matches!(result, MBQIResult::Unknown),
+            "expected Unknown once max_rounds is exhausted, got {result:?}"
+        );
+        assert_eq!(
+            integration.current_round, 2,
+            "run() must return before incrementing once the round limit is hit"
+        );
+    }
+
     #[test]
     fn test_set_time_limit() {
         let mut integration = MBQIIntegration::new();
         let limit = Duration::from_secs(30);
         integration.set_time_limit(limit);
         assert_eq!(integration.time_limit, Some(limit));
+    }
+
+    /// Regression test for the audit finding that `collect_ground_terms`
+    /// was an empty stub: trigger patterns never seeded candidates.
+    /// A trigger `g(0)` (fully ground: no `Var` anywhere in its subtree)
+    /// must now register both `g(0)` itself and the literal `0` as
+    /// candidates for their respective sorts, while a trigger containing a
+    /// bound variable (`f(x)`) must register nothing, since `f(x)` is not
+    /// ground under any binder-free interpretation.
+    #[test]
+    fn test_audit_collect_ground_terms_seeds_candidates() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+
+        let zero = manager.mk_int(0);
+        let g_zero = manager.mk_apply("g", [zero], int_sort);
+
+        let mut integration = MBQIIntegration::new();
+        integration.collect_ground_terms(g_zero, &manager);
+
+        let candidates = integration
+            .extra_candidates
+            .get(&int_sort)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            candidates.contains(&g_zero),
+            "the fully ground trigger term itself must be seeded as a candidate"
+        );
+        assert!(
+            candidates.contains(&zero),
+            "ground subterms of the trigger must also be seeded as candidates"
+        );
+
+        // A trigger containing a `Var` occurrence anywhere (e.g. the bound
+        // variable `x` of the enclosing quantifier) must not add any new
+        // candidates: it isn't ground.
+        let mut integration2 = MBQIIntegration::new();
+        let x = manager.mk_var("x", int_sort);
+        let f_x = manager.mk_apply("f", [x], int_sort);
+        integration2.collect_ground_terms(f_x, &manager);
+        assert!(
+            integration2.extra_candidates.is_empty(),
+            "a trigger containing a Var occurrence must not be treated as ground"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Audit regression tests (solver-mbqi)
+    // ---------------------------------------------------------------------
+
+    use num_bigint::BigInt;
+
+    /// Finding #1 (integration.rs:296): a universal quantifier over the
+    /// *infinite* Int domain must NEVER be reported `Satisfied` (sat) merely
+    /// because a finite sample of candidate values did not falsify it.
+    ///
+    /// `(forall ((x Int)) (>= x (- 10)))` is false at `x = -11`, yet the finite
+    /// candidate sampler only tries roughly `-2..=5`, all of which satisfy the
+    /// body.  The result must be non-sat (Unknown / instantiations), never
+    /// Satisfied.
+    #[test]
+    fn test_audit_infinite_int_domain_not_satisfied() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let neg_ten = manager.mk_int(BigInt::from(-10));
+        let body = manager.mk_ge(x, neg_ten);
+        let forall = manager.mk_forall([("x", int_sort)], body);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+
+        let model = FxHashMap::default();
+        let result = integration.check_with_model(&model, &mut manager);
+        assert!(
+            !result.is_sat(),
+            "forall x:Int. x >= -10 is false at x=-11 and must NOT be reported \
+             Satisfied from a finite candidate sample, got {result:?}"
+        );
+    }
+
+    /// Finding #1: classification of which sorts the counterexample generator
+    /// can enumerate exhaustively.  Bool is exhaustible; Int/Real/String are
+    /// not (infinite); BitVec is not (only sampled).
+    #[test]
+    fn test_audit_sort_finitely_exhausted_classification() {
+        let mut manager = TermManager::new();
+        let integration = MBQIIntegration::new();
+        let model = CompletedModel::new();
+
+        let bool_sort = manager.sorts.bool_sort;
+        let int_sort = manager.sorts.int_sort;
+        let real_sort = manager.sorts.real_sort;
+        let bv_sort = manager.sorts.bitvec(8);
+
+        assert!(
+            integration.sort_finitely_exhausted(bool_sort, &model, &manager),
+            "Bool is a genuinely finite, fully-enumerated domain"
+        );
+        assert!(
+            !integration.sort_finitely_exhausted(int_sort, &model, &manager),
+            "Int is infinite and must not be treated as exhausted"
+        );
+        assert!(
+            !integration.sort_finitely_exhausted(real_sort, &model, &manager),
+            "Real is infinite and must not be treated as exhausted"
+        );
+        assert!(
+            !integration.sort_finitely_exhausted(bv_sort, &model, &manager),
+            "BitVec is only sampled, never fully enumerated by the candidate sampler"
+        );
+    }
+
+    /// Finding #1: an uninterpreted sort is exhaustible only when the completed
+    /// model pins a small finite universe for it.  A universe larger than the
+    /// candidate limit is NOT fully enumerated.
+    #[test]
+    fn test_audit_uninterpreted_universe_exhaustion() {
+        let mut manager = TermManager::new();
+        let integration = MBQIIntegration::new();
+
+        let spur = manager.intern_str("U");
+        let u_sort = manager.sorts.intern(SortKind::Uninterpreted(spur));
+
+        // No universe at all -> not exhausted.
+        let empty_model = CompletedModel::new();
+        assert!(!integration.sort_finitely_exhausted(u_sort, &empty_model, &manager));
+
+        // Small universe (<= FINITE_ENUM_LIMIT) -> exhausted.
+        let mut small_model = CompletedModel::new();
+        for i in 0..3i64 {
+            let v = manager.mk_int(BigInt::from(i));
+            small_model.add_to_universe(u_sort, v);
+        }
+        assert!(
+            integration.sort_finitely_exhausted(u_sort, &small_model, &manager),
+            "a 3-element universe fits within FINITE_ENUM_LIMIT and is exhausted"
+        );
+
+        // Oversized universe (> FINITE_ENUM_LIMIT) -> not exhausted, because the
+        // sampler truncates the candidate list and would miss elements.
+        let mut big_model = CompletedModel::new();
+        for i in 0..(FINITE_ENUM_LIMIT as i64 + 5) {
+            let v = manager.mk_int(BigInt::from(i));
+            big_model.add_to_universe(u_sort, v);
+        }
+        assert!(
+            !integration.sort_finitely_exhausted(u_sort, &big_model, &manager),
+            "a universe larger than FINITE_ENUM_LIMIT is not fully enumerated"
+        );
+    }
+
+    /// Finding #1 (reviewer follow-up): the finite-domain gate must account for
+    /// the counterexample generator's *cartesian-product* enumeration cap, not
+    /// just per-variable finiteness.  `forall x,y,z : U. P` with a completed
+    /// model pinning |U| = 5 has 125 candidate tuples, but the generator
+    /// enumerates only the first `COMBINATION_ENUM_CAP` (= 100) and does not
+    /// flag the truncation.  Because P could be false only at an un-enumerated
+    /// tuple, the absence of a counterexample must NOT be reported `Satisfied`.
+    #[test]
+    fn test_audit_multivar_product_exceeds_combination_cap_not_exhausted() {
+        let mut manager = TermManager::new();
+        let spur = manager.intern_str("U");
+        let u_sort = manager.sorts.intern(SortKind::Uninterpreted(spur));
+
+        // Completed model with a 5-element universe for U.
+        let mut model = CompletedModel::new();
+        for i in 0..5i64 {
+            let v = manager.mk_int(BigInt::from(i));
+            model.add_to_universe(u_sort, v);
+        }
+
+        let build = |manager: &mut TermManager, n: usize| {
+            let vars: Vec<(&str, SortId)> = ["x", "y", "z"][..n]
+                .iter()
+                .map(|&nm| (nm, u_sort))
+                .collect();
+            let body = manager.mk_true();
+            let forall = manager.mk_forall(vars, body);
+            let mut integration = MBQIIntegration::new();
+            integration.add_quantifier(forall, manager);
+            integration.quantifiers.clone()
+        };
+
+        let integration = MBQIIntegration::new();
+
+        // 2 variables -> 5*5 = 25 <= 100: fully enumerated, may conclude sat.
+        let q2 = build(&mut manager, 2);
+        assert!(
+            integration.all_domains_finitely_exhausted(&q2, &model, &manager),
+            "2 vars over |U|=5 has 25 combinations (<= cap) and IS fully enumerated"
+        );
+
+        // 3 variables -> 5*5*5 = 125 > 100: truncated, must NOT conclude sat.
+        let q3 = build(&mut manager, 3);
+        assert!(
+            !integration.all_domains_finitely_exhausted(&q3, &model, &manager),
+            "3 vars over |U|=5 has 125 combinations (> cap); enumeration is \
+             truncated so the domain is NOT exhaustively covered and MBQI must \
+             not report Satisfied"
+        );
+    }
+
+    /// Finding #1 (reviewer follow-up): a large number of Bool-quantified
+    /// variables also blows past the combination cap (2^n grows quickly), so
+    /// such a quantifier must not be treated as exhaustively enumerated even
+    /// though each individual Bool domain is trivially finite.
+    #[test]
+    fn test_audit_many_bool_vars_exceed_combination_cap() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let model = CompletedModel::new();
+
+        let build = |manager: &mut TermManager, n: usize| {
+            let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+            let vars: Vec<(&str, SortId)> = names[..n].iter().map(|&nm| (nm, bool_sort)).collect();
+            let body = manager.mk_true();
+            let forall = manager.mk_forall(vars, body);
+            let mut integration = MBQIIntegration::new();
+            integration.add_quantifier(forall, manager);
+            integration.quantifiers.clone()
+        };
+
+        let integration = MBQIIntegration::new();
+
+        // 6 Bool vars -> 2^6 = 64 <= 100: fully enumerated.
+        let q6 = build(&mut manager, 6);
+        assert!(
+            integration.all_domains_finitely_exhausted(&q6, &model, &manager),
+            "2^6 = 64 combinations fit within the cap"
+        );
+
+        // 7 Bool vars -> 2^7 = 128 > 100: truncated, not exhausted.
+        let q7 = build(&mut manager, 7);
+        assert!(
+            !integration.all_domains_finitely_exhausted(&q7, &model, &manager),
+            "2^7 = 128 combinations exceed the cap and are not fully enumerated"
+        );
+    }
+
+    /// Finding #2 (integration.rs:509): substitution must descend into EVERY
+    /// term kind, including `Xor`.  Previously the catch-all `_ => term` arm
+    /// skipped `Xor`, leaving the bound variable `x` inside `(xor x false)`
+    /// even after instantiating `x := true` -- producing a lemma that
+    /// constrains a stray free variable.
+    #[test]
+    fn test_audit_substitution_covers_xor_no_leftover_bound_var() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let x = manager.mk_var("x", bool_sort);
+        let f = manager.mk_false();
+        let xor = manager.mk_xor(x, f);
+        let body = manager.mk_eq(x, xor); // (= x (xor x false))
+        let forall = manager.mk_forall([("x", bool_sort)], body);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+        let quantifier = integration.quantifiers[0].clone();
+
+        let true_val = manager.mk_true();
+        let x_spur = quantifier.bound_vars[0].0;
+        let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+        subst.insert(x_spur, true_val);
+
+        let result = integration
+            .apply_substitution(&quantifier, &subst, &mut manager)
+            .expect("substitution of x:=true must fully ground the Xor body");
+
+        let free = collect_free_vars(result, &manager);
+        assert!(
+            !free.contains(&x),
+            "instantiation lemma still contains free bound variable x -- Xor was \
+             not substituted (found free vars: {free:?})"
+        );
+    }
+
+    /// Finding #2: substitution must descend into `Distinct` (also previously
+    /// skipped by the catch-all arm).
+    #[test]
+    fn test_audit_substitution_covers_distinct() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let c0 = manager.mk_int(BigInt::from(0));
+        let c1 = manager.mk_int(BigInt::from(1));
+        let distinct = manager.mk_distinct([x, c0, c1]); // (distinct x 0 1)
+        let forall = manager.mk_forall([("x", int_sort)], distinct);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+        let quantifier = integration.quantifiers[0].clone();
+
+        let seven = manager.mk_int(BigInt::from(7));
+        let x_spur = quantifier.bound_vars[0].0;
+        let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+        subst.insert(x_spur, seven);
+
+        let result = integration
+            .apply_substitution(&quantifier, &subst, &mut manager)
+            .expect("substitution of x:=7 must fully ground the Distinct body");
+
+        let free = collect_free_vars(result, &manager);
+        assert!(
+            !free.contains(&x),
+            "Distinct body still contains free bound variable x after substitution"
+        );
+    }
+
+    /// Finding #2: a nested quantifier that re-binds the same variable name
+    /// must be left intact by capture-avoiding substitution and must NOT be
+    /// mis-flagged as a leftover free variable.
+    #[test]
+    fn test_audit_substitution_respects_inner_shadowing() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        // Inner: (exists ((x Int)) (>= x 0)) -- rebinds x.
+        let x_inner = manager.mk_var("x", int_sort);
+        let zero = manager.mk_int(BigInt::from(0));
+        let inner_body = manager.mk_ge(x_inner, zero);
+        let inner = manager.mk_exists([("x", int_sort)], inner_body);
+
+        // Outer body: (and P inner) where P mentions the outer x.
+        let x_outer = manager.mk_var("x", int_sort);
+        let p = manager.mk_gt(x_outer, zero);
+        let outer_body = manager.mk_and(vec![p, inner]);
+        let forall = manager.mk_forall([("x", int_sort)], outer_body);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+        let quantifier = integration.quantifiers[0].clone();
+
+        let five = manager.mk_int(BigInt::from(5));
+        let x_spur = quantifier.bound_vars[0].0;
+        let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+        subst.insert(x_spur, five);
+
+        // Should succeed: the inner exists legitimately keeps its own x; only
+        // the outer occurrence is replaced.
+        let result = integration.apply_substitution(&quantifier, &subst, &mut manager);
+        assert!(
+            result.is_some(),
+            "capture-avoiding substitution with inner shadowing must not be \
+             rejected as a leftover-bound-variable internal error"
+        );
+
+        // Sanity: the bool sort remains distinct from the int sort (guards
+        // against accidental sort collapse in this fixture).
+        assert_ne!(int_sort, bool_sort);
+    }
+
+    /// Finding (solver-p3b #3): a universal quantifier whose body simplifies to
+    /// `true` regardless of its bound variable (e.g. `forall x. f(x) = f(x)`)
+    /// must be reported `Satisfied` even over the infinite Int domain, so simple
+    /// UFLIA tautological quantifiers return sat rather than Unknown.
+    #[test]
+    fn test_audit_trivially_valid_quantifier_is_satisfied() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let f_x = manager.mk_apply("f", [x], int_sort);
+        let body = manager.mk_eq(f_x, f_x); // f(x) = f(x)  ≡ true
+        let forall = manager.mk_forall([("x", int_sort)], body);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+
+        let model = FxHashMap::default();
+        let result = integration.check_with_model(&model, &mut manager);
+        assert!(
+            result.is_sat(),
+            "forall x:Int. f(x) = f(x) is a tautology and must be Satisfied, \
+             got {result:?}"
+        );
+    }
+
+    /// Guard: the trivially-valid recognition must NOT grant sat for a
+    /// non-tautological body.  `forall x. x >= -10` does not simplify to true
+    /// and is in fact false at x = -11, so it must not be reported sat.
+    #[test]
+    fn test_audit_trivially_valid_does_not_overreach() {
+        use num_bigint::BigInt;
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let neg_ten = manager.mk_int(BigInt::from(-10));
+        let body = manager.mk_ge(x, neg_ten);
+        let forall = manager.mk_forall([("x", int_sort)], body);
+
+        let mut integration = MBQIIntegration::new();
+        integration.add_quantifier(forall, &manager);
+
+        let model = FxHashMap::default();
+        let result = integration.check_with_model(&model, &mut manager);
+        assert!(
+            !result.is_sat(),
+            "forall x:Int. x >= -10 is not a tautology and must not be granted \
+             sat by trivial-validity recognition, got {result:?}"
+        );
     }
 }

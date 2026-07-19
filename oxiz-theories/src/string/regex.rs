@@ -6,6 +6,7 @@
 use super::unicode::UnicodeCategory;
 #[allow(unused_imports)]
 use crate::prelude::*;
+use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
 use smallvec::SmallVec;
 
@@ -51,6 +52,91 @@ pub struct Regex {
     pub op: RegexOp,
     /// Cached nullable status
     nullable: bool,
+}
+
+/// Deterministic total order over `RegexOp`, used to canonicalize the
+/// operand order of `Union`/`Inter` (see [`Regex::union`]/[`Regex::inter`])
+/// so that the same set of alternatives combined in a different input
+/// order ends up structurally equal after sorting + `dedup`.
+///
+/// This used to be done via `format!("{:?}", ...).cmp(...)` on the WHOLE
+/// (potentially deeply nested) regex for every comparison during the
+/// sort -- correct only incidentally (derived `Debug` output happens to be
+/// consistent with derived `Eq` here), but wasteful (a fresh `String`
+/// allocated per comparison) and fragile (silently depends on `Debug`'s
+/// output format never changing in a way that breaks the total order,
+/// e.g. via a future hand-written `Debug` impl).
+///
+/// A `#[derive(Ord)]` on `RegexOp` itself is not available: the
+/// `UnicodeClass` variant carries a `UnicodeCategory`, defined in a sibling
+/// module this cluster does not own, which does not derive `Ord`. Instead,
+/// `UnicodeCategory` is a plain fieldless enum, so its discriminant (via
+/// `as u32`) already gives it a real total order without needing to modify
+/// that module.
+fn regex_op_cmp(a: &RegexOp, b: &RegexOp) -> Ordering {
+    fn rank(op: &RegexOp) -> u8 {
+        match op {
+            RegexOp::Epsilon => 0,
+            RegexOp::None => 1,
+            RegexOp::All => 2,
+            RegexOp::AllChar => 3,
+            RegexOp::Char(_) => 4,
+            RegexOp::Range(..) => 5,
+            RegexOp::UnicodeClass(_) => 6,
+            RegexOp::Concat(_) => 7,
+            RegexOp::Union(_) => 8,
+            RegexOp::Inter(_) => 9,
+            RegexOp::Complement(_) => 10,
+            RegexOp::Star(_) => 11,
+            RegexOp::Plus(_) => 12,
+            RegexOp::Option(_) => 13,
+            RegexOp::Loop(..) => 14,
+        }
+    }
+
+    let (ra, rb) = (rank(a), rank(b));
+    if ra != rb {
+        return ra.cmp(&rb);
+    }
+
+    match (a, b) {
+        (RegexOp::Char(x), RegexOp::Char(y)) => x.cmp(y),
+        (RegexOp::Range(x1, x2), RegexOp::Range(y1, y2)) => (x1, x2).cmp(&(y1, y2)),
+        (RegexOp::UnicodeClass(x), RegexOp::UnicodeClass(y)) => (*x as u32).cmp(&(*y as u32)),
+        (RegexOp::Concat(x), RegexOp::Concat(y))
+        | (RegexOp::Union(x), RegexOp::Union(y))
+        | (RegexOp::Inter(x), RegexOp::Inter(y)) => regex_vec_cmp(x, y),
+        (RegexOp::Complement(x), RegexOp::Complement(y))
+        | (RegexOp::Star(x), RegexOp::Star(y))
+        | (RegexOp::Plus(x), RegexOp::Plus(y))
+        | (RegexOp::Option(x), RegexOp::Option(y)) => regex_cmp(x, y),
+        (RegexOp::Loop(x, xlo, xhi), RegexOp::Loop(y, ylo, yhi)) => regex_cmp(x, y)
+            .then_with(|| xlo.cmp(ylo))
+            .then_with(|| xhi.cmp(yhi)),
+        // Same rank implies the same variant (`rank` is injective), so
+        // every other combination is unreachable; fall back to `Equal`
+        // rather than panicking; still a valid (if imprecise for an
+        // impossible case) total order.
+        _ => Ordering::Equal,
+    }
+}
+
+/// Total order over `Regex`, delegating to [`regex_op_cmp`] (the cached
+/// `nullable` flag is redundant with `op` and not compared).
+fn regex_cmp(a: &Regex, b: &Regex) -> Ordering {
+    regex_op_cmp(&a.op, &b.op)
+}
+
+/// Total order over a list of sub-regexes (`Concat`/`Union`/`Inter`
+/// operands), comparing lexicographically by length then element-wise.
+fn regex_vec_cmp(a: &[Arc<Regex>], b: &[Arc<Regex>]) -> Ordering {
+    a.len().cmp(&b.len()).then_with(|| {
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| regex_cmp(x, y))
+            .find(|o| !o.is_eq())
+            .unwrap_or(Ordering::Equal)
+    })
 }
 
 impl Regex {
@@ -164,7 +250,7 @@ impl Regex {
                 .expect("flat has exactly one element");
         }
         // Deduplicate
-        flat.sort_by(|a, b| format!("{:?}", a.op).cmp(&format!("{:?}", b.op)));
+        flat.sort_by(|a, b| regex_op_cmp(&a.op, &b.op));
         flat.dedup();
         let nullable = flat.iter().any(|r| r.nullable);
         Arc::new(Self {
@@ -193,7 +279,7 @@ impl Regex {
                 .next()
                 .expect("flat has exactly one element");
         }
-        flat.sort_by(|a, b| format!("{:?}", a.op).cmp(&format!("{:?}", b.op)));
+        flat.sort_by(|a, b| regex_op_cmp(&a.op, &b.op));
         flat.dedup();
         let nullable = flat.iter().all(|r| r.nullable);
         Arc::new(Self {
@@ -386,8 +472,16 @@ impl Regex {
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct DerivativeCache {
-    /// Cache: (regex hash, char) -> derivative
-    cache: FxHashMap<(u64, char), Arc<Regex>>,
+    /// Cache: (regex, char) -> derivative.
+    ///
+    /// Keyed by the actual `Regex` value (which derives `Eq`/`Hash`), not a
+    /// raw pre-computed `u64` hash: using a bare hash AS the map key means
+    /// any hash collision between two DIFFERENT regexes silently returns
+    /// the wrong cached derivative (no equality check ever happens, since
+    /// the original regex value isn't retained to check against). Keying
+    /// on the value itself lets `FxHashMap`'s normal collision handling
+    /// (hash bucket + `Eq` verification) do this correctly.
+    cache: FxHashMap<(Regex, char), Arc<Regex>>,
 }
 
 #[allow(dead_code)]
@@ -401,9 +495,7 @@ impl DerivativeCache {
 
     /// Get or compute derivative
     pub fn derivative(&mut self, r: &Arc<Regex>, c: char) -> Arc<Regex> {
-        let mut hasher = rustc_hash::FxHasher::default();
-        r.hash(&mut hasher);
-        let key = (hasher.finish(), c);
+        let key = ((**r).clone(), c);
 
         if let Some(d) = self.cache.get(&key) {
             return d.clone();
@@ -700,5 +792,121 @@ mod tests {
         assert!(email.matches("test_123@domain.org"));
         assert!(!email.matches("invalid"));
         assert!(!email.matches("@missing.com"));
+    }
+
+    // Audit regression (theories-string): `DerivativeCache` keyed its
+    // entries by a raw pre-computed `u64` hash with no follow-up equality
+    // check, so two DIFFERENT regexes that happen to hash-collide would
+    // silently share (and return each other's) cached derivative. This
+    // constructs two structurally different regexes and confirms each
+    // gets its own, independently-correct cached derivative.
+    #[test]
+    fn audit_derivative_cache_distinguishes_different_regexes() {
+        let mut cache = DerivativeCache::new();
+
+        let a = Regex::char('a');
+        let b = Regex::char('b');
+
+        let d_a = cache.derivative(&a, 'a');
+        let d_b = cache.derivative(&b, 'b');
+
+        // derivative of `a` w.r.t. 'a' is epsilon (nullable, matches "").
+        assert!(d_a.matches(""));
+        // derivative of `b` w.r.t. 'b' is ALSO epsilon -- but it must have
+        // been computed independently (from `b`, not misappropriated from
+        // the cached entry for `a`), and cross-checking against the wrong
+        // *source* regex is exactly the failure mode a hash collision (or
+        // a cache bug) would produce.
+        assert!(d_b.matches(""));
+
+        // A derivative that should NOT match must not do so because of a
+        // cache mix-up: derivative of `a` w.r.t. 'b' is the empty language.
+        let d_a_wrt_b = cache.derivative(&a, 'b');
+        assert!(!d_a_wrt_b.matches(""));
+        assert!(!d_a_wrt_b.matches("a"));
+
+        // Re-querying the same (regex, char) pair must return the SAME
+        // (cached) derivative rather than recomputing something different.
+        let d_a_again = cache.derivative(&a, 'a');
+        assert_eq!(*d_a_again, *d_a);
+    }
+
+    // Audit regression (theories-string): `Regex::union`/`Regex::inter`
+    // used to canonicalize operand order via
+    // `format!("{:?}", ...).cmp(...)` on the whole regex tree. Confirm the
+    // real replacement (`regex_op_cmp`) still produces order-independent,
+    // deduplicated results.
+    #[test]
+    fn audit_union_canonicalizes_regardless_of_input_order() {
+        let a = Regex::char('a');
+        let b = Regex::char('b');
+        let c = Regex::char('c');
+
+        let u1 = Regex::union(vec![a.clone(), b.clone(), c.clone()]);
+        let u2 = Regex::union(vec![c.clone(), a.clone(), b.clone()]);
+        let u3 = Regex::union(vec![b, c, a]);
+
+        assert_eq!(u1, u2, "union must not depend on input order");
+        assert_eq!(u1, u3, "union must not depend on input order");
+    }
+
+    #[test]
+    fn audit_union_deduplicates_repeated_operands() {
+        let a = Regex::char('a');
+        let b = Regex::char('b');
+
+        let u = Regex::union(vec![a.clone(), b.clone(), a.clone(), b]);
+        if let RegexOp::Union(parts) = &u.op {
+            assert_eq!(
+                parts.len(),
+                2,
+                "duplicate operands must be removed after canonical sort"
+            );
+        } else {
+            panic!("expected a Union node, got {:?}", u.op);
+        }
+    }
+
+    #[test]
+    fn audit_regex_op_cmp_is_consistent_with_eq() {
+        // Structurally-equal regexes must compare as `Equal`, and the
+        // comparator must be antisymmetric for structurally different
+        // ones -- basic total-order sanity checks for the hand-written
+        // comparator that replaced the `Debug`-string-based sort.
+        let variants = vec![
+            Regex::epsilon(),
+            Regex::none(),
+            Regex::all(),
+            Regex::all_char(),
+            Regex::char('x'),
+            Regex::range('a', 'z'),
+            Regex::star(Regex::char('x')),
+            Regex::plus(Regex::char('x')),
+            Regex::concat(vec![Regex::char('x'), Regex::char('y')]),
+        ];
+
+        for v in &variants {
+            assert_eq!(regex_cmp(v, v), Ordering::Equal);
+        }
+
+        for i in 0..variants.len() {
+            for j in 0..variants.len() {
+                if i == j {
+                    continue;
+                }
+                let ord_ij = regex_cmp(&variants[i], &variants[j]);
+                let ord_ji = regex_cmp(&variants[j], &variants[i]);
+                assert_eq!(
+                    ord_ij,
+                    ord_ji.reverse(),
+                    "comparator must be antisymmetric for distinct regexes"
+                );
+                assert_ne!(
+                    ord_ij,
+                    Ordering::Equal,
+                    "structurally different regexes must not compare Equal"
+                );
+            }
+        }
     }
 }

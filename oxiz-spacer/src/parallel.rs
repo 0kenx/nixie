@@ -5,8 +5,11 @@
 //!
 //! Reference: Z3's parallel PDR and portfolio approaches
 
+use crate::chc::{ChcSystem, PredId};
 use crate::frames::{FrameManager, LemmaId};
-use crate::pob::{PobId, PobManager};
+use crate::pob::PobId;
+use crate::smt::{SmtSolver, build_frame_formula};
+use oxiz_core::TermManager;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -56,6 +59,10 @@ impl Default for ParallelConfig {
 pub enum WorkItem {
     /// Propagate a lemma to higher frames
     PropagateLemma {
+        /// The predicate the lemma belongs to (`LemmaId`s are only unique
+        /// *within* a single predicate's frame sequence, so the predicate
+        /// must be known to look the lemma up at all).
+        pred: PredId,
         /// Lemma to propagate
         lemma_id: LemmaId,
         /// Starting frame level
@@ -98,6 +105,14 @@ pub enum WorkResult {
         subsumed: LemmaId,
         /// The subsuming lemma
         subsuming: LemmaId,
+    },
+    /// The check ran successfully but the lemma is not (yet) inductive at
+    /// the target level, so it was not propagated. This is a normal,
+    /// expected outcome -- distinct from [`WorkResult::Failed`], which
+    /// signals the check itself could not be completed.
+    NotInductive {
+        /// Lemma ID
+        lemma_id: LemmaId,
     },
     /// Work item failed
     Failed {
@@ -333,56 +348,80 @@ impl ParallelFrameSolver {
     }
 }
 
-/// Parallel lemma propagation helper
+/// Lemma propagation helper.
+///
+/// Despite the name (kept for API stability), lemma propagation itself
+/// runs sequentially -- see [`Self::propagate_lemmas`] for why -- so this
+/// no longer holds a [`ParallelFrameSolver`]; `config` is retained for
+/// any future work-item kind this type grows that genuinely can run on
+/// the worker-thread pool.
 pub struct ParallelPropagator {
-    /// Parallel solver
-    solver: ParallelFrameSolver,
+    /// Configuration (currently unused by `propagate_lemmas` itself, kept
+    /// for future parallel work-item kinds).
+    #[allow(dead_code)]
+    config: ParallelConfig,
 }
 
 impl ParallelPropagator {
     /// Create a new parallel propagator
     pub fn new(config: ParallelConfig) -> Self {
-        Self {
-            solver: ParallelFrameSolver::new(config),
-        }
+        Self { config }
     }
 
-    /// Propagate lemmas in parallel
+    /// Propagate lemmas, checking genuine inductiveness via
+    /// [`SmtSolver::is_lemma_inductive`] for each one.
+    ///
+    /// This used to report every lemma as `LemmaPropagated` unconditionally
+    /// (a placeholder that never actually checked whether the lemma held
+    /// at the higher level), which is unsound: it would let a
+    /// non-inductive lemma get bumped to a frame it does not actually
+    /// hold at, corrupting frame invariants and potentially causing a
+    /// false fixpoint declaration.
+    ///
+    /// Note on "parallel": genuine SMT-backed inductiveness checking
+    /// needs mutable, sequential access to a single [`TermManager`] (term
+    /// interning is not thread-safe here), so -- unlike
+    /// [`ParallelFrameSolver::process_parallel`]'s generic worker-thread
+    /// dispatch used elsewhere in this module -- these checks run
+    /// sequentially on the caller's thread. Running them one at a time
+    /// with a correct answer is preferable to a "parallel" facade that
+    /// cannot actually check anything.
     pub fn propagate_lemmas(
         &self,
-        _frames: &FrameManager,
-        _pobs: &PobManager,
-        lemmas: Vec<(LemmaId, u32)>,
+        terms: &mut TermManager,
+        system: &ChcSystem,
+        frames: &FrameManager,
+        lemmas: Vec<(PredId, LemmaId, u32)>,
     ) -> Result<Vec<WorkResult>, ParallelError> {
-        let items: Vec<WorkItem> = lemmas
-            .into_iter()
-            .map(|(lemma_id, from_level)| WorkItem::PropagateLemma {
-                lemma_id,
-                from_level,
-            })
-            .collect();
+        let mut results = Vec::with_capacity(lemmas.len());
 
-        let worker_fn = move |item: WorkItem| -> WorkResult {
-            match item {
-                WorkItem::PropagateLemma {
+        for (pred, lemma_id, from_level) in lemmas {
+            let Some(lemma_formula) = frames
+                .get(pred)
+                .and_then(|pred_frames| pred_frames.get_lemma(lemma_id))
+                .map(|lemma| lemma.formula)
+            else {
+                results.push(WorkResult::Failed {
+                    error: format!("lemma {lemma_id:?} not found for predicate {pred:?}"),
+                });
+                continue;
+            };
+
+            let frame_formula = build_frame_formula(terms, frames, pred, from_level);
+            let mut smt = SmtSolver::new(terms, system);
+            match smt.is_lemma_inductive(pred, lemma_formula, from_level, frame_formula) {
+                Ok(true) => results.push(WorkResult::LemmaPropagated {
                     lemma_id,
-                    from_level,
-                } => {
-                    // Placeholder: actual implementation would check if lemma
-                    // is inductive at higher levels
-                    // For now, just return success
-                    WorkResult::LemmaPropagated {
-                        lemma_id,
-                        new_level: from_level + 1,
-                    }
-                }
-                _ => WorkResult::Failed {
-                    error: "unexpected work item type".to_string(),
-                },
+                    new_level: from_level + 1,
+                }),
+                Ok(false) => results.push(WorkResult::NotInductive { lemma_id }),
+                Err(e) => results.push(WorkResult::Failed {
+                    error: e.to_string(),
+                }),
             }
-        };
+        }
 
-        self.solver.process_parallel(items, worker_fn)
+        Ok(results)
     }
 }
 
@@ -403,6 +442,7 @@ mod tests {
         let queue = WorkQueue::new(config);
 
         let item = WorkItem::PropagateLemma {
+            pred: PredId::new(0),
             lemma_id: LemmaId(0),
             from_level: 1,
         };
@@ -442,24 +482,93 @@ mod tests {
         assert_eq!(solver.active_workers(), 0);
     }
 
+    /// Regression test for the `sweep-backend-misc` triage sweep:
+    /// `propagate_lemmas` used to report every lemma as
+    /// `LemmaPropagated` unconditionally, without any inductiveness
+    /// check. Set up a real CHC system with one genuinely inductive
+    /// lemma (`true`, trivially preserved by any transition) and one
+    /// genuinely non-inductive lemma (`x = 0`, violated after one step
+    /// of `x' = x + 1`), and verify each gets the correct, distinct
+    /// outcome.
     #[test]
     fn test_parallel_propagator() {
+        use crate::chc::PredicateApp;
+        use crate::smt::canon_cur_vars;
+        use oxiz_core::TermManager;
+
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+        let pred = system.declare_predicate("ParPropInv", [terms.sorts.int_sort]);
+
+        let x = terms.mk_var("par_prop_x", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let init_c = terms.mk_eq(x, zero);
+        system.add_init_rule(
+            [("par_prop_x".to_string(), terms.sorts.int_sort)],
+            init_c,
+            pred,
+            [x],
+        );
+
+        let x_next = terms.mk_var("par_prop_x_next", terms.sorts.int_sort);
+        let one = terms.mk_int(1);
+        let x_plus_one = terms.mk_add([x, one]);
+        let trans_c = terms.mk_eq(x_next, x_plus_one);
+        system.add_transition_rule(
+            [
+                ("par_prop_x".to_string(), terms.sorts.int_sort),
+                ("par_prop_x_next".to_string(), terms.sorts.int_sort),
+            ],
+            [PredicateApp::new(pred, [x])],
+            trans_c,
+            pred,
+            [x_next],
+        );
+
+        let mut frames = FrameManager::new();
+
+        // Genuinely inductive: `true` is trivially preserved by any
+        // transition.
+        let true_term = terms.mk_true();
+        let inductive_id = frames.add_lemma(pred, true_term, 1);
+
+        // Genuinely NOT inductive: `x = 0` does not survive `x' = x + 1`.
+        let cur_vars = canon_cur_vars(&mut terms, &system, pred);
+        let zero_again = terms.mk_int(0);
+        let noninductive_lemma = terms.mk_eq(cur_vars[0], zero_again);
+        let noninductive_id = frames.add_lemma(pred, noninductive_lemma, 1);
+
         let config = ParallelConfig {
             num_workers: 2,
             parallel_propagation: true,
             parallel_blocking: true,
             max_queue_size: 100,
         };
-
         let propagator = ParallelPropagator::new(config);
-        let frames = FrameManager::new();
-        let pobs = PobManager::new();
 
-        let lemmas = vec![(LemmaId(0), 1), (LemmaId(1), 2)];
-        let results = propagator.propagate_lemmas(&frames, &pobs, lemmas);
+        let lemmas = vec![(pred, inductive_id, 1), (pred, noninductive_id, 1)];
+        let results = propagator
+            .propagate_lemmas(&mut terms, &system, &frames, lemmas)
+            .expect("propagate_lemmas should not error");
 
-        assert!(results.is_ok());
-        let results = results.expect("test operation should succeed");
         assert_eq!(results.len(), 2);
+        assert!(
+            matches!(
+                results[0],
+                WorkResult::LemmaPropagated { lemma_id, new_level }
+                    if lemma_id == inductive_id && new_level == 2
+            ),
+            "the `true` lemma must be reported inductive and propagated: {:?}",
+            results[0]
+        );
+        assert!(
+            matches!(
+                results[1],
+                WorkResult::NotInductive { lemma_id } if lemma_id == noninductive_id
+            ),
+            "the `x = 0` lemma must be reported NOT inductive, not \
+             fabricated as propagated: {:?}",
+            results[1]
+        );
     }
 }

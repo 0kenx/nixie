@@ -99,6 +99,54 @@ class Term:
 
 
 # ====================================================================== #
+# Sort                                                                     #
+# ====================================================================== #
+
+class Sort:
+    """A reference to a sort (type) created by a :class:`TermManager`.
+
+    Returned by the module-level sort constructors (:func:`IntSort`,
+    :func:`BoolSort`, :func:`StringSort`, :func:`FPSort`, :func:`ArraySort`).
+    """
+
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+    @property
+    def is_fp(self) -> bool:
+        """True if this is a floating-point sort."""
+        ...
+
+    @property
+    def eb(self) -> Optional[int]:
+        """Exponent bit-width (FP sorts only, ``None`` otherwise)."""
+        ...
+
+    @property
+    def sb(self) -> Optional[int]:
+        """Significand bit-width (FP sorts only, ``None`` otherwise)."""
+        ...
+
+
+# ====================================================================== #
+# FPRoundingMode                                                           #
+# ====================================================================== #
+
+class FPRoundingMode:
+    """An opaque token representing the FP rounding-mode "sort" (z3-python parity).
+
+    In z3-python ``FPRoundingMode()`` is a sort; here it is a simple
+    sentinel object. Use the string forms ``"RNE"``, ``"RNA"``, ``"RTP"``,
+    ``"RTN"``, ``"RTZ"`` with FP operations (:func:`fp_add`, etc.) instead
+    of constructing this directly.
+    """
+
+    def __init__(self) -> None: ...
+    def __repr__(self) -> str: ...
+
+
+# ====================================================================== #
 # SolverResult                                                             #
 # ====================================================================== #
 
@@ -718,4 +766,215 @@ def Or_tm(tm: TermManager, *args: Term) -> Term:
 
 def Not_tm(tm: TermManager, term: Term) -> Term:
     """Like :func:`Not` but with an explicit TermManager."""
+    ...
+
+
+# ====================================================================== #
+# Theory combinators (strings, arrays, floating-point, quantifiers)       #
+# ====================================================================== #
+#
+# Unlike the Bool combinators above (And/Or/Not/...), every function in
+# this section takes the owning TermManager as its *first* argument -
+# there is no Context/owner-term to resolve it from implicitly.
+
+def StringVal(tm: TermManager, value: str) -> Term:
+    """Create a string literal Term.
+
+    Example::
+
+        s = oxiz.StringVal(tm, "hello")
+        # -- or if you want an owner for operator overloads --
+        s = ctx.string_val("hello")
+    """
+    ...
+
+
+def StringSort(tm: TermManager) -> Sort:
+    """Return the string sort object.
+
+    Example::
+
+        ss = oxiz.StringSort(tm)
+    """
+    ...
+
+
+def Concat(tm: TermManager, s1: Term, s2: Term) -> Term:
+    """Concatenate two string Terms.
+
+    Example::
+
+        result = oxiz.Concat(tm, s1, s2)
+    """
+    ...
+
+
+def Length(tm: TermManager, s: Term) -> Term:
+    """Return the length of a string Term as an integer Term.
+
+    Example::
+
+        n = oxiz.Length(tm, s)
+    """
+    ...
+
+
+def Contains(tm: TermManager, s: Term, sub: Term) -> Term:
+    """Test whether string Term ``s`` contains ``sub``, returning a boolean Term.
+
+    Example::
+
+        b = oxiz.Contains(tm, s, sub)
+    """
+    ...
+
+
+def PrefixOf(tm: TermManager, pre: Term, s: Term) -> Term:
+    """Test whether ``pre`` is a prefix of string Term ``s``, returning a boolean Term.
+
+    Example::
+
+        b = oxiz.PrefixOf(tm, pre, s)
+    """
+    ...
+
+
+def SuffixOf(tm: TermManager, suf: Term, s: Term) -> Term:
+    """Test whether ``suf`` is a suffix of string Term ``s``, returning a boolean Term.
+
+    Example::
+
+        b = oxiz.SuffixOf(tm, suf, s)
+    """
+    ...
+
+
+def ArraySort(tm: TermManager, index_sort: Sort, elem_sort: Sort) -> Sort:
+    """Return an array sort ``Array[index, element]``.
+
+    Mirrors z3-python's ``ArraySort(domain, range)``.
+
+    Example::
+
+        arr_sort = oxiz.ArraySort(tm, oxiz.IntSort(tm), oxiz.IntSort(tm))
+    """
+    ...
+
+
+def IntSort(tm: TermManager) -> Sort:
+    """Return the integer sort object.
+
+    Example::
+
+        is_ = oxiz.IntSort(tm)
+    """
+    ...
+
+
+def BoolSort(tm: TermManager) -> Sort:
+    """Return the boolean sort object.
+
+    Example::
+
+        bs = oxiz.BoolSort(tm)
+    """
+    ...
+
+
+def FPSort(tm: TermManager, eb: int, sb: int) -> Sort:
+    """Return the floating-point sort for a given (exponent-bits, significand-bits) format.
+
+    Mirrors z3-python's ``FPSort(eb, sb)``.
+
+    Example::
+
+        fp16 = oxiz.FPSort(tm, 5, 11)   # IEEE 754 half-precision
+        fp32 = oxiz.FPSort(tm, 8, 24)   # IEEE 754 single-precision
+    """
+    ...
+
+
+def FPVal(tm: TermManager, sign: bool, exp: int, sig: int, sort: Sort) -> Term:
+    """Create a floating-point value Term from its components.
+
+    Args:
+        tm:   The TermManager that should own the term.
+        sign: Sign bit (``True`` = negative).
+        exp:  Bitvector exponent as a signed integer.
+        sig:  Bitvector significand as an unsigned integer.
+        sort: An ``FPSort`` object (created with :func:`FPSort`).
+
+    Example::
+
+        sort = oxiz.FPSort(tm, 8, 24)
+        one  = oxiz.FPVal(tm, False, 127, 0, sort)   # +1.0 in fp32
+    """
+    ...
+
+
+def fp_add(tm: TermManager, rm: str, lhs: Term, rhs: Term) -> Term:
+    """Floating-point addition.
+
+    Args:
+        tm:  TermManager.
+        rm:  Rounding mode string: ``"RNE"``, ``"RNA"``, ``"RTP"``, ``"RTN"``, or ``"RTZ"``.
+        lhs: Left operand (FP Term).
+        rhs: Right operand (FP Term).
+
+    Example::
+
+        r = oxiz.fp_add(tm, "RNE", a, b)
+    """
+    ...
+
+
+def fp_sub(tm: TermManager, rm: str, lhs: Term, rhs: Term) -> Term:
+    """Floating-point subtraction."""
+    ...
+
+
+def fp_mul(tm: TermManager, rm: str, lhs: Term, rhs: Term) -> Term:
+    """Floating-point multiplication."""
+    ...
+
+
+def fp_div(tm: TermManager, rm: str, lhs: Term, rhs: Term) -> Term:
+    """Floating-point division."""
+    ...
+
+
+def ForAll(tm: TermManager, vars: List[tuple[str, str]], body: Term) -> Term:
+    """Construct a universally-quantified formula.
+
+    Args:
+        tm:   The TermManager that owns the term.
+        vars: List of ``(name, sort_name)`` pairs for the bound variables.
+              Sort name examples: ``"Int"``, ``"Bool"``, ``"Real"``,
+              ``"BitVec[32]"``, ``"Float[8,24]"``, ``"String"``,
+              ``"Array[Int,Bool]"``.
+        body: The body Term.
+
+    Example::
+
+        x = ctx.int_const("x")
+        body = x > ctx.int_val(0)
+        fml = oxiz.ForAll(ctx.tm, [("x", "Int")], body)
+    """
+    ...
+
+
+def Exists(tm: TermManager, vars: List[tuple[str, str]], body: Term) -> Term:
+    """Construct an existentially-quantified formula.
+
+    Args:
+        tm:   The TermManager that owns the term.
+        vars: List of ``(name, sort_name)`` pairs for the bound variables.
+        body: The body Term.
+
+    Example::
+
+        x = ctx.int_const("x")
+        body = x > ctx.int_val(0)
+        fml = oxiz.Exists(ctx.tm, [("x", "Int")], body)
+    """
     ...

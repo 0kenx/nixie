@@ -17,6 +17,7 @@
 
 use crate::chc::{ChcSystem, PredId, RuleHead};
 use crate::frames::PredicateFrames;
+use crate::smt::{SmtSolver, canon_cur_vars};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -185,8 +186,8 @@ impl InvariantInference {
             self.generate_octagon_templates(chc, manager);
         }
 
-        // Phase 3: Run Houdini algorithm
-        let houdini_result = self.run_houdini();
+        // Phase 3: Run Houdini algorithm (with real SMT inductiveness checks)
+        let houdini_result = self.run_houdini(chc, manager);
 
         self.stats.total_time_ms = start.elapsed().as_millis() as u64;
 
@@ -211,23 +212,50 @@ impl InvariantInference {
         predicates
     }
 
-    /// Generate candidate invariants from CHC rule bodies
-    fn generate_candidates_from_rules(&mut self, chc: &ChcSystem, manager: &TermManager) {
+    /// Generate candidate invariants from CHC rule bodies.
+    ///
+    /// Only constraints that are *pure state predicates* over the head
+    /// predicate's arguments are kept (constraints mentioning auxiliary /
+    /// next-state variables cannot be invariants of the predicate).  Accepted
+    /// constraints are normalized into the predicate's canonical current-state
+    /// variables so that Houdini's inductiveness queries can rename them
+    /// consistently across rules.
+    fn generate_candidates_from_rules(&mut self, chc: &ChcSystem, manager: &mut TermManager) {
         for (rule_idx, rule) in chc.rules().enumerate() {
+            let head_args: Vec<TermId> = match &rule.head {
+                RuleHead::Predicate(app) => app.args.to_vec(),
+                RuleHead::Query => continue,
+            };
             let predicate_id = match &rule.head {
                 RuleHead::Predicate(app) => app.pred,
                 RuleHead::Query => continue,
             };
 
+            let canon = canon_cur_vars(manager, chc, predicate_id);
+            if canon.len() != head_args.len() {
+                continue;
+            }
+            let head_map: FxHashMap<TermId, TermId> = head_args
+                .iter()
+                .zip(canon.iter())
+                .map(|(&a, &c)| (a, c))
+                .collect();
+
             // Extract constraints from rule body
             let body_constraints = self.extract_body_constraints(rule.body.constraint, manager);
 
             for formula in body_constraints {
+                // Keep only constraints whose variables are all head arguments.
+                let vars = self.extract_variables(formula, manager);
+                if !vars.iter().all(|v| head_args.contains(v)) {
+                    continue;
+                }
+                let canon_formula = manager.substitute(formula, &head_map);
                 let candidate = Candidate {
-                    formula,
+                    formula: canon_formula,
                     source: CandidateSource::RuleBody(rule_idx),
                     predicate_id,
-                    variables: self.extract_variables(formula, manager),
+                    variables: canon.iter().copied().collect(),
                     confidence: 0.8, // High confidence for rule-derived
                 };
 
@@ -373,7 +401,7 @@ impl InvariantInference {
     /// Generate linear template candidates
     fn generate_linear_templates(&mut self, chc: &ChcSystem, manager: &mut TermManager) {
         for &predicate_id in &self.target_predicates.clone() {
-            let variables = self.get_predicate_variables(predicate_id, chc);
+            let variables = self.get_predicate_variables(predicate_id, chc, manager);
 
             if variables.is_empty() {
                 continue;
@@ -410,7 +438,7 @@ impl InvariantInference {
     /// Generate octagon template candidates
     fn generate_octagon_templates(&mut self, chc: &ChcSystem, manager: &mut TermManager) {
         for &predicate_id in &self.target_predicates.clone() {
-            let variables = self.get_predicate_variables(predicate_id, chc);
+            let variables = self.get_predicate_variables(predicate_id, chc, manager);
 
             if variables.len() < 2 {
                 continue;
@@ -469,21 +497,31 @@ impl InvariantInference {
         }
     }
 
-    /// Get variables used in a predicate
-    fn get_predicate_variables(&self, predicate_id: PredId, chc: &ChcSystem) -> Vec<TermId> {
-        // Find rules with this predicate in head
-        for rule in chc.rules() {
-            if let RuleHead::Predicate(app) = &rule.head
-                && app.pred == predicate_id
-            {
-                return app.args.to_vec();
-            }
-        }
-        Vec::new()
+    /// Get the canonical current-state variables of a predicate.
+    ///
+    /// Templates are built over these canonical variables so that every
+    /// candidate for a predicate lives in a single, consistent namespace that
+    /// Houdini can rename onto each rule's argument terms.
+    fn get_predicate_variables(
+        &self,
+        predicate_id: PredId,
+        chc: &ChcSystem,
+        manager: &mut TermManager,
+    ) -> Vec<TermId> {
+        canon_cur_vars(manager, chc, predicate_id).to_vec()
     }
 
-    /// Run Houdini algorithm to filter candidates
-    fn run_houdini(&mut self) -> InferenceResult {
+    /// Run the Houdini algorithm to filter candidates down to an inductive
+    /// subset via **real SMT inductiveness queries**.
+    ///
+    /// A candidate `c` for predicate `P` is dropped whenever some rule
+    /// `Q1(a1) ∧ … ∧ Qn(an) ∧ constraint ⇒ P(head)` fails consecution, i.e.
+    /// `⋀ᵢ (current candidates of Qᵢ, renamed to aᵢ) ∧ constraint ∧ ¬c[head]`
+    /// is satisfiable (or the solver cannot prove it unsatisfiable).  The
+    /// process iterates to a greatest fixpoint, so the surviving set is
+    /// genuinely inductive — contradictory guesses such as `x ≥ 0` and
+    /// `x ≤ 0` are eliminated instead of being reported as invariants.
+    fn run_houdini(&mut self, chc: &ChcSystem, manager: &mut TermManager) -> InferenceResult {
         let mut iteration = 0;
         let mut changed = true;
 
@@ -492,34 +530,32 @@ impl InvariantInference {
             iteration += 1;
             self.stats.houdini_iterations = iteration;
 
-            // Check each candidate against CHC rules
+            // Snapshot the current candidate formulas per predicate; these form
+            // the antecedent context (the assumed invariants of body predicates)
+            // for this pass.
+            let snapshot: FxHashMap<PredId, Vec<TermId>> = self
+                .candidates
+                .iter()
+                .map(|(&p, cands)| (p, cands.iter().map(|c| c.formula).collect()))
+                .collect();
+
             let target_predicates = self.target_predicates.clone();
             for &predicate_id in &target_predicates {
-                // Clone candidates to check validity without borrowing self
-                let candidates_to_check: Vec<(usize, f64)> = self
-                    .candidates
-                    .get(&predicate_id)
-                    .map(|candidates| {
-                        candidates
-                            .iter()
-                            .enumerate()
-                            .map(|(idx, c)| (idx, c.confidence))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let candidate_formulas: Vec<TermId> =
+                    snapshot.get(&predicate_id).cloned().unwrap_or_default();
 
                 let mut to_remove = Vec::new();
-                for (idx, confidence) in candidates_to_check {
+                for (idx, &formula) in candidate_formulas.iter().enumerate() {
                     self.stats.smt_queries += 1;
-                    // Check validity based on confidence threshold
-                    if confidence <= 0.3 {
+                    if !Self::candidate_is_inductive(chc, manager, predicate_id, formula, &snapshot)
+                    {
                         to_remove.push(idx);
                         self.stats.candidates_filtered += 1;
                         changed = true;
                     }
                 }
 
-                // Remove invalid candidates (in reverse order to preserve indices)
+                // Remove violated candidates (reverse order to preserve indices).
                 if let Some(candidates) = self.candidates.get_mut(&predicate_id) {
                     for idx in to_remove.into_iter().rev() {
                         candidates.remove(idx);
@@ -556,6 +592,87 @@ impl InvariantInference {
         } else {
             InferenceResult::Failed("No invariants found".to_string())
         }
+    }
+
+    /// Check whether `candidate` (over `pred`'s canonical current-state
+    /// variables) is preserved by **every** rule whose head is `pred`, given
+    /// the assumed candidate invariants in `snapshot`.
+    ///
+    /// Returns `true` only if consecution is *provably* UNSAT for all such
+    /// rules.  A SAT result (real violation) or a solver `Unknown` both yield
+    /// `false` — we never keep a candidate we could not prove inductive, which
+    /// keeps the returned invariant set sound.
+    fn candidate_is_inductive(
+        chc: &ChcSystem,
+        manager: &mut TermManager,
+        pred: PredId,
+        candidate: TermId,
+        snapshot: &FxHashMap<PredId, Vec<TermId>>,
+    ) -> bool {
+        for rule in chc.rules() {
+            let head_app = match &rule.head {
+                RuleHead::Predicate(app) if app.pred == pred => app,
+                _ => continue,
+            };
+
+            // Antecedent: assumed invariants of each body predicate (renamed to
+            // the rule's argument terms) plus the rule's own constraint.
+            let mut antecedent: Vec<TermId> = Vec::new();
+            let mut skip_rule = false;
+            for body_app in &rule.body.predicates {
+                let body_canon = canon_cur_vars(manager, chc, body_app.pred);
+                if body_canon.len() != body_app.args.len() {
+                    // Arity mismatch: cannot form a sound antecedent, so we
+                    // cannot prove preservation for this rule => drop candidate.
+                    skip_rule = true;
+                    break;
+                }
+                let body_map: FxHashMap<TermId, TermId> = body_canon
+                    .iter()
+                    .zip(body_app.args.iter())
+                    .map(|(&c, &a)| (c, a))
+                    .collect();
+                if let Some(assumed) = snapshot.get(&body_app.pred) {
+                    for &inv in assumed {
+                        antecedent.push(manager.substitute(inv, &body_map));
+                    }
+                }
+            }
+            if skip_rule {
+                return false;
+            }
+            antecedent.push(rule.body.constraint);
+
+            // Consequent: candidate renamed onto the rule's head arguments.
+            let head_canon = canon_cur_vars(manager, chc, pred);
+            if head_canon.len() != head_app.args.len() {
+                return false;
+            }
+            let head_map: FxHashMap<TermId, TermId> = head_canon
+                .iter()
+                .zip(head_app.args.iter())
+                .map(|(&c, &a)| (c, a))
+                .collect();
+            let candidate_head = manager.substitute(candidate, &head_map);
+            let not_candidate = manager.mk_not(candidate_head);
+
+            // Check SAT(antecedent ∧ ¬candidate_head).
+            let mut smt = SmtSolver::new(manager, chc);
+            smt.push();
+            for a in &antecedent {
+                smt.assert(*a);
+            }
+            smt.assert(not_candidate);
+            let sat = smt.check_sat();
+            smt.pop();
+
+            match sat {
+                Ok(false) => {}           // preserved by this rule
+                Ok(true) => return false, // real violation
+                Err(_) => return false,   // Unknown: cannot claim inductive
+            }
+        }
+        true
     }
 
     /// Get inference statistics
@@ -607,8 +724,8 @@ pub mod houdini {
     /// Run pure Houdini algorithm
     pub fn run(
         candidates: &mut FxHashMap<PredId, Vec<TermId>>,
-        _chc: &ChcSystem,
-        manager: &TermManager,
+        chc: &ChcSystem,
+        manager: &mut TermManager,
         max_iterations: usize,
     ) -> FxHashMap<PredId, Vec<TermId>> {
         let mut inference = InvariantInference::new(InvariantConfig {
@@ -636,7 +753,7 @@ pub mod houdini {
 
         inference.target_predicates = candidates.keys().copied().collect();
 
-        match inference.run_houdini() {
+        match inference.run_houdini(chc, manager) {
             InferenceResult::Success(inv) => inv,
             InferenceResult::Partial { found, .. } => found,
             _ => FxHashMap::default(),

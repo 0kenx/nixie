@@ -54,6 +54,15 @@ pub enum OmegaResult {
     Unknown,
 }
 
+/// Value of a shadow gap expression `b·α − a·β`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShadowValue {
+    /// The gap reduces to a constant (no other variables remain).
+    Const(i64),
+    /// The gap still depends on other variables — undecidable here.
+    Symbolic,
+}
+
 /// Configuration for Omega test.
 #[derive(Debug, Clone)]
 pub struct OmegaTestConfig {
@@ -123,6 +132,20 @@ impl OmegaTester {
     }
 
     /// Eliminate a variable using the Omega test.
+    ///
+    /// Projects `var` out of the current constraint system using Pugh's real
+    /// and dark shadow tests, and reports whether the projection is
+    /// satisfiable, unsatisfiable, or undetermined:
+    ///
+    /// * `Unsatisfiable` — some lower/upper bound pair yields an empty real
+    ///   interval that reduces to a constant contradiction, or a
+    ///   variable-free constraint is violated.
+    /// * `Satisfiable` — every constraint mentions only `var`, every real
+    ///   shadow is (constantly) non-empty, and every dark shadow holds, so an
+    ///   integer solution is guaranteed.
+    /// * `Unknown` — the projection still involves other variables (the exact
+    ///   Omega splitting/recursion is not carried out here), so no sound
+    ///   definite answer can be given.
     pub fn eliminate(&mut self, var: VarId) -> OmegaResult {
         if self.depth >= self.config.max_depth {
             return OmegaResult::Unknown;
@@ -131,36 +154,88 @@ impl OmegaTester {
         self.stats.vars_eliminated += 1;
         self.depth += 1;
 
-        // Extract bounds on var
-        let enable_real = self.config.enable_real_shadow;
-        let enable_dark = self.config.enable_dark_shadow;
+        let result = self.eliminate_inner(var);
 
-        // Check real shadow (necessary condition)
-        if enable_real {
-            let (lower_indices, upper_indices) = self.extract_bound_indices(var);
-            if !self.check_real_shadow(&lower_indices, &upper_indices) {
-                self.depth -= 1;
-                return OmegaResult::Unsatisfiable;
-            }
-        }
-
-        // Check dark shadow (sufficient condition for integer satisfiability)
-        if enable_dark {
-            let (lower_indices, upper_indices) = self.extract_bound_indices(var);
-            if self.check_dark_shadow(&lower_indices, &upper_indices) {
-                self.depth -= 1;
-                return OmegaResult::Satisfiable;
-            }
-        }
-
-        // If neither shadow works, need to recurse (simplified here)
-        self.stats.recursive_calls += 1;
         self.depth -= 1;
+        result
+    }
 
-        OmegaResult::Unknown
+    /// Core projection logic (see [`OmegaTester::eliminate`]).
+    fn eliminate_inner(&mut self, var: VarId) -> OmegaResult {
+        // Reject variable-free constraints that are already contradictory
+        // (0 ≤ rhs with rhs < 0), and detect whether the projection leaves any
+        // constraint mentioning a variable other than `var`.
+        let mut has_other_vars = false;
+        for constraint in &self.constraints {
+            let mentions_var = constraint.get_coeff(var) != 0;
+            let mentions_other = constraint.coeffs.iter().any(|(&v, &c)| v != var && c != 0);
+            if !mentions_var {
+                if !mentions_other {
+                    // Purely constant constraint: 0 ≤ rhs.
+                    if constraint.rhs < 0 {
+                        return OmegaResult::Unsatisfiable;
+                    }
+                } else {
+                    // Remains after projecting out `var`.
+                    has_other_vars = true;
+                }
+            } else if mentions_other {
+                has_other_vars = true;
+            }
+        }
+
+        // Split the constraints on `var` into lower and upper bounds.
+        // Constraint form: Σ cₖ·xₖ ≤ rhs. For `var` with coefficient c:
+        //   c > 0 → upper bound on var:  c·var ≤ α   (α = rhs − rest)
+        //   c < 0 → lower bound on var:  b·var ≥ β   (b = |c|, β = rest − rhs)
+        // `extract_bound_indices` returns (coeff > 0, coeff < 0), i.e.
+        // (upper-bound indices, lower-bound indices).
+        let (upper_indices, lower_indices) = self.extract_bound_indices(var);
+
+        let mut definite = !has_other_vars;
+
+        if self.config.enable_real_shadow {
+            for &upper_idx in &upper_indices {
+                for &lower_idx in &lower_indices {
+                    match self.real_shadow_pair(var, upper_idx, lower_idx) {
+                        ShadowValue::Const(k) => {
+                            // Real shadow feasible ⟺ k ≥ 0.
+                            if k < 0 {
+                                return OmegaResult::Unsatisfiable;
+                            }
+                        }
+                        ShadowValue::Symbolic => definite = false,
+                    }
+                }
+            }
+        } else {
+            // Cannot rule out infeasibility without the real shadow.
+            definite = false;
+        }
+
+        if self.config.enable_dark_shadow {
+            for &upper_idx in &upper_indices {
+                for &lower_idx in &lower_indices {
+                    if !self.dark_shadow_pair(var, upper_idx, lower_idx) {
+                        definite = false;
+                    }
+                }
+            }
+        } else {
+            definite = false;
+        }
+
+        if definite {
+            OmegaResult::Satisfiable
+        } else {
+            self.stats.recursive_calls += 1;
+            OmegaResult::Unknown
+        }
     }
 
     /// Extract lower and upper bound constraint indices for a variable.
+    ///
+    /// The returned pair is `(coeff > 0 indices, coeff < 0 indices)`.
     fn extract_bound_indices(&self, var: VarId) -> (Vec<usize>, Vec<usize>) {
         let mut lower = Vec::new();
         let mut upper = Vec::new();
@@ -177,24 +252,72 @@ impl OmegaTester {
         (lower, upper)
     }
 
-    /// Check real shadow (∃x ∈ ℝ. φ).
-    fn check_real_shadow(&mut self, lower_indices: &[usize], upper_indices: &[usize]) -> bool {
+    /// Real shadow value for an (upper, lower) constraint pair.
+    ///
+    /// `upper_idx` has `var`-coefficient `a > 0` giving `a·var ≤ α`;
+    /// `lower_idx` has `var`-coefficient `−b < 0` giving `b·var ≥ β`.
+    /// The real shadow requires `a·β ≤ b·α`, i.e. `b·α − a·β ≥ 0`.
+    /// Returns the constant value of `b·α − a·β` when it does not involve any
+    /// other variable, otherwise [`ShadowValue::Symbolic`].
+    fn real_shadow_pair(&mut self, var: VarId, upper_idx: usize, lower_idx: usize) -> ShadowValue {
         self.stats.real_shadow_checks += 1;
-
-        if lower_indices.is_empty() || upper_indices.is_empty() {
-            return true; // One side unbounded
-        }
-
-        // Simplified: would check that for all i, j: lower[i] ≤ upper[j]
-        true
+        self.shadow_gap(var, upper_idx, lower_idx)
     }
 
-    /// Check dark shadow (sufficient for integer satisfiability).
-    fn check_dark_shadow(&mut self, _lower_indices: &[usize], _upper_indices: &[usize]) -> bool {
+    /// Dark shadow test for an (upper, lower) constraint pair.
+    ///
+    /// With `a·var ≤ α` and `b·var ≥ β`, the dark shadow holds when
+    /// `b·α − a·β ≥ (a − 1)(b − 1)`, which guarantees an integer in the
+    /// interval. Only decidable when the gap is a constant.
+    fn dark_shadow_pair(&mut self, var: VarId, upper_idx: usize, lower_idx: usize) -> bool {
         self.stats.dark_shadow_checks += 1;
+        let a = self.constraints[upper_idx].get_coeff(var); // > 0
+        let b = -self.constraints[lower_idx].get_coeff(var); // > 0
+        match self.shadow_gap(var, upper_idx, lower_idx) {
+            ShadowValue::Const(gap) => {
+                let threshold = (a - 1) * (b - 1);
+                gap >= threshold
+            }
+            ShadowValue::Symbolic => false,
+        }
+    }
 
-        // Simplified: would compute dark shadow bounds with GCD adjustment
-        false
+    /// Compute `b·α − a·β` for the pair, as a [`ShadowValue`].
+    ///
+    /// `α = rhs_u − rest_u` (from `a·var + rest_u ≤ rhs_u`) and
+    /// `β = rest_l − rhs_l` (from `−b·var + rest_l ≤ rhs_l`, i.e.
+    /// `b·var ≥ rest_l − rhs_l`). The result's non-`var` variable coefficients
+    /// are `b·(−rest_u) − a·(rest_l)`; if all vanish the gap is constant.
+    fn shadow_gap(&self, var: VarId, upper_idx: usize, lower_idx: usize) -> ShadowValue {
+        let upper = &self.constraints[upper_idx];
+        let lower = &self.constraints[lower_idx];
+        let a = upper.get_coeff(var); // a > 0
+        let b = -lower.get_coeff(var); // b > 0
+
+        // Accumulate coefficients of the other variables in b·α − a·β.
+        let mut acc: FxHashMap<VarId, i64> = FxHashMap::default();
+        // α = rhs_u − rest_u  →  contributes b·α: constant b·rhs_u, vars −b·rest_u.
+        for (&v, &c) in &upper.coeffs {
+            if v == var {
+                continue;
+            }
+            *acc.entry(v).or_insert(0) += -b * c;
+        }
+        // β = rest_l − rhs_l  →  contributes −a·β: constant a·rhs_l, vars −a·rest_l.
+        for (&v, &c) in &lower.coeffs {
+            if v == var {
+                continue;
+            }
+            *acc.entry(v).or_insert(0) += -a * c;
+        }
+
+        if acc.values().any(|&c| c != 0) {
+            return ShadowValue::Symbolic;
+        }
+
+        // Constant part: b·rhs_u − a·(−rhs_l) = b·rhs_u + a·rhs_l.
+        let gap = b * upper.rhs + a * lower.rhs;
+        ShadowValue::Const(gap)
     }
 
     /// Get statistics.
@@ -278,5 +401,68 @@ mod tests {
 
         tester.reset_stats();
         assert_eq!(tester.stats().vars_eliminated, 0);
+    }
+
+    /// Helper: `Σ coeffs ≤ rhs` from `(var, coeff)` pairs.
+    fn constraint(pairs: &[(VarId, i64)], rhs: i64) -> LinearConstraint {
+        let mut coeffs = FxHashMap::default();
+        for &(v, c) in pairs {
+            coeffs.insert(v, c);
+        }
+        LinearConstraint::new(coeffs, rhs)
+    }
+
+    #[test]
+    fn test_real_shadow_detects_unsat() {
+        // x ≤ 3  ∧  x ≥ 5  (i.e. -x ≤ -5) — empty interval.
+        let mut tester = OmegaTester::default_config();
+        tester.add_constraint(constraint(&[(0, 1)], 3));
+        tester.add_constraint(constraint(&[(0, -1)], -5));
+
+        assert_eq!(tester.eliminate(0), OmegaResult::Unsatisfiable);
+        assert!(tester.stats().real_shadow_checks >= 1);
+    }
+
+    #[test]
+    fn test_dark_shadow_detects_sat() {
+        // 2x ≤ 7  ∧  2x ≥ 3 (i.e. -2x ≤ -3): integers 2, 3 lie in [1.5, 3.5].
+        let mut tester = OmegaTester::default_config();
+        tester.add_constraint(constraint(&[(0, 2)], 7));
+        tester.add_constraint(constraint(&[(0, -2)], -3));
+
+        assert_eq!(tester.eliminate(0), OmegaResult::Satisfiable);
+        assert!(tester.stats().dark_shadow_checks >= 1);
+    }
+
+    #[test]
+    fn test_gray_shadow_is_unknown() {
+        // 3x ≤ 4 ∧ 3x ≥ 3: real shadow feasible but dark shadow fails, so the
+        // Omega test (without the splitting recursion) honestly reports Unknown
+        // rather than fabricating an answer.
+        let mut tester = OmegaTester::default_config();
+        tester.add_constraint(constraint(&[(0, 3)], 4));
+        tester.add_constraint(constraint(&[(0, -3)], -3));
+
+        assert_eq!(tester.eliminate(0), OmegaResult::Unknown);
+    }
+
+    #[test]
+    fn test_other_variables_are_unknown() {
+        // x ≤ y ∧ x ≥ 0 — projection still depends on y → Unknown.
+        let mut tester = OmegaTester::default_config();
+        tester.add_constraint(constraint(&[(0, 1), (1, -1)], 0)); // x - y ≤ 0
+        tester.add_constraint(constraint(&[(0, -1)], 0)); // -x ≤ 0
+
+        assert_eq!(tester.eliminate(0), OmegaResult::Unknown);
+    }
+
+    #[test]
+    fn test_constant_contradiction_is_unsat() {
+        // A variable-free contradictory constraint 0 ≤ -1.
+        let mut tester = OmegaTester::default_config();
+        tester.add_constraint(constraint(&[(0, 1)], 10));
+        tester.add_constraint(constraint(&[], -1));
+
+        assert_eq!(tester.eliminate(0), OmegaResult::Unsatisfiable);
     }
 }

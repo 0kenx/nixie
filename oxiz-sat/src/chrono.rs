@@ -83,21 +83,43 @@ impl ChronoBacktrack {
 
     /// Check if the clause is asserting at the given level
     ///
-    /// A clause is asserting at level L if exactly one literal is unassigned
-    /// and all others are false at level L.
+    /// A clause is asserting at level L if, restricted to the assignment as
+    /// it stood upon *reaching* level L, exactly one literal is unassigned
+    /// and all others are false.
+    ///
+    /// "Unassigned as of level L" covers two distinct cases that must both
+    /// be counted, and must NOT be confused with each other:
+    /// - The variable is genuinely unassigned in the (current, full) trail.
+    /// - The variable *is* assigned, but only at some level strictly above
+    ///   `level` — i.e. it hadn't been decided yet by the time the search
+    ///   was at level L.
+    ///
+    /// Crucially, level 0 is a real decision level (unit facts derived by
+    /// root-level propagation), not a sentinel for "unassigned" — treating
+    /// `trail.level(var) == 0` as "unassigned" would misclassify every
+    /// level-0 literal in the clause, and variables actually assigned above
+    /// `level` must still be tallied as unassigned rather than silently
+    /// dropped from both counts.
     fn is_clause_asserting_at_level(&self, trail: &Trail, clause: &[Lit], level: u32) -> bool {
         let mut unassigned_count = 0;
         let mut false_count = 0;
 
         for &lit in clause {
             let var = lit.var();
-            let var_level = trail.level(var);
 
-            if var_level == 0 {
-                // Unassigned
+            if !trail.is_assigned(var) {
+                // Genuinely unassigned (never decided/propagated at all).
                 unassigned_count += 1;
-            } else if var_level <= level {
-                // Check if it's false
+                continue;
+            }
+
+            let var_level = trail.level(var);
+            if var_level > level {
+                // Assigned, but only after the point we're testing: as of
+                // reaching `level`, this literal hadn't been decided yet.
+                unassigned_count += 1;
+            } else {
+                // Assigned at or before `level` (including level 0 facts).
                 let value = trail.lit_value(lit);
                 if value.is_false() {
                     false_count += 1;
@@ -187,5 +209,85 @@ mod tests {
         let chrono = ChronoBacktrack::default();
         assert!(chrono.is_enabled());
         assert_eq!(chrono.threshold(), 100);
+    }
+
+    // Regression test: `is_clause_asserting_at_level` previously (a) treated
+    // any variable assigned at decision level 0 as *unassigned* rather than
+    // checking its actual (permanent) truth value, and (b) silently dropped
+    // variables assigned strictly above the level under test instead of
+    // counting them as unassigned — together these meant the asserting
+    // check almost never succeeded, so chronological backtracking was
+    // effectively inert and `compute_backtrack_level` always degenerated to
+    // the plain (non-chronological) assertion level.
+    //
+    // Build a trail where x9 is a level-0 fact and x1..x4 are decisions at
+    // levels 1..4, with x5 (the would-be UIP) decided at level 5. The learnt
+    // clause `¬x5 ∨ ¬x9 ∨ ¬x1` stays asserting through levels 2..4 (x5 is
+    // simply not yet decided as of those points, and x9/x1 are both false),
+    // so chronological backtracking should jump to level 3 — strictly
+    // higher than the traditional assertion level of 1. Under the old
+    // buggy logic this returned 1 (no chronological jump at all).
+    #[test]
+    fn test_chrono_backtrack_finds_higher_level_for_asserting_clause() {
+        let chrono = ChronoBacktrack::new(true, 100);
+        let mut trail = Trail::new(10);
+
+        // Level 0: root-level fact. Must NOT be misread as "unassigned".
+        trail.assign_decision(Lit::pos(Var::new(9)));
+
+        // Level 1: drives assertion_level = 1.
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(1)));
+
+        // Levels 2..4: decisions unrelated to the learnt clause; the clause
+        // should remain asserting all the way through them.
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(2)));
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(3)));
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(4)));
+
+        // Level 5: the (would-be) UIP variable.
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(5)));
+
+        let learnt = vec![
+            Lit::neg(Var::new(5)),
+            Lit::neg(Var::new(9)),
+            Lit::neg(Var::new(1)),
+        ];
+
+        let level = chrono.compute_backtrack_level(&trail, &learnt, 1);
+
+        assert_eq!(
+            level, 3,
+            "chronological backtracking should skip past levels 2..4 instead of \
+             degenerating to the plain assertion level"
+        );
+    }
+
+    // Companion test isolating just the level-0-vs-unassigned confusion:
+    // a clause containing only a level-0 literal (always false) and the
+    // current-level UIP literal must be recognized as asserting even at
+    // level 0 itself.
+    #[test]
+    fn test_asserting_check_treats_level_zero_as_assigned_not_unassigned() {
+        let chrono = ChronoBacktrack::new(true, 100);
+        let mut trail = Trail::new(10);
+
+        // Level 0 fact: x0 = true, so ¬x0 is false.
+        trail.assign_decision(Lit::pos(Var::new(0)));
+
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(1)));
+
+        let learnt = vec![Lit::neg(Var::new(1)), Lit::neg(Var::new(0))];
+
+        assert!(
+            chrono.is_clause_asserting_at_level(&trail, &learnt, 0),
+            "with x0 correctly read as false (not unassigned) at level 0, \
+             ¬x1 is the sole unassigned literal, so the clause is asserting"
+        );
     }
 }

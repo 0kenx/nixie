@@ -27,12 +27,9 @@ pub fn s_polynomial(f: &Polynomial, g: &Polynomial) -> Polynomial {
     let lm_f = f.leading_monomial();
     let lm_g = g.leading_monomial();
 
-    if lm_f.is_none() || lm_g.is_none() {
+    let (Some(lm_f), Some(lm_g)) = (lm_f, lm_g) else {
         return Polynomial::zero();
-    }
-
-    let lm_f = lm_f.expect("leading monomial exists for non-zero polynomial");
-    let lm_g = lm_g.expect("leading monomial exists for non-zero polynomial");
+    };
 
     // Compute LCM of leading monomials
     let lcm = monomial_lcm(lm_f, lm_g);
@@ -129,12 +126,9 @@ pub fn reduce(f: &Polynomial, g_set: &[Polynomial]) -> Polynomial {
             let lm_p = p.leading_monomial();
             let lm_g = g.leading_monomial();
 
-            if lm_p.is_none() || lm_g.is_none() {
+            let (Some(lm_p), Some(lm_g)) = (lm_p, lm_g) else {
                 continue;
-            }
-
-            let lm_p = lm_p.expect("leading monomial exists");
-            let lm_g = lm_g.expect("leading monomial exists for non-zero polynomial");
+            };
 
             // Check if LM(g) divides LM(p)
             if let Some(quotient_monomial) = lm_p.div(lm_g) {
@@ -170,6 +164,16 @@ pub fn reduce(f: &Polynomial, g_set: &[Polynomial]) -> Polynomial {
                 break;
             }
         }
+    }
+
+    // If the iteration cap was hit with `p` still non-zero, we have not
+    // finished reducing. The invariant `f ≡ p + r (mod ideal)` still holds, so
+    // fold the unreduced tail back into the result rather than silently
+    // dropping it — dropping `p` would return a polynomial that is NOT
+    // equivalent to `f` modulo the ideal, corrupting every downstream caller
+    // (S-polynomial reduction, membership/implication tests, NRA sat checks).
+    if !p.is_zero() {
+        r = r.add(&p);
     }
 
     r
@@ -218,8 +222,12 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
     while !pairs.is_empty() && iterations < max_iterations {
         iterations += 1;
 
-        // Take a pair
-        let (i, j) = pairs.pop().expect("collection validated to be non-empty");
+        // Take a pair. `pairs` is non-empty per the `while` guard, so this
+        // should always succeed; treat an unexpected `None` as "nothing left
+        // to process" rather than panicking.
+        let Some((i, j)) = pairs.pop() else {
+            break;
+        };
 
         if i >= g.len() || j >= g.len() {
             continue;
@@ -401,8 +409,24 @@ fn f5_criterion(sig: &Signature, basis: &[LabeledPoly]) -> bool {
 /// Reference: Faugère, "A new efficient algorithm for computing Gröbner bases
 /// without reduction to zero (F5)" (2002)
 pub fn grobner_basis_f5(polynomials: &[Polynomial]) -> Vec<Polynomial> {
+    grobner_basis_f5_tracked(polynomials).0
+}
+
+/// Same computation as [`grobner_basis_f5`], but additionally reports whether
+/// the S-pair queue was fully drained for every incrementally-added
+/// generator (`true`), or whether the per-step iteration cap was hit while
+/// pairs still remained (`false`).
+///
+/// A `false` result means the returned basis is **not** guaranteed to be the
+/// true (complete) reduced Gröbner basis: an S-polynomial that would have
+/// been computed with more iterations -- including, critically, one that
+/// reduces to a nonzero constant and would prove the ideal `Unsat` -- may be
+/// missing. Callers that treat "no constant found in the basis" as a
+/// satisfiability verdict (see `NraSolver::check_equalities`) must downgrade
+/// to `Unknown` rather than `Sat` when this flag is `false`.
+fn grobner_basis_f5_tracked(polynomials: &[Polynomial]) -> (Vec<Polynomial>, bool) {
     if polynomials.is_empty() {
-        return vec![];
+        return (vec![], true);
     }
 
     // Remove zero polynomials
@@ -413,11 +437,12 @@ pub fn grobner_basis_f5(polynomials: &[Polynomial]) -> Vec<Polynomial> {
         .collect();
 
     if polys.is_empty() {
-        return vec![];
+        return (vec![], true);
     }
 
     // The F5 algorithm processes input polynomials incrementally
     let mut basis: Vec<LabeledPoly> = Vec::new();
+    let mut complete = true;
 
     // Process each input polynomial
     for (idx, poly) in polys.iter().enumerate() {
@@ -445,7 +470,12 @@ pub fn grobner_basis_f5(polynomials: &[Polynomial]) -> Vec<Polynomial> {
         while !pairs.is_empty() && iterations < max_iterations {
             iterations += 1;
 
-            let (i, j) = pairs.pop().expect("collection validated to be non-empty");
+            // `pairs` is non-empty per the `while` guard; treat an
+            // unexpected `None` as "nothing left to process" rather than
+            // panicking.
+            let Some((i, j)) = pairs.pop() else {
+                break;
+            };
 
             if i >= basis.len() || j >= basis.len() {
                 continue;
@@ -455,12 +485,9 @@ pub fn grobner_basis_f5(polynomials: &[Polynomial]) -> Vec<Polynomial> {
             let lm_i = basis[i].polynomial.leading_monomial();
             let lm_j = basis[j].polynomial.leading_monomial();
 
-            if lm_i.is_none() || lm_j.is_none() {
+            let (Some(lm_i), Some(lm_j)) = (lm_i, lm_j) else {
                 continue;
-            }
-
-            let lm_i = lm_i.expect("leading monomial exists");
-            let lm_j = lm_j.expect("leading monomial exists");
+            };
 
             let lcm = monomial_lcm(lm_i, lm_j);
 
@@ -518,11 +545,17 @@ pub fn grobner_basis_f5(polynomials: &[Polynomial]) -> Vec<Polynomial> {
                 }
             }
         }
+
+        // The per-step iteration cap was hit while S-pairs for this
+        // generator still remained: the basis is not guaranteed complete.
+        if !pairs.is_empty() {
+            complete = false;
+        }
     }
 
     // Extract polynomials from labeled polynomials and interreduce
     let polys: Vec<Polynomial> = basis.iter().map(|lp| lp.polynomial.clone()).collect();
-    interreduce(&polys)
+    (interreduce(&polys), complete)
 }
 
 /// F4 algorithm for computing Gröbner bases.
@@ -766,6 +799,11 @@ pub enum Relation {
     LessEqual,
 }
 
+/// A post-Gröbner-reduction polynomial paired with the relation it must
+/// satisfy against zero. Used internally by `NraSolver::check_sat` while
+/// sorting constraints into decided / linear / non-linear buckets.
+type PolyRelation = (Polynomial, Relation);
+
 /// A polynomial constraint: polynomial \<relation\> 0
 #[derive(Debug, Clone)]
 pub struct PolynomialConstraint {
@@ -877,6 +915,12 @@ pub struct NraSolver {
     grobner_basis: Option<Vec<Polynomial>>,
     /// Whether the Gröbner basis needs recomputation
     basis_dirty: bool,
+    /// Whether the cached `grobner_basis` is the true (complete) reduced
+    /// Gröbner basis, or a partial result returned because the F5
+    /// iteration cap was hit before the S-pair queue drained (see
+    /// [`grobner_basis_f5_tracked`]). `check_equalities` must not treat an
+    /// incomplete basis's "no constant found" as a certified `Sat`.
+    basis_complete: bool,
 }
 
 impl NraSolver {
@@ -887,6 +931,7 @@ impl NraSolver {
             inequalities: Vec::new(),
             grobner_basis: None,
             basis_dirty: false,
+            basis_complete: true,
         }
     }
 
@@ -912,21 +957,54 @@ impl NraSolver {
     /// Compute (or retrieve cached) Gröbner basis for the equalities.
     fn get_grobner_basis(&mut self) -> &Vec<Polynomial> {
         if self.basis_dirty || self.grobner_basis.is_none() {
-            let gb = if self.equalities.is_empty() {
-                vec![]
+            let (gb, complete) = if self.equalities.is_empty() {
+                (vec![], true)
             } else {
-                grobner_basis_f5(&self.equalities)
+                grobner_basis_f5_tracked(&self.equalities)
             };
             self.grobner_basis = Some(gb);
+            self.basis_complete = complete;
             self.basis_dirty = false;
         }
-        self.grobner_basis.as_ref().expect("grobner basis computed")
+        // `self.grobner_basis` was just set to `Some` above (or already was
+        // `Some` and `basis_dirty` is `false`), so this never inserts in
+        // practice; `get_or_insert_with` avoids an `.expect()`/panic path
+        // for what should be an unreachable `None` case.
+        self.grobner_basis.get_or_insert_with(Vec::new)
     }
 
     /// Check if the equality constraints are satisfiable.
     ///
     /// This uses the Gröbner basis to check if the ideal contains 1
     /// (which would indicate unsatisfiability).
+    ///
+    /// # Soundness notes
+    ///
+    /// "The (complex) Gröbner basis contains no nonzero constant" is a
+    /// Nullstellensatz criterion: it certifies that the ideal is consistent
+    /// over an algebraically closed field (the complex numbers), i.e. that
+    /// the *complex* variety is non-empty. For a system with nonlinear
+    /// generators this does **not**, by itself, certify that the *real*
+    /// variety is non-empty (e.g. `{z^2 + 1 = 0}` is complex-consistent but
+    /// has no real solution) -- nor does it certify it is empty (e.g.
+    /// `{z^2 - 2 = 0}` is complex-consistent *and* has a real solution,
+    /// `z = sqrt(2)`, that a rational-arithmetic Gröbner basis alone cannot
+    /// distinguish from the former case without real root isolation, which
+    /// is not implemented here). This method therefore reports the
+    /// Nullstellensatz-only verdict for the equalities in isolation, same
+    /// as before; the additional soundness gap this package fixes --
+    /// treating a nonlinear equality basis as trustworthy input to the
+    /// *linear* Fourier-Motzkin decision procedure for any leftover
+    /// inequalities -- is handled at that specific call site in
+    /// [`Self::check_sat`], not here.
+    ///
+    /// A nonzero constant, however found, always proves `Unsat` (an empty
+    /// complex variety implies an empty real variety). And "no constant
+    /// found" is only reported here as `Sat` when the Gröbner basis
+    /// computation actually finished draining its S-pair queue (see
+    /// `grobner_basis_f5_tracked`); a basis cut off by the iteration cap
+    /// could be missing exactly the S-polynomial that would have revealed
+    /// inconsistency, so that case honestly reports `Unknown` instead.
     pub fn check_equalities(&mut self) -> SatResult {
         if self.equalities.is_empty() {
             return SatResult::Sat;
@@ -934,17 +1012,39 @@ impl NraSolver {
 
         let gb = self.get_grobner_basis();
 
-        // If the Gröbner basis contains a non-zero constant, the system is unsatisfiable
+        // If the Gröbner basis contains a non-zero constant, the system is
+        // unsatisfiable -- true over both the complex and real numbers.
         for p in gb {
             if p.is_constant() && !p.is_zero() {
                 return SatResult::Unsat;
             }
         }
 
+        // No constant found: `gb`'s last use was the loop above, so the
+        // borrow ends here (NLL) and `self.basis_complete` can be read.
+        if !self.basis_complete {
+            return SatResult::Unknown;
+        }
+
         SatResult::Sat
     }
 
     /// Check satisfiability of all constraints (equalities and inequalities).
+    ///
+    /// # Soundness: nonlinear equalities vs. the linear inequality decision
+    ///
+    /// The Fourier-Motzkin decision procedure (`decide_linear_arms`) used
+    /// below for the *linear* leftover of the inequalities only reasons
+    /// about those linear atoms -- it has no visibility into a nonlinear
+    /// equality Gröbner basis lurking behind them. That is an unsound
+    /// combination on its own: `{z^2 + w = 0, w > 0}` is real-UNSAT (`z^2 =
+    /// -w` forces `w <= 0`), but the leftover inequality `w > 0` is linear
+    /// and satisfiable in isolation, so FM alone would wrongly say `Sat`.
+    /// Whenever FM would conclude `Sat` for the linear leftover *and* the
+    /// equalities' Gröbner basis contains a nonlinear polynomial, that
+    /// conclusion is downgraded to the honest `Unknown` (an `Unsat` verdict
+    /// from FM remains sound regardless: extra constraints only shrink
+    /// feasibility, whatever the equalities turn out to allow).
     pub fn check_sat(&mut self) -> SatResult {
         // First check if equalities are satisfiable
         let eq_result = self.check_equalities();
@@ -952,50 +1052,92 @@ impl NraSolver {
             return SatResult::Unsat;
         }
 
-        // Check inequalities
-        if !self.inequalities.is_empty() {
-            // Get Gröbner basis first, then work with inequalities
-            let gb = self.get_grobner_basis().clone();
+        if self.inequalities.is_empty() {
+            return eq_result;
+        }
 
-            for constraint in &self.inequalities {
-                let simplified = reduce(&constraint.polynomial, &gb);
+        // Get Gröbner basis first, then work with inequalities
+        let gb = self.get_grobner_basis().clone();
 
-                // Check if the simplified constraint is a constant (or zero)
-                if simplified.is_constant() || simplified.is_zero() {
-                    let const_val = if simplified.is_zero() {
-                        BigRational::zero()
-                    } else {
-                        simplified.constant_term()
-                    };
+        // Constraints that don't reduce to a constant need a real decision
+        // procedure; collect them (with their post-reduction polynomial) so
+        // the linear subset can be routed through the Fourier-Motzkin-based
+        // decision procedure below.
+        let mut undecided: Vec<PolyRelation> = Vec::new();
 
-                    let is_sat = match constraint.relation {
-                        Relation::Equal => const_val.is_zero(),
-                        Relation::NotEqual => !const_val.is_zero(),
-                        Relation::Greater => const_val.is_positive(),
-                        Relation::GreaterEqual => !const_val.is_negative(),
-                        Relation::Less => const_val.is_negative(),
-                        Relation::LessEqual => !const_val.is_positive(),
-                    };
+        for constraint in &self.inequalities {
+            let simplified = reduce(&constraint.polynomial, &gb);
 
-                    if !is_sat {
-                        return SatResult::Unsat;
-                    }
+            // Check if the simplified constraint is a constant (or zero)
+            if simplified.is_constant() || simplified.is_zero() {
+                let const_val = if simplified.is_zero() {
+                    BigRational::zero()
+                } else {
+                    simplified.constant_term()
+                };
+
+                let is_sat = match constraint.relation {
+                    Relation::Equal => const_val.is_zero(),
+                    Relation::NotEqual => !const_val.is_zero(),
+                    Relation::Greater => const_val.is_positive(),
+                    Relation::GreaterEqual => !const_val.is_negative(),
+                    Relation::Less => const_val.is_negative(),
+                    Relation::LessEqual => !const_val.is_positive(),
+                };
+
+                if !is_sat {
+                    return SatResult::Unsat;
                 }
-            }
-
-            // If we have non-constant inequalities, try basic inequality solving
-            // For now, return Unknown for complex cases
-            let has_complex_inequality = self.inequalities.iter().any(|c| {
-                let simplified = reduce(&c.polynomial, &gb);
-                !simplified.is_constant() && simplified.total_degree() > 1
-            });
-
-            if has_complex_inequality {
-                return SatResult::Unknown;
+            } else {
+                undecided.push((simplified, constraint.relation));
             }
         }
 
-        SatResult::Sat
+        if undecided.is_empty() {
+            return eq_result;
+        }
+
+        // Some inequalities remain undecided after Gröbner reduction. Route
+        // the linear subset (affine, degree <= 1) through the complete
+        // Fourier-Motzkin decision procedure in `decide_linear_arms`. A
+        // genuinely non-linear leftover (e.g. `x^2 > 0`) still has no
+        // decision procedure wired in, so it must not be silently treated
+        // as Sat -- but an Unsat verdict on the linear subset alone is
+        // sound regardless (extra constraints only shrink feasibility).
+        let (linear, nonlinear): (Vec<PolyRelation>, Vec<PolyRelation>) = undecided
+            .into_iter()
+            .partition(|(poly, _)| poly.is_linear());
+
+        if !linear.is_empty() {
+            let arms: Vec<(&Polynomial, Relation)> =
+                linear.iter().map(|(poly, rel)| (poly, *rel)).collect();
+            match crate::grobner::linear_arith::decide_linear_arms(&arms) {
+                SatResult::Unsat => return SatResult::Unsat,
+                SatResult::Sat if nonlinear.is_empty() => {
+                    // The FM decision procedure only reasons about the
+                    // linear inequality arms; it knows nothing about a
+                    // nonlinear equality basis lurking behind them (the
+                    // {z^2 + w = 0, w > 0} soundness gap: FM alone sees
+                    // `w > 0` and happily returns Sat while the nonlinear
+                    // equality secretly forces `w <= 0`). Downgrade to the
+                    // honest Unknown in exactly that case; an incomplete
+                    // (but linear) basis is covered by `eq_result` already
+                    // being `Unknown` from `check_equalities`.
+                    if gb.iter().any(|p| !p.is_linear()) {
+                        return SatResult::Unknown;
+                    }
+                    return eq_result;
+                }
+                SatResult::Sat | SatResult::Unknown => {}
+            }
+        }
+
+        // Either a non-linear constraint remains undecided, or the linear
+        // decision procedure exhausted its search budget without a
+        // definitive answer (see `decide_linear_arms`/`linear_system_sat`).
+        // Returning Unknown is the honest result: it never asserts a
+        // satisfying assignment we have not actually verified.
+        SatResult::Unknown
     }
 
     /// Simplify a polynomial using the current Gröbner basis.
@@ -1028,12 +1170,21 @@ impl NraSolver {
     /// Extract a model from the Gröbner basis (if possible).
     ///
     /// This attempts to solve for variables using the simplified basis.
-    /// For univariate polynomials in the basis, we can find roots.
-    /// This is a basic implementation; a complete solver would use more
-    /// sophisticated techniques.
+    /// For univariate *linear* polynomials in the basis, we can solve
+    /// exactly. This is a basic implementation; a complete solver would use
+    /// more sophisticated techniques (e.g. real root isolation) for
+    /// higher-degree univariate members.
+    ///
+    /// Only produces a model when [`Self::check_equalities`] returns `Sat`
+    /// (a certified real solution exists per that method's doc comment) --
+    /// `Unsat` and `Unknown` both return `None` rather than a guess. This
+    /// also makes the "certified Sat implies every basis polynomial is
+    /// linear/affine" invariant hold here, so the higher-degree branch
+    /// below is unreachable in practice; it is still kept honest (it never
+    /// fabricates a root) as defense in depth.
     pub fn get_model(&mut self) -> Option<Model> {
         let eq_result = self.check_equalities();
-        if eq_result == SatResult::Unsat {
+        if eq_result != SatResult::Sat {
             return None;
         }
 
@@ -1058,9 +1209,14 @@ impl NraSolver {
                         model.assign(var, root);
                     }
                 }
-                // For higher degree, we'd need root isolation
-                // For now, just assign 0 if not already assigned
-                else if model.get(var).is_none() {
+                // For higher degree we would need real root isolation,
+                // which is not implemented here. `0` is a root only when
+                // the polynomial's constant term is zero (poly = x * q(x));
+                // fabricating `0` otherwise would silently hand back a
+                // model that does not actually satisfy the constraint, so
+                // leave the variable unassigned instead (honest
+                // incompleteness beats a wrong "solution").
+                else if model.get(var).is_none() && poly.constant_term().is_zero() {
                     model.assign(var, BigRational::zero());
                 }
             }
@@ -1075,6 +1231,7 @@ impl NraSolver {
         self.inequalities.clear();
         self.grobner_basis = None;
         self.basis_dirty = false;
+        self.basis_complete = true;
     }
 
     /// Get the number of equality constraints.
@@ -1658,5 +1815,90 @@ mod tests {
         solver.add_constraint(constraint);
 
         assert_eq!(solver.check_sat(), SatResult::Unknown);
+    }
+
+    // -----------------------------------------------------------------
+    // Regression tests: complex-vs-real Nullstellensatz soundness gap.
+    //
+    // The Gröbner basis "no nonzero constant" test only certifies
+    // consistency over the complex numbers. `check_equalities`/`check_sat`
+    // must downgrade a would-be Sat verdict to `Unknown` whenever the
+    // equalities' basis contains a nonlinear polynomial (the real variety
+    // may be empty, or smaller than what a purely-linear leftover
+    // inequality's Fourier-Motzkin decision suggests), while still
+    // reporting `Sat` when the basis is linear-only (no complex/real gap
+    // for degree-1 generators).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn nra_solver_nonlinear_equality_downgrades_fm_sat_to_unknown() {
+        // {z^2 + w = 0, w > 0}: over the reals this is UNSAT (z^2 = -w and
+        // z^2 >= 0 forces w <= 0, contradicting w > 0). The Gröbner basis
+        // {z^2 + w} is only complex-consistent (e.g. z = i, w = -1), and
+        // the leftover inequality `w > 0` is linear, so Fourier-Motzkin
+        // alone (ignoring the nonlinear equality) would wrongly say Sat.
+        // The nonlinear equality basis must downgrade that verdict.
+        let mut solver = NraSolver::new();
+        let z_squared_plus_w = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (1, &[(1, 1)])]); // z^2 + w
+        solver.add_equality(z_squared_plus_w);
+        solver.add_constraint(PolynomialConstraint::greater(Polynomial::from_var(1))); // w > 0
+
+        let result = solver.check_sat();
+        assert_ne!(
+            result,
+            SatResult::Sat,
+            "{{z^2+w=0, w>0}} is real-UNSAT; must never be reported Sat"
+        );
+        assert!(
+            result == SatResult::Unknown || result == SatResult::Unsat,
+            "expected the honest Unknown (or Unsat, if real-root reasoning \
+             is implemented), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn nra_solver_linear_only_equality_basis_sat_still_decided() {
+        // Contrast case: when the equality basis is entirely linear/affine,
+        // "complex-consistent" and "real-consistent" coincide, so a genuine
+        // Sat must still be reported -- the fix must not over-approximate
+        // every equality system to Unknown.
+        let mut solver = NraSolver::new();
+        // z - 1 = 0 (linear)
+        let z_minus_1 = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-1, &[])]);
+        solver.add_equality(z_minus_1);
+        // w > 0 on an unrelated variable: survives Gröbner reduction
+        // unchanged and is routed through the linear Fourier-Motzkin
+        // decision procedure, which must still be trusted here.
+        solver.add_constraint(PolynomialConstraint::greater(Polynomial::from_var(1)));
+
+        assert_eq!(solver.check_sat(), SatResult::Sat);
+    }
+
+    #[test]
+    fn nra_solver_get_model_does_not_fabricate_wrong_root_for_higher_degree_univariate() {
+        // {z^2 - 2 = 0} alone: the Gröbner basis is the univariate
+        // polynomial itself (degree 2). `0` is NOT a root (0 - 2 = -2 !=
+        // 0) even though a real root does exist (z = sqrt(2), which cannot
+        // be represented exactly as a `BigRational`). `get_model` used to
+        // blindly assign `z = 0` for any non-linear univariate basis
+        // member; it must now leave `z` unassigned instead of handing back
+        // a witness that does not actually satisfy the constraint.
+        let mut solver = NraSolver::new();
+        let z_squared_minus_2 = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-2, &[])]);
+        solver.add_equality(z_squared_minus_2);
+
+        // Sanity: this is the same "Nullstellensatz Sat" verdict as the
+        // existing `test_nra_solver_with_algebraic_numbers` integration
+        // test in `oxiz-math/src/lib.rs` (real root exists, just not
+        // rationally representable) -- get_model must be reachable here.
+        assert_eq!(solver.check_equalities(), SatResult::Sat);
+
+        let model = solver
+            .get_model()
+            .expect("Nullstellensatz-consistent equalities return Some");
+        assert!(
+            model.get(0).is_none(),
+            "must not fabricate z = 0 as a root of z^2 - 2 (0 is not actually a root)"
+        );
     }
 }

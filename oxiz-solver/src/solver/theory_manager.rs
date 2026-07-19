@@ -12,9 +12,34 @@ use oxiz_theories::euf::EufSolver;
 use oxiz_theories::{EqualityNotification, Theory, TheoryCombination};
 use smallvec::SmallVec;
 
+use super::theory_bv_encode::encode_bv_term_recursive;
 use super::types::{
     ArithConstraintType, Constraint, ParsedArithConstraint, Statistics, TheoryMode,
 };
+
+/// One entry of the theory manager's own deduplicated assignment trail.
+///
+/// The SAT core drives theory state incrementally through `on_assignment` /
+/// `on_new_level` / `on_backtrack`, but its conflict analysis can (on some
+/// formulas) compute a wrong backtrack level and *overwrite* a variable's
+/// assignment in place — flipping a decision literal's polarity without ever
+/// popping the theory scope that recorded the old polarity.  The incremental
+/// EUF / arith / BV solvers only support level-scoped `pop`, not point removal
+/// of a single mid-level assertion, so a flipped literal would otherwise leave
+/// the theory state permanently reflecting the stale polarity and manufacture a
+/// spurious conflict (observed as a wrong top-level UNSAT on satisfiable
+/// disjunctive LIA chains).  We therefore shadow every theory-relevant
+/// assignment here, keyed so a flip is detected in O(1), and rebuild theory
+/// state from the corrected trail when one occurs.
+#[derive(Debug, Clone, Copy)]
+struct TrailAtom {
+    /// The SAT variable that was assigned.
+    var: Var,
+    /// `true` when the atom was assigned true, `false` when assigned false.
+    is_positive: bool,
+    /// The SAT decision level at which the assignment currently holds.
+    level: u32,
+}
 
 /// Theory decision hint
 #[derive(Debug, Clone, Copy)]
@@ -105,332 +130,43 @@ pub(crate) struct TheoryManager<'a> {
     /// detects conflicts (e.g., f(a)=true, f(b)=false, but a=b).
     bool_true_node: Option<u32>,
     bool_false_node: Option<u32>,
-}
-
-/// Post-order, memoised BV term encoding.
-///
-/// Bit-blast every BV-sorted operand reachable through a boolean condition
-/// `cond` (the kind that appears as an `ite` selector). Walks the boolean
-/// connective/comparison structure and bit-blasts the BV terms underneath the
-/// `Eq`/comparison leaves, so that `BvSolver::encode_bool_node` can look them
-/// up. Returns `false` if any BV operand fails to encode.
-fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -> bool {
-    let term = match mgr.get(cond) {
-        Some(t) => t,
-        None => return false,
-    };
-    match &term.kind {
-        // Boolean structure: recurse into operands.
-        TermKind::Not(inner) => bit_blast_cond_operands(bv, *inner, mgr),
-        TermKind::And(args) | TermKind::Or(args) => {
-            args.iter().all(|&a| bit_blast_cond_operands(bv, a, mgr))
-        }
-        // Comparison/equality leaves: their operands are BV terms.
-        TermKind::Eq(lhs, rhs)
-        | TermKind::BvUlt(lhs, rhs)
-        | TermKind::BvUle(lhs, rhs)
-        | TermKind::BvSlt(lhs, rhs)
-        | TermKind::BvSle(lhs, rhs) => {
-            let mut encoded: FxHashSet<TermId> = FxHashSet::default();
-            let lhs_ok = encode_bv_term_recursive(bv, *lhs, mgr, &mut encoded) || {
-                if let Some(w) = mgr
-                    .get(*lhs)
-                    .and_then(|t| mgr.sorts.get(t.sort))
-                    .and_then(|s| s.bitvec_width())
-                {
-                    bv.new_bv(*lhs, w);
-                    true
-                } else {
-                    false
-                }
-            };
-            let rhs_ok = encode_bv_term_recursive(bv, *rhs, mgr, &mut encoded) || {
-                if let Some(w) = mgr
-                    .get(*rhs)
-                    .and_then(|t| mgr.sorts.get(t.sort))
-                    .and_then(|s| s.bitvec_width())
-                {
-                    bv.new_bv(*rhs, w);
-                    true
-                } else {
-                    false
-                }
-            };
-            lhs_ok && rhs_ok
-        }
-        // A bare boolean variable / constant has no BV operands to blast.
-        TermKind::Var(_) | TermKind::True | TermKind::False => true,
-        // Anything else is outside the supported condition fragment.
-        _ => false,
-    }
-}
-
-/// If `tid` is a `BitVecConst` whose value is a positive power of two, return
-/// the exponent (shift amount).  Returns `None` for zero, non-powers-of-two,
-/// and non-constant terms.
-fn bitvec_const_pow2_shift(mgr: &TermManager, tid: TermId) -> Option<u32> {
-    let term = mgr.get(tid)?;
-    if let TermKind::BitVecConst { value, .. } = &term.kind {
-        let digits: Vec<u64> = value.iter_u64_digits().collect();
-        let set_bits: u32 = digits.iter().map(|&d| d.count_ones()).sum();
-        if set_bits != 1 {
-            return None;
-        }
-        for (chunk, &d) in digits.iter().enumerate() {
-            if d != 0 {
-                return Some(chunk as u32 * 64 + d.trailing_zeros());
-            }
-        }
-    }
-    None
-}
-
-/// Recursively encodes every sub-term of `root` into the BV solver using an
-/// explicit work-stack so that arbitrarily deep nesting is handled without
-/// overflowing the call stack.  A `FxHashSet<TermId>` memo prevents duplicate
-/// encoding when the same sub-term appears in multiple branches of the DAG.
-///
-/// Returns `true` when `root` was fully encoded, `false` when an unrecognised
-/// TermKind is encountered.
-fn encode_bv_term_recursive(
-    bv: &mut BvSolver,
-    root: TermId,
-    mgr: &TermManager,
-    encoded: &mut FxHashSet<TermId>,
-) -> bool {
-    // Work-stack entry: (term_id, children_pushed)
-    // We push a term twice: first time to push children, second time to
-    // encode the term itself (post-order).
-    let mut stack: Vec<(TermId, bool)> = vec![(root, false)];
-
-    while let Some((tid, children_done)) = stack.pop() {
-        if encoded.contains(&tid) {
-            continue;
-        }
-
-        let term = match mgr.get(tid) {
-            Some(t) => t,
-            None => return false,
-        };
-
-        let width = match mgr.sorts.get(term.sort).and_then(|s| s.bitvec_width()) {
-            Some(w) => w,
-            None => return false,
-        };
-
-        if !children_done {
-            // Re-push this node as "children done" so we encode it after children
-            stack.push((tid, true));
-
-            // Push children (they will be encoded first)
-            match &term.kind {
-                TermKind::BvAdd(a, b)
-                | TermKind::BvMul(a, b)
-                | TermKind::BvSub(a, b)
-                | TermKind::BvAnd(a, b)
-                | TermKind::BvOr(a, b)
-                | TermKind::BvXor(a, b)
-                | TermKind::BvUdiv(a, b)
-                | TermKind::BvSdiv(a, b)
-                | TermKind::BvUrem(a, b)
-                | TermKind::BvSrem(a, b) => {
-                    if !encoded.contains(a) {
-                        stack.push((*a, false));
-                    }
-                    if !encoded.contains(b) {
-                        stack.push((*b, false));
-                    }
-                }
-                TermKind::BvNot(a) => {
-                    if !encoded.contains(a) {
-                        stack.push((*a, false));
-                    }
-                }
-                // Shifts: value and shift-amount operands (same width).
-                TermKind::BvShl(a, b) | TermKind::BvLshr(a, b) | TermKind::BvAshr(a, b) => {
-                    if !encoded.contains(a) {
-                        stack.push((*a, false));
-                    }
-                    if !encoded.contains(b) {
-                        stack.push((*b, false));
-                    }
-                }
-                // Concatenation: both operands (their own widths).
-                TermKind::BvConcat(a, b) => {
-                    if !encoded.contains(a) {
-                        stack.push((*a, false));
-                    }
-                    if !encoded.contains(b) {
-                        stack.push((*b, false));
-                    }
-                }
-                // Extraction: single source operand (its own width).
-                TermKind::BvExtract { arg, .. } => {
-                    if !encoded.contains(arg) {
-                        stack.push((*arg, false));
-                    }
-                }
-                // ITE over BV: bit-blast both branches; the condition's BV
-                // operands are bit-blasted separately just before encoding.
-                TermKind::Ite(_cond, then_t, else_t) => {
-                    if !encoded.contains(then_t) {
-                        stack.push((*then_t, false));
-                    }
-                    if !encoded.contains(else_t) {
-                        stack.push((*else_t, false));
-                    }
-                }
-                // Leaves: Var, BitVecConst — no children to push
-                TermKind::Var(_) | TermKind::BitVecConst { .. } => {}
-                // Unknown term kind — cannot encode, abort
-                _ => return false,
-            }
-        } else {
-            // Encode this node (children already encoded)
-            match &term.kind {
-                TermKind::BvAdd(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_add(tid, *a, *b);
-                }
-                TermKind::BvMul(a, b) => {
-                    if let Some(shift) = bitvec_const_pow2_shift(mgr, *b) {
-                        bv.new_bv(*a, width);
-                        bv.bv_shl_const(tid, *a, shift, width);
-                    } else if let Some(shift) = bitvec_const_pow2_shift(mgr, *a) {
-                        bv.new_bv(*b, width);
-                        bv.bv_shl_const(tid, *b, shift, width);
-                    } else {
-                        bv.new_bv(*a, width);
-                        bv.new_bv(*b, width);
-                        bv.bv_mul(tid, *a, *b);
-                    }
-                }
-                TermKind::BvSub(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_sub(tid, *a, *b);
-                }
-                TermKind::BvAnd(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_and(tid, *a, *b);
-                }
-                TermKind::BvOr(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_or(tid, *a, *b);
-                }
-                TermKind::BvXor(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_xor(tid, *a, *b);
-                }
-                TermKind::BvNot(a) => {
-                    bv.new_bv(*a, width);
-                    bv.bv_not(tid, *a);
-                }
-                TermKind::BvShl(a, b) => {
-                    // Operands and result share `width`.
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_shl(tid, *a, *b);
-                }
-                TermKind::BvLshr(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_lshr(tid, *a, *b);
-                }
-                TermKind::BvAshr(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_ashr(tid, *a, *b);
-                }
-                TermKind::BvConcat(a, b) => {
-                    // Operands keep their own (possibly differing) widths; the
-                    // result width is their sum (already `width` here).
-                    let aw = match mgr
-                        .get(*a)
-                        .and_then(|t| mgr.sorts.get(t.sort))
-                        .and_then(|s| s.bitvec_width())
-                    {
-                        Some(w) => w,
-                        None => return false,
-                    };
-                    let bw = match mgr
-                        .get(*b)
-                        .and_then(|t| mgr.sorts.get(t.sort))
-                        .and_then(|s| s.bitvec_width())
-                    {
-                        Some(w) => w,
-                        None => return false,
-                    };
-                    bv.new_bv(*a, aw);
-                    bv.new_bv(*b, bw);
-                    // BvConcat(high, low) — `a` is the high (most-significant) part.
-                    bv.concat(tid, *a, *b);
-                }
-                TermKind::BvExtract { high, low, arg } => {
-                    let arg_w = match mgr
-                        .get(*arg)
-                        .and_then(|t| mgr.sorts.get(t.sort))
-                        .and_then(|s| s.bitvec_width())
-                    {
-                        Some(w) => w,
-                        None => return false,
-                    };
-                    bv.new_bv(*arg, arg_w);
-                    bv.extract(tid, *arg, *high, *low);
-                }
-                TermKind::Ite(cond, then_t, else_t) => {
-                    // Branches are already bit-blasted (pushed as children). The
-                    // condition's BV operands must be bit-blasted before the
-                    // condition itself is encoded inside `bv_ite`.
-                    if !bit_blast_cond_operands(bv, *cond, mgr) {
-                        return false;
-                    }
-                    bv.bv_ite(tid, *cond, *then_t, *else_t, mgr);
-                }
-                TermKind::BvUdiv(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_udiv(tid, *a, *b);
-                }
-                TermKind::BvSdiv(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_sdiv(tid, *a, *b);
-                }
-                TermKind::BvUrem(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_urem(tid, *a, *b);
-                }
-                TermKind::BvSrem(a, b) => {
-                    bv.new_bv(*a, width);
-                    bv.new_bv(*b, width);
-                    bv.bv_srem(tid, *a, *b);
-                }
-                TermKind::Var(_) => {
-                    // Leaf variable: just ensure a BV variable exists.
-                    bv.new_bv(tid, width);
-                }
-                TermKind::BitVecConst { value, .. } => {
-                    // Leaf constant: create the BV variable AND pin its bits to
-                    // the concrete value.  Without this the constant operand of a
-                    // bit-blasted op (e.g. the `#x02` in `(bvmul #x02 x)`) would be
-                    // an unconstrained free variable, silently weakening the
-                    // encoding and causing false SAT for constant-folded identities.
-                    let val_u64 = value.iter_u64_digits().next().unwrap_or(0);
-                    bv.assert_const(tid, val_u64, width);
-                }
-                _ => return false,
-            }
-            encoded.insert(tid);
-        }
-    }
-
-    true
+    /// Set to `true` when a genuine theory conflict was detected but suppressed
+    /// because the conflict limit (`max_conflicts`) had been reached.  On
+    /// exhaustion the manager returns `TheoryCheckResult::Sat` to make the SAT
+    /// solver stop searching; that `Sat` is a resource signal, not a model.
+    /// The owning `Solver` reads this flag after `solve_with_theory` and, when
+    /// set, answers `Unknown` instead of trusting the `Sat` — so a dropped
+    /// conflict never turns into a fabricated satisfiability result.
+    resource_exhausted: bool,
+    /// Wall-clock deadline for this solve, derived from `timeout_ms`.  `None`
+    /// means no timeout.  Checked in the theory callbacks so a single
+    /// uninterruptible `solve_with_theory` call cannot run past the budget:
+    /// once the deadline passes we set `resource_exhausted` and stop reporting
+    /// conflicts, forcing the search to terminate; the owning `Solver` then
+    /// answers `Unknown`.
+    #[cfg(feature = "std")]
+    deadline: Option<std::time::Instant>,
+    /// Latest SAT-assignment polarity of each theory-atom variable
+    /// (`true` = atom assigned true, `false` = assigned false).  Recorded in
+    /// `on_assignment` / lazy `final_check` so that `terms_to_conflict_clause`
+    /// can emit, for each reason atom, the literal that is currently *false*
+    /// (the negation of its assignment).  Without this a negatively-assigned
+    /// atom would contribute a currently-*true* literal, violating the
+    /// all-literals-false convention `analyze_theory_conflict` relies on and
+    /// yielding an unsound lemma.
+    assigned_polarity: FxHashMap<Var, bool>,
+    /// Current SAT decision level, mirrored from `on_new_level` / `on_backtrack`.
+    /// Used to stamp shadow-trail entries with the level they hold at.
+    current_level: u32,
+    /// Deduplicated shadow of every theory-relevant SAT assignment, in the
+    /// order asserted.  Each variable appears at most once.  See [`TrailAtom`]
+    /// for why this exists: it lets us detect an in-place polarity flip by the
+    /// SAT core and rebuild theory state soundly rather than trust the stale
+    /// incremental state.
+    assignment_trail: Vec<TrailAtom>,
+    /// Map from a theory variable to its index in `assignment_trail`, for O(1)
+    /// flip detection.  Rebuilt whenever the trail is truncated on backtrack.
+    trail_index: FxHashMap<Var, usize>,
 }
 
 impl<'a> TheoryManager<'a> {
@@ -450,7 +186,16 @@ impl<'a> TheoryManager<'a> {
         max_conflicts: u64,
         max_decisions: u64,
         has_bv_arith_ops: bool,
+        timeout_ms: u64,
     ) -> Self {
+        #[cfg(feature = "std")]
+        let deadline = if timeout_ms > 0 {
+            std::time::Instant::now().checked_add(core::time::Duration::from_millis(timeout_ms))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "std"))]
+        let _ = timeout_ms;
         Self {
             manager,
             euf,
@@ -476,7 +221,103 @@ impl<'a> TheoryManager<'a> {
             interned_bv_constants: FxHashMap::default(),
             bool_true_node: None,
             bool_false_node: None,
+            resource_exhausted: false,
+            #[cfg(feature = "std")]
+            deadline,
+            assigned_polarity: FxHashMap::default(),
+            current_level: 0,
+            assignment_trail: Vec::new(),
+            trail_index: FxHashMap::default(),
         }
+    }
+
+    /// Returns `true` once the configured wall-clock deadline has passed.
+    /// Always `false` when no timeout was set or in `no_std` builds (no clock).
+    #[inline]
+    fn timed_out(&self) -> bool {
+        #[cfg(feature = "std")]
+        {
+            match self.deadline {
+                Some(d) => std::time::Instant::now() >= d,
+                None => false,
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// Returns `true` if a real theory conflict was suppressed because the
+    /// conflict limit was reached during this solve.  When set, the caller must
+    /// treat any subsequent `Sat` as `Unknown`: the dropped conflict means the
+    /// current assignment is not a verified model.
+    pub(crate) fn resource_exhausted(&self) -> bool {
+        self.resource_exhausted
+    }
+
+    /// Rebuild all incremental theory state from the deduplicated shadow trail.
+    ///
+    /// Invoked when the SAT core overwrites a variable's assignment in place
+    /// (flips a decision literal's polarity without a matching backtrack — a
+    /// wrong assertion-level result from its conflict analysis).  The
+    /// incremental EUF / arith / BV solvers still reflect the stale polarity and,
+    /// because they support only level-scoped `pop` (not point removal of a
+    /// single mid-level assertion), the stale fact cannot be surgically undone.
+    /// We therefore `reset` the three theory solvers and replay the corrected
+    /// trail level by level, re-establishing exactly one push scope per decision
+    /// level so subsequent `on_backtrack` pops stay aligned with `level_stack`.
+    ///
+    /// Replay continues through every level even after a conflict is found, so
+    /// that `level_stack` ends fully populated (`current_level + 1` entries) and
+    /// any later backtrack — to any level — pops a matching number of scopes.
+    /// The first conflict encountered is remembered and returned; a returned
+    /// `Conflict` triggers the SAT core to backtrack, which the now-consistent
+    /// scope stack handles correctly.
+    fn resync_theory_state(&mut self) -> TheoryCheckResult {
+        use oxiz_theories::Theory;
+
+        // Drop all incremental theory state and derived caches.
+        self.euf.reset();
+        self.arith.reset();
+        self.bv.reset();
+        self.interned_int_constants.clear();
+        self.interned_bv_constants.clear();
+        self.bool_true_node = None;
+        self.bool_false_node = None;
+        self.processed_equalities.clear();
+        self.pending_equalities.clear();
+
+        // Rebuild the level-scope bookkeeping to match the current level.
+        self.level_stack = vec![0];
+        self.processed_count = 0;
+
+        let max_level = self.current_level;
+        // Snapshot the trail so we can call `&mut self` methods while iterating.
+        let trail = self.assignment_trail.clone();
+        let mut first_conflict: Option<TheoryCheckResult> = None;
+
+        for lvl in 0..=max_level {
+            if lvl > 0 {
+                self.level_stack.push(self.processed_count);
+                self.euf.push();
+                self.arith.push();
+                self.bv.push();
+            }
+            for atom in trail.iter().filter(|a| a.level == lvl) {
+                let Some(constraint) = self.var_to_constraint.get(&atom.var).cloned() else {
+                    continue;
+                };
+                self.processed_count += 1;
+                let result =
+                    self.process_constraint(atom.var, constraint, atom.is_positive, self.manager);
+                if first_conflict.is_none() && matches!(result, TheoryCheckResult::Conflict(_)) {
+                    first_conflict = Some(result);
+                }
+            }
+        }
+
+        first_conflict.unwrap_or(TheoryCheckResult::Sat)
     }
 
     /// Process Nelson-Oppen equality sharing
@@ -595,26 +436,42 @@ impl<'a> TheoryManager<'a> {
     /// Model-based theory combination
     /// Detects conflicts where EUF has derived an equality between two terms
     /// but the arithmetic solver assigns them different values.
+    ///
+    /// Two terms disagree only if they share an EUF equivalence class, so instead
+    /// of the naive O(n²) all-pairs scan we bucket each shared term by its EUF
+    /// representative node in a single O(n) pass.  Within a bucket we keep the
+    /// first (term, arith-value) witness we have seen; the moment a later member
+    /// of the same class carries a different arith value we have found a valid
+    /// interface conflict (any two class members with distinct arith values form
+    /// one).  This turns the per-`final_check` cost from quadratic to linear in
+    /// the number of encoded terms while preserving the exact conflict semantics.
     fn model_based_combination(&mut self) -> TheoryCheckResult {
-        // Check: EUF equality vs arith disagreement
+        // Map EUF representative node -> (witness term, its arith value) for the
+        // first class member that carries a concrete arithmetic value.  Terms
+        // without an arith value cannot participate in an arith disagreement and
+        // are simply skipped (mirroring the old `if let (Some, Some)` guard).
+        let mut witness: FxHashMap<u32, (TermId, Rational64)> = FxHashMap::default();
+
         let shared_terms: Vec<TermId> = self.term_to_var.keys().copied().collect();
-        for i in 0..shared_terms.len() {
-            for j in (i + 1)..shared_terms.len() {
-                let t1 = shared_terms[i];
-                let t2 = shared_terms[j];
+        for term in shared_terms {
+            let Some(value) = self.arith.value(term) else {
+                continue;
+            };
+            // `intern` returns the existing node (or creates one, matching the
+            // previous behaviour), and `find` yields its equivalence-class root.
+            let node = self.euf.intern(term);
+            let rep = self.euf.find(node);
 
-                let t1_node = self.euf.intern(t1);
-                let t2_node = self.euf.intern(t2);
-
-                if self.euf.are_equal(t1_node, t2_node) {
-                    let t1_value = self.arith.value(t1);
-                    let t2_value = self.arith.value(t2);
-                    if let (Some(v1), Some(v2)) = (t1_value, t2_value)
-                        && v1 != v2
-                    {
-                        let conflict_lits = self.terms_to_conflict_clause(&[t1, t2]);
+            match witness.get(&rep) {
+                Some(&(prev_term, prev_value)) => {
+                    if prev_value != value {
+                        // Same EUF class, different arith values: interface conflict.
+                        let conflict_lits = self.terms_to_conflict_clause(&[prev_term, term]);
                         return TheoryCheckResult::Conflict(conflict_lits);
                     }
+                }
+                None => {
+                    witness.insert(rep, (term, value));
                 }
             }
         }
@@ -847,13 +704,36 @@ impl<'a> TheoryManager<'a> {
             .unwrap_or_else(|| TermId::new(0))
     }
 
-    /// Convert a list of term IDs to a conflict clause
-    /// Each term ID should correspond to a constraint that was asserted
+    /// Convert a list of reason term IDs into a theory conflict clause.
+    ///
+    /// `analyze_theory_conflict` (in `oxiz-sat`) requires every literal of the
+    /// conflict clause to be **false** under the current assignment.  A reason
+    /// atom may have been assigned either polarity: a disequality (`Eq` assigned
+    /// false), a `~(a != b)`, or a Bool application assigned false all store
+    /// their term as a theory reason.  We therefore emit, for each reason atom,
+    /// the literal opposite to its recorded assignment — `¬var` when the atom is
+    /// currently true, `var` when it is currently false — so the literal is
+    /// false as required.  Emitting `¬var` unconditionally (the previous
+    /// behaviour) produced a *true* literal for negatively-assigned atoms,
+    /// yielding an unsound lemma.
+    ///
+    /// Reason terms with no SAT variable are tautological facts injected by the
+    /// theory layer itself (e.g. `10 ≠ 20` interned-constant disequalities);
+    /// they are not decision literals and are correctly omitted.
     fn terms_to_conflict_clause(&self, terms: &[TermId]) -> SmallVec<[Lit; 8]> {
         let mut conflict = SmallVec::new();
         for &term in terms {
             if let Some(&var) = self.term_to_var.get(&term) {
-                conflict.push(Lit::neg(var));
+                let lit = match self.assigned_polarity.get(&var) {
+                    // Atom currently true  → its false literal is ¬var.
+                    Some(true) => Lit::neg(var),
+                    // Atom currently false → its false literal is var.
+                    Some(false) => Lit::pos(var),
+                    // Polarity unknown (e.g. a shared theory term not assigned as
+                    // a Boolean atom): fall back to ¬var, matching legacy behaviour.
+                    None => Lit::neg(var),
+                };
+                conflict.push(lit);
             }
         }
         conflict
@@ -1172,8 +1052,9 @@ impl<'a> TheoryManager<'a> {
                             // non-empty conflict clause if the SAT sub-solver returns UNSAT.
                             let constraint_term = self.term_for_var(var);
                             self.bv.record_constraint_term(constraint_term);
+                            let bv_check_result = self.bv.check();
                             if let Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) =
-                                self.bv.check()
+                                bv_check_result
                             {
                                 let conflict_lits = self.terms_to_conflict_clause(&conflict_terms);
                                 return TheoryCheckResult::Conflict(conflict_lits);
@@ -1437,6 +1318,18 @@ impl TheoryCallback for TheoryManager<'_> {
         let var = lit.var();
         let is_positive = !lit.is_neg();
 
+        // Record the atom's current polarity so conflict clauses can emit the
+        // correct (currently-false) literal for this variable.
+        self.assigned_polarity.insert(var, is_positive);
+
+        // Enforce the wall-clock timeout mid-search.  Suppressing conflicts
+        // (returning Sat) drives the search to a full assignment quickly; the
+        // `resource_exhausted` flag makes the owning solver answer `Unknown`.
+        if self.timed_out() {
+            self.resource_exhausted = true;
+            return TheoryCheckResult::Sat;
+        }
+
         // Track propagation
         self.statistics.propagations += 1;
 
@@ -1455,6 +1348,88 @@ impl TheoryCallback for TheoryManager<'_> {
             return TheoryCheckResult::Sat;
         };
 
+        // Shadow-trail bookkeeping + in-place-flip detection.
+        //
+        // If the SAT core has assigned this variable before (and not yet
+        // backtracked past it) with the OPPOSITE polarity, it has overwritten
+        // its own trail — a wrong assertion-level bug in conflict analysis.  The
+        // incremental theory state still holds the old polarity's assertions and
+        // cannot be surgically undone, so we replace the trail entry and rebuild
+        // theory state from the corrected trail.  A re-assignment with the SAME
+        // polarity is an idempotent re-send after a backtrack; it falls through
+        // to the normal (re)processing path, preserving pre-existing behaviour.
+        match self.trail_index.get(&var).copied() {
+            // In-place polarity flip by the SAT core (a wrong assertion-level
+            // result from its conflict analysis).  Rebuild theory state from the
+            // corrected, deduplicated trail so no stale over-constraint from the
+            // old polarity manufactures a spurious conflict (the wrong-UNSAT on
+            // satisfiable disjunctive LIA chains).  Any residual unsoundness the
+            // corrupted SAT trail could still produce (a full assignment
+            // violating a Boolean clause the theory cannot see) is caught
+            // downstream by the model-verification gate in `Solver::check`.
+            //
+            // Scope: the rebuild covers the EUF and arithmetic solvers, so we
+            // engage it only when the problem has no bit-vector content.  The BV
+            // solver's bit-blasted circuits are rebuilt from scratch on every
+            // `check` (see `mod.rs`) and its incremental push/pop already handles
+            // flips soundly; resetting and replaying it mid-search would instead
+            // corrupt its embedded SAT state.  BV problems therefore retain the
+            // existing (correct) incremental behaviour.
+            Some(idx)
+                if self.assignment_trail[idx].is_positive != is_positive
+                    && self.bv_terms.is_empty() =>
+            {
+                self.assignment_trail[idx] = TrailAtom {
+                    var,
+                    is_positive,
+                    level: self.current_level,
+                };
+                self.processed_count += 1;
+                self.statistics.theory_propagations += 1;
+
+                // Process the flipped literal against the current (stale) state
+                // first.  If it stays consistent, keep that result — the extra
+                // over-constraint from the not-yet-popped old polarity is
+                // harmless here and preserves the existing search trajectory.
+                // Only when it manufactures a conflict do we pay for a full
+                // rebuild from the corrected, deduplicated trail: that conflict
+                // may be spurious (a stale artefact of the SAT core's wrong
+                // backtrack level, the wrong-UNSAT cause) so we must re-derive
+                // the authoritative verdict — `Conflict` if genuinely
+                // inconsistent, `Sat` if the stale state fabricated it.
+                let direct = self.process_constraint(var, constraint, is_positive, self.manager);
+                let result = if matches!(direct, TheoryCheckResult::Conflict(_)) {
+                    self.resync_theory_state()
+                } else {
+                    direct
+                };
+                if matches!(result, TheoryCheckResult::Conflict(_)) {
+                    self.statistics.theory_conflicts += 1;
+                    self.statistics.conflicts += 1;
+                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                        self.resource_exhausted = true;
+                        return TheoryCheckResult::Sat;
+                    }
+                }
+                return result;
+            }
+            Some(_) => {
+                // Either an idempotent same-polarity re-send after a backtrack,
+                // or a flip in a problem that contains bit-vector terms (handled
+                // by the BV solver's own incremental push/pop).  Both fall
+                // through to normal processing, preserving pre-existing behaviour.
+            }
+            None => {
+                let idx = self.assignment_trail.len();
+                self.assignment_trail.push(TrailAtom {
+                    var,
+                    is_positive,
+                    level: self.current_level,
+                });
+                self.trail_index.insert(var, idx);
+            }
+        }
+
         self.processed_count += 1;
         self.statistics.theory_propagations += 1;
 
@@ -1467,6 +1442,9 @@ impl TheoryCallback for TheoryManager<'_> {
 
             // Check conflict limit
             if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                // Resource exhaustion: we are dropping a real conflict to stop
+                // the search.  Flag it so the solver answers Unknown, not Sat.
+                self.resource_exhausted = true;
                 return TheoryCheckResult::Sat; // Return Sat to signal resource exhaustion
             }
         }
@@ -1475,10 +1453,20 @@ impl TheoryCallback for TheoryManager<'_> {
     }
 
     fn final_check(&mut self) -> TheoryCheckResult {
+        // Enforce the wall-clock timeout: a full assignment has been reached,
+        // but if we are out of time we must not spend it on a (possibly
+        // expensive) final theory check.  Flag resource exhaustion and report
+        // Sat so the owning solver answers `Unknown`.
+        if self.timed_out() {
+            self.resource_exhausted = true;
+            return TheoryCheckResult::Sat;
+        }
+
         // In lazy mode, process all pending assignments now
         if self.theory_mode == TheoryMode::Lazy {
             for &(lit, is_positive) in &self.pending_assignments.clone() {
                 let var = lit.var();
+                self.assigned_polarity.insert(var, is_positive);
                 let Some(constraint) = self.var_to_constraint.get(&var).cloned() else {
                     continue;
                 };
@@ -1493,6 +1481,9 @@ impl TheoryCallback for TheoryManager<'_> {
 
                     // Check conflict limit
                     if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                        // Dropping a real conflict at the limit: flag it so the
+                        // solver reports Unknown rather than trusting Sat.
+                        self.resource_exhausted = true;
                         return TheoryCheckResult::Sat; // Signal resource exhaustion
                     }
 
@@ -1512,6 +1503,9 @@ impl TheoryCallback for TheoryManager<'_> {
 
             // Check conflict limit
             if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                // Dropping a real EUF conflict at the limit: flag it so the
+                // solver reports Unknown rather than trusting Sat.
+                self.resource_exhausted = true;
                 return TheoryCheckResult::Sat; // Signal resource exhaustion
             }
 
@@ -1547,6 +1541,9 @@ impl TheoryCallback for TheoryManager<'_> {
                         // Check conflict limit
                         if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts
                         {
+                            // Dropping a real arithmetic conflict at the limit:
+                            // flag it so the solver reports Unknown, not Sat.
+                            self.resource_exhausted = true;
                             return TheoryCheckResult::Sat; // Signal resource exhaustion
                         }
 
@@ -1557,20 +1554,30 @@ impl TheoryCallback for TheoryManager<'_> {
                         self.model_based_combination()
                     }
                     oxiz_theories::TheoryCheckResult::Unknown => {
-                        // Theory is incomplete, be conservative
+                        // The arithmetic solver could not decide this state
+                        // (e.g. LIA branch-and-bound / LP budget exhausted).
+                        // Returning a plain `Sat` here would fabricate a model
+                        // the solver never verified — an unsound `Sat`.  Flag
+                        // resource exhaustion so the owning solver answers
+                        // `Unknown`, and stop the search by reporting Sat.
+                        self.resource_exhausted = true;
                         TheoryCheckResult::Sat
                     }
                 }
             }
             Err(_error) => {
-                // Internal error in the arithmetic solver
-                // For now, be conservative and return Sat
+                // Internal error in the arithmetic solver.  We have no verified
+                // model, so we must not claim `Sat`.  Flag resource exhaustion
+                // (→ solver answers `Unknown`) and stop the search.
+                self.resource_exhausted = true;
                 TheoryCheckResult::Sat
             }
         }
     }
 
     fn on_new_level(&mut self, level: u32) {
+        // Track the current SAT decision level for the shadow trail.
+        self.current_level = level;
         // Push theory state when a new decision level is created
         // Ensure we have enough levels in the stack
         while self.level_stack.len() < (level as usize + 1) {
@@ -1582,6 +1589,18 @@ impl TheoryCallback for TheoryManager<'_> {
     }
 
     fn on_backtrack(&mut self, level: u32) {
+        // Track the current SAT decision level and prune the shadow trail of
+        // every assignment made above `level` (they have been undone by the SAT
+        // core's backtrack).  Rebuild the var -> trail-index map afterwards.
+        self.current_level = level;
+        if self.assignment_trail.iter().any(|a| a.level > level) {
+            self.assignment_trail.retain(|a| a.level <= level);
+            self.trail_index.clear();
+            for (i, atom) in self.assignment_trail.iter().enumerate() {
+                self.trail_index.insert(atom.var, i);
+            }
+        }
+
         // Pop EUF, Arith, and BV states if needed
         while self.level_stack.len() > (level as usize + 1) {
             self.level_stack.pop();

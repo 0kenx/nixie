@@ -21,6 +21,18 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
     a
 }
 
+/// Compute GCD of two i128 values (used by the Diophantine consistency check).
+fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
+    a = a.abs();
+    b = b.abs();
+    while b != 0 {
+        let temp = b;
+        b = a % b;
+        a = temp;
+    }
+    a
+}
+
 /// Arithmetic Theory Solver (LRA/LIA)
 #[derive(Debug)]
 pub struct ArithSolver {
@@ -40,6 +52,38 @@ pub struct ArithSolver {
     context_stack: Vec<ContextState>,
     /// Accumulated shared equalities (from notify_equality calls)
     shared_equalities: Vec<EqualityNotification>,
+    /// Integral model recorded by the LIA branch-and-bound search.
+    ///
+    /// Populated only when the most recent `check()` proved `Sat` in integer
+    /// mode.  `value()` consults this first for Int terms so it returns the
+    /// integral assignment found by branch-and-bound rather than the (possibly
+    /// fractional) LP-relaxation optimum.  Cleared at the start of every
+    /// `check()` and on `reset()`.
+    lia_model: FxHashMap<VarId, Rational64>,
+    /// Integer equalities asserted in LIA mode, kept as raw
+    /// `(sum a_i·x_i = b)` rows so that a linear Diophantine consistency check
+    /// can detect cross-constraint parity infeasibility (e.g. `y=2x ∧ y=2z+1`)
+    /// that per-equation GCD reasoning and pure branch-and-bound over unbounded
+    /// variables miss.  Push/pop-scoped via `ContextState`.
+    int_equalities: Vec<IntEquation>,
+}
+
+/// A linear equality over the integers: `sum(coeff_i · var_i) = rhs`.
+#[derive(Debug, Clone)]
+struct IntEquation {
+    terms: Vec<(VarId, i64)>,
+    rhs: i64,
+}
+
+/// Outcome of exploring a single branch-and-bound child node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchOutcome {
+    /// An integral assignment satisfying all constraints was found.
+    Sat,
+    /// This branch is proven infeasible (a dead end).
+    Infeasible,
+    /// The branch could not be resolved within the resource budget.
+    Unknown,
 }
 
 /// State for push/pop
@@ -48,6 +92,7 @@ struct ContextState {
     num_vars: usize,
     num_reasons: usize,
     num_shared_equalities: usize,
+    num_int_equalities: usize,
 }
 
 impl Default for ArithSolver {
@@ -69,6 +114,8 @@ impl ArithSolver {
             is_integer,
             context_stack: Vec::new(),
             shared_equalities: Vec::new(),
+            lia_model: FxHashMap::default(),
+            int_equalities: Vec::new(),
         }
     }
 
@@ -254,25 +301,48 @@ impl ArithSolver {
             let const_term = if expr.constant.denom() == &1 {
                 -*expr.constant.numer()
             } else {
-                // Non-integer constant in equality - infeasible for integers
+                // Non-integer constant in equality - infeasible for integers.
+                // Attribute the contradiction to the actual assertion that
+                // caused it (not a hardcoded/arbitrary reason id), so the
+                // resulting unsat core cites the real culprit.
+                let reason_id = self.add_reason(reason);
                 if let Some(&(var, _)) = expr.terms.first() {
-                    self.simplex.set_lower(var, Rational64::from_integer(1), 0);
-                    self.simplex.set_upper(var, Rational64::from_integer(0), 0);
+                    self.simplex
+                        .set_lower(var, Rational64::from_integer(1), reason_id);
+                    self.simplex
+                        .set_upper(var, Rational64::from_integer(0), reason_id);
                 }
                 return;
             };
 
             // Check GCD infeasibility if all coefficients are integers
             if !coeffs.is_empty() && coeffs.len() == expr.terms.len() {
+                // Record the integer equality (sum a_i·x_i = const_term) so the
+                // cross-constraint Diophantine consistency check can see it.
+                let eq_terms: Vec<(VarId, i64)> =
+                    expr.terms.iter().map(|(v, c)| (*v, *c.numer())).collect();
+                self.int_equalities.push(IntEquation {
+                    terms: eq_terms,
+                    rhs: const_term,
+                });
+
                 // Compute GCD of all coefficients
                 let g = coeffs.iter().fold(0i64, |acc, &c| gcd_i64(acc, c.abs()));
 
                 if g > 0 && const_term % g != 0 {
                     // GCD infeasibility detected!
-                    // Add contradictory constraints: x >= 1 and x <= 0
+                    // Add contradictory constraints: x >= 1 and x <= 0,
+                    // attributed to the actual equality assertion that
+                    // caused the contradiction (not a hardcoded reason id)
+                    // so `check()`'s unsat core cites the real culprit
+                    // instead of whatever the first reason ever added
+                    // happened to be.
+                    let reason_id = self.add_reason(reason);
                     if let Some(&(var, _)) = expr.terms.first() {
-                        self.simplex.set_lower(var, Rational64::from_integer(1), 0);
-                        self.simplex.set_upper(var, Rational64::from_integer(0), 0);
+                        self.simplex
+                            .set_lower(var, Rational64::from_integer(1), reason_id);
+                        self.simplex
+                            .set_upper(var, Rational64::from_integer(0), reason_id);
                     }
                     return;
                 }
@@ -361,6 +431,12 @@ impl ArithSolver {
     pub fn value(&self, term: TermId) -> Option<Rational64> {
         self.term_to_var.get(&term).map(|&var| {
             if self.is_integer {
+                // Prefer the integral assignment found by branch-and-bound when
+                // the last check() proved Sat — the raw LP optimum may be
+                // fractional for Int variables.
+                if let Some(v) = self.lia_model.get(&var) {
+                    return *v;
+                }
                 // Get the full delta-rational value
                 let dval = self.simplex.delta_value(var);
 
@@ -426,6 +502,291 @@ impl ArithSolver {
         }
     }
 
+    /// Maximum branch-and-bound tree depth for the LIA integrality search.
+    const LIA_MAX_DEPTH: usize = 512;
+    /// Maximum number of branch-and-bound nodes explored before giving up
+    /// (returning `Unknown`).  Bounds worst-case exponential search.
+    const LIA_MAX_NODES: usize = 20_000;
+
+    /// Collect the simplex variable ids of all interned (Int) terms, sorted for
+    /// deterministic branching order.  Slack variables are excluded — we only
+    /// branch on the original integer-sorted variables.
+    fn interned_int_vars(&self) -> Vec<VarId> {
+        let mut vars: Vec<VarId> = self
+            .var_to_term
+            .iter()
+            .filter_map(|term| self.term_to_var.get(term).copied())
+            .collect();
+        vars.sort_unstable();
+        vars.dedup();
+        vars
+    }
+
+    /// Find the first interned Int variable whose current LP value is fractional.
+    fn find_fractional_int_var(&self, int_vars: &[VarId]) -> Option<(VarId, Rational64)> {
+        for &var in int_vars {
+            let val = self.simplex.value(var);
+            if !val.is_integer() {
+                return Some((var, val));
+            }
+        }
+        None
+    }
+
+    /// Build a sound (over-approximate) unsat core: every assertion reason known
+    /// to the solver.  When branch-and-bound proves integer-infeasibility, the
+    /// full conjunction of asserted constraints is genuinely inconsistent, so
+    /// returning all of them is a valid (if imprecise) conflict explanation.
+    fn full_unsat_core(&self) -> Vec<TermId> {
+        let mut terms = self.reasons.clone();
+        terms.sort_unstable();
+        terms.dedup();
+        terms
+    }
+
+    /// Snapshot the current (integral) LP assignment of every interned Int
+    /// variable into `lia_model`.  Called at an integer-feasible leaf so that
+    /// `value()` reports the integral model after branch-and-bound unwinds.
+    fn snapshot_lia_model(&mut self, int_vars: &[VarId]) {
+        self.lia_model.clear();
+        for &var in int_vars {
+            self.lia_model.insert(var, self.simplex.value(var));
+        }
+    }
+
+    /// Decide whether the accumulated system of integer equalities has NO
+    /// integer solution (a sound, one-sided UNSAT detector).
+    ///
+    /// Every equality `sum a_i·x_i = b` is an exact integer row.  We run integer
+    /// (fraction-free) Gaussian elimination: reducing rows with the identity
+    /// `row := (a/g)·row − (b/g)·pivot` (g = gcd of the two pivot-column
+    /// entries) produces rows that are integer linear combinations of the
+    /// originals, hence consequences that every integer solution must satisfy.
+    /// For any resulting row `sum c_j·x_j = d`, an integer solution requires
+    /// `gcd(c_j) | d`; if that fails — or a row reduces to `0 = d` with `d ≠ 0` —
+    /// the whole system is integer-infeasible.
+    ///
+    /// This catches cross-constraint parity infeasibility such as
+    /// `y = 2x ∧ y = 2z + 1` (⇒ `2x − 2z = 1`, and `gcd(2,2) = 2 ∤ 1`), which
+    /// per-equation GCD reasoning and unbounded branch-and-bound cannot.
+    ///
+    /// The check is *sound but incomplete*: it only ever concludes UNSAT.  If an
+    /// intermediate value would overflow `i128`, or the system is too large, it
+    /// conservatively returns `false` (defer to branch-and-bound).
+    fn int_equalities_infeasible(&self) -> bool {
+        if self.int_equalities.is_empty() {
+            return false;
+        }
+
+        // Assign a dense column index to every variable that appears.
+        let mut col_of: FxHashMap<VarId, usize> = FxHashMap::default();
+        for eq in &self.int_equalities {
+            for &(v, _) in &eq.terms {
+                let next = col_of.len();
+                col_of.entry(v).or_insert(next);
+            }
+        }
+        let cols = col_of.len();
+        let rows = self.int_equalities.len();
+
+        // Bound the work: skip very large systems (defer to branch-and-bound).
+        if cols == 0 || rows.saturating_mul(cols) > 200_000 {
+            return false;
+        }
+
+        // Dense augmented matrix: last entry of each row is the RHS.
+        let mut mat: Vec<Vec<i128>> = vec![vec![0i128; cols + 1]; rows];
+        for (r, eq) in self.int_equalities.iter().enumerate() {
+            for &(v, c) in &eq.terms {
+                if let Some(&col) = col_of.get(&v) {
+                    mat[r][col] += c as i128;
+                }
+            }
+            mat[r][cols] = eq.rhs as i128;
+        }
+
+        // Fraction-free Gaussian elimination.
+        let mut pivot_row = 0usize;
+        for col in 0..cols {
+            // Find a pivot at or below `pivot_row` with a nonzero entry.
+            let Some(sel) = (pivot_row..rows).find(|&r| mat[r][col] != 0) else {
+                continue;
+            };
+            mat.swap(pivot_row, sel);
+
+            // Snapshot the pivot row to avoid aliasing two rows of `mat`.
+            let pivot = mat[pivot_row].clone();
+            let a = pivot[col];
+
+            // Eliminate this column from every other row.
+            for (r, row) in mat.iter_mut().enumerate() {
+                if r == pivot_row || row[col] == 0 {
+                    continue;
+                }
+                let b = row[col];
+                let g = gcd_i128(a, b);
+                let fa = a / g; // scale for row r
+                let fb = b / g; // scale for pivot
+                for (k, &pv) in pivot.iter().enumerate().skip(col) {
+                    let lhs = match row[k].checked_mul(fa) {
+                        Some(v) => v,
+                        None => return false, // overflow → cannot decide
+                    };
+                    let rhs = match pv.checked_mul(fb) {
+                        Some(v) => v,
+                        None => return false,
+                    };
+                    row[k] = match lhs.checked_sub(rhs) {
+                        Some(v) => v,
+                        None => return false,
+                    };
+                }
+            }
+
+            pivot_row += 1;
+            if pivot_row == rows {
+                break;
+            }
+        }
+
+        // Consequence check: each row must be integer-satisfiable on its own.
+        for row in &mat {
+            let mut g = 0i128;
+            for &c in &row[..cols] {
+                g = gcd_i128(g, c);
+            }
+            let d = row[cols];
+            if g == 0 {
+                // 0 = d with d ≠ 0 is inconsistent (even over the rationals).
+                if d != 0 {
+                    return true;
+                }
+            } else if d % g != 0 {
+                // gcd of coefficients does not divide the constant ⇒ no integer
+                // solution to this consequence ⇒ system integer-infeasible.
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Entry point for the LIA integrality search (branch-and-bound).
+    ///
+    /// Precondition: the LP relaxation is feasible and not resource-limited.
+    fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
+        // Cheap, sound integer-equality consistency check first — resolves
+        // cross-constraint parity infeasibility that branch-and-bound over
+        // unbounded variables would otherwise only be able to report as Unknown.
+        if self.int_equalities_infeasible() {
+            return Ok(TheoryResult::Unsat(self.full_unsat_core()));
+        }
+        let int_vars = self.interned_int_vars();
+        let mut nodes: usize = 0;
+        self.bnb_recurse(&int_vars, 0, &mut nodes)
+    }
+
+    /// Recursive branch-and-bound over integer variables.
+    ///
+    /// Uses balanced simplex push/pop so no branch constraint leaks into the
+    /// caller's decision level.  The satisfying integral assignment is captured
+    /// into `lia_model` at the feasible leaf (before the pushes unwind), so
+    /// `value()` can report it afterwards.
+    ///
+    /// Returns:
+    /// - `Sat` if an integral assignment is found;
+    /// - `Unsat(core)` if BOTH branches on the fractional variable are
+    ///   infeasible (integer-infeasible);
+    /// - `Unknown` if the depth/node budget is exhausted, or a sub-solve hit the
+    ///   simplex pivot limit — never a fabricated Sat/Unsat.
+    fn bnb_recurse(
+        &mut self,
+        int_vars: &[VarId],
+        depth: usize,
+        nodes: &mut usize,
+    ) -> Result<TheoryResult> {
+        if depth > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
+            return Ok(TheoryResult::Unknown);
+        }
+        *nodes += 1;
+
+        // Find a fractional Int variable at the current LP optimum.
+        let (var, value) = match self.find_fractional_int_var(int_vars) {
+            None => {
+                // Fully integral leaf: record the model, then report Sat.
+                self.snapshot_lia_model(int_vars);
+                return Ok(TheoryResult::Sat);
+            }
+            Some(vv) => vv,
+        };
+
+        let floor_v = value.floor();
+        let ceil_v = value.ceil();
+
+        // Track whether any explored branch was left unresolved (Unknown) so we
+        // never collapse an Unknown into a spurious Unsat.
+        let mut saw_unknown = false;
+
+        // Branch down: var <= floor(value).
+        self.simplex.push();
+        self.simplex.set_upper(var, floor_v, 0);
+        let down = self.explore_branch(int_vars, depth, nodes)?;
+        self.simplex.pop();
+        match down {
+            BranchOutcome::Sat => return Ok(TheoryResult::Sat),
+            BranchOutcome::Unknown => saw_unknown = true,
+            BranchOutcome::Infeasible => {}
+        }
+
+        // Branch up: var >= ceil(value).
+        self.simplex.push();
+        self.simplex.set_lower(var, ceil_v, 0);
+        let up = self.explore_branch(int_vars, depth, nodes)?;
+        self.simplex.pop();
+        match up {
+            BranchOutcome::Sat => return Ok(TheoryResult::Sat),
+            BranchOutcome::Unknown => saw_unknown = true,
+            BranchOutcome::Infeasible => {}
+        }
+
+        // Neither branch produced Sat.  If any branch was left unresolved we must
+        // answer Unknown; only when both branches are proven infeasible may we
+        // conclude integer-infeasibility (Unsat).
+        if saw_unknown {
+            Ok(TheoryResult::Unknown)
+        } else {
+            Ok(TheoryResult::Unsat(self.full_unsat_core()))
+        }
+    }
+
+    /// Explore the current (already-constrained) branch: re-solve the LP and, if
+    /// feasible and not resource-limited, recurse into branch-and-bound.
+    ///
+    /// The caller is responsible for the surrounding `push`/`pop`.
+    fn explore_branch(
+        &mut self,
+        int_vars: &[VarId],
+        depth: usize,
+        nodes: &mut usize,
+    ) -> Result<BranchOutcome> {
+        match self.simplex.check() {
+            Ok(()) => {
+                if self.simplex.resource_limit_reached() {
+                    // LP unresolved within the pivot budget — Unknown, not Sat.
+                    Ok(BranchOutcome::Unknown)
+                } else {
+                    Ok(match self.bnb_recurse(int_vars, depth + 1, nodes)? {
+                        TheoryResult::Sat => BranchOutcome::Sat,
+                        TheoryResult::Unsat(_) => BranchOutcome::Infeasible,
+                        _ => BranchOutcome::Unknown,
+                    })
+                }
+            }
+            // LP infeasible on this branch: a proven dead end.
+            Err(_) => Ok(BranchOutcome::Infeasible),
+        }
+    }
+
     /// Tighten constraints for integer arithmetic
     ///
     /// Returns true if any tightening was performed
@@ -474,16 +835,39 @@ impl Theory for ArithSolver {
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
+        // Any previously recorded integral model is stale for this fresh check.
+        self.lia_model.clear();
+
+        // Step 1: solve the LP (real) relaxation.
         match self.simplex.check() {
-            Ok(()) => Ok(TheoryResult::Sat),
+            Ok(()) => {
+                // The pivot budget may have been exhausted without a definitive
+                // answer.  In that case the assignment is NOT a model — report
+                // Unknown rather than a fabricated Sat.
+                if self.simplex.resource_limit_reached() {
+                    return Ok(TheoryResult::Unknown);
+                }
+            }
             Err(reasons) => {
                 let terms: Vec<_> = reasons
                     .iter()
                     .filter_map(|&r| self.reasons.get(r as usize).copied())
                     .collect();
-                Ok(TheoryResult::Unsat(terms))
+                return Ok(TheoryResult::Unsat(terms));
             }
         }
+
+        // Step 2 (LRA): the LP relaxation is exact — feasible LP ⇒ Sat.
+        if !self.is_integer {
+            return Ok(TheoryResult::Sat);
+        }
+
+        // Step 3 (LIA): the LP relaxation being feasible is NOT sufficient — a
+        // fractional assignment over Int variables must be resolved by
+        // branch-and-bound before we may answer Sat.  Otherwise integer-
+        // infeasible-but-LP-feasible systems (e.g. y = 2x ∧ y = 2z+1) would be
+        // wrongly reported Sat with fractional values for Int terms.
+        self.lia_branch_and_bound()
     }
 
     fn push(&mut self) {
@@ -491,6 +875,7 @@ impl Theory for ArithSolver {
             num_vars: self.var_to_term.len(),
             num_reasons: self.reasons.len(),
             num_shared_equalities: self.shared_equalities.len(),
+            num_int_equalities: self.int_equalities.len(),
         });
         self.simplex.push();
     }
@@ -501,6 +886,7 @@ impl Theory for ArithSolver {
             self.reasons.truncate(state.num_reasons);
             self.reason_counter = state.num_reasons as u32;
             self.shared_equalities.truncate(state.num_shared_equalities);
+            self.int_equalities.truncate(state.num_int_equalities);
             self.simplex.pop();
         }
     }
@@ -513,6 +899,8 @@ impl Theory for ArithSolver {
         self.reasons.clear();
         self.context_stack.clear();
         self.shared_equalities.clear();
+        self.lia_model.clear();
+        self.int_equalities.clear();
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {
@@ -863,6 +1251,54 @@ mod tests {
         assert_eq!(gcd_i64(5, 0), 5);
         assert_eq!(gcd_i64(-12, 8), 4);
         assert_eq!(gcd_i64(12, -8), 4);
+    }
+
+    // Audit regression (theories-arith): the GCD-infeasibility path in
+    // `assert_eq` used to fabricate its contradictory bounds with a
+    // hardcoded `reason` id of `0`, so the resulting UNSAT conflict always
+    // cited whatever the FIRST reason ever added happened to be, instead of
+    // the actual assertion that caused the contradiction. Assert an
+    // unrelated, satisfiable constraint first (populating reason id `0`
+    // with an unrelated term), then a GCD-infeasible equality with a
+    // DIFFERENT reason term, and confirm the conflict cites the real
+    // culprit.
+    #[test]
+    fn audit_gcd_infeasibility_conflict_cites_real_reason() {
+        let mut solver = ArithSolver::lia();
+
+        let x = TermId::new(10);
+        let y = TermId::new(20);
+        let unrelated_reason = TermId::new(1);
+        let real_reason = TermId::new(2);
+
+        // x >= 0: satisfiable, unrelated to the GCD conflict. If the old
+        // hardcoded-reason-0 bug were still present, this becomes
+        // `self.reasons[0]`, and the GCD conflict below would wrongly cite
+        // it instead of `real_reason`.
+        solver.assert_ge(
+            &[(x, Rational64::one())],
+            Rational64::zero(),
+            unrelated_reason,
+        );
+
+        // 2y = 7 has no integer solution: gcd(2) = 2 does not divide 7.
+        solver.assert_eq(
+            &[(y, Rational64::from_integer(2))],
+            Rational64::from_integer(7),
+            real_reason,
+        );
+
+        let result = solver.check().expect("check should succeed");
+        match result {
+            TheoryResult::Unsat(conflict) => {
+                assert!(
+                    conflict.contains(&real_reason),
+                    "GCD-infeasibility conflict must cite the actual violating \
+                     assertion {real_reason:?}, got {conflict:?}"
+                );
+            }
+            other => panic!("expected Unsat (2y=7 is GCD-infeasible over integers), got {other:?}"),
+        }
     }
 
     #[test]

@@ -320,37 +320,60 @@ impl ConvexityHandler {
     }
 
     /// Process pending disjunctions.
+    ///
+    /// Unit disjunctions are resolved immediately. Non-unit disjunctions are split
+    /// according to the configured strategy. Under [`CaseSplitStrategy::Lazy`],
+    /// non-unit disjunctions are *deferred* — set aside and restored to the pending
+    /// queue before returning `Ok(None)` — rather than re-queued in place, which
+    /// would otherwise loop forever. Because every iteration removes one item from
+    /// the pending queue (and deferred items are held aside, never re-enqueued
+    /// within the same pass), the loop is guaranteed to terminate.
     pub fn process_disjunctions(&mut self) -> Result<Option<Equality>, String> {
-        while let Some(disjunction) = self.pending_disjunctions.pop_front() {
+        // Disjunctions deferred by the Lazy strategy during this pass. They are
+        // held out of the pending queue so the loop makes strict progress, and
+        // restored afterwards so they can be processed on a later pass.
+        let mut deferred: Vec<EqualityDisjunction> = Vec::new();
+
+        let result = loop {
+            let Some(disjunction) = self.pending_disjunctions.pop_front() else {
+                break Ok(None);
+            };
+
             // If unit, return the single equality
             if let Some(eq) = disjunction.get_unit() {
-                return Ok(Some(eq));
+                break Ok(Some(eq));
             }
 
             // Non-unit disjunction: perform case split
             if self.stats.case_splits >= self.config.max_case_splits as u64 {
-                return Err("Maximum case splits exceeded".to_string());
+                break Err("Maximum case splits exceeded".to_string());
             }
 
             match self.config.split_strategy {
                 CaseSplitStrategy::ModelBased => {
-                    return self.model_based_split(&disjunction);
+                    break self.model_based_split(&disjunction);
                 }
                 CaseSplitStrategy::Exhaustive => {
-                    return self.exhaustive_split(&disjunction);
+                    break self.exhaustive_split(&disjunction);
                 }
                 CaseSplitStrategy::Heuristic => {
-                    return self.heuristic_split(&disjunction);
+                    break self.heuristic_split(&disjunction);
                 }
                 CaseSplitStrategy::Lazy => {
-                    // Defer splitting
-                    self.pending_disjunctions.push_back(disjunction);
+                    // Defer splitting: set aside (do NOT re-enqueue in place, which
+                    // would spin forever) and continue with the rest of the queue.
+                    deferred.push(disjunction);
                     continue;
                 }
             }
+        };
+
+        // Restore any deferred disjunctions for a later processing pass.
+        for disjunction in deferred {
+            self.pending_disjunctions.push_back(disjunction);
         }
 
-        Ok(None)
+        result
     }
 
     /// Model-based case split.
@@ -628,40 +651,40 @@ impl DisjunctiveReasoning {
         propagated
     }
 
-    /// Simplify disjunctions given an equality.
+    /// Simplify disjunctions given an equality now known to hold.
+    ///
+    /// `eq` has been established TRUE (e.g. propagated by a theory). Any
+    /// active disjunction `(t1=s1) ∨ ... ∨ (tn=sn)` that contains `eq` as
+    /// one of its disjuncts is therefore already satisfied and must be
+    /// dropped outright.
+    ///
+    /// The previous implementation instead *removed* `eq` from every
+    /// disjunction that contained it and kept the (shrunk) remainder --
+    /// i.e. disequality semantics, as if `eq` had just become FALSE rather
+    /// than TRUE. For `(a=b) ∨ (c=d)` with `eq = (a=b)` confirmed true, the
+    /// whole disjunction is satisfied and carries no further information;
+    /// the old code instead turned it into the unit `(c=d)` and queued a
+    /// *bogus* forced equality with no justification. Disjunctions that do
+    /// not mention `eq` at all carry no information from `eq` either way
+    /// and must be left untouched (nothing can be soundly inferred about
+    /// them from `eq` alone).
     pub fn simplify_with_equality(&mut self, eq: Equality) {
-        let mut simplified = Vec::new();
-
-        for disjunction in self.disjunctions.drain(..) {
-            let mut new_disjuncts = Vec::new();
-
-            for &disjunct in &disjunction.disjuncts {
-                // Check if disjunct is satisfied by eq
-                if disjunct != eq {
-                    new_disjuncts.push(disjunct);
-                }
-            }
-
-            if !new_disjuncts.is_empty() {
-                let new_disjunction =
-                    EqualityDisjunction::new(new_disjuncts, disjunction.theory, disjunction.level);
-
-                if new_disjunction.is_unit() {
-                    if let Some(unit_eq) = new_disjunction.get_unit() {
-                        self.unit_queue.push_back(unit_eq);
-                    }
-                } else {
-                    simplified.push(new_disjunction);
-                }
-            }
-        }
-
-        self.disjunctions = simplified;
+        self.disjunctions
+            .retain(|disjunction| !disjunction.disjuncts.contains(&eq));
     }
 
     /// Check for conflicts (empty disjunctions).
+    ///
+    /// A disjunction with zero disjuncts is the empty clause -- an
+    /// unsatisfiable constraint -- and can only arise here via
+    /// [`Self::add_disjunction`] being called with `disjuncts: vec![]`
+    /// (`simplify_with_equality` never shrinks a disjunction's disjunct
+    /// list, so it cannot manufacture one). `has_conflict` previously
+    /// always reported `false`, silently ignoring this case.
     pub fn has_conflict(&self) -> bool {
-        false // Simplified: would check for empty disjunctions
+        self.disjunctions
+            .iter()
+            .any(|disjunction| disjunction.disjuncts.is_empty())
     }
 
     /// Clear all disjunctions.
@@ -763,6 +786,67 @@ mod tests {
         assert_eq!(propagated[0], eq);
     }
 
+    /// Audit regression: `simplify_with_equality` used to implement
+    /// disequality semantics -- it stripped the confirmed-true equality out
+    /// of every disjunction that mentioned it and kept the shrunk
+    /// remainder, deriving a *bogus* forced unit equality from disjuncts
+    /// that were never actually implied. `(a=b) ∨ (c=d)` with `a=b`
+    /// confirmed true must be dropped as satisfied, not turned into a
+    /// forced `c=d`.
+    #[test]
+    fn test_audit_simplify_with_equality_drops_satisfied_disjunction_no_bogus_unit() {
+        let mut dr = DisjunctiveReasoning::new();
+
+        let a_eq_b = Equality::new(1, 2);
+        let c_eq_d = Equality::new(3, 4);
+        dr.add_disjunction(EqualityDisjunction::new(vec![a_eq_b, c_eq_d], 0, 0));
+
+        dr.simplify_with_equality(a_eq_b);
+
+        // The disjunction is satisfied by `a_eq_b` and must be gone
+        // entirely, and `c_eq_d` must NOT have been queued as a forced
+        // unit consequence.
+        assert!(dr.disjunctions.is_empty());
+        let propagated = dr.propagate_units();
+        assert!(
+            propagated.is_empty(),
+            "no bogus unit equality should have been derived, got {propagated:?}"
+        );
+    }
+
+    /// A disjunction that does not mention the confirmed-true equality at
+    /// all carries no information from it and must be left untouched.
+    #[test]
+    fn test_audit_simplify_with_equality_leaves_unrelated_disjunction_untouched() {
+        let mut dr = DisjunctiveReasoning::new();
+
+        let a_eq_b = Equality::new(1, 2);
+        let c_eq_d = Equality::new(3, 4);
+        let e_eq_f = Equality::new(5, 6);
+        dr.add_disjunction(EqualityDisjunction::new(vec![c_eq_d, e_eq_f], 0, 0));
+
+        dr.simplify_with_equality(a_eq_b);
+
+        assert_eq!(dr.disjunctions.len(), 1);
+        assert_eq!(dr.disjunctions[0].disjuncts, vec![c_eq_d, e_eq_f]);
+    }
+
+    /// Audit regression: `has_conflict` used to unconditionally return
+    /// `false`, silently ignoring an empty (unsatisfiable) disjunction.
+    #[test]
+    fn test_audit_has_conflict_detects_empty_disjunction() {
+        let mut dr = DisjunctiveReasoning::new();
+        assert!(!dr.has_conflict());
+
+        // An empty disjunction (the empty clause) represents a direct
+        // contradiction and must be reported as a conflict.
+        dr.add_disjunction(EqualityDisjunction::new(vec![], 0, 0));
+        assert!(dr.has_conflict());
+
+        dr.clear();
+        assert!(!dr.has_conflict());
+    }
+
     #[test]
     fn test_simplify_disjunction() {
         let mut handler = ConvexityHandler::new();
@@ -802,5 +886,57 @@ mod tests {
         let result = handler.process_disjunctions();
         assert!(result.is_ok());
         assert!(result.ok().flatten().is_some());
+    }
+
+    /// Regression (audit finding: Lazy strategy infinite loop).
+    ///
+    /// A non-unit disjunction processed under `CaseSplitStrategy::Lazy` used to be
+    /// popped and immediately re-pushed, spinning `process_disjunctions` forever.
+    /// It must now terminate, deferring the disjunction (no split returned) and
+    /// preserving it in the pending queue.
+    #[test]
+    fn test_lazy_strategy_terminates_on_non_unit() {
+        let config = ConvexityConfig {
+            split_strategy: CaseSplitStrategy::Lazy,
+            ..ConvexityConfig::default()
+        };
+        let mut handler = ConvexityHandler::with_config(config);
+
+        let disj = EqualityDisjunction::new(vec![Equality::new(1, 2), Equality::new(3, 4)], 0, 0);
+        handler.add_disjunction(disj);
+
+        // Must not hang.
+        let result = handler.process_disjunctions();
+        assert_eq!(result.ok().flatten(), None);
+        // The deferred disjunction is restored for a later pass.
+        assert_eq!(handler.pending_count(), 1);
+        // No case split should have been performed for a deferred disjunction.
+        assert_eq!(handler.stats().case_splits, 0);
+    }
+
+    /// Regression (audit finding: Lazy strategy infinite loop).
+    ///
+    /// Under the Lazy strategy, a deferred non-unit disjunction must not prevent a
+    /// subsequent unit disjunction from being resolved.
+    #[test]
+    fn test_lazy_strategy_still_returns_units() {
+        let config = ConvexityConfig {
+            split_strategy: CaseSplitStrategy::Lazy,
+            ..ConvexityConfig::default()
+        };
+        let mut handler = ConvexityHandler::with_config(config);
+
+        handler.add_disjunction(EqualityDisjunction::new(
+            vec![Equality::new(1, 2), Equality::new(3, 4)],
+            0,
+            0,
+        ));
+        let unit_eq = Equality::new(5, 6);
+        handler.add_disjunction(EqualityDisjunction::new(vec![unit_eq], 0, 0));
+
+        let result = handler.process_disjunctions();
+        assert_eq!(result.ok().flatten(), Some(unit_eq));
+        // The deferred non-unit disjunction remains pending.
+        assert_eq!(handler.pending_count(), 1);
     }
 }

@@ -1,7 +1,22 @@
 //! Advanced Bit-Vector Solver with SAT-Based Techniques.
 //!
-//! Implements sophisticated bit-vector solving using bit-blasting,
-//! word-level reasoning, and optimized propagation.
+//! Intended to implement sophisticated bit-vector solving using
+//! bit-blasting, word-level reasoning, and optimized propagation.
+//!
+//! Audit note (theories-bv, sweep-theories triage): this module is NOT
+//! declared in `bv/mod.rs` (no `mod solver_advanced;`), so it is not
+//! compiled into the crate and `AdvancedBvSolver` is unreachable from any
+//! public API, test, or the real bit-blasting solver (`bv::solver::BvSolver`,
+//! which already implements this functionality and is what is actually
+//! wired into `oxiz-solver`). Several of its methods are genuine stubs
+//! (`bv_not` ignores width and returns the input unchanged;
+//! `interval_based_solve`/`propagate_intervals`, `bit_blast_solve`/
+//! `bit_blast_constraint`, and `simplify_pattern` are documented no-ops).
+//! Bringing this online would mean implementing real interval propagation
+//! and bit-blasting here, which the sibling `bv::solver`/`bv::bitblast_advanced`
+//! modules already provide -- a substantial duplication of already-working
+//! functionality, not a bounded fix. Left unwired (and therefore posing no
+//! risk to any real caller) rather than half-fixed.
 
 #[allow(unused_imports)]
 use crate::prelude::*;

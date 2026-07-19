@@ -258,9 +258,14 @@ impl<'a> Bmc<'a> {
         }
 
         // ---- Transition constraints: Trans(sᵢ, sᵢ₊₁) for i = 0..k-1 ----
+        // The transition relation is the DISJUNCTION of all matching rules:
+        // a nondeterministic system may advance via any one of its rules, so
+        // conjoining them (which is what a naive encoding would do) makes
+        // contradictory rules like x'=x+1 and x'=x-1 render the whole
+        // unrolling UNSAT and yields an unsound Safe answer.
         for i in 0..k {
-            // Collect the transition rule for pred_id that has pred_id in body
-            let mut trans_found = false;
+            // Collect each matching rule's substituted transition as a disjunct.
+            let mut disjuncts: Vec<TermId> = Vec::new();
             for rule in self.system.rules_by_head(pred_id) {
                 // Skip init rules
                 if rule.body.predicates.is_empty() {
@@ -278,11 +283,10 @@ impl<'a> Bmc<'a> {
                     let mut subst = subst_from_args(&body_app.args, &step_vars[i as usize]);
                     subst.extend(subst_from_args(&head_app.args, &step_vars[i as usize + 1]));
                     let trans_c = self.terms.substitute(rule.body.constraint, &subst);
-                    conjuncts.push(trans_c);
-                    trans_found = true;
+                    disjuncts.push(trans_c);
                 }
             }
-            if !trans_found {
+            if disjuncts.is_empty() {
                 // No transition rule: no way to advance state, so no
                 // counterexample can exist beyond depth 0.
                 debug!(
@@ -291,6 +295,8 @@ impl<'a> Bmc<'a> {
                 );
                 return Ok(BmcResult::Safe(k));
             }
+            let step_trans = self.terms.mk_or(disjuncts);
+            conjuncts.push(step_trans);
         }
 
         // ---- Bad state: Bad(sₖ) ------------------------------------------
@@ -347,6 +353,19 @@ impl<'a> Bmc<'a> {
     // -----------------------------------------------------------------------
 
     /// Run k-induction from depth 1 up to `max_depth`.
+    ///
+    /// If every attempted `k` returns [`BmcResult::Unknown`], this reports
+    /// `Unknown` overall rather than fabricating `Safe(max_depth)`.
+    /// `check_kinduction(k)`'s base-case loop (`0..=k`) returns `Unknown`
+    /// and stops at the *first* depth the SMT solver can't decide -- it
+    /// does not necessarily re-verify every depth up to `k` on every call.
+    /// Because the underlying query is deterministic, an `Unknown` at some
+    /// depth `i` tends to recur at every later `k >= i` too, so hitting
+    /// `Unknown` on every iteration up to `max_depth` does *not* mean
+    /// depths `i..=max_depth` were ever actually verified free of a
+    /// counterexample -- it means the solver could never get past depth
+    /// `i`. Claiming `Safe(max_depth)` in that situation would silently
+    /// assert bounded safety that was never actually checked.
     fn run_kinduction(&mut self) -> Result<BmcResult, BmcError> {
         for k in 1..=self.config.max_depth {
             self.stats.max_depth_reached = k;
@@ -360,7 +379,9 @@ impl<'a> Bmc<'a> {
                 }
             }
         }
-        Ok(BmcResult::Safe(self.config.max_depth))
+        // Every k in 1..=max_depth came back Unknown: no inductive proof
+        // was found and no depth range was conclusively verified safe.
+        Ok(BmcResult::Unknown)
     }
 
     /// Sound k-induction check.
@@ -443,8 +464,12 @@ impl<'a> Bmc<'a> {
             }
         }
 
-        // Trans(sᵢ, sᵢ₊₁) for i = 0 .. k-1
+        // Trans(sᵢ, sᵢ₊₁) for i = 0 .. k-1.
+        // As in the base case, the transition relation is the DISJUNCTION of the
+        // matching rules — conjoining nondeterministic rules would make the step
+        // formula spuriously UNSAT and produce an unsound k-inductive "proof".
         for i in 0..k {
+            let mut disjuncts: Vec<TermId> = Vec::new();
             for rule in self.system.rules_by_head(pred_id) {
                 if rule.body.predicates.is_empty() {
                     continue; // skip init rules
@@ -458,8 +483,12 @@ impl<'a> Bmc<'a> {
                     let mut subst = subst_from_args(&body_app.args, &step_vars[i as usize]);
                     subst.extend(subst_from_args(&head_app.args, &step_vars[i as usize + 1]));
                     let trans_c = self.terms.substitute(rule.body.constraint, &subst);
-                    conjuncts.push(trans_c);
+                    disjuncts.push(trans_c);
                 }
+            }
+            if !disjuncts.is_empty() {
+                let step_trans = self.terms.mk_or(disjuncts);
+                conjuncts.push(step_trans);
             }
         }
 

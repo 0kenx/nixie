@@ -3,8 +3,11 @@
 **/*.rs.bk
 target
 
-# Cargo files
-**/Cargo.lock
+# Cargo.lock is intentionally NOT ignored here: oxiz-cli ships as a binary
+# crate, and reproducible binary builds want a committed lockfile
+# (see https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control).
+# The root Cargo.lock still needs to be added to git (`git add Cargo.lock`) to
+# actually become tracked. Do not re-add a `Cargo.lock` ignore rule here.
 
 # claude
 .claude/

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
 //! Gröbner Basis Preprocessing for NLSAT.
 //!
 //! This module implements Gröbner basis-based preprocessing for polynomial systems
@@ -23,6 +25,19 @@ use num_traits::{One, Zero};
 use oxiz_math::grobner::{grobner_basis, reduce};
 use oxiz_math::polynomial::{Polynomial, Var};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Hard cap on Gröbner-basis background worker threads allowed to be in
+/// flight at once, shared across every [`GroebnerPreprocessor`] in this
+/// process. See [`GroebnerPreprocessor::compute_grobner_with_timeout`]'s
+/// doc comment for why this exists.
+const MAX_OUTSTANDING_GROBNER_THREADS: usize = 4;
+
+/// Number of Gröbner-basis worker threads currently running in the
+/// background (including ones whose timeout already fired on the caller's
+/// side — they keep running regardless, see
+/// [`GroebnerPreprocessor::compute_grobner_with_timeout`]).
+static OUTSTANDING_GROBNER_THREADS: AtomicUsize = AtomicUsize::new(0);
 
 /// Configuration for Gröbner preprocessing.
 #[derive(Debug, Clone)]
@@ -235,13 +250,41 @@ impl GroebnerPreprocessor {
     /// to `config.timeout_ms` milliseconds.  If the computation does not finish
     /// in time we return `None`, which the caller treats as `PreprocessResult::Skipped`.
     ///
-    /// Note: Rust has no thread-cancellation primitive, so the worker thread
-    /// continues to completion in the background.  This is acceptable because
-    /// the input is already size-bounded by `max_poly_count` / `max_degree`
-    /// checks performed before this call.
+    /// Rust has no safe thread-cancellation primitive, so a worker thread
+    /// that misses its timeout does *not* stop: it keeps running
+    /// Buchberger's algorithm to completion in the background, consuming a
+    /// CPU core, with no way for us to reclaim it. The `max_poly_count` /
+    /// `max_degree` bounds checked before this call reduce how often that
+    /// happens but do not eliminate it (Buchberger's algorithm can still be
+    /// doubly-exponential on small-looking inputs, which is precisely why a
+    /// timeout is needed at all). Left unmitigated, a caller that hits this
+    /// timeout repeatedly — e.g. a portfolio search retrying preprocessing
+    /// across many hard subproblems — would accumulate an unbounded number
+    /// of these permanently-running threads: an unbounded resource leak.
+    ///
+    /// [`OUTSTANDING_GROBNER_THREADS`] turns that into a *bounded* leak:
+    /// once [`MAX_OUTSTANDING_GROBNER_THREADS`] computations are already in
+    /// flight process-wide, further calls honestly report "skip" (`None`,
+    /// exactly like a timeout) instead of spawning yet another
+    /// unreclaimable thread. This does not implement true cancellation —
+    /// that would require a cooperative check inside `grobner_basis` itself
+    /// (in `oxiz-math`, outside this crate) — but it does cap the worst-case
+    /// damage at a small, fixed number of background threads rather than
+    /// letting it grow without limit.
     fn compute_grobner_with_timeout(&self, polys: &[Polynomial]) -> Option<Vec<Polynomial>> {
         use std::sync::mpsc;
         use std::time::Duration;
+
+        // Reserve a slot, or honestly skip if we're already at the cap on
+        // outstanding (potentially permanently-running) worker threads.
+        let reserved = OUTSTANDING_GROBNER_THREADS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < MAX_OUTSTANDING_GROBNER_THREADS).then_some(n + 1)
+            })
+            .is_ok();
+        if !reserved {
+            return None;
+        }
 
         let polys_clone = polys.to_vec();
         let max_poly_count = self.config.max_poly_count;
@@ -252,11 +295,15 @@ impl GroebnerPreprocessor {
             let gb = grobner_basis(&polys_clone);
             // Ignore send error — receiver may have already timed out.
             let _ = tx.send(gb);
+            // Release our slot regardless of whether anyone was still
+            // listening, so the cap reflects threads still actually running
+            // rather than ones the caller merely gave up waiting for.
+            OUTSTANDING_GROBNER_THREADS.fetch_sub(1, Ordering::AcqRel);
         });
 
         let gb = match rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(_) => return None, // Timeout — skip preprocessing.
+            Err(_) => return None, // Timeout — skip preprocessing (thread keeps running).
         };
 
         // Check if result is too large
@@ -667,5 +714,62 @@ mod tests {
             // Degree should be reduced
             assert!(preprocessor.stats.degree_reduction > 0);
         }
+    }
+
+    // Regression test for the thread-leak item: `compute_grobner_with_timeout`
+    // must refuse to spawn another background worker once
+    // `MAX_OUTSTANDING_GROBNER_THREADS` are already in flight, honestly
+    // reporting "skip" (`None`) instead of piling on an unbounded number of
+    // threads that can never be reclaimed.
+    #[test]
+    fn test_grobner_thread_cap_prevents_unbounded_leak() {
+        // Saturate the shared budget so this call cannot reserve a slot.
+        // Bump by far more than the cap so this holds even if other tests
+        // running in the same process are concurrently nudging the counter
+        // by the (small, `<= MAX_OUTSTANDING_GROBNER_THREADS`) amounts
+        // normal usage would.
+        let bump = 1_000_000usize;
+        OUTSTANDING_GROBNER_THREADS.fetch_add(bump, Ordering::SeqCst);
+
+        let preprocessor = GroebnerPreprocessor::new();
+        let poly = poly_from_coeffs(0, &[-1, 1]); // x - 1
+        let result = preprocessor.compute_grobner_with_timeout(&[poly]);
+
+        OUTSTANDING_GROBNER_THREADS.fetch_sub(bump, Ordering::SeqCst);
+
+        assert!(
+            result.is_none(),
+            "must not spawn another worker thread once the outstanding-thread \
+             cap is saturated"
+        );
+    }
+
+    // A completed computation must release its slot rather than leaking it
+    // forever, so the process doesn't permanently ratchet down towards the
+    // cap under ordinary (non-timing-out) usage.
+    #[test]
+    fn test_grobner_thread_counter_released_after_completion() {
+        let preprocessor = GroebnerPreprocessor::new();
+        let poly = poly_from_coeffs(0, &[-1, 1]); // x - 1
+
+        let before = OUTSTANDING_GROBNER_THREADS.load(Ordering::SeqCst);
+        let result = preprocessor.compute_grobner_with_timeout(&[poly]);
+        assert!(result.is_some());
+
+        // The worker thread sends its result and then decrements the
+        // counter; poll briefly for that trailing decrement to land instead
+        // of assuming it already has.
+        let mut released = false;
+        for _ in 0..200 {
+            if OUTSTANDING_GROBNER_THREADS.load(Ordering::SeqCst) <= before {
+                released = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            released,
+            "outstanding-thread counter must be released after the worker completes"
+        );
     }
 }

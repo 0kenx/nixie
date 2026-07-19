@@ -1,24 +1,74 @@
 # Workspace-wide cargo configuration
-
-# macOS-specific linker flags to allow undefined Python symbols in oxiz-py crate
-# (Python provides these symbols at runtime when loading the extension)
-# This is safe for other crates as they don't reference undefined Python symbols
 #
-# target-cpu=native enables CPU-specific optimizations (NEON on Apple Silicon,
-# AVX2 on x86_64) for better auto-vectorization of hot loops.
+# History: this file previously forced `target-cpu=native` on every build
+# target and `-undefined dynamic_lookup` on every macOS binary. Both were
+# removed in an earlier pass (audit finding, infra-p3), on the belief that
+# `pyo3-build-config` (used by oxiz-py via the `extension-module` feature)
+# already emits the macOS link args itself. That belief was wrong -- see
+# below -- and removing the section caused a real regression: `cargo
+# nextest run --workspace --all-features` failed to *link* oxiz-py's lib
+# test binary on macOS (missing `_Py*` symbols). This section restores
+# just the linker flag, without `target-cpu=native`.
+#
+# The actual, current design (as of this restoration):
+#
+# 1. `oxiz-py/Cargo.toml` no longer enables `pyo3/extension-module` in its
+#    own `[dependencies]` -- see the comment on that line. So plain
+#    `cargo build`/`cargo test`/`cargo nextest run`, with or without
+#    `--all-features` (there is nothing left to gate on a feature), link
+#    pyo3 in its normal "embedding" mode against the real `libpython3.x`
+#    on the build machine and can actually run, not just link.
+#
+# 2. `maturin build`/`maturin develop` (for real Python wheels) request
+#    `pyo3/extension-module` explicitly via `pyproject.toml`'s
+#    `[tool.maturin] features = ["pyo3/extension-module"]`, invoking a
+#    *separate* `cargo build` just for that. In extension-module mode,
+#    pyo3 deliberately leaves CPython C-API (`_Py*`) symbols undefined in
+#    the built `cdylib`, to be resolved at load time by the Python
+#    interpreter that `dlopen()`s it.
+#
+#    Contrary to the previous belief, `pyo3-build-config` does NOT emit
+#    the macOS `-undefined dynamic_lookup` link arg automatically as part
+#    of depending on pyo3/pyo3-ffi. It only exposes a helper function,
+#    `pyo3_build_config::add_extension_module_link_args()`, that a
+#    project must call itself from its own `build.rs` -- oxiz-py has no
+#    such `build.rs`. Without that link arg from *somewhere*, the
+#    maturin-driven cdylib build fails outright with `ld: symbol(s) not
+#    found for architecture arm64` for every `_Py*` reference. This
+#    `[target.*]` section is the "alternative to build.rs" that PyO3's
+#    own guide documents (see pyo3 guide,
+#    building-and-distribution.md#macos) for supplying that flag.
+#
+# Because it lives in `[target.*].rustflags`, it necessarily applies to
+# every binary built for these targets, not only oxiz-py's cdylib (cargo
+# has no way to scope rustflags to one package) -- for non-Python crates
+# (e.g. oxiz-cli) this could turn a genuinely missing symbol into a
+# runtime crash instead of a link error. That risk is accepted, same as
+# upstream PyO3 projects generally accept it, because the alternative is
+# maturin builds of oxiz-py not linking at all, and in practice no other
+# workspace crate has undefined symbols for this to paper over. It does
+# NOT affect `cargo test`/`cargo nextest run`'s oxiz-py lib test binary,
+# since that build no longer references undefined `_Py*` symbols in the
+# first place (see point 1) -- the flag is inert for it either way.
+#
+# `target-cpu=native` is intentionally NOT restored (separate concern):
+# it bakes in the *building machine's* CPU features (e.g. AVX2/AVX-512 on
+# x86_64, extra NEON extensions on aarch64). Because this file is
+# committed to git, every from-source build -- including Docker images,
+# CI release artifacts, and `cargo install` by end users -- would
+# silently produce a binary that can SIGILL on any CPU less capable than
+# the one that built it. That is not appropriate for a portable,
+# redistributable default.
+#
+# If you want `target-cpu=native` for local benchmarking on your own
+# machine, opt in explicitly instead of committing it here, e.g.:
+#   RUSTFLAGS="-C target-cpu=native" cargo bench -p oxiz-solver
+# or add it to your personal (untracked) `~/.cargo/config.toml`.
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "link-args=-undefined dynamic_lookup", "-C", "target-cpu=native"]
+rustflags = ["-C", "link-args=-undefined dynamic_lookup"]
 
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-args=-undefined dynamic_lookup", "-C", "target-cpu=native"]
+rustflags = ["-C", "link-args=-undefined dynamic_lookup"]
 
-# Generic x86_64 and aarch64 targets (non-macOS)
-[target.'cfg(all(target_arch = "x86_64", not(target_os = "macos")))']
-rustflags = ["-C", "target-cpu=native"]
-
-[target.'cfg(all(target_arch = "aarch64", not(target_os = "macos")))']
-rustflags = ["-C", "target-cpu=native"]
-
-# PyO3 configuration for Python 3.14+ compatibility
 [env]
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"

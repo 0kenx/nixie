@@ -7,7 +7,6 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
-use oxiz::core::smtlib::*;
 use oxiz::{Solver, TermManager};
 
 #[derive(Debug, Arbitrary)]
@@ -42,12 +41,12 @@ struct ArithConstraint {
 fuzz_target!(|data: &[u8]| {
     let mut unstructured = Unstructured::new(data);
 
-    let num_vars: u8 = match unstructured.arbitrary() {
+    let num_vars: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 10) + 1,
         Err(_) => return,
     };
 
-    let num_constraints: u8 = match unstructured.arbitrary() {
+    let num_constraints: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 20) + 1,
         Err(_) => return,
     };
@@ -99,7 +98,10 @@ fuzz_target!(|data: &[u8]| {
         // Build relational constraint
         let rel_expr = match constraint.relation {
             ArithRelation::Eq => tm.mk_eq(arith_expr, const_val),
-            ArithRelation::Ne => tm.mk_not(tm.mk_eq(arith_expr, const_val)),
+            ArithRelation::Ne => {
+                let eq = tm.mk_eq(arith_expr, const_val);
+                tm.mk_not(eq)
+            }
             ArithRelation::Lt => tm.mk_lt(arith_expr, const_val),
             ArithRelation::Le => tm.mk_le(arith_expr, const_val),
             ArithRelation::Gt => tm.mk_gt(arith_expr, const_val),

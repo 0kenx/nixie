@@ -1,8 +1,8 @@
 # oxiz-math TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-07-19 (v0.2.4)
 
-Reference: Z3's `math/` directory at `../z3/src/math/`
+Reference: Z3's `math/` directory
 
 ## Progress: 100% Complete
 

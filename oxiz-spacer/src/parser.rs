@@ -5,6 +5,7 @@
 //! Reference: <https://chc-comp.github.io/format.html>
 
 use crate::chc::{ChcSystem, PredId, PredicateApp, RuleBody, RuleHead};
+use num_rational::Rational64;
 use oxiz_core::ast::TermKind;
 use oxiz_core::sort::SortId;
 use oxiz_core::{TermId, TermManager};
@@ -417,7 +418,7 @@ impl<'a> ChcParser<'a> {
                         let sort_name = s.as_symbol().ok_or_else(|| {
                             ParseError::InvalidSyntax("expected sort name".to_string())
                         })?;
-                        Ok(self.parse_sort(sort_name))
+                        self.parse_sort(sort_name)
                     })
                     .collect::<Result<Vec<_>, ParseError>>()?;
 
@@ -451,16 +452,23 @@ impl<'a> ChcParser<'a> {
         }
     }
 
-    /// Parse a sort name to SortId
-    fn parse_sort(&self, name: &str) -> SortId {
+    /// Parse a sort name to SortId.
+    ///
+    /// Unknown/unsupported sort names (e.g. `BitVec`, `Array`, or any
+    /// undeclared user sort) are reported as an honest
+    /// [`ParseError::UndefinedSymbol`] rather than silently coerced to
+    /// `Bool` -- a CHC predicate argument or bound variable typed `Bool`
+    /// when it was actually meant to be, say, a `BitVec` sort would
+    /// silently corrupt every constraint that touches it.
+    fn parse_sort(&self, name: &str) -> Result<SortId, ParseError> {
         match name {
-            "Bool" => self.terms.sorts.bool_sort,
-            "Int" => self.terms.sorts.int_sort,
-            "Real" => self.terms.sorts.real_sort,
-            _ => {
-                // Default to Bool for unknown sorts
-                self.terms.sorts.bool_sort
-            }
+            "Bool" => Ok(self.terms.sorts.bool_sort),
+            "Int" => Ok(self.terms.sorts.int_sort),
+            "Real" => Ok(self.terms.sorts.real_sort),
+            _ => Err(ParseError::UndefinedSymbol(format!(
+                "unknown or unsupported sort: {}",
+                name
+            ))),
         }
     }
 
@@ -502,19 +510,42 @@ impl<'a> ChcParser<'a> {
                 Ok(self.terms.mk_int(value))
             }
             Token::Decimal(d) => {
-                // Parse as rational
-                let parts: Vec<&str> = d.split('.').collect();
-                if parts.len() != 2 {
+                // Parse a decimal literal (e.g. "3.25", "-0.5") into an
+                // exact rational: `whole.frac` -> `(whole * 10^len(frac) +
+                // frac) / 10^len(frac)`. This used to discard both parsed
+                // components and always return the constant `0`, silently
+                // corrupting every decimal literal in a CHC-COMP input.
+                let negative = d.starts_with('-');
+                let unsigned = d.strip_prefix('-').unwrap_or(d.as_str());
+                let parts: Vec<&str> = unsigned.split('.').collect();
+                if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
                     return Err(ParseError::TypeError(format!("invalid decimal: {}", d)));
                 }
-                // Simple decimal parsing: convert to rational
-                let _whole: i64 = parts[0].parse().map_err(|_| {
-                    ParseError::TypeError(format!("invalid decimal whole part: {}", parts[0]))
+                let (whole_str, frac_str) = (parts[0], parts[1]);
+                if !whole_str.bytes().all(|b| b.is_ascii_digit())
+                    || !frac_str.bytes().all(|b| b.is_ascii_digit())
+                {
+                    return Err(ParseError::TypeError(format!("invalid decimal: {}", d)));
+                }
+
+                let denom: i64 = 10i64.checked_pow(frac_str.len() as u32).ok_or_else(|| {
+                    ParseError::TypeError(format!("decimal literal too precise: {}", d))
                 })?;
-                let _frac = parts[1];
-                // For now, use Int sort approximation
-                // Full implementation would create a Rational
-                Ok(self.terms.mk_int(0))
+                let whole: i64 = whole_str.parse().map_err(|_| {
+                    ParseError::TypeError(format!("invalid decimal whole part: {}", whole_str))
+                })?;
+                let frac: i64 = frac_str.parse().map_err(|_| {
+                    ParseError::TypeError(format!("invalid decimal fractional part: {}", frac_str))
+                })?;
+                let magnitude = whole
+                    .checked_mul(denom)
+                    .and_then(|w| w.checked_add(frac))
+                    .ok_or_else(|| {
+                        ParseError::TypeError(format!("decimal literal overflow: {}", d))
+                    })?;
+                let numer = if negative { -magnitude } else { magnitude };
+
+                Ok(self.terms.mk_real(Rational64::new(numer, denom)))
             }
             _ => Err(ParseError::Unsupported(format!(
                 "unsupported token type: {:?}",
@@ -656,14 +687,17 @@ impl<'a> ChcParser<'a> {
             // Predicate application
             _ => {
                 // Check if it's a declared predicate
-                if let Some(&_pred_id) = self.predicates.get(func_name) {
-                    let _args: Vec<TermId> = items[1..]
+                if self.predicates.contains_key(func_name) {
+                    let args: Vec<TermId> = items[1..]
                         .iter()
                         .map(|e| self.parse_term(e))
                         .collect::<Result<Vec<_>, _>>()?;
-                    // For now, return a placeholder
-                    // Full implementation would construct PredicateApp
-                    Ok(self.terms.mk_true())
+                    // Build a real `TermKind::Apply` so that head/body predicate
+                    // extraction (`try_extract_predicate_app`) can recover the
+                    // predicate symbol and its argument terms.  Predicates return
+                    // Bool in the CHC fragment.
+                    let bool_sort = self.terms.sorts.bool_sort;
+                    Ok(self.terms.mk_apply(func_name, args, bool_sort))
                 } else {
                     Err(ParseError::UndefinedSymbol(func_name.to_string()))
                 }
@@ -706,7 +740,7 @@ impl<'a> ChcParser<'a> {
                 .as_symbol()
                 .ok_or_else(|| ParseError::InvalidSyntax("expected sort name".to_string()))?;
 
-            let sort = self.parse_sort(sort_name);
+            let sort = self.parse_sort(sort_name)?;
             let var = self.terms.mk_var(var_name, sort);
             self.variables.insert(var_name.to_string(), var);
             quantified_vars.push((var_name, sort));
@@ -1053,6 +1087,119 @@ mod tests {
         ]);
         let result = parser.parse_term(&expr);
         assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression tests for the `sweep-backend-misc` triage sweep.
+    // -----------------------------------------------------------------------
+
+    /// Decimal literals used to always parse as the constant `0`
+    /// regardless of their actual text (`parse_atom`'s `Token::Decimal`
+    /// arm discarded both parsed components and hardcoded `mk_int(0)`).
+    /// This verifies decimals now parse to their true rational value.
+    #[test]
+    fn test_parse_decimal_literal_exact_value() {
+        let mut terms = TermManager::new();
+        let mut parser = ChcParser::new(&mut terms);
+
+        let term = parser
+            .parse_atom(&Token::Decimal("3.25".to_string()))
+            .expect("3.25 should parse");
+        let node = parser.terms.get(term).expect("term must exist");
+        assert_eq!(node.kind, TermKind::RealConst(Rational64::new(325, 100)));
+        assert_eq!(node.sort, parser.terms.sorts.real_sort);
+    }
+
+    #[test]
+    fn test_parse_decimal_literal_negative() {
+        let mut terms = TermManager::new();
+        let mut parser = ChcParser::new(&mut terms);
+
+        let term = parser
+            .parse_atom(&Token::Decimal("-0.5".to_string()))
+            .expect("-0.5 should parse");
+        let node = parser.terms.get(term).expect("term must exist");
+        assert_eq!(node.kind, TermKind::RealConst(Rational64::new(-1, 2)));
+    }
+
+    #[test]
+    fn test_parse_decimal_literal_trailing_zeros_preserved_exactly() {
+        let mut terms = TermManager::new();
+        let mut parser = ChcParser::new(&mut terms);
+
+        // "3.05" must be 305/100, not 35/10 or 0.
+        let term = parser
+            .parse_atom(&Token::Decimal("3.05".to_string()))
+            .expect("3.05 should parse");
+        let node = parser.terms.get(term).expect("term must exist");
+        assert_eq!(node.kind, TermKind::RealConst(Rational64::new(305, 100)));
+    }
+
+    #[test]
+    fn test_parse_decimal_literal_malformed_is_error() {
+        let mut terms = TermManager::new();
+        let mut parser = ChcParser::new(&mut terms);
+
+        assert!(
+            parser
+                .parse_atom(&Token::Decimal("1.2.3".to_string()))
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse_atom(&Token::Decimal(".5".to_string()))
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse_atom(&Token::Decimal("5.".to_string()))
+                .is_err()
+        );
+    }
+
+    /// Unknown sort names used to silently resolve to `Bool`. This
+    /// verifies they now surface as an honest parse error instead.
+    #[test]
+    fn test_parse_unknown_sort_is_error_not_silent_bool() {
+        let mut terms = TermManager::new();
+        let parser = ChcParser::new(&mut terms);
+
+        let err = parser
+            .parse_sort("BitVec")
+            .expect_err("unknown sort must error, not silently become Bool");
+        assert!(matches!(err, ParseError::UndefinedSymbol(_)));
+    }
+
+    #[test]
+    fn test_parse_unknown_sort_in_declare_fun_propagates_error() {
+        let mut terms = TermManager::new();
+        let mut parser = ChcParser::new(&mut terms);
+
+        let result = parser.parse("(declare-fun P (BitVec) Bool)");
+        assert!(
+            result.is_err(),
+            "an undeclared/unsupported sort in declare-fun must fail parsing, \
+             not silently declare the argument as Bool"
+        );
+    }
+
+    #[test]
+    fn test_parse_known_sorts_still_work() {
+        let mut terms = TermManager::new();
+        let parser = ChcParser::new(&mut terms);
+
+        assert_eq!(
+            parser.parse_sort("Bool").expect("Bool is known"),
+            parser.terms.sorts.bool_sort
+        );
+        assert_eq!(
+            parser.parse_sort("Int").expect("Int is known"),
+            parser.terms.sorts.int_sort
+        );
+        assert_eq!(
+            parser.parse_sort("Real").expect("Real is known"),
+            parser.terms.sorts.real_sort
+        );
     }
 
     #[test]

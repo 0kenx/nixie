@@ -7,7 +7,6 @@ use crate::ast::{TermId, TermKind, TermManager};
 use crate::prelude::HashSet;
 #[allow(unused_imports)]
 use crate::prelude::*;
-use crate::sort::SortId;
 
 /// Configuration for model completion
 #[derive(Debug, Clone)]
@@ -81,51 +80,23 @@ impl ModelCompletion {
 
         self.completed.insert(term);
 
-        // Determine sort from term structure
+        // Use the term's *actual* sort (`Term::sort`, assigned correctly
+        // at construction time by `TermManager`/`SortManager`) rather than
+        // re-deriving a guess from the term's `TermKind`. The previous
+        // `infer_sort` helper matched only a handful of `TermKind`
+        // variants against hardcoded sort-id constants (`SortId(5)` for
+        // any bitvector op, `SortId(100)` as a catch-all "uninterpreted"
+        // fallback) that do not correspond to how sorts are actually
+        // interned (bitvector/array/uninterpreted sorts get whatever id
+        // they happened to be interned under, not a fixed magic number).
+        // It also had no arm for `TermKind::Var(_)` at all, so every
+        // variable completed via `complete_variables` silently fell
+        // through to the wrong `SortId(100)` default — assigning it an
+        // essentially arbitrary uninterpreted value regardless of its real
+        // declared sort (Bool, Int, BitVec, ...).
         if let Some(t) = manager.get(term) {
-            let sort = self.infer_sort(&t.kind);
-            let value = self.factory.default_value(sort);
+            let value = self.factory.default_value(t.sort);
             model.assign(term, value);
-        }
-    }
-
-    /// Infer sort from term kind
-    fn infer_sort(&self, kind: &TermKind) -> SortId {
-        match kind {
-            TermKind::True
-            | TermKind::False
-            | TermKind::Not(_)
-            | TermKind::And(_)
-            | TermKind::Or(_)
-            | TermKind::Xor(_, _)
-            | TermKind::Implies(_, _)
-            | TermKind::Eq(_, _)
-            | TermKind::Distinct(_)
-            | TermKind::Lt(_, _)
-            | TermKind::Le(_, _)
-            | TermKind::Gt(_, _)
-            | TermKind::Ge(_, _) => SortId(0), // Bool
-
-            TermKind::IntConst(_)
-            | TermKind::Neg(_)
-            | TermKind::Add(_)
-            | TermKind::Sub(_, _)
-            | TermKind::Mul(_)
-            | TermKind::Div(_, _)
-            | TermKind::Mod(_, _) => SortId(1), // Int
-
-            TermKind::RealConst(_) => SortId(2), // Real
-
-            TermKind::BitVecConst { .. }
-            | TermKind::BvNot(_)
-            | TermKind::BvAnd(_, _)
-            | TermKind::BvOr(_, _)
-            | TermKind::BvXor(_, _)
-            | TermKind::BvAdd(_, _)
-            | TermKind::BvSub(_, _)
-            | TermKind::BvMul(_, _) => SortId(5), // BitVec
-
-            _ => SortId(100), // Uninterpreted/Unknown
         }
     }
 

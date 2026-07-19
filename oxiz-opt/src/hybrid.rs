@@ -7,6 +7,8 @@
 
 use crate::maxsat::{MaxSatConfig, MaxSatError, MaxSatResult, MaxSatSolver, SoftClause, Weight};
 use crate::sls::{SlsConfig, SlsError, SlsSolver};
+use oxiz_sat::Lit;
+use smallvec::SmallVec;
 use thiserror::Error;
 
 /// Errors from hybrid solver
@@ -78,6 +80,8 @@ pub struct HybridStats {
 
 /// Hybrid MaxSAT solver
 pub struct HybridSolver {
+    /// Hard clauses (must be satisfied — partial MaxSAT support)
+    hard_clauses: Vec<SmallVec<[Lit; 4]>>,
     /// Soft clauses
     soft_clauses: Vec<SoftClause>,
     /// Configuration
@@ -97,11 +101,21 @@ impl HybridSolver {
     /// Create a new hybrid solver with configuration
     pub fn with_config(config: HybridConfig) -> Self {
         Self {
+            hard_clauses: Vec::new(),
             soft_clauses: Vec::new(),
             config,
             stats: HybridStats::default(),
             best_cost: Weight::Infinite,
         }
+    }
+
+    /// Add a hard clause (must be satisfied in every solution).
+    ///
+    /// This enables genuine *partial* MaxSAT: hard clauses are threaded into
+    /// both the SLS phase and the exact phase so the advertised hybrid design
+    /// actually optimizes soft clauses subject to hard constraints.
+    pub fn add_hard(&mut self, lits: impl IntoIterator<Item = Lit>) {
+        self.hard_clauses.push(lits.into_iter().collect());
     }
 
     /// Add a soft clause
@@ -155,18 +169,18 @@ impl HybridSolver {
         // Also run exact solver
         let exact_result = self.run_exact_phase();
 
-        // Return the better result
+        // Return the better result. When the exact solver produced an answer
+        // we must propagate *its* actual verdict (which may be `Unknown` on an
+        // iteration limit, or `Unsatisfiable`) rather than fabricating
+        // `Optimal`.
         match (sls_result, exact_result) {
-            (Ok(_sls_cost), Ok(_)) => {
-                // Exact solver gives provably optimal result
-                Ok(MaxSatResult::Optimal)
-            }
+            (Ok(_sls_cost), Ok(exact)) => Ok(exact),
             (Ok(sls_cost), Err(_)) => {
                 self.best_cost = sls_cost.clone();
                 self.stats.final_cost = Some(sls_cost);
                 Ok(MaxSatResult::Satisfiable)
             }
-            (Err(_), Ok(_)) => Ok(MaxSatResult::Optimal),
+            (Err(_), Ok(exact)) => Ok(exact),
             (Err(e), Err(_)) => Err(e.into()),
         }
     }
@@ -187,7 +201,10 @@ impl HybridSolver {
     fn run_sls_phase(&mut self) -> Result<Weight, SlsError> {
         let mut sls = SlsSolver::with_config(self.config.sls_config.clone());
 
-        // Add hard clauses (none in this simplified version)
+        // Add hard clauses (converted to DIMACS form for the SLS engine).
+        for clause in &self.hard_clauses {
+            sls.add_hard(clause.iter().map(|lit| lit.to_dimacs()).collect());
+        }
         // Add soft clauses
         for clause in &self.soft_clauses {
             sls.add_soft(clause.clone());
@@ -206,6 +223,10 @@ impl HybridSolver {
 
         let mut exact = MaxSatSolver::with_config(self.config.maxsat_config.clone());
 
+        // Add hard clauses
+        for clause in &self.hard_clauses {
+            exact.add_hard(clause.iter().copied());
+        }
         // Add soft clauses
         for clause in &self.soft_clauses {
             exact.add_soft_weighted(clause.lits.iter().copied(), clause.weight.clone());

@@ -216,10 +216,11 @@ fn test_add_ult_product_fixed() {
 /// r < d
 ///
 /// NOTE: This test uses the BV solver directly (not through SMT interface).
-/// The Z3 parity benchmarks pass for all BV tests. The direct BV solver API
-/// has limitations with inverse constraints involving multiple unknowns.
+/// The `#[ignore]` previously here cited a "direct BV solver API limitation",
+/// but that was actually a `BvSolver::check()` bug that has since been fixed;
+/// the solver now finds a valid model (e.g. d=20, r=0) for `5*d + r = 100`
+/// with `r < d`, so the test is enabled and expected to pass.
 #[test]
-#[ignore = "Direct BV solver API limitation - Z3 parity benchmarks pass"]
 fn test_all_three_two_unknowns() {
     let mut solver = BvSolver::new();
     let width = 8u32;

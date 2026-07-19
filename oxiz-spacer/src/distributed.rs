@@ -1,9 +1,22 @@
 //! Distributed PDR for solving large CHC systems across multiple workers.
 //!
-//! This module provides infrastructure for distributed solving of Constrained Horn Clauses,
-//! allowing multiple workers to collaborate on solving a single CHC system.
+//! This module provides the message-passing / shared-state *infrastructure*
+//! (coordinator, workers, work queue, frame synchronization) for distributing
+//! a Constrained Horn Clause solve across cooperating workers.
 //!
-//! ## Architecture
+//! ## Current status: documented single-process fallback
+//!
+//! A genuinely distributed PDR engine needs the CHC system and term manager to
+//! be shared *mutably* across worker threads. The current ownership model —
+//! [`Spacer`] borrows `&mut TermManager`, and [`ChcSystem`] is not `Clone`
+//! (it holds atomic ID counters) — does not support that yet. Rather than
+//! fabricate block/sleep results (which would make the exported API silently
+//! unsound), [`DistributedCoordinator::solve`] and [`Worker::run`] **delegate
+//! to the sound, sequential [`Spacer`] engine** and return its exact result.
+//! The scaffolding below (queue, messages, shared frames) is retained for the
+//! future multi-worker implementation.
+//!
+//! ## Architecture (target design)
 //!
 //! - **Coordinator**: Manages work distribution and result aggregation
 //! - **Workers**: Process proof obligations and learn lemmas independently
@@ -14,7 +27,7 @@
 
 use crate::chc::{ChcSystem, PredId};
 use crate::frames::{FrameManager, LemmaId};
-use crate::pdr::{SpacerConfig, SpacerError, SpacerResult, SpacerStats};
+use crate::pdr::{Spacer, SpacerConfig, SpacerError, SpacerResult, SpacerStats};
 use crate::pob::{Pob, PobId};
 use oxiz_core::{TermId, TermManager};
 use std::collections::{HashMap, VecDeque};
@@ -302,89 +315,41 @@ impl Worker {
         }
     }
 
-    /// Run the worker loop
+    /// Run the worker.
+    ///
+    /// Single-process fallback (see the module-level docs): rather than
+    /// fabricate proof-obligation outcomes, the worker runs the sound,
+    /// sequential [`Spacer`] engine on the shared system and publishes the
+    /// **real** result plus its solver statistics. Genuine multi-worker POB
+    /// distribution over the shared queue is future work.
     pub fn run(
         &mut self,
-        _terms: &mut TermManager,
-        _system: &ChcSystem,
-        _config: &SpacerConfig,
+        terms: &mut TermManager,
+        system: &ChcSystem,
+        config: &SpacerConfig,
     ) -> Result<(), DistributedError> {
-        loop {
-            // Check for shutdown signal
-            if let Some(WorkerMessage::Shutdown) = self.shared.receive_message() {
-                break;
-            }
-
-            // Check if result already found
-            if self.shared.get_result().is_some() {
-                break;
-            }
-
-            // Try to get work
-            if let Some(work_item) = self.shared.dequeue_work() {
-                // Process work item
-                self.process_work_item(work_item)?;
-            } else {
-                // No work available - request work stealing or wait
-                self.shared
-                    .send_message(WorkerMessage::RequestWork { worker_id: self.id });
-                std::thread::sleep(Duration::from_millis(10));
-            }
+        // If a peer already found the answer, honor the shutdown / result and
+        // do not redundantly re-solve.
+        if self.shared.get_result().is_some() {
+            return Ok(());
+        }
+        if let Some(WorkerMessage::Shutdown) = self.shared.receive_message() {
+            return Ok(());
         }
 
-        // Update shared statistics
-        self.shared.update_stats(|stats| {
-            stats.worker_stats.insert(self.id, self.stats.clone());
+        let mut spacer = Spacer::with_config(terms, system, config.clone());
+        let result = spacer.solve()?;
+        self.stats = spacer.stats().clone();
+
+        // Publish the real result and this worker's statistics.
+        self.shared.set_result(result);
+        let worker_id = self.id;
+        let stats = self.stats.clone();
+        let num_pobs = u64::from(self.stats.num_pobs);
+        self.shared.update_stats(move |s| {
+            s.worker_stats.insert(worker_id, stats);
+            s.total_work_items = s.total_work_items.saturating_add(num_pobs);
         });
-
-        Ok(())
-    }
-
-    /// Process a work item
-    fn process_work_item(&mut self, work_item: WorkItem) -> Result<(), DistributedError> {
-        // Process a POB (Proof Obligation)
-        // 1. Try to block the POB using SMT solver
-        // 2. If blocked, learn lemma and add to frames
-        // 3. If not blocked, create child POBs
-        // 4. Send results/lemmas via messages
-
-        self.stats.num_pobs += 1;
-
-        // Basic POB processing logic:
-        // In a full implementation, we would:
-        // - Set up SMT query for the POB
-        // - Check if the state is reachable
-        // - If unreachable, extract a lemma (blocking clause)
-        // - If reachable, generate predecessor POBs
-
-        // For now, implement a simple heuristic:
-        // - Assume half of POBs can be blocked
-        // - Generate a trivial lemma for blocked POBs
-        let blocked = work_item.pob_id.0.is_multiple_of(2);
-
-        // Generate a lemma ID if blocked
-        // In reality, this would be extracted from UNSAT core and added to frames
-        let lemma = if blocked {
-            // In a real implementation, we would:
-            // 1. Add the lemma to the frame manager
-            // 2. Get its LemmaId
-            // For now, just return None as we don't have a real lemma
-            None
-        } else {
-            None
-        };
-
-        // Send the result back to the coordinator
-        self.shared.send_message(WorkerMessage::WorkResult {
-            worker_id: self.id,
-            pob_id: work_item.pob_id,
-            blocked,
-            lemma,
-        });
-
-        if blocked {
-            self.stats.num_blocked += 1;
-        }
 
         Ok(())
     }
@@ -421,207 +386,35 @@ impl<'a> DistributedCoordinator<'a> {
         }
     }
 
-    /// Solve the CHC system using distributed workers
+    /// Solve the CHC system.
+    ///
+    /// **Single-process fallback.** As documented at the module level, a
+    /// genuinely distributed PDR engine is not yet implemented (it needs the
+    /// term manager and CHC system to be shared mutably across threads, which
+    /// the current ownership model forbids). Instead of returning a fabricated
+    /// answer derived from sleep-based "work", this delegates to the sound,
+    /// sequential [`Spacer`] engine and returns its exact result — so the
+    /// exported API is always honest: `Safe`/`Unsafe` when the sequential
+    /// engine decides, `Unknown` when it cannot (including on timeout).
     pub fn solve(&mut self) -> Result<SpacerResult, DistributedError> {
-        // Distributed solving with worker threads
-        // 1. Initialize frames and initial POBs
-        // 2. Spawn worker threads
-        // 3. Monitor progress and synchronize state
-        // 4. Detect termination (invariant found or counterexample)
-        // 5. Aggregate results
+        // Honor an explicit distributed timeout by bounding the sequential
+        // engine's work via its resource limits is not directly expressible,
+        // so we run the sound engine and surface its verdict.  The engine
+        // itself returns `Unknown` rather than an unsound answer when it hits
+        // its own limits.
+        let config = self.config.worker_config.clone();
 
-        use std::sync::Arc;
-        use std::thread;
-
-        // Step 1: Initialize work queue with initial POBs
-        // In a real implementation, we would create POBs from the query
-        use crate::pob::Pob;
-
-        let initial_pob_data = Pob::new(
-            PobId(0),
-            PredId(0),
-            self.terms.mk_true(), // Placeholder post-condition
-            0,                    // level
-            0,                    // depth
-        );
-
-        let initial_work = WorkItem {
-            pob_id: PobId(0),
-            pob: initial_pob_data,
-            priority: 0,
+        let result = {
+            let mut spacer = Spacer::with_config(self.terms, self.system, config);
+            spacer.solve()?
         };
 
-        self.shared.enqueue_work(initial_work);
+        self.shared.set_result(result.clone());
+        self.shared.update_stats(|stats| {
+            stats.total_work_items = stats.total_work_items.saturating_add(1);
+        });
 
-        // Step 2: Spawn worker threads
-        let mut handles = Vec::new();
-        for worker_id in 0..self.config.num_workers {
-            let shared = Arc::clone(&self.shared);
-            let _config = self.config.worker_config.clone();
-            let handle = thread::spawn(move || {
-                tracing::debug!("Worker {} started", worker_id);
-
-                // Worker loop: process work items until termination
-                loop {
-                    // Check for shutdown message
-                    if let Some(WorkerMessage::Shutdown) = shared.receive_message() {
-                        tracing::debug!("Worker {} received shutdown signal", worker_id);
-                        break;
-                    }
-
-                    // Check for termination
-                    if shared.get_result().is_some() {
-                        tracing::debug!("Worker {} terminating (result found)", worker_id);
-                        break;
-                    }
-
-                    // Try to dequeue work
-                    let work_item = match shared.dequeue_work() {
-                        Some(item) => item,
-                        None => {
-                            // No work available
-                            if shared.work_queue_size() == 0 {
-                                // Queue is truly empty, check if we're done
-                                // In a full implementation, check for global termination
-                                tracing::debug!("Worker {} idle", worker_id);
-                                std::thread::sleep(Duration::from_millis(10));
-                                continue;
-                            }
-                            continue;
-                        }
-                    };
-
-                    tracing::trace!("Worker {} processing POB {:?}", worker_id, work_item.pob_id);
-
-                    // Process the work item (POB)
-                    // In a full implementation, this would:
-                    // 1. Check if POB is blocked by existing lemmas
-                    // 2. If not, generate a predecessor POB
-                    // 3. Learn and generalize lemmas
-                    // 4. Propagate lemmas forward
-                    // 5. Detect fixpoints (invariants) or counterexamples
-
-                    // For now, simulate some work
-                    std::thread::sleep(Duration::from_micros(100));
-
-                    // Report result (simulated: mark as blocked)
-                    shared.send_message(WorkerMessage::WorkResult {
-                        worker_id,
-                        pob_id: work_item.pob_id,
-                        blocked: true,
-                        lemma: None,
-                    });
-
-                    // Update statistics
-                    shared.update_stats(|stats| {
-                        stats.total_work_items += 1;
-                        stats.messages_sent += 1;
-                    });
-                }
-
-                tracing::debug!("Worker {} finished", worker_id);
-            });
-            handles.push(handle);
-        }
-
-        // Step 3: Monitor progress and process worker messages
-        let monitor_start = Instant::now();
-        let sync_interval = Duration::from_millis(self.config.sync_interval_ms);
-        let mut last_sync = Instant::now();
-
-        loop {
-            // Check for timeout
-            if let Some(timeout) = self.config.timeout
-                && monitor_start.elapsed() >= timeout
-            {
-                tracing::warn!("Distributed solving timed out");
-                self.shared.set_result(SpacerResult::Unknown);
-                break;
-            }
-
-            // Process messages from workers
-            let mut messages_processed = 0;
-            while let Some(msg) = self.shared.receive_message() {
-                match msg {
-                    WorkerMessage::WorkResult {
-                        worker_id,
-                        pob_id,
-                        blocked,
-                        lemma,
-                    } => {
-                        tracing::trace!(
-                            "Worker {} reported result for POB {:?}: blocked={}",
-                            worker_id,
-                            pob_id,
-                            blocked
-                        );
-                        if let Some(_lemma_id) = lemma {
-                            // Lemma was learned
-                            self.shared.update_stats(|stats| {
-                                stats.total_lemmas += 1;
-                            });
-                        }
-                    }
-                    WorkerMessage::LemmaLearned {
-                        pred, lemma, level, ..
-                    } => {
-                        // Synchronize lemma across all workers
-                        self.shared.add_lemma(pred, lemma, level);
-                        self.shared.update_stats(|stats| {
-                            stats.total_lemmas += 1;
-                            stats.sync_events += 1;
-                        });
-                    }
-                    WorkerMessage::Counterexample { worker_id } => {
-                        tracing::info!("Worker {} found counterexample", worker_id);
-                        self.shared.set_result(SpacerResult::Unsafe);
-                        break;
-                    }
-                    WorkerMessage::Invariant { worker_id, level } => {
-                        tracing::info!("Worker {} found invariant at level {}", worker_id, level);
-                        self.shared.set_result(SpacerResult::Safe);
-                        break;
-                    }
-                    _ => {}
-                }
-                messages_processed += 1;
-            }
-
-            // Check if result was found
-            if self.shared.get_result().is_some() {
-                break;
-            }
-
-            // Check if all workers are idle (no work in queue)
-            if self.shared.work_queue_size() == 0 && messages_processed == 0 {
-                // Heuristic: if no work and no messages for a while, assume completion
-                if last_sync.elapsed() > Duration::from_millis(500) {
-                    tracing::debug!("No work remaining, assuming Unknown result");
-                    self.shared.set_result(SpacerResult::Unknown);
-                    break;
-                }
-            } else {
-                last_sync = Instant::now();
-            }
-
-            // Sleep briefly before next check
-            std::thread::sleep(std::cmp::min(sync_interval, Duration::from_millis(50)));
-        }
-
-        // Signal workers to shut down
-        for _ in 0..self.config.num_workers {
-            self.shared.send_message(WorkerMessage::Shutdown);
-        }
-
-        // Wait for workers to finish
-        for handle in handles {
-            let _ = handle.join();
-        }
-
-        // Step 4: Return the result
-        self.shared
-            .get_result()
-            .ok_or_else(|| SpacerError::Internal("no result found".to_string()).into())
+        Ok(result)
     }
 
     /// Check if timeout exceeded

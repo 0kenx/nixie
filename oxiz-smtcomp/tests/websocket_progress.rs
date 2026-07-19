@@ -34,10 +34,10 @@ async fn test_receives_progress_events() {
     // 2. Start the WebSocket server.
     let server = WsProgressServer::new(addr);
     let callback = server.progress_callback();
-    let _handle = server.serve().await;
-
-    // Give the server a moment to start accepting connections.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let _handle = server
+        .serve()
+        .await
+        .expect("failed to bind ws-progress test server");
 
     // 3. Connect a tokio-tungstenite client.
     let url = format!("ws://{addr}/progress");
@@ -83,9 +83,10 @@ async fn test_multiple_clients_receive_events() {
 
     let server = WsProgressServer::new(addr);
     let callback = server.progress_callback();
-    let _handle = server.serve().await;
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let _handle = server
+        .serve()
+        .await
+        .expect("failed to bind ws-progress test server");
 
     let url = format!("ws://{addr}/progress");
 
@@ -134,9 +135,10 @@ async fn test_progress_json_fields() {
 
     let server = WsProgressServer::new(addr);
     let callback = server.progress_callback();
-    let _handle = server.serve().await;
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let _handle = server
+        .serve()
+        .await
+        .expect("failed to bind ws-progress test server");
 
     let url = format!("ws://{addr}/progress");
     let (ws_stream, _) = tokio_tungstenite::connect_async(&url)

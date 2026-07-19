@@ -65,7 +65,7 @@ pub(crate) fn run_files(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
     let start_time = Instant::now();
     let track_memory = args.memory;
 
-    let results = if args.parallel && files.len() > 1 {
+    let (results, aggregated_sat_stats) = if args.parallel && files.len() > 1 {
         process_files_parallel(&files, ctx, args, verbosity, &mut result_cache)
     } else {
         process_files_sequential(&files, ctx, args, verbosity, &mut result_cache)
@@ -118,8 +118,14 @@ pub(crate) fn run_files(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
         None
     };
 
-    // Collect SAT solver statistics
-    let sat_stats = ctx.stats();
+    // Collect SAT solver statistics. Each file is solved on its own freshly
+    // constructed `Context` (see `process_files_sequential`/
+    // `process_files_parallel`) so that state never leaks between files; the
+    // outer `ctx` handed to `run_files` is therefore never actually solved
+    // against and would always report all-zero counters. Use the stats
+    // aggregated across every per-file context instead, so `--stats` reflects
+    // what was really searched.
+    let sat_stats = &aggregated_sat_stats;
 
     // Collect statistics
     let stats = SolverStats {
@@ -241,6 +247,18 @@ pub(crate) fn run_files(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
             );
         }
     }
+
+    // Signal failure via the process exit code when any file produced a
+    // genuine solver/parse error. Previously the only way to get a non-zero
+    // exit code on error was `--cicd-strict`; every other invocation
+    // (including the plain default one a shell script or Makefile would
+    // use) always exited 0 regardless of `stats.error_count`, so callers
+    // checking `$?` could not detect failure at all. `--cicd` (without
+    // `--cicd-strict`) keeps its own documented, already-handled exit-code
+    // contract above and is left untouched here.
+    if !args.cicd && stats.error_count > 0 {
+        std::process::exit(1);
+    }
 }
 
 /// Collect files from input paths, supporting glob patterns and recursive traversal
@@ -314,14 +332,34 @@ fn collect_files(inputs: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
     files
 }
 
+/// Add another file-context's SAT solver counters into a running total.
+///
+/// Only the counters the CLI actually surfaces via `--stats`
+/// (decisions/propagations/conflicts/restarts) are aggregated; the rest of
+/// `oxiz_solver::SolverStats` is left at its default value on the accumulator.
+fn accumulate_sat_stats(
+    total: &mut oxiz_solver::SolverStats,
+    file_stats: &oxiz_solver::SolverStats,
+) {
+    total.decisions += file_stats.decisions;
+    total.propagations += file_stats.propagations;
+    total.conflicts += file_stats.conflicts;
+    total.restarts += file_stats.restarts;
+}
+
 /// Process files sequentially with optional progress bar
+///
+/// Returns the per-file results together with the SAT solver counters
+/// (decisions/propagations/conflicts/restarts) summed across every file,
+/// since each file solves against its own freshly constructed `Context`
+/// (see the loop below) rather than the caller's `_ctx`.
 fn process_files_sequential(
     files: &[PathBuf],
     _ctx: &mut Context,
     args: &Args,
     verbosity: Verbosity,
     cache: &mut Option<cache::ResultCache>,
-) -> Vec<SolverResult> {
+) -> (Vec<SolverResult>, oxiz_solver::SolverStats) {
     // Show progress bar with ETA if requested
     let progress = if args.progress && verbosity >= Verbosity::Normal {
         let pb = ProgressBar::new(files.len() as u64);
@@ -339,6 +377,7 @@ fn process_files_sequential(
     };
 
     let mut results = Vec::new();
+    let mut aggregated_sat_stats = oxiz_solver::SolverStats::default();
     let start_time = Instant::now();
 
     for (idx, file) in files.iter().enumerate() {
@@ -365,6 +404,7 @@ fn process_files_sequential(
         apply_solver_options(&mut file_ctx, args);
 
         let result = process_single_file(file, &mut file_ctx, args, cache);
+        accumulate_sat_stats(&mut aggregated_sat_stats, file_ctx.stats());
         results.push(result);
 
         if let Some(ref pb) = progress {
@@ -382,17 +422,22 @@ fn process_files_sequential(
         ));
     }
 
-    results
+    (results, aggregated_sat_stats)
 }
 
 /// Process files in parallel using rayon
+///
+/// Returns the per-file results together with the SAT solver counters
+/// (decisions/propagations/conflicts/restarts) summed across every file, for
+/// the same reason `process_files_sequential` does: each file solves against
+/// its own freshly constructed `Context`, not the caller's `_ctx`.
 fn process_files_parallel(
     files: &[PathBuf],
     _ctx: &Context,
     args: &Args,
     verbosity: Verbosity,
     _cache: &mut Option<cache::ResultCache>,
-) -> Vec<SolverResult> {
+) -> (Vec<SolverResult>, oxiz_solver::SolverStats) {
     let progress = if args.progress && verbosity >= Verbosity::Normal {
         let pb = ProgressBar::new(files.len() as u64);
         pb.set_style(
@@ -406,7 +451,7 @@ fn process_files_parallel(
         None
     };
 
-    let results: Vec<_> = files
+    let per_file: Vec<(SolverResult, oxiz_solver::SolverStats)> = files
         .par_iter()
         .map(|file| {
             let mut ctx = Context::new();
@@ -419,20 +464,28 @@ fn process_files_parallel(
 
             // Note: Cache not used in parallel mode to avoid synchronization overhead
             let result = process_single_file(file, &mut ctx, args, &mut None);
+            let file_stats = ctx.stats().clone();
 
             if let Some(ref pb) = progress {
                 pb.inc(1);
             }
 
-            result
+            (result, file_stats)
         })
         .collect();
+
+    let mut results = Vec::with_capacity(per_file.len());
+    let mut aggregated_sat_stats = oxiz_solver::SolverStats::default();
+    for (result, file_stats) in per_file {
+        accumulate_sat_stats(&mut aggregated_sat_stats, &file_stats);
+        results.push(result);
+    }
 
     if let Some(pb) = progress {
         pb.finish_with_message("Done");
     }
 
-    results
+    (results, aggregated_sat_stats)
 }
 
 /// Process a single file and return the result

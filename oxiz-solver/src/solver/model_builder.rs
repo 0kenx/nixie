@@ -139,8 +139,25 @@ impl Solver {
             }
         }
 
-        // Get bitvector values - check ArithSolver first (for BV comparisons),
-        // then BvSolver (for BV arithmetic/bit operations)
+        // Get bitvector values.  Which theory owns a BV variable's value depends
+        // on how it was actually constrained (see `bv_solver_is_authoritative`):
+        //
+        //   * BV structure (arithmetic, bitwise, shifts, concat/extract) and BV
+        //     (dis)equalities are genuinely bit-blasted — with constant operands
+        //     pinned to their concrete bits — so `BvSolver::get_value` is a real
+        //     witness (e.g. `a != b` in `not(bvadd a b = bvsub a b)`).
+        //   * BV *comparisons* (`bvult`/`bvule`/…) are routed through the linear
+        //     `ArithSolver` as bounded integers.  The BV comparison path allocates
+        //     *unpinned* bits (`new_bv`) for the constant operands, so
+        //     `BvSolver::get_value` for a comparison-only variable is arbitrary and
+        //     may violate the very bound that made the query SAT (historically
+        //     `x = 122` for `5 <u x <u 10`).  There the ArithSolver holds the real
+        //     bounds and its value is authoritative.
+        //
+        // Establishing a single owning theory per problem keeps the extracted
+        // model self-consistent instead of reading a stale value from the wrong
+        // solver.
+        let bv_authoritative = self.bv_solver_is_authoritative(manager);
         for &term in &self.bv_terms {
             // Don't overwrite if already set (shouldn't happen, but be safe)
             if model.get(term).is_some() {
@@ -154,29 +171,104 @@ impl Solver {
                 .and_then(|s| s.bitvec_width())
                 .unwrap_or(64);
 
-            // Prefer the BvSolver's bit-blasted value when the term was actually
-            // bit-blasted (`get_value` returns `Some` only for terms with bit
-            // variables). The bit-level model is authoritative for BV arithmetic
-            // and bit operations, and — crucially — it carries genuine
-            // counterexample witnesses (e.g. `a != b` in `not(bvadd a b = bvsub
-            // a b)`). Falling back to ArithSolver covers BV terms that were
-            // tracked only as bounded integers (pure comparison constraints).
-            if let Some(bv_value) = self.bv.get_value(term) {
-                let value_term = manager.mk_bitvec(bv_value, width);
-                model.set(term, value_term);
-            } else if let Some(arith_value) = self.arith.value(term) {
-                let int_value = arith_value.to_integer();
-                let value_term = manager.mk_bitvec(int_value, width);
-                model.set(term, value_term);
+            let bv_value = self.bv.get_value(term);
+            let arith_value = self.arith.value(term);
+
+            let value_term = if bv_authoritative {
+                // BV theory owns the model: prefer its bit-blasted witness, then
+                // fall back to any bounded-integer value, then a default of 0.
+                if let Some(bv_value) = bv_value {
+                    manager.mk_bitvec(bv_value, width)
+                } else if let Some(arith_value) = arith_value {
+                    manager.mk_bitvec(arith_value.to_integer(), width)
+                } else {
+                    manager.mk_bitvec(0i64, width)
+                }
             } else {
-                // If no value from either solver, use default value (0)
-                // This handles unconstrained BV variables
-                let value_term = manager.mk_bitvec(0i64, width);
-                model.set(term, value_term);
-            }
+                // Comparison-only problem: the ArithSolver holds the genuine
+                // bounds, so prefer its value; only fall back to the (unpinned)
+                // BV bits or a default when arith has nothing.
+                if let Some(arith_value) = arith_value {
+                    manager.mk_bitvec(arith_value.to_integer(), width)
+                } else if let Some(bv_value) = bv_value {
+                    manager.mk_bitvec(bv_value, width)
+                } else {
+                    manager.mk_bitvec(0i64, width)
+                }
+            };
+            model.set(term, value_term);
         }
 
         self.model = Some(model);
+    }
+
+    /// Decide whether the `BvSolver`'s bit-blasted model is authoritative for
+    /// BV terms in the current problem.
+    ///
+    /// It is authoritative when the problem contains genuine BV *structure* —
+    /// any BV arithmetic/bitwise/shift/concat/extract operation — or any BV
+    /// (dis)equality constraint.  Those paths bit-blast their operands with
+    /// constant bits pinned to concrete values, so `BvSolver::get_value` is a
+    /// faithful witness.
+    ///
+    /// When the only BV atoms are comparisons (`bvult`/`bvule`/`bvslt`/`bvsle`),
+    /// the constraints are solved as bounded integers in the `ArithSolver` and
+    /// the BV comparison path leaves constant operands' bits unpinned; the BV
+    /// model is then arbitrary, so the arithmetic value is used instead.
+    fn bv_solver_is_authoritative(&self, manager: &TermManager) -> bool {
+        // Any structural BV operation implies real bit-blasting.
+        for &term in &self.bv_terms {
+            if let Some(t) = manager.get(term)
+                && Self::is_structural_bv_op(&t.kind)
+            {
+                return true;
+            }
+        }
+
+        // Any BV (dis)equality also bit-blasts both operands with pinned
+        // constants.  A disequality `a != b` is stored as an `Eq` atom whose
+        // SAT variable is assigned false, so both cases surface here as `Eq`.
+        let is_bv = |tid: TermId| -> bool {
+            manager
+                .get(tid)
+                .and_then(|t| manager.sorts.get(t.sort))
+                .is_some_and(|s| s.is_bitvec())
+        };
+        for constraint in self.var_to_constraint.values() {
+            if let Constraint::Eq(lhs, rhs) = constraint
+                && (is_bv(*lhs) || is_bv(*rhs))
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Whether a `TermKind` is a structural BV operation (arithmetic, bitwise,
+    /// shift, concat, or extract) — as opposed to a comparison, constant, or
+    /// variable.  Structural ops are the ones the BV solver genuinely
+    /// bit-blasts, making its model authoritative.
+    fn is_structural_bv_op(kind: &TermKind) -> bool {
+        matches!(
+            kind,
+            TermKind::BvNot(_)
+                | TermKind::BvAnd(_, _)
+                | TermKind::BvOr(_, _)
+                | TermKind::BvXor(_, _)
+                | TermKind::BvAdd(_, _)
+                | TermKind::BvSub(_, _)
+                | TermKind::BvMul(_, _)
+                | TermKind::BvUdiv(_, _)
+                | TermKind::BvSdiv(_, _)
+                | TermKind::BvUrem(_, _)
+                | TermKind::BvSrem(_, _)
+                | TermKind::BvShl(_, _)
+                | TermKind::BvLshr(_, _)
+                | TermKind::BvAshr(_, _)
+                | TermKind::BvConcat(_, _)
+                | TermKind::BvExtract { .. }
+        )
     }
 
     /// Build unsat core for trivial conflicts (assertion of false)

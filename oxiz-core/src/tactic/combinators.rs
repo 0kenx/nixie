@@ -31,6 +31,11 @@ impl Tactic for ThenTactic {
     }
 
     fn apply(&self, goal: &Goal) -> Result<TacticResult> {
+        // `current_goals` accumulates the (conjunctive) set of proof
+        // obligations still outstanding: as with every other tactic in this
+        // module that produces `SubGoals`, discharging the original goal
+        // requires discharging *all* of them, not just the first one a
+        // sub-tactic happens to solve.
         let mut current_goals = vec![goal.clone()];
 
         for tactic in &self.tactics {
@@ -38,9 +43,18 @@ impl Tactic for ThenTactic {
 
             for g in &current_goals {
                 match tactic.apply(g)? {
-                    TacticResult::Solved(result) => {
-                        return Ok(TacticResult::Solved(result));
+                    // One conjunct being unsatisfiable makes the whole
+                    // conjunctive goal set unsatisfiable — sound to
+                    // short-circuit.
+                    TacticResult::Solved(SolveResult::Unsat) => {
+                        return Ok(TacticResult::Solved(SolveResult::Unsat));
                     }
+                    // Sat/Unknown for *this one* subgoal says nothing about
+                    // any *other* still-pending subgoal from an earlier
+                    // split — it must not be returned as the verdict for
+                    // the whole goal set. Simply drop this now-discharged
+                    // subgoal and keep processing the rest.
+                    TacticResult::Solved(SolveResult::Sat | SolveResult::Unknown) => {}
                     TacticResult::SubGoals(sub) => {
                         next_goals.extend(sub);
                     }
@@ -54,6 +68,13 @@ impl Tactic for ThenTactic {
             }
 
             current_goals = next_goals;
+        }
+
+        if current_goals.is_empty() {
+            // Every subgoal across every tactic in the sequence was fully
+            // discharged (and none came back Unsat), so the original goal
+            // is proved.
+            return Ok(TacticResult::Solved(SolveResult::Sat));
         }
 
         Ok(TacticResult::SubGoals(current_goals))
@@ -371,5 +392,125 @@ impl Tactic for TimeoutTactic {
 
     fn description(&self) -> &str {
         "Apply a tactic with a time limit"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Splits any goal into two (identical) subgoals, once.
+    #[derive(Debug, Default)]
+    struct SplitInTwo;
+
+    impl Tactic for SplitInTwo {
+        fn name(&self) -> &str {
+            "split-in-two"
+        }
+        fn apply(&self, goal: &Goal) -> Result<TacticResult> {
+            Ok(TacticResult::SubGoals(vec![goal.clone(), goal.clone()]))
+        }
+    }
+
+    /// Reports the *first* goal it ever sees as `Solved(Sat)`; every
+    /// subsequent goal (even if structurally identical) is left pending
+    /// (`NotApplicable`), simulating "this specific subgoal instance is
+    /// done, but sibling subgoals from the same split are not".
+    #[derive(Debug, Default)]
+    struct ResolveFirstOnly {
+        calls: AtomicUsize,
+    }
+
+    impl Tactic for ResolveFirstOnly {
+        fn name(&self) -> &str {
+            "resolve-first-only"
+        }
+        fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(TacticResult::Solved(SolveResult::Sat))
+            } else {
+                Ok(TacticResult::NotApplicable)
+            }
+        }
+    }
+
+    #[test]
+    fn then_tactic_does_not_report_whole_set_solved_from_one_subgoal() {
+        // Regression test: `ThenTactic` used to `return` as soon as *any*
+        // subgoal came back `Solved(..)`, discarding every other pending
+        // subgoal from an earlier split and reporting the whole (still
+        // partially unresolved) goal set as solved.
+        let goal = Goal::new(vec![]);
+        let then = ThenTactic::new(vec![
+            Box::new(SplitInTwo),
+            Box::new(ResolveFirstOnly::default()),
+        ]);
+
+        let result = then.apply(&goal).expect("tactic should not error");
+        match result {
+            TacticResult::SubGoals(remaining) => {
+                assert_eq!(
+                    remaining.len(),
+                    1,
+                    "exactly one of the two split subgoals was resolved; \
+                     the other must still be reported as outstanding"
+                );
+            }
+            other => panic!(
+                "expected one remaining subgoal to be reported, got {other:?} \
+                 (a lone Solved(Sat) would silently ignore the still-pending \
+                 sibling subgoal)"
+            ),
+        }
+    }
+
+    #[test]
+    fn then_tactic_reports_sat_once_every_subgoal_is_resolved() {
+        #[derive(Debug, Default)]
+        struct ResolveEverything;
+        impl Tactic for ResolveEverything {
+            fn name(&self) -> &str {
+                "resolve-everything"
+            }
+            fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+                Ok(TacticResult::Solved(SolveResult::Sat))
+            }
+        }
+
+        let goal = Goal::new(vec![]);
+        let then = ThenTactic::new(vec![Box::new(SplitInTwo), Box::new(ResolveEverything)]);
+
+        let result = then.apply(&goal).expect("tactic should not error");
+        assert!(matches!(result, TacticResult::Solved(SolveResult::Sat)));
+    }
+
+    #[test]
+    fn then_tactic_short_circuits_on_unsat_subgoal() {
+        #[derive(Debug, Default)]
+        struct FirstIsUnsat {
+            calls: AtomicUsize,
+        }
+        impl Tactic for FirstIsUnsat {
+            fn name(&self) -> &str {
+                "first-is-unsat"
+            }
+            fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+                if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(TacticResult::Solved(SolveResult::Unsat))
+                } else {
+                    Ok(TacticResult::Solved(SolveResult::Sat))
+                }
+            }
+        }
+
+        let goal = Goal::new(vec![]);
+        let then = ThenTactic::new(vec![
+            Box::new(SplitInTwo),
+            Box::new(FirstIsUnsat::default()),
+        ]);
+
+        let result = then.apply(&goal).expect("tactic should not error");
+        assert!(matches!(result, TacticResult::Solved(SolveResult::Unsat)));
     }
 }

@@ -11,7 +11,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::cell::RefCell;
 
-use crate::term::{PyTerm, PyTermManager, parse_sort_name};
+use crate::term::{PySort, PyTerm, PyTermManager, parse_sort_name};
 use ::oxiz::core::ast::TermManager;
 
 /// High-level context that bundles a TermManager and provides named-constant
@@ -141,5 +141,63 @@ impl PyContext {
         let mut inner = tm_guard.inner.borrow_mut();
         let id = inner.mk_bitvec(BigInt::from(value), width);
         Ok(PyTerm::with_owner(id, self.tm.clone_ref(py)))
+    }
+
+    // ------------------------------------------------------------------ //
+    // String theory factories                                              //
+    // ------------------------------------------------------------------ //
+
+    /// Declare a string-sorted constant named ``name``.
+    fn string_const(&self, py: Python<'_>, name: &str) -> PyResult<PyTerm> {
+        let tm_guard = self.tm.borrow(py);
+        let mut inner = tm_guard.inner.borrow_mut();
+        let sort = inner.sorts.string_sort();
+        let id = inner.mk_var(name, sort);
+        Ok(PyTerm::with_owner(id, self.tm.clone_ref(py)))
+    }
+
+    /// Create a string literal term.
+    fn string_val(&self, py: Python<'_>, value: &str) -> PyResult<PyTerm> {
+        let tm_guard = self.tm.borrow(py);
+        let mut inner = tm_guard.inner.borrow_mut();
+        let id = inner.mk_string_lit(value);
+        Ok(PyTerm::with_owner(id, self.tm.clone_ref(py)))
+    }
+
+    // ------------------------------------------------------------------ //
+    // Sort factories (convenience shorthands on Context)                  //
+    // ------------------------------------------------------------------ //
+
+    /// Return the FP sort for the given (eb, sb) format.
+    fn fp_sort(&self, py: Python<'_>, eb: u32, sb: u32) -> PyResult<PySort> {
+        let tm_guard = self.tm.borrow(py);
+        let mut inner = tm_guard.inner.borrow_mut();
+        let sort_id = inner.sorts.float_sort(eb, sb);
+        Ok(PySort {
+            id: sort_id,
+            eb: Some(eb),
+            sb: Some(sb),
+            is_array: false,
+            is_string: false,
+        })
+    }
+
+    /// Return the array sort ``Array[index_sort, elem_sort]``.
+    fn array_sort(
+        &self,
+        py: Python<'_>,
+        index_sort: &PySort,
+        elem_sort: &PySort,
+    ) -> PyResult<PySort> {
+        let tm_guard = self.tm.borrow(py);
+        let mut inner = tm_guard.inner.borrow_mut();
+        let sort_id = inner.sorts.array(index_sort.id, elem_sort.id);
+        Ok(PySort {
+            id: sort_id,
+            eb: None,
+            sb: None,
+            is_array: true,
+            is_string: false,
+        })
     }
 }

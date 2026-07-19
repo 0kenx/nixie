@@ -634,13 +634,26 @@ fn colorize_proof_word(word: &str, args: &Args) -> String {
 pub(crate) fn output_results(results: &[SolverResult], args: &Args, stats: &SolverStats) {
     match args.format {
         OutputFormat::Smtlib => {
-            for result in results {
-                if let Some(path) = args.output.as_ref() {
-                    if let Err(e) = fs::write(path, &result.result) {
-                        eprintln_colored(args, &format!("Error writing output: {}", e));
+            if let Some(path) = args.output.as_ref() {
+                // Previously this looped `fs::write(path, &result.result)`
+                // once per file, and `fs::write` truncates on every call, so
+                // with more than one input file only the *last* result ever
+                // survived on disk -- every earlier result was silently
+                // overwritten. Accumulate all of them and write once.
+                let combined = results
+                    .iter()
+                    .map(|r| r.result.as_str())
+                    .filter(|r| !r.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if let Err(e) = fs::write(path, combined) {
+                    eprintln_colored(args, &format!("Error writing output: {}", e));
+                }
+            } else {
+                for result in results {
+                    if !result.result.is_empty() {
+                        println!("{}", result.result);
                     }
-                } else if !result.result.is_empty() {
-                    println!("{}", result.result);
                 }
             }
         }

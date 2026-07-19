@@ -89,13 +89,13 @@ solver.assert_eq(bv_term_a, bv_term_b, reason);
 let result = solver.check()?;
 ```
 
-## Status (v0.2.2)
+## Status (v0.2.4)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.2.2 |
+| Version | 0.2.4 |
 | Status | Stable |
-| Tests | 1,337 passing |
+| Tests | 1,495 passing |
 | Release Date | 2026-06-01 |
 | Rust LoC | 72,028 (123 files) |
 | Public API items | 2,609 |

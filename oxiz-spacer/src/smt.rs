@@ -5,13 +5,108 @@
 //! Reference: Z3's `muz/spacer/spacer_context.cpp` solver integration
 
 use crate::chc::{ChcSystem, PredId, Rule};
+use crate::frames::FrameManager;
 use crate::interp::Interpolator;
+use oxiz_core::ast::TermKind;
 use oxiz_core::{TermId, TermManager};
 use oxiz_solver::{Solver, SolverResult};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use thiserror::Error;
 use tracing::{debug, trace};
+
+/// Build the frame formula `F_level(pred)`: the conjunction of every
+/// active lemma for `pred` at or above `level`, or `true` if there are
+/// none. Shared by any caller that needs to check consecution/
+/// inductiveness for a specific `(pred, level)` (e.g. [`SmtSolver::
+/// is_lemma_inductive`] callers in `pdr.rs` and `parallel.rs`).
+pub(crate) fn build_frame_formula(
+    terms: &mut TermManager,
+    frames: &FrameManager,
+    pred: PredId,
+    level: u32,
+) -> TermId {
+    match frames.get(pred) {
+        Some(pred_frames) => {
+            let lemmas: Vec<TermId> = pred_frames
+                .lemmas_geq_level(level)
+                .map(|l| l.formula)
+                .collect();
+            if lemmas.is_empty() {
+                terms.mk_true()
+            } else if lemmas.len() == 1 {
+                lemmas[0]
+            } else {
+                terms.mk_and(lemmas)
+            }
+        }
+        None => terms.mk_true(),
+    }
+}
+
+/// Build the canonical *current-state* variables for a predicate.
+///
+/// Spacer normalizes every state formula (init facts, POB cubes, lemmas,
+/// frames) so that a predicate `P`'s arguments are represented by the fixed
+/// variables `__sp_c#<pred>#<j>`.  This gives a single, consistent variable
+/// namespace across rules that use different local argument names, which is
+/// what makes primed-state renaming (consecution) and reachability queries
+/// sound.
+pub(crate) fn canon_cur_vars(
+    terms: &mut TermManager,
+    system: &ChcSystem,
+    pred: PredId,
+) -> SmallVec<[TermId; 4]> {
+    match system.get_predicate(pred) {
+        Some(decl) => decl
+            .params
+            .iter()
+            .enumerate()
+            .map(|(j, &sort)| {
+                let name = format!("__sp_c#{}#{}", pred.raw(), j);
+                terms.mk_var(&name, sort)
+            })
+            .collect(),
+        None => SmallVec::new(),
+    }
+}
+
+/// Build a substitution mapping each `arg` term to the corresponding `target`.
+///
+/// Returns `None` unless every `arg` is a plain (interned) variable, because
+/// substituting a compound term is not a sound state renaming.  This is the
+/// guard that keeps Spacer restricted to the linear fragment it can handle
+/// soundly; callers treat `None` as "unsupported, do not claim a result".
+pub(crate) fn var_subst(
+    terms: &TermManager,
+    args: &[TermId],
+    targets: &[TermId],
+) -> Option<FxHashMap<TermId, TermId>> {
+    if args.len() != targets.len() {
+        return None;
+    }
+    let mut map = FxHashMap::default();
+    for (&arg, &target) in args.iter().zip(targets.iter()) {
+        match terms.get(arg).map(|d| &d.kind) {
+            Some(TermKind::Var(_)) => {}
+            _ => return None,
+        }
+        map.insert(arg, target);
+    }
+    Some(map)
+}
+
+/// Assert `formula` onto `solver`, splitting a top-level `And` into separate
+/// assertions.  See [`SmtSolver::assert`] for why the split matters.
+fn assert_flat(solver: &mut Solver, terms: &mut TermManager, formula: TermId) {
+    if let Some(TermKind::And(args)) = terms.get(formula).map(|d| d.kind.clone()) {
+        for arg in args {
+            assert_flat(solver, terms, arg);
+        }
+        return;
+    }
+    solver.assert(formula, terms);
+}
 
 /// Errors from SMT queries
 #[derive(Error, Debug)]
@@ -123,6 +218,18 @@ impl<'a> SmtSolver<'a> {
     /// `formula` **must** be a `TermId` that belongs to the canonical
     /// `TermManager` passed to `SmtSolver::new`.
     pub fn assert(&mut self, formula: TermId) {
+        // Assert each top-level conjunct separately.  This is logically
+        // identical to asserting the conjunction, but avoids a solver
+        // incompleteness where a single `And` term containing disequalities
+        // (`¬(x = k)`) can be answered SAT when the individually-asserted
+        // conjuncts are correctly UNSAT.  Spacer's blocking lemmas are exactly
+        // such disequalities, so this normalization is essential for soundness.
+        if let Some(TermKind::And(args)) = self.terms.get(formula).map(|d| d.kind.clone()) {
+            for arg in args {
+                self.assert(arg);
+            }
+            return;
+        }
         self.solver.assert(formula, self.terms);
         trace!("SMT assert formula");
     }
@@ -151,6 +258,40 @@ impl<'a> SmtSolver<'a> {
             SolverResult::Unknown => {
                 self.stats.num_unknown += 1;
                 debug!("SMT query: UNKNOWN ({}µs)", elapsed);
+                Err(SmtError::Unknown)
+            }
+        }
+    }
+
+    /// Check satisfiability of the conjunction of `assertions` on a **fresh**
+    /// underlying solver.
+    ///
+    /// The backend's incremental `push`/`pop` interface can return a stale
+    /// (wrong) result on a solver that has already answered and rolled back a
+    /// query.  Any independent query whose result must be trusted for
+    /// soundness (e.g. per-rule consecution) therefore runs on its own fresh
+    /// solver instance instead of reusing this one across `pop`.
+    ///
+    /// Top-level `And` conjuncts are asserted separately (see [`Self::assert`]).
+    pub fn check_sat_fresh(&mut self, assertions: &[TermId]) -> Result<bool, SmtError> {
+        let mut solver = Solver::new();
+        solver.set_logic("HORN");
+        for &a in assertions {
+            assert_flat(&mut solver, self.terms, a);
+        }
+
+        self.stats.num_queries += 1;
+        match solver.check(self.terms) {
+            SolverResult::Sat => {
+                self.stats.num_sat += 1;
+                Ok(true)
+            }
+            SolverResult::Unsat => {
+                self.stats.num_unsat += 1;
+                Ok(false)
+            }
+            SolverResult::Unknown => {
+                self.stats.num_unknown += 1;
                 Err(SmtError::Unknown)
             }
         }
@@ -234,8 +375,26 @@ impl<'a> SmtSolver<'a> {
         Ok(result)
     }
 
-    /// Check if a lemma is inductive at a level:
-    /// F_level(pred) ∧ T ∧ ¬lemma' is UNSAT?
+    /// Check whether `lemma` (expressed over predicate `pred`'s canonical
+    /// current-state variables) is inductive relative to the frame
+    /// `frame_formula = F_level`.
+    ///
+    /// Consecution is checked **per rule** (the transition relation is a
+    /// disjunction of rules, so each rule must independently preserve the
+    /// lemma) with proper primed-state renaming:
+    ///
+    /// For each self-loop rule `P(body_args) ∧ C ⇒ P(head_args)` we test
+    /// satisfiability of
+    ///   `F_level ∧ C[body_args ↦ C_vars] ∧ ¬lemma[C_vars ↦ head_args]`.
+    /// `head_args` are the rule's next-state variables, so `¬lemma'` ranges
+    /// over the next state while `F_level` ranges over the current state.  If
+    /// any rule makes this SAT the lemma is **not** inductive and cannot be
+    /// pushed.  UNSAT for every rule ⇒ inductive.
+    ///
+    /// Only the single-predicate linear (self-loop) fragment is supported
+    /// soundly; any rule outside it makes this return `Ok(false)`
+    /// (conservatively "not inductive"), which merely prevents a fixpoint
+    /// rather than fabricating one.
     pub fn is_lemma_inductive(
         &mut self,
         pred: PredId,
@@ -243,32 +402,68 @@ impl<'a> SmtSolver<'a> {
         _level: u32,
         frame_formula: TermId,
     ) -> Result<bool, SmtError> {
-        self.push();
+        // Canonical current-state variables for `pred`.
+        let cur = canon_cur_vars(self.terms, self.system, pred);
 
-        // Assert frame at level
-        self.assert(frame_formula);
-
-        // Assert all transition rules for this predicate
-        // Collect body constraints to assert (avoid borrow conflicts)
-        let body_constraints: Vec<TermId> = self
+        // Collect the (body_args, head_args, constraint, linear?) of every rule
+        // whose head is `pred`, cloned up-front to avoid borrowing the system
+        // while mutating `self`.
+        #[allow(clippy::type_complexity)]
+        let rules: Vec<(SmallVec<[TermId; 4]>, SmallVec<[TermId; 4]>, TermId, bool)> = self
             .system
             .rules_by_head(pred)
-            .map(|rule| rule.body.constraint)
+            .map(|rule| {
+                let body_args = rule
+                    .body
+                    .predicates
+                    .first()
+                    .map(|app| app.args.clone())
+                    .unwrap_or_default();
+                let head_args = rule
+                    .head
+                    .as_predicate()
+                    .map(|app| app.args.clone())
+                    .unwrap_or_default();
+                let linear = rule.body.predicates.len() <= 1
+                    && rule.body.predicates.iter().all(|app| app.pred == pred);
+                (body_args, head_args, rule.body.constraint, linear)
+            })
             .collect();
 
-        for constraint in body_constraints {
-            self.assert(constraint);
+        for (body_args, head_args, constraint, linear) in rules {
+            if !linear {
+                // Non-linear / cross-predicate rule: cannot check soundly here.
+                return Ok(false);
+            }
+
+            // Renaming of the lemma to the next state (head args).
+            let Some(next_subst) = var_subst(self.terms, &cur, &head_args) else {
+                return Ok(false);
+            };
+            let lemma_next = self.terms.substitute(lemma, &next_subst);
+            let not_lemma_next = self.terms.mk_not(lemma_next);
+
+            // Transition constraint in canonical current-state space.
+            let trans = if body_args.is_empty() {
+                // Init rule (no body predicate): the constraint already defines
+                // the head state; the current state is unconstrained.
+                constraint
+            } else {
+                let Some(cur_subst) = var_subst(self.terms, &body_args, &cur) else {
+                    return Ok(false);
+                };
+                self.terms.substitute(constraint, &cur_subst)
+            };
+
+            let is_sat = self.check_sat_fresh(&[frame_formula, trans, not_lemma_next])?;
+
+            if is_sat {
+                // A transition out of F_level violates lemma' ⇒ not inductive.
+                return Ok(false);
+            }
         }
 
-        // Assert negation of lemma in next state (built via the canonical terms)
-        let not_lemma = self.terms.mk_not(lemma);
-        self.assert(not_lemma);
-
-        let is_sat = self.check_sat()?;
-        let is_inductive = !is_sat; // UNSAT means inductive
-
-        self.pop();
-        Ok(is_inductive)
+        Ok(true)
     }
 
     /// Check if state is blocked by a lemma:
@@ -286,31 +481,32 @@ impl<'a> SmtSolver<'a> {
         Ok(is_blocked)
     }
 
-    /// Extract model from current satisfying assignment
-    fn extract_model(&mut self, _pred: PredId) -> Model {
+    /// Extract model from current satisfying assignment.
+    ///
+    /// Evaluates the predicate's canonical *current-state* variables
+    /// (`__sp_c#<pred>#<j>`, see [`canon_cur_vars`]) -- the exact names
+    /// every asserted formula (init facts, transition constraints,
+    /// lemmas, POB cubes) actually uses for this predicate's arguments.
+    ///
+    /// This previously invented its own `"{pred_name}_{idx}"` variable
+    /// names via a fresh `mk_var` call. Those names never occurred in any
+    /// asserted formula, so evaluating them in the model just read back
+    /// the solver's arbitrary default for a totally unconstrained
+    /// variable -- not the real value of the predicate's argument in the
+    /// reachable state the model actually describes.
+    fn extract_model(&mut self, pred: PredId) -> Model {
         use std::time::Instant;
 
         let start = Instant::now();
 
-        let model = if let Some(pred_decl) = self.system.get_predicate(_pred) {
-            // Extract assignments for each predicate parameter
-            let assignments: Vec<TermId> = pred_decl
-                .params
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, &sort)| {
-                    let var_name = format!("{}_{}", pred_decl.name, idx);
-                    let var = self.terms.mk_var(&var_name, sort);
-                    // Try to evaluate in the model
-                    self.solver.model().map(|m| m.eval(var, self.terms))
-                })
-                .collect();
-
-            Model { assignments }
-        } else {
-            Model {
+        let cur_vars = canon_cur_vars(self.terms, self.system, pred);
+        let model = match self.solver.model() {
+            Some(m) => Model {
+                assignments: cur_vars.iter().map(|&v| m.eval(v, self.terms)).collect(),
+            },
+            None => Model {
                 assignments: Vec::new(),
-            }
+            },
         };
 
         let elapsed = start.elapsed().as_micros() as u64;
@@ -579,5 +775,49 @@ mod tests {
         // Evaluate x in the model — should yield 5
         let val = solver.eval_in_model(x);
         assert!(val.is_some(), "eval_in_model should return Some for x");
+    }
+
+    /// Regression test for the `sweep-backend-misc` triage sweep:
+    /// `extract_model` used to invent its own `"{pred_name}_{idx}"`
+    /// variable names, which never occur in any asserted formula, so the
+    /// "extracted" values were arbitrary solver defaults rather than the
+    /// real reachable-state values. This verifies the model returned by
+    /// `is_state_reachable` now evaluates the predicate's *actual*
+    /// canonical current-state variable (`canon_cur_vars`) to the value
+    /// pinned down by the asserted state.
+    #[test]
+    fn test_extract_model_uses_canonical_predicate_variables() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+        let pred = system.declare_predicate("ExtrModelInv", [terms.sorts.int_sort]);
+
+        // The state formula, expressed the way real Spacer code builds
+        // state formulas: over the predicate's canonical current-state
+        // variable, not some ad hoc local name.
+        let cur_vars = canon_cur_vars(&mut terms, &system, pred);
+        assert_eq!(cur_vars.len(), 1);
+        let seven = terms.mk_int(7i64);
+        let state = terms.mk_eq(cur_vars[0], seven);
+        let frame_true = terms.mk_true();
+
+        let mut solver = SmtSolver::new(&mut terms, &system);
+        let model = solver
+            .is_state_reachable(pred, state, 0, frame_true)
+            .expect("SMT query should not error")
+            .expect("x=7 with a trivially true frame must be SAT");
+
+        assert_eq!(
+            model.assignments.len(),
+            1,
+            "one assignment per predicate parameter"
+        );
+        let evaluated = model.assignments[0];
+        let seven_again = terms.mk_int(7i64);
+        assert_eq!(
+            evaluated, seven_again,
+            "extract_model must evaluate the predicate's real canonical \
+             variable (pinned to 7 by the asserted state), not an \
+             unconstrained fabricated variable"
+        );
     }
 }

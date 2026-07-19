@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
 //! Bounded Variable Elimination (BVE)
 //!
 //! This module implements bounded variable elimination, a preprocessing technique that

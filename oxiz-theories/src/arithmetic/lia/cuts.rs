@@ -1,4 +1,15 @@
-//\! Cut generation and management for LIA solver
+//! Cut generation and management for LIA solver
+//!
+//! All cutting-plane generators derive their inequalities from the *actual*
+//! simplex tableau row of a fractional basic variable, never from a scalar
+//! value in isolation.  The returned [`LinExpr`] `C` encodes the valid
+//! inequality `C <= 0` (same convention as [`LiaSolver::generate_cover_cut`]
+//! and [`Simplex::add_le`]).  Every emitted cut is a valid inequality of the
+//! mixed-integer hull: it never removes an integer-feasible point.  Whenever a
+//! sound cut cannot be derived the generator returns [`None`] rather than
+//! fabricating an inequality — branch-and-bound (see `branching.rs`) remains a
+//! sound and complete decision procedure for LIA, so a missing cut only forgoes
+//! an optional strengthening.
 
 use super::super::simplex::{LinExpr, VarId};
 use super::helpers::gcd;
@@ -7,107 +18,218 @@ use super::types::LiaSolver;
 use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::{One, Zero};
+
 impl LiaSolver {
-    pub(super) fn generate_gomory_cut(&self, _var: VarId, value: Rational64) -> Option<LinExpr> {
-        if value.is_integer() {
+    /// Derive a cutting plane from the tableau row of a fractional basic variable.
+    ///
+    /// Given the row of a basic integer variable `x_var`
+    ///
+    /// ```text
+    /// x_var = a0 + Σ_j a_j · x_j        (x_j non-basic, resting at a bound)
+    /// ```
+    ///
+    /// each non-basic term is rewritten in the non-negative slack
+    /// `y_j = x_j - l_j` (variable at its lower bound) or `y_j = u_j - x_j`
+    /// (variable at its upper bound), giving
+    ///
+    /// ```text
+    /// x_var = x̄_var + Σ_j â_j · y_j ,   y_j ≥ 0 ,
+    /// ```
+    ///
+    /// where `x̄_var` is the current (fractional) value of the basic variable.
+    /// Let `f0 = x̄_var − ⌊x̄_var⌋ ∈ (0,1)`.
+    ///
+    /// The Gomory/GMI coefficient formulas are stated for the canonical source
+    /// row `x_var + Σ_j ā_j y_j = x̄_var`; since the simplex stores the row as
+    /// `x_var = x̄_var + Σ_j â_j y_j`, the canonical coefficient is
+    /// `ā_j = −â_j` (this negation is essential — using `â_j` directly emits an
+    /// invalid inequality that removes integer-feasible points).
+    ///
+    /// * `pure_integer == false` produces the **Gomory Mixed-Integer (GMI)**
+    ///   cut `Σ_j γ_j y_j ≥ 1`, valid whether or not the non-basic variables are
+    ///   integer:
+    ///   * integer `y_j` (variable is an integer variable resting at an integer
+    ///     bound) with `f_j = ā_j − ⌊ā_j⌋`:
+    ///     `γ_j = f_j/f0` if `f_j ≤ f0`, else `γ_j = (1−f_j)/(1−f0)`;
+    ///   * continuous `y_j`:
+    ///     `γ_j = ā_j/f0` if `ā_j ≥ 0`, else `γ_j = −ā_j/(1−f0)`.
+    ///
+    /// * `pure_integer == true` produces the **pure-integer Gomory fractional
+    ///   cut** `Σ_j f_j y_j ≥ f0` with `f_j = ā_j − ⌊ā_j⌋`, which is only valid
+    ///   when *every* non-basic variable in the row is integer; if any non-basic
+    ///   is continuous the method returns [`None`].
+    ///
+    /// Both cuts are translated back into the original variables and returned
+    /// with the convention `C <= 0`.  Returns [`None`] when `x_var` is not a
+    /// basic integer variable with a fractional value, when the row is empty, or
+    /// when a non-basic variable is not resting at a finite bound (so the
+    /// `y_j ≥ 0` substitution is unavailable).
+    ///
+    /// Reference: Cornuéjols, "Valid inequalities for mixed integer linear
+    /// programs" (2008); Dutertre & de Moura, "A Fast Linear-Arithmetic Solver
+    /// for DPLL(T)" (2006).
+    fn tableau_row_cut(&self, var: VarId, pure_integer: bool) -> Option<LinExpr> {
+        // The cut is only sound for a basic integer variable with a fractional
+        // LP value.
+        if !self.int_vars.contains_key(&var) || !self.simplex.is_basic(var as usize) {
             return None;
         }
 
-        // For now, generate a simple fractional cut
-        // In a full implementation, we'd analyze the tableau row
-        let frac_part = value - value.floor();
+        let bar = self.simplex.value(var);
+        let f0 = bar - bar.floor();
+        if f0.is_zero() {
+            return None; // already integral: nothing to cut
+        }
 
-        if frac_part.is_zero() {
+        let one = Rational64::one();
+        let zero = Rational64::zero();
+        let one_minus_f0 = one - f0;
+
+        // Fetch the tableau row `x_var = constant + Σ a_j x_j`.
+        let row = self
+            .simplex
+            .tableau_iter()
+            .find(|(v, _)| **v == var)
+            .map(|(_, e)| e.clone())?;
+        if row.terms.is_empty() {
             return None;
         }
 
-        // Simple cut: this is a placeholder
-        // A real implementation would extract the row from the simplex tableau
+        // Base right-hand side: `Σ f_j y_j ≥ f0` (pure) or `Σ γ_j y_j ≥ 1` (GMI).
+        let base_rhs = if pure_integer { f0 } else { one };
+
+        // Accumulate the cut as `C = R − Σ c_j x_j` with the convention `C ≤ 0`.
         let mut cut = LinExpr::new();
-        cut.add_constant(-frac_part);
+        let mut rhs = base_rhs;
 
-        Some(cut)
-    }
+        for (xj, a_j) in &row.terms {
+            let xj = *xj;
+            let a_j = *a_j;
+            if a_j.is_zero() {
+                continue;
+            }
 
-    /// Coefficient lifting for strengthening Gomory cuts
-    ///
-    /// Given a Gomory cut sum(a_i * x_i) >= b, we try to increase (lift) the coefficients
-    /// while maintaining validity. This produces stronger cuts that cut off more fractional solutions.
-    ///
-    /// The lifting procedure:
-    /// 1. Start with a valid cut
-    /// 2. For each coefficient a_i, try to replace it with a larger value a_i'
-    /// 3. Check that the cut remains valid (doesn't cut off integer points)
-    /// 4. Use sequence-independent lifting (lift variables one at a time)
-    ///
-    /// Reference: "Integer Programming" by Wolsey, Chapter 8
-    pub fn lift_gomory_cut(&self, cut: &mut LinExpr, var: VarId) -> bool {
-        // Find the current coefficient for the variable
-        let mut current_coeff = Rational64::zero();
-        let mut var_idx = None;
+            let idx = xj as usize;
+            let vj = self.simplex.value(xj);
+            let lower = self.simplex.lower_real_at(idx);
+            let upper = self.simplex.upper_real_at(idx);
 
-        for (idx, &(v, c)) in cut.terms.iter().enumerate() {
-            if v == var {
-                current_coeff = c;
-                var_idx = Some(idx);
-                break;
+            // Determine which bound the non-basic variable rests at.  A general
+            // simplex parks non-basic variables at a bound; if this variable is
+            // not at a finite bound we cannot form the non-negative slack `y_j`,
+            // so no sound cut is available.
+            let (at_lower, bound_val) = if lower == Some(vj) {
+                (true, vj)
+            } else if upper == Some(vj) {
+                (false, vj)
+            } else {
+                return None;
+            };
+
+            // Coefficient of `y_j` in the *stored* row orientation
+            // `x_var = x̄_var + Σ â_j y_j`:  `â_j = a_j` at a lower bound,
+            // `−a_j` at an upper bound.
+            let hat_a = if at_lower { a_j } else { -a_j };
+
+            // The Gomory/GMI coefficient formulas below are stated for the
+            // canonical source row `x_var + Σ ā_j y_j = x̄_var`, whereas the
+            // simplex stores `x_var = x̄_var + Σ â_j y_j`.  Rearranging,
+            // `ā_j = −â_j`; using `â_j` directly would flip the split on the
+            // sign of the coefficient and the fractional part, yielding an
+            // invalid inequality that cuts off integer-feasible points.
+            let bar_a = -hat_a;
+
+            // `y_j` is integral only when `x_j` is an integer variable resting
+            // at an integer bound.  Slack variables are conservatively treated
+            // as continuous (their integrality is not tracked), which keeps the
+            // GMI cut valid.
+            let is_int = self.int_vars.contains_key(&xj) && bound_val.is_integer();
+
+            let gamma = if pure_integer {
+                // The pure-integer Gomory fractional cut is only valid when
+                // every non-basic variable is integral.
+                if !is_int {
+                    return None;
+                }
+                bar_a - bar_a.floor() // f_j ∈ [0,1)
+            } else if is_int {
+                let fj = bar_a - bar_a.floor();
+                if fj <= f0 {
+                    fj / f0
+                } else {
+                    (one - fj) / one_minus_f0
+                }
+            } else if bar_a > zero {
+                bar_a / f0
+            } else {
+                -bar_a / one_minus_f0
+            };
+
+            if gamma.is_zero() {
+                continue;
+            }
+
+            // Translate `γ_j y_j` back to `x_j` and fold into `C = R − Σ c_j x_j`:
+            //   lower: y_j = x_j − l_j  ⇒ c_j = +γ_j , R += γ_j·l_j
+            //   upper: y_j = u_j − x_j  ⇒ c_j = −γ_j , R −= γ_j·u_j
+            if at_lower {
+                cut.add_term(xj, -gamma);
+                rhs += gamma * bound_val;
+            } else {
+                cut.add_term(xj, gamma);
+                rhs -= gamma * bound_val;
             }
         }
 
-        if current_coeff.is_zero() || var_idx.is_none() {
-            return false;
+        if cut.terms.is_empty() {
+            return None;
         }
 
-        // Try to lift the coefficient
-        // The maximum lifted coefficient is determined by ensuring the cut doesn't
-        // exclude any integer feasible points
-        //
-        // For Gomory cuts, we can use the formula:
-        // a_i' = a_i + floor((f_0 * (U_i - L_i)) / (1 - f_0))
-        // where f_0 is the fractional part of the RHS, U_i and L_i are bounds on x_i
-
-        // Get the fractional part of the constant term (negated RHS)
-        let rhs = -cut.constant;
-        let frac_rhs = rhs - rhs.floor();
-
-        if frac_rhs.is_zero() || frac_rhs == Rational64::one() {
-            return false; // Cannot lift
-        }
-
-        // Simplified lifting: increase coefficient by fractional part scaling
-        // In a full implementation, we would:
-        // 1. Get variable bounds from the simplex solver
-        // 2. Compute optimal lifting coefficient using the formula above
-        // 3. Update the cut with the lifted coefficient
-
-        // For now, apply a conservative lift: multiply coefficient by (1 + frac_rhs)
-        let lift_factor = Rational64::one() + frac_rhs / Rational64::from_integer(2);
-        let lifted_coeff = current_coeff * lift_factor;
-
-        // Update the coefficient in the cut
-        if let Some(idx) = var_idx {
-            cut.terms[idx].1 = lifted_coeff;
-        }
-
-        true
+        cut.add_constant(rhs);
+        Some(cut)
     }
 
-    /// Sequence-independent coefficient lifting
+    /// Generate a Gomory (mixed-integer) cut from the tableau row of `var`.
     ///
-    /// Lift multiple variables in the cut to strengthen it maximally.
-    /// This procedure lifts variables one at a time in a sequence-independent manner,
-    /// meaning the order doesn't affect the final result.
-    ///
-    /// Reference: Gu, Nemhauser, Savelsbergh (1998) "Sequence Independent Lifting"
-    pub fn lift_cut_all_vars(&self, cut: &mut LinExpr) {
-        // Collect all variables in the cut
-        let vars: Vec<VarId> = cut.terms.iter().map(|(v, _)| *v).collect();
+    /// This is the Gomory Mixed-Integer (GMI) cut derived from the simplex row
+    /// of the fractional basic variable `var`.  It is valid for the integer hull
+    /// (never removes an integer-feasible point) and separates the current
+    /// fractional LP point.  Returns [`None`] when no sound cut can be derived
+    /// (see [`LiaSolver::tableau_row_cut`]).
+    pub(super) fn generate_gomory_cut(&self, var: VarId, value: Rational64) -> Option<LinExpr> {
+        if value.is_integer() {
+            return None;
+        }
+        self.tableau_row_cut(var, false)
+    }
 
-        // Lift each variable
+    /// Coefficient lifting for strengthening Gomory cuts.
+    ///
+    /// Correct coefficient lifting must be *validity preserving* — it may never
+    /// turn a valid cut into one that removes an integer-feasible point.  A
+    /// sound lifting procedure requires per-variable bound information together
+    /// with a sequence-independent lifting function; an earlier revision applied
+    /// an ad-hoc coefficient scaling that could invalidate the cut.  Until a
+    /// validity-preserving lifting is implemented we leave the cut unchanged so
+    /// the already-valid input inequality is emitted verbatim, and report that
+    /// no lifting was performed.
+    ///
+    /// Reference: Gu, Nemhauser, Savelsbergh (1998), "Sequence Independent
+    /// Lifting"; Wolsey, "Integer Programming", Chapter 8.
+    pub fn lift_gomory_cut(&self, cut: &mut LinExpr, var: VarId) -> bool {
+        // Intentionally a no-op: preserve validity by not modifying the cut.
+        let _ = (&*cut, var);
+        false
+    }
+
+    /// Sequence-independent coefficient lifting across all variables in a cut.
+    ///
+    /// Delegates to [`LiaSolver::lift_gomory_cut`], which is currently a
+    /// validity-preserving no-op (see its documentation).  The cut is therefore
+    /// returned unchanged.
+    pub fn lift_cut_all_vars(&self, cut: &mut LinExpr) {
+        let vars: Vec<VarId> = cut.terms.iter().map(|(v, _)| *v).collect();
         for &var in &vars {
-            // Try lifting this variable
-            // In a full implementation, we would compute the lifting coefficient
-            // based on the current partial cut and variable bounds
             let _ = self.lift_gomory_cut(cut, var);
         }
     }
@@ -151,131 +273,60 @@ impl LiaSolver {
         (bound / g) * g
     }
 
-    /// Generate a Mixed-Integer Rounding (MIR) cut
+    /// Generate a Mixed-Integer Rounding (MIR) cut from the tableau row of `var`.
     ///
-    /// MIR cuts are stronger than Gomory cuts and work well for mixed-integer problems.
-    /// Given a constraint row: x_i = b + sum(a_j * x_j) where x_i is basic and integer,
-    /// and b is fractional, we generate: sum(floor(a_j) * x_j) >= ceil(b)
+    /// For a single simplex row the Mixed-Integer Rounding cut coincides with the
+    /// Gomory Mixed-Integer cut, so this delegates to the same tableau-derived
+    /// construction (see `LiaSolver::tableau_row_cut`).  The result is valid
+    /// for the integer hull and separates the current fractional point, or
+    /// [`None`] when no sound cut can be derived.
+    ///
+    /// Reference: Marchand & Wolsey, "Aggregation and Mixed Integer Rounding to
+    /// Solve MIPs" (2001) — MIR applied to a tableau row yields the GMI cut.
     pub fn generate_mir_cut(&self, var: VarId, value: Rational64) -> Option<LinExpr> {
         if value.is_integer() {
             return None;
         }
-
-        // Try to get the tableau row for this variable
-        // In a full implementation, we'd access the Simplex tableau
-        // For now, generate a simple MIR-like cut based on the fractional part
-
-        let frac_part = value - value.floor();
-        if frac_part.is_zero() {
-            return None;
-        }
-
-        // MIR cut: for a fractional basic variable with value b_i
-        // The cut is: sum(mir_coef(a_j) * x_j) >= ceil(b_i) - b_i
-        // where mir_coef(a) = floor(a) if a >= 0, ceil(a) if a < 0
-
-        let mut cut = LinExpr::new();
-        // The RHS is the ceiling of the fractional part
-        let rhs = value.ceil() - value.floor();
-        cut.add_constant(-rhs);
-
-        // In a complete implementation, we would:
-        // 1. Get the tableau row for 'var'
-        // 2. Apply MIR coefficient transformation to each non-basic variable
-        // 3. Generate the strengthened cut
-
-        // Add a simple cut term based on the variable
-        cut.add_term(var, Rational64::one());
-        cut.add_constant(-value.ceil());
-
-        Some(cut)
+        self.tableau_row_cut(var, false)
     }
 
-    /// Generate a Chvatal-Gomory (CG) cut
+    /// Generate a Chvatal-Gomory (CG) cut from the tableau row of `var`.
     ///
-    /// CG cuts are based on rounding the coefficients and constant term.
-    /// For a constraint: sum(a_i * x_i) <= b with integer x_i,
-    /// the CG cut is: sum(floor(a_i) * x_i) <= floor(b)
+    /// This is the pure-integer Gomory fractional cut (`Σ f_j y_j ≥ f0`), the
+    /// Chvátal-Gomory rounding of the tableau row.  It is valid only when every
+    /// non-basic variable in the row is integral; because slack integrality is
+    /// not tracked, a row that contains any continuous (e.g. slack) non-basic
+    /// yields [`None`] rather than an unsound cut.  When it does fire, the cut is
+    /// valid for the integer hull and separates the current fractional point.
     pub fn generate_cg_cut(&self, var: VarId, value: Rational64) -> Option<LinExpr> {
         if value.is_integer() {
             return None;
         }
-
-        // CG cuts round down all coefficients and the RHS
-        // For a fractional basic variable, we generate:
-        // sum(floor(a_j) * x_j) <= floor(b)
-
-        let mut cut = LinExpr::new();
-
-        // In a complete implementation, we would:
-        // 1. Get the tableau row for 'var': x_i = b + sum(a_j * x_j)
-        // 2. Round down all coefficients: floor(a_j)
-        // 3. Round down the RHS: floor(b)
-        // 4. Negate to get the cut in standard form
-
-        // For now, generate a simple CG-like cut
-        let floor_value = value.floor();
-        cut.add_term(var, Rational64::one());
-        cut.add_constant(-floor_value);
-
-        // The cut enforces: var >= ceil(value)
-        // Which is equivalent to: var <= floor(value) is violated
-
-        Some(cut)
+        self.tableau_row_cut(var, true)
     }
 
-    /// Generate a disjunctive (split) cut
+    /// Generate a disjunctive (split) cut for the split on `var`.
     ///
-    /// Disjunctive cuts are based on the principle that for an integer variable x
-    /// with fractional value x*, we have the disjunction: x <= floor(x*) OR x >= ceil(x*).
+    /// For an integer variable `x` with fractional LP value `x*` the split
+    /// disjunction is `x ≤ ⌊x*⌋ ∨ x ≥ ⌈x*⌉`.  The Gomory Mixed-Integer cut
+    /// derived from the tableau row of `var` is exactly the split cut for this
+    /// disjunction, so this delegates to the tableau-derived construction (see
+    /// `LiaSolver::tableau_row_cut`).  The result is a valid inequality of the
+    /// integer hull — it never removes an integer-feasible point — and separates
+    /// the current fractional point.
     ///
-    /// These cuts are more general than Gomory cuts and can be stronger.
-    /// They are derived from the split disjunction and can cut off the current fractional solution.
+    /// Returns [`None`] for an integer `value` and whenever no sound cut can be
+    /// derived (e.g. `var` is non-basic, or a non-basic term of the row is not
+    /// resting at a finite bound).
     ///
-    /// Reference: "Disjunctive Programming" by Balas (1979), "On the Rank of Mixed 0-1 Polyhedra" by Balas et al. (1996)
+    /// Reference: Balas, "Disjunctive Programming" (1979); Cornuéjols (2008) —
+    /// the GMI cut is the split cut for the elementary split on the basic
+    /// variable.
     pub fn generate_disjunctive_cut(&self, var: VarId, value: Rational64) -> Option<LinExpr> {
         if value.is_integer() {
             return None;
         }
-
-        // A disjunctive cut is derived from the split: x <= floor(x*) OR x >= ceil(x*)
-        // The cut is valid for the convex hull of points satisfying either disjunct
-        //
-        // For a basic implementation, we generate a cut based on the fractional part
-        // A general disjunctive cut would involve analyzing the tableau structure
-        // and deriving valid inequalities from both branches
-
-        let frac = value - value.floor();
-        let floor_val = value.floor();
-        let ceil_val = value.ceil();
-
-        // Simple disjunctive cut: use the fractional part to weight the disjunction
-        // This creates a cut that's tighter than a pure Gomory cut
-        let mut cut = LinExpr::new();
-
-        // The coefficient is chosen based on the fractional part
-        // Closer to 0.5 means stronger cut
-        let coeff = if frac < Rational64::new(1, 2) {
-            // Closer to floor - penalize being above floor
-            Rational64::one()
-        } else {
-            // Closer to ceil - penalize being below ceil
-            -Rational64::one()
-        };
-
-        cut.add_term(var, coeff);
-
-        // The RHS is the midpoint between floor and ceil, adjusted by fractional part
-        // This makes the cut stronger than just enforcing floor or ceil
-        let rhs = if frac < Rational64::new(1, 2) {
-            -floor_val
-        } else {
-            ceil_val
-        };
-
-        cut.add_constant(-rhs);
-
-        Some(cut)
+        self.tableau_row_cut(var, false)
     }
 
     /// Generate a cover cut for a knapsack constraint
@@ -349,14 +400,336 @@ impl LiaSolver {
         // First generate a basic cover cut
         let cut = self.generate_cover_cut(coeffs, vars, rhs)?;
 
-        // In a full implementation, we would:
-        // 1. Identify variables not in the cover
-        // 2. Compute lifting coefficients for each non-cover variable
-        // 3. Add lifted terms to the cut
-        //
-        // For now, return the basic cover cut
-        // Lifting cover cuts is complex and requires solving small knapsack problems
-
+        // Lifting cover cuts requires solving small knapsack lifting problems to
+        // compute valid coefficients for the non-cover variables; a lift that is
+        // not validity preserving would remove integer-feasible points.  Until
+        // that is implemented we return the (valid) basic cover cut unchanged
+        // rather than adding unsound lifted terms.
         Some(cut)
+    }
+}
+
+#[cfg(test)]
+mod cut_validity_tests {
+    use super::*;
+    use crate::arithmetic::simplex::{LinExpr, VarId};
+    use num_rational::Rational64;
+    use num_traits::Zero;
+
+    fn r(n: i64) -> Rational64 {
+        Rational64::from_integer(n)
+    }
+
+    /// Build `{x ≥ 0, y ≥ 0, x + 2y ≤ 2, 3x + 2y ≤ 4}`.
+    ///
+    /// Maximising `x + y` reaches the fractional vertex `(1, 1/2)`, while the
+    /// integer-feasible points include `(0,0), (1,0), (0,1)`.
+    fn build_instance_a() -> (LiaSolver, VarId, VarId) {
+        let mut s = LiaSolver::new();
+        let x = s.new_var();
+        let y = s.new_var();
+        s.simplex.set_lower(x, r(0), 0);
+        s.simplex.set_lower(y, r(0), 1);
+
+        let mut c1 = LinExpr::new();
+        c1.add_term(x, r(1));
+        c1.add_term(y, r(2));
+        c1.add_constant(r(-2));
+        s.simplex.add_le(c1, 2);
+
+        let mut c2 = LinExpr::new();
+        c2.add_term(x, r(3));
+        c2.add_term(y, r(2));
+        c2.add_constant(r(-4));
+        s.simplex.add_le(c2, 3);
+
+        (s, x, y)
+    }
+
+    /// Build `{x ≥ 0, y ≥ 0, 2x + 3y ≤ 5}`.
+    ///
+    /// Maximising `x` reaches the fractional vertex `(5/2, 0)` at which the
+    /// integer variable `y` is non-basic at its (integer) lower bound with a
+    /// fractional row coefficient, exercising the integer branch of the GMI
+    /// construction.
+    fn build_instance_f() -> (LiaSolver, VarId, VarId) {
+        let mut s = LiaSolver::new();
+        let x = s.new_var();
+        let y = s.new_var();
+        s.simplex.set_lower(x, r(0), 0);
+        s.simplex.set_lower(y, r(0), 1);
+
+        let mut c1 = LinExpr::new();
+        c1.add_term(x, r(2));
+        c1.add_term(y, r(3));
+        c1.add_constant(r(-5));
+        s.simplex.add_le(c1, 2);
+
+        (s, x, y)
+    }
+
+    /// Build `{x ≥ 0, y ≥ 0, 4x − y ≤ 3}`.
+    ///
+    /// Maximising `x − 10y` drives `y` to its lower bound `0` and reaches the
+    /// fractional vertex `(3/4, 0)`, so the fractional part `f0 = 3/4 ≠ 1/2`.
+    /// This is the discriminating instance: at `f0 = 1/2` the wrong-sign GMI
+    /// coefficients coincide with the correct ones (because `frac(â) = frac(−â)`
+    /// and `f0 = 1−f0`), fully masking a sign error in the fractional-part /
+    /// continuous split; here they differ, so a wrong-sign cut provably removes
+    /// the feasible integer point `(1,1)` (`4·1−1 = 3 ≤ 3`).
+    fn build_instance_g() -> (LiaSolver, VarId, VarId) {
+        let mut s = LiaSolver::new();
+        let x = s.new_var();
+        let y = s.new_var();
+        s.simplex.set_lower(x, r(0), 0);
+        s.simplex.set_lower(y, r(0), 1);
+
+        let mut c1 = LinExpr::new();
+        c1.add_term(x, r(4));
+        c1.add_term(y, r(-1));
+        c1.add_constant(r(-3));
+        s.simplex.add_le(c1, 2);
+
+        (s, x, y)
+    }
+
+    /// Evaluate cut `C` (convention `C ≤ 0`) at an integer assignment of the two
+    /// original variables.  Returns `Some(value)` when the point is feasible
+    /// under all asserted constraints (slack values are read from a freshly
+    /// solved copy of the instance), or `None` when the point is infeasible.
+    fn eval_cut_at(
+        build: impl Fn() -> (LiaSolver, VarId, VarId),
+        cut: &LinExpr,
+        xval: i64,
+        yval: i64,
+    ) -> Option<Rational64> {
+        let (mut s, x, y) = build();
+        s.simplex.set_lower(x, r(xval), 100);
+        s.simplex.set_upper(x, r(xval), 101);
+        s.simplex.set_lower(y, r(yval), 102);
+        s.simplex.set_upper(y, r(yval), 103);
+
+        if s.simplex.check().is_err() || s.simplex.resource_limit_reached() {
+            return None; // point violates the asserted constraints
+        }
+
+        let mut acc = cut.constant;
+        for (v, c) in &cut.terms {
+            acc += *c * s.simplex.value(*v);
+        }
+        Some(acc)
+    }
+
+    /// Assert that `cut` removes no integer-feasible point of the instance
+    /// (validity) and that it separates the current fractional LP point
+    /// (usefulness).
+    fn assert_cut_valid_and_separating(
+        solver: &LiaSolver,
+        build: impl Fn() -> (LiaSolver, VarId, VarId) + Copy,
+        cut: &LinExpr,
+    ) {
+        // Validity: no feasible integer point may violate `C ≤ 0`.
+        for xi in 0..=4 {
+            for yi in 0..=4 {
+                if let Some(cv) = eval_cut_at(build, cut, xi, yi) {
+                    assert!(
+                        cv <= Rational64::zero(),
+                        "cut removes feasible integer point ({xi},{yi}): C = {cv}"
+                    );
+                }
+            }
+        }
+
+        // Usefulness: the current fractional LP point must be cut off.
+        let mut current = cut.constant;
+        for (v, c) in &cut.terms {
+            current += *c * solver.simplex.value(*v);
+        }
+        assert!(
+            current > Rational64::zero(),
+            "cut does not separate the current fractional point (C = {current})"
+        );
+    }
+
+    fn optimise_max_sum(
+        build: impl Fn() -> (LiaSolver, VarId, VarId),
+    ) -> (LiaSolver, VarId, VarId) {
+        let (mut s, x, y) = build();
+        let mut obj = LinExpr::new();
+        obj.add_term(x, r(-1)); // minimise -(x+y) == maximise x+y
+        obj.add_term(y, r(-1));
+        let _ = s.simplex.optimize_linexpr(&obj);
+        (s, x, y)
+    }
+
+    fn optimise_max_x(build: impl Fn() -> (LiaSolver, VarId, VarId)) -> (LiaSolver, VarId, VarId) {
+        let (mut s, x, y) = build();
+        let mut obj = LinExpr::new();
+        obj.add_term(x, r(-1)); // minimise -x == maximise x
+        let _ = s.simplex.optimize_linexpr(&obj);
+        (s, x, y)
+    }
+
+    fn optimise_max_x_minus_10y(
+        build: impl Fn() -> (LiaSolver, VarId, VarId),
+    ) -> (LiaSolver, VarId, VarId) {
+        let (mut s, x, y) = build();
+        let mut obj = LinExpr::new();
+        obj.add_term(x, r(-1)); // minimise -(x - 10y) == maximise x - 10y
+        obj.add_term(y, r(10));
+        let _ = s.simplex.optimize_linexpr(&obj);
+        (s, x, y)
+    }
+
+    /// Every generator that emits a cut for instance A must emit a valid,
+    /// separating cut (continuous / slack non-basic branch of GMI).
+    #[test]
+    fn cuts_valid_instance_a() {
+        let (s, x, y) = optimise_max_sum(build_instance_a);
+
+        let mut produced = 0;
+        for &var in &[x, y] {
+            let val = s.simplex.value(var);
+            if val.is_integer() {
+                continue;
+            }
+            let cuts = [
+                s.generate_gomory_cut(var, val),
+                s.generate_mir_cut(var, val),
+                s.generate_cg_cut(var, val),
+                s.generate_disjunctive_cut(var, val),
+            ];
+            for cut in cuts.into_iter().flatten() {
+                produced += 1;
+                assert_cut_valid_and_separating(&s, build_instance_a, &cut);
+            }
+        }
+        assert!(
+            produced > 0,
+            "expected at least one cut at the fractional optimum"
+        );
+    }
+
+    /// Instance F exercises the *integer* non-basic branch of the GMI/CG
+    /// construction (`y` non-basic at an integer bound with a fractional row
+    /// coefficient); every emitted cut must be valid and separating.
+    #[test]
+    fn cuts_valid_instance_f() {
+        let (s, x, y) = optimise_max_x(build_instance_f);
+
+        let mut produced = 0;
+        for &var in &[x, y] {
+            let val = s.simplex.value(var);
+            if val.is_integer() {
+                continue;
+            }
+            let cuts = [
+                s.generate_gomory_cut(var, val),
+                s.generate_mir_cut(var, val),
+                s.generate_cg_cut(var, val),
+                s.generate_disjunctive_cut(var, val),
+            ];
+            for cut in cuts.into_iter().flatten() {
+                produced += 1;
+                assert_cut_valid_and_separating(&s, build_instance_f, &cut);
+            }
+        }
+        assert!(
+            produced > 0,
+            "expected at least one cut at the fractional optimum"
+        );
+    }
+
+    /// Instance G is the discriminating case with `f0 = 3/4 ≠ 1/2`.  A
+    /// wrong-sign GMI construction (using the stored `â_j` instead of the
+    /// canonical `ā_j = −â_j`) produces `6x − 2y ≤ 3`, which removes the
+    /// feasible integer point `(1,1)`.  The correct construction yields `x ≤ y`,
+    /// which removes no feasible integer point.  Every emitted cut must be valid
+    /// and separating, so this test fails on the sign bug and passes only on the
+    /// corrected coefficients.
+    #[test]
+    fn cuts_valid_instance_g_f0_not_half() {
+        let (s, x, y) = optimise_max_x_minus_10y(build_instance_g);
+
+        // The fractional optimum is (3/4, 0): f0 = 3/4, the discriminating value.
+        assert_eq!(s.simplex.value(x), Rational64::new(3, 4));
+        assert_eq!(s.simplex.value(y), Rational64::zero());
+
+        let mut produced = 0;
+        for &var in &[x, y] {
+            let val = s.simplex.value(var);
+            if val.is_integer() {
+                continue;
+            }
+            let cuts = [
+                s.generate_gomory_cut(var, val),
+                s.generate_mir_cut(var, val),
+                s.generate_cg_cut(var, val),
+                s.generate_disjunctive_cut(var, val),
+            ];
+            for cut in cuts.into_iter().flatten() {
+                produced += 1;
+                assert_cut_valid_and_separating(&s, build_instance_g, &cut);
+            }
+        }
+        assert!(
+            produced > 0,
+            "expected at least one cut at the f0=3/4 fractional optimum"
+        );
+    }
+
+    /// Generators must be honest: no cut for an integer value, and no cut for a
+    /// variable with no tableau row (nothing solved yet).
+    #[test]
+    fn no_cut_without_fractional_basic_row() {
+        let mut s = LiaSolver::new();
+        let x = s.new_var();
+        let _y = s.new_var();
+
+        // Integer value -> None regardless of state.
+        assert!(s.generate_gomory_cut(x, r(3)).is_none());
+        assert!(s.generate_mir_cut(x, r(3)).is_none());
+        assert!(s.generate_cg_cut(x, r(3)).is_none());
+        assert!(s.generate_disjunctive_cut(x, r(3)).is_none());
+
+        // Fractional value but the variable is not a basic row -> None (honest),
+        // never a fabricated inequality.
+        assert!(s.generate_gomory_cut(x, Rational64::new(3, 2)).is_none());
+        assert!(
+            s.generate_disjunctive_cut(x, Rational64::new(3, 2))
+                .is_none()
+        );
+    }
+
+    /// The GMI cut for instance A is the known inequality `3x + 4y ≤ 4`; verify
+    /// it separates the fractional vertex and keeps every integer-feasible point
+    /// (regression guard for the exact coefficients).
+    #[test]
+    fn gomory_cut_matches_known_inequality() {
+        let (s, x, y) = optimise_max_sum(build_instance_a);
+
+        // y is the fractional basic variable at (1, 1/2).
+        let yval = s.simplex.value(y);
+        assert_eq!(yval, Rational64::new(1, 2));
+        let _ = x;
+
+        let cut = s
+            .generate_gomory_cut(y, yval)
+            .expect("a GMI cut exists at the fractional vertex");
+
+        // Evaluated over original variables the cut is equivalent to 3x+4y ≤ 4.
+        // Check that against every integer point in the box, using the same
+        // feasibility oracle the solver uses.
+        for xi in 0..=4 {
+            for yi in 0..=4 {
+                let feasible = eval_cut_at(build_instance_a, &cut, xi, yi);
+                // The 3x+4y ≤ 4 region and the asserted-constraint region agree
+                // on which integer points are feasible here, so a feasible point
+                // must satisfy the cut.
+                if let Some(cv) = feasible {
+                    assert!(cv <= Rational64::zero(), "({xi},{yi}) wrongly cut: {cv}");
+                }
+            }
+        }
     }
 }

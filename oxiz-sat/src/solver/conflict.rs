@@ -66,7 +66,54 @@ impl Solver {
         let mut counter = 0;
         let mut p = None;
         let mut index = self.trail.assignments().len();
-        let current_level = self.trail.decision_level();
+
+        // The "conflict level" is the highest decision level among the conflict
+        // clause's literals. In textbook CDCL this always equals
+        // `trail.decision_level()`, because propagation is run to completion at
+        // every level before a new decision is taken. However, clauses added
+        // *on the fly* — theory reason/lemma clauses in CDCL(T), or clauses
+        // encountered after chronological backtracking — can be falsified at a
+        // level strictly BELOW the current decision level. Running 1-UIP
+        // resolution relative to `decision_level()` in that situation is
+        // unsound for backtracking: the conflict clause contributes NO literal
+        // at the pivot level, so the current-level counter starts at 0, the
+        // trail walk underflows it, and the asserting literal ends up at a level
+        // <= the computed backtrack level. Backtracking then fails to unassign
+        // that variable and `learn_clause` re-assigns it in place — corrupting
+        // the trail (observed as a wrong top-level UNSAT on disjunctive LIA).
+        // Anchoring the analysis at the genuine conflict level restores the
+        // 1-UIP invariant (asserting literal strictly above the backtrack
+        // level) for both the normal and the on-the-fly-clause cases.
+        let current_level = {
+            let mut lvl = 0;
+            if let Some(c) = self.clauses.get(conflict) {
+                for &lit in &c.lits {
+                    let l = self.trail.level(lit.var());
+                    if l > lvl {
+                        lvl = l;
+                    }
+                }
+            }
+            lvl
+        };
+
+        // A conflict whose genuine level is 0 has EVERY literal falsified under
+        // unconditional (level-0) assignments — a root-level refutation, so the
+        // instance is UNSAT. This can happen above decision level 0 when an
+        // on-the-fly clause (a theory reason/lemma clause) is added already
+        // fully falsified at the root: the watched-literal scheme only visits it
+        // on the next propagation, which may run at a higher decision level.
+        // There is no asserting literal to learn, so we return an empty clause
+        // (backtrack level 0) — the caller treats an empty learned clause as
+        // fundamental UNSAT, exactly as `analyze_theory_conflict` already does.
+        // Fabricating a 1-UIP clause here instead would resolve the trail's
+        // bottom literal into a spurious unit clause that contradicts a
+        // level-0 fact, corrupting the trail (the earlier `decision_level()`
+        // fallback did precisely this, tripping the trail-consistency assert).
+        if current_level == 0 {
+            self.learnt.clear();
+            return (0, SmallVec::new());
+        }
 
         // Reset seen flags
         for s in &mut self.seen {
@@ -80,7 +127,6 @@ impl Solver {
 
         while let Some(clause) = self.clauses.get(reason_clause) {
             // Process reason clause (must exist, as it's either conflict or a propagation reason)
-            let start = if p.is_some() { 1 } else { 0 };
             let is_learned = clause.learned;
 
             // Record clause usage for tier promotion and bump activity (if it's a learned clause)
@@ -97,7 +143,20 @@ impl Solver {
             let Some(clause) = self.clauses.get(reason_clause) else {
                 break;
             };
-            for &lit in &clause.lits[start..] {
+            for &lit in &clause.lits {
+                // When resolving a *reason* clause (`p` is Some), the propagated
+                // literal `p` is the one being resolved out: it is TRUE on the trail
+                // and must NOT be added to the learned clause. We skip it BY VALUE
+                // rather than by a fixed index, because binary-implication-graph
+                // propagation (propagate.rs) records the reason without moving the
+                // implied literal to index 0 — so the propagated literal may sit at
+                // index 1. Skipping index 0 positionally would drop the false
+                // antecedent at index 0, producing over-strong (unsound) learned
+                // clauses. For the initial conflict clause `p` is None, so every
+                // literal is processed.
+                if p == Some(lit) {
+                    continue;
+                }
                 let var = lit.var();
                 let level = self.trail.level(var);
 
@@ -232,6 +291,29 @@ impl Solver {
                 backtrack_level
             );
         }
+
+        // Trail-consistency invariants (debug builds only, so no release-path
+        // panic on user input). A well-formed 1-UIP learned clause has its
+        // asserting literal (learnt[0]) at the conflict level and every other
+        // literal strictly below the backtrack level, so backtracking is
+        // guaranteed to unassign the asserting variable before `learn_clause`
+        // re-asserts it. If either invariant is violated the trail would be
+        // corrupted by an in-place re-assignment.
+        debug_assert!(
+            self.learnt.is_empty()
+                || !self.trail.is_assigned(self.learnt[0].var())
+                || self.trail.level(self.learnt[0].var()) > backtrack_level,
+            "asserting literal must be above the backtrack level (uip level {}, backtrack {})",
+            self.trail.level(self.learnt[0].var()),
+            backtrack_level
+        );
+        debug_assert!(
+            self.learnt
+                .iter()
+                .skip(1)
+                .all(|lit| self.trail.level(lit.var()) <= backtrack_level),
+            "every non-asserting literal must be at or below the backtrack level"
+        );
 
         (backtrack_level, self.learnt.clone())
     }
@@ -386,7 +468,25 @@ impl Solver {
         self.learnt.push(Lit::from_code(0)); // Placeholder
 
         let mut counter = 0;
-        let current_level = self.trail.decision_level();
+
+        // Anchor the analysis at the genuine conflict level — the highest
+        // decision level among the (all-false) theory conflict literals —
+        // rather than `trail.decision_level()`. A theory conflict can be
+        // reported while the SAT trail sits at a strictly higher decision level
+        // than any literal actually involved in the conflict; running 1-UIP
+        // against `decision_level()` would then leave the asserting literal at
+        // or below the backtrack level and corrupt the trail via an in-place
+        // re-assignment in `learn_clause`. See the companion note in `analyze`.
+        let current_level = {
+            let mut lvl = 0;
+            for &lit in conflict_lits {
+                let l = self.trail.level(lit.var());
+                if l > lvl {
+                    lvl = l;
+                }
+            }
+            lvl
+        };
 
         // Reset seen flags
         for s in &mut self.seen {
@@ -449,8 +549,16 @@ impl Solver {
                     && let Reason::Propagation(reason_clause) = self.trail.reason(var)
                     && let Some(clause) = self.clauses.get(reason_clause)
                 {
-                    // Get reason and process its literals
-                    for &lit in &clause.lits[1..] {
+                    // Get reason and process its literals.
+                    // `current_lit` is the propagated (TRUE) literal being resolved
+                    // out; skip it BY VALUE rather than assuming it sits at index 0.
+                    // Binary-implication-graph propagation does not move the implied
+                    // literal to index 0, so a positional `[1..]` skip would drop the
+                    // false antecedent at index 0 and yield unsound learned clauses.
+                    for &lit in &clause.lits {
+                        if lit == current_lit {
+                            continue;
+                        }
                         let reason_var = lit.var();
                         let level = self.trail.level(reason_var);
 
@@ -517,54 +625,181 @@ impl Solver {
             max_level
         };
 
+        // Trail-consistency invariants (debug builds only): the asserting
+        // literal must sit strictly above the backtrack level so backtracking
+        // unassigns it before it is re-asserted, and every other learned
+        // literal must be at or below the backtrack level. See `analyze`.
+        debug_assert!(
+            self.learnt.is_empty()
+                || !self.trail.is_assigned(self.learnt[0].var())
+                || self.trail.level(self.learnt[0].var()) > backtrack_level,
+            "theory: asserting literal must be above the backtrack level (uip level {}, backtrack {})",
+            self.trail.level(self.learnt[0].var()),
+            backtrack_level
+        );
+        debug_assert!(
+            self.learnt
+                .iter()
+                .skip(1)
+                .all(|lit| self.trail.level(lit.var()) <= backtrack_level),
+            "theory: every non-asserting literal must be at or below the backtrack level"
+        );
+
         (backtrack_level, self.learnt.clone())
     }
 
-    /// Extract a core of assumptions that caused a conflict
+    /// Extract the core of assumptions responsible for a *directly conflicting*
+    /// assumption — one whose required polarity is already falsified on the trail
+    /// when it is about to be asserted (index `conflict_idx`).
+    ///
+    /// The failed assumption's variable sits on the trail with the opposite phase,
+    /// implied (transitively) by earlier assumptions through unit propagation.
+    /// Seeding the analysis from that variable and resolving every antecedent back
+    /// to its decision (assumption) roots yields *all* contributing assumptions,
+    /// not merely the failed one. The previous implementation only ever returned
+    /// the single failed assumption (its `seen`-based guard was never populated
+    /// for this path), so a core such as `{a, b}` for
+    /// `a ∧ b ∧ (¬a ∨ ¬b)` under `[a, b]` came back as just `{b}` — an incomplete,
+    /// and therefore unsound-for-minimisation, core.
     pub(super) fn extract_assumption_core(
-        &self,
+        &mut self,
         assumptions: &[Lit],
         conflict_idx: usize,
     ) -> Vec<Lit> {
-        // The conflicting assumption and any assumptions it depends on
-        let mut core = Vec::new();
-        let conflict_lit = assumptions[conflict_idx];
+        let failed = assumptions[conflict_idx];
+        // Only assumptions asserted up to (and including) the failure can be on
+        // the trail and thus contribute.
+        self.analyze_final_core(&[failed], &[failed], &assumptions[..=conflict_idx])
+    }
 
-        // Find assumptions that led to this conflict
-        for &lit in &assumptions[..=conflict_idx] {
-            if self.seen.get(lit.var().index()).copied().unwrap_or(false) || lit == conflict_lit {
+    /// Analyze a propagation conflict encountered while (or after) asserting the
+    /// assumptions, returning every assumption in the unsat core.
+    ///
+    /// Seeds the analysis from the literals of the actual conflict clause and
+    /// walks the implication graph back to the assumption (decision) roots. The
+    /// previous implementation inspected only each assumption's *own* trail value
+    /// and a never-populated `seen` array, so it systematically dropped
+    /// assumptions that contributed only indirectly (through propagated literals)
+    /// and, when it found nothing, fell back to returning *every* assumption —
+    /// a safe but maximally imprecise core.
+    pub(super) fn analyze_assumption_conflict(
+        &mut self,
+        assumptions: &[Lit],
+        conflict: ClauseId,
+    ) -> Vec<Lit> {
+        let seed: SmallVec<[Lit; 16]> = match self.clauses.get(conflict) {
+            Some(c) => c.lits.iter().copied().collect(),
+            None => SmallVec::new(),
+        };
+        let core = self.analyze_final_core(&seed, &[], assumptions);
+        if core.is_empty() {
+            // Defensive fallback: never return an empty core for an UNSAT result;
+            // conservatively blame all assumptions rather than lose soundness.
+            return assumptions.to_vec();
+        }
+        core
+    }
+
+    /// Shared "analyze final" implementation (à la MiniSat `analyzeFinal`).
+    ///
+    /// Marks the `seed` literals' variables, walks the trail from newest to
+    /// oldest resolving each marked propagated literal against its reason clause,
+    /// and collects the assumption literals sitting at the decision roots. Any
+    /// literals in `include` are unconditionally placed in the resulting core
+    /// first (used to force the directly-failed assumption into its own core).
+    ///
+    /// Uses the solver's shared `seen` scratch buffer and restores it to all-false
+    /// before returning, so it composes cleanly with the rest of conflict analysis.
+    fn analyze_final_core(
+        &mut self,
+        seed: &[Lit],
+        include: &[Lit],
+        assumptions: &[Lit],
+    ) -> Vec<Lit> {
+        use crate::prelude::{HashMap, HashSet};
+
+        // Map each assumption's variable to the assumption literal as it appears
+        // on the trail (an assumption `a` is placed via `assign_decision(a)`, so
+        // its variable identifies it). First occurrence wins on duplicates.
+        let mut assumption_of: HashMap<usize, Lit> = HashMap::new();
+        for &a in assumptions {
+            assumption_of.entry(a.var().index()).or_insert(a);
+        }
+
+        let mut core: Vec<Lit> = Vec::new();
+        let mut in_core: HashSet<usize> = HashSet::new();
+        for &lit in include {
+            if in_core.insert(lit.var().index()) {
                 core.push(lit);
             }
         }
 
-        // If core is empty, just return the conflicting assumption
-        if core.is_empty() {
-            core.push(conflict_lit);
-        }
-
-        core
-    }
-
-    /// Analyze conflict to find assumptions in the unsat core
-    pub(super) fn analyze_assumption_conflict(&mut self, assumptions: &[Lit]) -> Vec<Lit> {
-        // Use seen flags to mark which assumptions are in the conflict
-        let mut core = Vec::new();
-
-        // Walk back through the trail to find conflicting assumptions
-        for &lit in assumptions {
+        // Seed the marks with every above-root seed variable.
+        let mut touched: Vec<usize> = Vec::new();
+        for &lit in seed {
             let var = lit.var();
-            if var.index() < self.trail.assignments().len() {
-                let value = self.trail.lit_value(lit);
-                // If the negation of an assumption is implied, it's in the core
-                if value.is_false() || self.seen.get(var.index()).copied().unwrap_or(false) {
-                    core.push(lit);
+            if self.trail.level(var) > 0 {
+                let vi = var.index();
+                if vi < self.seen.len() && !self.seen[vi] {
+                    self.seen[vi] = true;
+                    touched.push(vi);
                 }
             }
         }
 
-        // If no specific core found, return all assumptions
-        if core.is_empty() {
-            core.extend(assumptions.iter().copied());
+        // Walk the trail newest-to-oldest. `assignments()` is a snapshot copy so
+        // the loop can freely borrow `self.clauses` / `self.trail` / `self.seen`.
+        let trail_lits: Vec<Lit> = self.trail.assignments().to_vec();
+        for &tlit in trail_lits.iter().rev() {
+            let var = tlit.var();
+            let vi = var.index();
+            if vi >= self.seen.len() || !self.seen[vi] {
+                continue;
+            }
+            self.seen[vi] = false;
+            if self.trail.level(var) == 0 {
+                continue;
+            }
+            match self.trail.reason(var) {
+                Reason::Decision | Reason::Theory => {
+                    // A decision root above level 0: if it is one of our
+                    // assumptions, it belongs in the core.
+                    if let Some(&alit) = assumption_of.get(&vi)
+                        && in_core.insert(vi)
+                    {
+                        core.push(alit);
+                    }
+                }
+                Reason::Propagation(cid) => {
+                    // Resolve against the reason clause: mark every other literal's
+                    // variable so its own antecedents are visited in turn.
+                    let antecedents: SmallVec<[Var; 8]> = match self.clauses.get(cid) {
+                        Some(clause) => clause
+                            .lits
+                            .iter()
+                            .map(|l| l.var())
+                            .filter(|&av| av != var)
+                            .collect(),
+                        None => SmallVec::new(),
+                    };
+                    for av in antecedents {
+                        if self.trail.level(av) > 0 {
+                            let avi = av.index();
+                            if avi < self.seen.len() && !self.seen[avi] {
+                                self.seen[avi] = true;
+                                touched.push(avi);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Restore the shared scratch buffer (any marks not cleared during the walk).
+        for vi in touched {
+            if vi < self.seen.len() {
+                self.seen[vi] = false;
+            }
         }
 
         core
@@ -967,6 +1202,127 @@ mod tests {
             observed_max as usize <= max_learnt_len,
             "max hook LBD {observed_max} must not exceed the largest learned clause length \
              {max_learnt_len} — proves LBD is computed from the learned clause, not vars_to_bump"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Regression: conflict clause whose literals all sit BELOW the current
+    // decision level (an on-the-fly / theory-lemma-style clause).
+    // ---------------------------------------------------------------------------
+
+    /// Root cause of the disjunctive-LIA wrong-UNSAT: `analyze` used to anchor
+    /// its 1-UIP resolution at `trail.decision_level()`. When the conflict
+    /// clause contains NO literal at that level (its highest literal is at a
+    /// strictly lower level — as happens for theory reason/lemma clauses added
+    /// mid-search), the pivot-level counter starts at 0, the trail walk
+    /// underflows it, and the asserting literal comes out at or below the
+    /// computed backtrack level. Backtracking then fails to unassign the
+    /// asserting variable and the clause-learning step re-assigns it in place,
+    /// corrupting the trail.
+    ///
+    /// We reconstruct exactly that state by hand and assert the fixed invariant:
+    /// the asserting literal `learnt[0]` must live strictly above the backtrack
+    /// level, so a subsequent backtrack unassigns it.
+    #[test]
+    fn test_analyze_conflict_below_current_level_is_asserting() {
+        use crate::Solver;
+
+        let mut solver = Solver::new();
+        let v0 = solver.new_var();
+        let v1 = solver.new_var();
+        let v2 = solver.new_var();
+
+        // Level 1: decide v0 = false.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::neg(v0));
+
+        // Level 1: propagate v1 = false with reason clause (¬v1 ∨ v0).
+        // With v0 false, this clause forces ¬v1.
+        let r1 = solver.clauses.add_learned([Lit::neg(v1), Lit::pos(v0)]);
+        solver.trail.assign_propagation(Lit::neg(v1), r1);
+
+        // Level 2: an UNRELATED decision v2 = true, lifting the trail's
+        // decision level to 2 while the impending conflict lives entirely at
+        // level 1.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(v2));
+
+        assert_eq!(solver.trail.decision_level(), 2);
+
+        // Conflict clause (v0 ∨ v1): both literals are FALSE (v0 = false,
+        // v1 = false), so the clause is falsified. Its highest literal level is
+        // 1 — strictly below the current decision level 2.
+        let conflict = solver.clauses.add_learned([Lit::pos(v0), Lit::pos(v1)]);
+
+        let (backtrack_level, learnt) = solver.analyze(conflict);
+
+        assert!(!learnt.is_empty(), "learned clause must not be empty");
+
+        let uip = learnt[0];
+        let uip_level = solver.trail.level(uip.var());
+
+        // The genuine conflict level is 1, so the asserting literal must be at
+        // level 1 and the backtrack level must be strictly below it (0 here).
+        assert_eq!(
+            uip_level, 1,
+            "asserting literal must sit at the true conflict level (1), not the \
+             stale decision level (2)"
+        );
+        assert!(
+            backtrack_level < uip_level,
+            "backtrack level {backtrack_level} must be strictly below the asserting \
+             literal's level {uip_level}; otherwise backtracking leaves the variable \
+             assigned and clause learning corrupts the trail by re-assigning it"
+        );
+
+        // Every non-asserting literal must be unassigned or restorable at the
+        // backtrack target (i.e. at a level <= backtrack_level).
+        for &lit in learnt.iter().skip(1) {
+            assert!(
+                solver.trail.level(lit.var()) <= backtrack_level,
+                "non-asserting literal at level {} exceeds backtrack level {backtrack_level}",
+                solver.trail.level(lit.var())
+            );
+        }
+    }
+
+    /// End-to-end guard: a normal (current-level) conflict must be unaffected by
+    /// the conflict-level anchoring — the asserting literal still sits at the
+    /// current decision level and the backtrack level below it.
+    #[test]
+    fn test_analyze_normal_current_level_conflict_unaffected() {
+        use crate::Solver;
+
+        let mut solver = Solver::new();
+        let v0 = solver.new_var();
+        let v1 = solver.new_var();
+        let v2 = solver.new_var();
+
+        // Level 1: decide v0 = true.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(v0));
+
+        // Level 2: decide v1 = true.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(v1));
+
+        // Level 2: propagate v2 = true with reason (¬v1 ∨ v2).
+        let r = solver.clauses.add_learned([Lit::neg(v1), Lit::pos(v2)]);
+        solver.trail.assign_propagation(Lit::pos(v2), r);
+
+        // Conflict clause (¬v0 ∨ ¬v1 ∨ ¬v2): all three literals false at their
+        // levels; the highest is v2/v1 at level 2 == current decision level.
+        let conflict = solver
+            .clauses
+            .add_learned([Lit::neg(v0), Lit::neg(v1), Lit::neg(v2)]);
+
+        let (backtrack_level, learnt) = solver.analyze(conflict);
+        assert!(!learnt.is_empty());
+        let uip_level = solver.trail.level(learnt[0].var());
+        assert_eq!(uip_level, 2, "asserting literal at current level");
+        assert!(
+            backtrack_level < uip_level,
+            "backtrack level {backtrack_level} must be below asserting level {uip_level}"
         );
     }
 }

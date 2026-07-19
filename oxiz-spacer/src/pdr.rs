@@ -14,11 +14,12 @@
 //!    d. If fixpoint: SAFE
 //!    e. If counterexample: UNSAFE
 
-use crate::chc::{ChcSystem, PredId, PredicateApp, Rule};
+use crate::chc::{ChcSystem, PredId, Rule};
 use crate::frames::{FrameManager, LemmaId};
 use crate::pob::{PobId, PobManager};
 use crate::reach::{CexState, Counterexample, ReachFactStore};
-use crate::smt::{SmtError, SmtSolver};
+use crate::smt::{SmtError, SmtSolver, canon_cur_vars, var_subst};
+use oxiz_core::ast::TermKind;
 use oxiz_core::{TermId, TermManager};
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -178,8 +179,21 @@ impl<'a> Spacer<'a> {
         }
     }
 
-    /// Solve the CHC system
+    /// Solve the CHC system.
+    ///
+    /// Any SMT `Unknown` or resource-limit encountered while solving is
+    /// surfaced honestly as [`SpacerResult::Unknown`] rather than being
+    /// collapsed into a (potentially unsound) Safe/Unsafe answer.
     pub fn solve(&mut self) -> Result<SpacerResult, SpacerError> {
+        match self.solve_inner() {
+            Err(SpacerError::Smt(SmtError::Unknown)) | Err(SpacerError::ResourceLimit) => {
+                Ok(SpacerResult::Unknown)
+            }
+            other => other,
+        }
+    }
+
+    fn solve_inner(&mut self) -> Result<SpacerResult, SpacerError> {
         // Validate system
         if self.system.is_empty() {
             // Empty system is trivially safe - nothing can go wrong
@@ -188,6 +202,15 @@ impl<'a> Spacer<'a> {
 
         if self.system.queries().next().is_none() {
             return Err(SpacerError::NoQuery);
+        }
+
+        // Spacer's PDR engine here is sound only for the single-predicate
+        // linear fragment (one predicate, at most one body predicate per rule,
+        // and predicate arguments that are plain variables).  For anything
+        // outside it we return `Unknown` rather than risk an unsound answer.
+        if !self.is_supported_fragment() {
+            debug!("Spacer: unsupported CHC fragment — returning Unknown");
+            return Ok(SpacerResult::Unknown);
         }
 
         // Initialize frames for all predicates
@@ -234,6 +257,66 @@ impl<'a> Spacer<'a> {
         }
     }
 
+    /// Check whether the system is in the single-predicate linear fragment
+    /// that this PDR engine can handle soundly.
+    fn is_supported_fragment(&self) -> bool {
+        // Exactly one declared predicate.
+        if self.system.predicates().count() != 1 {
+            return false;
+        }
+        let the_pred = match self.system.predicates().next() {
+            Some(p) => p.id,
+            None => return false,
+        };
+
+        for rule in self.system.rules() {
+            // At most one body predicate, and it must be `the_pred`.
+            if rule.body.predicates.len() > 1 {
+                return false;
+            }
+            for app in &rule.body.predicates {
+                if app.pred != the_pred || !self.args_are_distinct_vars(&app.args) {
+                    return false;
+                }
+            }
+            // Head predicate arguments must be distinct plain variables.
+            if let Some(app) = rule.head.as_predicate()
+                && (app.pred != the_pred || !self.args_are_distinct_vars(&app.args))
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// True iff every argument is a distinct plain variable term.
+    fn args_are_distinct_vars(&self, args: &[TermId]) -> bool {
+        for (i, &a) in args.iter().enumerate() {
+            match self.terms.get(a).map(|d| &d.kind) {
+                Some(TermKind::Var(_)) => {}
+                _ => return false,
+            }
+            if args[..i].contains(&a) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Canonicalize a constraint expressed over the argument terms `app_args`
+    /// of predicate `pred` into `pred`'s canonical current-state variables.
+    /// Returns `None` if the args are not plain variables.
+    fn canonicalize(
+        &mut self,
+        constraint: TermId,
+        app_args: &[TermId],
+        pred: PredId,
+    ) -> Option<TermId> {
+        let cur = canon_cur_vars(self.terms, self.system, pred);
+        let subst = var_subst(self.terms, app_args, &cur)?;
+        Some(self.terms.substitute(constraint, &subst))
+    }
+
     /// Initialize the solver
     fn initialize(&mut self) -> Result<(), SpacerError> {
         // Initialize frames for all predicates
@@ -249,75 +332,92 @@ impl<'a> Spacer<'a> {
         Ok(())
     }
 
-    /// Process an init rule
+    /// Process an init rule.
+    ///
+    /// The init constraint is normalized into the head predicate's canonical
+    /// current-state variables so that it can be intersected with POB cubes
+    /// (which live in the same namespace) during `is_init_reachable`.
     fn process_init_rule(&mut self, rule: &Rule) -> Result<(), SpacerError> {
-        if let Some(head_pred) = rule.head_predicate() {
-            // The constraint of the init rule defines initial states
-            let init_fact = rule.body.constraint;
-            self.reach_facts.add(head_pred, init_fact, rule.id, true);
+        if let Some(head_app) = rule.head.as_predicate() {
+            let head_pred = head_app.pred;
+            let args = head_app.args.clone();
+            let rule_id = rule.id;
+            let constraint = rule.body.constraint;
+            if let Some(init_fact) = self.canonicalize(constraint, &args, head_pred) {
+                self.reach_facts.add(head_pred, init_fact, rule_id, true);
+            }
         }
         Ok(())
     }
 
-    /// Check reachability of bad states
+    /// Check reachability of bad states at the current frame level.
     fn check_reachability(&mut self) -> Result<ReachabilityResult, SpacerError> {
         let level = self.frames.current_level();
 
-        // Check each query rule
+        // Collect (pred, args, constraint) for every query body predicate.  The
+        // query constraint is normalized into the predicate's canonical
+        // current-state variables so that it can be checked against frames and
+        // intersected with init facts consistently.
+        let mut targets: Vec<(PredId, SmallVec<[TermId; 4]>, TermId)> = Vec::new();
         for query in self.system.queries() {
-            // Get body predicates of the query
             for body_app in &query.body.predicates {
-                // Check if bad state is reachable at current level
-                // Pass the query constraint to properly check reachability
-                if self.is_bad_reachable(body_app, query.body.constraint, level)? {
-                    // Create a POB for the bad state
-                    let pob_id = self.pobs.create(
-                        body_app.pred,
-                        query.body.constraint,
-                        level,
-                        0, // depth 0 for initial POBs
-                    );
-                    self.stats.num_pobs = self.stats.num_pobs.saturating_add(1);
-                    return Ok(ReachabilityResult::Reachable(pob_id));
-                }
+                targets.push((body_app.pred, body_app.args.clone(), query.body.constraint));
+            }
+        }
+
+        for (pred, args, constraint) in targets {
+            let Some(post) = self.canonicalize(constraint, &args, pred) else {
+                continue;
+            };
+            if self.is_bad_reachable(pred, post, level)? {
+                let pob_id = self.pobs.create(pred, post, level, 0);
+                self.stats.num_pobs = self.stats.num_pobs.saturating_add(1);
+                return Ok(ReachabilityResult::Reachable(pob_id));
             }
         }
 
         Ok(ReachabilityResult::Unreachable)
     }
 
-    /// Check if a bad state is reachable
+    /// Check whether the (already canonicalized) bad state `post` intersects
+    /// the current over-approximation `F_level(pred)`.
+    ///
+    /// Query: is `F_level(pred) ∧ post` SAT?
     fn is_bad_reachable(
         &mut self,
-        app: &PredicateApp,
-        query_constraint: TermId,
+        pred: PredId,
+        post: TermId,
         level: u32,
     ) -> Result<bool, SpacerError> {
-        // Build frame formula for this predicate at this level
-        let frame_formula = self.build_frame_formula(app.pred, level);
+        let frame_formula = self.build_frame_formula(pred, level);
 
-        // Create temporary SMT solver for this query
         let mut smt = SmtSolver::new(self.terms, self.system);
-
-        // Query: Is F_level(pred) /\ query_constraint SAT?
-        // This checks if the bad state (defined by query_constraint) is reachable
-        // given the current invariant approximation (frame_formula)
-        let is_sat =
-            match smt.is_state_reachable(app.pred, query_constraint, level, frame_formula)? {
-                Some(_model) => {
-                    debug!("Bad state reachable at level {}", level);
-                    true
-                }
-                None => false,
-            };
+        smt.push();
+        smt.assert(frame_formula);
+        smt.assert(post);
+        let is_sat = smt.check_sat()?;
+        smt.pop();
 
         self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
+        if is_sat {
+            debug!("Bad state reachable at level {}", level);
+        }
         Ok(is_sat)
     }
 
-    /// Block a proof obligation
+    /// Block a proof obligation.
+    ///
+    /// Standard IC3/PDR recursive blocking:
+    ///
+    /// * If the POB is already excluded by a frame lemma, close it.
+    /// * At level 0, if the (canonical) bad state intersects Init, a real
+    ///   counterexample has been found.
+    /// * Otherwise repeatedly look for a concrete predecessor at `level-1`.
+    ///   Each predecessor found is recursively blocked; if it turns out to be
+    ///   init-reachable the counterexample propagates up.  When no further
+    ///   predecessor exists, the POB is generalized into a blocking lemma at
+    ///   `level` and closed.
     fn block(&mut self, pob_id: PobId) -> Result<BlockResult, SpacerError> {
-        // Extract POB data first to avoid holding borrow
         let (level, pred, post) = {
             let pob = self
                 .pobs
@@ -326,40 +426,55 @@ impl<'a> Spacer<'a> {
             (pob.level(), pob.pred, pob.post)
         };
 
-        // Check if already blocked by existing lemma
+        // Check if already blocked by an existing lemma.
         if self.is_blocked_by_lemma(pred, post, level)? {
-            if let Some(lemma_id) = self.find_blocking_lemma(pred, post, level) {
+            if let Some(lemma_id) = self.find_blocking_lemma(pred, post, level)? {
                 self.pobs.close(pob_id, lemma_id);
                 self.stats.num_blocked = self.stats.num_blocked.saturating_add(1);
             }
             return Ok(BlockResult::Blocked);
         }
 
-        // Level 0: must check if truly reachable from init
+        // Level 0: the frame is exactly Init, so the only way to block is to
+        // prove the bad state is not an initial state.
         if level == 0 {
-            // Check if the bad state is satisfiable with initial states
             if self.is_init_reachable(pred, post)? {
-                // Construct counterexample
                 self.build_counterexample(pob_id)?;
                 return Ok(BlockResult::Counterexample);
             }
+            let lemma = self.generalize_blocking_lemma(pob_id)?;
+            let lemma_id = self.frames.add_lemma(pred, lemma, level);
+            self.pobs.close(pob_id, lemma_id);
+            self.stats.num_blocked = self.stats.num_blocked.saturating_add(1);
+            self.stats.num_lemmas = self.stats.num_lemmas.saturating_add(1);
+            return Ok(BlockResult::Blocked);
         }
 
-        // Try to find a predecessor
-        match self.find_predecessor(pob_id)? {
-            Some(pred_pob_id) => {
-                // Found predecessor - need to block it first
-                // Recursively block the predecessor
-                self.block(pred_pob_id)
+        // Level > 0: search for predecessors until none remain.
+        loop {
+            // Bound the search so a diverging predecessor chain surfaces as
+            // Unknown rather than looping forever.
+            if self.stats.num_pobs > self.config.max_pobs {
+                return Err(SpacerError::ResourceLimit);
             }
-            None => {
-                // No predecessor found - can generate blocking lemma
-                let lemma = self.generalize_blocking_lemma(pob_id)?;
-                let lemma_id = self.frames.add_lemma(pred, lemma, level);
-                self.pobs.close(pob_id, lemma_id);
-                self.stats.num_blocked = self.stats.num_blocked.saturating_add(1);
-                self.stats.num_lemmas = self.stats.num_lemmas.saturating_add(1);
-                Ok(BlockResult::Blocked)
+
+            match self.find_predecessor(pob_id)? {
+                Some(pred_pob_id) => match self.block(pred_pob_id)? {
+                    BlockResult::Counterexample => return Ok(BlockResult::Counterexample),
+                    BlockResult::Blocked => {
+                        // Predecessor blocked; loop to look for another one.
+                        continue;
+                    }
+                },
+                None => {
+                    // No predecessor: generalize into a blocking lemma.
+                    let lemma = self.generalize_blocking_lemma(pob_id)?;
+                    let lemma_id = self.frames.add_lemma(pred, lemma, level);
+                    self.pobs.close(pob_id, lemma_id);
+                    self.stats.num_blocked = self.stats.num_blocked.saturating_add(1);
+                    self.stats.num_lemmas = self.stats.num_lemmas.saturating_add(1);
+                    return Ok(BlockResult::Blocked);
+                }
             }
         }
     }
@@ -392,84 +507,174 @@ impl<'a> Spacer<'a> {
         Ok(false)
     }
 
-    /// Find a lemma that blocks a state
-    fn find_blocking_lemma(&self, pred: PredId, _state: TermId, level: u32) -> Option<LemmaId> {
-        // Find the first lemma that blocks the state
-        // In a full implementation, we would check each lemma to see if it blocks the state
-        // For now, return the first lemma at the level (if any)
-        if let Some(pred_frames) = self.frames.get(pred) {
-            pred_frames
+    /// Find the specific lemma that actually blocks `state` at `level`
+    /// (i.e. the one `is_blocked_by_lemma` found), rather than blindly
+    /// returning whatever lemma happens to be first in the level's lemma
+    /// list. Returning an unrelated lemma here made `self.pobs.close`
+    /// record the wrong lemma as the reason a POB was closed whenever
+    /// more than one lemma existed at `level` -- corrupting lemma
+    /// provenance/usage accounting (and any downstream proof/certificate
+    /// construction that trusts it) for every such POB.
+    fn find_blocking_lemma(
+        &mut self,
+        pred: PredId,
+        state: TermId,
+        level: u32,
+    ) -> Result<Option<LemmaId>, SpacerError> {
+        let lemmas: Vec<(LemmaId, TermId)> = match self.frames.get(pred) {
+            Some(pred_frames) => pred_frames
                 .lemmas_geq_level(level)
-                .next()
-                .map(|lemma| lemma.id)
-        } else {
-            None
+                .map(|lemma| (lemma.id, lemma.formula))
+                .collect(),
+            None => return Ok(None),
+        };
+
+        for (id, formula) in lemmas {
+            let mut smt = SmtSolver::new(self.terms, self.system);
+            let blocks = smt.is_blocked_by(formula, state)?;
+            self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
+            if blocks {
+                return Ok(Some(id));
+            }
         }
+        Ok(None)
     }
 
-    /// Check if a state is reachable from initial states
-    fn is_init_reachable(&mut self, pred: PredId, _state: TermId) -> Result<bool, SpacerError> {
-        // Check if state is satisfiable with init reach facts
-        for _fact in self.reach_facts.for_pred(pred) {
-            // In real implementation: check if fact /\ state is SAT
+    /// Check whether the (canonical) state `state` intersects the initial
+    /// states of `pred`: is `init_fact ∧ state` SAT for any init fact?
+    fn is_init_reachable(&mut self, pred: PredId, state: TermId) -> Result<bool, SpacerError> {
+        let facts: Vec<TermId> = self
+            .reach_facts
+            .for_pred(pred)
+            .filter(|f| f.is_init())
+            .map(|f| f.fact)
+            .collect();
+
+        for fact in facts {
+            let mut smt = SmtSolver::new(self.terms, self.system);
+            smt.push();
+            smt.assert(fact);
+            smt.assert(state);
+            let is_sat = smt.check_sat()?;
+            smt.pop();
             self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
+            if is_sat {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
 
-    /// Find a predecessor state for a POB
+    /// Find a concrete predecessor state for a POB via a model-based SMT query.
+    ///
+    /// For each transition rule `Q(body_args) ∧ C ⇒ P(head_args)` we ask:
+    ///   `F_{level-1}(Q) ∧ C[body_args ↦ cur] ∧ post[cur_P ↦ head_args]`
+    /// where `cur` are `Q`'s canonical current-state variables.  A SAT result
+    /// exhibits a concrete state (read from the model as a cube of equalities)
+    /// that transitions in one step into the POB's bad state — a genuine
+    /// predecessor.  This is what makes `SpacerResult::Unsafe` reachable.
     fn find_predecessor(&mut self, pob_id: PobId) -> Result<Option<PobId>, SpacerError> {
-        // Extract POB info first to avoid holding borrow
-        let (pred, level, depth) = {
+        let (pred, level, depth, post) = {
             let pob = self
                 .pobs
                 .get(pob_id)
                 .ok_or_else(|| SpacerError::Internal("POB not found".to_string()))?;
-            (pob.pred, pob.level(), pob.depth())
+            (pob.pred, pob.level(), pob.depth(), pob.post)
         };
 
         if level == 0 {
             return Ok(None);
         }
 
-        // Collect rules that derive this predicate
-        let rules: Vec<_> = self.system.rules_by_head(pred).collect();
+        // Collect transition-rule data (skip init rules, which have no body
+        // predicate) up-front to release the borrow on `self.system`.
+        #[allow(clippy::type_complexity)]
+        let rules: Vec<(PredId, SmallVec<[TermId; 4]>, SmallVec<[TermId; 4]>, TermId)> = self
+            .system
+            .rules_by_head(pred)
+            .filter_map(|rule| {
+                let body_app = rule.body.predicates.first()?;
+                let head_app = rule.head.as_predicate()?;
+                Some((
+                    body_app.pred,
+                    body_app.args.clone(),
+                    head_app.args.clone(),
+                    rule.body.constraint,
+                ))
+            })
+            .collect();
 
-        // Find rules that can derive this predicate
-        for rule in rules {
-            // Check if the transition is feasible
-            if self.is_transition_feasible(rule, pob_id)? {
-                // Create predecessor POBs for body predicates
-                // In full implementation, we'd create POBs for all body predicates
-                // For now, create POB for first body predicate (if any)
-                if let Some(first_body_app) = rule.body.predicates.first() {
-                    let pred_pob = self.pobs.create_derived(
-                        first_body_app.pred,
-                        rule.body.constraint,
-                        level - 1,
-                        depth + 1,
-                        pob_id,
-                    );
-                    self.stats.num_pobs = self.stats.num_pobs.saturating_add(1);
-                    return Ok(Some(pred_pob));
+        for (body_pred, body_args, head_args, constraint) in rules {
+            // Canonical current-state variables of the predecessor predicate.
+            let cur = canon_cur_vars(self.terms, self.system, body_pred);
+            let frame = self.build_frame_formula(body_pred, level - 1);
+
+            // Transition constraint with the body args mapped to canonical
+            // current-state variables; the next state stays as the head args.
+            let Some(cur_subst) = var_subst(self.terms, &body_args, &cur) else {
+                continue;
+            };
+            let trans = self.terms.substitute(constraint, &cur_subst);
+
+            // Move `post` (over `pred`'s canonical current vars) onto the
+            // next-state (head arg) variables.
+            let pred_cur = canon_cur_vars(self.terms, self.system, pred);
+            let Some(next_subst) = var_subst(self.terms, &pred_cur, &head_args) else {
+                continue;
+            };
+            let post_next = self.terms.substitute(post, &next_subst);
+
+            let mut smt = SmtSolver::new(self.terms, self.system);
+            smt.push();
+            smt.assert(frame);
+            smt.assert(trans);
+            smt.assert(post_next);
+            let is_sat = smt.check_sat()?;
+            self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
+
+            if !is_sat {
+                smt.pop();
+                continue;
+            }
+
+            // Extract a concrete predecessor cube from the model.  Every state
+            // variable must be pinned to a concrete value, otherwise the "cube"
+            // would be an over-approximation and claiming Unsafe from it would
+            // be unsound — in that case we surface Unknown.
+            let mut lits: Vec<TermId> = Vec::new();
+            let mut underdetermined = false;
+            for &v in &cur {
+                match smt.eval_in_model(v) {
+                    Some(val) if is_concrete_value(smt.terms(), val) => {
+                        let eq = smt.terms().mk_eq(v, val);
+                        lits.push(eq);
+                    }
+                    _ => {
+                        underdetermined = true;
+                        break;
+                    }
                 }
             }
+            smt.pop();
+
+            if underdetermined {
+                return Err(SpacerError::Smt(SmtError::Unknown));
+            }
+
+            let cube = match lits.len() {
+                0 => self.terms.mk_true(),
+                1 => lits[0],
+                _ => self.terms.mk_and(lits),
+            };
+
+            let pred_pob = self
+                .pobs
+                .create_derived(body_pred, cube, level - 1, depth + 1, pob_id);
+            self.stats.num_pobs = self.stats.num_pobs.saturating_add(1);
+            return Ok(Some(pred_pob));
         }
 
         Ok(None)
-    }
-
-    /// Check if a transition is feasible
-    fn is_transition_feasible(
-        &mut self,
-        _rule: &Rule,
-        _pob_id: PobId,
-    ) -> Result<bool, SpacerError> {
-        // In real implementation:
-        // 1. Get current state from POB
-        // 2. Check if rule.body.constraint /\ F_{level-1}(body_preds) /\ post is SAT
-        self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
-        Ok(false)
     }
 
     /// Generalize a blocking lemma
@@ -664,6 +869,23 @@ impl<'a> Spacer<'a> {
     }
 }
 
+/// True iff `term` is a concrete value (a model literal), not a variable or
+/// compound term.  Used to confirm that a predecessor cube extracted from a
+/// model pins every state variable to a definite value.
+fn is_concrete_value(terms: &TermManager, term: TermId) -> bool {
+    matches!(
+        terms.get(term).map(|d| &d.kind),
+        Some(
+            TermKind::IntConst(_)
+                | TermKind::RealConst(_)
+                | TermKind::BitVecConst { .. }
+                | TermKind::True
+                | TermKind::False
+                | TermKind::StringLit(_)
+        )
+    )
+}
+
 /// Result of reachability check
 enum ReachabilityResult {
     /// Bad state is unreachable at current level
@@ -784,7 +1006,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires complete arithmetic theory integration"]
     fn test_spacer_simple_safe() {
         let mut terms = TermManager::new();
         let mut system = ChcSystem::new();
@@ -834,8 +1055,8 @@ mod tests {
         let mut spacer = Spacer::new(&mut terms, &system);
         let result = spacer.solve();
 
-        // The system should be safe (x >= 0 is invariant)
-        // Note: With placeholder SMT, this returns Safe due to is_bad_reachable returning false
+        // The system is safe: x >= 0 is an inductive invariant, proved via the
+        // consecution check with primed-state renaming.
         assert!(matches!(result, Ok(SpacerResult::Safe)));
     }
 
@@ -843,5 +1064,69 @@ mod tests {
     fn test_legacy_spacer() {
         let spacer = LegacySpacer::new();
         assert!(matches!(spacer.result, SpacerResult::Unknown));
+    }
+
+    /// Regression test for the `sweep-backend-misc` triage sweep:
+    /// `find_blocking_lemma` used to return whatever lemma happened to be
+    /// first in the level's lemma list, without checking that it actually
+    /// blocks the queried state. Set up several lemmas at the same level
+    /// where only *one* actually blocks the state in question, and verify
+    /// `find_blocking_lemma` returns that specific lemma (not merely "a"
+    /// lemma that happens to be first).
+    #[test]
+    fn test_find_blocking_lemma_returns_actual_blocker() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+        let pred = system.declare_predicate("FblInv", [terms.sorts.int_sort]);
+        // A query is required for `Spacer::new` to accept the system.
+        let x = terms.mk_var("fbl_x", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let neg = terms.mk_lt(x, zero);
+        system.add_query(
+            [("fbl_x".to_string(), terms.sorts.int_sort)],
+            [PredicateApp::new(pred, [x])],
+            neg,
+        );
+
+        let mut spacer = Spacer::new(&mut terms, &system);
+
+        // The state under test: x = 3.
+        let three = spacer.terms.mk_int(3);
+        let state = spacer.terms.mk_eq(x, three);
+
+        // Several decoy lemmas that do NOT block x=3 (x != 5, x != 7, x !=
+        // 9 are all satisfiable together with x=3), inserted first.
+        for excluded in [5i64, 7, 9] {
+            let val = spacer.terms.mk_int(excluded);
+            let eq = spacer.terms.mk_eq(x, val);
+            let ne = spacer.terms.mk_not(eq);
+            spacer.frames.add_lemma(pred, ne, 1);
+        }
+
+        // The one lemma that DOES block x=3: x != 3.
+        let three_again = spacer.terms.mk_int(3);
+        let eq3 = spacer.terms.mk_eq(x, three_again);
+        let blocking_formula = spacer.terms.mk_not(eq3);
+        let blocking_id = spacer.frames.add_lemma(pred, blocking_formula, 1);
+
+        // More decoys after it, so the true blocker isn't simply "last"
+        // either.
+        for excluded in [11i64, 13] {
+            let val = spacer.terms.mk_int(excluded);
+            let eq = spacer.terms.mk_eq(x, val);
+            let ne = spacer.terms.mk_not(eq);
+            spacer.frames.add_lemma(pred, ne, 1);
+        }
+
+        let found = spacer
+            .find_blocking_lemma(pred, state, 1)
+            .expect("SMT queries should not error")
+            .expect("at least one lemma blocks x=3");
+
+        assert_eq!(
+            found, blocking_id,
+            "find_blocking_lemma must return the lemma that actually \
+             blocks the state, not just the first lemma at the level"
+        );
     }
 }

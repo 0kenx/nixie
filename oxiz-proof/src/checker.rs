@@ -23,9 +23,9 @@
 //! assert!(result.is_valid());
 //! ```
 
-use crate::alethe::{AletheProof, AletheRule, AletheStep};
-use crate::theory::{TheoryProof, TheoryRule, TheoryStepId};
-use std::collections::HashSet;
+use crate::alethe::{AletheProof, AletheRule, AletheStep, StepIndex, TermRef};
+use crate::theory::{ProofTerm, TheoryProof, TheoryRule, TheoryStepId};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 /// Result of checking a proof step
@@ -275,7 +275,25 @@ impl fmt::Display for ErrorSeverity {
 pub struct CheckerConfig {
     /// Whether to continue checking after the first error
     pub continue_on_error: bool,
-    /// Whether to verify conclusion content (not just structure)
+    /// Whether to verify conclusion content (not just structure).
+    ///
+    /// When `true`, in addition to the structural checks that always run
+    /// (premises exist, no cycles, premise/argument counts), the checker
+    /// re-derives and checks the *semantics* of the conclusion for the rules
+    /// it knows how to verify:
+    ///
+    /// - Theory proofs (see [`crate::theory::TheoryRule`]): `Refl`, `Symm`,
+    ///   `Trans`, `Cong`, `ArrReadWrite1`.
+    /// - Alethe proofs (see [`crate::alethe::AletheRule`]): `Refl`/`EqRefl`,
+    ///   `Symm`/`EqSymm`, `Trans`/`EqTrans`, `Cong`/`EqCong`, and `Resolution`
+    ///   (a necessary-condition check: every literal in the concluded clause
+    ///   must appear in some premise clause).
+    ///
+    /// Rules outside this set (e.g. `LaGeneric`, quantifier rules, bit-vector
+    /// rules) are *not* semantically verified even with this flag set --
+    /// only the structural checks apply to them. This is a deliberate,
+    /// honest scoping: the checker never fabricates a semantic verdict for a
+    /// rule it cannot actually check.
     pub verify_conclusions: bool,
     /// Whether to allow cyclic dependencies (for some proof formats)
     pub allow_cycles: bool,
@@ -387,6 +405,16 @@ impl ProofChecker {
         // Check rule-specific requirements
         self.check_theory_rule(&step.rule, step.premises.len(), step.args.len())?;
 
+        // Check the semantic content of the conclusion, if requested.
+        if self.config.verify_conclusions {
+            let premise_terms: Vec<&ProofTerm> = step
+                .premises
+                .iter()
+                .filter_map(|id| proof.get_step(*id).map(|s| &s.conclusion))
+                .collect();
+            verify_theory_conclusion(&step.rule, &premise_terms, &step.conclusion)?;
+        }
+
         // Mark as validated
         if !self.config.allow_cycles {
             self.in_progress.remove(&step_id.0);
@@ -485,15 +513,22 @@ impl ProofChecker {
 
         let steps = proof.steps();
         let mut step_indices: HashSet<u32> = HashSet::new();
+        // Map from step index to its conclusion clause (literals), used for
+        // semantic conclusion checking. `Assume` contributes a one-literal
+        // "clause" (the assumed term); `Anchor`/`DefineFun` steps have no
+        // clause and are simply absent from the map.
+        let mut clause_by_index: HashMap<StepIndex, Vec<TermRef>> = HashMap::new();
 
         // First pass: collect all step indices
         for step in steps {
             match step {
-                AletheStep::Assume { index, .. } => {
+                AletheStep::Assume { index, term } => {
                     step_indices.insert(*index);
+                    clause_by_index.insert(*index, vec![term.clone()]);
                 }
-                AletheStep::Step { index, .. } => {
+                AletheStep::Step { index, clause, .. } => {
                     step_indices.insert(*index);
+                    clause_by_index.insert(*index, clause.clone());
                 }
                 AletheStep::Anchor { step: index, .. } => {
                     step_indices.insert(*index);
@@ -504,7 +539,7 @@ impl ProofChecker {
 
         // Second pass: check each step
         for (idx, step) in steps.iter().enumerate() {
-            if let Err(error) = self.check_alethe_step(step, &step_indices) {
+            if let Err(error) = self.check_alethe_step(step, &step_indices, &clause_by_index) {
                 if self.config.continue_on_error {
                     self.errors.push((idx as u32, error));
                 } else {
@@ -528,6 +563,7 @@ impl ProofChecker {
         &self,
         step: &AletheStep,
         step_indices: &HashSet<u32>,
+        clause_by_index: &HashMap<StepIndex, Vec<TermRef>>,
     ) -> Result<(), CheckError> {
         match step {
             AletheStep::Assume { .. } => {
@@ -535,7 +571,12 @@ impl ProofChecker {
                 Ok(())
             }
 
-            AletheStep::Step { rule, premises, .. } => {
+            AletheStep::Step {
+                clause,
+                rule,
+                premises,
+                ..
+            } => {
                 // Check all premises exist
                 for premise in premises {
                     if !step_indices.contains(premise) {
@@ -544,7 +585,14 @@ impl ProofChecker {
                 }
 
                 // Check rule-specific requirements
-                self.check_alethe_rule(rule, premises.len())
+                self.check_alethe_rule(rule, premises.len())?;
+
+                // Check the semantic content of the conclusion, if requested.
+                if self.config.verify_conclusions {
+                    verify_alethe_conclusion(*rule, clause, premises, clause_by_index)?;
+                }
+
+                Ok(())
             }
 
             AletheStep::Anchor { .. } => {
@@ -620,6 +668,533 @@ impl Checkable for AletheProof {
 
     fn check_with_config(&self, config: CheckerConfig) -> CheckResult {
         ProofChecker::with_config(config).check_alethe_proof(self)
+    }
+}
+
+// ============================================================================
+// Semantic conclusion verification
+// ============================================================================
+//
+// `ProofTerm`/`TermRef` values are opaque SMT-LIB-style s-expression strings
+// (e.g. `"(= a b)"`, `"(f x y)"`). To check that a rule's conclusion actually
+// follows from its premises we parse those strings into a tiny s-expression
+// tree and compare subterms structurally. This is deliberately scoped to the
+// handful of rules below (see [`CheckerConfig::verify_conclusions`]); rules
+// we cannot verify are left alone rather than being given a fabricated pass
+// or fail.
+
+/// A minimal parsed s-expression: either an atom or a parenthesized list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum SExpr {
+    Atom(String),
+    List(Vec<SExpr>),
+}
+
+/// Parse a single s-expression from `input`, requiring the whole string
+/// (modulo surrounding whitespace) to be consumed.
+fn parse_sexpr(input: &str) -> Result<SExpr, String> {
+    let mut chars: std::iter::Peekable<std::str::Chars<'_>> = input.chars().peekable();
+    let expr = parse_sexpr_rec(&mut chars)?;
+    skip_ws(&mut chars);
+    if chars.peek().is_some() {
+        return Err(format!("trailing input after term: {input:?}"));
+    }
+    Ok(expr)
+}
+
+fn skip_ws(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+}
+
+fn parse_sexpr_rec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<SExpr, String> {
+    skip_ws(chars);
+    match chars.peek() {
+        Some('(') => {
+            chars.next();
+            let mut items = Vec::new();
+            loop {
+                skip_ws(chars);
+                match chars.peek() {
+                    Some(')') => {
+                        chars.next();
+                        break;
+                    }
+                    Some(_) => items.push(parse_sexpr_rec(chars)?),
+                    None => return Err("unexpected end of input inside a list".to_string()),
+                }
+            }
+            Ok(SExpr::List(items))
+        }
+        Some(')') => Err("unexpected ')'".to_string()),
+        Some(_) => {
+            let mut atom = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() || c == '(' || c == ')' {
+                    break;
+                }
+                atom.push(c);
+                chars.next();
+            }
+            if atom.is_empty() {
+                return Err("empty atom".to_string());
+            }
+            Ok(SExpr::Atom(atom))
+        }
+        None => Err("unexpected end of input".to_string()),
+    }
+}
+
+/// If `expr` is `(op lhs rhs)`, return `(lhs, rhs)`.
+fn as_binary<'a>(op: &str, expr: &'a SExpr) -> Option<(&'a SExpr, &'a SExpr)> {
+    if let SExpr::List(items) = expr
+        && items.len() == 3
+        && let SExpr::Atom(a) = &items[0]
+        && a == op
+    {
+        return Some((&items[1], &items[2]));
+    }
+    None
+}
+
+/// If `expr` is a function application `(name arg1 .. argn)`, return
+/// `(name, [arg1 .. argn])`.
+fn as_call(expr: &SExpr) -> Option<(&str, &[SExpr])> {
+    if let SExpr::List(items) = expr
+        && let Some(SExpr::Atom(name)) = items.first()
+    {
+        return Some((name.as_str(), &items[1..]));
+    }
+    None
+}
+
+fn malformed(msg: impl Into<String>) -> CheckError {
+    CheckError::MalformedTerm(msg.into())
+}
+
+fn invalid(msg: impl Into<String>) -> CheckError {
+    CheckError::InvalidConclusion(msg.into())
+}
+
+/// Check whether the four "endpoints" of two premise equalities chain
+/// together (in any orientation) into `(u, v)`, i.e. transitivity.
+fn trans_chains_to<'a>(
+    a1: &'a SExpr,
+    b1: &'a SExpr,
+    a2: &'a SExpr,
+    b2: &'a SExpr,
+    u: &SExpr,
+    v: &SExpr,
+) -> bool {
+    let candidates = [
+        (a1, b1, a2, b2),
+        (a1, b1, b2, a2),
+        (b1, a1, a2, b2),
+        (b1, a1, b2, a2),
+    ];
+    for (x1, y1, x2, y2) in candidates {
+        if y1 == x2 && ((u == x1 && v == y2) || (u == y2 && v == x1)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Semantically verify a theory-proof step's conclusion against its
+/// premises' conclusions, for the subset of rules we can check. Rules not
+/// covered here return `Ok(())` -- absence of a semantic error does not mean
+/// the step was verified, only that it was not found to be wrong.
+fn verify_theory_conclusion(
+    rule: &TheoryRule,
+    premises: &[&ProofTerm],
+    conclusion: &ProofTerm,
+) -> Result<(), CheckError> {
+    match rule {
+        TheoryRule::Refl => {
+            let c = parse_sexpr(&conclusion.0).map_err(malformed)?;
+            let (l, r) = as_binary("=", &c).ok_or_else(|| {
+                invalid(format!(
+                    "refl conclusion '{}' is not an equality",
+                    conclusion.0
+                ))
+            })?;
+            if l == r {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "refl conclusion '{}' does not equate identical terms",
+                    conclusion.0
+                )))
+            }
+        }
+        TheoryRule::Symm => {
+            let p = premises
+                .first()
+                .ok_or_else(|| invalid("symm requires one premise"))?;
+            let pe = parse_sexpr(&p.0).map_err(malformed)?;
+            let (a, b) = as_binary("=", &pe)
+                .ok_or_else(|| invalid(format!("symm premise '{}' is not an equality", p.0)))?;
+            let c = parse_sexpr(&conclusion.0).map_err(malformed)?;
+            let (x, y) = as_binary("=", &c).ok_or_else(|| {
+                invalid(format!(
+                    "symm conclusion '{}' is not an equality",
+                    conclusion.0
+                ))
+            })?;
+            if x == b && y == a {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "symm conclusion '{}' is not the reverse of premise '{}'",
+                    conclusion.0, p.0
+                )))
+            }
+        }
+        TheoryRule::Trans => {
+            if premises.len() < 2 {
+                return Err(invalid("trans requires two premises"));
+            }
+            let p1 = parse_sexpr(&premises[0].0).map_err(malformed)?;
+            let p2 = parse_sexpr(&premises[1].0).map_err(malformed)?;
+            let (a1, b1) = as_binary("=", &p1).ok_or_else(|| {
+                invalid(format!(
+                    "trans premise '{}' is not an equality",
+                    premises[0].0
+                ))
+            })?;
+            let (a2, b2) = as_binary("=", &p2).ok_or_else(|| {
+                invalid(format!(
+                    "trans premise '{}' is not an equality",
+                    premises[1].0
+                ))
+            })?;
+            let c = parse_sexpr(&conclusion.0).map_err(malformed)?;
+            let (u, v) = as_binary("=", &c).ok_or_else(|| {
+                invalid(format!(
+                    "trans conclusion '{}' is not an equality",
+                    conclusion.0
+                ))
+            })?;
+
+            if trans_chains_to(a1, b1, a2, b2, u, v) {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "trans conclusion '{}' does not follow from premises '{}' and '{}'",
+                    conclusion.0, premises[0].0, premises[1].0
+                )))
+            }
+        }
+        TheoryRule::Cong => {
+            let c = parse_sexpr(&conclusion.0).map_err(malformed)?;
+            let (l, r) = as_binary("=", &c).ok_or_else(|| {
+                invalid(format!(
+                    "cong conclusion '{}' is not an equality",
+                    conclusion.0
+                ))
+            })?;
+            match (as_call(l), as_call(r)) {
+                (Some((lf, largs)), Some((rf, rargs))) => {
+                    if lf != rf {
+                        return Err(invalid(format!(
+                            "cong conclusion '{}' uses different function symbols ({lf} vs {rf})",
+                            conclusion.0
+                        )));
+                    }
+                    if largs.len() != rargs.len() {
+                        return Err(invalid(format!(
+                            "cong conclusion '{}' has mismatched arity ({} vs {})",
+                            conclusion.0,
+                            largs.len(),
+                            rargs.len()
+                        )));
+                    }
+                    let mut premise_iter = premises.iter();
+                    for i in 0..largs.len() {
+                        if largs[i] == rargs[i] {
+                            continue;
+                        }
+                        let premise = premise_iter.next().ok_or_else(|| {
+                            invalid(format!(
+                                "cong conclusion '{}' has no premise establishing argument {i} equal",
+                                conclusion.0
+                            ))
+                        })?;
+                        let p = parse_sexpr(&premise.0).map_err(malformed)?;
+                        let (pa, pb) = as_binary("=", &p).ok_or_else(|| {
+                            invalid(format!("cong premise '{}' is not an equality", premise.0))
+                        })?;
+                        if !((pa == &largs[i] && pb == &rargs[i])
+                            || (pa == &rargs[i] && pb == &largs[i]))
+                        {
+                            return Err(invalid(format!(
+                                "cong premise '{}' does not establish argument {i} equal",
+                                premise.0
+                            )));
+                        }
+                    }
+                    Ok(())
+                }
+                (None, None) => {
+                    // Nullary function symbols (or plain constants) render as bare atoms.
+                    if l == r {
+                        Ok(())
+                    } else {
+                        Err(invalid(format!(
+                            "cong conclusion '{}' does not equate identical constants",
+                            conclusion.0
+                        )))
+                    }
+                }
+                _ => Err(invalid(format!(
+                    "cong conclusion '{}' has mismatched left/right shape",
+                    conclusion.0
+                ))),
+            }
+        }
+        TheoryRule::ArrReadWrite1 => {
+            // (= (select (store a i v) i) v)
+            let c = parse_sexpr(&conclusion.0).map_err(malformed)?;
+            let (l, r) = as_binary("=", &c).ok_or_else(|| {
+                invalid(format!(
+                    "arr_read_write_1 conclusion '{}' is not an equality",
+                    conclusion.0
+                ))
+            })?;
+            let (sel_fn, sel_args) = as_call(l).ok_or_else(|| {
+                invalid(format!(
+                    "arr_read_write_1 conclusion '{}' left side is not a function application",
+                    conclusion.0
+                ))
+            })?;
+            if sel_fn != "select" || sel_args.len() != 2 {
+                return Err(invalid(format!(
+                    "arr_read_write_1 conclusion '{}' left side is not a (select ...) of arity 2",
+                    conclusion.0
+                )));
+            }
+            let (store_fn, store_args) = as_call(&sel_args[0]).ok_or_else(|| {
+                invalid(format!(
+                    "arr_read_write_1 conclusion '{}' does not select from a store",
+                    conclusion.0
+                ))
+            })?;
+            if store_fn != "store" || store_args.len() != 3 {
+                return Err(invalid(format!(
+                    "arr_read_write_1 conclusion '{}' does not select from a (store ...) of arity 3",
+                    conclusion.0
+                )));
+            }
+            let select_index = &sel_args[1];
+            let store_index = &store_args[1];
+            let store_value = &store_args[2];
+            if select_index != store_index {
+                return Err(invalid(format!(
+                    "arr_read_write_1 conclusion '{}' selects a different index than was stored",
+                    conclusion.0
+                )));
+            }
+            if store_value != r {
+                return Err(invalid(format!(
+                    "arr_read_write_1 conclusion '{}' does not conclude the stored value",
+                    conclusion.0
+                )));
+            }
+            Ok(())
+        }
+        // Other rules (arithmetic, bit-vector, quantifier, array extensionality, ...)
+        // are not semantically re-derivable from their string conclusion alone
+        // within this checker's scope; leave them to structural checking only.
+        _ => Ok(()),
+    }
+}
+
+/// Semantically verify an Alethe step's concluded clause against its
+/// premises' clauses, for the subset of rules we can check.
+fn verify_alethe_conclusion(
+    rule: AletheRule,
+    clause: &[TermRef],
+    premises: &[StepIndex],
+    clause_by_index: &HashMap<StepIndex, Vec<TermRef>>,
+) -> Result<(), CheckError> {
+    match rule {
+        AletheRule::Refl | AletheRule::EqRefl => {
+            if clause.len() != 1 {
+                return Err(invalid("refl step must conclude exactly one literal"));
+            }
+            let e = parse_sexpr(&clause[0]).map_err(malformed)?;
+            let (l, r) = as_binary("=", &e).ok_or_else(|| {
+                invalid(format!(
+                    "refl conclusion '{}' is not an equality",
+                    clause[0]
+                ))
+            })?;
+            if l == r {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "refl conclusion '{}' does not equate identical terms",
+                    clause[0]
+                )))
+            }
+        }
+        AletheRule::Symm | AletheRule::EqSymm => {
+            let Some(premise_clause) = premises.first().and_then(|idx| clause_by_index.get(idx))
+            else {
+                // Premise clause unavailable (e.g. references an anchor); out of scope.
+                return Ok(());
+            };
+            let (Some(plit), true) = (premise_clause.first(), premise_clause.len() == 1) else {
+                return Ok(());
+            };
+            if clause.len() != 1 {
+                return Err(invalid("symm step must conclude exactly one literal"));
+            }
+            let pe = parse_sexpr(plit).map_err(malformed)?;
+            let ce = parse_sexpr(&clause[0]).map_err(malformed)?;
+            let (a, b) = as_binary("=", &pe)
+                .ok_or_else(|| invalid(format!("symm premise '{plit}' is not an equality")))?;
+            let (x, y) = as_binary("=", &ce).ok_or_else(|| {
+                invalid(format!(
+                    "symm conclusion '{}' is not an equality",
+                    clause[0]
+                ))
+            })?;
+            if x == b && y == a {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "symm conclusion '{}' is not the reverse of premise '{plit}'",
+                    clause[0]
+                )))
+            }
+        }
+        AletheRule::Trans | AletheRule::EqTrans => {
+            if premises.len() != 2 {
+                // Chained (>2 premise) transitivity is out of scope for this checker.
+                return Ok(());
+            }
+            let Some(p1) = clause_by_index.get(&premises[0]) else {
+                return Ok(());
+            };
+            let Some(p2) = clause_by_index.get(&premises[1]) else {
+                return Ok(());
+            };
+            if p1.len() != 1 || p2.len() != 1 {
+                return Ok(());
+            }
+            if clause.len() != 1 {
+                return Err(invalid("trans step must conclude exactly one literal"));
+            }
+            let pe1 = parse_sexpr(&p1[0]).map_err(malformed)?;
+            let pe2 = parse_sexpr(&p2[0]).map_err(malformed)?;
+            let ce = parse_sexpr(&clause[0]).map_err(malformed)?;
+            let (a1, b1) = as_binary("=", &pe1)
+                .ok_or_else(|| invalid(format!("trans premise '{}' is not an equality", p1[0])))?;
+            let (a2, b2) = as_binary("=", &pe2)
+                .ok_or_else(|| invalid(format!("trans premise '{}' is not an equality", p2[0])))?;
+            let (u, v) = as_binary("=", &ce).ok_or_else(|| {
+                invalid(format!(
+                    "trans conclusion '{}' is not an equality",
+                    clause[0]
+                ))
+            })?;
+            if trans_chains_to(a1, b1, a2, b2, u, v) {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "trans conclusion '{}' does not follow from premises '{}' and '{}'",
+                    clause[0], p1[0], p2[0]
+                )))
+            }
+        }
+        AletheRule::Cong | AletheRule::EqCong => {
+            if clause.len() != 1 {
+                return Ok(()); // multi-literal congruence steps are out of scope
+            }
+            let e = parse_sexpr(&clause[0]).map_err(malformed)?;
+            let Some((l, r)) = as_binary("=", &e) else {
+                return Ok(());
+            };
+            let (Some((lf, largs)), Some((rf, rargs))) = (as_call(l), as_call(r)) else {
+                return Ok(());
+            };
+            if lf != rf || largs.len() != rargs.len() {
+                return Err(invalid(format!(
+                    "cong conclusion '{}' does not equate two applications of the same function",
+                    clause[0]
+                )));
+            }
+            let mut premise_iter = premises.iter();
+            for i in 0..largs.len() {
+                if largs[i] == rargs[i] {
+                    continue;
+                }
+                let Some(premise_clause) =
+                    premise_iter.next().and_then(|idx| clause_by_index.get(idx))
+                else {
+                    return Err(invalid(format!(
+                        "cong conclusion '{}' has no premise establishing argument {i} equal",
+                        clause[0]
+                    )));
+                };
+                if premise_clause.len() != 1 {
+                    continue; // cannot verify this premise's shape; skip rather than reject
+                }
+                let Ok(p) = parse_sexpr(&premise_clause[0]) else {
+                    continue;
+                };
+                let Some((pa, pb)) = as_binary("=", &p) else {
+                    continue;
+                };
+                if !((pa == &largs[i] && pb == &rargs[i]) || (pa == &rargs[i] && pb == &largs[i])) {
+                    return Err(invalid(format!(
+                        "cong premise '{}' does not establish argument {i} equal",
+                        premise_clause[0]
+                    )));
+                }
+            }
+            Ok(())
+        }
+        AletheRule::Resolution => {
+            // Necessary condition: every literal in the concluded clause must
+            // appear in at least one premise clause (basic resolution only
+            // ever drops the resolved-on pivot literals and unions the rest).
+            // This does not verify a valid pivot chain exists -- doing so
+            // would require pivot literals the format does not record here --
+            // but it does reject conclusions containing literals fabricated
+            // out of nowhere.
+            let mut allowed: HashSet<SExpr> = HashSet::new();
+            let mut any_premise_known = false;
+            for idx in premises {
+                if let Some(pc) = clause_by_index.get(idx) {
+                    any_premise_known = true;
+                    for lit in pc {
+                        if let Ok(e) = parse_sexpr(lit) {
+                            allowed.insert(e);
+                        }
+                    }
+                }
+            }
+            if !any_premise_known {
+                return Ok(());
+            }
+            for lit in clause {
+                let e = parse_sexpr(lit).map_err(malformed)?;
+                if !allowed.contains(&e) {
+                    return Err(invalid(format!(
+                        "resolution conclusion literal '{lit}' does not appear in any premise clause"
+                    )));
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -790,5 +1365,304 @@ mod tests {
 
         let result = proof.check();
         assert!(!result.is_valid());
+    }
+
+    // ------------------------------------------------------------------
+    // verify_conclusions gating (audit finding proof-p3 / checker.rs:279)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_verify_conclusions_off_accepts_bogus_trans_conclusion() {
+        // Default config: verify_conclusions is false, so only structural
+        // checks run. A Trans step whose conclusion has nothing to do with
+        // its premises must still be accepted (unchanged legacy behavior).
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        let s2 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= b c)");
+        proof.add_step(TheoryRule::Trans, vec![s1, s2], "(= x y)");
+
+        let result = proof.check();
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_rejects_bogus_trans_conclusion() {
+        // Same proof as above, but with verify_conclusions: true the
+        // fabricated conclusion "(= x y)" must now be rejected: it does not
+        // follow from "(= a b)" and "(= b c)".
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        let s2 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= b c)");
+        proof.add_step(TheoryRule::Trans, vec![s1, s2], "(= x y)");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+        assert!(matches!(
+            result.error(),
+            Some(CheckError::InvalidConclusion(_))
+        ));
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_accepts_genuine_trans_conclusion() {
+        // A correctly derived transitivity conclusion must still pass with
+        // semantic checking enabled.
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        let s2 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= b c)");
+        proof.trans(s1, s2, "a", "c");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_accepts_reversed_premise_trans() {
+        // Transitivity must also chain correctly when a premise equality is
+        // stated in the reverse orientation.
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= b a)");
+        let s2 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= b c)");
+        proof.add_step(TheoryRule::Trans, vec![s1, s2], "(= a c)");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_rejects_bogus_refl() {
+        let mut proof = TheoryProof::new();
+        proof.add_axiom(TheoryRule::Refl, "(= x y)");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_accepts_genuine_refl() {
+        let mut proof = TheoryProof::new();
+        proof.refl("x");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_rejects_bogus_symm() {
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        proof.add_step(TheoryRule::Symm, vec![s1], "(= a b)");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_accepts_genuine_symm() {
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        proof.symm(s1, "a", "b");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_accepts_genuine_cong() {
+        let mut proof = TheoryProof::new();
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        proof.cong(
+            vec![s1],
+            "f",
+            &[ProofTerm::from("a")],
+            &[ProofTerm::from("b")],
+        );
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_rejects_bogus_cong() {
+        let mut proof = TheoryProof::new();
+        // Premise establishes a = b, but the congruence conclusion claims
+        // f(a) = f(c) -- c was never shown equal to a.
+        let s1 = proof.add_axiom(TheoryRule::Custom("assert".into()), "(= a b)");
+        proof.add_step(TheoryRule::Cong, vec![s1], "(= (f a) (f c))");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_rejects_bogus_array_axiom() {
+        let mut proof = TheoryProof::new();
+        // Claims the wrong value is returned by the store-then-select.
+        proof.add_axiom(TheoryRule::ArrReadWrite1, "(= (select (store a i v) i) w)");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_on_accepts_genuine_array_axiom() {
+        let mut proof = TheoryProof::new();
+        proof.add_axiom(TheoryRule::ArrReadWrite1, "(= (select (store a i v) i) v)");
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_alethe_off_accepts_bogus_trans() {
+        let mut proof = AletheProof::new();
+        let a1 = proof.assume("(= a b)");
+        let a2 = proof.assume("(= b c)");
+        proof.step(
+            vec!["(= x y)".to_string()],
+            AletheRule::Trans,
+            vec![a1, a2],
+            vec![],
+        );
+
+        let result = proof.check();
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_alethe_on_rejects_bogus_trans() {
+        let mut proof = AletheProof::new();
+        let a1 = proof.assume("(= a b)");
+        let a2 = proof.assume("(= b c)");
+        proof.step(
+            vec!["(= x y)".to_string()],
+            AletheRule::Trans,
+            vec![a1, a2],
+            vec![],
+        );
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_alethe_on_accepts_genuine_trans() {
+        let mut proof = AletheProof::new();
+        let a1 = proof.assume("(= a b)");
+        let a2 = proof.assume("(= b c)");
+        proof.step(
+            vec!["(= a c)".to_string()],
+            AletheRule::Trans,
+            vec![a1, a2],
+            vec![],
+        );
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_alethe_on_rejects_bogus_resolution() {
+        let mut proof = AletheProof::new();
+        let a1 = proof.assume("p");
+        let a2 = proof.assume("(not p)");
+        // A conclusion literal ("q") that appears in neither premise clause
+        // cannot be derived by resolution from them.
+        proof.step(
+            vec!["q".to_string()],
+            AletheRule::Resolution,
+            vec![a1, a2],
+            vec![],
+        );
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(!result.is_valid());
+    }
+
+    #[test]
+    fn test_verify_conclusions_alethe_on_accepts_valid_resolution() {
+        let mut proof = AletheProof::new();
+        // Two "input" clauses [p, q] and [(not p)]; resolving on p yields [q].
+        let c1 = proof.step(
+            vec!["p".to_string(), "q".to_string()],
+            AletheRule::Input,
+            vec![],
+            vec![],
+        );
+        let c2 = proof.step(
+            vec!["(not p)".to_string()],
+            AletheRule::Input,
+            vec![],
+            vec![],
+        );
+        proof.step(
+            vec!["q".to_string()],
+            AletheRule::Resolution,
+            vec![c1, c2],
+            vec![],
+        );
+
+        let config = CheckerConfig {
+            verify_conclusions: true,
+            ..Default::default()
+        };
+        let result = proof.check_with_config(config);
+        assert!(result.is_valid());
     }
 }

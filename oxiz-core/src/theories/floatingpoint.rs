@@ -2,7 +2,7 @@
 //!
 //! Implements the theory of IEEE 754 floating-point arithmetic.
 //!
-//! Reference: Z3's `src/smt/theory_fpa.cpp` at `../z3/src/smt/`
+//! Reference: Z3's `src/smt/theory_fpa.cpp`
 
 use crate::ast::{RoundingMode, TermId, TermKind, TermManager};
 #[allow(unused_imports)]

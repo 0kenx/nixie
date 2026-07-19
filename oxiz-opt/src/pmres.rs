@@ -12,7 +12,6 @@
 
 use crate::maxsat::{MaxSatError, MaxSatResult, SoftClause, SoftId, Weight};
 use oxiz_sat::{LBool, Lit, Solver as SatSolver, SolverResult, Var};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Configuration for PMRES solver
@@ -71,10 +70,6 @@ pub struct PmresSolver {
     upper_bound: Weight,
     /// Best model found
     best_model: Option<Vec<LBool>>,
-    /// Relaxation variables for soft clauses
-    relax_vars: FxHashMap<SoftId, Lit>,
-    /// Soft clauses that have been permanently relaxed (excluded from assumptions)
-    permanently_relaxed: rustc_hash::FxHashSet<SoftId>,
 }
 
 impl PmresSolver {
@@ -94,8 +89,6 @@ impl PmresSolver {
             lower_bound: Weight::zero(),
             upper_bound: Weight::Infinite,
             best_model: None,
-            relax_vars: FxHashMap::default(),
-            permanently_relaxed: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -198,54 +191,94 @@ impl PmresSolver {
         Ok(MaxSatResult::Optimal)
     }
 
-    /// Solve a specific weight level
+    /// Solve a specific weight level using core-guided WPM1 relaxation.
+    ///
+    /// Each soft clause is augmented with a fresh *selector* variable `s`
+    /// (clause `body ∨ s`); asserting `¬s` demands `body` hold. When
+    /// `solve_with_assumptions` returns an unsat core over these selectors the
+    /// involved soft constraints are relaxed following weighted Fu-Malik (WPM1,
+    /// Ansótegui–Bonet–Levy 2013):
+    ///   1. the minimum residual weight `w` across the core is added to the
+    ///      lower bound;
+    ///   2. every core constraint's weight is split so the remainder `weight−w`
+    ///      survives as an independent soft constraint;
+    ///   3. each core clause gains a fresh blocking variable and a fresh
+    ///      selector; and
+    ///   4. an ExactlyOne constraint over the blocking variables forces exactly
+    ///      one of the core clauses to pay `w`.
+    ///
+    /// This makes progress on cores of ANY size. The previous scheme only added
+    /// an at-most-one constraint over the (unchanged) relaxation variables while
+    /// re-asserting the SAME `¬relax` assumptions, so any core with two or more
+    /// soft clauses reproduced itself forever — a non-terminating loop that a
+    /// now-correct (complete) unsat-core extraction newly exposed. When the SAT
+    /// call finally succeeds, the accumulated lower bound IS the optimum for
+    /// this level.
     fn solve_level(&mut self, soft_clauses: &[SoftClause]) -> Result<MaxSatResult, MaxSatError> {
+        // An active soft constraint in the WPM1 working set.
+        struct SoftEntry {
+            /// Original clause literals (never gains blocking/selector literals).
+            body: SmallVec<[Lit; 8]>,
+            /// Residual weight still to be paid if this constraint is violated.
+            weight: Weight,
+            /// Current selector variable; the live clause is `body ∨ … ∨ selector`
+            /// and the constraint is enforced by asserting `¬selector`.
+            selector: Var,
+        }
+
         let mut solver = self.create_base_solver();
 
-        // Clear state from previous levels
-        self.permanently_relaxed.clear();
-
-        // Add relaxation variables for soft clauses at this level
-        let mut level_relax_vars: FxHashMap<SoftId, Lit> = FxHashMap::default();
-
+        // Register every variable that occurs in a soft clause and advance
+        // `next_var` past all of them, so freshly allocated selector / blocking
+        // variables can never collide with a problem variable (a collision would
+        // silently corrupt both the assumptions and the computed cost).
         for clause in soft_clauses {
-            // Ensure all variables in the clause exist
             for &lit in &clause.lits {
                 self.ensure_var(&mut solver, lit.var().0);
                 self.next_var = self.next_var.max(lit.var().0 + 1);
             }
-
-            let relax_var = Var(self.next_var);
-            self.next_var += 1;
-            self.ensure_var(&mut solver, relax_var.0);
-
-            let relax_lit = Lit::pos(relax_var);
-            level_relax_vars.insert(clause.id, relax_lit);
-            self.stats.relax_vars += 1;
-
-            // Add soft clause with relaxation: clause \/ relax_var
-            let mut relaxed_clause: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
-            relaxed_clause.push(relax_lit);
-            solver.add_clause(relaxed_clause.iter().copied());
         }
 
-        // Main loop: extract cores and relax
-        let mut iterations = 0;
+        // Build the initial working set: one selector per (non-trivial) soft clause.
+        let mut entries: Vec<SoftEntry> = Vec::new();
+        for clause in soft_clauses {
+            if clause.weight.is_zero() {
+                continue;
+            }
+            let selector = self.fresh_var(&mut solver);
+            self.stats.relax_vars += 1;
+            let body: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
+            self.add_relaxed_clause(&mut solver, &body, &[selector]);
+            entries.push(SoftEntry {
+                body,
+                weight: clause.weight.clone(),
+                selector,
+            });
+        }
+
+        let mut lb = Weight::zero();
+        let mut iterations: u32 = 0;
+
         loop {
             iterations += 1;
             if iterations > self.config.max_iterations {
                 return Ok(MaxSatResult::Unknown);
             }
 
-            // Build assumptions: ~relax_var for all soft clauses (except permanently relaxed ones)
-            let assumptions: Vec<Lit> = soft_clauses
-                .iter()
-                .filter(|c| !self.permanently_relaxed.contains(&c.id))
-                .filter_map(|c| level_relax_vars.get(&c.id).map(|&lit| lit.negate()))
-                .collect();
+            let assumptions: Vec<Lit> = entries.iter().map(|e| Lit::neg(e.selector)).collect();
 
+            // No active soft constraints remain: solve the residual hard problem.
             if assumptions.is_empty() {
-                break;
+                self.stats.sat_calls += 1;
+                return match solver.solve() {
+                    SolverResult::Sat => {
+                        self.best_model = Some(solver.model().to_vec());
+                        self.lower_bound = lb;
+                        Ok(MaxSatResult::Optimal)
+                    }
+                    SolverResult::Unsat => Err(MaxSatError::Unsatisfiable),
+                    SolverResult::Unknown => Ok(MaxSatResult::Unknown),
+                };
             }
 
             self.stats.sat_calls += 1;
@@ -253,72 +286,90 @@ impl PmresSolver {
 
             match result {
                 SolverResult::Sat => {
-                    // Found a solution satisfying all soft clauses at this level
                     self.best_model = Some(solver.model().to_vec());
-
-                    // Compute actual cost from model: sum weights of violated soft clauses
-                    // (those whose relaxation variables are true)
-                    let model = solver.model();
-                    let mut actual_cost = Weight::zero();
-                    for clause in soft_clauses {
-                        if let Some(&relax_lit) = level_relax_vars.get(&clause.id) {
-                            let var_idx = relax_lit.var().0 as usize;
-                            if var_idx < model.len() && model[var_idx] == LBool::True {
-                                actual_cost = actual_cost.add(&clause.weight);
-                            }
-                        }
-                    }
-                    self.lower_bound = actual_cost;
-
+                    self.lower_bound = lb;
                     return Ok(MaxSatResult::Optimal);
                 }
+                SolverResult::Unknown => return Ok(MaxSatResult::Unknown),
                 SolverResult::Unsat => {
-                    // Extract and process core
                     let core_lits = core.unwrap_or_default();
                     if core_lits.is_empty() {
-                        // Hard constraints are UNSAT
+                        // Conflict independent of the soft selectors → hard UNSAT.
+                        return Err(MaxSatError::Unsatisfiable);
+                    }
+
+                    // Map the core's selector variables back to entry indices.
+                    let core_vars: rustc_hash::FxHashSet<u32> =
+                        core_lits.iter().map(|l| l.var().0).collect();
+                    let core_idx: Vec<usize> = (0..entries.len())
+                        .filter(|&i| core_vars.contains(&entries[i].selector.0))
+                        .collect();
+
+                    if core_idx.is_empty() {
+                        // Core involves no soft selector → hard clauses are UNSAT.
                         return Err(MaxSatError::Unsatisfiable);
                     }
 
                     self.stats.cores_extracted += 1;
-                    self.stats.total_core_size += core_lits.len() as u32;
+                    self.stats.total_core_size += core_idx.len() as u32;
 
-                    // Find soft clauses in core and their minimum weight
-                    let mut core_soft_ids: Vec<SoftId> = Vec::new();
-                    let mut min_weight = Weight::Infinite;
+                    // Minimum residual weight across the core.
+                    let mut w_min = Weight::Infinite;
+                    for &i in &core_idx {
+                        w_min = w_min.min_weight(&entries[i].weight);
+                    }
+                    // Weights are finite and positive here, so this cannot arise;
+                    // guard defensively against a non-progress loop regardless.
+                    if w_min.is_infinite() || w_min.is_zero() {
+                        return Ok(MaxSatResult::Unknown);
+                    }
 
-                    for lit in &core_lits {
-                        let var = lit.var();
-                        // Find which soft clause this relaxation var belongs to
-                        for (soft_id, &relax_lit) in &level_relax_vars {
-                            if relax_lit.var() == var {
-                                core_soft_ids.push(*soft_id);
-                                if let Some(clause) = soft_clauses.iter().find(|c| c.id == *soft_id)
-                                {
-                                    min_weight = min_weight.min(clause.weight.clone());
-                                }
-                                break;
-                            }
+                    lb = lb.add(&w_min);
+
+                    // Relax each core constraint (WPM1).
+                    let mut blocking: Vec<Var> = Vec::with_capacity(core_idx.len());
+                    let mut split_off: Vec<SoftEntry> = Vec::new();
+
+                    for &i in &core_idx {
+                        // Weight split: the remainder `weight − w_min` survives as
+                        // an independent soft constraint with its own selector.
+                        let residual = entries[i].weight.sub(&w_min);
+                        if !residual.is_zero() {
+                            let sel_res = self.fresh_var(&mut solver);
+                            let body = entries[i].body.clone();
+                            self.add_relaxed_clause(&mut solver, &body, &[sel_res]);
+                            split_off.push(SoftEntry {
+                                body,
+                                weight: residual,
+                                selector: sel_res,
+                            });
                         }
+
+                        // Fresh blocking var + fresh selector for the relaxed clause.
+                        let b = self.fresh_var(&mut solver);
+                        blocking.push(b);
+                        let sel_new = self.fresh_var(&mut solver);
+                        self.stats.relax_vars += 1;
+
+                        // (body ∨ b ∨ sel_new): asserting ¬sel_new demands
+                        // (body ∨ b), so the body may be violated only when this
+                        // constraint is the one that pays via its blocking var `b`.
+                        let body = entries[i].body.clone();
+                        self.add_relaxed_clause(&mut solver, &body, &[b, sel_new]);
+
+                        entries[i].selector = sel_new;
+                        entries[i].weight = w_min.clone();
                     }
 
-                    if core_soft_ids.is_empty() {
-                        return Err(MaxSatError::Unsatisfiable);
-                    }
+                    entries.extend(split_off);
 
-                    // Process core: add at-most-one constraint on relaxation vars
-                    if core_soft_ids.len() > 1 {
-                        self.add_core_constraint(&mut solver, &level_relax_vars, &core_soft_ids);
-                    } else if core_soft_ids.len() == 1 {
-                        // Singleton core: permanently relax this clause
-                        self.permanently_relaxed.insert(core_soft_ids[0]);
-                    }
+                    // ExactlyOne(blocking): at least one core clause pays (a sound
+                    // lower bound) and at most one pays (no over-counting beyond
+                    // the single `w_min` already added to `lb`).
+                    self.add_exactly_one(&mut solver, &blocking);
                 }
-                SolverResult::Unknown => return Ok(MaxSatResult::Unknown),
             }
         }
-
-        Ok(MaxSatResult::Optimal)
     }
 
     /// Main PMRES solving loop (non-stratified)
@@ -327,35 +378,62 @@ impl PmresSolver {
         self.solve_level(&soft_clauses)
     }
 
-    /// Add core constraint: at most one relaxation variable in core can be true
-    fn add_core_constraint(
-        &mut self,
-        solver: &mut SatSolver,
-        relax_vars: &FxHashMap<SoftId, Lit>,
-        core_soft_ids: &[SoftId],
-    ) {
-        // For small cores, use pairwise encoding
-        if core_soft_ids.len() <= 5 {
-            for i in 0..core_soft_ids.len() {
-                for j in (i + 1)..core_soft_ids.len() {
-                    if let (Some(&lit_i), Some(&lit_j)) = (
-                        relax_vars.get(&core_soft_ids[i]),
-                        relax_vars.get(&core_soft_ids[j]),
-                    ) {
-                        // ~lit_i | ~lit_j (at most one can be true)
-                        solver.add_clause([lit_i.negate(), lit_j.negate()]);
-                    }
+    /// Allocate a fresh SAT variable and ensure the solver has it registered.
+    fn fresh_var(&mut self, solver: &mut SatSolver) -> Var {
+        let v = Var(self.next_var);
+        self.next_var += 1;
+        self.ensure_var(solver, v.0);
+        v
+    }
+
+    /// Add the clause `body ∨ extra_0 ∨ … ∨ extra_k` (each `extra` a positive
+    /// literal of the given variable) to `solver`.
+    fn add_relaxed_clause(&self, solver: &mut SatSolver, body: &[Lit], extra: &[Var]) {
+        let mut clause: SmallVec<[Lit; 10]> = body.iter().copied().collect();
+        for &v in extra {
+            clause.push(Lit::pos(v));
+        }
+        solver.add_clause(clause.iter().copied());
+    }
+
+    /// Encode ExactlyOne over `vars` as hard clauses: one at-least-one clause,
+    /// plus at-most-one via the pairwise encoding for small sets, escalating to
+    /// the Sinz sequential-counter encoding (linear in the number of variables)
+    /// once the quadratic pairwise clause count would bloat the database.
+    fn add_exactly_one(&mut self, solver: &mut SatSolver, vars: &[Var]) {
+        if vars.is_empty() {
+            return;
+        }
+
+        // At least one.
+        let at_least_one: SmallVec<[Lit; 16]> = vars.iter().map(|&v| Lit::pos(v)).collect();
+        solver.add_clause(at_least_one.iter().copied());
+
+        // At most one.
+        if vars.len() <= 5 {
+            for i in 0..vars.len() {
+                for j in (i + 1)..vars.len() {
+                    solver.add_clause([Lit::neg(vars[i]), Lit::neg(vars[j])]);
                 }
             }
-        } else {
-            // For larger cores, add weaker constraint: at least one must be false
-            let clause: SmallVec<[Lit; 8]> = core_soft_ids
-                .iter()
-                .filter_map(|id| relax_vars.get(id).map(|lit| lit.negate()))
-                .collect();
-            if !clause.is_empty() {
-                solver.add_clause(clause.iter().copied());
+            return;
+        }
+
+        // Sinz sequential (ladder) at-most-one with fresh register variables.
+        let n = vars.len();
+        let mut s_prev = self.fresh_var(solver);
+        solver.add_clause([Lit::neg(vars[0]), Lit::pos(s_prev)]); // ¬x0 ∨ r0
+        for (k, &xk) in vars.iter().enumerate().skip(1) {
+            if k + 1 == n {
+                // Last variable: ¬x_{n-1} ∨ ¬r_{n-2}.
+                solver.add_clause([Lit::neg(xk), Lit::neg(s_prev)]);
+                break;
             }
+            let s_cur = self.fresh_var(solver);
+            solver.add_clause([Lit::neg(xk), Lit::pos(s_cur)]); // ¬x_k ∨ r_k
+            solver.add_clause([Lit::neg(s_prev), Lit::pos(s_cur)]); // ¬r_{k-1} ∨ r_k
+            solver.add_clause([Lit::neg(xk), Lit::neg(s_prev)]); // ¬x_k ∨ ¬r_{k-1}
+            s_prev = s_cur;
         }
     }
 
@@ -408,8 +486,6 @@ impl PmresSolver {
         self.lower_bound = Weight::zero();
         self.upper_bound = Weight::Infinite;
         self.best_model = None;
-        self.relax_vars.clear();
-        self.permanently_relaxed.clear();
     }
 }
 
@@ -479,7 +555,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PMRES algorithm needs further tuning for simple cases"]
     fn test_pmres_all_satisfiable() {
         let mut solver = PmresSolver::new();
 

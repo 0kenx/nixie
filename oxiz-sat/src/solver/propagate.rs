@@ -19,6 +19,29 @@ impl Solver {
             let binary_len = self.binary_graph.get(lit).len();
             for idx in 0..binary_len {
                 let (implied_lit, clause_id) = self.binary_graph.get(lit)[idx];
+
+                // The binary implication graph is a fast-path index over binary
+                // clauses, but its edges are never removed when a clause is
+                // retracted by pop()/forget_learned_since()/subsumption, and
+                // freed clause slots are reused for new clauses. A stale edge
+                // would keep propagating (or reporting conflicts from) a clause
+                // that no longer exists — or, after slot reuse, from an unrelated
+                // live clause — yielding false UNSAT in incremental solving.
+                // Only trust an edge still backed by a live binary clause
+                // {~lit, implied_lit}; skip (and thereby ignore) any other edge.
+                let backed = match self.clauses.get(clause_id) {
+                    Some(c) => {
+                        !c.deleted
+                            && c.lits.len() == 2
+                            && c.lits.contains(&lit.negate())
+                            && c.lits.contains(&implied_lit)
+                    }
+                    None => false,
+                };
+                if !backed {
+                    continue;
+                }
+
                 let value = self.trail.lit_value(implied_lit);
                 if value.is_false() {
                     // Conflict in binary clause

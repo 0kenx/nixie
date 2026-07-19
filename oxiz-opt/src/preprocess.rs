@@ -51,7 +51,15 @@ pub struct PreprocessConfig {
     pub unit_propagation: bool,
     /// Enable failed literal detection (more expensive but effective)
     pub failed_literal_detection: bool,
-    /// Enable bounded variable elimination (eliminate variables with few occurrences)
+    /// Enable bounded variable elimination (eliminate variables with few occurrences).
+    ///
+    /// Resolution-based BVE is only sound for *hard* (satisfiability-preserving)
+    /// clauses: resolving weighted soft clauses as if they were hard does not
+    /// preserve the MaxSAT optimum (e.g. soft `(x)w1, (¬x)w1, (¬x)w1` has
+    /// optimum cost 1, but naive resolution forces cost 2). It is therefore
+    /// **disabled by default**, and even when enabled the implementation only
+    /// eliminates variables all of whose occurrences are infinite-weight
+    /// (effectively hard) clauses. See `Preprocessor::bounded_variable_elimination`.
     pub bounded_variable_elimination: bool,
     /// Maximum clause size for BVE resolution
     pub bve_clause_limit: usize,
@@ -69,7 +77,9 @@ impl Default for PreprocessConfig {
             simplify: true,
             unit_propagation: true,
             failed_literal_detection: false, // Expensive, disabled by default
-            bounded_variable_elimination: true,
+            // Resolving weighted soft clauses as if hard does not preserve the
+            // MaxSAT optimum, so BVE is off by default (see the field docs).
+            bounded_variable_elimination: false,
             bve_clause_limit: 100,    // Don't create clauses larger than this
             bve_occurrence_limit: 10, // Only eliminate vars with <= this many occurrences
         }
@@ -138,7 +148,7 @@ impl Preprocessor {
 
         // Step 5: Unit propagation on soft clauses
         if self.config.unit_propagation {
-            soft = self.unit_propagation(soft, &mut hard);
+            soft = self.unit_propagation(soft, &hard);
         }
 
         // Step 6: Failed literal detection (expensive but effective)
@@ -320,82 +330,78 @@ impl Preprocessor {
         clause_a.iter().all(|lit| set_b.contains(lit))
     }
 
-    /// Unit propagation on soft clauses
+    /// Unit propagation using genuinely HARD unit clauses only.
     ///
-    /// Find unit clauses in soft constraints and propagate them.
-    /// If a soft clause becomes unit, we can simplify other clauses by:
-    /// - Removing clauses that contain the unit literal (satisfied)
-    /// - Removing the negation of the unit literal from other clauses
+    /// A soft clause that happens to have a single literal is *not* a fact:
+    /// it need not hold in the optimal solution (e.g. soft `(x)` weight 1
+    /// competing against soft `(¬x)` weight 5 — the optimum violates the
+    /// weight-1 clause, it does not force `x`). Treating such soft units as
+    /// facts and using them to delete or truncate other soft clauses
+    /// silently discards weight and corrupts the optimum.
+    ///
+    /// Only clauses that are unconditionally true — the HARD unit clauses
+    /// already produced earlier in this preprocessing pass (e.g. by
+    /// [`Self::harden_high_weight`]) — may be used as propagation facts:
+    /// - A soft clause containing a hard-true literal is always satisfied
+    ///   regardless of the solution, so it can be dropped outright (it
+    ///   never contributes to the cost).
+    /// - A soft clause containing the negation of a hard-true literal can
+    ///   never be satisfied through that literal, so the literal can be
+    ///   struck from it. If this empties the clause entirely, the clause is
+    ///   violated in *every* solution; it is kept (with no literals) rather
+    ///   than dropped, so the core-guided solver still accounts for its
+    ///   weight instead of the cost silently vanishing.
+    ///
+    /// Weight-aware handling of conflicts between two *soft* unit clauses
+    /// is intentionally left to the exact weighted core-guided MaxSAT
+    /// algorithm (see `maxsat::algorithms::MaxSatSolver`), which reasons
+    /// about such trade-offs precisely rather than approximating them here.
     fn unit_propagation(
         &mut self,
         soft_clauses: Vec<SoftClause>,
-        _hard: &mut Vec<SmallVec<[Lit; 4]>>,
+        hard: &[SmallVec<[Lit; 4]>],
     ) -> Vec<SoftClause> {
+        let hard_units: Vec<Lit> = hard
+            .iter()
+            .filter(|c| c.len() == 1)
+            .filter_map(|c| c.first().copied())
+            .collect();
+
+        if hard_units.is_empty() {
+            return soft_clauses;
+        }
+
         let mut result = soft_clauses;
-        let mut changed = true;
+        for unit_lit in hard_units {
+            let neg_unit = unit_lit.negate();
+            let mut new_result = Vec::with_capacity(result.len());
 
-        // Iterate until no more units are found
-        while changed {
-            changed = false;
+            for clause in result {
+                if clause.lits.contains(&unit_lit) {
+                    // Forced satisfied by a hard fact - always true, so it
+                    // never contributes to the cost; drop it.
+                    self.stats.clauses_removed += 1;
+                    continue;
+                }
 
-            // Find unit clauses (single literal)
-            let mut units = Vec::new();
-            for clause in &result {
-                if clause.lits.len() == 1 {
-                    units.push((clause.lits[0], clause.weight.clone()));
+                if clause.lits.contains(&neg_unit) {
+                    let new_lits: SmallVec<[Lit; 4]> = clause
+                        .lits
+                        .iter()
+                        .copied()
+                        .filter(|&lit| lit != neg_unit)
+                        .collect();
+
+                    let mut new_clause = SoftClause::new(clause.id, new_lits, clause.weight);
+                    new_clause.relax_var = clause.relax_var;
+                    self.stats.unit_propagations += 1;
+                    new_result.push(new_clause);
+                } else {
+                    new_result.push(clause);
                 }
             }
 
-            if units.is_empty() {
-                break;
-            }
-
-            // Process each unit
-            for (unit_lit, _unit_weight) in units {
-                let mut new_result = Vec::new();
-
-                for clause in result {
-                    // Skip the unit clause itself
-                    if clause.lits.len() == 1 && clause.lits[0] == unit_lit {
-                        new_result.push(clause);
-                        continue;
-                    }
-
-                    // If clause contains the unit literal, it's satisfied
-                    if clause.lits.contains(&unit_lit) {
-                        // For weighted MaxSAT, we need to be careful
-                        // For now, just skip satisfied clauses
-                        continue;
-                    }
-
-                    // Remove the negation of the unit literal
-                    let neg_unit = unit_lit.negate();
-                    if clause.lits.contains(&neg_unit) {
-                        let new_lits: SmallVec<[Lit; 4]> = clause
-                            .lits
-                            .iter()
-                            .copied()
-                            .filter(|&lit| lit != neg_unit)
-                            .collect();
-
-                        if !new_lits.is_empty() {
-                            let mut new_clause =
-                                SoftClause::new(clause.id, new_lits, clause.weight);
-                            new_clause.relax_var = clause.relax_var;
-                            new_result.push(new_clause);
-                            self.stats.unit_propagations += 1;
-                            changed = true;
-                        } else {
-                            // Empty clause after propagation - conflict
-                            self.stats.clauses_removed += 1;
-                        }
-                    } else {
-                        new_result.push(clause);
-                    }
-                }
-
-                result = new_result;
-            }
+            result = new_result;
         }
 
         result
@@ -522,6 +528,16 @@ impl Preprocessor {
     /// This is only beneficial if the number of resolvents is less than m+n,
     /// and if the resolvents are not too large.
     ///
+    /// # Soundness
+    ///
+    /// Resolution-based BVE preserves *satisfiability* but **not** the weighted
+    /// MaxSAT optimum: replacing two soft clauses by their resolvent silently
+    /// changes which constraints are sacrificed. To stay sound, this
+    /// implementation only eliminates a variable when *every* clause mentioning
+    /// it has infinite weight (i.e. is effectively a hard constraint); such
+    /// clauses must all be satisfied, so ordinary resolution is valid for them.
+    /// Finite-weight soft clauses are never resolved as if they were hard.
+    ///
     /// Reference: SatELite preprocessing (Eén & Biere, 2005)
     #[allow(dead_code)]
     fn bounded_variable_elimination(&mut self, soft_clauses: Vec<SoftClause>) -> Vec<SoftClause> {
@@ -553,6 +569,18 @@ impl Preprocessor {
             if let Some(neg_indices) = neg_indices {
                 let pos_count = pos_indices.len();
                 let neg_count = neg_indices.len();
+
+                // Soundness guard: only resolve a variable whose every
+                // occurrence is an infinite-weight (effectively hard) clause.
+                // Resolving finite-weight soft clauses as if they were hard
+                // does not preserve the MaxSAT optimum.
+                let all_hard = pos_indices
+                    .iter()
+                    .chain(neg_indices.iter())
+                    .all(|&i| result[i].weight.is_infinite());
+                if !all_hard {
+                    continue;
+                }
 
                 // Only eliminate if occurrences are within limit
                 if pos_count + neg_count <= self.config.bve_occurrence_limit {
@@ -592,12 +620,16 @@ impl Preprocessor {
 
         // Eliminate variables
         for var in vars_to_eliminate {
-            let pos_indices = var_pos_clauses
-                .get(&var)
-                .expect("variable exists in pos_clauses map");
-            let neg_indices = var_neg_clauses
-                .get(&var)
-                .expect("variable exists in neg_clauses map");
+            // Both maps are guaranteed to have an entry for `var` here: it was
+            // only pushed onto `vars_to_eliminate` above after a successful
+            // lookup in both `var_pos_clauses` and `var_neg_clauses`. Still,
+            // fall back to leaving the variable un-eliminated (rather than
+            // panicking) if that invariant is ever violated by a future edit.
+            let (Some(pos_indices), Some(neg_indices)) =
+                (var_pos_clauses.get(&var), var_neg_clauses.get(&var))
+            else {
+                continue;
+            };
 
             let mut new_clauses = Vec::new();
 
@@ -880,22 +912,76 @@ mod tests {
     }
 
     #[test]
-    fn test_unit_propagation() {
+    fn test_unit_propagation_hard_unit_only() {
         let mut prep = Preprocessor::new();
-        let mut hard = Vec::new();
+        // Genuine HARD unit clause: x0 (this is a fact, unlike a soft unit).
+        let hard: Vec<SmallVec<[Lit; 4]>> = vec![[lit(0, false)].into_iter().collect()];
 
-        // Unit clause: x0
         // Clause with negation: ~x0 | x1
-        // After propagation, second clause should become just x1
+        // Since x0 is a hard fact, ~x0 can never hold, so this clause should
+        // be simplified down to just x1.
+        let soft = vec![make_soft_clause(
+            1,
+            &[lit(0, true), lit(1, false)],
+            Weight::one(),
+        )];
+
+        let result = prep.unit_propagation(soft, &hard);
+
+        // Should have propagated the hard unit and shrunk the clause to [x1].
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].lits.as_slice(), &[lit(1, false)]);
+        assert!(prep.stats.unit_propagations > 0);
+    }
+
+    #[test]
+    fn test_unit_propagation_soft_unit_is_not_a_fact() {
+        // Regression test: a SOFT unit clause must never be treated as a
+        // hard fact. soft (x0) w=1 and soft (~x0|x1) w=1 must both survive
+        // propagation unchanged, since x0 need not hold in the optimum.
+        let mut prep = Preprocessor::new();
+        let hard: Vec<SmallVec<[Lit; 4]>> = Vec::new();
+
         let soft = vec![
             make_soft_clause(0, &[lit(0, false)], Weight::one()),
             make_soft_clause(1, &[lit(0, true), lit(1, false)], Weight::one()),
         ];
 
-        let result = prep.unit_propagation(soft, &mut hard);
+        let result = prep.unit_propagation(soft, &hard);
 
-        // Should have propagated the unit
-        assert!(prep.stats.unit_propagations > 0 || result.len() == 1);
+        // No hard units exist, so nothing should have been touched.
+        assert_eq!(result.len(), 2);
+        assert_eq!(prep.stats.unit_propagations, 0);
+        assert_eq!(prep.stats.clauses_removed, 0);
+        // Both original clauses (in original literal form) must still be
+        // present, in some order.
+        assert!(result.iter().any(|c| c.lits.as_slice() == [lit(0, false)]));
+        assert!(
+            result
+                .iter()
+                .any(|c| c.lits.as_slice() == [lit(0, true), lit(1, false)])
+        );
+    }
+
+    #[test]
+    fn test_unit_propagation_conflicting_soft_units_both_survive() {
+        // The exact adversarial example from the audit: soft (x) w=1 and
+        // soft (~x) w=5 must NOT have either clause silently dropped by
+        // preprocessing; the weighted core-guided solver is responsible for
+        // resolving this trade-off exactly.
+        let mut prep = Preprocessor::new();
+        let hard: Vec<SmallVec<[Lit; 4]>> = Vec::new();
+
+        let soft = vec![
+            make_soft_clause(0, &[lit(0, false)], Weight::from(1i64)),
+            make_soft_clause(1, &[lit(0, true)], Weight::from(5i64)),
+        ];
+
+        let result = prep.unit_propagation(soft, &hard);
+
+        assert_eq!(result.len(), 2);
+        let total_weight: i64 = result.iter().filter_map(|c| c.weight.to_i64()).sum();
+        assert_eq!(total_weight, 6);
     }
 
     #[test]
@@ -936,19 +1022,21 @@ mod tests {
     #[test]
     fn test_unit_propagation_empty_clause() {
         let mut prep = Preprocessor::new();
-        let mut hard = Vec::new();
+        // Genuine HARD unit: x0.
+        let hard: Vec<SmallVec<[Lit; 4]>> = vec![[lit(0, false)].into_iter().collect()];
 
-        // Unit clause: x0
-        // Clause that becomes empty after propagation: ~x0
-        let soft = vec![
-            make_soft_clause(0, &[lit(0, false)], Weight::one()),
-            make_soft_clause(1, &[lit(0, true)], Weight::one()),
-        ];
+        // Soft clause that becomes empty after propagation: ~x0 (weight 7).
+        // Since x0 is hard-true, this soft clause can never be satisfied and
+        // is violated in every solution; it must be *kept* (with zero
+        // literals) so its weight is still accounted for downstream, rather
+        // than silently dropped.
+        let soft = vec![make_soft_clause(1, &[lit(0, true)], Weight::from(7i64))];
 
-        let result = prep.unit_propagation(soft, &mut hard);
+        let result = prep.unit_propagation(soft, &hard);
 
-        // One clause should be removed or simplified
-        assert!(result.len() <= 2);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].lits.is_empty());
+        assert_eq!(result[0].weight, Weight::from(7i64));
     }
 
     #[test]
@@ -985,6 +1073,9 @@ mod tests {
         );
     }
 
+    /// Positive case: every clause mentioning `x0` is infinite-weight
+    /// (effectively hard), so the soundness guard in
+    /// [`Preprocessor::bounded_variable_elimination`] allows the elimination.
     #[test]
     fn test_bounded_variable_elimination() {
         let config = PreprocessConfig {
@@ -1002,19 +1093,61 @@ mod tests {
         let mut prep = Preprocessor::with_config(config);
 
         // Create a simple case where x0 can be eliminated
-        // Clause 0: x0 | x1
-        // Clause 1: ~x0 | x2
+        // Clause 0: x0 | x1  (hard: infinite weight)
+        // Clause 1: ~x0 | x2 (hard: infinite weight)
         // After eliminating x0, we get: x1 | x2
+        let soft = vec![
+            make_soft_clause(0, &[lit(0, false), lit(1, false)], Weight::Infinite),
+            make_soft_clause(1, &[lit(0, true), lit(2, false)], Weight::Infinite),
+        ];
+
+        let result = prep.bounded_variable_elimination(soft);
+
+        // x0 should have been eliminated and replaced by its single resolvent
+        // (x1 | x2).
+        assert_eq!(prep.stats().variables_eliminated, 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].lits.len(), 2);
+        assert!(result[0].lits.contains(&lit(1, false)));
+        assert!(result[0].lits.contains(&lit(2, false)));
+    }
+
+    /// Negative case: the same clause shape as above, but with *finite*
+    /// weights. Resolving finite-weight soft clauses as if they were hard
+    /// does not preserve the weighted MaxSAT optimum (see the
+    /// [`Preprocessor::bounded_variable_elimination`] soundness doc), so the
+    /// guard must refuse to eliminate `x0` here even though it otherwise
+    /// looks like a profitable elimination.
+    #[test]
+    fn test_bounded_variable_elimination_preserves_finite_weight_clauses() {
+        let config = PreprocessConfig {
+            merge_duplicates: false,
+            harden_high_weight: false,
+            harden_threshold: None,
+            subsumption: false,
+            simplify: false,
+            unit_propagation: false,
+            failed_literal_detection: false,
+            bounded_variable_elimination: true,
+            bve_clause_limit: 100,
+            bve_occurrence_limit: 10,
+        };
+        let mut prep = Preprocessor::with_config(config);
+
         let soft = vec![
             make_soft_clause(0, &[lit(0, false), lit(1, false)], Weight::one()),
             make_soft_clause(1, &[lit(0, true), lit(2, false)], Weight::one()),
         ];
 
-        let result = prep.bounded_variable_elimination(soft);
+        let result = prep.bounded_variable_elimination(soft.clone());
 
-        // Should have eliminated x0 and created a resolvent
-        // Result should have 1 clause (x1 | x2)
-        assert!(result.len() <= 2);
+        assert_eq!(prep.stats().variables_eliminated, 0);
+        // The clauses must survive unchanged (in some order) — no resolvent
+        // was substituted in their place.
+        assert_eq!(result.len(), soft.len());
+        for clause in &soft {
+            assert!(result.iter().any(|c| c.lits == clause.lits));
+        }
     }
 
     #[test]

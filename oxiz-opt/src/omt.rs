@@ -259,6 +259,24 @@ impl OmtObjective {
     }
 }
 
+/// Compute the wall-clock deadline for one search call from `timeout_ms`
+/// (0 = no deadline). Shared by `optimize_binary_search`,
+/// `optimize_linear_search`, and `optimize_geometric_search` so that
+/// `OmtConfig::timeout_ms` — previously accepted into the config but never
+/// read anywhere in this module — actually bounds each search loop instead
+/// of running until `max_iterations` regardless of elapsed time.
+fn omt_deadline(timeout_ms: u64) -> Option<std::time::Instant> {
+    if timeout_ms == 0 {
+        return None;
+    }
+    std::time::Instant::now().checked_add(core::time::Duration::from_millis(timeout_ms))
+}
+
+/// True once `deadline` (if any) has passed.
+fn omt_deadline_passed(deadline: Option<std::time::Instant>) -> bool {
+    deadline.is_some_and(|d| std::time::Instant::now() >= d)
+}
+
 impl OmtSolver {
     /// Create a new OMT solver
     pub fn new() -> Self {
@@ -434,8 +452,16 @@ impl OmtSolver {
         let is_minimize = matches!(self.objectives[obj_idx].kind, ObjectiveKind::Minimize);
 
         let mut iterations = 0;
+        // Whether the search actually *proved* optimality. Only an exact
+        // integer bound closure (lower meets upper) counts. Exiting via the
+        // iteration budget, a mixed-type midpoint failure, the rational
+        // epsilon cutoff, or the wall-clock deadline leaves a
+        // feasible-but-unproven bound, which must be reported as
+        // `Satisfiable`, not `Optimal`.
+        let mut converged = false;
+        let deadline = omt_deadline(self.config.timeout_ms);
 
-        while iterations < self.config.max_iterations {
+        while iterations < self.config.max_iterations && !omt_deadline_passed(deadline) {
             iterations += 1;
             self.stats.sat_calls += 1;
 
@@ -446,13 +472,15 @@ impl OmtSolver {
             if let (Some(l), Some(u)) = (lower, upper)
                 && l >= u
             {
-                // For integers, check if we're done
+                // For integers, meeting bounds is an exact optimality proof.
                 if let (Weight::Int(li), Weight::Int(ui)) = (l, u)
                     && li >= ui
                 {
+                    converged = true;
                     break;
                 }
-                // For rationals, use precision check
+                // For rationals, we only close the gap to a tolerance: this is
+                // an approximate optimum, not a proven exact one.
                 if let (Weight::Rational(lr), Weight::Rational(ur)) = (l, u) {
                     let diff = ur - lr;
                     if diff.abs() < BigRational::new(BigInt::one(), BigInt::from(1000000)) {
@@ -525,7 +553,11 @@ impl OmtSolver {
         self.stats.objectives_optimized += 1;
 
         match &self.best_values[obj_idx] {
-            Some(v) => ObjectiveResult::Optimal(v.clone()),
+            // Only claim `Optimal` when the search proved it (exact integer
+            // bound closure). Otherwise the best value found is feasible but
+            // its optimality is unproven.
+            Some(v) if converged => ObjectiveResult::Optimal(v.clone()),
+            Some(v) => ObjectiveResult::Satisfiable(v.clone()),
             None => ObjectiveResult::Unknown,
         }
     }
@@ -542,8 +574,14 @@ impl OmtSolver {
 
         let mut iterations = 0;
         let mut last_value: Option<Weight> = None;
+        // Whether the search actually *proved* optimality. Only a genuine
+        // "cannot improve" UNSAT result counts. Exiting via the iteration
+        // budget or the wall-clock deadline leaves a feasible-but-unproven
+        // value, which must be reported as `Satisfiable`, not `Optimal`.
+        let mut converged = false;
+        let deadline = omt_deadline(self.config.timeout_ms);
 
-        while iterations < self.config.max_iterations {
+        while iterations < self.config.max_iterations && !omt_deadline_passed(deadline) {
             iterations += 1;
             self.stats.sat_calls += 1;
 
@@ -595,7 +633,9 @@ impl OmtSolver {
                 self.update_best_model(assignment);
                 last_value = self.best_values[obj_idx].clone();
             } else {
-                // Can't improve further
+                // Can't improve further: strict-improvement probe came back
+                // UNSAT, so the current best value is a proven optimum.
+                converged = true;
                 break;
             }
         }
@@ -603,7 +643,11 @@ impl OmtSolver {
         self.stats.objectives_optimized += 1;
 
         match &self.best_values[obj_idx] {
-            Some(v) => ObjectiveResult::Optimal(v.clone()),
+            // Only claim `Optimal` when the search proved it (UNSAT on the
+            // strict-improvement step). A deadline or iteration-budget exit
+            // leaves a feasible-but-unproven value.
+            Some(v) if converged => ObjectiveResult::Optimal(v.clone()),
+            Some(v) => ObjectiveResult::Satisfiable(v.clone()),
             None => ObjectiveResult::Unknown,
         }
     }
@@ -638,8 +682,16 @@ impl OmtSolver {
             return ObjectiveResult::Unsatisfiable;
         }
 
+        // Whether the search actually *proved* optimality. Only backing the
+        // step size down below the epsilon tolerance (the precise bound is
+        // pinned) counts. Exiting via the iteration budget or the wall-clock
+        // deadline leaves a feasible-but-unproven value, which must be
+        // reported as `Satisfiable`, not `Optimal`.
+        let mut converged = false;
+
         // Geometric phase: increase step size while SAT
-        while iterations < self.config.max_iterations {
+        let deadline = omt_deadline(self.config.timeout_ms);
+        while iterations < self.config.max_iterations && !omt_deadline_passed(deadline) {
             iterations += 1;
             self.stats.sat_calls += 1;
 
@@ -669,6 +721,9 @@ impl OmtSolver {
             } else {
                 // Back off: halve the step and try again
                 if step <= BigRational::new(BigInt::one(), BigInt::from(1000000)) {
+                    // Step shrank below tolerance: the precise bound is pinned,
+                    // so the current best value is a proven optimum.
+                    converged = true;
                     break;
                 }
                 step /= &factor;
@@ -678,7 +733,11 @@ impl OmtSolver {
         self.stats.objectives_optimized += 1;
 
         match &self.best_values[obj_idx] {
-            Some(v) => ObjectiveResult::Optimal(v.clone()),
+            // Only claim `Optimal` when the search proved it (step size backed
+            // below the epsilon tolerance). A deadline or iteration-budget exit
+            // leaves a feasible-but-unproven value.
+            Some(v) if converged => ObjectiveResult::Optimal(v.clone()),
+            Some(v) => ObjectiveResult::Satisfiable(v.clone()),
             None => ObjectiveResult::Unknown,
         }
     }
@@ -706,6 +765,11 @@ impl OmtSolver {
         let mut indices: Vec<usize> = (0..self.objectives.len()).collect();
         indices.sort_by_key(|&i| self.objectives[i].priority);
 
+        // Track whether every objective was proven optimal. If any objective
+        // only reached a feasible-but-unproven value, the joint result must be
+        // reported as `Satisfiable` rather than `Optimal`.
+        let mut all_optimal = true;
+
         // Optimize each objective in priority order
         for &obj_idx in &indices {
             let result = match self.config.strategy {
@@ -732,7 +796,8 @@ impl OmtSolver {
                     };
                 }
                 ObjectiveResult::Unknown => return OmtResult::Unknown,
-                _ => {}
+                ObjectiveResult::Satisfiable(_) => all_optimal = false,
+                ObjectiveResult::Optimal(_) => {}
             }
         }
 
@@ -745,7 +810,11 @@ impl OmtSolver {
 
         let model = self.best_model.clone().unwrap_or_default();
 
-        OmtResult::Optimal { values, model }
+        if all_optimal {
+            OmtResult::Optimal { values, model }
+        } else {
+            OmtResult::Satisfiable { values, model }
+        }
     }
 
     /// Reset the solver
@@ -846,6 +915,152 @@ mod tests {
 
         let eq = ArithConstraint::eq(LinearObjective::var(0), BigRational::from(BigInt::from(5)));
         assert!(eq.is_satisfied(&assignment));
+    }
+
+    /// `OmtConfig::timeout_ms` used to be accepted into the config but never
+    /// read by `optimize_binary_search` — only `max_iterations` bounded the
+    /// loop. This pins down that a wall-clock deadline (with an effectively
+    /// unlimited `max_iterations`) now stops the search on its own, and that
+    /// stopping early is reported honestly (`Satisfiable`, never a fabricated
+    /// `Optimal`) since the search could not have converged in so few steps.
+    #[test]
+    fn test_omt_binary_search_honors_timeout() {
+        let mut solver = OmtSolver::with_config(OmtConfig {
+            strategy: OmtStrategy::BinarySearch,
+            max_iterations: 1_000_000,
+            timeout_ms: 30,
+            ..Default::default()
+        });
+
+        // Minimize x where x >= 2, over a range wide enough that binary
+        // search needs ~30 steps to close the gap exactly.
+        solver.minimize(LinearObjective::var(0));
+        solver.set_bounds(
+            ObjectiveId::new(0),
+            Some(Weight::from(0)),
+            Some(Weight::from(1_000_000_000i64)),
+        );
+
+        // Deliberately slow checker: each call costs 10ms, so a 30ms deadline
+        // permits only a handful of iterations — far short of the ~30 needed
+        // to converge on this range. If the wall-clock deadline weren't
+        // honored, this would instead run for the full `max_iterations`
+        // budget (or until convergence).
+        let checker = |c: &ArithConstraint| -> Option<FxHashMap<u32, BigRational>> {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            let point: FxHashMap<u32, BigRational> = [(0u32, BigRational::from(BigInt::from(2)))]
+                .into_iter()
+                .collect();
+            if c.is_satisfied(&point) {
+                Some(point)
+            } else {
+                None
+            }
+        };
+
+        let start = std::time::Instant::now();
+        let result = solver.optimize_binary_search(0, checker);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "a 30ms timeout must bound the search even with max_iterations=1_000_000, took {elapsed:?}"
+        );
+        assert!(
+            matches!(result, ObjectiveResult::Satisfiable(_)),
+            "the deadline cuts the search short of exact convergence, so the result must be \
+             the honest feasible-but-unproven `Satisfiable`, got {result:?}"
+        );
+    }
+
+    /// Regression: `optimize_linear_search` used to report `Optimal`
+    /// unconditionally at the end of the loop. When the wall-clock deadline
+    /// (or the iteration budget) fires mid-improvement, the best value is only
+    /// feasible/unproven and must be reported as `Satisfiable`, never a
+    /// fabricated `Optimal`.
+    #[test]
+    fn test_omt_linear_search_honors_timeout() {
+        let mut solver = OmtSolver::with_config(OmtConfig {
+            strategy: OmtStrategy::LinearSearch,
+            max_iterations: 1_000_000,
+            timeout_ms: 30,
+            ..Default::default()
+        });
+
+        solver.minimize(LinearObjective::var(0));
+
+        // Slow checker that keeps finding a strictly-better point every call,
+        // simulating an unbounded descent: the strict-improvement probe never
+        // comes back UNSAT, so the loop can only ever exit via the deadline.
+        let mut counter = 0i64;
+        let checker = move |_c: &ArithConstraint| -> Option<FxHashMap<u32, BigRational>> {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            counter -= 1;
+            let point: FxHashMap<u32, BigRational> =
+                [(0u32, BigRational::from(BigInt::from(counter)))]
+                    .into_iter()
+                    .collect();
+            Some(point)
+        };
+
+        let start = std::time::Instant::now();
+        let result = solver.optimize_linear_search(0, checker);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "a 30ms timeout must bound the search even with max_iterations=1_000_000, took {elapsed:?}"
+        );
+        assert!(
+            matches!(result, ObjectiveResult::Satisfiable(_)),
+            "the deadline cuts the search short of a proven optimum, so the result must be \
+             the honest feasible-but-unproven `Satisfiable`, got {result:?}"
+        );
+    }
+
+    /// Regression: `optimize_geometric_search` used to report `Optimal`
+    /// unconditionally at the end of the loop. A deadline (or iteration
+    /// budget) exit mid-improvement leaves a feasible-but-unproven value that
+    /// must be reported as `Satisfiable`, never a fabricated `Optimal`.
+    #[test]
+    fn test_omt_geometric_search_honors_timeout() {
+        let mut solver = OmtSolver::with_config(OmtConfig {
+            strategy: OmtStrategy::GeometricSearch,
+            max_iterations: 1_000_000,
+            timeout_ms: 30,
+            ..Default::default()
+        });
+
+        solver.minimize(LinearObjective::var(0));
+
+        // Slow checker that always finds a strictly-better point, keeping the
+        // geometric phase in its "increase step" branch forever: it never
+        // backs the step below tolerance, so the loop can only exit via the
+        // deadline.
+        let mut counter = 0i64;
+        let checker = move |_c: &ArithConstraint| -> Option<FxHashMap<u32, BigRational>> {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            counter -= 1;
+            let point: FxHashMap<u32, BigRational> =
+                [(0u32, BigRational::from(BigInt::from(counter)))]
+                    .into_iter()
+                    .collect();
+            Some(point)
+        };
+
+        let start = std::time::Instant::now();
+        let result = solver.optimize_geometric_search(0, checker);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "a 30ms timeout must bound the search even with max_iterations=1_000_000, took {elapsed:?}"
+        );
+        assert!(
+            matches!(result, ObjectiveResult::Satisfiable(_)),
+            "the deadline cuts the search short of a proven optimum, so the result must be \
+             the honest feasible-but-unproven `Satisfiable`, got {result:?}"
+        );
     }
 
     #[test]

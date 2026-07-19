@@ -34,6 +34,17 @@ enum UndoOp {
     LookupInsert { key: (TermId, Vec<TermId>) },
     /// Undo a use list insertion
     UseListInsert { arg: TermId, parent: TermId },
+    /// Undo a disequality insertion (only recorded when the pair was newly
+    /// inserted, i.e. not already asserted by an outer scope).
+    DiseqInsert { pair: (TermId, TermId) },
+    /// Undo a union-by-rank increment.
+    RankChange { term: TermId, old_rank: usize },
+    /// Undo an explanation insertion, restoring whatever (if anything) was
+    /// there before.
+    ExplanationInsert {
+        key: (TermId, TermId),
+        old_value: Option<Explanation>,
+    },
 }
 
 /// Congruence closure data structure with advanced features
@@ -156,6 +167,20 @@ impl CongruenceClosure {
                             list.retain(|&p| p != parent);
                         }
                     }
+                    UndoOp::DiseqInsert { pair } => {
+                        self.diseqs.remove(&pair);
+                    }
+                    UndoOp::RankChange { term, old_rank } => {
+                        self.rank.insert(term, old_rank);
+                    }
+                    UndoOp::ExplanationInsert { key, old_value } => match old_value {
+                        Some(e) => {
+                            self.explanations.insert(key, e);
+                        }
+                        None => {
+                            self.explanations.remove(&key);
+                        }
+                    },
                 }
             }
         }
@@ -195,7 +220,12 @@ impl CongruenceClosure {
             (b_root, a_root)
         };
 
-        self.diseqs.insert(pair);
+        // Only record an undo entry when the pair is genuinely new: if an
+        // outer (still-active) scope already asserted this disequality,
+        // popping this scope must not erase it.
+        if self.diseqs.insert(pair) {
+            self.undo_trail.push(UndoOp::DiseqInsert { pair });
+        }
         None
     }
 
@@ -396,6 +426,10 @@ impl CongruenceClosure {
             (b_root, a_root)
         } else {
             // Equal ranks: increase parent's rank
+            self.undo_trail.push(UndoOp::RankChange {
+                term: a_root,
+                old_rank: a_rank,
+            });
             self.rank.insert(a_root, a_rank + 1);
             (b_root, a_root)
         };
@@ -409,7 +443,11 @@ impl CongruenceClosure {
 
         // Store explanation
         let key = if a.0 < b.0 { (a, b) } else { (b, a) };
-        self.explanations.insert(key, explanation);
+        let old_explanation = self.explanations.insert(key, explanation);
+        self.undo_trail.push(UndoOp::ExplanationInsert {
+            key,
+            old_value: old_explanation,
+        });
 
         // Add merged terms to worklist for propagation
         self.worklist.push(a_root);
@@ -435,11 +473,28 @@ impl CongruenceClosure {
                 continue;
             }
 
-            // Get all terms that use this term as an argument
-            let parents: Vec<_> = self.use_list.get(&term).cloned().unwrap_or_default();
-            let root_parents: Vec<_> = self.use_list.get(&root).cloned().unwrap_or_default();
+            // Gather use-lists from *every* term currently in this
+            // equivalence class, not just `term` (the worklist entry) and
+            // `root` (the current representative). A term can join the
+            // class via an earlier merge without ever being pushed to the
+            // worklist itself or becoming the representative — e.g. class
+            // {x, y, z} with root r: a use of `y` as an argument
+            // (`use_list[y]`) would otherwise never be inspected when only
+            // `term`/`root`'s own use-lists are consulted, silently
+            // missing a congruence between a parent application over `y`
+            // and one over `x`/`z`/`r`.
+            let all_terms: Vec<TermId> = self.parent.keys().copied().collect();
+            let class_members: Vec<TermId> = all_terms
+                .into_iter()
+                .filter(|&t| self.find(t) == root)
+                .collect();
 
-            let all_parents: Vec<_> = parents.into_iter().chain(root_parents).collect();
+            let mut seen_parents = FxHashSet::default();
+            let all_parents: Vec<_> = class_members
+                .iter()
+                .flat_map(|t| self.use_list.get(t).cloned().unwrap_or_default())
+                .filter(|&p| seen_parents.insert(p))
+                .collect();
 
             // Check for congruent parents
             for i in 0..all_parents.len() {
@@ -464,7 +519,9 @@ impl CongruenceClosure {
                             } else {
                                 (parent_b, parent_a)
                             };
-                            self.explanations.insert(key, explanation);
+                            let old_value = self.explanations.insert(key, explanation);
+                            self.undo_trail
+                                .push(UndoOp::ExplanationInsert { key, old_value });
                         }
                     }
                 }

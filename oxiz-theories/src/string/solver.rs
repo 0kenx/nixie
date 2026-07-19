@@ -135,6 +135,81 @@ impl StringExpr {
             StringAtom::Var(_) => None,
         })
     }
+
+    /// Return a copy of this expression with every occurrence of `Var(var)`
+    /// replaced by the constant `value`, merging any adjacent constants that
+    /// result (an empty `value` simply drops the variable atom).
+    fn substituted(&self, var: u32, value: &str) -> StringExpr {
+        let mut atoms: SmallVec<[StringAtom; 4]> = SmallVec::new();
+        for atom in &self.atoms {
+            let next = match atom {
+                StringAtom::Var(v) if *v == var => {
+                    if value.is_empty() {
+                        continue;
+                    }
+                    StringAtom::Const(value.to_string())
+                }
+                other => other.clone(),
+            };
+            if let (Some(StringAtom::Const(prev)), StringAtom::Const(cur)) =
+                (atoms.last_mut(), &next)
+            {
+                prev.push_str(cur);
+            } else {
+                atoms.push(next);
+            }
+        }
+        StringExpr { atoms }
+    }
+}
+
+/// Outcome of [`StringSolver::solve_equations`].
+#[derive(Debug)]
+enum SolveOutcome {
+    /// A definite unsatisfiable equation was found (with its conflict origins).
+    Conflict(Vec<TermId>),
+    /// Every active equation was discharged (system consistent so far).
+    Resolved,
+    /// Equations remain that this incomplete procedure cannot decide; the
+    /// caller must report `Unknown`, never `Sat`.
+    Unresolved,
+}
+
+/// Result of a single [`StringSolver::try_resolve_equation`] step.
+#[derive(Debug)]
+enum ResolveStep {
+    /// The equation was resolved and removed.
+    Resolved,
+    /// No sound resolution rule applied.
+    NoProgress,
+}
+
+/// Whether `expr` is non-empty and consists solely of variables that each
+/// occur exactly once across the whole equation system (per `occ`) AND appear
+/// in no other constraint (per `constrained`). Such "free" variables can be
+/// assigned an arbitrary witness without affecting any other equation *or*
+/// constraint.
+///
+/// The `constrained` guard is essential for soundness: `occ` only counts
+/// occurrences across word equations, so a variable that occurs once in the
+/// equations but also carries a length/regex/prefix/suffix/contains/str<->int
+/// constraint would otherwise be treated as free. Committing an arbitrary
+/// witness (see [`StringSolver::resolve_free_side`]) for such a variable can
+/// violate that other constraint even when a different word-equation solution
+/// satisfies everything, producing a false `Unsat`. Excluding constrained
+/// variables keeps the equation unresolved (-> honest `Unknown`) instead.
+fn is_all_free_once(
+    expr: &StringExpr,
+    occ: &FxHashMap<u32, usize>,
+    constrained: &FxHashSet<u32>,
+) -> bool {
+    if expr.atoms.is_empty() {
+        return false;
+    }
+    expr.atoms.iter().all(|a| match a {
+        StringAtom::Var(v) => occ.get(v).copied().unwrap_or(0) == 1 && !constrained.contains(v),
+        StringAtom::Const(_) => false,
+    })
 }
 
 /// A string atom (variable or constant)
@@ -195,6 +270,8 @@ pub struct LengthConstraint {
     pub upper: Option<i64>,
     /// Equality constraint
     pub equal: Option<i64>,
+    /// Origin term that introduced this constraint (for conflict explanations)
+    pub origin: TermId,
 }
 
 /// String theory solver
@@ -253,6 +330,12 @@ struct ContextState {
     num_contains: usize,
     num_str_to_int: usize,
     num_int_to_str: usize,
+    /// Length of `shared_equalities` at push time, so `pop` can truncate
+    /// away equalities derived (via `notify_equality`) inside the popped
+    /// scope. Without this, a Nelson-Oppen shared equality that only held
+    /// because of an assumption made in the popped scope survives the pop
+    /// and keeps being reported to other theories as if it still held.
+    num_shared_equalities: usize,
     assignments_snapshot: FxHashMap<u32, String>,
 }
 
@@ -326,6 +409,7 @@ impl StringSolver {
             lower: None,
             upper: None,
             equal: Some(len),
+            origin,
         });
     }
 
@@ -429,9 +513,21 @@ impl StringSolver {
         self.int_to_str.push((str_var, int_value, origin));
     }
 
-    /// Solve word equations using Nielsen transformation
-    fn solve_equations(&mut self) -> Option<Vec<TermId>> {
-        // Simple equation solving via substitution and case analysis
+    /// Solve word equations by normalization + sound substitution.
+    ///
+    /// Repeatedly, for each equation: strip matching constant prefix/suffix,
+    /// detect trivial conflicts/solutions, and apply the substitution rules in
+    /// [`Self::try_resolve_equation`] (each of which is sound: it only fires
+    /// when a variable's value is *forced*, or when a side consists solely of
+    /// variables that occur nowhere else and can therefore be assigned freely).
+    ///
+    /// Returns:
+    /// - [`SolveOutcome::Conflict`] on a definite unsatisfiable equation,
+    /// - [`SolveOutcome::Resolved`] when every equation was discharged,
+    /// - [`SolveOutcome::Unresolved`] when equations remain that this
+    ///   (deliberately incomplete) procedure cannot decide. The caller MUST
+    ///   translate `Unresolved` into `Unknown` rather than claiming `Sat`.
+    fn solve_equations(&mut self) -> SolveOutcome {
         let mut changed = true;
         let mut iterations = 0;
         const MAX_ITERATIONS: usize = 1000;
@@ -442,89 +538,202 @@ impl StringSolver {
 
             let mut i = 0;
             while i < self.equations.len() {
-                let eq = &self.equations[i];
-
-                // Check for conflict
-                if eq.has_conflict() {
-                    return Some(vec![eq.origin]);
+                // Normalize by stripping the matching constant prefix/suffix.
+                let mut lhs = self.equations[i].lhs.clone();
+                let mut rhs = self.equations[i].rhs.clone();
+                self.strip_common_prefix(&mut lhs, &mut rhs);
+                self.strip_common_suffix(&mut lhs, &mut rhs);
+                if lhs != self.equations[i].lhs || rhs != self.equations[i].rhs {
+                    self.equations[i].lhs = lhs;
+                    self.equations[i].rhs = rhs;
+                    changed = true;
                 }
 
-                // Check if solved
-                if eq.is_solved() {
+                // Definite conflict?
+                if self.equations[i].has_conflict() {
+                    return SolveOutcome::Conflict(vec![self.equations[i].origin]);
+                }
+
+                // Trivially solved?
+                if self.equations[i].is_solved() {
                     self.equations.swap_remove(i);
                     changed = true;
                     continue;
                 }
 
-                // Try to make progress via Levi's lemma
-                if let Some(result) = self.apply_levi(&self.equations[i].clone()) {
-                    match result {
-                        LeviResult::Solved => {
-                            self.equations.swap_remove(i);
-                            changed = true;
-                            continue;
-                        }
-                        LeviResult::Conflict(origin) => {
-                            return Some(vec![origin]);
-                        }
-                        LeviResult::Progress(new_eqs) => {
-                            let origin = self.equations[i].origin;
-                            self.equations.swap_remove(i);
-                            for (lhs, rhs) in new_eqs {
-                                self.equations.push(WordEquation { lhs, rhs, origin });
-                            }
-                            changed = true;
-                            continue;
-                        }
-                        LeviResult::NoProgress => {}
+                match self.try_resolve_equation(i) {
+                    ResolveStep::Resolved => {
+                        changed = true;
+                        continue;
                     }
+                    ResolveStep::NoProgress => {}
                 }
 
                 i += 1;
             }
         }
 
-        None
+        if self.equations.is_empty() {
+            SolveOutcome::Resolved
+        } else {
+            SolveOutcome::Unresolved
+        }
     }
 
-    /// Apply Levi's lemma to an equation
-    fn apply_levi(&self, eq: &WordEquation) -> Option<LeviResult> {
-        let lhs = &eq.lhs;
-        let rhs = &eq.rhs;
+    /// Attempt one sound resolution step on the equation at index `i`.
+    ///
+    /// On success the equation is removed (and any implied assignment is
+    /// substituted into the remaining equations). Only fires when correctness
+    /// is guaranteed:
+    /// - Rule A: a single-variable side whose partner evaluates to a concrete
+    ///   ground string forces that variable's value.
+    /// - Rule B/C: a side made up solely of variables that each occur exactly
+    ///   once across the whole system can absorb a ground partner (or two such
+    ///   sides can both be emptied); occur-once variables appear nowhere else,
+    ///   so the chosen assignment cannot invalidate any other equation.
+    fn try_resolve_equation(&mut self, i: usize) -> ResolveStep {
+        let lhs = self.equations[i].lhs.clone();
+        let rhs = self.equations[i].rhs.clone();
 
-        // Empty = Empty
-        if lhs.is_empty() && rhs.is_empty() {
-            return Some(LeviResult::Solved);
+        // Rule A: single-variable side determined by a ground partner.
+        if let Some(x) = lhs.as_var()
+            && let Some(c) = self.eval_expr(&rhs)
+        {
+            self.equations.swap_remove(i);
+            self.substitute_all(x, &c);
+            return ResolveStep::Resolved;
+        }
+        if let Some(x) = rhs.as_var()
+            && let Some(c) = self.eval_expr(&lhs)
+        {
+            self.equations.swap_remove(i);
+            self.substitute_all(x, &c);
+            return ResolveStep::Resolved;
         }
 
-        // Empty = non-empty with constants -> conflict
-        if lhs.is_empty() && rhs.min_length() > 0 {
-            return Some(LeviResult::Conflict(eq.origin));
+        // Rule B/C: free (occur-once) variable side(s). A variable is only
+        // "free" if it occurs once across the equations AND participates in no
+        // other constraint, otherwise the arbitrary witness committed below
+        // could contradict that constraint (see `constrained_vars`).
+        let occ = self.var_occurrences();
+        let constrained = self.constrained_vars();
+        let lhs_free_once = is_all_free_once(&lhs, &occ, &constrained);
+        let rhs_free_once = is_all_free_once(&rhs, &occ, &constrained);
+
+        if lhs_free_once && let Some(g) = self.eval_expr(&rhs) {
+            self.resolve_free_side(i, &lhs, &g);
+            return ResolveStep::Resolved;
         }
-        if rhs.is_empty() && lhs.min_length() > 0 {
-            return Some(LeviResult::Conflict(eq.origin));
+        if rhs_free_once && let Some(g) = self.eval_expr(&lhs) {
+            self.resolve_free_side(i, &rhs, &g);
+            return ResolveStep::Resolved;
+        }
+        if lhs_free_once && rhs_free_once {
+            let vars: Vec<u32> = lhs
+                .atoms
+                .iter()
+                .chain(rhs.atoms.iter())
+                .filter_map(|a| match a {
+                    StringAtom::Var(v) => Some(*v),
+                    StringAtom::Const(_) => None,
+                })
+                .collect();
+            self.equations.swap_remove(i);
+            for v in vars {
+                self.substitute_all(v, "");
+            }
+            return ResolveStep::Resolved;
         }
 
-        // Both start with same constant prefix
-        if let (Some(l), Some(r)) = (lhs.first_char(), rhs.first_char()) {
-            if l == r {
-                // Strip common prefix
-                let mut new_lhs = lhs.clone();
-                let mut new_rhs = rhs.clone();
-                self.strip_common_prefix(&mut new_lhs, &mut new_rhs);
-                if new_lhs != *lhs || new_rhs != *rhs {
-                    return Some(LeviResult::Progress(vec![(new_lhs, new_rhs)]));
-                }
+        ResolveStep::NoProgress
+    }
+
+    /// Resolve an equation whose `side` is entirely occur-once variables and
+    /// whose partner evaluates to the concrete string `ground`: assign the
+    /// first variable the whole ground value and the rest the empty string,
+    /// then substitute. Sound because these variables occur nowhere else.
+    fn resolve_free_side(&mut self, i: usize, side: &StringExpr, ground: &str) {
+        let vars: Vec<u32> = side
+            .atoms
+            .iter()
+            .filter_map(|a| match a {
+                StringAtom::Var(v) => Some(*v),
+                StringAtom::Const(_) => None,
+            })
+            .collect();
+        self.equations.swap_remove(i);
+        for (k, v) in vars.iter().enumerate() {
+            if k == 0 {
+                self.substitute_all(*v, ground);
             } else {
-                return Some(LeviResult::Conflict(eq.origin));
+                self.substitute_all(*v, "");
             }
         }
+    }
 
-        // x . α = y . β where x, y are variables
-        // Case split: x = y ∧ α = β, or x = y.γ ∧ γ.α = β, or y = x.γ ∧ α = γ.β
-        // For now, we just handle simple cases
+    /// Count how many times each variable occurs across all active equations
+    /// (both sides). Used to identify occur-once ("free") variables that can
+    /// be assigned without affecting any other equation.
+    fn var_occurrences(&self) -> FxHashMap<u32, usize> {
+        let mut counts: FxHashMap<u32, usize> = FxHashMap::default();
+        for eq in &self.equations {
+            for atom in eq.lhs.atoms.iter().chain(eq.rhs.atoms.iter()) {
+                if let StringAtom::Var(v) = atom {
+                    *counts.entry(*v).or_insert(0) += 1;
+                }
+            }
+        }
+        counts
+    }
 
-        None
+    /// Collect every variable that participates in a constraint *other than*
+    /// the word equations: length, regex membership, disequality, prefix,
+    /// suffix, contains, and str<->int constraints.
+    ///
+    /// These variables must be excluded from the occur-once "free variable"
+    /// resolution rules ([`Self::resolve_free_side`] and the both-sides-empty
+    /// case in [`Self::try_resolve_equation`]), which commit an *arbitrary*
+    /// witness. That witness is only sound when the variable is genuinely
+    /// unconstrained: if it also appears here, the arbitrary choice could
+    /// violate the other constraint even though a different word-equation
+    /// solution would satisfy everything, giving a false `Unsat`.
+    fn constrained_vars(&self) -> FxHashSet<u32> {
+        let mut set: FxHashSet<u32> = FxHashSet::default();
+        for l in &self.lengths {
+            set.insert(l.var);
+        }
+        for (v, _regex, _positive, _origin) in &self.regex_constraints {
+            set.insert(*v);
+        }
+        for (v, _value, _origin) in &self.str_to_int {
+            set.insert(*v);
+        }
+        for (v, _value, _origin) in &self.int_to_str {
+            set.insert(*v);
+        }
+        for (lhs, rhs, _origin) in self
+            .diseqs
+            .iter()
+            .chain(self.prefixes.iter())
+            .chain(self.suffixes.iter())
+            .chain(self.contains.iter())
+        {
+            for atom in lhs.atoms.iter().chain(rhs.atoms.iter()) {
+                if let StringAtom::Var(v) = atom {
+                    set.insert(*v);
+                }
+            }
+        }
+        set
+    }
+
+    /// Record `var = value` and substitute it into every active equation.
+    fn substitute_all(&mut self, var: u32, value: &str) {
+        self.assignments.insert(var, value.to_string());
+        for eq in &mut self.equations {
+            eq.lhs = eq.lhs.substituted(var, value);
+            eq.rhs = eq.rhs.substituted(var, value);
+        }
     }
 
     /// Strip common prefix from two expressions
@@ -556,6 +765,55 @@ impl StringSolver {
                 (StringAtom::Var(x), StringAtom::Var(y)) if x == y => {
                     lhs.atoms.remove(0);
                     rhs.atoms.remove(0);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// Strip common suffix from two expressions (mirror of
+    /// [`Self::strip_common_prefix`], working from the end).
+    fn strip_common_suffix(&self, lhs: &mut StringExpr, rhs: &mut StringExpr) {
+        while !lhs.atoms.is_empty() && !rhs.atoms.is_empty() {
+            let li = lhs.atoms.len() - 1;
+            let ri = rhs.atoms.len() - 1;
+            match (&lhs.atoms[li], &rhs.atoms[ri]) {
+                (StringAtom::Const(a), StringAtom::Const(b)) => {
+                    let a_chars: Vec<char> = a.chars().collect();
+                    let b_chars: Vec<char> = b.chars().collect();
+                    let common = a_chars
+                        .iter()
+                        .rev()
+                        .zip(b_chars.iter().rev())
+                        .take_while(|(x, y)| x == y)
+                        .count();
+                    if common == 0 {
+                        break;
+                    }
+                    let a_full = common == a_chars.len();
+                    let b_full = common == b_chars.len();
+                    if a_full && b_full {
+                        lhs.atoms.pop();
+                        rhs.atoms.pop();
+                    } else if a_full {
+                        lhs.atoms.pop();
+                        rhs.atoms[ri] =
+                            StringAtom::Const(b_chars[..b_chars.len() - common].iter().collect());
+                    } else if b_full {
+                        rhs.atoms.pop();
+                        lhs.atoms[li] =
+                            StringAtom::Const(a_chars[..a_chars.len() - common].iter().collect());
+                    } else {
+                        lhs.atoms[li] =
+                            StringAtom::Const(a_chars[..a_chars.len() - common].iter().collect());
+                        rhs.atoms[ri] =
+                            StringAtom::Const(b_chars[..b_chars.len() - common].iter().collect());
+                        break;
+                    }
+                }
+                (StringAtom::Var(x), StringAtom::Var(y)) if x == y => {
+                    lhs.atoms.pop();
+                    rhs.atoms.pop();
                 }
                 _ => break,
             }
@@ -644,22 +902,25 @@ impl StringSolver {
     fn check_lengths(&self) -> Option<Vec<TermId>> {
         for lc in &self.lengths {
             if let Some(value) = self.assignments.get(&lc.var) {
-                let len = value.len() as i64;
+                // Count Unicode scalar values, not UTF-8 bytes, so the length
+                // matches SMT-LIB string semantics (str.len counts characters).
+                let len = value.chars().count() as i64;
                 if let Some(eq) = lc.equal
                     && len != eq
                 {
-                    // Find origin term - would need to track this
-                    continue;
+                    // Assigned string violates the asserted length equality:
+                    // report the origin of the length constraint as the conflict.
+                    return Some(vec![lc.origin]);
                 }
                 if let Some(lo) = lc.lower
                     && len < lo
                 {
-                    continue;
+                    return Some(vec![lc.origin]);
                 }
                 if let Some(hi) = lc.upper
                     && len > hi
                 {
-                    continue;
+                    return Some(vec![lc.origin]);
                 }
             }
         }
@@ -701,20 +962,6 @@ impl StringSolver {
         }
         None
     }
-}
-
-/// Result of applying Levi's lemma
-#[allow(dead_code)]
-#[derive(Debug)]
-enum LeviResult {
-    /// Equation is solved
-    Solved,
-    /// Equation leads to conflict
-    Conflict(TermId),
-    /// Made progress with new equations
-    Progress(Vec<(StringExpr, StringExpr)>),
-    /// No progress possible
-    NoProgress,
 }
 
 impl Default for StringSolver {
@@ -760,9 +1007,12 @@ impl Theory for StringSolver {
             return Ok(TheoryResult::Unsat(conflict));
         }
 
-        // Solve word equations
-        if let Some(conflict) = self.solve_equations() {
-            return Ok(TheoryResult::Unsat(conflict));
+        // Solve word equations. A definite conflict is Unsat immediately; an
+        // `Unresolved` outcome is remembered so we can honestly report
+        // `Unknown` at the end rather than claiming `Sat`.
+        let outcome = self.solve_equations();
+        if let SolveOutcome::Conflict(conflict) = &outcome {
+            return Ok(TheoryResult::Unsat(conflict.clone()));
         }
 
         // Check regex constraints
@@ -811,6 +1061,23 @@ impl Theory for StringSolver {
             return Ok(TheoryResult::Propagate(props));
         }
 
+        // Honesty gate. `solve_equations` now resolves determinable word
+        // equations (via prefix/suffix stripping + sound substitution), so a
+        // consistent case such as `x ++ "!" = "hello!"` empties the equation
+        // list and stays `Sat`. Anything it could NOT resolve remains in
+        // `self.equations`; reporting `Sat` there would be a silent wrong
+        // result, so we report `Unknown` for the unhandled fragment. Likewise
+        // a regex membership constraint on a still-unassigned variable is
+        // undecided by this theory and must not be silently accepted as `Sat`.
+        if matches!(outcome, SolveOutcome::Unresolved) {
+            return Ok(TheoryResult::Unknown);
+        }
+        for (var, _regex, _positive, _origin) in &self.regex_constraints {
+            if !self.assignments.contains_key(var) {
+                return Ok(TheoryResult::Unknown);
+            }
+        }
+
         Ok(TheoryResult::Sat)
     }
 
@@ -826,6 +1093,7 @@ impl Theory for StringSolver {
             num_contains: self.contains.len(),
             num_str_to_int: self.str_to_int.len(),
             num_int_to_str: self.int_to_str.len(),
+            num_shared_equalities: self.shared_equalities.len(),
             assignments_snapshot: self.assignments.clone(),
         });
     }
@@ -850,6 +1118,11 @@ impl Theory for StringSolver {
             self.contains.truncate(state.num_contains);
             self.str_to_int.truncate(state.num_str_to_int);
             self.int_to_str.truncate(state.num_int_to_str);
+
+            // Restore shared equalities: drop any Nelson-Oppen equalities
+            // derived inside the popped scope so they stop being reported
+            // to other theories once that scope's assumptions are gone.
+            self.shared_equalities.truncate(state.num_shared_equalities);
 
             // Restore assignments
             self.assignments = state.assignments_snapshot;
@@ -1215,6 +1488,62 @@ mod tests {
     }
 
     #[test]
+    fn test_length_eq_violation_is_unsat() {
+        // Regression (audit theories-p3): a string variable assigned "abc" with
+        // len(s) = 2 asserted must be UNSAT, not silently dropped to SAT.
+        let mut solver = StringSolver::new();
+        let term = TermId(0);
+        let origin = TermId(77);
+        let var = solver.get_or_create_var(term);
+
+        solver.assignments.insert(var, "abc".to_string());
+        solver.add_length_eq(var, 2, origin);
+
+        let result = solver.check().expect("check must not error");
+        match result {
+            TheoryResult::Unsat(reasons) => {
+                assert!(
+                    reasons.contains(&origin),
+                    "conflict must cite the length-constraint origin"
+                );
+            }
+            other => panic!("expected Unsat for len(\"abc\") = 2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_length_eq_satisfied_is_sat() {
+        // A matching length must remain SAT.
+        let mut solver = StringSolver::new();
+        let term = TermId(0);
+        let var = solver.get_or_create_var(term);
+
+        solver.assignments.insert(var, "abc".to_string());
+        solver.add_length_eq(var, 3, TermId(88));
+
+        let result = solver.check().expect("check must not error");
+        assert!(matches!(result, TheoryResult::Sat));
+    }
+
+    #[test]
+    fn test_length_eq_counts_chars_not_bytes() {
+        // Multi-byte characters count as one each (SMT-LIB str.len semantics).
+        let mut solver = StringSolver::new();
+        let term = TermId(0);
+        let var = solver.get_or_create_var(term);
+
+        // "café" is 4 characters but 5 UTF-8 bytes.
+        solver.assignments.insert(var, "café".to_string());
+        solver.add_length_eq(var, 4, TermId(99));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "length must count characters, not bytes"
+        );
+    }
+
+    #[test]
     fn test_solver_push_pop() {
         let mut solver = StringSolver::new();
         let term = TermId(0);
@@ -1234,6 +1563,60 @@ mod tests {
 
         let result = solver.check().expect("test operation should succeed");
         assert!(matches!(result, TheoryResult::Sat));
+    }
+
+    // Audit regression (theories-string): `pop()` restored every piece of
+    // solver state EXCEPT `shared_equalities`, so a Nelson-Oppen equality
+    // derived (via `notify_equality`) inside a pushed scope survived a
+    // `pop()` and kept being reported to other theories via
+    // `get_shared_equalities()` even after the scope that produced it was
+    // retracted.
+    #[test]
+    fn audit_pop_restores_shared_equalities() {
+        let mut solver = StringSolver::new();
+
+        let a = TermId(1);
+        let b = TermId(2);
+        let c = TermId(3);
+        let d = TermId(4);
+
+        // A shared equality established BEFORE the push must survive pop.
+        solver.get_or_create_var(a);
+        solver.get_or_create_var(b);
+        assert!(solver.notify_equality(EqualityNotification {
+            lhs: a,
+            rhs: b,
+            reason: None,
+        }));
+        assert_eq!(solver.get_shared_equalities().len(), 1);
+
+        solver.push();
+
+        // A second shared equality established INSIDE the pushed scope
+        // must NOT survive pop.
+        solver.get_or_create_var(c);
+        solver.get_or_create_var(d);
+        assert!(solver.notify_equality(EqualityNotification {
+            lhs: c,
+            rhs: d,
+            reason: None,
+        }));
+        assert_eq!(
+            solver.get_shared_equalities().len(),
+            2,
+            "both equalities should be visible inside the pushed scope"
+        );
+
+        solver.pop();
+
+        let remaining = solver.get_shared_equalities();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "the equality derived inside the popped scope must be discarded"
+        );
+        assert_eq!(remaining[0].lhs, a);
+        assert_eq!(remaining[0].rhs, b);
     }
 
     #[test]
@@ -1353,5 +1736,152 @@ mod tests {
 
         let result = solver.check().expect("test operation should succeed");
         assert!(matches!(result, TheoryResult::Unsat(_)));
+    }
+
+    // ------------------------------------------------------------------
+    // Honesty (theories-string): `check()` must NOT report `Sat` while word
+    // equations or regex constraints on unassigned variables remain
+    // unresolved. Determinable equations are resolved (staying Sat/Unsat);
+    // genuinely-undecided ones yield `Unknown`.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn audit_resolvable_var_suffix_equation_is_sat() {
+        // x ++ "!" = "hello!"  is determinable (x = "hello"); must stay Sat
+        // and record the forced assignment.
+        let mut solver = StringSolver::new();
+        let concat = StringExpr::var(0).concat(StringExpr::literal("!"));
+        solver.add_equality(concat, StringExpr::literal("hello!"), TermId(0));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "determinable word equation must remain Sat, got {result:?}"
+        );
+        assert_eq!(
+            solver.assignments.get(&0).map(String::as_str),
+            Some("hello")
+        );
+    }
+
+    #[test]
+    fn audit_free_vars_equal_constant_is_sat() {
+        // x ++ y = "helloworld" is satisfiable (x, y occur once); must be Sat.
+        let mut solver = StringSolver::new();
+        let concat = StringExpr::var(0).concat(StringExpr::var(1));
+        solver.add_equality(concat, StringExpr::literal("helloworld"), TermId(0));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "free-variable concatenation equal to a constant must be Sat, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn audit_free_var_with_length_constraint_is_not_false_unsat() {
+        // Regression: (str.++ x y) = "helloworld" AND (str.len x) = 5.
+        // The true answer is SAT (x = "hello", y = "world"). The occur-once
+        // "free variable" rule must NOT eagerly commit an arbitrary witness
+        // (x = "helloworld", y = "") here, because `x` also carries a length
+        // constraint that the arbitrary witness (len 10 != 5) would violate,
+        // producing a false Unsat. With the fix `x` is excluded from the
+        // free-variable rule, so the equation stays unresolved and `check()`
+        // returns Unknown -- never Unsat.
+        let mut solver = StringSolver::new();
+        let concat = StringExpr::var(0).concat(StringExpr::var(1));
+        solver.add_equality(concat, StringExpr::literal("helloworld"), TermId(0));
+        solver.add_length_eq(0, 5, TermId(1));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            !matches!(result, TheoryResult::Unsat(_)),
+            "satisfiable constraint set must not be reported Unsat; got {result:?}"
+        );
+        assert!(
+            matches!(result, TheoryResult::Unknown),
+            "incomplete procedure must report Unknown for this fragment; got {result:?}"
+        );
+        // The arbitrary witness must not have been committed.
+        assert_ne!(
+            solver.assignments.get(&0).map(String::as_str),
+            Some("helloworld"),
+            "must not commit the length-violating arbitrary witness for x"
+        );
+    }
+
+    #[test]
+    fn audit_free_var_no_constraint_still_resolves() {
+        // Control: with NO extra constraint on the occur-once variables the
+        // free-variable rule still fires and the constant split stays Sat.
+        let mut solver = StringSolver::new();
+        let concat = StringExpr::var(0).concat(StringExpr::var(1));
+        solver.add_equality(concat, StringExpr::literal("helloworld"), TermId(0));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "unconstrained free-variable split must remain Sat; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn audit_unresolved_word_equation_is_unknown() {
+        // x ++ "a" = "b" ++ y : neither side is a lone variable nor an
+        // all-free-variable side, and there is no constant prefix/suffix to
+        // strip. This incomplete procedure cannot decide it, so `check()`
+        // must return Unknown rather than a silent Sat.
+        let mut solver = StringSolver::new();
+        let lhs = StringExpr::var(0).concat(StringExpr::literal("a"));
+        let rhs = StringExpr::literal("b").concat(StringExpr::var(1));
+        solver.add_equality(lhs, rhs, TermId(0));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unknown),
+            "an undecided word equation must yield Unknown, not Sat; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn audit_unassigned_regex_membership_is_unknown() {
+        // A regex membership on a variable with no known value is undecided:
+        // must be Unknown, not a silent Sat.
+        let mut solver = StringSolver::new();
+        let term = TermId(0);
+        let var = solver.get_or_create_var(term);
+        let regex = Regex::plus(Regex::char('a'));
+        solver.add_regex_membership(var, regex, true, term);
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unknown),
+            "regex membership on an unassigned variable must yield Unknown; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn audit_resolved_regex_membership_unchanged() {
+        // Once the variable is assigned, a regex membership is decided as
+        // before (here: satisfied => Sat).
+        let mut solver = StringSolver::new();
+        let term = TermId(0);
+        let var = solver.get_or_create_var(term);
+        solver.assignments.insert(var, "aaa".to_string());
+        let regex = Regex::plus(Regex::char('a'));
+        solver.add_regex_membership(var, regex, true, term);
+
+        let result = solver.check().expect("check must not error");
+        assert!(matches!(result, TheoryResult::Sat));
+    }
+
+    #[test]
+    fn audit_strip_common_suffix_reduces_equation() {
+        let solver = StringSolver::new();
+        let mut lhs = StringExpr::var(0).concat(StringExpr::literal("world"));
+        let mut rhs = StringExpr::literal("hello").concat(StringExpr::literal("world"));
+        solver.strip_common_suffix(&mut lhs, &mut rhs);
+        assert_eq!(lhs.as_var(), Some(0));
+        assert_eq!(rhs.as_const(), Some("hello"));
     }
 }

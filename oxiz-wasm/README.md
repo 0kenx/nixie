@@ -2,14 +2,14 @@
 
 WebAssembly bindings for the OxiZ SMT solver, enabling high-performance SMT solving directly in web browsers and Node.js.
 
-## Status (v0.2.2)
+## Status (v0.2.4)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.2.2 |
+| Version | 0.2.4 |
 | Status | Stable |
 | Release Date | 2026-06-01 |
-| Tests | 114 passing |
+| Tests | 137 passing |
 | Source files | 27 |
 | Public API items | 471 |
 

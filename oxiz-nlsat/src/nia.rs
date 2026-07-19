@@ -14,8 +14,8 @@
 //! - Z3's NIA solver in `nlsat/nlsat_solver.cpp`
 //! - Branch-and-bound for mixed integer non-linear programming (MINLP)
 
-use crate::solver::{Model, NlsatSolver, SolverResult};
-use crate::types::AtomKind;
+use crate::solver::{AtomId, Model, NlsatSolver, SolverResult};
+use crate::types::{Atom, AtomKind, Literal};
 use num_rational::BigRational;
 use num_traits::{One, ToPrimitive};
 use oxiz_math::lp::cutting_planes::CuttingPlaneGenerator;
@@ -73,6 +73,16 @@ pub enum BranchingStrategy {
 }
 
 /// Branch-and-bound node.
+///
+/// A node does NOT hold a reference to any [`NlsatSolver`]; instead it
+/// records the path of bound constraints (relative to the shared base
+/// problem) that must hold for this branch. This is essential for
+/// soundness: [`NlsatSolver`] has no clause-retraction (push/pop) API, so
+/// asserting a branch bound directly onto a solver shared across sibling
+/// branches would permanently leak that bound into every other branch (see
+/// the audit finding this module fixes). Each node is instead solved by
+/// rebuilding a fresh [`NlsatSolver`] from the shared base problem plus
+/// exactly this node's own `path`.
 #[derive(Debug, Clone)]
 struct BranchNode {
     /// Decision level in the solver.
@@ -81,6 +91,32 @@ struct BranchNode {
     branched_vars: HashSet<Var>,
     /// Current depth in the tree.
     depth: usize,
+    /// Path of bound constraints from the root to this node:
+    /// `(var, bound, is_lower)` where `is_lower == true` means `var >= bound`
+    /// and `is_lower == false` means `var <= bound`.
+    path: Vec<(Var, BigRational, bool)>,
+}
+
+/// A faithful, replayable snapshot of the arithmetic variables, atoms, and
+/// non-learned (i.e. originally asserted, not CDCL-derived) clauses of an
+/// [`NlsatSolver`]'s problem.
+///
+/// Used to rebuild a fresh, correctly scoped [`NlsatSolver`] for each
+/// branch-and-bound node without mutating (or leaking state into) the
+/// shared base solver.
+struct ProblemSnapshot {
+    /// Number of arithmetic variables in the base problem.
+    num_arith_vars: u32,
+    /// One slot per boolean variable index (`0..num_bool_vars`):
+    /// `Some((poly, kind))` if that variable backs a single-factor
+    /// inequality atom, `None` if it's a "free" boolean variable with no
+    /// associated atom. Replaying slots in index order via
+    /// `new_ineq_atom`/`new_bool_var` reproduces the exact original
+    /// variable numbering, since both allocate the next sequential
+    /// boolean variable deterministically.
+    atom_slots: Vec<Option<(Polynomial, AtomKind)>>,
+    /// All non-learned clauses of the base problem.
+    clauses: Vec<Vec<Literal>>,
 }
 
 /// Non-linear integer arithmetic solver.
@@ -191,15 +227,121 @@ impl NiaSolver {
         }
     }
 
+    /// Take a faithful, replayable snapshot of `self.nlsat`'s current
+    /// problem (arithmetic variable count, atoms, and non-learned clauses).
+    ///
+    /// Returns `None` if the current problem cannot be guaranteed to
+    /// replay identically onto a fresh [`NlsatSolver`] (e.g. it contains
+    /// atoms not reachable through the public `new_ineq_atom` API, such as
+    /// root atoms produced internally during CAD-based solving, or stray
+    /// boolean variables not tied 1:1 to atoms). Branch-and-bound scoping
+    /// depends on exact replay fidelity for soundness, so callers must
+    /// treat `None` as "cannot safely branch" rather than guessing.
+    fn snapshot_problem(&self) -> Option<ProblemSnapshot> {
+        let num_atoms = self.nlsat.num_atoms();
+        let num_bool_vars = self.nlsat.num_bool_vars() as usize;
+        let mut atom_slots: Vec<Option<(Polynomial, AtomKind)>> = vec![None; num_bool_vars];
+
+        for id in 0..num_atoms as AtomId {
+            match self.nlsat.get_atom(id)? {
+                Atom::Ineq(ineq) if ineq.factors.len() == 1 && !ineq.factors[0].is_even => {
+                    let slot = atom_slots.get_mut(ineq.bool_var as usize)?;
+                    *slot = Some((ineq.factors[0].poly.clone(), ineq.kind));
+                }
+                // Root atoms or multi-factor/even-power atoms are not
+                // reproducible via `new_ineq_atom`; bail out honestly
+                // rather than silently dropping or mis-replaying them.
+                _ => return None,
+            }
+        }
+
+        let clauses: Vec<Vec<Literal>> = self
+            .nlsat
+            .clauses()
+            .clauses()
+            .iter()
+            .filter(|c| !c.is_learned())
+            .map(|c| c.literals().to_vec())
+            .collect();
+
+        Some(ProblemSnapshot {
+            num_arith_vars: self.nlsat.num_arith_vars(),
+            atom_slots,
+            clauses,
+        })
+    }
+
+    /// Rebuild a fresh [`NlsatSolver`] from `snapshot` plus the branch bound
+    /// constraints in `path`. Each branch node gets its own solver built
+    /// this way, so bounds from one branch can never leak into a sibling.
+    fn rebuild_solver(
+        snapshot: &ProblemSnapshot,
+        path: &[(Var, BigRational, bool)],
+    ) -> NlsatSolver {
+        let mut solver = NlsatSolver::new();
+
+        for _ in 0..snapshot.num_arith_vars {
+            solver.new_arith_var();
+        }
+
+        for slot in &snapshot.atom_slots {
+            match slot {
+                Some((poly, kind)) => {
+                    solver.new_ineq_atom(poly.clone(), *kind);
+                }
+                None => {
+                    solver.new_bool_var();
+                }
+            }
+        }
+
+        for clause in &snapshot.clauses {
+            solver.add_clause(clause.clone());
+        }
+
+        for &(var, ref bound, is_lower) in path {
+            // For x >= bound: NOT(x - bound < 0)
+            // For x <= bound: NOT(x - bound > 0)
+            let x = Polynomial::from_var(var);
+            let poly = Polynomial::sub(&x, &Polynomial::constant(bound.clone()));
+
+            if is_lower {
+                let atom_id = solver.new_ineq_atom(poly, AtomKind::Lt);
+                let lit = solver.atom_literal(atom_id, false);
+                solver.add_clause(vec![lit]);
+            } else {
+                let atom_id = solver.new_ineq_atom(poly, AtomKind::Gt);
+                let lit = solver.atom_literal(atom_id, false);
+                solver.add_clause(vec![lit]);
+            }
+        }
+
+        solver
+    }
+
     /// Branch-and-bound search for integer solutions.
+    ///
+    /// Each node is solved against a *freshly rebuilt* [`NlsatSolver`]
+    /// (via [`Self::rebuild_solver`]) scoped to exactly that node's branch
+    /// path, so sibling branch bounds never leak into each other. Gomory
+    /// cuts, which are valid across the whole integer hull (not just the
+    /// current fractional vertex), are instead asserted permanently onto
+    /// the shared base solver `self.nlsat`, which is re-snapshotted before
+    /// every node so all pending branches benefit from them.
     fn branch_and_bound(&mut self) -> SolverResult {
         let root_node = BranchNode {
             level: 0,
             branched_vars: HashSet::new(),
             depth: 0,
+            path: Vec::new(),
         };
 
         let mut stack = vec![root_node];
+        // Tracks whether every explored branch was conclusively resolved
+        // (Sat or Unsat). If any node was Unknown (e.g. depth-limited or
+        // solver-inconclusive), the overall search cannot honestly claim
+        // Unsat once the stack is exhausted.
+        let mut fully_explored = true;
 
         while let Some(node) = stack.pop() {
             self.stats.nodes_explored += 1;
@@ -210,11 +352,22 @@ impl NiaSolver {
                 return SolverResult::Unknown;
             }
             if node.depth >= self.config.max_depth {
-                continue; // Prune this branch
+                // Pruned due to depth limit, not proven infeasible.
+                fully_explored = false;
+                continue;
             }
 
-            // Solve at this node
-            let result = self.nlsat.solve();
+            // Snapshot the current base problem (original constraints plus
+            // any Gomory cuts accumulated so far) and rebuild a solver
+            // scoped to exactly this node's own branch path.
+            let Some(snapshot) = self.snapshot_problem() else {
+                // Cannot faithfully replay the problem (see
+                // `snapshot_problem` docs) — branching cannot be proven
+                // sound, so honestly report Unknown instead of guessing.
+                return SolverResult::Unknown;
+            };
+            let mut node_solver = Self::rebuild_solver(&snapshot, &node.path);
+            let result = node_solver.solve();
 
             match result {
                 SolverResult::Unsat => {
@@ -222,21 +375,30 @@ impl NiaSolver {
                     continue;
                 }
                 SolverResult::Unknown => {
-                    // Inconclusive - try other branches
+                    // Inconclusive - try other branches, but remember we
+                    // cannot claim full exploration.
+                    fully_explored = false;
                     continue;
                 }
                 SolverResult::Sat => {
                     // Check if solution is integer
-                    if let Some(model) = self.nlsat.get_model() {
+                    if let Some(model) = node_solver.get_model() {
                         if self.is_integer_solution(&model) {
-                            // Found an integer solution!
+                            // Found an integer solution! Publish the node's
+                            // solver as the authoritative one so
+                            // `self.nlsat().get_model()` reflects it.
                             self.stats.integer_solutions += 1;
+                            self.nlsat = node_solver;
                             return SolverResult::Sat;
                         }
 
-                        // If cutting planes are enabled, attempt to cut off the
-                        // fractional LP solution before branching. A Gomory cut
-                        // tightens the relaxation and can prune many branches.
+                        // If cutting planes are enabled, attempt to cut off
+                        // the fractional LP solution before branching. A
+                        // Gomory cut tightens the relaxation and can prune
+                        // many branches. Cuts are asserted onto the shared
+                        // base solver (never onto `node_solver`, which is
+                        // scoped to this branch only) since they remain
+                        // valid for the entire integer hull.
                         if self.config.enable_cutting_planes {
                             let _ = self.add_cutting_plane(&model);
                         }
@@ -250,14 +412,14 @@ impl NiaSolver {
 
                                 // Push ceil branch first (stack is LIFO, so will explore floor first)
                                 if ceil_val > floor_val {
-                                    self.create_branch(
+                                    Self::push_branch(
                                         &mut stack, &node, branch_var, &ceil_val,
                                         true, // >= ceil
                                     );
                                 }
 
                                 // Push floor branch
-                                self.create_branch(
+                                Self::push_branch(
                                     &mut stack, &node, branch_var, &floor_val,
                                     false, // <= floor
                                 );
@@ -272,8 +434,14 @@ impl NiaSolver {
             }
         }
 
-        // Exhausted search space without finding integer solution
-        SolverResult::Unsat
+        // Exhausted search space. Only report Unsat if every branch was
+        // conclusively refuted; otherwise some region of the search space
+        // was never actually ruled out.
+        if fully_explored {
+            SolverResult::Unsat
+        } else {
+            SolverResult::Unknown
+        }
     }
 
     /// Select which variable to branch on.
@@ -331,47 +499,50 @@ impl NiaSolver {
         }
     }
 
-    /// Create a branch by adding a constraint.
-    fn create_branch(
-        &mut self,
+    /// Push a child branch node onto the stack, recording the new bound
+    /// constraint in its `path` (relative to the shared base problem).
+    ///
+    /// Unlike the old design, this never touches any [`NlsatSolver`]
+    /// directly: the constraint is only materialized when the node is
+    /// popped and solved via [`Self::rebuild_solver`], which keeps sibling
+    /// branches from ever seeing each other's bounds.
+    fn push_branch(
         stack: &mut Vec<BranchNode>,
         parent: &BranchNode,
         var: Var,
         bound: &BigRational,
         is_lower: bool, // true for x >= bound, false for x <= bound
     ) {
-        // Create new node
         let mut new_branched = parent.branched_vars.clone();
         new_branched.insert(var);
 
-        let new_node = BranchNode {
+        let mut new_path = parent.path.clone();
+        new_path.push((var, bound.clone(), is_lower));
+
+        stack.push(BranchNode {
             level: parent.level + 1,
             branched_vars: new_branched,
             depth: parent.depth + 1,
-        };
-
-        // Add constraint to NLSAT solver
-        // For x >= bound: (x - bound > 0) OR (x - bound = 0) => NOT(x - bound < 0)
-        // For x <= bound: (x - bound < 0) OR (x - bound = 0) => NOT(x - bound > 0)
-        let x = Polynomial::from_var(var);
-        let poly = Polynomial::sub(&x, &Polynomial::constant(bound.clone()));
-
-        if is_lower {
-            // x >= bound means NOT(x - bound < 0)
-            let atom_id = self.nlsat.new_ineq_atom(poly, AtomKind::Lt);
-            let lit = self.nlsat.atom_literal(atom_id, false); // negated
-            self.nlsat.add_clause(vec![lit]);
-        } else {
-            // x <= bound means NOT(x - bound > 0)
-            let atom_id = self.nlsat.new_ineq_atom(poly, AtomKind::Gt);
-            let lit = self.nlsat.atom_literal(atom_id, false); // negated
-            self.nlsat.add_clause(vec![lit]);
-        }
-
-        stack.push(new_node);
+            path: new_path,
+        });
     }
 
     /// Check if a model satisfies all integer constraints.
+    ///
+    /// This is the authoritative soundness gate for branch-and-bound: once it
+    /// returns `true`, the caller reports `model` as the solver's final `Sat`
+    /// answer, so it must check *exact* integrality (`BigRational::is_integer`,
+    /// i.e. denominator `== 1` in lowest terms) rather than
+    /// [`Self::is_near_integer`]'s lossy `f64`-tolerance heuristic. That
+    /// heuristic converts the exact rational to `f64` (itself precision-losing
+    /// for large numerators/denominators) and accepts anything within
+    /// `int_tolerance` of a whole number, so a genuinely fractional value such
+    /// as `1_000_000_000_001 / 1_000_000_000_000` would be wrongly reported as
+    /// an integer solution, making the solver return `Sat` with a model that
+    /// does not actually satisfy the integrality constraint. `is_near_integer`
+    /// remains appropriate for the non-authoritative heuristics elsewhere in
+    /// this module (branching-variable selection, cut-generation eligibility),
+    /// where an approximate answer only affects search efficiency.
     fn is_integer_solution(&self, model: &Model) -> bool {
         for var in 0..self.nlsat.num_arith_vars() {
             if !self.is_integer_var(var) {
@@ -379,7 +550,7 @@ impl NiaSolver {
             }
 
             if let Some(value) = model.arith_value(var)
-                && !self.is_near_integer(value)
+                && !value.is_integer()
             {
                 return false;
             }
@@ -401,18 +572,15 @@ impl NiaSolver {
     }
 
     /// Compute floor and ceiling of a rational number.
+    ///
+    /// Uses [`BigRational::floor`]/[`BigRational::ceil`] rather than raw
+    /// `BigInt` division, which truncates toward zero and gives the wrong
+    /// answer for negative non-integral values (e.g. `-3/2` truncates to
+    /// `-1`, but `floor(-3/2) == -2`). A branch bound of `x <= -1` would
+    /// fail to exclude the fractional relaxation point `x = -1.5`, causing
+    /// branch-and-bound to loop on the same fractional solution.
     fn floor_ceil(&self, value: &BigRational) -> (BigRational, BigRational) {
-        // For rational a/b, floor = floor(a/b)
-        let floor_int = value.numer() / value.denom();
-        let floor_val = BigRational::from_integer(floor_int.clone());
-
-        let ceil_val = if &floor_val == value {
-            floor_val.clone()
-        } else {
-            floor_val.clone() + BigRational::one()
-        };
-
-        (floor_val, ceil_val)
+        (value.floor(), value.ceil())
     }
 
     /// Get statistics.
@@ -455,9 +623,13 @@ impl NiaSolver {
                 continue;
             };
 
-            // Only attempt to cut if the value is fractional.
-            let frac = self.fractional_part(value);
-            if frac < self.config.int_tolerance || frac > (1.0 - self.config.int_tolerance) {
+            // Only attempt to cut if the value is (heuristically) fractional.
+            // This is eligibility for an *optional* optimization (skipping a
+            // cut here just means one fewer pruning opportunity, not an
+            // incorrect answer), so the `int_tolerance` heuristic remains
+            // appropriate here, unlike `is_integer_solution`'s authoritative
+            // exact-integrality check.
+            if self.is_near_integer(value) {
                 continue;
             }
 
@@ -636,5 +808,177 @@ mod tests {
         assert_eq!(stats.nodes_explored, 0);
         assert_eq!(stats.cutting_planes, 0);
         assert_eq!(stats.integer_solutions, 0);
+    }
+
+    // Regression test: `is_near_integer`'s f64-tolerance heuristic
+    // (appropriate for branching-selection/cut-eligibility heuristics) must
+    // NOT be conflated with genuine, exact integrality.
+    #[test]
+    fn test_near_integer_heuristic_vs_exact_integrality_diverge() {
+        let solver = NiaSolver::new();
+        let near_one = BigRational::from_integer(1.into())
+            + BigRational::new(1.into(), 1_000_000_000_000i64.into());
+
+        // The tolerance-based heuristic says "close enough to integer"...
+        assert!(solver.is_near_integer(&near_one));
+        // ...but it genuinely is not an integer.
+        assert!(!near_one.is_integer());
+    }
+
+    // Regression test for the item: previously `is_integer_solution` used
+    // `is_near_integer`'s f64-tolerance heuristic as the authoritative
+    // soundness check, so a value within `int_tolerance` (default `1e-6`) of
+    // a whole number but not actually integral would be wrongly accepted as
+    // an "integer solution", making the solver return `Sat` for a genuinely
+    // `Unsat` integer problem. `x = 1 + 1/10^12` is the *unique* real
+    // solution here (an equality constraint) and is not an integer, so the
+    // correct answer is `Unsat`.
+    #[test]
+    fn test_nia_near_integer_but_not_exact_is_rejected() {
+        let mut solver = NiaSolver::new();
+        let var_x = solver.nlsat_mut().new_arith_var();
+        solver.set_var_type(var_x, VarType::Integer);
+
+        let x = Polynomial::from_var(var_x);
+        let near_one = BigRational::from_integer(1.into())
+            + BigRational::new(1.into(), 1_000_000_000_000i64.into());
+        let poly = Polynomial::sub(&x, &Polynomial::constant(near_one));
+        let atom = solver.nlsat_mut().new_ineq_atom(poly, AtomKind::Eq);
+        let lit = solver.nlsat().atom_literal(atom, true);
+        solver.nlsat_mut().add_clause(vec![lit]);
+
+        let result = solver.solve();
+        assert_eq!(
+            result,
+            SolverResult::Unsat,
+            "x = 1 + 1e-12 is not an integer; the solver must not accept it \
+             as an integer solution just because it is within int_tolerance \
+             of one"
+        );
+    }
+
+    /// Regression test for the audit finding: `create_branch` used to add
+    /// BOTH the floor (`x <= bound`) and ceil (`x >= bound + 1`) constraints
+    /// as permanent unit clauses to the SAME shared [`NlsatSolver`]. Once
+    /// both siblings were pushed, the shared solver held the contradictory
+    /// pair `x <= 0` and `x >= 1` simultaneously, so every subsequent node
+    /// (in either branch) solved an unsatisfiable, over-constrained problem
+    /// and `branch_and_bound` always returned `Unsat`.
+    ///
+    /// This test directly exercises the fixed scoping mechanism
+    /// (`snapshot_problem` + `rebuild_solver`) and checks that two sibling
+    /// branch solvers built from the same snapshot never see each other's
+    /// bound, and that the shared base solver is left completely
+    /// unaffected by either branch.
+    #[test]
+    fn test_branch_bounds_do_not_leak_between_siblings() {
+        let mut solver = NiaSolver::new();
+        let var_x = solver.nlsat_mut().new_arith_var();
+        solver.set_var_type(var_x, VarType::Integer);
+
+        // Only constraint on the base problem: x >= 0 (i.e. NOT(x < 0)).
+        let x = Polynomial::from_var(var_x);
+        let atom = solver.nlsat_mut().new_ineq_atom(x, AtomKind::Lt);
+        let lit = solver.nlsat().atom_literal(atom, false);
+        solver.nlsat_mut().add_clause(vec![lit]);
+
+        let snapshot = solver
+            .snapshot_problem()
+            .expect("simple linear problem must be snapshot-able");
+
+        // Sibling branch paths that used to be asserted permanently onto
+        // ONE shared solver: floor branch "x <= 0" and ceil branch "x >= 1".
+        let floor_path = vec![(var_x, BigRational::from_integer(0.into()), false)];
+        let ceil_path = vec![(var_x, BigRational::from_integer(1.into()), true)];
+
+        let mut floor_solver = NiaSolver::rebuild_solver(&snapshot, &floor_path);
+        let mut ceil_solver = NiaSolver::rebuild_solver(&snapshot, &ceil_path);
+
+        // Each branch is independently satisfiable (x=0 and x=1
+        // respectively). If bounds leaked between siblings, at least one
+        // of these would incorrectly be Unsat.
+        assert_eq!(floor_solver.solve(), SolverResult::Sat);
+        assert_eq!(ceil_solver.solve(), SolverResult::Sat);
+
+        // The shared base solver must remain untouched by either branch.
+        assert_eq!(solver.nlsat_mut().solve(), SolverResult::Sat);
+        if let Some(model) = solver.nlsat().get_model() {
+            // Base problem only asserts x >= 0; a negative value would mean
+            // a branch bound leaked into the shared solver.
+            assert!(model.arith_value(var_x).is_none_or(|v| *v >= rat(0)));
+        }
+    }
+
+    /// End-to-end sanity check covering `NiaSolver::solve()`'s public API
+    /// for a disjunctive constraint with one fractional and one integer
+    /// alternative: `(x = 3/2) OR (x = 2)`. Whether or not the solver's
+    /// initial witness happens to be the fractional disjunct (routing
+    /// through `branch_and_bound`) or the integer one directly, the only
+    /// answer consistent with the problem is `Sat` with `x = 2` — the
+    /// pre-fix bound-leaking bug could turn this into a wrong `Unsat`
+    /// whenever branching was exercised (see
+    /// `test_branch_bounds_do_not_leak_between_siblings` for a
+    /// branching-path-targeted reproduction of that exact defect).
+    #[test]
+    fn test_nia_strict_lower_bound_finds_integer_solution() {
+        let mut solver = NiaSolver::new();
+        let var_x = solver.nlsat_mut().new_arith_var();
+        solver.set_var_type(var_x, VarType::Integer);
+
+        let x = Polynomial::from_var(var_x);
+        let half_poly = Polynomial::sub(
+            &x,
+            &Polynomial::constant(BigRational::new(3.into(), 2.into())),
+        );
+        let two_poly = Polynomial::sub(&x, &Polynomial::constant(rat(2)));
+        let half_atom = solver.nlsat_mut().new_ineq_atom(half_poly, AtomKind::Eq);
+        let two_atom = solver.nlsat_mut().new_ineq_atom(two_poly, AtomKind::Eq);
+        let half_lit = solver.nlsat().atom_literal(half_atom, true);
+        let two_lit = solver.nlsat().atom_literal(two_atom, true);
+        solver.nlsat_mut().add_clause(vec![half_lit, two_lit]);
+
+        let result = solver.solve();
+        assert_eq!(
+            result,
+            SolverResult::Sat,
+            "(x = 3/2) OR (x = 2) has the integer solution x = 2"
+        );
+
+        if let Some(model) = solver.nlsat().get_model() {
+            let x_val = model
+                .arith_value(var_x)
+                .expect("model must assign integer var x");
+            assert_eq!(*x_val, rat(2), "the only integer-satisfying model is x = 2");
+            assert_eq!(
+                x_val.denom(),
+                &num_bigint::BigInt::from(1),
+                "returned solution must be integer, got {x_val}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nia_floor_ceil_negative() {
+        let solver = NiaSolver::new();
+
+        // floor(-3/2) == -2, ceil(-3/2) == -1 (NOT -1 and 0, which is what
+        // truncating BigInt division toward zero would incorrectly give).
+        let val = BigRational::new((-3).into(), 2.into());
+        let (floor, ceil) = solver.floor_ceil(&val);
+
+        assert_eq!(floor, rat(-2));
+        assert_eq!(ceil, rat(-1));
+    }
+
+    #[test]
+    fn test_nia_floor_ceil_negative_integer() {
+        let solver = NiaSolver::new();
+
+        // An already-integral negative value: floor == ceil == the value.
+        let val = rat(-4);
+        let (floor, ceil) = solver.floor_ceil(&val);
+
+        assert_eq!(floor, rat(-4));
+        assert_eq!(ceil, rat(-4));
     }
 }

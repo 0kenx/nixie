@@ -165,7 +165,7 @@ oxiz-theories/
 ## Algorithm Sources
 
 The implementations in oxiz-theories are **heavily based on** the Z3 SMT solver:
-- Z3 repository: `../z3/`
+- Z3 repository: upstream (github.com/Z3Prover/z3)
 - Algorithms adapted and transformed into idiomatic Rust
 - Core SMT techniques from research papers and Z3's proven implementations
 - No direct code translation - redesigned for Rust's ownership model and type system

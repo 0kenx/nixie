@@ -1,4 +1,5 @@
-//! Simplex algorithm implementation
+// Copyright 2026 COOLJAPAN OU (Team KitaSan)
+// SPDX-License-Identifier: Apache-2.0
 
 use super::delta::DeltaRational;
 use crate::config::{PivotingRule, SimplexConfig};
@@ -9,10 +10,102 @@ use num_traits::{One, Signed, Zero};
 #[cfg(feature = "profiling")]
 use oxiz_core::profiling::{ProfilingCategory, ScopedTimer};
 use smallvec::SmallVec;
-
 /// Variable index
 pub type VarId = u32;
-
+/// GCD of two `i128` values (used by the checked-rational helpers below to
+/// reduce results computed via `i128` intermediates before narrowing back
+/// to `i64`).
+fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
+    a = a.abs();
+    b = b.abs();
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
+/// Build a fully-reduced `Rational64` from an `i128` numerator/denominator
+/// pair, returning `None` if the reduced value does not fit back into
+/// `i64`. All of the checked-rational helpers below route through this so
+/// that a value which cannot be represented as a `Rational64` is reported
+/// as `None` (overflow) rather than silently truncated.
+fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
+    if denom == 0 {
+        return None;
+    }
+    let g = gcd_i128(numer, denom);
+    let g = if g == 0 { 1 } else { g };
+    let mut n = numer / g;
+    let mut d = denom / g;
+    if d < 0 {
+        n = -n;
+        d = -d;
+    }
+    if !(i64::MIN as i128..=i64::MAX as i128).contains(&n) || d > i64::MAX as i128 {
+        return None;
+    }
+    Some(Rational64::new(n as i64, d as i64))
+}
+/// Checked rational multiplication: `a * b`, via `i128` intermediates.
+/// Returns `None` on overflow instead of silently wrapping (the `i64`-based
+/// `Rational64` multiplication used by `num-rational`'s `Mul` impl does not
+/// check for overflow: it panics in debug builds and silently wraps to a
+/// wrong coefficient in release builds).
+fn checked_mul_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+    let numer = (*a.numer() as i128).checked_mul(*b.numer() as i128)?;
+    let denom = (*a.denom() as i128).checked_mul(*b.denom() as i128)?;
+    checked_ratio_i128(numer, denom)
+}
+/// Checked rational division: `a / b`. Returns `None` if `b` is zero or the
+/// result overflows `i64` after reduction.
+fn checked_div_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+    if b.numer() == &0 {
+        return None;
+    }
+    let numer = (*a.numer() as i128).checked_mul(*b.denom() as i128)?;
+    let denom = (*a.denom() as i128).checked_mul(*b.numer() as i128)?;
+    checked_ratio_i128(numer, denom)
+}
+/// Checked rational addition: `a + b`. Returns `None` on overflow.
+fn checked_add_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+    let ad = (*a.numer() as i128).checked_mul(*b.denom() as i128)?;
+    let cb = (*b.numer() as i128).checked_mul(*a.denom() as i128)?;
+    let numer = ad.checked_add(cb)?;
+    let denom = (*a.denom() as i128).checked_mul(*b.denom() as i128)?;
+    checked_ratio_i128(numer, denom)
+}
+/// Checked rational negation: `-a`. Only fails for the `i64::MIN` edge
+/// case, whose absolute value has no positive `i64` representation.
+fn checked_neg_r64(a: Rational64) -> Option<Rational64> {
+    let n = (*a.numer() as i128).checked_neg()?;
+    if !(i64::MIN as i128..=i64::MAX as i128).contains(&n) {
+        return None;
+    }
+    Some(Rational64::new(n as i64, *a.denom()))
+}
+/// Checked rational reciprocal: `1 / a`. Returns `None` if `a` is zero.
+fn checked_recip_r64(a: Rational64) -> Option<Rational64> {
+    if a.numer() == &0 {
+        return None;
+    }
+    checked_ratio_i128(*a.denom() as i128, *a.numer() as i128)
+}
+/// Split a full reason list into `(primary, auxiliary)`, deduplicating so a
+/// reason never appears twice. Returns `None` for an empty list (a derived
+/// bound with no recorded antecedent is not applied rather than fabricating a
+/// reason).
+fn split_reasons(reasons: SmallVec<[u32; 4]>) -> Option<(u32, SmallVec<[u32; 4]>)> {
+    let mut iter = reasons.into_iter();
+    let primary = iter.next()?;
+    let mut aux: SmallVec<[u32; 4]> = SmallVec::new();
+    for r in iter {
+        if r != primary && !aux.contains(&r) {
+            aux.push(r);
+        }
+    }
+    Some((primary, aux))
+}
 /// A linear expression: sum of (coefficient, variable) pairs + constant
 #[derive(Debug, Clone, Default)]
 pub struct LinExpr {
@@ -21,14 +114,12 @@ pub struct LinExpr {
     /// Constant term
     pub constant: Rational64,
 }
-
 impl LinExpr {
     /// Create a new linear expression
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
-
     /// Create a constant expression
     #[must_use]
     pub fn constant(c: Rational64) -> Self {
@@ -37,7 +128,6 @@ impl LinExpr {
             constant: c,
         }
     }
-
     /// Create a variable expression
     #[must_use]
     pub fn var(v: VarId) -> Self {
@@ -46,11 +136,9 @@ impl LinExpr {
             constant: Rational64::zero(),
         }
     }
-
     /// Add a term
     pub fn add_term(&mut self, var: VarId, coef: Rational64) {
         if !coef.is_zero() {
-            // Check if variable already exists
             for (v, c) in &mut self.terms {
                 if *v == var {
                     *c += coef;
@@ -63,12 +151,35 @@ impl LinExpr {
             self.terms.push((var, coef));
         }
     }
-
     /// Add a constant
     pub fn add_constant(&mut self, c: Rational64) {
         self.constant += c;
     }
-
+    /// Overflow-checked variant of [`Self::add_term`]: merges `coef` into
+    /// the existing coefficient of `var` (or inserts a new term) exactly
+    /// like `add_term`, but via `i64`-checked rational addition. Returns
+    /// `false` (leaving `self` unmodified) if the merged coefficient would
+    /// not fit back into a `Rational64`, instead of silently wrapping.
+    #[must_use]
+    fn try_add_term(&mut self, var: VarId, coef: Rational64) -> bool {
+        if coef.is_zero() {
+            return true;
+        }
+        for (v, c) in &mut self.terms {
+            if *v == var {
+                let Some(sum) = checked_add_r64(*c, coef) else {
+                    return false;
+                };
+                *c = sum;
+                if c.is_zero() {
+                    self.terms.retain(|(v, _)| *v != var);
+                }
+                return true;
+            }
+        }
+        self.terms.push((var, coef));
+        true
+    }
     /// Negate the expression
     pub fn negate(&mut self) {
         for (_, c) in &mut self.terms {
@@ -76,7 +187,6 @@ impl LinExpr {
         }
         self.constant = -self.constant;
     }
-
     /// Multiply by a constant
     pub fn scale(&mut self, factor: Rational64) {
         for (_, c) in &mut self.terms {
@@ -84,19 +194,15 @@ impl LinExpr {
         }
         self.constant *= factor;
     }
-
     /// Check if this expression subsumes another (i.e., this is weaker or equal)
     ///
     /// For example, x + y <= 10 subsumes x + y <= 5 (the latter is stronger)
     /// Returns true if adding the other constraint is redundant given this one
     #[must_use]
     pub fn subsumes(&self, other: &LinExpr, self_is_le: bool, other_is_le: bool) -> bool {
-        // Check if the expressions have the same terms
         if self.terms.len() != other.terms.len() {
             return false;
         }
-
-        // Check if all terms match (assuming sorted)
         for (i, (v1, c1)) in self.terms.iter().enumerate() {
             if let Some((v2, c2)) = other.terms.get(i) {
                 if v1 != v2 || c1 != c2 {
@@ -106,26 +212,13 @@ impl LinExpr {
                 return false;
             }
         }
-
-        // Now check if the constant makes this weaker
-        // For <= constraints: larger constant is weaker
-        // For >= constraints: smaller constant is weaker
         match (self_is_le, other_is_le) {
-            (true, true) => {
-                // Both are <=: self subsumes other if self.constant >= other.constant
-                self.constant >= other.constant
-            }
-            (false, false) => {
-                // Both are >=: self subsumes other if self.constant <= other.constant
-                self.constant <= other.constant
-            }
-            _ => false, // Different constraint types don't subsume
+            (true, true) => self.constant >= other.constant,
+            (false, false) => self.constant <= other.constant,
+            _ => false,
         }
     }
 }
-
-// PivotingRule is now imported from crate::config
-
 /// Bound type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -139,18 +232,32 @@ pub enum BoundType {
     /// Equality (x = b)
     Equal,
 }
-
 /// A bound on a variable
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Bound {
     /// Bound type
     pub kind: BoundType,
     /// Bound value (supports strict bounds via delta)
     pub value: DeltaRational,
-    /// Reason (assertion that caused this bound)
+    /// Primary reason (assertion that caused this bound).
     pub reason: u32,
+    /// Additional contributing reasons beyond `reason`. Populated when this
+    /// bound was *derived* by propagation from several non-basic-variable
+    /// bounds (see [`Simplex::propagate_bounds`] / [`Simplex::tighten_bounds`]):
+    /// such a derived bound is implied by ALL of the bounds that fed the
+    /// derivation, not just one. Conflict explanations
+    /// ([`Simplex::explain_conflict`] and the bound-crossing check in
+    /// [`Simplex::check`]) must emit `reason` together with every entry here,
+    /// otherwise the Farkas/conflict clause is incomplete -- an unsound
+    /// explanation that omits genuine antecedents.
+    pub aux_reasons: SmallVec<[u32; 4]>,
 }
-
+impl Bound {
+    /// Iterate over every reason (primary + auxiliary) backing this bound.
+    fn all_reasons(&self) -> impl Iterator<Item = u32> + '_ {
+        core::iter::once(self.reason).chain(self.aux_reasons.iter().copied())
+    }
+}
 /// A propagated bound derived from constraint analysis
 #[derive(Debug, Clone)]
 pub struct PropagatedBound {
@@ -163,7 +270,6 @@ pub struct PropagatedBound {
     /// The reasons (assertion IDs) that imply this bound
     pub reasons: SmallVec<[u32; 4]>,
 }
-
 /// An undo entry for reverting a bound change
 #[derive(Debug, Clone)]
 enum BoundUndo {
@@ -180,7 +286,6 @@ enum BoundUndo {
     /// A new slack variable was added
     NewSlack(VarId),
 }
-
 /// Simplex tableau state
 #[derive(Debug)]
 pub struct Simplex {
@@ -217,21 +322,26 @@ pub struct Simplex {
     pivoting_rule: PivotingRule,
     /// Maximum number of pivot operations before giving up
     max_pivots: usize,
+    /// Set to `true` when the most recent `check()`/`dual_simplex()` aborted
+    /// because it hit `max_pivots` without proving feasibility or infeasibility.
+    ///
+    /// When this flag is set, an `Ok(())` result from `check()` MUST NOT be
+    /// interpreted as "satisfiable" — the LP state is unresolved (an incomplete
+    /// resource-limited run), and callers deciding satisfiability have to report
+    /// `Unknown` rather than `Sat`.  See [`Simplex::resource_limit_reached`].
+    resource_limit: bool,
 }
-
 impl Default for Simplex {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl Simplex {
     /// Create a new Simplex instance
     #[must_use]
     pub fn new() -> Self {
         Self::with_config(SimplexConfig::default())
     }
-
     /// Create a new Simplex instance with custom configuration
     #[must_use]
     pub fn with_config(config: SimplexConfig) -> Self {
@@ -251,27 +361,31 @@ impl Simplex {
             saved_tableaux: Vec::new(),
             pivoting_rule: config.pivoting_rule,
             max_pivots: config.max_pivots,
+            resource_limit: false,
         }
     }
-
+    /// Whether the most recent feasibility run (`check` / `dual_simplex`) gave up
+    /// after exhausting the pivot budget without a definitive answer.
+    ///
+    /// If this returns `true`, the last `Ok(())` is a *resource limit*, not a
+    /// proof of feasibility, and any satisfiability decision built on top of the
+    /// simplex must be reported as `Unknown`.
+    #[inline]
+    #[must_use]
+    pub fn resource_limit_reached(&self) -> bool {
+        self.resource_limit
+    }
     /// Set the pivoting rule
     pub fn set_pivoting_rule(&mut self, rule: PivotingRule) {
         self.pivoting_rule = rule;
     }
-
     /// Get the current pivoting rule
     #[must_use]
     pub fn pivoting_rule(&self) -> PivotingRule {
         self.pivoting_rule
     }
-
     /// Add a new variable
     pub fn new_var(&mut self) -> VarId {
-        // Use `assignment.len()` as the ID so that regular variables and slack
-        // variables never collide.  The old scheme (id = num_vars) produced IDs
-        // that overlapped with previously-allocated slack IDs
-        // (id_slack = num_vars + num_slack) whenever new_var() was called after
-        // slacks had already been allocated.
         let id = self.assignment.len() as VarId;
         self.num_vars += 1;
         self.assignment.push(DeltaRational::zero());
@@ -281,21 +395,17 @@ impl Simplex {
         self.trail.push(BoundUndo::NewVar);
         id
     }
-
     /// Add a slack variable for a constraint
     fn new_slack(&mut self) -> VarId {
-        // Use `assignment.len()` as the ID for the same reason as `new_var`:
-        // unified allocation prevents collisions between regular and slack IDs.
         let id = self.assignment.len() as VarId;
         self.num_slack += 1;
         self.assignment.push(DeltaRational::zero());
         self.lower.push(None);
         self.upper.push(None);
-        self.basic.push(true); // Slack variables start basic
+        self.basic.push(true);
         self.trail.push(BoundUndo::NewSlack(id));
         id
     }
-
     /// Get the current value of a variable (returns the real part)
     #[inline]
     #[must_use]
@@ -305,7 +415,6 @@ impl Simplex {
             .map(|d| d.real)
             .unwrap_or_default()
     }
-
     /// Get the current delta-rational value of a variable
     #[inline]
     #[must_use]
@@ -315,100 +424,152 @@ impl Simplex {
             .copied()
             .unwrap_or_default()
     }
-
     /// Set a lower bound (x >= value)
     pub fn set_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
         if idx < self.lower.len() {
-            // Track the old value for undo
-            match self.lower[idx] {
+            match &self.lower[idx] {
                 None => self.trail.push(BoundUndo::LowerWasNone(var)),
-                Some(old) => self.trail.push(BoundUndo::LowerWasSome(var, old)),
+                Some(old) => {
+                    let old = old.clone();
+                    self.trail.push(BoundUndo::LowerWasSome(var, old));
+                }
             }
             self.lower[idx] = Some(Bound {
                 kind: BoundType::Lower,
                 value: DeltaRational::from_rational(value),
                 reason,
+                aux_reasons: SmallVec::new(),
             });
         }
     }
-
+    /// Set a lower bound directly from a `DeltaRational` (supports strict
+    /// bounds carrying an infinitesimal `δ` component), pushing an undo
+    /// record onto `self.trail` exactly like [`Self::set_lower`]. Used by
+    /// [`Self::propagate_bounds`], whose derived bound values are already
+    /// `DeltaRational` (propagation chains through strict inequalities).
+    ///
+    /// Takes the FULL set of contributing reasons: the first becomes the
+    /// bound's primary `reason`, the remainder its `aux_reasons`, so that a
+    /// propagated bound records every antecedent for later conflict
+    /// explanation (see [`Bound::aux_reasons`]).
+    fn set_lower_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
+        let idx = var as usize;
+        if idx < self.lower.len() {
+            let Some((reason, aux_reasons)) = split_reasons(reasons) else {
+                return;
+            };
+            match &self.lower[idx] {
+                None => self.trail.push(BoundUndo::LowerWasNone(var)),
+                Some(old) => {
+                    let old = old.clone();
+                    self.trail.push(BoundUndo::LowerWasSome(var, old));
+                }
+            }
+            self.lower[idx] = Some(Bound {
+                kind: BoundType::Lower,
+                value,
+                reason,
+                aux_reasons,
+            });
+        }
+    }
+    /// Set an upper bound directly from a `DeltaRational`; see
+    /// [`Self::set_lower_delta`].
+    fn set_upper_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
+        let idx = var as usize;
+        if idx < self.upper.len() {
+            let Some((reason, aux_reasons)) = split_reasons(reasons) else {
+                return;
+            };
+            match &self.upper[idx] {
+                None => self.trail.push(BoundUndo::UpperWasNone(var)),
+                Some(old) => {
+                    let old = old.clone();
+                    self.trail.push(BoundUndo::UpperWasSome(var, old));
+                }
+            }
+            self.upper[idx] = Some(Bound {
+                kind: BoundType::Upper,
+                value,
+                reason,
+                aux_reasons,
+            });
+        }
+    }
     /// Set a strict lower bound (x > value), represented as x >= value + δ
     pub fn set_strict_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
         if idx < self.lower.len() {
-            // Track the old value for undo
-            match self.lower[idx] {
+            match &self.lower[idx] {
                 None => self.trail.push(BoundUndo::LowerWasNone(var)),
-                Some(old) => self.trail.push(BoundUndo::LowerWasSome(var, old)),
+                Some(old) => {
+                    let old = old.clone();
+                    self.trail.push(BoundUndo::LowerWasSome(var, old));
+                }
             }
             self.lower[idx] = Some(Bound {
                 kind: BoundType::Lower,
                 value: DeltaRational::new(value, Rational64::one()),
                 reason,
+                aux_reasons: SmallVec::new(),
             });
         }
     }
-
     /// Set an upper bound (x <= value)
     pub fn set_upper(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
         if idx < self.upper.len() {
-            // Track the old value for undo
-            match self.upper[idx] {
+            match &self.upper[idx] {
                 None => self.trail.push(BoundUndo::UpperWasNone(var)),
-                Some(old) => self.trail.push(BoundUndo::UpperWasSome(var, old)),
+                Some(old) => {
+                    let old = old.clone();
+                    self.trail.push(BoundUndo::UpperWasSome(var, old));
+                }
             }
             self.upper[idx] = Some(Bound {
                 kind: BoundType::Upper,
                 value: DeltaRational::from_rational(value),
                 reason,
+                aux_reasons: SmallVec::new(),
             });
         }
     }
-
     /// Set a strict upper bound (x < value), represented as x <= value - δ
     pub fn set_strict_upper(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
         if idx < self.upper.len() {
-            // Track the old value for undo
-            match self.upper[idx] {
+            match &self.upper[idx] {
                 None => self.trail.push(BoundUndo::UpperWasNone(var)),
-                Some(old) => self.trail.push(BoundUndo::UpperWasSome(var, old)),
+                Some(old) => {
+                    let old = old.clone();
+                    self.trail.push(BoundUndo::UpperWasSome(var, old));
+                }
             }
             self.upper[idx] = Some(Bound {
                 kind: BoundType::Upper,
                 value: DeltaRational::new(value, -Rational64::one()),
                 reason,
+                aux_reasons: SmallVec::new(),
             });
         }
     }
-
     /// Add a constraint: expr <= 0
     pub fn add_le(&mut self, mut expr: LinExpr, reason: u32) {
-        // First, substitute any basic variables in expr with their non-basic expressions
-        // This ensures the new constraint is properly integrated into the tableau
         let mut substituted_expr = LinExpr::constant(expr.constant);
         for (var, coef) in &expr.terms {
             if let Some(basic_expr) = self.tableau.get(var).cloned() {
-                // var is basic, substitute: var = basic_expr
-                // Add coef * basic_expr to substituted_expr
                 substituted_expr.add_constant(coef * basic_expr.constant);
                 for (inner_var, inner_coef) in &basic_expr.terms {
                     substituted_expr.add_term(*inner_var, coef * inner_coef);
                 }
             } else {
-                // var is non-basic, add directly
                 substituted_expr.add_term(*var, *coef);
             }
         }
         expr = substituted_expr;
-
-        // Introduce slack variable: expr + s = 0, s >= 0
         let slack = self.new_slack();
         expr.add_term(slack, Rational64::one());
-
-        // slack is basic, express it in terms of non-basic
         let mut slack_expr = LinExpr::constant(-expr.constant);
         for (var, coef) in &expr.terms {
             if *var != slack {
@@ -416,56 +577,39 @@ impl Simplex {
             }
         }
         self.tableau.insert(slack, slack_expr);
-
-        // Mark slack as basic (it has a tableau row defining it in terms of non-basic vars)
         if slack as usize >= self.basic.len() {
             self.basic.resize(slack as usize + 1, false);
         }
         self.basic[slack as usize] = true;
-
-        // Set slack >= 0
         self.set_lower(slack, Rational64::zero(), reason);
     }
-
     /// Add a constraint: expr >= 0
     pub fn add_ge(&mut self, mut expr: LinExpr, reason: u32) {
         expr.negate();
         self.add_le(expr, reason);
     }
-
     /// Add a constraint: expr = 0
     pub fn add_eq(&mut self, expr: LinExpr, reason: u32) {
-        // expr <= 0 and expr >= 0
         self.add_le(expr.clone(), reason);
         self.add_ge(expr, reason);
     }
-
     /// Add a strict constraint: expr < 0
     /// Uses infinitesimals: expr + s = 0 with s > 0
     pub fn add_strict_lt(&mut self, mut expr: LinExpr, reason: u32) {
-        // First, substitute any basic variables in expr with their non-basic expressions
-        // This ensures the new constraint is properly integrated into the tableau
         let mut substituted_expr = LinExpr::constant(expr.constant);
         for (var, coef) in &expr.terms {
             if let Some(basic_expr) = self.tableau.get(var).cloned() {
-                // var is basic, substitute: var = basic_expr
-                // Add coef * basic_expr to substituted_expr
                 substituted_expr.add_constant(coef * basic_expr.constant);
                 for (inner_var, inner_coef) in &basic_expr.terms {
                     substituted_expr.add_term(*inner_var, coef * inner_coef);
                 }
             } else {
-                // var is non-basic, add directly
                 substituted_expr.add_term(*var, *coef);
             }
         }
         expr = substituted_expr;
-
-        // Introduce slack variable: expr + s = 0, s > 0 (strict)
         let slack = self.new_slack();
         expr.add_term(slack, Rational64::one());
-
-        // slack is basic, express it in terms of non-basic
         let mut slack_expr = LinExpr::constant(-expr.constant);
         for (var, coef) in &expr.terms {
             if *var != slack {
@@ -473,36 +617,37 @@ impl Simplex {
             }
         }
         self.tableau.insert(slack, slack_expr);
-
-        // Set slack > 0 (strict lower bound: slack >= 0 + δ)
         self.set_strict_lower(slack, Rational64::zero(), reason);
     }
-
     /// Add a strict constraint: expr > 0
     /// Uses infinitesimals: -expr < 0
     pub fn add_strict_gt(&mut self, mut expr: LinExpr, reason: u32) {
         expr.negate();
         self.add_strict_lt(expr, reason);
     }
-
     /// Check if bounds are consistent
     pub fn check(&mut self) -> Result<(), Vec<u32>> {
-        // Check for trivially infeasible bounds
+        self.resource_limit = false;
         for i in 0..self.assignment.len() {
             if let (Some(lo), Some(hi)) = (&self.lower[i], &self.upper[i])
                 && lo.value > hi.value
             {
-                return Err(vec![lo.reason, hi.reason]);
+                // Emit ALL antecedents of both crossing bounds, not just their
+                // primary reasons: a propagated bound is implied by every
+                // reason that fed its derivation, and dropping them yields an
+                // incomplete (unsound) conflict explanation.
+                let mut conflict: Vec<u32> = Vec::new();
+                for r in lo.all_reasons().chain(hi.all_reasons()) {
+                    if !conflict.contains(&r) {
+                        conflict.push(r);
+                    }
+                }
+                return Err(conflict);
             }
         }
-
-        // Apply crash basis heuristic for better starting point
         self.crash_basis();
-
-        // Pivot to find feasible solution
         self.make_feasible()
     }
-
     /// Crash basis initialization for faster convergence
     ///
     /// This heuristic initializes the basis to a "good" starting point instead of
@@ -516,69 +661,45 @@ impl Simplex {
     ///
     /// Reference: Koberstein's crash procedure for MIP solvers
     fn crash_basis(&mut self) {
-        // Simple crash heuristic: assign non-basic variables to bounds that minimize violations
-        // For each non-basic variable:
-        // - If it has a lower bound, assign to lower bound
-        // - Else if it has an upper bound, assign to upper bound
-        // - Otherwise assign to 0
-
         for i in 0..self.assignment.len() {
-            // Skip basic variables
             if i < self.basic.len() && self.basic[i] {
                 continue;
             }
-
-            // Choose assignment based on bounds
             if let Some(lo) = &self.lower[i] {
-                // Has lower bound - assign to it
                 self.assignment[i] = lo.value;
             } else if let Some(hi) = &self.upper[i] {
-                // Has upper bound - assign to it
                 self.assignment[i] = hi.value;
             } else {
-                // No bounds - assign to 0
                 self.assignment[i] = DeltaRational::zero();
             }
         }
-
-        // Update basic variables based on tableau
         self.update_assignment();
     }
-
     /// Pivot to make the solution feasible
     fn make_feasible(&mut self) -> Result<(), Vec<u32>> {
-        // Compute initial assignment for basic variables
         self.update_assignment();
-
         for _ in 0..self.max_pivots {
-            // Find a violating basic variable
             let violating = self.find_violating();
-
             if violating.is_none() {
                 return Ok(());
             }
-
             let (basic_var, bound) =
                 violating.expect("violating basic variable must exist after is_none check");
-
-            // Find a non-basic variable to pivot with
             let pivot_col = self.find_pivot_col(basic_var, &bound);
-
             match pivot_col {
                 Some(nonbasic_var) => {
-                    self.pivot(basic_var, nonbasic_var);
+                    if !self.pivot(basic_var, nonbasic_var) {
+                        return Ok(());
+                    }
                 }
                 None => {
-                    // No pivot possible - infeasible
                     return Err(self.explain_conflict(basic_var, &bound));
                 }
             }
         }
-
-        // Too many pivots - unknown
+        self.resource_limit = true;
         Ok(())
     }
-
     /// Dual Simplex: Restore primal feasibility while maintaining dual feasibility
     ///
     /// The dual simplex algorithm is particularly efficient when:
@@ -599,39 +720,30 @@ impl Simplex {
     /// - Bixby, "Implementing the Simplex Method" (2002)
     /// - Modern MIP solvers (CPLEX, Gurobi) use dual simplex as the primary LP solver
     pub fn dual_simplex(&mut self) -> Result<(), Vec<u32>> {
-        // Compute initial assignment
+        self.resource_limit = false;
         self.update_assignment();
-
         for _ in 0..self.max_pivots {
-            // Find a basic variable that violates its bounds (primal infeasible)
             let violating = self.find_violating();
-
             if violating.is_none() {
-                return Ok(()); // Primal feasible - done!
+                return Ok(());
             }
-
             let (leaving_var, bound) =
                 violating.expect("violating basic variable must exist after is_none check");
-
-            // Find entering variable that maintains dual feasibility
             let entering = self.find_dual_pivot_col(leaving_var, &bound);
-
             match entering {
                 Some(entering_var) => {
-                    // Pivot: leaving_var exits basis, entering_var enters basis
-                    self.pivot(leaving_var, entering_var);
+                    if !self.pivot(leaving_var, entering_var) {
+                        return Ok(());
+                    }
                 }
                 None => {
-                    // No dual-feasible pivot exists - problem is infeasible
                     return Err(self.explain_conflict(leaving_var, &bound));
                 }
             }
         }
-
-        // Too many pivots - unknown (possibly cycling or unbounded)
+        self.resource_limit = true;
         Ok(())
     }
-
     /// Find entering variable for dual simplex (maintains dual feasibility)
     ///
     /// Given a leaving variable (basic var violating bounds), find a non-basic variable
@@ -659,37 +771,22 @@ impl Simplex {
     #[allow(dead_code)]
     fn find_dual_pivot_col(&self, leaving_var: VarId, bound: &Bound) -> Option<VarId> {
         let expr = self.tableau.get(&leaving_var)?;
-
-        // Simple dual pivot selection: choose first eligible non-basic variable
-        // A more sophisticated implementation would use ratio tests to ensure dual feasibility
-
         let mut best_var = None;
-
         for (var, coef) in &expr.terms {
             let can_increase = self.can_increase(*var);
             let can_decrease = self.can_decrease(*var);
-
-            // Determine if this variable is eligible for dual pivot
             let is_eligible = match bound.kind {
                 BoundType::Lower => {
-                    // leaving_var < lower_bound, need to increase it
-                    // If coef > 0: increasing var increases leaving_var ✓
-                    // If coef < 0: decreasing var increases leaving_var ✓
                     (*coef > Rational64::zero() && can_increase)
                         || (*coef < Rational64::zero() && can_decrease)
                 }
                 BoundType::Upper => {
-                    // leaving_var > upper_bound, need to decrease it
-                    // If coef < 0: increasing var decreases leaving_var ✓
-                    // If coef > 0: decreasing var decreases leaving_var ✓
                     (*coef < Rational64::zero() && can_increase)
                         || (*coef > Rational64::zero() && can_decrease)
                 }
                 _ => false,
             };
-
             if is_eligible {
-                // Use Bland's rule for anti-cycling: choose smallest index
                 best_var = match best_var {
                     None => Some(*var),
                     Some(current) if *var < current => Some(*var),
@@ -697,41 +794,32 @@ impl Simplex {
                 };
             }
         }
-
         best_var
     }
-
     /// Find a basic variable that violates its bounds
     fn find_violating(&self) -> Option<(VarId, Bound)> {
         for var in self.tableau.keys() {
             let idx = *var as usize;
             let val = self.assignment[idx];
-
-            if let Some(lo) = self.lower[idx]
+            if let Some(lo) = &self.lower[idx]
                 && val < lo.value
             {
-                return Some((*var, lo));
+                return Some((*var, lo.clone()));
             }
-
-            if let Some(hi) = self.upper[idx]
+            if let Some(hi) = &self.upper[idx]
                 && val > hi.value
             {
-                return Some((*var, hi));
+                return Some((*var, hi.clone()));
             }
         }
         None
     }
-
     /// Find a non-basic variable to pivot with using the configured pivoting rule
     fn find_pivot_col(&self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
         let expr = self.tableau.get(&basic_var)?;
-
         match self.pivoting_rule {
             PivotingRule::Bland => {
-                // Bland's rule: choose the smallest index among eligible variables
-                // This prevents cycling
                 let mut best_var = None;
-
                 for (var, coef) in &expr.terms {
                     let can_increase = self.can_increase(*var);
                     let can_decrease = self.can_decrease(*var);
@@ -746,7 +834,6 @@ impl Simplex {
                         }
                         _ => false,
                     };
-
                     if is_eligible {
                         best_var = match best_var {
                             None => Some(*var),
@@ -758,14 +845,11 @@ impl Simplex {
                 best_var
             }
             PivotingRule::Dantzig => {
-                // Dantzig's rule: choose variable with largest improvement
                 let mut best_var = None;
                 let mut best_improvement = Rational64::zero();
-
                 for (var, coef) in &expr.terms {
                     let can_increase = self.can_increase(*var);
                     let can_decrease = self.can_decrease(*var);
-
                     let improvement = match bound.kind {
                         BoundType::Lower if *coef > Rational64::zero() && can_increase => {
                             coef.abs()
@@ -781,7 +865,6 @@ impl Simplex {
                         }
                         _ => Rational64::zero(),
                     };
-
                     if improvement > best_improvement {
                         best_improvement = improvement;
                         best_var = Some(*var);
@@ -790,16 +873,11 @@ impl Simplex {
                 best_var
             }
             PivotingRule::SteepestEdge => {
-                // Steepest edge: similar to Dantzig but considers edge norms
-                // For simplicity, fall back to Dantzig's rule
-                // A full implementation would maintain edge weights
                 let mut best_var = None;
                 let mut best_score = Rational64::zero();
-
                 for (var, coef) in &expr.terms {
                     let can_increase = self.can_increase(*var);
                     let can_decrease = self.can_decrease(*var);
-
                     let score = match bound.kind {
                         BoundType::Lower if *coef > Rational64::zero() && can_increase => {
                             coef.abs()
@@ -815,7 +893,6 @@ impl Simplex {
                         }
                         _ => Rational64::zero(),
                     };
-
                     if score > best_score {
                         best_score = score;
                         best_var = Some(*var);
@@ -824,27 +901,17 @@ impl Simplex {
                 best_var
             }
             PivotingRule::PartialPricing => {
-                // Partial pricing: check only a subset of candidates to reduce overhead
-                // Effective for large problems where full pricing is expensive
-                //
-                // Strategy: check every k-th variable instead of all variables
-                // This reduces the complexity of pivot column selection from O(n) to O(n/k)
-                const SAMPLE_RATE: usize = 4; // Check every 4th variable
-
+                const SAMPLE_RATE: usize = 4;
                 let mut best_var = None;
                 let mut best_improvement = Rational64::zero();
                 let mut count = 0;
-
                 for (var, coef) in &expr.terms {
-                    // Skip most variables, only check every SAMPLE_RATE-th one
                     count += 1;
                     if count % SAMPLE_RATE != 0 {
                         continue;
                     }
-
                     let can_increase = self.can_increase(*var);
                     let can_decrease = self.can_decrease(*var);
-
                     let improvement = match bound.kind {
                         BoundType::Lower if *coef > Rational64::zero() && can_increase => {
                             coef.abs()
@@ -860,14 +927,11 @@ impl Simplex {
                         }
                         _ => Rational64::zero(),
                     };
-
                     if improvement > best_improvement {
                         best_improvement = improvement;
                         best_var = Some(*var);
                     }
                 }
-
-                // If no candidate found in sample, fall back to first eligible
                 if best_var.is_none() {
                     for (var, coef) in &expr.terms {
                         let can_increase = self.can_increase(*var);
@@ -883,18 +947,15 @@ impl Simplex {
                             }
                             _ => false,
                         };
-
                         if is_eligible {
                             return Some(*var);
                         }
                     }
                 }
-
                 best_var
             }
         }
     }
-
     /// Check if a variable can be increased
     #[inline]
     pub(super) fn can_increase(&self, var: VarId) -> bool {
@@ -904,7 +965,6 @@ impl Simplex {
             None => true,
         }
     }
-
     /// Check if a variable can be decreased
     #[inline]
     pub(super) fn can_decrease(&self, var: VarId) -> bool {
@@ -914,65 +974,118 @@ impl Simplex {
             None => true,
         }
     }
-
-    /// Perform a pivot operation
-    pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) {
+    /// Perform a pivot operation.
+    ///
+    /// `Rational64` is `i64`-backed: repeated pivoting can grow numerators
+    /// and denominators without bound (the classic fraction-free-elimination
+    /// blowup), and `num-rational`'s arithmetic operators do not check for
+    /// overflow -- they panic in debug builds and silently wrap to a wrong
+    /// coefficient in release builds. To avoid both, every coefficient
+    /// computed here goes through the `checked_*_r64` helpers, and the pivot
+    /// is fully validated (via a `i128`-checked dry run) BEFORE any tableau
+    /// state is mutated: an overflow anywhere aborts the pivot with no
+    /// partial mutation, matching the pre-existing `resource_limit` "give up
+    /// honestly" contract used for pivot-budget exhaustion. Returns `false`
+    /// iff the pivot could not be completed (overflow, or a broken tableau
+    /// invariant), in which case `resource_limit` is set so callers report
+    /// `Unknown` rather than trusting a fabricated/partial result.
+    ///
+    /// Not `#[must_use]`: `simplex_opt.rs`'s optimization-direction pivot
+    /// loop currently ignores the outcome (pre-existing behavior, out of
+    /// this module's scope to change) and relies on the subsequent
+    /// pivot-budget/optimality bookkeeping to notice a stalled search.
+    pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) -> bool {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SimplexPivot);
-        let expr = self
-            .tableau
-            .remove(&basic_var)
-            .expect("basic variable must have expression in tableau");
-
-        // Find coefficient of nonbasic in basic's row
-        let coef = expr
+        let Some(expr) = self.tableau.get(&basic_var) else {
+            self.resource_limit = true;
+            return false;
+        };
+        let Some(coef) = expr
             .terms
             .iter()
             .find(|(v, _)| *v == nonbasic_var)
             .map(|(_, c)| *c)
-            .expect("nonbasic variable must appear in basic variable's expression");
-
-        // Express nonbasic in terms of basic
+        else {
+            self.resource_limit = true;
+            return false;
+        };
+        let Some(inv_coef) = checked_recip_r64(coef) else {
+            self.resource_limit = true;
+            return false;
+        };
+        let Some(new_constant) =
+            checked_neg_r64(expr.constant).and_then(|n| checked_div_r64(n, coef))
+        else {
+            self.resource_limit = true;
+            return false;
+        };
         let mut new_expr = LinExpr::new();
-        new_expr.add_term(basic_var, Rational64::one() / coef);
-        new_expr.add_constant(-expr.constant / coef);
-
+        new_expr.terms.push((basic_var, inv_coef));
+        new_expr.constant = new_constant;
         for (var, c) in &expr.terms {
             if *var != nonbasic_var {
-                new_expr.add_term(*var, -*c / coef);
+                let Some(neg_c) = checked_neg_r64(*c) else {
+                    self.resource_limit = true;
+                    return false;
+                };
+                let Some(val) = checked_div_r64(neg_c, coef) else {
+                    self.resource_limit = true;
+                    return false;
+                };
+                if !new_expr.try_add_term(*var, val) {
+                    self.resource_limit = true;
+                    return false;
+                }
             }
         }
-
-        // Substitute into other rows
-        for row in self.tableau.values_mut() {
+        let mut row_updates: Vec<(VarId, LinExpr)> = Vec::new();
+        for (var, row) in &self.tableau {
+            if *var == basic_var {
+                continue;
+            }
             let sub_coef = row
                 .terms
                 .iter()
                 .find(|(v, _)| *v == nonbasic_var)
                 .map(|(_, c)| *c);
-
-            if let Some(sc) = sub_coef {
-                row.terms.retain(|(v, _)| *v != nonbasic_var);
-                row.constant += sc * new_expr.constant;
-                for (v, c) in &new_expr.terms {
-                    row.add_term(*v, sc * *c);
+            let Some(sc) = sub_coef else { continue };
+            let mut new_row = row.clone();
+            new_row.terms.retain(|(v, _)| *v != nonbasic_var);
+            let Some(delta_c) = checked_mul_r64(sc, new_expr.constant) else {
+                self.resource_limit = true;
+                return false;
+            };
+            let Some(sum) = checked_add_r64(new_row.constant, delta_c) else {
+                self.resource_limit = true;
+                return false;
+            };
+            new_row.constant = sum;
+            for (v, c) in &new_expr.terms {
+                let Some(term_c) = checked_mul_r64(sc, *c) else {
+                    self.resource_limit = true;
+                    return false;
+                };
+                if !new_row.try_add_term(*v, term_c) {
+                    self.resource_limit = true;
+                    return false;
                 }
             }
+            row_updates.push((*var, new_row));
         }
-
+        self.tableau.remove(&basic_var);
+        for (var, new_row) in row_updates {
+            self.tableau.insert(var, new_row);
+        }
         self.tableau.insert(nonbasic_var, new_expr);
         self.basic[basic_var as usize] = false;
         self.basic[nonbasic_var as usize] = true;
-
-        // Update assignment
         self.update_assignment();
+        true
     }
-
     /// Update variable assignments after pivot
     pub(super) fn update_assignment(&mut self) {
         let num_vars = self.assignment.len();
-
-        // Non-basic variables keep their bounds
         for i in 0..num_vars {
             if !self.basic[i] {
                 if let Some(lo) = &self.lower[i] {
@@ -982,18 +1095,13 @@ impl Simplex {
                 }
             }
         }
-
-        // Compute basic variables from their rows
-        // Skip entries with stale variable references (can happen after pop)
         for (var, expr) in &self.tableau {
             let var_idx = *var as usize;
             if var_idx >= num_vars {
-                continue; // Skip stale tableau entry
+                continue;
             }
-
             let mut val = DeltaRational::from_rational(expr.constant);
             let mut has_stale_ref = false;
-
             for (v, c) in &expr.terms {
                 let v_idx = *v as usize;
                 if v_idx >= num_vars {
@@ -1002,13 +1110,11 @@ impl Simplex {
                 }
                 val += self.assignment[v_idx] * *c;
             }
-
             if !has_stale_ref {
                 self.assignment[var_idx] = val;
             }
         }
     }
-
     /// Explain why a conflict occurred using Farkas lemma
     ///
     /// When a basic variable x_i violates its bounds and no pivot is possible,
@@ -1020,64 +1126,51 @@ impl Simplex {
     ///
     /// The conflict clause contains the reasons for all the bounds that prevent a pivot.
     fn explain_conflict(&self, basic_var: VarId, bound: &Bound) -> Vec<u32> {
-        let mut reasons = Vec::new();
-
-        // Add the violated bound's reason
-        reasons.push(bound.reason);
-
-        // Get the row for this basic variable
+        let mut reasons: Vec<u32> = Vec::new();
+        // Every antecedent of the violated bound (primary + auxiliary), so a
+        // propagated bound contributes all of the reasons that derived it.
+        let push_all = |b: &Bound, reasons: &mut Vec<u32>| {
+            for r in b.all_reasons() {
+                if !reasons.contains(&r) {
+                    reasons.push(r);
+                }
+            }
+        };
+        push_all(bound, &mut reasons);
         let expr = match self.tableau.get(&basic_var) {
             Some(e) => e,
             None => return reasons,
         };
-
-        // For each non-basic variable in the row, add the reason for the bound
-        // that prevents pivoting
         for (var, coef) in &expr.terms {
             let var_idx = *var as usize;
-
             match bound.kind {
                 BoundType::Lower => {
-                    // We need to increase basic_var but couldn't find a pivot
-                    // For each non-basic variable:
-                    // - If coef > 0, we need to increase it, so its upper bound blocks us
-                    // - If coef < 0, we need to decrease it, so its lower bound blocks us
                     if *coef > Rational64::zero()
                         && let Some(hi) = &self.upper[var_idx]
-                        && !reasons.contains(&hi.reason)
                     {
-                        reasons.push(hi.reason);
+                        push_all(hi, &mut reasons);
                     } else if *coef < Rational64::zero()
                         && let Some(lo) = &self.lower[var_idx]
-                        && !reasons.contains(&lo.reason)
                     {
-                        reasons.push(lo.reason);
+                        push_all(lo, &mut reasons);
                     }
                 }
                 BoundType::Upper => {
-                    // We need to decrease basic_var but couldn't find a pivot
-                    // For each non-basic variable:
-                    // - If coef > 0, we need to decrease it, so its lower bound blocks us
-                    // - If coef < 0, we need to increase it, so its upper bound blocks us
                     if *coef > Rational64::zero()
                         && let Some(lo) = &self.lower[var_idx]
-                        && !reasons.contains(&lo.reason)
                     {
-                        reasons.push(lo.reason);
+                        push_all(lo, &mut reasons);
                     } else if *coef < Rational64::zero()
                         && let Some(hi) = &self.upper[var_idx]
-                        && !reasons.contains(&hi.reason)
                     {
-                        reasons.push(hi.reason);
+                        push_all(hi, &mut reasons);
                     }
                 }
                 _ => {}
             }
         }
-
         reasons
     }
-
     /// Perform bound propagation through the tableau
     ///
     /// For each basic variable x_i = c + sum(a_j * x_j), we can derive bounds:
@@ -1085,51 +1178,39 @@ impl Simplex {
     /// - If x_i has a bound, we may derive bounds for x_j
     pub fn propagate_bounds(&mut self) {
         self.propagated.clear();
-
-        // Propagate forward: derive bounds for basic variables from non-basic bounds
         for (basic_var, expr) in &self.tableau {
             if let Some(bound) = self.derive_basic_bound(*basic_var, expr) {
                 self.propagated.push(bound);
             }
         }
-
-        // Apply propagated bounds
-        for prop in &self.propagated {
+        let props = self.propagated.clone();
+        for prop in &props {
             let idx = prop.var as usize;
             if idx >= self.lower.len() {
                 continue;
             }
-
+            if prop.reasons.is_empty() {
+                continue;
+            }
             if prop.is_lower {
-                // Check if this tightens existing lower bound
                 let should_update = match &self.lower[idx] {
                     None => true,
                     Some(existing) => prop.value > existing.value,
                 };
                 if should_update {
-                    self.lower[idx] = Some(Bound {
-                        kind: BoundType::Lower,
-                        value: prop.value,
-                        reason: prop.reasons.first().copied().unwrap_or(0),
-                    });
+                    self.set_lower_delta(prop.var, prop.value, prop.reasons.clone());
                 }
             } else {
-                // Check if this tightens existing upper bound
                 let should_update = match &self.upper[idx] {
                     None => true,
                     Some(existing) => prop.value < existing.value,
                 };
                 if should_update {
-                    self.upper[idx] = Some(Bound {
-                        kind: BoundType::Upper,
-                        value: prop.value,
-                        reason: prop.reasons.first().copied().unwrap_or(0),
-                    });
+                    self.set_upper_delta(prop.var, prop.value, prop.reasons.clone());
                 }
             }
         }
     }
-
     /// Derive bounds for a basic variable from bounds on non-basic variables
     ///
     /// For basic variable x_i = c + sum(a_j * x_j):
@@ -1137,36 +1218,35 @@ impl Simplex {
     /// - Upper bound: sum of (a_j * upper(x_j) if a_j > 0, a_j * lower(x_j) if a_j < 0)
     fn derive_basic_bound(&self, basic_var: VarId, expr: &LinExpr) -> Option<PropagatedBound> {
         let idx = basic_var as usize;
-
-        // Try to derive lower bound
         let mut lower_sum = DeltaRational::from_rational(expr.constant);
         let mut lower_reasons: SmallVec<[u32; 4]> = SmallVec::new();
         let mut can_derive_lower = true;
-
         for (var, coef) in &expr.terms {
             let var_idx = *var as usize;
             if *coef > Rational64::zero() {
-                // Positive coefficient: need lower bound
                 if let Some(lo) = &self.lower[var_idx] {
                     lower_sum += lo.value * *coef;
-                    lower_reasons.push(lo.reason);
+                    // Carry EVERY antecedent of this bound (primary + auxiliary),
+                    // not just its primary reason: when `lo` is itself a
+                    // propagated bound derived from several reasons, dropping its
+                    // `aux_reasons` here would yield an incomplete conflict
+                    // explanation one derivation step later. `split_reasons`
+                    // deduplicates downstream.
+                    lower_reasons.extend(lo.all_reasons());
                 } else {
                     can_derive_lower = false;
                     break;
                 }
             } else {
-                // Negative coefficient: need upper bound
                 if let Some(hi) = &self.upper[var_idx] {
                     lower_sum += hi.value * *coef;
-                    lower_reasons.push(hi.reason);
+                    lower_reasons.extend(hi.all_reasons());
                 } else {
                     can_derive_lower = false;
                     break;
                 }
             }
         }
-
-        // Check if derived lower bound is tighter than existing
         if can_derive_lower {
             let is_tighter = match &self.lower[idx] {
                 None => true,
@@ -1181,36 +1261,29 @@ impl Simplex {
                 });
             }
         }
-
-        // Try to derive upper bound
         let mut upper_sum = DeltaRational::from_rational(expr.constant);
         let mut upper_reasons: SmallVec<[u32; 4]> = SmallVec::new();
         let mut can_derive_upper = true;
-
         for (var, coef) in &expr.terms {
             let var_idx = *var as usize;
             if *coef > Rational64::zero() {
-                // Positive coefficient: need upper bound
                 if let Some(hi) = &self.upper[var_idx] {
                     upper_sum += hi.value * *coef;
-                    upper_reasons.push(hi.reason);
+                    upper_reasons.extend(hi.all_reasons());
                 } else {
                     can_derive_upper = false;
                     break;
                 }
             } else {
-                // Negative coefficient: need lower bound
                 if let Some(lo) = &self.lower[var_idx] {
                     upper_sum += lo.value * *coef;
-                    upper_reasons.push(lo.reason);
+                    upper_reasons.extend(lo.all_reasons());
                 } else {
                     can_derive_upper = false;
                     break;
                 }
             }
         }
-
-        // Check if derived upper bound is tighter than existing
         if can_derive_upper {
             let is_tighter = match &self.upper[idx] {
                 None => true,
@@ -1225,30 +1298,31 @@ impl Simplex {
                 });
             }
         }
-
         None
     }
-
     /// Get pending propagated bounds
     #[must_use]
     pub fn get_propagated(&self) -> &[PropagatedBound] {
         &self.propagated
     }
-
     /// Clear propagated bounds
     pub fn clear_propagated(&mut self) {
         self.propagated.clear();
     }
-
     /// Tighten bounds on a variable if possible
     /// Returns true if bounds were tightened
+    ///
+    /// Like [`Self::propagate_bounds`] (see its doc comment for the full
+    /// rationale), this routes writes through the undo trail via
+    /// `set_lower_delta`/`set_upper_delta` rather than writing
+    /// `self.lower`/`self.upper` directly, and skips applying a derived
+    /// bound with no recorded reason rather than fabricating one.
     pub fn tighten_bounds(&mut self, var: VarId) -> bool {
         let idx = var as usize;
         let mut changed = false;
-
-        // If this is a basic variable, check its expression
         if let Some(expr) = self.tableau.get(&var).cloned()
             && let Some(prop) = self.derive_basic_bound(var, &expr)
+            && !prop.reasons.is_empty()
         {
             if prop.is_lower {
                 let should_update = match &self.lower[idx] {
@@ -1256,11 +1330,7 @@ impl Simplex {
                     Some(existing) => prop.value > existing.value,
                 };
                 if should_update {
-                    self.lower[idx] = Some(Bound {
-                        kind: BoundType::Lower,
-                        value: prop.value,
-                        reason: prop.reasons.first().copied().unwrap_or(0),
-                    });
+                    self.set_lower_delta(var, prop.value, prop.reasons.clone());
                     changed = true;
                 }
             } else {
@@ -1269,37 +1339,28 @@ impl Simplex {
                     Some(existing) => prop.value < existing.value,
                 };
                 if should_update {
-                    self.upper[idx] = Some(Bound {
-                        kind: BoundType::Upper,
-                        value: prop.value,
-                        reason: prop.reasons.first().copied().unwrap_or(0),
-                    });
+                    self.set_upper_delta(var, prop.value, prop.reasons.clone());
                     changed = true;
                 }
             }
         }
-
         changed
     }
-
     /// Get the number of original (non-slack) variables
     #[must_use]
     pub fn num_original_vars(&self) -> usize {
         self.num_vars
     }
-
     /// Get lower bound of a variable (if any)
     #[must_use]
     pub fn get_lower(&self, var: VarId) -> Option<&Bound> {
         self.lower.get(var as usize).and_then(|b| b.as_ref())
     }
-
     /// Get upper bound of a variable (if any)
     #[must_use]
     pub fn get_upper(&self, var: VarId) -> Option<&Bound> {
         self.upper.get(var as usize).and_then(|b| b.as_ref())
     }
-
     /// Reset the solver
     pub fn reset(&mut self) {
         self.num_vars = 0;
@@ -1316,23 +1377,18 @@ impl Simplex {
         self.trail_limits.push(0);
         self.cached_assignments.clear();
         self.saved_tableaux.clear();
+        self.resource_limit = false;
     }
-
     /// Push a new decision level
     pub fn push(&mut self) {
         self.trail_limits.push(self.trail.len());
-        // Cache current assignment for warm-starting on pop (basis caching).
         self.cached_assignments.push(self.assignment.clone());
-        // Save the full tableau snapshot so that pivots during check() inside
-        // the pushed scope can be correctly undone on pop().
         self.saved_tableaux
             .push((self.tableau.clone(), self.basic.clone()));
     }
-
     /// Pop to previous decision level
     pub fn pop(&mut self) {
         if let Some(limit) = self.trail_limits.pop() {
-            // Undo all operations since the limit (bounds and variable allocations).
             while self.trail.len() > limit {
                 if let Some(undo) = self.trail.pop() {
                     match undo {
@@ -1361,29 +1417,20 @@ impl Simplex {
                             self.lower.pop();
                             self.upper.pop();
                             self.basic.pop();
-                            // Tableau row removal handled by tableau snapshot restore below.
-                            let _ = id; // VarId noted but actual removal done below
+                            let _ = id;
                         }
                     }
                 }
             }
-
-            // Restore the full tableau snapshot saved at push time.
-            // This correctly undoes any pivots performed during check() inside
-            // the pushed scope, which is critical for sound probe-and-pop operations
-            // (e.g., Nelson-Oppen equality detection).
             if let Some((saved_tableau, saved_basic)) = self.saved_tableaux.pop() {
                 self.tableau = saved_tableau;
-                // Restore basic flags up to current length.
                 let cur_len = self.basic.len();
                 let restore_len = saved_basic.len().min(cur_len);
                 self.basic[..restore_len].copy_from_slice(&saved_basic[..restore_len]);
-                // Ensure any remaining entries are set to false (shouldn't happen normally).
                 for item in self.basic.iter_mut().skip(restore_len) {
                     *item = false;
                 }
             } else {
-                // Fallback: clean up stale entries (shouldn't be reached in normal use).
                 let num_vars = self.assignment.len();
                 self.tableau.retain(|&var, expr| {
                     if (var as usize) >= num_vars {
@@ -1403,8 +1450,6 @@ impl Simplex {
                     }
                 }
             }
-
-            // Restore cached assignment for warm-starting.
             if let Some(cached) = self.cached_assignments.pop() {
                 let restore_len = cached.len().min(self.assignment.len());
                 self.assignment[..restore_len].copy_from_slice(&cached[..restore_len]);
@@ -1416,53 +1461,42 @@ impl Simplex {
                     *item = DeltaRational::zero();
                 }
             }
-
             self.infeasible = None;
         }
     }
-
     /// Get the current decision level
     #[must_use]
     pub fn decision_level(&self) -> usize {
         self.trail_limits.len().saturating_sub(1)
     }
-
-    // ── Accessor helpers for the optimization extension (simplex_opt.rs) ─────
-
     /// Number of allocated variable slots (original + slack).
     #[inline]
     pub(super) fn assignment_len(&self) -> usize {
         self.assignment.len()
     }
-
     /// Real-part of the assignment at index `idx`.
     #[inline]
     pub(super) fn assignment_real_at(&self, idx: usize) -> Rational64 {
         self.assignment[idx].real
     }
-
     /// Full `DeltaRational` assignment at index `idx`.
     #[inline]
     pub(super) fn assignment_at(&self, idx: usize) -> Rational64 {
         self.assignment[idx].real
     }
-
     /// Whether variable at `idx` is currently basic.
     #[inline]
     pub(super) fn is_basic(&self, idx: usize) -> bool {
         idx < self.basic.len() && self.basic[idx]
     }
-
     /// Iterate over `(basic_var, row)` pairs in the tableau.
     pub(super) fn tableau_iter(&self) -> impl Iterator<Item = (&VarId, &LinExpr)> {
         self.tableau.iter()
     }
-
     /// Iterate over basic variable IDs in the tableau.
     pub(super) fn tableau_keys(&self) -> impl Iterator<Item = VarId> + '_ {
         self.tableau.keys().copied()
     }
-
     /// Return the coefficient of `nonbasic` in the row of `basic`, or `None`.
     pub(super) fn tableau_coef_of(&self, basic: VarId, nonbasic: VarId) -> Option<Rational64> {
         self.tableau.get(&basic).and_then(|row| {
@@ -1472,7 +1506,6 @@ impl Simplex {
                 .map(|(_, c)| *c)
         })
     }
-
     /// Real part of the upper bound for variable at `idx`, if any.
     #[inline]
     pub(super) fn upper_real_at(&self, idx: usize) -> Option<Rational64> {
@@ -1480,7 +1513,6 @@ impl Simplex {
             .get(idx)
             .and_then(|b| b.as_ref().map(|b| b.value.real))
     }
-
     /// Real part of the lower bound for variable at `idx`, if any.
     #[inline]
     pub(super) fn lower_real_at(&self, idx: usize) -> Option<Rational64> {
@@ -1488,7 +1520,6 @@ impl Simplex {
             .get(idx)
             .and_then(|b| b.as_ref().map(|b| b.value.real))
     }
-
     /// Full `DeltaRational` upper bound for variable at `idx`, if any.
     #[inline]
     pub(super) fn upper_delta_at(&self, idx: usize) -> Option<DeltaRational> {
@@ -1496,7 +1527,6 @@ impl Simplex {
             .get(idx)
             .and_then(|b| b.as_ref().map(|b| b.value))
     }
-
     /// Full `DeltaRational` lower bound for variable at `idx`, if any.
     #[inline]
     pub(super) fn lower_delta_at(&self, idx: usize) -> Option<DeltaRational> {
@@ -1504,424 +1534,18 @@ impl Simplex {
             .get(idx)
             .and_then(|b| b.as_ref().map(|b| b.value))
     }
-
     /// Overwrite the assignment at `idx` with `val`.
     #[inline]
     pub(super) fn set_assignment_at(&mut self, idx: usize, val: DeltaRational) {
         self.assignment[idx] = val;
     }
-
     /// Maximum pivot count configured for this instance.
     #[inline]
     pub(super) fn max_pivots(&self) -> usize {
         self.max_pivots
     }
 }
-
 pub use super::simplex_opt::SimplexOptStatus;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simplex_basic() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-
-        // x >= 0, y >= 0
-        simplex.set_lower(x, Rational64::zero(), 0);
-        simplex.set_lower(y, Rational64::zero(), 1);
-
-        // x <= 10
-        simplex.set_upper(x, Rational64::from_integer(10), 2);
-
-        assert!(simplex.check().is_ok());
-    }
-
-    #[test]
-    fn test_simplex_infeasible() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-
-        // x >= 10 and x <= 5 is infeasible
-        simplex.set_lower(x, Rational64::from_integer(10), 0);
-        simplex.set_upper(x, Rational64::from_integer(5), 1);
-
-        assert!(simplex.check().is_err());
-    }
-
-    #[test]
-    fn test_simplex_strict_bounds() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-
-        // x > 0 (strict lower bound)
-        simplex.set_strict_lower(x, Rational64::zero(), 0);
-
-        // x < 10 (strict upper bound)
-        simplex.set_strict_upper(x, Rational64::from_integer(10), 1);
-
-        assert!(simplex.check().is_ok());
-
-        // Value should be between 0 and 10 (exclusive)
-        let val = simplex.delta_value(x);
-        assert!(val.is_positive()); // > 0
-        assert!(val < DeltaRational::from(10)); // < 10
-    }
-
-    #[test]
-    fn test_simplex_strict_infeasible() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-
-        // x >= 5 and x < 5 is infeasible
-        simplex.set_lower(x, Rational64::from_integer(5), 0);
-        simplex.set_strict_upper(x, Rational64::from_integer(5), 1);
-
-        assert!(simplex.check().is_err());
-    }
-
-    #[test]
-    fn test_simplex_strict_feasible_boundary() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-
-        // x > 5 and x <= 6 is feasible
-        simplex.set_strict_lower(x, Rational64::from_integer(5), 0);
-        simplex.set_upper(x, Rational64::from_integer(6), 1);
-
-        assert!(simplex.check().is_ok());
-
-        let val = simplex.delta_value(x);
-        assert!(val > DeltaRational::from(5));
-        assert!(val <= DeltaRational::from(6));
-    }
-
-    #[test]
-    fn test_bound_propagation() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-
-        // x >= 0, x <= 10
-        simplex.set_lower(x, Rational64::zero(), 0);
-        simplex.set_upper(x, Rational64::from_integer(10), 1);
-
-        // y >= 0, y <= 10
-        simplex.set_lower(y, Rational64::zero(), 2);
-        simplex.set_upper(y, Rational64::from_integer(10), 3);
-
-        // Add constraint: x + y <= 15
-        // This introduces slack variable s, where s = 15 - x - y, s >= 0
-        let mut expr = LinExpr::new();
-        expr.add_term(x, Rational64::one());
-        expr.add_term(y, Rational64::one());
-        expr.add_constant(-Rational64::from_integer(15));
-        simplex.add_le(expr, 4);
-
-        // Propagate bounds
-        simplex.propagate_bounds();
-
-        // Check the constraint is feasible
-        assert!(simplex.check().is_ok());
-
-        // The accessor methods work
-        assert!(simplex.get_lower(x).is_some());
-        assert!(simplex.get_upper(x).is_some());
-    }
-
-    #[test]
-    fn test_tighten_bounds() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-
-        // x >= 5
-        simplex.set_lower(x, Rational64::from_integer(5), 0);
-
-        // x <= 15
-        simplex.set_upper(x, Rational64::from_integer(15), 1);
-
-        // The accessor methods work
-        let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::from_integer(5));
-
-        let hi = simplex.get_upper(x).expect("test operation should succeed");
-        assert_eq!(hi.value.real, Rational64::from_integer(15));
-
-        assert!(simplex.check().is_ok());
-    }
-
-    #[test]
-    fn test_farkas_conflict_explanation() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-
-        // Constraint: x + y <= 5 (reason 0)
-        // Which becomes: x + y - 5 <= 0, introduce slack s where s = 5 - x - y, s >= 0
-        let mut expr1 = LinExpr::new();
-        expr1.add_term(x, Rational64::one());
-        expr1.add_term(y, Rational64::one());
-        expr1.add_constant(-Rational64::from_integer(5));
-        simplex.add_le(expr1, 0);
-
-        // x >= 3 (reason 1)
-        simplex.set_lower(x, Rational64::from_integer(3), 1);
-
-        // y >= 3 (reason 2)
-        simplex.set_lower(y, Rational64::from_integer(3), 2);
-
-        // This is infeasible: x >= 3, y >= 3 implies x + y >= 6, but x + y <= 5
-        let result = simplex.check();
-        assert!(result.is_err());
-
-        // The conflict should include the relevant reasons
-        let reasons = result.unwrap_err();
-        assert!(!reasons.is_empty());
-        // Should include at least the constraint reason (0) and the bound reasons
-    }
-
-    #[test]
-    fn test_farkas_multiple_variables() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-        let z = simplex.new_var();
-
-        // x + y + z <= 10 (reason 0)
-        let mut expr = LinExpr::new();
-        expr.add_term(x, Rational64::one());
-        expr.add_term(y, Rational64::one());
-        expr.add_term(z, Rational64::one());
-        expr.add_constant(-Rational64::from_integer(10));
-        simplex.add_le(expr, 0);
-
-        // x >= 4 (reason 1)
-        simplex.set_lower(x, Rational64::from_integer(4), 1);
-
-        // y >= 4 (reason 2)
-        simplex.set_lower(y, Rational64::from_integer(4), 2);
-
-        // z >= 4 (reason 3)
-        simplex.set_lower(z, Rational64::from_integer(4), 3);
-
-        // Infeasible: x + y + z >= 12 but x + y + z <= 10
-        let result = simplex.check();
-        assert!(result.is_err());
-
-        let reasons = result.unwrap_err();
-        // Should have multiple reasons in the conflict
-        assert!(reasons.len() >= 2);
-    }
-
-    #[test]
-    fn test_simplex_push_pop() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-
-        // Level 0: x >= 0, x <= 100
-        simplex.set_lower(x, Rational64::zero(), 0);
-        simplex.set_upper(x, Rational64::from_integer(100), 1);
-
-        assert!(simplex.check().is_ok());
-
-        // Push to level 1
-        simplex.push();
-
-        // Level 1: tighten to x >= 50, x <= 60
-        simplex.set_lower(x, Rational64::from_integer(50), 2);
-        simplex.set_upper(x, Rational64::from_integer(60), 3);
-
-        assert!(simplex.check().is_ok());
-        let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::from_integer(50));
-
-        // Push to level 2
-        simplex.push();
-
-        // Level 2: infeasible bounds x >= 70, x <= 60
-        simplex.set_lower(x, Rational64::from_integer(70), 4);
-
-        assert!(simplex.check().is_err());
-
-        // Pop to level 1 - should be feasible again
-        simplex.pop();
-
-        // After pop, bounds should be back to x >= 50, x <= 60
-        let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::from_integer(50));
-        let hi = simplex.get_upper(x).expect("test operation should succeed");
-        assert_eq!(hi.value.real, Rational64::from_integer(60));
-
-        assert!(simplex.check().is_ok());
-
-        // Pop to level 0
-        simplex.pop();
-
-        // After pop, bounds should be back to x >= 0, x <= 100
-        let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::zero());
-        let hi = simplex.get_upper(x).expect("test operation should succeed");
-        assert_eq!(hi.value.real, Rational64::from_integer(100));
-
-        assert!(simplex.check().is_ok());
-    }
-
-    #[test]
-    fn test_simplex_push_pop_vars() {
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        simplex.set_lower(x, Rational64::zero(), 0);
-        simplex.set_upper(x, Rational64::from_integer(10), 1);
-
-        assert_eq!(simplex.num_original_vars(), 1);
-
-        simplex.push();
-
-        // Add a new variable at level 1
-        let y = simplex.new_var();
-        simplex.set_lower(y, Rational64::zero(), 2);
-        simplex.set_upper(y, Rational64::from_integer(20), 3);
-
-        assert_eq!(simplex.num_original_vars(), 2);
-        assert!(simplex.check().is_ok());
-
-        // Pop - the new variable should be gone
-        simplex.pop();
-
-        assert_eq!(simplex.num_original_vars(), 1);
-    }
-
-    #[test]
-    fn test_dual_simplex_basic() {
-        // Test dual simplex - it works best when we have a basis already
-        // For a simple feasibility test, dual_simplex should find violations
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-
-        // x, y >= 0
-        simplex.set_lower(x, Rational64::zero(), 0);
-        simplex.set_lower(y, Rational64::zero(), 1);
-
-        // Add a constraint: x + y = 10 (using slack variable, becomes basic)
-        let mut expr = LinExpr::new();
-        expr.add_term(x, Rational64::one());
-        expr.add_term(y, Rational64::one());
-        expr.add_constant(Rational64::from_integer(-10));
-        simplex.add_eq(expr, 2);
-
-        // dual_simplex should be able to find a feasible solution
-        assert!(simplex.dual_simplex().is_ok());
-
-        // Check values
-        let x_val = simplex.value(x);
-        let y_val = simplex.value(y);
-        assert!(x_val + y_val >= Rational64::from_integer(9)); // Allow some slack
-        assert!(x_val + y_val <= Rational64::from_integer(11));
-    }
-
-    #[test]
-    fn test_dual_simplex_feasible() {
-        // Test dual simplex on a feasible problem
-        let mut simplex = Simplex::new();
-
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-
-        // x >= 0, y >= 0
-        simplex.set_lower(x, Rational64::zero(), 0);
-        simplex.set_lower(y, Rational64::zero(), 1);
-
-        // x <= 10, y <= 10
-        simplex.set_upper(x, Rational64::from_integer(10), 2);
-        simplex.set_upper(y, Rational64::from_integer(10), 3);
-
-        // Add constraint: x + y >= 5
-        let mut expr = LinExpr::new();
-        expr.add_term(x, Rational64::one());
-        expr.add_term(y, Rational64::one());
-        expr.add_constant(Rational64::from_integer(-5));
-        simplex.add_ge(expr, 4);
-
-        // Should be feasible
-        assert!(simplex.dual_simplex().is_ok());
-
-        // Check that solution satisfies bounds
-        let x_val = simplex.value(x);
-        let y_val = simplex.value(y);
-
-        assert!(x_val >= Rational64::zero());
-        assert!(y_val >= Rational64::zero());
-        assert!(x_val + y_val >= Rational64::from_integer(5));
-    }
-
-    /// Test that x<=y AND y<=x makes x<y infeasible (probe test).
-    #[test]
-    fn test_bidirectional_constraints_probe() {
-        let mut simplex = Simplex::new();
-        let x = simplex.new_var();
-        let y = simplex.new_var();
-
-        // x <= y  (x - y <= 0)
-        let mut e1 = LinExpr::new();
-        e1.add_term(x, Rational64::one());
-        e1.add_term(y, -Rational64::one());
-        simplex.add_le(e1, 0);
-
-        // y <= x  (y - x <= 0)
-        let mut e2 = LinExpr::new();
-        e2.add_term(y, Rational64::one());
-        e2.add_term(x, -Rational64::one());
-        simplex.add_le(e2, 1);
-
-        assert!(simplex.check().is_ok(), "x<=y AND y<=x should be SAT");
-
-        // Probe: x < y should be UNSAT (since x=y is forced)
-        {
-            simplex.push();
-            let mut e3 = LinExpr::new();
-            e3.add_term(x, Rational64::one());
-            e3.add_term(y, -Rational64::one());
-            simplex.add_strict_lt(e3, 99);
-            let probe1 = simplex.check();
-            simplex.pop();
-            assert!(
-                probe1.is_err(),
-                "x<y should be UNSAT when x=y is forced; got Ok"
-            );
-        }
-
-        // Re-establish SAT state.
-        assert!(simplex.check().is_ok(), "should still be SAT after probe 1");
-
-        // Probe: y < x should also be UNSAT
-        {
-            simplex.push();
-            let mut e4 = LinExpr::new();
-            e4.add_term(y, Rational64::one());
-            e4.add_term(x, -Rational64::one());
-            simplex.add_strict_lt(e4, 99);
-            let probe2 = simplex.check();
-            simplex.pop();
-            assert!(
-                probe2.is_err(),
-                "y<x should be UNSAT when x=y is forced; got Ok"
-            );
-        }
-    }
-}
+mod tests;

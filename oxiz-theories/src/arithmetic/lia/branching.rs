@@ -46,7 +46,24 @@ impl LiaSolver {
         }
     }
 
-    /// Branch-and-bound algorithm
+    /// Branch-and-bound algorithm.
+    ///
+    /// Each branch is explored under a matched `simplex.push()` / `simplex.pop()`
+    /// so that trying `x >= ceil(v)` never destroys the constraints needed for the
+    /// sibling branch `x <= floor(v)`.  (The previous implementation called
+    /// `simplex.reset()` between the two branches, which erased *every* constraint
+    /// and made the down-branch trivially satisfiable — a soundness bug that made
+    /// e.g. `2x = 1` over the integers report SAT.)
+    ///
+    /// On a satisfying leaf the winning branch's constraints are intentionally
+    /// left in place (its `push` is not popped) so that the integral model stays
+    /// queryable via `value()`; failed branches are always fully popped.
+    ///
+    /// Cutting planes are deliberately NOT generated here: the available cut
+    /// generators are placeholders that do not derive valid inequalities from the
+    /// tableau, and adding an invalid "cut" as a permanent constraint can change
+    /// satisfiability.  Branch-and-bound alone is a sound and (for bounded
+    /// problems) complete integrality procedure.
     fn branch_and_bound(&mut self, depth: usize) -> Result<bool> {
         if depth > self.max_depth {
             return Err(OxizError::Internal(
@@ -54,117 +71,77 @@ impl LiaSolver {
             ));
         }
 
-        // Periodically age and purge ineffective learned cuts to keep the LP
-        // matrix compact.  We do this every 8 levels so the overhead is O(1)
-        // amortised per node for typical tree depths.
-        if depth.is_multiple_of(8) {
-            self.manage_cuts();
-        }
+        // Check if the current solution is integer.
+        let (var, value) = match self.find_fractional_var() {
+            Some(vv) => vv,
+            None => return Ok(true), // all variables integer-valued ⇒ SAT
+        };
 
-        // Check if current solution is integer
-        if let Some((var, value)) = self.find_fractional_var() {
-            // Generate cuts before branching (if enabled and under limit)
-            if self.cuts_generated < self.config.max_cuts {
-                // Try generating cuts in order of strength: MIR > CG > Gomory
-                let cut = if self.config.enable_mir_cuts {
-                    self.generate_mir_cut(var, value)
-                } else if self.config.enable_cg_cuts {
-                    self.generate_cg_cut(var, value)
-                } else if self.config.enable_gomory_cuts {
-                    self.generate_gomory_cut(var, value)
-                } else {
-                    None
-                };
+        let ceil_value = value.ceil().to_integer();
+        let floor_value = value.floor().to_integer();
 
-                if let Some(cut) = cut {
-                    self.simplex.add_le(cut, 0);
-                    self.cuts_generated += 1;
+        self.branch_stack.push(BranchNode {
+            var,
+            branch_up: true,
+            fractional_value: value,
+        });
 
-                    // Re-solve after adding cut
-                    match self.simplex.check() {
-                        Ok(()) => {
-                            // After adding cuts, try to fix variables with tight bounds
-                            // This can significantly reduce the branching tree
-                            let _ = self.fix_tight_bounds();
-                            return self.branch_and_bound(depth);
-                        }
-                        Err(_) => return Ok(false),
-                    }
+        // Branch up: x >= ceil(value).
+        self.simplex.push();
+        let mut up_expr = LinExpr::new();
+        up_expr.add_term(var, Rational64::one());
+        up_expr.add_constant(-Rational64::from_integer(ceil_value));
+        self.simplex.add_ge(up_expr, 0);
+        match self.simplex.check() {
+            Ok(()) if !self.simplex.resource_limit_reached() => {
+                if self.branch_and_bound(depth + 1)? {
+                    self.update_pseudo_cost(var, true, (depth + 1) as f64);
+                    self.branch_stack.pop();
+                    return Ok(true); // keep constraints so the model persists
                 }
             }
-
-            // Before branching, try to fix variables with tight bounds
-            // This reduces the number of variables we need to branch on
-            let _ = self.fix_tight_bounds();
-
-            // Branch on the fractional variable
-            self.branch_stack.push(BranchNode {
-                var,
-                branch_up: true,
-                fractional_value: value,
-            });
-
-            // Try branch up: x >= ceil(value)
-            let ceil_value = value.ceil().to_integer();
-            let mut expr = LinExpr::new();
-            expr.add_term(var, Rational64::one());
-            expr.add_constant(-Rational64::from_integer(ceil_value));
-            self.simplex.add_ge(expr.clone(), 0);
-
-            let up_cost = match self.simplex.check() {
-                Ok(()) => {
-                    let result = self.branch_and_bound(depth + 1)?;
-                    let cost = (depth + 1) as f64; // Simple depth-based cost
-                    if result {
-                        // Update pseudo-cost for successful up-branch
-                        self.update_pseudo_cost(var, true, cost);
-                        return Ok(true);
-                    }
-                    cost
-                }
-                Err(_) => {
-                    // Branch up is infeasible - high cost
-                    0.1 // Infeasible branches have low cost (pruned immediately)
-                }
-            };
-
-            // Update pseudo-cost for up-branch
-            self.update_pseudo_cost(var, true, up_cost);
-
-            // Backtrack and try branch down: x <= floor(value)
-            self.simplex.reset();
-            let floor_value = value.floor().to_integer();
-            let mut expr_down = LinExpr::new();
-            expr_down.add_term(var, Rational64::one());
-            expr_down.add_constant(-Rational64::from_integer(floor_value));
-            self.simplex.add_le(expr_down, 0);
-
-            let down_cost = match self.simplex.check() {
-                Ok(()) => {
-                    let result = self.branch_and_bound(depth + 1)?;
-                    let cost = (depth + 1) as f64;
-                    if result {
-                        // Update pseudo-cost for successful down-branch
-                        self.update_pseudo_cost(var, false, cost);
-                        return Ok(true);
-                    }
-                    cost
-                }
-                Err(_) => {
-                    // Branch down is infeasible
-                    0.1
-                }
-            };
-
-            // Update pseudo-cost for down-branch
-            self.update_pseudo_cost(var, false, down_cost);
-
-            self.branch_stack.pop();
-            Ok(false)
-        } else {
-            // All variables are integer-valued
-            Ok(true)
+            Ok(()) => {
+                // Simplex hit its pivot budget — undecidable, report honestly.
+                self.simplex.pop();
+                self.branch_stack.pop();
+                return Err(OxizError::Internal(
+                    "branch-and-bound: simplex pivot limit reached".to_string(),
+                ));
+            }
+            Err(_) => {} // up-branch infeasible
         }
+        self.simplex.pop();
+        self.update_pseudo_cost(var, true, (depth + 1) as f64);
+
+        // Branch down: x <= floor(value).
+        self.simplex.push();
+        let mut down_expr = LinExpr::new();
+        down_expr.add_term(var, Rational64::one());
+        down_expr.add_constant(-Rational64::from_integer(floor_value));
+        self.simplex.add_le(down_expr, 0);
+        match self.simplex.check() {
+            Ok(()) if !self.simplex.resource_limit_reached() => {
+                if self.branch_and_bound(depth + 1)? {
+                    self.update_pseudo_cost(var, false, (depth + 1) as f64);
+                    self.branch_stack.pop();
+                    return Ok(true); // keep constraints so the model persists
+                }
+            }
+            Ok(()) => {
+                self.simplex.pop();
+                self.branch_stack.pop();
+                return Err(OxizError::Internal(
+                    "branch-and-bound: simplex pivot limit reached".to_string(),
+                ));
+            }
+            Err(_) => {} // down-branch infeasible
+        }
+        self.simplex.pop();
+        self.update_pseudo_cost(var, false, (depth + 1) as f64);
+
+        // Both branches are proven infeasible ⇒ integer-infeasible.
+        self.branch_stack.pop();
+        Ok(false)
     }
 
     /// Find a variable with fractional value using the configured branching heuristic

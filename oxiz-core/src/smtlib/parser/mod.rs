@@ -75,6 +75,9 @@ pub enum Command {
     GetValue(Vec<TermId>),
     /// Get unsat core
     GetUnsatCore,
+    /// Get unsat assumptions (the failed subset of the assumptions passed to
+    /// the most recent `check-sat-assuming` that returned `unsat`).
+    GetUnsatAssumptions,
     /// Get assertions
     GetAssertions,
     /// Get assignment
@@ -127,6 +130,17 @@ pub struct Parser<'a> {
     /// Datatype constructor names -> (datatype_sort, arity/selector_info)
     /// For nullary constructors (enums), the Vec is empty
     pub(super) dt_constructors: FxHashMap<String, SortId>,
+    /// Whether we are parsing a full SMT-LIB *script* (`parse_script`) rather
+    /// than an ad-hoc bare term (`parse_term`).
+    ///
+    /// In script mode every symbol must be declared before use, so an unknown
+    /// symbol is a hard error instead of being silently minted as a fresh
+    /// Bool variable. The bare-term convenience path stays lenient so that
+    /// free variables can still be constructed without a declaration prologue.
+    /// This replaces the earlier "any declaration table is non-empty" heuristic,
+    /// which wrongly stayed lenient for a script whose symbols were all
+    /// undeclared.
+    pub(super) script_mode: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -144,7 +158,88 @@ impl<'a> Parser<'a> {
             recovery_mode: false,
             errors: Vec::new(),
             dt_constructors: FxHashMap::default(),
+            script_mode: false,
         }
+    }
+
+    /// Create a new parser whose environment is pre-seeded with declarations
+    /// supplied by an embedding context.
+    ///
+    /// The plain [`Parser::new`] path always starts with an empty
+    /// constants/functions map, which means a symbol declared *outside* the
+    /// current text fragment (for example a constant registered by the
+    /// `oxiz-wasm` JS API or an `oxiz-solver` `Context`) is rejected in script
+    /// mode or mis-sorted as a fresh `Bool` variable in bare-term mode. This
+    /// constructor lets an embedder register those declarations up front so the
+    /// symbols resolve with their true sorts.
+    ///
+    /// Because the seeded declarations describe a real environment, strict
+    /// undeclared-symbol resolution is enabled: a *seeded* symbol resolves to a
+    /// variable of its declared sort, while a genuinely-unknown symbol still
+    /// produces an honest parse error instead of a silently mis-sorted term.
+    /// Seed further symbols incrementally with [`Parser::seed_declaration`] /
+    /// [`Parser::seed_function`].
+    ///
+    /// Note: for an *external* embedder to reach this API, the `Parser` type
+    /// must be re-exported from `smtlib/mod.rs` (which currently re-exports only
+    /// `parse_term` / `parse_script` / `Command`); that re-export lives outside
+    /// this file. Until then the seeding API is reachable in-crate (e.g. by an
+    /// `oxiz-solver` `Context` that lives in this crate) and via tests.
+    #[allow(dead_code)]
+    pub fn with_context<I>(input: &'a str, manager: &'a mut TermManager, declarations: I) -> Self
+    where
+        I: IntoIterator<Item = (String, SortId)>,
+    {
+        let mut parser = Self::new(input, manager);
+        for (name, sort) in declarations {
+            parser.constants.insert(name, sort);
+        }
+        // A seeded context describes real declarations, so unknown symbols must
+        // be rejected rather than silently minted as fresh Bool variables.
+        parser.script_mode = true;
+        parser
+    }
+
+    /// Pre-register a declared constant (or nullary function) symbol so that it
+    /// resolves to a variable of `sort` during parsing.
+    ///
+    /// This is the builder-style counterpart to [`Parser::with_context`]: an
+    /// embedder can chain `seed_declaration` calls on a parser built with
+    /// [`Parser::new`] or [`Parser::with_context`] before invoking
+    /// [`Parser::parse_term`] / [`Parser::parse_script`]. Seeded symbols resolve
+    /// with their true sort; unseeded symbols keep whatever undeclared-symbol
+    /// behavior the parser's mode dictates.
+    #[allow(dead_code)]
+    pub fn seed_declaration(&mut self, name: impl Into<String>, sort: SortId) -> &mut Self {
+        self.constants.insert(name.into(), sort);
+        self
+    }
+
+    /// Pre-register a declared function symbol with its parameter sorts and
+    /// return sort, so that applications like `(f x)` are built with the correct
+    /// result sort instead of defaulting to `Bool`.
+    #[allow(dead_code)]
+    pub fn seed_function(
+        &mut self,
+        name: impl Into<String>,
+        params: Vec<SortId>,
+        ret: SortId,
+    ) -> &mut Self {
+        self.functions.insert(name.into(), (params, ret));
+        self
+    }
+
+    /// Enable or disable strict undeclared-symbol resolution.
+    ///
+    /// When strict (`true`), an unknown symbol is a hard parse error — matching
+    /// full-script semantics where every symbol must be declared. When lenient
+    /// (`false`), an unknown symbol in a bare term is minted as a fresh
+    /// `Bool`-sorted variable. Embedders parsing an isolated fragment against a
+    /// seeded context typically want strict resolution.
+    #[allow(dead_code)]
+    pub fn set_strict_symbols(&mut self, strict: bool) -> &mut Self {
+        self.script_mode = strict;
+        self
     }
 
     /// Create a new parser with error recovery enabled
@@ -162,6 +257,7 @@ impl<'a> Parser<'a> {
             recovery_mode: true,
             errors: Vec::new(),
             dt_constructors: FxHashMap::default(),
+            script_mode: false,
         }
     }
 
@@ -268,6 +364,9 @@ pub fn parse_term(input: &str, manager: &mut TermManager) -> Result<TermId> {
 /// Parse an SMT-LIB2 script
 pub fn parse_script(input: &str, manager: &mut TermManager) -> Result<Vec<Command>> {
     let mut parser = Parser::new(input, manager);
+    // A full script must reference only declared symbols; enable strict
+    // undeclared-symbol rejection regardless of how many declarations appear.
+    parser.script_mode = true;
     let mut commands = Vec::new();
     while let Some(cmd) = parser.parse_command()? {
         commands.push(cmd);
@@ -642,6 +741,145 @@ mod tests {
         match &contains_term.kind {
             crate::ast::TermKind::StrContains(_, _) => {}
             _ => panic!("expected StrContains term, got {:?}", contains_term.kind),
+        }
+    }
+
+    #[test]
+    fn test_parse_nary_core_operators() {
+        // Regression: chainable / n-ary core operators `=`, `<`, `<=`, `>`,
+        // `>=`, `=>`, `xor`, `-` were previously rejected with more than two
+        // operands. They must now parse per the SMT-LIB grammar.
+        let mut manager = TermManager::new();
+        let script = r#"
+            (declare-const a Int)
+            (declare-const b Int)
+            (declare-const c Int)
+            (assert (= a b c))
+            (assert (< a b c))
+            (assert (> a b c))
+            (assert (<= a b c))
+            (assert (>= a b c))
+            (assert (=> (> a 0) (> b 0) (> c 0)))
+            (assert (xor (> a 0) (> b 0) (> c 0)))
+            (assert (= (- a b c) 0))
+        "#;
+        let commands =
+            parse_script(script, &mut manager).expect("should parse n-ary core operators");
+        // 3 declares + 8 asserts.
+        assert_eq!(commands.len(), 11);
+    }
+
+    #[test]
+    fn test_nary_eq_expands_to_conjunction() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let t = {
+            let mut parser = Parser::with_context(
+                "(= a b c)",
+                &mut manager,
+                [
+                    ("a".to_string(), int_sort),
+                    ("b".to_string(), int_sort),
+                    ("c".to_string(), int_sort),
+                ],
+            );
+            parser.parse_term().expect("should parse (= a b c)")
+        };
+        match &manager.get(t).expect("term should exist").kind {
+            crate::ast::TermKind::And(atoms) => {
+                assert_eq!(atoms.len(), 2, "(= a b c) => (and (= a b) (= b c))");
+            }
+            other => panic!("expected And of two Eq atoms, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_binary_eq_keeps_eq_kind() {
+        // The binary case must be unchanged: a lone `(= a b)` stays an `Eq`
+        // node, not a one-element conjunction.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let t = {
+            let mut parser = Parser::with_context(
+                "(= a b)",
+                &mut manager,
+                [("a".to_string(), int_sort), ("b".to_string(), int_sort)],
+            );
+            parser.parse_term().expect("should parse (= a b)")
+        };
+        match &manager.get(t).expect("term should exist").kind {
+            crate::ast::TermKind::Eq(_, _) => {}
+            other => panic!("expected Eq term, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_nary_minus_left_associative() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let t = {
+            let mut parser = Parser::with_context(
+                "(- a b c)",
+                &mut manager,
+                [
+                    ("a".to_string(), int_sort),
+                    ("b".to_string(), int_sort),
+                    ("c".to_string(), int_sort),
+                ],
+            );
+            parser.parse_term().expect("should parse (- a b c)")
+        };
+        // (- a b c) = (- (- a b) c): outer node is a Sub whose lhs is a Sub.
+        match &manager.get(t).expect("term should exist").kind {
+            crate::ast::TermKind::Sub(lhs, _) => {
+                match &manager.get(*lhs).expect("lhs should exist").kind {
+                    crate::ast::TermKind::Sub(_, _) => {}
+                    other => panic!("expected left-nested Sub, got {other:?}"),
+                }
+            }
+            other => panic!("expected Sub term, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_seed_declaration_resolves_sort() {
+        // A seeded constant must resolve to a variable of its declared sort,
+        // even though the constant was not declared in the parsed text.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let t = {
+            let mut parser = Parser::new("x", &mut manager);
+            parser.seed_declaration("x", int_sort);
+            parser.parse_term().expect("seeded x should resolve")
+        };
+        let sort = manager.get(t).expect("term should exist").sort;
+        assert_eq!(sort, int_sort, "seeded symbol keeps its true sort");
+    }
+
+    #[test]
+    fn test_with_context_seeds_and_stays_strict() {
+        // `with_context` seeds declarations and enables strict resolution:
+        // seeded symbols resolve, genuinely-unknown symbols still error.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+
+        // Seeded symbol resolves.
+        {
+            let mut parser = Parser::with_context("y", &mut manager, [("y".to_string(), int_sort)]);
+            let t = parser.parse_term().expect("seeded y should resolve");
+            let sort = parser.manager.get(t).expect("term should exist").sort;
+            assert_eq!(sort, int_sort);
+        }
+
+        // Unseeded symbol errors in the strict seeded context.
+        {
+            let empty: Vec<(String, SortId)> = Vec::new();
+            let mut parser = Parser::with_context("z", &mut manager, empty);
+            let result = parser.parse_term();
+            assert!(
+                result.is_err(),
+                "unseeded symbol must error in a strict seeded context"
+            );
         }
     }
 

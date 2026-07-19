@@ -98,6 +98,11 @@ impl WasmSolver {
 
         let sort = self.parse_sort(sort_name)?;
         self.ctx.declare_const(name, sort);
+        // Track (name -> sort name) so `minimize`/`maximize`/`assertSoft`
+        // (see `js_api::optimize`) can later re-resolve this symbol with its
+        // true declared sort when parsing an objective/soft-constraint
+        // formula in isolation from the rest of the script.
+        self.record_declared_symbol(name, sort_name);
         Ok(())
     }
 
@@ -158,6 +163,7 @@ impl WasmSolver {
         if arg_sorts.is_empty() {
             // Nullary function = constant
             self.ctx.declare_const(name, ret);
+            self.record_declared_symbol(name, ret_sort);
         } else {
             // Parse and validate all argument sorts
             let parsed_arg_sorts: Result<Vec<_>, _> =

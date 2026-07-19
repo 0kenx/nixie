@@ -258,7 +258,20 @@ impl AutomorphismDetector {
                 .push(Var(var as u32));
         }
 
-        // Create swap permutations for variables with identical signatures
+        // Precompute a canonical representation of the clause set so candidate
+        // generators can be checked for membership efficiently.
+        let clause_set = self.canonical_clause_set();
+
+        // Create swap permutations for variables with identical signatures.
+        //
+        // A shared signature is only a *necessary* condition for two variables to
+        // be interchangeable, never a sufficient one: for `(a ∨ b) ∧ (c ∨ d)` all
+        // four variables share a signature yet `a ↔ c` is not an automorphism.
+        // Emitting an unverified permutation is unsound — the downstream
+        // lex-leader / symmetry-breaking predicates it feeds can exclude
+        // legitimate models and flip a satisfiable formula to UNSAT. Every
+        // candidate transposition is therefore verified to be a genuine
+        // automorphism of the clause set before it is emitted.
         for (_sig, vars) in signature_groups {
             if vars.len() >= 2 {
                 // Generate transposition between first two variables in each group
@@ -266,12 +279,46 @@ impl AutomorphismDetector {
                     let mut mapping: Vec<Var> = (0..self.num_vars).map(|j| Var(j as u32)).collect();
                     mapping[vars[0].0 as usize] = vars[i];
                     mapping[vars[i].0 as usize] = vars[0];
-                    group.add_generator(Permutation::new(mapping));
+                    let perm = Permutation::new(mapping);
+                    if self.is_automorphism(&perm, &clause_set) {
+                        group.add_generator(perm);
+                    }
                 }
             }
         }
 
         group
+    }
+
+    /// Build the canonical representation of every clause for membership tests.
+    fn canonical_clause_set(&self) -> HashSet<Vec<u32>> {
+        self.clauses
+            .iter()
+            .map(|c| Self::canonical_clause(c))
+            .collect()
+    }
+
+    /// Canonicalise a clause to a sorted, deduplicated list of literal codes so
+    /// that two clauses that are equal as sets compare equal.
+    fn canonical_clause(clause: &[Lit]) -> Vec<u32> {
+        let mut codes: Vec<u32> = clause.iter().map(|l| l.code()).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        codes
+    }
+
+    /// Verify that `perm` is an automorphism of the CNF formula: every clause,
+    /// after the permutation is applied to each of its literals, must map onto a
+    /// clause that is itself present in the set. Only verified generators are
+    /// sound to use for symmetry breaking.
+    fn is_automorphism(&self, perm: &Permutation, clause_set: &HashSet<Vec<u32>>) -> bool {
+        for clause in &self.clauses {
+            let mapped: Vec<Lit> = clause.iter().map(|&l| perm.apply_lit(l)).collect();
+            if !clause_set.contains(&Self::canonical_clause(&mapped)) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Compute a signature for each variable based on clause structure

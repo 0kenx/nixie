@@ -5,7 +5,8 @@
 //! Unlike compression (which removes unreachable nodes), simplification
 //! transforms proof steps to equivalent but simpler forms.
 
-use crate::proof::Proof;
+use crate::metadata::Strategy;
+use crate::proof::{Proof, ProofNodeId};
 
 /// Configuration for proof simplification.
 #[derive(Debug, Clone)]
@@ -166,6 +167,36 @@ impl ProofSimplifier {
         stats
     }
 
+    /// Record that `id`'s conclusion has just been rewritten by
+    /// simplification, from `original_conclusion` to whatever it now reads.
+    ///
+    /// [`Proof`] intentionally exposes no way to also update an
+    /// `Inference` node's `rule`/`premises` when its conclusion changes --
+    /// only [`Proof::update_conclusion`] is public. Rewriting *only* the
+    /// conclusion text leaves the node's stored `rule`/`premises` fields
+    /// describing a derivation of the *original* conclusion, not the
+    /// rewritten one: a strict proof checker that tried to literally
+    /// replay `rule` against `premises` and expect the *current*
+    /// conclusion would (correctly) reject the step as unsound, since
+    /// that's not actually what the rule derives any more.
+    ///
+    /// Rather than leave that mismatch silently undiscoverable, every
+    /// rewrite is tagged with [`Strategy::Simplify`] and the *first*
+    /// (pre-simplification) conclusion this node ever had is preserved as
+    /// a metadata attribute. Any consumer -- a proof checker, a human
+    /// auditor, or a future `Proof` API enhancement that can rewire
+    /// premises properly -- can then tell that `rule`/`premises` on this
+    /// node certify the recorded original conclusion, not its current
+    /// text, and treat it as "simplified, not directly re-checkable"
+    /// rather than silently trusting a stale derivation record.
+    fn record_simplification(&self, proof: &mut Proof, id: ProofNodeId, original_conclusion: &str) {
+        let metadata = proof.get_or_create_metadata(id);
+        metadata.add_strategy(Strategy::Simplify);
+        if metadata.get_attribute("pre_simplify_conclusion").is_none() {
+            metadata.set_attribute("pre_simplify_conclusion", original_conclusion);
+        }
+    }
+
     /// Simplify double negations (¬¬p → p).
     fn simplify_double_negations(&self, proof: &mut Proof) -> usize {
         let mut count = 0;
@@ -176,11 +207,10 @@ impl ProofSimplifier {
                 let conclusion = node.conclusion().to_string();
                 if let Some(simplified) = self.simplify_conclusion_double_neg(&conclusion)
                     && simplified != conclusion
+                    && proof.update_conclusion(id, simplified)
                 {
-                    // Update the conclusion
-                    if proof.update_conclusion(id, simplified) {
-                        count += 1;
-                    }
+                    self.record_simplification(proof, id, &conclusion);
+                    count += 1;
                 }
             }
         }
@@ -200,6 +230,7 @@ impl ProofSimplifier {
                     && simplified != conclusion
                     && proof.update_conclusion(id, simplified)
                 {
+                    self.record_simplification(proof, id, &conclusion);
                     count += 1;
                 }
             }
@@ -220,6 +251,7 @@ impl ProofSimplifier {
                     && simplified != conclusion
                     && proof.update_conclusion(id, simplified)
                 {
+                    self.record_simplification(proof, id, &conclusion);
                     count += 1;
                 }
             }
@@ -237,6 +269,7 @@ impl ProofSimplifier {
             if let Some(node) = proof.get_node(id) {
                 let conclusion = node.conclusion().to_string();
                 if self.is_tautology(&conclusion) && proof.update_conclusion(id, "true") {
+                    self.record_simplification(proof, id, &conclusion);
                     count += 1;
                 }
             }
@@ -246,9 +279,18 @@ impl ProofSimplifier {
     }
 
     /// Combine consecutive inference chains when possible.
+    ///
+    /// Genuinely combining two chained `Inference` nodes (e.g. collapsing
+    /// `A -> B` into a single step) requires removing a node and rewiring
+    /// whoever referenced it as a premise -- [`Proof`] (`oxiz-proof/src/
+    /// proof.rs`) exposes no API for either operation (only node
+    /// *addition* and conclusion-text rewriting), so this cannot be
+    /// implemented soundly from this module alone. Rather than fabricate
+    /// a fake reduction (e.g. by cosmetically rewriting text without
+    /// actually shrinking the proof), this honestly reports zero
+    /// combinations until `Proof` grows the necessary node-removal/
+    /// premise-rewiring API.
     fn combine_inference_chains(&self, _proof: &mut Proof) -> usize {
-        // This is more complex and requires analyzing inference patterns
-        // For now, return 0 (future enhancement)
         0
     }
 

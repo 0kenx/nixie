@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
 //! Assumption-based incremental solving.
 //!
 //! This module provides support for incremental SMT solving with assumptions.

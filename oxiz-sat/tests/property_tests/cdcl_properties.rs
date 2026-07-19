@@ -10,6 +10,32 @@
 use oxiz_sat::*;
 use proptest::prelude::*;
 
+/// Verify that `solver`'s current model satisfies every one of `clauses`
+/// (DIMACS-style signed-literal clauses, `1`-indexed variables matching
+/// `add_clause_dimacs`/`add_clause_dimacs`'s convention). A clause is
+/// satisfied iff at least one of its literals evaluates to true in the
+/// model.
+///
+/// Every property test below that asserts a specific `SolverResult::Sat`
+/// outcome (rather than merely "didn't return Unknown") must also call this
+/// to confirm the returned *model* actually satisfies the CNF -- a solver
+/// bug that returns `Sat` with an inconsistent model would otherwise slip
+/// through every one of these tests undetected, since none of them
+/// previously inspected the model at all.
+fn model_satisfies_dimacs(solver: &Solver, clauses: &[Vec<i32>]) -> bool {
+    clauses.iter().all(|clause| {
+        clause.iter().any(|&lit| {
+            let var = Var(lit.unsigned_abs() - 1);
+            let value = solver.model_value(var);
+            if lit > 0 {
+                value == LBool::True
+            } else {
+                value == LBool::False
+            }
+        })
+    })
+}
+
 #[cfg(test)]
 mod cdcl_basic_properties {
     use super::*;
@@ -30,10 +56,18 @@ mod cdcl_basic_properties {
                 let _var = lit.unsigned_abs();
                 solver.new_var();
 
-                solver.add_clause_dimacs(&[lit]);
+                let clauses = vec![vec![lit]];
+                solver.add_clause_dimacs(&clauses[0]);
                 let result = solver.solve();
 
+                // A single unit clause is always satisfiable: the sole
+                // constraint is that one literal.
                 prop_assert_eq!(result, SolverResult::Sat);
+                prop_assert!(
+                    model_satisfies_dimacs(&solver, &clauses),
+                    "model must actually satisfy the unit clause {:?}",
+                    clauses
+                );
             }
         }
 
@@ -62,12 +96,15 @@ mod cdcl_basic_properties {
             }
 
             // v ∨ ¬v (tautology)
-            solver.add_clause_dimacs(&[v as i32, -(v as i32)]);
+            let clauses = vec![vec![v as i32, -(v as i32)]];
+            solver.add_clause_dimacs(&clauses[0]);
 
             let result = solver.solve();
 
-            // Empty CNF after removing tautology
+            // A tautology is always satisfied, so the CNF is equivalent to
+            // the empty formula.
             prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(model_satisfies_dimacs(&solver, &clauses));
         }
 
         #[test]
@@ -81,11 +118,14 @@ mod cdcl_basic_properties {
                 }
 
                 // v1 ∨ v2
-                solver.add_clause_dimacs(&[v1 as i32, v2 as i32]);
+                let clauses = vec![vec![v1 as i32, v2 as i32]];
+                solver.add_clause_dimacs(&clauses[0]);
 
                 let result = solver.solve();
 
+                // A single 2-clause is always satisfiable.
                 prop_assert_eq!(result, SolverResult::Sat);
+                prop_assert!(model_satisfies_dimacs(&solver, &clauses));
             }
         }
 
@@ -103,12 +143,17 @@ mod cdcl_basic_properties {
             }
 
             // Horn clause: ¬v1 ∨ ¬v2 ∨ v3
-            solver.add_clause_dimacs(&[-(v1 as i32), -(v2 as i32), v3 as i32]);
+            let clauses = vec![vec![-(v1 as i32), -(v2 as i32), v3 as i32]];
+            solver.add_clause_dimacs(&clauses[0]);
 
             let result = solver.solve();
 
-            // Horn clauses are always decidable
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unsat));
+            // A single Horn clause is always satisfiable (e.g. v1 = false
+            // alone already satisfies it), so the known answer here is
+            // `Sat`, not merely "decidable" -- and the model must actually
+            // satisfy the clause.
+            prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(model_satisfies_dimacs(&solver, &clauses));
         }
     }
 }
@@ -127,17 +172,28 @@ mod clause_learning_properties {
             }
 
             // Create conflict scenario
+            let mut clauses: Vec<Vec<i32>> = Vec::new();
             for i in 1..v {
-                solver.add_clause_dimacs(&[i as i32, (i+1) as i32]);
+                clauses.push(vec![i as i32, (i + 1) as i32]);
             }
+            clauses.push(vec![-(v as i32)]);
+            clauses.push(vec![1]);
 
-            solver.add_clause_dimacs(&[-(v as i32)]);
-            solver.add_clause_dimacs(&[1]);
+            for clause in &clauses {
+                solver.add_clause_dimacs(clause);
+            }
 
             let result = solver.solve();
 
-            // Should learn and prune search space
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unsat));
+            // var(1) is forced true (satisfying the first chain link
+            // regardless of anything else), and var(v-1) can always be set
+            // true to satisfy both the chain link into it and the final
+            // link out to the now-forced-false var(v): always satisfiable.
+            prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(
+                model_satisfies_dimacs(&solver, &clauses),
+                "model must satisfy every clause, including the learned-clause-driven chain"
+            );
         }
 
         #[test]
@@ -185,8 +241,11 @@ mod clause_learning_properties {
 
             let result = solver.solve();
 
-            // Learned clauses should accumulate
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unsat));
+            // The loop above always asserts `¬var(1)` (its `i = 1` case),
+            // which directly contradicts the trailing unit clause
+            // `var(1) = true`: this instance is unconditionally
+            // unsatisfiable, not merely "decidable".
+            prop_assert_eq!(result, SolverResult::Unsat);
         }
     }
 }
@@ -212,12 +271,18 @@ mod resolution_properties {
 
                 // (v1 ∨ v2) ∧ (¬v2 ∨ v3)
                 // Resolution gives: (v1 ∨ v3)
-                solver.add_clause_dimacs(&[v1 as i32, v2 as i32]);
-                solver.add_clause_dimacs(&[-(v2 as i32), v3 as i32]);
+                let clauses = vec![
+                    vec![v1 as i32, v2 as i32],
+                    vec![-(v2 as i32), v3 as i32],
+                ];
+                for clause in &clauses {
+                    solver.add_clause_dimacs(clause);
+                }
 
                 let result = solver.solve();
 
                 prop_assert_eq!(result, SolverResult::Sat);
+                prop_assert!(model_satisfies_dimacs(&solver, &clauses));
             }
         }
 
@@ -252,12 +317,15 @@ mod resolution_properties {
                 }
 
                 // v1 subsumes (v1 ∨ v2)
-                solver.add_clause_dimacs(&[v1 as i32]);
-                solver.add_clause_dimacs(&[v1 as i32, v2 as i32]);
+                let clauses = vec![vec![v1 as i32], vec![v1 as i32, v2 as i32]];
+                for clause in &clauses {
+                    solver.add_clause_dimacs(clause);
+                }
 
                 let result = solver.solve();
 
                 prop_assert_eq!(result, SolverResult::Sat);
+                prop_assert!(model_satisfies_dimacs(&solver, &clauses));
             }
         }
     }
@@ -277,15 +345,24 @@ mod restart_properties {
             }
 
             // Add some clauses
+            let mut clauses: Vec<Vec<i32>> = Vec::new();
             for i in 1..v {
-                solver.add_clause_dimacs(&[i as i32, (i+1) as i32]);
+                clauses.push(vec![i as i32, (i + 1) as i32]);
+            }
+            for clause in &clauses {
+                solver.add_clause_dimacs(clause);
             }
 
             // Solve (restarts are enabled by default in SolverConfig)
             let result = solver.solve();
 
-            // Should still find correct result after restarts
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unsat));
+            // An unconstrained chain of 2-clauses (no units, no negations)
+            // is always satisfiable -- e.g. by setting every variable true.
+            prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(
+                model_satisfies_dimacs(&solver, &clauses),
+                "model must satisfy every clause even after restarts"
+            );
         }
 
         #[test]
@@ -310,9 +387,13 @@ mod restart_properties {
             }
 
             // Add same clauses to both
+            let mut clauses: Vec<Vec<i32>> = Vec::new();
             for i in 1..n {
-                solver1.add_clause_dimacs(&[i as i32, (i+1) as i32]);
-                solver2.add_clause_dimacs(&[i as i32, (i+1) as i32]);
+                clauses.push(vec![i as i32, (i + 1) as i32]);
+            }
+            for clause in &clauses {
+                solver1.add_clause_dimacs(clause);
+                solver2.add_clause_dimacs(clause);
             }
 
             let result1 = solver1.solve();
@@ -320,6 +401,14 @@ mod restart_properties {
 
             // Both should give same result
             prop_assert_eq!(result1, result2);
+
+            // Same reasoning as `restart_preserves_learned_clauses`: an
+            // unconstrained clause chain is always satisfiable, and each
+            // solver's own model must satisfy it independently of which
+            // restart strategy was used.
+            prop_assert_eq!(result1, SolverResult::Sat);
+            prop_assert!(model_satisfies_dimacs(&solver1, &clauses));
+            prop_assert!(model_satisfies_dimacs(&solver2, &clauses));
         }
     }
 }
@@ -338,12 +427,15 @@ mod variable_elimination_properties {
             }
 
             // v appears only positively (pure literal)
-            solver.add_clause_dimacs(&[v as i32, 1]);
-            solver.add_clause_dimacs(&[v as i32, 2]);
+            let clauses = vec![vec![v as i32, 1], vec![v as i32, 2]];
+            for clause in &clauses {
+                solver.add_clause_dimacs(clause);
+            }
 
             let result = solver.solve();
 
             prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(model_satisfies_dimacs(&solver, &clauses));
         }
 
         #[test]
@@ -360,11 +452,13 @@ mod variable_elimination_properties {
                 }
 
                 // (v1 ∨ v2)
-                solver.add_clause_dimacs(&[v1 as i32, v2 as i32]);
+                let clauses = vec![vec![v1 as i32, v2 as i32]];
+                solver.add_clause_dimacs(&clauses[0]);
 
                 let result = solver.solve();
 
                 prop_assert_eq!(result, SolverResult::Sat);
+                prop_assert!(model_satisfies_dimacs(&solver, &clauses));
             }
         }
     }
@@ -389,15 +483,25 @@ mod clause_database_properties {
             }
 
             // Add many clauses
+            let mut clauses: Vec<Vec<i32>> = Vec::new();
             for i in 1..n {
-                solver.add_clause_dimacs(&[i as i32, (i+1) as i32]);
+                clauses.push(vec![i as i32, (i + 1) as i32]);
+            }
+            for clause in &clauses {
+                solver.add_clause_dimacs(clause);
             }
 
             // Clause deletion is enabled via config
             let result = solver.solve();
 
-            // Should still work correctly
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unsat));
+            // Unconstrained clause chain: always satisfiable, and clause
+            // deletion (of *learned* clauses only) must never make the
+            // solver forget one of the *original* clauses above.
+            prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(
+                model_satisfies_dimacs(&solver, &clauses),
+                "model must satisfy every original clause after clause database deletion"
+            );
         }
 
         #[test]
@@ -415,16 +519,25 @@ mod clause_database_properties {
                 }
 
                 // (v1 ∨ v2 ∨ v3)
-                solver.add_clause_dimacs(&[v1 as i32, v2 as i32, v3 as i32]);
-
-                // ¬v1 ∧ ¬v2
-                solver.add_clause_dimacs(&[-(v1 as i32)]);
-                solver.add_clause_dimacs(&[-(v2 as i32)]);
+                let clauses = vec![
+                    vec![v1 as i32, v2 as i32, v3 as i32],
+                    vec![-(v1 as i32)],
+                    vec![-(v2 as i32)],
+                ];
+                for clause in &clauses {
+                    solver.add_clause_dimacs(clause);
+                }
 
                 let result = solver.solve();
 
                 // v3 must be true
                 prop_assert_eq!(result, SolverResult::Sat);
+                prop_assert!(model_satisfies_dimacs(&solver, &clauses));
+                prop_assert_eq!(
+                    solver.model_value(Var(v3 - 1)),
+                    LBool::True,
+                    "v3 is forced true once v1 and v2 are both negated"
+                );
             }
         }
 
@@ -437,14 +550,23 @@ mod clause_database_properties {
             }
 
             // Create implication chain (DAG structure)
+            let mut clauses: Vec<Vec<i32>> = Vec::new();
             for i in 1..n {
-                solver.add_clause_dimacs(&[-(i as i32), (i+1) as i32]);
+                clauses.push(vec![-(i as i32), (i + 1) as i32]);
+            }
+            for clause in &clauses {
+                solver.add_clause_dimacs(clause);
             }
 
             let result = solver.solve();
 
-            // Should have valid implication graph
-            prop_assert!(matches!(result, SolverResult::Sat | SolverResult::Unsat));
+            // An unconstrained chain of implications (no unit clauses) is
+            // always satisfiable, e.g. by setting every variable false.
+            prop_assert_eq!(result, SolverResult::Sat);
+            prop_assert!(
+                model_satisfies_dimacs(&solver, &clauses),
+                "model must satisfy every implication in the chain"
+            );
         }
     }
 }

@@ -111,7 +111,14 @@ impl FastRational {
         } else {
             (num, den)
         };
-        let g = gcd_i64(n.saturating_abs(), d);
+        // NB: pass `n` directly rather than `n.saturating_abs()`. `gcd_i64`
+        // already takes the absolute value via `unsigned_abs()`, which
+        // (unlike `i64::saturating_abs`) is exact for `i64::MIN` (2^63 fits
+        // in `u64`). Pre-computing a saturated abs here would corrupt the
+        // gcd for `n == i64::MIN` and silently produce a wrong reduced
+        // fraction (or, for `new_small`, an unreduced `Small` that violates
+        // the lowest-terms invariant).
+        let g = gcd_i64(n, d);
         if g == 0 {
             return FastRational::Small { num: 0, den: 1 };
         }
@@ -319,9 +326,12 @@ fn sub_small(a_num: i64, a_den: i64, b_num: i64, b_den: i64) -> FastRational {
 #[inline]
 fn mul_small(a_num: i64, a_den: i64, b_num: i64, b_den: i64) -> FastRational {
     // (a/b) * (c/d) = (a*c) / (b*d)
-    // Cross-reduce first to minimize overflow chance
-    let g1 = gcd_i64(a_num.saturating_abs(), b_den);
-    let g2 = gcd_i64(b_num.saturating_abs(), a_den);
+    // Cross-reduce first to minimize overflow chance.
+    // NB: pass the numerators directly (not `.saturating_abs()`) -- see the
+    // comment in `new_small` for why a pre-saturated abs corrupts the gcd
+    // (and hence the product) when a numerator is `i64::MIN`.
+    let g1 = gcd_i64(a_num, b_den);
+    let g2 = gcd_i64(b_num, a_den);
     let an = if g1 != 0 { a_num / g1 } else { a_num };
     let bd = if g1 != 0 { b_den / g1 } else { b_den };
     let bn = if g2 != 0 { b_num / g2 } else { b_num };
@@ -772,15 +782,16 @@ impl Div<&FastRational> for &FastRational {
                 FastRational::Small { num: bn, den: bd },
             ) => match div_small(*an, *ad, *bn, *bd) {
                 Some(r) => r,
-                None => {
-                    debug_assert!(false, "FastRational: division by zero");
-                    FastRational::zero()
-                }
+                // `debug_assert!` is compiled out in release builds, which
+                // previously let this fall through to `FastRational::zero()`
+                // — a silently wrong result rather than the documented
+                // panic. Division by zero must fail loudly in both profiles,
+                // matching `i64`'s own division-by-zero behavior.
+                None => panic!("FastRational: division by zero"),
             },
             (a, b) => {
                 if b.is_zero() {
-                    debug_assert!(false, "FastRational: division by zero");
-                    return FastRational::zero();
+                    panic!("FastRational: division by zero");
                 }
                 let big_a = a.to_big_rational();
                 let big_b = b.to_big_rational();
@@ -1240,6 +1251,88 @@ mod tests {
         let b = small(1, 2);
         assert_eq!(a.clone().max(b.clone()), b);
         assert_eq!(a.clone().min(b.clone()), a);
+    }
+
+    // -- Regression tests: i64::MIN must never be pre-corrupted by
+    //    `saturating_abs` before reaching `gcd_i64` (which already handles
+    //    it exactly via `unsigned_abs`). See audit finding on
+    //    `mul_small`/`new_small`.
+
+    #[test]
+    fn test_new_small_i64_min_odd_denominator_stays_irreducible() {
+        // gcd(2^63, 7) == 1: i64::MIN/7 is already in lowest terms and must
+        // be returned unchanged, not silently reduced to an integer.
+        let r = FastRational::new_small(i64::MIN, 7);
+        assert_eq!(
+            r,
+            FastRational::Small {
+                num: i64::MIN,
+                den: 7
+            }
+        );
+        // Round-trip through BigRational must agree exactly.
+        let expected = BigRational::new(BigInt::from(i64::MIN), BigInt::from(7));
+        assert_eq!(r.to_big_rational(), expected);
+    }
+
+    #[test]
+    fn test_new_small_i64_min_even_denominator_reduces_correctly() {
+        // gcd(2^63, 2) == 2: must reduce to (MIN/2)/1, preserving the
+        // Small invariant `gcd(|num|, den) == 1`.
+        let r = FastRational::new_small(i64::MIN, 2);
+        assert_eq!(
+            r,
+            FastRational::Small {
+                num: i64::MIN / 2,
+                den: 1
+            }
+        );
+        let expected = BigRational::new(BigInt::from(i64::MIN), BigInt::from(2));
+        assert_eq!(r.to_big_rational(), expected);
+    }
+
+    #[test]
+    fn test_mul_small_i64_min_by_small_fraction() {
+        // Regression for the audit finding: mul_small(MIN, 1, 1, 7) used to
+        // return -1317624576693539401 (an *integer*, silently wrong by a
+        // factor of 1/7) because `saturating_abs(i64::MIN) == i64::MAX`
+        // corrupted the cross-reduction gcd against a denominator of 7
+        // (which happens to divide i64::MAX exactly).
+        let a = FastRational::Small {
+            num: i64::MIN,
+            den: 1,
+        };
+        let b = FastRational::Small { num: 1, den: 7 };
+        let result = &a * &b;
+
+        let expected = BigRational::new(BigInt::from(i64::MIN), BigInt::from(7));
+        assert_eq!(
+            result.to_big_rational(),
+            expected,
+            "MIN * (1/7) must equal MIN/7 exactly, not truncate to an integer"
+        );
+        // The result must not be integral (MIN is not a multiple of 7).
+        assert!(!result.is_integer());
+    }
+
+    #[test]
+    fn test_mul_small_i64_min_eq_hash_invariant_preserved() {
+        // The lowest-terms invariant must hold after multiplication
+        // involving i64::MIN, so Eq/Hash stay consistent with equal values
+        // produced via a different path (Big).
+        let a = FastRational::Small {
+            num: i64::MIN,
+            den: 1,
+        };
+        let b = FastRational::Small { num: 1, den: 7 };
+        let small_result = &a * &b;
+
+        let big_a = BigRational::from_integer(BigInt::from(i64::MIN));
+        let big_b = BigRational::new(BigInt::one(), BigInt::from(7));
+        let big_result = FastRational::from_big(big_a * big_b);
+
+        assert_eq!(small_result, big_result);
+        assert_eq!(hash_of(&small_result), hash_of(&big_result));
     }
 
     #[test]

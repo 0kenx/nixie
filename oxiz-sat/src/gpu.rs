@@ -46,15 +46,19 @@
 //! // Create CPU reference accelerator
 //! let mut accelerator = CpuReferenceAccelerator::new(config);
 //!
-//! // Prepare batch propagation data
+//! // Prepare batch propagation data: two watched clauses, `1 ∨ 2` and `-2 ∨ 3`
+//! // (DIMACS-style signed literals; variable `v`'s current value lives at
+//! // `assignments[v - 1]`).
 //! let watched_lists: Vec<Vec<(usize, bool)>> = vec![
-//!     vec![(0, true), (1, false)],
-//!     vec![(2, true)],
+//!     vec![(0, false)], // clause 0 watched from literal slot 0
+//!     vec![(1, false)], // clause 1 watched from literal slot 1
 //! ];
-//! let assignments = vec![true, false, true, false];
+//! let clauses: Vec<Vec<i32>> = vec![vec![1, 2], vec![-2, 3]];
+//! // x1 = false, x2 = false, x3 unassigned.
+//! let assignments: Vec<Option<bool>> = vec![Some(false), Some(false), None];
 //!
 //! // Run batch propagation
-//! let result = accelerator.batch_unit_propagation(&watched_lists, &assignments);
+//! let result = accelerator.batch_unit_propagation(&watched_lists, &clauses, &assignments);
 //! assert!(result.is_ok());
 //! ```
 
@@ -348,18 +352,35 @@ pub trait GpuSolverAccelerator {
 
     /// Batch unit propagation
     ///
-    /// Process multiple watched literal lists in parallel to find units and conflicts.
+    /// Process multiple watched literal lists in parallel to find genuine
+    /// units and conflicts, by actually evaluating each watched clause's
+    /// literals against the current (tri-state) assignment — this requires
+    /// the real clause contents, not just a cached "blocking literal
+    /// assigned" flag, since that flag alone cannot distinguish a
+    /// conflicting clause from a unit one or from one with several literals
+    /// still unassigned.
     ///
     /// # Arguments
-    /// * `watched_lists` - For each literal, list of (clause_index, blocking_literal_assigned)
-    /// * `assignments` - Current variable assignments (true/false for each variable)
+    /// * `watched_lists` - For each watched literal slot, the list of
+    ///   `(clause_index, blocking_literal_assigned)` pairs watching it.
+    ///   `blocking_literal_assigned = true` means the clause's cached
+    ///   blocking literal is currently true (clause already satisfied, so
+    ///   it can be skipped without inspecting `clauses[clause_index]`).
+    /// * `clauses` - The literals of each watched clause, indexed by
+    ///   `clause_index`, using DIMACS-style signed integers (positive
+    ///   literal `v` means variable `v`, `1`-indexed; negative means its
+    ///   negation).
+    /// * `assignments` - Current value of each variable, `1`-indexed to
+    ///   match `clauses` (`assignments[v - 1]`); `None` means unassigned.
     ///
     /// # Returns
-    /// Result containing unit literals and conflict clauses
+    /// Result containing the signed unit literals that must become true and
+    /// the indices of clauses found to be fully falsified (conflicting).
     fn batch_unit_propagation(
         &mut self,
         watched_lists: &[Vec<(usize, bool)>],
-        assignments: &[bool],
+        clauses: &[Vec<i32>],
+        assignments: &[Option<bool>],
     ) -> Result<BatchPropagationResult, GpuError>;
 
     /// Parallel conflict analysis data structure update
@@ -450,46 +471,87 @@ impl GpuSolverAccelerator for CpuReferenceAccelerator {
     fn batch_unit_propagation(
         &mut self,
         watched_lists: &[Vec<(usize, bool)>],
-        assignments: &[bool],
+        clauses: &[Vec<i32>],
+        assignments: &[Option<bool>],
     ) -> Result<BatchPropagationResult, GpuError> {
         let start = Instant::now();
         self.stats.batch_propagation_calls += 1;
         self.stats.cpu_fallback_operations += 1;
 
+        // Current truth value of a signed DIMACS literal under `assignments`
+        // (`1`-indexed, `None` = unassigned).
+        let lit_value = |lit: i32| -> Option<bool> {
+            let var_idx = lit.unsigned_abs() as usize - 1;
+            assignments
+                .get(var_idx)
+                .copied()
+                .flatten()
+                .map(|value| if lit > 0 { value } else { !value })
+        };
+
         let mut unit_literals = Vec::new();
         let mut conflict_clauses = Vec::new();
-        let mut watches_updated = 0;
+        let mut watches_updated = 0usize;
+        // The same clause can be reached from more than one watch entry (a
+        // real two-watched-literal scheme watches each clause from up to
+        // two of its literals), so de-duplicate what we report.
+        let mut seen_conflicts: HashSet<usize> = HashSet::new();
+        let mut seen_units: HashSet<i32> = HashSet::new();
 
         // Process each literal's watch list
-        for (lit_idx, watch_list) in watched_lists.iter().enumerate() {
+        for watch_list in watched_lists {
             for &(clause_idx, blocking_assigned) in watch_list {
-                // If blocking literal is assigned true, no action needed
+                // If the cached blocking literal is already true, the
+                // clause is satisfied and needs no further inspection.
                 if blocking_assigned {
                     continue;
                 }
 
-                // Check if this could produce a unit or conflict
-                // This is a simplified simulation - real implementation would
-                // need full clause access
-                let lit_value = if lit_idx < assignments.len() {
-                    assignments[lit_idx]
-                } else {
-                    false
+                watches_updated += 1;
+
+                let Some(clause) = clauses.get(clause_idx) else {
+                    // No literal data available for this clause index: we
+                    // cannot honestly conclude anything about it, so report
+                    // nothing rather than guessing.
+                    continue;
                 };
 
-                if !lit_value {
-                    // Literal is false, might need watch update
-                    watches_updated += 1;
+                let mut unassigned: Option<i32> = None;
+                let mut unassigned_count = 0usize;
+                let mut satisfied = false;
 
-                    // Simulate finding conflict or unit (simplified)
-                    if clause_idx % 7 == 0 {
-                        // Simulated conflict
-                        conflict_clauses.push(clause_idx);
-                    } else if clause_idx % 5 == 0 {
-                        // Simulated unit
-                        unit_literals.push(lit_idx as i32);
+                for &lit in clause {
+                    match lit_value(lit) {
+                        Some(true) => {
+                            satisfied = true;
+                            break;
+                        }
+                        Some(false) => {}
+                        None => {
+                            unassigned_count += 1;
+                            unassigned = Some(lit);
+                        }
                     }
                 }
+
+                if satisfied {
+                    continue;
+                }
+
+                if unassigned_count == 0 {
+                    // Every literal evaluates false: a genuine conflict.
+                    if seen_conflicts.insert(clause_idx) {
+                        conflict_clauses.push(clause_idx);
+                    }
+                } else if unassigned_count == 1
+                    && let Some(lit) = unassigned
+                    && seen_units.insert(lit)
+                {
+                    // Exactly one literal left unassigned with every other
+                    // literal false: it must become true.
+                    unit_literals.push(lit);
+                }
+                // Two or more unassigned literals: nothing conclusive yet.
             }
         }
 
@@ -624,6 +686,18 @@ impl GpuSolverAccelerator for CpuReferenceAccelerator {
 // ============================================================================
 
 /// CUDA backend accelerator (stub - requires `cuda` feature)
+///
+/// The `cuda` Cargo feature (like `opencl` and `vulkan`) is an explicitly
+/// documented placeholder — see the `[features]` comment in `Cargo.toml`
+/// ("GPU acceleration backends (placeholder for future implementation)")
+/// and the COOLJAPAN pure-Rust-by-default policy, which this crate honors
+/// by shipping no real CUDA/OpenCL/Vulkan (FFI-based) backend at all. There
+/// is therefore no runtime "is a device present" check to perform here;
+/// [`CudaAccelerator::new`] always reports [`GpuError::BackendNotSupported`]
+/// rather than [`GpuError::DeviceNotAvailable`], since the latter would
+/// misleadingly imply a real hardware probe was attempted and simply found
+/// nothing, when in fact this crate contains no CUDA integration to probe
+/// with.
 #[cfg(feature = "cuda")]
 #[allow(dead_code)]
 pub struct CudaAccelerator {
@@ -634,30 +708,21 @@ pub struct CudaAccelerator {
 
 #[cfg(feature = "cuda")]
 impl CudaAccelerator {
-    /// Create a new CUDA accelerator
+    /// Create a new CUDA accelerator.
     ///
     /// # Errors
-    /// Returns error if CUDA is not available
+    /// Always returns [`GpuError::BackendNotSupported`]: this crate ships no
+    /// real CUDA backend (see the struct-level doc comment).
     #[allow(dead_code)]
-    pub fn new(config: GpuConfig) -> Result<Self, GpuError> {
-        if !check_cuda_available() {
-            return Err(GpuError::DeviceNotAvailable);
-        }
-        Ok(Self {
-            config,
-            stats: GpuStats::default(),
-        })
+    pub fn new(_config: GpuConfig) -> Result<Self, GpuError> {
+        Err(GpuError::BackendNotSupported)
     }
 }
 
-#[cfg(feature = "cuda")]
-#[allow(dead_code)]
-fn check_cuda_available() -> bool {
-    // Stub: In real implementation, would check for CUDA runtime
-    false
-}
-
-/// OpenCL backend accelerator (stub - requires `opencl` feature)
+/// OpenCL backend accelerator (stub - requires `opencl` feature). See
+/// [`CudaAccelerator`]'s doc comment: this crate ships no real OpenCL
+/// backend, so construction always honestly fails rather than pretending to
+/// probe for a device.
 #[cfg(feature = "opencl")]
 #[allow(dead_code)]
 pub struct OpenCLAccelerator {
@@ -668,30 +733,21 @@ pub struct OpenCLAccelerator {
 
 #[cfg(feature = "opencl")]
 impl OpenCLAccelerator {
-    /// Create a new OpenCL accelerator
+    /// Create a new OpenCL accelerator.
     ///
     /// # Errors
-    /// Returns error if OpenCL is not available
+    /// Always returns [`GpuError::BackendNotSupported`]: this crate ships no
+    /// real OpenCL backend (see the struct-level doc comment).
     #[allow(dead_code)]
-    pub fn new(config: GpuConfig) -> Result<Self, GpuError> {
-        if !check_opencl_available() {
-            return Err(GpuError::DeviceNotAvailable);
-        }
-        Ok(Self {
-            config,
-            stats: GpuStats::default(),
-        })
+    pub fn new(_config: GpuConfig) -> Result<Self, GpuError> {
+        Err(GpuError::BackendNotSupported)
     }
 }
 
-#[cfg(feature = "opencl")]
-#[allow(dead_code)]
-fn check_opencl_available() -> bool {
-    // Stub: In real implementation, would check for OpenCL runtime
-    false
-}
-
-/// Vulkan compute backend accelerator (stub - requires `vulkan` feature)
+/// Vulkan compute backend accelerator (stub - requires `vulkan` feature).
+/// See [`CudaAccelerator`]'s doc comment: this crate ships no real Vulkan
+/// backend, so construction always honestly fails rather than pretending to
+/// probe for a device.
 #[cfg(feature = "vulkan")]
 #[allow(dead_code)]
 pub struct VulkanAccelerator {
@@ -702,26 +758,38 @@ pub struct VulkanAccelerator {
 
 #[cfg(feature = "vulkan")]
 impl VulkanAccelerator {
-    /// Create a new Vulkan accelerator
+    /// Create a new Vulkan accelerator.
     ///
     /// # Errors
-    /// Returns error if Vulkan is not available
+    /// Always returns [`GpuError::BackendNotSupported`]: this crate ships no
+    /// real Vulkan backend (see the struct-level doc comment).
     #[allow(dead_code)]
-    pub fn new(config: GpuConfig) -> Result<Self, GpuError> {
-        if !check_vulkan_available() {
-            return Err(GpuError::DeviceNotAvailable);
-        }
-        Ok(Self {
-            config,
-            stats: GpuStats::default(),
-        })
+    pub fn new(_config: GpuConfig) -> Result<Self, GpuError> {
+        Err(GpuError::BackendNotSupported)
     }
+}
+
+// `GpuBackend::is_available` (unlike the `*Accelerator::new` constructors
+// above) is honestly answered by a flat `false` here: its documented
+// contract is "is this backend available on the current system", and since
+// this crate contains no real CUDA/OpenCL/Vulkan integration to probe with
+// at all, "not available" is the correct, non-misleading answer for every
+// system — there is no hardware check to perform or hide.
+#[cfg(feature = "cuda")]
+#[allow(dead_code)]
+fn check_cuda_available() -> bool {
+    false
+}
+
+#[cfg(feature = "opencl")]
+#[allow(dead_code)]
+fn check_opencl_available() -> bool {
+    false
 }
 
 #[cfg(feature = "vulkan")]
 #[allow(dead_code)]
 fn check_vulkan_available() -> bool {
-    // Stub: In real implementation, would check for Vulkan runtime
     false
 }
 
@@ -802,17 +870,23 @@ impl GpuBenchmark {
     /// Run batch propagation benchmark
     pub fn benchmark_batch_propagation(&mut self, sizes: &[usize]) {
         for &size in sizes {
-            // Generate test data
-            let watched_lists: Vec<Vec<(usize, bool)>> = (0..size)
-                .map(|i| (0..10).map(|j| ((i * 10 + j) % 1000, j % 2 == 0)).collect())
+            // Generate test data: `size` two-literal clauses `i+1 ∨ -(i+2)`
+            // over `size + 1` variables, each watched from a single literal
+            // slot (blocking flag alternates so roughly half are trivially
+            // skipped as already-satisfied, matching the original
+            // benchmark's `j % 2 == 0` mix).
+            let clauses: Vec<Vec<i32>> = (0..size)
+                .map(|i| vec![(i + 1) as i32, -((i + 2) as i32)])
                 .collect();
-            let assignments: Vec<bool> = (0..size).map(|i| i % 2 == 0).collect();
+            let watched_lists: Vec<Vec<(usize, bool)>> =
+                (0..size).map(|i| vec![(i, i % 2 == 0)]).collect();
+            let assignments: Vec<Option<bool>> = (0..=size).map(|i| Some(i % 3 == 0)).collect();
 
             // Run CPU benchmark
             let mut cpu_accel = CpuReferenceAccelerator::default();
             let start = Instant::now();
             for _ in 0..10 {
-                let _ = cpu_accel.batch_unit_propagation(&watched_lists, &assignments);
+                let _ = cpu_accel.batch_unit_propagation(&watched_lists, &clauses, &assignments);
             }
             let cpu_time = start.elapsed() / 10;
 
@@ -1164,18 +1238,57 @@ mod tests {
     fn test_batch_unit_propagation() {
         let mut accel = CpuReferenceAccelerator::default();
 
-        let watched_lists = vec![
-            vec![(0, true), (1, false), (2, false)],
-            vec![(3, false), (4, true)],
-        ];
-        let assignments = vec![true, false, true];
+        // Clause 0: x1 ∨ x2 ∨ x3, with x1 = true -- satisfied via blocking
+        // flag, so it must be skipped without even needing clause data.
+        // Clause 1: -x1 ∨ x2, with x1 = true, x2 = false -- both literals
+        // false -> genuine conflict.
+        // Clause 2: x2 ∨ x3, with x2 = false and x3 unassigned -- unit,
+        // must derive x3 = true.
+        let clauses: Vec<Vec<i32>> = vec![vec![1, 2, 3], vec![-1, 2], vec![2, 3]];
+        let watched_lists = vec![vec![(0, true), (1, false)], vec![(2, false)]];
+        let assignments: Vec<Option<bool>> = vec![Some(true), Some(false), None];
 
-        let result = accel.batch_unit_propagation(&watched_lists, &assignments);
+        let result = accel.batch_unit_propagation(&watched_lists, &clauses, &assignments);
         assert!(result.is_ok());
+        let propagation = result.expect("batch propagation should succeed");
+
+        assert_eq!(propagation.conflict_clauses, vec![1]);
+        assert_eq!(propagation.unit_literals, vec![3]);
 
         let stats = accel.stats();
         assert_eq!(stats.batch_propagation_calls, 1);
         assert_eq!(stats.cpu_fallback_operations, 1);
+    }
+
+    // Regression test for the fabrication item: the previous implementation
+    // decided conflict/unit status purely from `clause_idx % 7` / `% 5`,
+    // completely ignoring the actual clause contents and assignments. Two
+    // clauses picked so their indices would have triggered the old fake
+    // rules (`0 % 7 == 0` "conflict", `5 % 5 == 0` "unit") must now report
+    // the behavior implied by their *real* literals instead.
+    #[test]
+    fn test_batch_unit_propagation_ignores_clause_index_and_uses_real_literals() {
+        let mut accel = CpuReferenceAccelerator::default();
+
+        // Clause index 0 (old fake rule: `0 % 7 == 0` -> "conflict"), but
+        // x1 ∨ x2 with x1 unassigned and x2 unassigned is not even close to
+        // a conflict: two unassigned literals, nothing conclusive.
+        let clauses: Vec<Vec<i32>> = vec![vec![1, 2]];
+        let watched_lists = vec![vec![(0, false)]];
+        let assignments: Vec<Option<bool>> = vec![None, None];
+
+        let result = accel
+            .batch_unit_propagation(&watched_lists, &clauses, &assignments)
+            .expect("batch propagation should succeed");
+
+        assert!(
+            result.conflict_clauses.is_empty(),
+            "two-unassigned-literal clause must not be fabricated into a conflict"
+        );
+        assert!(
+            result.unit_literals.is_empty(),
+            "two-unassigned-literal clause must not be fabricated into a unit"
+        );
     }
 
     #[test]
@@ -1233,7 +1346,7 @@ mod tests {
     #[test]
     fn test_reset_stats() {
         let mut accel = CpuReferenceAccelerator::default();
-        let _ = accel.batch_unit_propagation(&[], &[]);
+        let _ = accel.batch_unit_propagation(&[], &[], &[]);
         assert!(accel.stats().batch_propagation_calls > 0);
 
         accel.reset_stats();

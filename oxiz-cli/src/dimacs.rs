@@ -34,12 +34,25 @@ impl DimacsCnf {
     }
 
     /// Parse DIMACS CNF from a reader
+    ///
+    /// DIMACS clauses are terminated by a literal `0` and may legally span
+    /// multiple lines; a clause is not necessarily "one line". This parser
+    /// therefore tokenizes the whole clause body as a single literal stream
+    /// (not line-by-line) and splits it into clauses on `0` terminators, so:
+    /// - a clause split across several lines is reassembled correctly,
+    /// - an empty clause (`0` immediately, i.e. two terminators back-to-back
+    ///   or a lone `0` line) is preserved as the empty clause (falsum),
+    ///   which `to_smtlib2` renders as `(assert false)` -- an immediate
+    ///   UNSAT witness, matching the DIMACS semantics -- rather than being
+    ///   silently dropped, and
+    /// - a `0` appearing mid-line is always treated as a terminator, never
+    ///   misread as a reference to "variable 0".
     pub fn parse<R: BufRead>(reader: R) -> Result<Self, String> {
-        let mut num_vars = 0;
-        let mut num_clauses_expected = 0;
-        let mut clauses = Vec::new();
+        let mut num_vars = 0usize;
+        let mut num_clauses_expected = 0usize;
         let mut comments = Vec::new();
         let mut problem_line_found = false;
+        let mut body_tokens: Vec<i32> = Vec::new();
 
         for line in reader.lines() {
             let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
@@ -72,43 +85,48 @@ impl DimacsCnf {
                 continue;
             }
 
-            // Clause line
+            // Clause body line: accumulate its tokens into the literal
+            // stream; clause boundaries are resolved afterwards by `0`
+            // terminators, not by line breaks.
             if !problem_line_found {
                 return Err(
                     "Clause found before problem line. Problem line must come first.".to_string(),
                 );
             }
 
-            let literals: Result<Vec<i32>, _> = trimmed
-                .split_whitespace()
-                .map(|s| s.parse::<i32>())
-                .collect();
-
-            let mut literals = literals.map_err(|e| format!("Invalid literal in clause: {}", e))?;
-
-            // Remove trailing zero if present
-            if literals.last() == Some(&0) {
-                literals.pop();
-            }
-
-            // Check that all literals are within valid range
-            for &lit in &literals {
-                let var = lit.unsigned_abs() as usize;
-                if var > num_vars {
-                    return Err(format!(
-                        "Literal {} refers to variable {}, but only {} variables declared",
-                        lit, var, num_vars
-                    ));
-                }
-            }
-
-            if !literals.is_empty() {
-                clauses.push(literals);
+            for tok in trimmed.split_whitespace() {
+                let lit: i32 = tok
+                    .parse()
+                    .map_err(|_| format!("Invalid literal in clause: {}", tok))?;
+                body_tokens.push(lit);
             }
         }
 
         if !problem_line_found {
             return Err("No problem line found in DIMACS file".to_string());
+        }
+
+        let mut clauses: Vec<Vec<i32>> = Vec::new();
+        let mut current: Vec<i32> = Vec::new();
+        for tok in body_tokens {
+            if tok == 0 {
+                clauses.push(std::mem::take(&mut current));
+            } else {
+                let var = tok.unsigned_abs() as usize;
+                if var > num_vars {
+                    return Err(format!(
+                        "Literal {} refers to variable {}, but only {} variables declared",
+                        tok, var, num_vars
+                    ));
+                }
+                current.push(tok);
+            }
+        }
+        if !current.is_empty() {
+            return Err(format!(
+                "Unterminated clause: literals {:?} are missing a trailing 0",
+                current
+            ));
         }
 
         if clauses.len() != num_clauses_expected {
@@ -164,7 +182,13 @@ impl DimacsCnf {
 
         // Add clauses as assertions
         for clause in &self.clauses {
-            if clause.len() == 1 {
+            if clause.is_empty() {
+                // The empty clause (falsum): DIMACS files may legitimately
+                // contain a bare "0" clause, which is unsatisfiable by
+                // definition. Assert `false` directly instead of emitting
+                // `(or)` (vacuously true) or silently dropping the clause.
+                result.push_str("(assert false)\n");
+            } else if clause.len() == 1 {
                 // Unit clause
                 let lit = clause[0];
                 if lit > 0 {
@@ -294,13 +318,20 @@ impl QDimacsCnf {
     }
 
     /// Parse QDIMACS from a reader
+    ///
+    /// Quantifier blocks (`a ...`/`e ...`) are always exactly one line per
+    /// the QDIMACS spec, so those are still parsed line-by-line. Clauses,
+    /// however, are 0-terminated and may span multiple lines just like in
+    /// plain DIMACS (see [`DimacsCnf::parse`]), so the clause body is
+    /// tokenized as a single literal stream and split on `0` terminators
+    /// rather than treated as one clause per line.
     pub fn parse<R: BufRead>(reader: R) -> Result<Self, String> {
-        let mut num_vars = 0;
-        let mut num_clauses_expected = 0;
-        let mut clauses = Vec::new();
+        let mut num_vars = 0usize;
+        let mut num_clauses_expected = 0usize;
         let mut quantifiers = Vec::new();
         let mut comments = Vec::new();
         let mut problem_line_found = false;
+        let mut body_tokens: Vec<i32> = Vec::new();
 
         for line in reader.lines() {
             let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
@@ -382,37 +413,41 @@ impl QDimacsCnf {
                 continue;
             }
 
-            // Clause line
-            let literals: Result<Vec<i32>, _> = trimmed
-                .split_whitespace()
-                .map(|s| s.parse::<i32>())
-                .collect();
-
-            let mut literals = literals.map_err(|e| format!("Invalid literal in clause: {}", e))?;
-
-            // Remove trailing zero if present
-            if literals.last() == Some(&0) {
-                literals.pop();
-            }
-
-            // Check that all literals are within valid range
-            for &lit in &literals {
-                let var = lit.unsigned_abs() as usize;
-                if var > num_vars {
-                    return Err(format!(
-                        "Literal {} refers to variable {}, but only {} variables declared",
-                        lit, var, num_vars
-                    ));
-                }
-            }
-
-            if !literals.is_empty() {
-                clauses.push(literals);
+            // Clause body line: accumulate tokens; clause boundaries are
+            // resolved after the loop by `0` terminators, not line breaks.
+            for tok in trimmed.split_whitespace() {
+                let lit: i32 = tok
+                    .parse()
+                    .map_err(|_| format!("Invalid literal in clause: {}", tok))?;
+                body_tokens.push(lit);
             }
         }
 
         if !problem_line_found {
             return Err("No problem line found in QDIMACS file".to_string());
+        }
+
+        let mut clauses: Vec<Vec<i32>> = Vec::new();
+        let mut current: Vec<i32> = Vec::new();
+        for tok in body_tokens {
+            if tok == 0 {
+                clauses.push(std::mem::take(&mut current));
+            } else {
+                let var = tok.unsigned_abs() as usize;
+                if var > num_vars {
+                    return Err(format!(
+                        "Literal {} refers to variable {}, but only {} variables declared",
+                        tok, var, num_vars
+                    ));
+                }
+                current.push(tok);
+            }
+        }
+        if !current.is_empty() {
+            return Err(format!(
+                "Unterminated clause: literals {:?} are missing a trailing 0",
+                current
+            ));
         }
 
         if clauses.len() != num_clauses_expected {
@@ -630,6 +665,96 @@ mod tests {
         let input = "p cnf 2 2\n1 -2 0\n";
         let cursor = Cursor::new(input);
         assert!(DimacsCnf::parse(cursor).is_err());
+    }
+
+    #[test]
+    fn test_clause_spanning_multiple_lines_is_one_clause() {
+        // A single clause whose literals are split across several lines
+        // must be parsed as ONE clause, not several.
+        let input = "p cnf 3 1\n1 -2\n3 0\n";
+        let cursor = Cursor::new(input);
+        let cnf = DimacsCnf::parse(cursor).expect("multi-line clause should parse");
+        assert_eq!(cnf.clauses.len(), 1);
+        assert_eq!(cnf.clauses[0], vec![1, -2, 3]);
+    }
+
+    #[test]
+    fn test_multiple_clauses_spanning_lines() {
+        // Two clauses, each spanning two lines.
+        let input = "p cnf 4 2\n1 -2\n3 0\n-4 1\n2 0\n";
+        let cursor = Cursor::new(input);
+        let cnf = DimacsCnf::parse(cursor).expect("test should parse");
+        assert_eq!(cnf.clauses.len(), 2);
+        assert_eq!(cnf.clauses[0], vec![1, -2, 3]);
+        assert_eq!(cnf.clauses[1], vec![-4, 1, 2]);
+    }
+
+    #[test]
+    fn test_empty_clause_is_falsum_not_dropped() {
+        // A bare "0" clause means UNSAT (the empty clause / falsum) per the
+        // DIMACS spec -- it must survive parsing rather than being silently
+        // discarded.
+        let input = "p cnf 1 1\n0\n";
+        let cursor = Cursor::new(input);
+        let cnf = DimacsCnf::parse(cursor).expect("empty clause should parse, not error");
+        assert_eq!(cnf.clauses.len(), 1);
+        assert!(cnf.clauses[0].is_empty());
+
+        // And it must render as an explicit contradiction, not a vacuous
+        // `(or)` or a dropped assertion.
+        let smtlib2 = cnf.to_smtlib2();
+        assert!(smtlib2.contains("(assert false)"));
+        assert!(!smtlib2.contains("(assert (or))"));
+    }
+
+    #[test]
+    fn test_empty_clause_among_others() {
+        let input = "p cnf 2 2\n1 2 0\n0\n";
+        let cursor = Cursor::new(input);
+        let cnf = DimacsCnf::parse(cursor).expect("test should parse");
+        assert_eq!(cnf.clauses.len(), 2);
+        assert_eq!(cnf.clauses[0], vec![1, 2]);
+        assert!(cnf.clauses[1].is_empty());
+    }
+
+    #[test]
+    fn test_mid_line_zero_terminates_clause_not_treated_as_variable() {
+        // "1 2 0 3 0" on one physical line is two clauses: [1, 2] and [3],
+        // not a single clause containing a bogus "variable 0" literal.
+        let input = "p cnf 3 2\n1 2 0 3 0\n";
+        let cursor = Cursor::new(input);
+        let cnf = DimacsCnf::parse(cursor).expect("test should parse");
+        assert_eq!(cnf.clauses.len(), 2);
+        assert_eq!(cnf.clauses[0], vec![1, 2]);
+        assert_eq!(cnf.clauses[1], vec![3]);
+    }
+
+    #[test]
+    fn test_unterminated_clause_is_an_error() {
+        // A trailing clause with no terminating 0 is malformed.
+        let input = "p cnf 2 1\n1 2\n";
+        let cursor = Cursor::new(input);
+        let err = DimacsCnf::parse(cursor).expect_err("missing terminator should error");
+        assert!(err.contains("Unterminated clause"));
+    }
+
+    #[test]
+    fn test_qdimacs_clause_spanning_multiple_lines() {
+        let input = "p cnf 3 1\ne 1 2 0\na 3 0\n1 -2\n3 0\n";
+        let cursor = Cursor::new(input);
+        let qcnf = QDimacsCnf::parse(cursor).expect("test should parse");
+        assert_eq!(qcnf.clauses.len(), 1);
+        assert_eq!(qcnf.clauses[0], vec![1, -2, 3]);
+    }
+
+    #[test]
+    fn test_qdimacs_empty_clause_preserved() {
+        let input = "p cnf 1 1\ne 1 0\n0\n";
+        let cursor = Cursor::new(input);
+        let qcnf = QDimacsCnf::parse(cursor).expect("test should parse");
+        assert_eq!(qcnf.clauses.len(), 1);
+        assert!(qcnf.clauses[0].is_empty());
+        assert!(qcnf.to_smtlib2().contains("false"));
     }
 
     #[test]

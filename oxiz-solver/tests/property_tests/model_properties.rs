@@ -29,11 +29,15 @@ mod model_basic_properties {
             solver.assert(eq, &mut tm);
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    let x_val = model.get(x);
-                    prop_assert_eq!(x_val, Some(c));
-                }
+            // x = n is trivially satisfiable: the solver MUST answer Sat and
+            // produce a model (a validity test that never checks the result
+            // would silently pass on a solver that never produces models).
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                let x_val = model.get(x);
+                prop_assert_eq!(x_val, Some(c));
             }
         }
 
@@ -54,12 +58,14 @@ mod model_basic_properties {
                 solver.assert(and_term, &mut tm);
                 let result = solver.check(&mut tm);
 
-                if matches!(result, SolverResult::Sat) {
-                    if let Some(model) = solver.model() {
-                        // Model should provide a value for x
-                        let x_val = model.get(x);
-                        prop_assert!(x_val.is_some());
-                    }
+                // a <= b, so a <= x <= b is satisfiable → Sat with a model.
+                prop_assert_eq!(result, SolverResult::Sat);
+                let model = solver.model();
+                prop_assert!(model.is_some(), "Sat result must yield a model");
+                if let Some(model) = model {
+                    // Model should provide a value for x
+                    let x_val = model.get(x);
+                    prop_assert!(x_val.is_some());
                 }
             }
         }
@@ -80,12 +86,14 @@ mod model_basic_properties {
             solver.assert(or_term, &mut tm);
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // Model should satisfy at least one disjunct
-                    let x_val = model.get(x);
-                    prop_assert!(x_val == Some(ta) || x_val == Some(tb));
-                }
+            // x = a ∨ x = b is satisfiable → Sat with a model.
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // Model should satisfy at least one disjunct
+                let x_val = model.get(x);
+                prop_assert!(x_val == Some(ta) || x_val == Some(tb));
             }
         }
 
@@ -107,14 +115,16 @@ mod model_basic_properties {
 
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    let x_val = model.get(x);
-                    let y_val = model.get(y);
+            // x = n1 ∧ y = n2 is satisfiable → Sat with a model.
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                let x_val = model.get(x);
+                let y_val = model.get(y);
 
-                    prop_assert_eq!(x_val, Some(c1));
-                    prop_assert_eq!(y_val, Some(c2));
-                }
+                prop_assert_eq!(x_val, Some(c1));
+                prop_assert_eq!(y_val, Some(c2));
             }
         }
 
@@ -129,8 +139,11 @@ mod model_basic_properties {
             solver.assert(tm.mk_eq(x, const_b), &mut tm);
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
+            // x = <bool const> is satisfiable → Sat with a model.
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
                     let x_val = model.get(x);
                     // The model returns a TermId - we need to check if it represents
                     // the expected boolean value by comparing the term kinds
@@ -151,7 +164,6 @@ mod model_basic_properties {
                         // If model doesn't have a value, that's also acceptable
                         // as the solver might use implicit true/false
                     }
-                }
             }
         }
 
@@ -179,14 +191,16 @@ mod model_basic_properties {
 
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // x and y should have correct values
-                    prop_assert_eq!(model.get(x), Some(ta));
-                    prop_assert_eq!(model.get(y), Some(tb));
-                    // z should exist
-                    prop_assert!(model.get(z).is_some());
-                }
+            // x = a ∧ y = b ∧ z = x + y is satisfiable → Sat with a model.
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // x and y should have correct values
+                prop_assert_eq!(model.get(x), Some(ta));
+                prop_assert_eq!(model.get(y), Some(tb));
+                // z should exist
+                prop_assert!(model.get(z).is_some());
             }
         }
 
@@ -213,13 +227,15 @@ mod model_basic_properties {
 
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // All variables should have values
-                    prop_assert!(model.get(x).is_some());
-                    prop_assert!(model.get(y).is_some());
-                    prop_assert!(model.get(z).is_some());
-                }
+            // Three independent equalities x=n1, y=n2, z=n3 → Sat with a model.
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // All variables should have values
+                prop_assert!(model.get(x).is_some());
+                prop_assert!(model.get(y).is_some());
+                prop_assert!(model.get(z).is_some());
             }
         }
     }
@@ -246,11 +262,15 @@ mod model_theory_combination_properties {
 
             let result = solver.check(&mut tm);
 
-            // If b is false, should be unsat
+            // If b is false, asserting it is a contradiction → Unsat.
+            // If b is true, x = n ∧ true is satisfiable → Sat with a model.
             if !b {
-                prop_assert!(matches!(result, SolverResult::Unsat));
-            } else if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
+                prop_assert_eq!(result, SolverResult::Unsat);
+            } else {
+                prop_assert_eq!(result, SolverResult::Sat);
+                let model = solver.model();
+                prop_assert!(model.is_some(), "Sat result must yield a model");
+                if let Some(model) = model {
                     prop_assert_eq!(model.get(x), Some(c));
                 }
             }
@@ -276,12 +296,14 @@ mod model_theory_combination_properties {
 
             let result = solver.check(&mut tm);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    let x_val = model.get(x);
-                    let expected = if cond { ta } else { tb };
-                    prop_assert_eq!(x_val, Some(expected));
-                }
+            // x = ite(cond, a, b) with a constant condition is satisfiable → Sat.
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                let x_val = model.get(x);
+                let expected = if cond { ta } else { tb };
+                prop_assert_eq!(x_val, Some(expected));
             }
         }
     }

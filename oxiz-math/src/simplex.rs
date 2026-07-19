@@ -426,7 +426,54 @@ impl SimplexTableau {
             }
         }
 
+        // A non-basic variable never appears in `basic_vars`, so
+        // `check()`'s pivoting loop (which only scans `find_violating_basic_var`)
+        // would never notice that this newly tightened bound now conflicts
+        // with the variable's *current* assignment -- letting `check()`
+        // report `Sat` for an infeasible system (e.g. row y = x with bounds
+        // x >= 5, y <= 3: x stays at its stale value 0 forever). Repair it
+        // here (Dutertre-de Moura "update" procedure): snap the non-basic
+        // variable to the violated bound and recompute every basic variable
+        // that depends on it so the tableau's `assignment` map stays
+        // consistent. Any bound violation this produces on a *basic*
+        // variable is then picked up by the normal `check()`/`check_dual()`
+        // pivoting loop.
+        self.repair_non_basic_bound(var);
+
         Ok(())
+    }
+
+    /// Repair a non-basic variable's assignment so it satisfies its own
+    /// bounds, and propagate the change to all dependent basic variables.
+    ///
+    /// No-op for basic variables: their bound violations are handled by
+    /// `check()`/`check_dual()`'s pivoting loop instead.
+    fn repair_non_basic_bound(&mut self, var: VarId) {
+        if self.basic_vars.contains(&var) {
+            return;
+        }
+        let Some(current) = self.assignment.get(&var).cloned() else {
+            return;
+        };
+
+        let mut new_value = current.clone();
+        if let Some(lb) = self.lower_bounds.get(&var)
+            && &new_value < lb
+        {
+            new_value = lb.clone();
+        }
+        if let Some(ub) = self.upper_bounds.get(&var)
+            && &new_value > ub
+        {
+            new_value = ub.clone();
+        }
+
+        if new_value != current {
+            self.assignment.insert(var, new_value);
+            // Recompute every basic variable's value from the updated
+            // non-basic assignment.
+            self.update_assignment();
+        }
     }
 
     /// Get the current assignment to a variable.
@@ -1277,6 +1324,94 @@ mod tests {
         assert_eq!(result, SimplexResult::Sat);
 
         // Verify the solution is feasible
+        assert!(tableau.is_feasible());
+    }
+
+    /// Regression test for the audit finding: a non-basic variable whose
+    /// bound is tightened past its current assignment was never repaired,
+    /// so `check()` could report `Sat` for an infeasible system.
+    ///
+    /// Row: y = x (x non-basic, y basic).
+    /// Bounds: x >= 5, then y <= 3.
+    /// x >= 5 forces x (and hence y, via the row) up to 5, so y <= 3 is now
+    /// unsatisfiable: `check()` must never report `Sat`.
+    #[test]
+    fn test_add_bound_repairs_non_basic_var_violating_own_bound() {
+        let mut tableau = SimplexTableau::new();
+
+        let x = tableau.fresh_var();
+        let y = tableau.fresh_var();
+
+        let mut row = Row::new(y);
+        row.coeffs.insert(x, rat(1));
+        tableau.add_row(row).expect("test operation should succeed");
+
+        tableau
+            .add_bound(x, BoundType::Lower, rat(5), 0)
+            .expect("x >= 5 alone is not a direct conflict");
+
+        // x's assignment must have been repaired to 5, and y (which depends
+        // on x via the row) must have followed it to 5 -- this is the
+        // Dutertre-de Moura "update" that was previously missing entirely.
+        assert_eq!(tableau.get_value(x), Some(&rat(5)));
+        assert_eq!(
+            tableau.get_value(y),
+            Some(&rat(5)),
+            "basic variable y=x must be recomputed when non-basic x is repaired"
+        );
+
+        // y <= 3 does not directly conflict with any bound *recorded* on y
+        // (y has no prior bound), so add_bound may return Ok -- but y's
+        // *current* value (5, basic) now violates it.
+        let result = tableau.add_bound(y, BoundType::Upper, rat(3), 1);
+
+        match result {
+            Err(_) => {
+                // Immediate conflict detected at add_bound time is also
+                // acceptable.
+            }
+            Ok(()) => {
+                // Otherwise, check() must catch the bound-violating basic
+                // variable and report the system as infeasible -- never Sat.
+                let check_result = tableau.check();
+                assert!(
+                    check_result.is_err(),
+                    "check() must not report the infeasible system \
+                     (x>=5, y<=3, y=x) as satisfiable: {:?}",
+                    check_result
+                );
+            }
+        }
+    }
+
+    /// A non-basic variable's bound tightening that does *not* conflict
+    /// with the rest of the system must still leave `check()` reporting
+    /// `Sat`, and the repaired value must be visible via `get_value`
+    /// immediately (not only after calling `check()`).
+    #[test]
+    fn test_add_bound_repairs_non_basic_var_stays_sat_when_consistent() {
+        let mut tableau = SimplexTableau::new();
+
+        let x = tableau.fresh_var();
+        let y = tableau.fresh_var();
+
+        let mut row = Row::new(y);
+        row.coeffs.insert(x, rat(1));
+        tableau.add_row(row).expect("test operation should succeed");
+
+        // y <= 100 leaves plenty of room for x >= 5.
+        tableau
+            .add_bound(y, BoundType::Upper, rat(100), 0)
+            .expect("test operation should succeed");
+        tableau
+            .add_bound(x, BoundType::Lower, rat(5), 1)
+            .expect("test operation should succeed");
+
+        assert_eq!(tableau.get_value(x), Some(&rat(5)));
+        assert_eq!(tableau.get_value(y), Some(&rat(5)));
+
+        let result = tableau.check().expect("test operation should succeed");
+        assert_eq!(result, SimplexResult::Sat);
         assert!(tableau.is_feasible());
     }
 }

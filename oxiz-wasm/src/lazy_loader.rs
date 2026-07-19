@@ -328,9 +328,18 @@ impl LazyLoader {
             .and_then(|w| w.performance())
             .map(|p| p.now());
 
-        // Load the module if URL provided
-        if let Some(url) = &descriptor.module_url {
-            self.fetch_and_load_module(url).await?;
+        // Load the module if URL provided. A failure here (fetch error,
+        // invalid WASM bytes, or a module that fails to instantiate/link)
+        // must mark the theory `Failed` rather than leaving it stuck in
+        // `Loading` forever -- otherwise `getState`/`isLoaded` would keep
+        // reporting an in-progress load that has, in fact, already died.
+        if let Some(url) = &descriptor.module_url
+            && let Err(e) = self.fetch_and_load_module(url).await
+        {
+            if let Some(theory) = self.loaded.get_mut(name) {
+                theory.state = TheoryState::Failed;
+            }
+            return Err(e);
         }
 
         // Run initialization
@@ -532,7 +541,20 @@ impl LazyLoader {
         Ok(())
     }
 
-    /// Fetch and load a WASM module from a URL
+    /// Fetch a WASM module from a URL and actually compile + instantiate
+    /// it via the browser's `WebAssembly.instantiate`, rather than merely
+    /// downloading and discarding the bytes. A theory is only reported as
+    /// loaded once this genuinely succeeds:
+    ///
+    /// 1. The fetched bytes must pass `WebAssembly.validate` (a
+    ///    syntactically valid WASM binary).
+    /// 2. `WebAssembly.instantiate` must successfully compile *and link*
+    ///    the module (with an empty import object -- theory modules are
+    ///    expected to be self-contained; one that requires host imports
+    ///    will legitimately fail to link here instead of being silently
+    ///    reported as loaded).
+    /// 3. The resulting `{ module, instance }` result must actually
+    ///    contain an `instance`.
     async fn fetch_and_load_module(&self, url: &str) -> LoadResult<()> {
         let window = web_sys::window()
             .ok_or_else(|| LoadError::NetworkError("No window object available".to_string()))?;
@@ -545,6 +567,14 @@ impl LazyLoader {
             .dyn_into()
             .map_err(|_| LoadError::NetworkError("Invalid response".to_string()))?;
 
+        if !resp.ok() {
+            return Err(LoadError::NetworkError(format!(
+                "Fetch for '{}' returned HTTP {}",
+                url,
+                resp.status()
+            )));
+        }
+
         let array_buffer = JsFuture::from(
             resp.array_buffer()
                 .map_err(|e| LoadError::NetworkError(format!("Failed to get buffer: {:?}", e)))?,
@@ -552,9 +582,43 @@ impl LazyLoader {
         .await
         .map_err(|e| LoadError::NetworkError(format!("Buffer fetch failed: {:?}", e)))?;
 
-        // In a real implementation, we would instantiate the WASM module here
-        // For now, we just validate that we got the data
-        let _bytes = js_sys::Uint8Array::new(&array_buffer);
+        // Reject anything that isn't even a syntactically valid WASM
+        // binary outright, rather than silently accepting arbitrary
+        // fetched bytes as if they were a loaded module.
+        let is_valid_wasm = js_sys::WebAssembly::validate(&array_buffer).map_err(|e| {
+            LoadError::InitializationFailed {
+                theory: url.to_string(),
+                error: format!("WASM validation call failed: {:?}", e),
+            }
+        })?;
+        if !is_valid_wasm {
+            return Err(LoadError::InitializationFailed {
+                theory: url.to_string(),
+                error: "fetched bytes are not a valid WebAssembly module".to_string(),
+            });
+        }
+
+        let bytes = js_sys::Uint8Array::new(&array_buffer).to_vec();
+        let imports = js_sys::Object::new();
+        let instantiate_result =
+            JsFuture::from(js_sys::WebAssembly::instantiate_buffer(&bytes, &imports))
+                .await
+                .map_err(|e| LoadError::InitializationFailed {
+                    theory: url.to_string(),
+                    error: format!("failed to compile/instantiate WASM module: {:?}", e),
+                })?;
+
+        // `WebAssembly.instantiate(bufferSource, ...)` resolves to
+        // `{ module, instance }`; confirm we actually got a live
+        // instance back before declaring the theory loaded.
+        let has_instance =
+            js_sys::Reflect::has(&instantiate_result, &"instance".into()).unwrap_or(false);
+        if !has_instance {
+            return Err(LoadError::InitializationFailed {
+                theory: url.to_string(),
+                error: "WebAssembly.instantiate() did not return an instance".to_string(),
+            });
+        }
 
         Ok(())
     }

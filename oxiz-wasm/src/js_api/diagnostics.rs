@@ -155,9 +155,15 @@ impl WasmSolver {
     pub fn get_statistics(&self) -> Result<JsValue, JsValue> {
         let obj = js_sys::Object::new();
 
-        // Get assertion count
-        let assertions = self.ctx.format_assertions();
-        let num_assertions = assertions.matches("(assert").count();
+        // Get assertion count directly from the context's assertion list.
+        //
+        // The previous implementation counted occurrences of the substring
+        // "(assert" in `self.ctx.format_assertions()`'s output, but that
+        // formatter (`Context::format_assertions`) prints each assertion's
+        // *term* only (e.g. `"(> x 0)"`), never wrapped in an `(assert ...)`
+        // s-expression -- so the substring never matched and this was always
+        // `0`, regardless of how many assertions were actually present.
+        let num_assertions = self.ctx.get_assertions().len();
         js_sys::Reflect::set(&obj, &"num_assertions".into(), &num_assertions.into())
             .map_err(|_| WasmError::new(WasmErrorKind::Unknown, "Failed to set num_assertions"))?;
 

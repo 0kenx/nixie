@@ -849,6 +849,288 @@ pub fn legendre_symbol(a: &BigInt, p: &BigInt) -> i8 {
     jacobi_symbol(a, p)
 }
 
+// ---------------------------------------------------------------------------
+// Verified complete factorization
+//
+// `trial_division` only ever removes factors up to a fixed limit and then
+// blindly assumes whatever remains is prime. That assumption silently
+// misclassifies composite residuals (e.g. a semiprime whose two factors are
+// both above the limit), which in turn made `is_square_free`,
+// `divisor_count`, `divisor_sum`, `mobius` and `euler_totient` produce wrong
+// results for such inputs, and made `euler_totient`'s dedicated fallback
+// loop (bounded only by `sqrt(n)`) stall for ~10^9 iterations on a large
+// 64-bit prime.
+//
+// The helpers below factor completely: trial division peels off small
+// factors, and anything left over is verified with Miller-Rabin and, if
+// composite, split with Pollard's rho. Both primality testing and rho use a
+// self-contained deterministic pseudo-random sequence (no `rand` dependency)
+// so they behave identically with or without the `std` feature and never
+// need an entropy source. Total work is capped by a fixed retry budget
+// rather than by `n`'s magnitude, so factorization always terminates
+// promptly -- including for large primes, which is exactly the case that
+// used to hang.
+// ---------------------------------------------------------------------------
+
+/// Small deterministic PRNG (SplitMix64) used only to vary the starting
+/// parameters of successive Pollard's rho attempts. Not cryptographically
+/// meaningful -- just needs to explore different sequences on retry.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        SplitMix64(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+}
+
+/// FNV-1a hash of a `BigInt`'s bytes, used to seed the deterministic PRNG.
+fn seed_from_bigint(n: &BigInt, salt: u64) -> u64 {
+    let bytes = n.to_signed_bytes_le();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ salt;
+    for &b in &bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
+/// First 20 primes, used as fixed Miller-Rabin witnesses. This needs no
+/// entropy source (unlike [`is_prime`]), so it is available unconditionally.
+const SMALL_WITNESS_PRIMES: [u64; 20] = [
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
+];
+
+/// Deterministic Miller-Rabin primality test using a fixed witness set.
+///
+/// Unlike [`is_prime`], this does not draw from an entropy source, so it
+/// works identically with or without the `std` feature. False positives are
+/// only theoretically possible against numbers deliberately constructed to
+/// defeat this exact fixed witness set, which cannot arise from ordinary
+/// factorization work.
+fn is_prime_fixed_witnesses(n: &BigInt) -> bool {
+    let zero = BigInt::zero();
+    let one = BigInt::one();
+    let two = BigInt::from(2);
+
+    if n <= &one {
+        return false;
+    }
+    if n == &two {
+        return true;
+    }
+    if n.is_even() {
+        return false;
+    }
+
+    for &p in &SMALL_WITNESS_PRIMES {
+        let bp = BigInt::from(p);
+        if n == &bp {
+            return true;
+        }
+        if n > &bp && (n % &bp) == zero {
+            return false;
+        }
+    }
+
+    let n_minus_1 = n - &one;
+    let mut d = n_minus_1.clone();
+    let mut r: u32 = 0;
+    while d.is_even() {
+        d >>= 1;
+        r += 1;
+    }
+
+    'witness: for &a_val in &SMALL_WITNESS_PRIMES {
+        let a = BigInt::from(a_val);
+        if &a >= n {
+            continue;
+        }
+        let mut x = mod_pow(&a, &d, n);
+        if x == one || x == n_minus_1 {
+            continue 'witness;
+        }
+        for _ in 0..r.saturating_sub(1) {
+            x = mod_pow(&x, &two, n);
+            if x == n_minus_1 {
+                continue 'witness;
+            }
+        }
+        return false;
+    }
+
+    true
+}
+
+/// One attempt at splitting composite `n` via Pollard's rho, using
+/// deterministic pseudo-random parameters derived from `attempt`. Returns
+/// `None` if this particular choice of parameters fails to find a factor
+/// within the per-attempt iteration cap; callers should retry with a
+/// different `attempt` index.
+fn pollard_rho_attempt(n: &BigInt, attempt: u64) -> Option<BigInt> {
+    let one = BigInt::one();
+    if n.is_even() {
+        return Some(BigInt::from(2));
+    }
+
+    let mut rng = SplitMix64::new(seed_from_bigint(n, attempt));
+    let x0 = BigInt::from(rng.next_u64()) % n;
+    let mut c = BigInt::from(rng.next_u64()) % n;
+    if c.is_zero() {
+        c = one.clone();
+    }
+
+    let f = |x: &BigInt| -> BigInt { (x * x + &c) % n };
+
+    let mut x = x0.clone();
+    let mut y = x0;
+    let mut d = one.clone();
+
+    let max_iterations = 100_000;
+    let mut iterations = 0;
+
+    while d == one && iterations < max_iterations {
+        x = f(&x);
+        y = f(&f(&y));
+        let diff = if x >= y { &x - &y } else { &y - &x };
+        d = gcd_bigint(diff, n.clone());
+        iterations += 1;
+    }
+
+    if d != *n && d != one { Some(d) } else { None }
+}
+
+/// Completely factor `n` (`n > 1`) into primes, with multiplicity, verifying
+/// primality with Miller-Rabin instead of assuming a residual is prime.
+///
+/// Total Pollard's-rho work is capped by a fixed retry budget rather than by
+/// `n`'s magnitude, so this always terminates promptly. In the
+/// astronomically unlikely case that a composite cofactor resists the full
+/// retry budget -- which would require a deliberately constructed,
+/// cryptographically hard semiprime (a fundamentally hard problem for any
+/// classical factoring approach, not specific to this implementation) --
+/// this returns `Err((partial_factors, unresolved_residual))` instead of
+/// guessing.
+fn factorize_verified(n: &BigInt) -> Result<Vec<BigInt>, (Vec<BigInt>, BigInt)> {
+    let one = BigInt::one();
+    debug_assert!(n > &one, "factorize_verified expects n > 1");
+
+    let mut factors = Vec::new();
+    let mut remaining = n.clone();
+
+    while remaining.is_even() {
+        factors.push(BigInt::from(2));
+        remaining >>= 1;
+    }
+
+    let mut d = BigInt::from(3);
+    let small_limit = BigInt::from(1_000_000u64);
+    while &d * &d <= remaining && d <= small_limit {
+        while (&remaining % &d).is_zero() {
+            factors.push(d.clone());
+            remaining /= &d;
+        }
+        d += BigInt::from(2);
+    }
+
+    const MAX_POLLARD_ATTEMPTS: u32 = 64;
+    let mut attempts_left = MAX_POLLARD_ATTEMPTS;
+    let mut stack = vec![remaining];
+
+    while let Some(m) = stack.pop() {
+        if m <= one {
+            continue;
+        }
+        if is_prime_fixed_witnesses(&m) {
+            factors.push(m);
+            continue;
+        }
+
+        let mut split = None;
+        let mut attempt_idx: u64 = 0;
+        while attempts_left > 0 {
+            attempts_left -= 1;
+            attempt_idx += 1;
+            if let Some(f) = pollard_rho_attempt(&m, attempt_idx)
+                && f > one
+                && f < m
+            {
+                split = Some(f);
+                break;
+            }
+        }
+
+        match split {
+            Some(f) => {
+                let cofactor = &m / &f;
+                stack.push(f);
+                stack.push(cofactor);
+            }
+            None => {
+                // Budget exhausted on a known-composite (verified above)
+                // residual: surface it rather than silently treating it as
+                // prime. See doc comment for when this can occur.
+                factors.sort();
+                return Err((factors, m));
+            }
+        }
+    }
+
+    factors.sort();
+    Ok(factors)
+}
+
+/// Complete factorization of `n` (`n > 1`), with multiplicity, falling back
+/// to treating an unresolved residual (see [`factorize_verified`]) as a
+/// single factor. This preserves the non-`Result` signatures of the
+/// number-theoretic helpers below; the fallback path is only reachable for
+/// deliberately constructed, cryptographically hard semiprimes and is
+/// documented on [`factorize_verified`]. Callers needing an explicit error
+/// on that path should use [`factorize_verified`] directly (or the public
+/// `factorize` wrapper).
+fn factorize_or_best_effort(n: &BigInt) -> Vec<BigInt> {
+    match factorize_verified(n) {
+        Ok(factors) => factors,
+        Err((mut factors, residual)) => {
+            factors.push(residual);
+            factors.sort();
+            factors
+        }
+    }
+}
+
+/// Completely factor `n` into primes, with multiplicity.
+///
+/// This is the honest, `Result`-returning counterpart to the internal
+/// factorization used by [`is_square_free`], [`divisor_count`],
+/// [`divisor_sum`], [`mobius`] and [`euler_totient`]. Prefer this function
+/// when you need to know whether factorization fully succeeded rather than
+/// silently falling back on an unresolved residual.
+///
+/// # Errors
+///
+/// Returns `Err` describing the unresolved composite residual if the fixed
+/// retry budget is exhausted before `n` is fully factored -- see
+/// `factorize_verified` for when this can occur (in practice, only for
+/// deliberately constructed cryptographically hard semiprimes).
+pub fn factorize(n: &BigInt) -> Result<Vec<BigInt>, String> {
+    if n <= &BigInt::one() {
+        return Ok(Vec::new());
+    }
+    factorize_verified(n).map_err(|(_partial, residual)| {
+        format!(
+            "factorize: exhausted retry budget without fully factoring residual cofactor {residual}"
+        )
+    })
+}
+
 /// Computes Euler's totient function φ(n).
 ///
 /// φ(n) counts the number of integers from 1 to n that are coprime with n.
@@ -862,43 +1144,20 @@ pub fn legendre_symbol(a: &BigInt, p: &BigInt) -> i8 {
 /// assert_eq!(euler_totient(&BigInt::from(9)), BigInt::from(6)); // φ(9) = 6
 /// assert_eq!(euler_totient(&BigInt::from(10)), BigInt::from(4)); // φ(10) = 4
 /// ```
-#[allow(dead_code)]
 pub fn euler_totient(n: &BigInt) -> BigInt {
     if n <= &BigInt::one() {
         return BigInt::one();
     }
 
     let mut result = n.clone();
-
-    // Find all prime factors using trial division
-    let factors = trial_division(n, 1000000);
     let mut seen_primes = crate::prelude::HashSet::new();
 
-    for factor in factors {
+    for factor in factorize_or_best_effort(n) {
         if seen_primes.insert(factor.clone()) {
             // φ(n) = n * (1 - 1/p1) * (1 - 1/p2) * ...
             // = n * (p1 - 1)/p1 * (p2 - 1)/p2 * ...
             result = result * (&factor - BigInt::one()) / &factor;
         }
-    }
-
-    // If num is still > 1 after trial division, it's a large prime
-    let mut temp = n.clone();
-    let mut divisor = BigInt::from(2);
-    while &divisor * &divisor <= temp {
-        if &temp % &divisor == BigInt::zero() {
-            while &temp % &divisor == BigInt::zero() {
-                temp /= &divisor;
-            }
-            if seen_primes.insert(divisor.clone()) {
-                result = result * (&divisor - BigInt::one()) / &divisor;
-            }
-        }
-        divisor += BigInt::one();
-    }
-
-    if temp > BigInt::one() && !seen_primes.contains(&temp) {
-        result = result * (&temp - BigInt::one()) / &temp;
     }
 
     result
@@ -973,7 +1232,7 @@ pub fn is_square_free(n: &BigInt) -> bool {
         return n == &BigInt::one();
     }
 
-    let factors = trial_division(n, 100000);
+    let factors = factorize_or_best_effort(n);
     let mut prev: Option<BigInt> = None;
 
     for factor in factors {
@@ -1007,12 +1266,7 @@ pub fn divisor_count(n: &BigInt) -> BigInt {
         return BigInt::one();
     }
 
-    let factors = trial_division(n, 1000000);
-
-    // If factors is empty, n is prime (has exactly 2 divisors: 1 and n)
-    if factors.is_empty() {
-        return BigInt::from(2);
-    }
+    let factors = factorize_or_best_effort(n);
 
     let mut count = BigInt::one();
     let mut current_prime = None;
@@ -1059,12 +1313,7 @@ pub fn divisor_sum(n: &BigInt) -> BigInt {
         return BigInt::one();
     }
 
-    let factors = trial_division(n, 1000000);
-
-    // If factors is empty, n is prime (divisors are 1 and n, so sum = 1 + n)
-    if factors.is_empty() {
-        return BigInt::one() + n;
-    }
+    let factors = factorize_or_best_effort(n);
 
     let mut sum = BigInt::one();
     let mut current_prime = None;
@@ -1126,15 +1375,13 @@ pub fn mobius(n: &BigInt) -> i8 {
         return 1;
     }
 
-    if !is_square_free(n) {
-        return 0;
-    }
-
-    let factors = trial_division(n, 1000000);
+    let factors = factorize_or_best_effort(n);
     let mut unique_primes = crate::prelude::HashSet::new();
 
     for factor in factors {
-        unique_primes.insert(factor);
+        if !unique_primes.insert(factor) {
+            return 0; // Repeated prime factor => not square-free
+        }
     }
 
     if unique_primes.len() % 2 == 0 { 1 } else { -1 }
@@ -1154,13 +1401,12 @@ pub fn mobius(n: &BigInt) -> i8 {
 /// assert_eq!(carmichael_lambda(&BigInt::from(8)), BigInt::from(2)); // λ(8) = 2
 /// assert_eq!(carmichael_lambda(&BigInt::from(15)), BigInt::from(4)); // λ(15) = 4
 /// ```
-#[allow(dead_code)]
 pub fn carmichael_lambda(n: &BigInt) -> BigInt {
     if n <= &BigInt::one() {
         return BigInt::one();
     }
 
-    let factors = trial_division(n, 1000000);
+    let factors = factorize_or_best_effort(n);
     let mut prime_powers: FxHashMap<BigInt, u32> = FxHashMap::default();
 
     for factor in factors {

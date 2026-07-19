@@ -5,24 +5,30 @@ use std::process::Command;
 
 const Z3_TIMEOUT_SECS: u64 = 60;
 
+/// Common Z3 installation locations to probe, in order.
+const Z3_PATHS: [&str; 4] = [
+    "/opt/homebrew/bin/z3", // macOS Homebrew
+    "/usr/local/bin/z3",    // macOS/Linux manual install
+    "/usr/bin/z3",          // Linux package manager
+    "z3",                   // PATH
+];
+
+/// Locate a usable `z3` binary, if any is installed.
+///
+/// Used both by [`run_z3`] and by the differential tests below so that the
+/// tests can self-skip (rather than being permanently `#[ignore]`d) when no
+/// Z3 binary is available, and actually run as real differential tests
+/// whenever one is.
+fn find_z3() -> Option<&'static str> {
+    Z3_PATHS
+        .iter()
+        .find(|path| Command::new(path).arg("--version").output().is_ok())
+        .copied()
+}
+
 pub fn run_z3(smt2_file: &Path) -> Result<SolverResult> {
-    // Try common Z3 installation paths
-    let z3_paths = [
-        "/opt/homebrew/bin/z3", // macOS Homebrew
-        "/usr/local/bin/z3",    // macOS/Linux manual install
-        "/usr/bin/z3",          // Linux package manager
-        "z3",                   // PATH
-    ];
-
-    let mut z3_cmd = None;
-    for path in &z3_paths {
-        if Command::new(path).arg("--version").output().is_ok() {
-            z3_cmd = Some(path);
-            break;
-        }
-    }
-
-    let z3_path = z3_cmd.context("Z3 not found. Please install Z3 and ensure it's in PATH")?;
+    let z3_path =
+        find_z3().context("Z3 not found. Please install Z3 and ensure it's in PATH")?;
 
     let output = Command::new(z3_path)
         .arg("-smt2")
@@ -74,9 +80,27 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    /// Differential tests below self-skip when no Z3 binary is available,
+    /// instead of being hard `#[ignore]`d. This means `cargo test` in this
+    /// crate automatically exercises real differential testing against Z3
+    /// whenever Z3 happens to be installed (e.g. in a dev environment or a
+    /// CI image with Z3 present), with no `--ignored` flag required, while
+    /// still never failing a run where Z3 is absent.
+    macro_rules! skip_if_no_z3 {
+        () => {
+            if find_z3().is_none() {
+                eprintln!(
+                    "skipping: Z3 not found in {:?} or PATH (install Z3 to run this differential test)",
+                    &Z3_PATHS[..Z3_PATHS.len() - 1]
+                );
+                return Ok(());
+            }
+        };
+    }
+
     #[test]
-    #[ignore] // Only run if Z3 is installed
     fn test_z3_sat() -> Result<()> {
+        skip_if_no_z3!();
         let mut file = NamedTempFile::new()?;
         writeln!(file, "(set-logic QF_LIA)")?;
         writeln!(file, "(declare-const x Int)")?;
@@ -89,8 +113,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Only run if Z3 is installed
     fn test_z3_unsat() -> Result<()> {
+        skip_if_no_z3!();
         let mut file = NamedTempFile::new()?;
         writeln!(file, "(set-logic QF_LIA)")?;
         writeln!(file, "(declare-const x Int)")?;
@@ -101,5 +125,14 @@ mod tests {
         let result = run_z3(file.path())?;
         assert_eq!(result, SolverResult::Unsat);
         Ok(())
+    }
+
+    /// Regression test: `find_z3` must not panic or hang when no Z3 binary
+    /// exists anywhere on `PATH` or the well-known install locations; it
+    /// should return `None` so callers (including the tests above) can
+    /// gracefully skip rather than erroring out.
+    #[test]
+    fn test_find_z3_does_not_panic() {
+        let _ = find_z3();
     }
 }

@@ -28,6 +28,29 @@ use std::time::{Duration, Instant};
 use super::model_completion::CompletedModel;
 use super::{Instantiation, InstantiationReason, QuantifiedFormula};
 
+/// Compute SMT-LIB Euclidean division and remainder for integers.
+///
+/// Returns `(q, r)` such that `a = b*q + r` and `0 <= r < |b|`.  The caller
+/// must ensure `b != 0`.  Rust's truncated `/` and `%` take the sign of the
+/// dividend, so this floor-adjusts to produce a non-negative remainder,
+/// matching SMT-LIB `div`/`mod` (e.g. `(-7) div 2 = -4`, `(-7) mod 2 = 1`).
+fn euclidean_div_rem(a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
+    use num_traits::Zero;
+    let q_trunc = a / b;
+    let r_trunc = a % b;
+    if r_trunc < BigInt::zero() {
+        // Remainder is negative; shift it into [0, |b|) and adjust the quotient
+        // so the identity a = b*q + r still holds.
+        if *b > BigInt::zero() {
+            (q_trunc - 1, r_trunc + b)
+        } else {
+            (q_trunc + 1, r_trunc - b)
+        }
+    } else {
+        (q_trunc, r_trunc)
+    }
+}
+
 /// A counter-example to a quantified formula
 #[derive(Debug, Clone)]
 pub struct CounterExample {
@@ -1171,7 +1194,14 @@ impl CounterExampleGenerator {
         manager.mk_sub(lhs, rhs)
     }
 
-    /// Evaluate integer division
+    /// Evaluate integer division using SMT-LIB Euclidean semantics.
+    ///
+    /// SMT-LIB `div` is Euclidean: `(div a b)` is the unique `q` with
+    /// `a = b*q + r` and `0 <= r < |b|`.  This differs from Rust's truncated
+    /// `/` for negative operands (e.g. `(div -7 2) = -4`, not `-3`), so we must
+    /// floor-adjust.  Mirrors the canonical implementation in
+    /// `oxiz-core` `rewrite/arith.rs` / `model/evaluator.rs`.  Division by zero
+    /// is left uninterpreted (never folded).
     fn eval_div(&self, lhs: TermId, rhs: TermId, manager: &mut TermManager) -> TermId {
         let lhs_t = manager.get(lhs);
         let rhs_t = manager.get(rhs);
@@ -1179,7 +1209,8 @@ impl CounterExampleGenerator {
         if let (Some(l), Some(r)) = (lhs_t, rhs_t) {
             if let (TermKind::IntConst(a), TermKind::IntConst(b)) = (&l.kind, &r.kind) {
                 if *b != BigInt::from(0) {
-                    return manager.mk_int(a / b);
+                    let (q, _r) = euclidean_div_rem(a, b);
+                    return manager.mk_int(q);
                 }
             }
         }
@@ -1187,7 +1218,11 @@ impl CounterExampleGenerator {
         manager.mk_div(lhs, rhs)
     }
 
-    /// Evaluate modulo
+    /// Evaluate modulo using SMT-LIB Euclidean semantics.
+    ///
+    /// SMT-LIB `mod` is Euclidean: `(mod a b)` is always in `[0, |b|)`
+    /// (e.g. `(mod -7 2) = 1`, not `-1`), unlike Rust's `%` which takes the
+    /// sign of the dividend.  Modulo by zero is left uninterpreted.
     fn eval_modulo(&self, lhs: TermId, rhs: TermId, manager: &mut TermManager) -> TermId {
         let lhs_t = manager.get(lhs);
         let rhs_t = manager.get(rhs);
@@ -1195,7 +1230,8 @@ impl CounterExampleGenerator {
         if let (Some(l), Some(r)) = (lhs_t, rhs_t) {
             if let (TermKind::IntConst(a), TermKind::IntConst(b)) = (&l.kind, &r.kind) {
                 if *b != BigInt::from(0) {
-                    return manager.mk_int(a % b);
+                    let (_q, r) = euclidean_div_rem(a, b);
+                    return manager.mk_int(r);
                 }
             }
         }
@@ -1419,6 +1455,58 @@ mod tests {
         assert_ne!(
             RefinementStrategy::None,
             RefinementStrategy::BlockCounterexamples
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Audit regression: Euclidean div/mod (solver-p3b, finding #3)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_audit_euclidean_div_rem_helper() {
+        // SMT-LIB Euclidean semantics: 0 <= r < |b|.
+        let cases = [
+            (7i64, 2i64, 3i64, 1i64),
+            (-7, 2, -4, 1),
+            (7, -2, -3, 1),
+            (-7, -2, 4, 1),
+            (6, 3, 2, 0),
+            (-6, 3, -2, 0),
+            (0, 5, 0, 0),
+        ];
+        for (a, b, eq, er) in cases {
+            let (q, r) = euclidean_div_rem(&BigInt::from(a), &BigInt::from(b));
+            assert_eq!(q, BigInt::from(eq), "div({a},{b})");
+            assert_eq!(r, BigInt::from(er), "mod({a},{b})");
+            // Verify the defining identity and remainder range.
+            assert_eq!(BigInt::from(b) * &q + &r, BigInt::from(a));
+            assert!(r >= BigInt::from(0) && r < BigInt::from(b.abs()));
+        }
+    }
+
+    #[test]
+    fn test_audit_eval_div_mod_negative_euclidean() {
+        let generator = CounterExampleGenerator::new();
+        let mut manager = TermManager::new();
+        let neg7 = manager.mk_int(BigInt::from(-7));
+        let two = manager.mk_int(BigInt::from(2));
+
+        let d = generator.eval_div(neg7, two, &mut manager);
+        let m = generator.eval_modulo(neg7, two, &mut manager);
+
+        // (div -7 2) = -4 (Euclidean), NOT -3 (truncated).
+        assert!(
+            matches!(manager.get(d).map(|t| &t.kind),
+                Some(TermKind::IntConst(v)) if *v == BigInt::from(-4)),
+            "eval_div(-7,2) must be Euclidean -4, got {:?}",
+            manager.get(d).map(|t| t.kind.clone())
+        );
+        // (mod -7 2) = 1 (non-negative), NOT -1.
+        assert!(
+            matches!(manager.get(m).map(|t| &t.kind),
+                Some(TermKind::IntConst(v)) if *v == BigInt::from(1)),
+            "eval_modulo(-7,2) must be Euclidean 1, got {:?}",
+            manager.get(m).map(|t| t.kind.clone())
         );
     }
 }

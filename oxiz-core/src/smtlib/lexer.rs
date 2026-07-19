@@ -39,17 +39,42 @@ pub struct Token {
     pub end: usize,
 }
 
+/// A lexical error detected while scanning.
+///
+/// `Lexer::next_token` keeps returning `Some(Token)` even when it hits one
+/// of these conditions (unterminated string/quoted-symbol literals used to
+/// be accepted silently, consuming the rest of the input as their content;
+/// a bare `#` not followed by `x`/`X`/`b`/`B` used to be accepted silently
+/// as a one-character `Symbol`, even though `#` cannot start a valid
+/// SMT-LIB symbol) so that callers depending on the existing `Option<Token>`
+/// token stream keep working unchanged. Callers that want to reject
+/// malformed input should check [`Lexer::errors`] after lexing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexError {
+    /// Human-readable description of the problem.
+    pub message: String,
+    /// Byte offset where the problem was detected.
+    pub pos: usize,
+}
+
 /// Lexer for SMT-LIB2
 pub struct Lexer<'a> {
     input: &'a str,
     pos: usize,
+    /// Lexical errors accumulated so far. See [`LexError`] for why these
+    /// don't abort tokenization outright.
+    errors: Vec<LexError>,
 }
 
 impl<'a> Lexer<'a> {
     /// Create a new lexer
     #[must_use]
     pub fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
+        Self {
+            input,
+            pos: 0,
+            errors: Vec::new(),
+        }
     }
 
     /// Get the current position
@@ -58,12 +83,26 @@ impl<'a> Lexer<'a> {
         self.pos
     }
 
+    /// Lexical errors accumulated so far (unterminated string/quoted-symbol
+    /// literals, bare `#` tokens, ...). Empty for well-formed input.
+    #[must_use]
+    pub fn errors(&self) -> &[LexError] {
+        &self.errors
+    }
+
+    /// Whether any lexical error has been recorded so far.
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
     /// Peek at the next token without consuming it
     #[must_use]
     pub fn peek(&self) -> Option<Token> {
         let mut lexer = Self {
             input: self.input,
             pos: self.pos,
+            errors: Vec::new(),
         };
         lexer.next_token()
     }
@@ -100,7 +139,7 @@ impl<'a> Lexer<'a> {
             }
             '"' => {
                 self.pos += 1;
-                let s = self.read_string_lit();
+                let s = self.read_string_lit(start);
                 TokenKind::StringLit(s)
             }
             '#' => {
@@ -117,9 +156,27 @@ impl<'a> Lexer<'a> {
                             let bin = self.read_binary_chars();
                             TokenKind::Binary(bin)
                         }
-                        _ => TokenKind::Symbol("#".to_string()),
+                        _ => {
+                            // A bare `#` (not `#x...`/`#b...`) cannot start a
+                            // valid SMT-LIB symbol; record it instead of
+                            // silently minting a one-character `Symbol("#")`
+                            // that would otherwise surface downstream as a
+                            // confusing "undefined symbol" rather than a
+                            // lex-level error.
+                            self.errors.push(LexError {
+                                message: "bare '#' is not a valid token (expected #x... or #b...)"
+                                    .to_string(),
+                                pos: start,
+                            });
+                            TokenKind::Symbol("#".to_string())
+                        }
                     }
                 } else {
+                    self.errors.push(LexError {
+                        message: "unexpected end of input after '#' (expected #x... or #b...)"
+                            .to_string(),
+                        pos: start,
+                    });
                     TokenKind::Symbol("#".to_string())
                 }
             }
@@ -135,7 +192,7 @@ impl<'a> Lexer<'a> {
             }
             '|' => {
                 self.pos += 1;
-                let sym = self.read_quoted_symbol();
+                let sym = self.read_quoted_symbol(start);
                 TokenKind::Symbol(sym)
             }
             _ => {
@@ -220,7 +277,12 @@ impl<'a> Lexer<'a> {
         self.input[start..self.pos].to_string()
     }
 
-    fn read_quoted_symbol(&mut self) -> String {
+    /// Read a `|...|`-quoted symbol body, starting just past the opening
+    /// `|` (i.e. `self.pos` already advanced past it by the caller).
+    ///
+    /// The `start_of_token` argument is the position of the opening `|`,
+    /// used only to anchor an error if the closing `|` is never found.
+    fn read_quoted_symbol(&mut self, start_of_token: usize) -> String {
         let start = self.pos;
         while self.pos < self.input.len() {
             if let Some(c) = self.input[self.pos..].chars().next() {
@@ -232,11 +294,22 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
+        // Ran off the end of input without finding the closing `|`: the
+        // rest of the file was silently swallowed as symbol content. Record
+        // it rather than pretending this was a well-formed token.
+        self.errors.push(LexError {
+            message: "unterminated quoted symbol (missing closing '|')".to_string(),
+            pos: start_of_token,
+        });
         self.input[start..self.pos].to_string()
     }
 
-    fn read_string_lit(&mut self) -> String {
+    /// Read a `"..."`-quoted string literal body, starting just past the
+    /// opening `"`. `start_of_token` is the opening `"`'s position, used
+    /// only to anchor an error if the closing `"` is never found.
+    fn read_string_lit(&mut self, start_of_token: usize) -> String {
         let mut result = String::new();
+        let mut terminated = false;
         while self.pos < self.input.len() {
             if let Some(c) = self.input[self.pos..].chars().next() {
                 self.pos += c.len_utf8();
@@ -246,6 +319,7 @@ impl<'a> Lexer<'a> {
                         result.push('"');
                         self.pos += 1;
                     } else {
+                        terminated = true;
                         break;
                     }
                 } else {
@@ -254,6 +328,12 @@ impl<'a> Lexer<'a> {
             } else {
                 break;
             }
+        }
+        if !terminated {
+            self.errors.push(LexError {
+                message: "unterminated string literal (missing closing '\"')".to_string(),
+                pos: start_of_token,
+            });
         }
         result
     }

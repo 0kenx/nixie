@@ -188,7 +188,11 @@ pub fn eval_term(term_id: TermId, manager: &TermManager, model: &Model) -> Optio
             let val = eval_term(*arg, manager, model)?;
             match val {
                 ModelValue::BitVec { value, width } => {
-                    let mask = (1u64 << width) - 1;
+                    let mask = if width >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << width) - 1
+                    };
                     Some(ModelValue::BitVec {
                         value: (!value) & mask,
                         width,
@@ -498,7 +502,11 @@ fn eval_term_internal(
             let val = eval_term_internal(*arg, manager, model, cache)?;
             match val {
                 ModelValue::BitVec { value, width } => {
-                    let mask = (1u64 << width) - 1;
+                    let mask = if width >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << width) - 1
+                    };
                     Some(ModelValue::BitVec {
                         value: (!value) & mask,
                         width,

@@ -42,10 +42,20 @@
 
 #![forbid(unsafe_code)]
 
+use crate::async_utils;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
+
+/// Current time in milliseconds, or `0.0` outside a browser `window`
+/// (e.g. native tests, non-browser JS runtimes without `performance`).
+fn now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0)
+}
 
 /// Message types for worker communication
 #[wasm_bindgen]
@@ -217,11 +227,25 @@ struct WorkerInfo {
 }
 
 /// Worker pool for managing multiple workers
+///
+/// # Threading model (honest disclosure)
+///
+/// OxiZ WASM does not enable the `atomics`/`bulk-memory` wasm target
+/// features and does not ship a browser `Worker` bootstrap script, so
+/// there is no real OS/browser-thread parallelism available here — the
+/// crate is built and used as an ordinary single-threaded WASM module.
+/// Rather than have `submit()` enqueue tasks that are never drained (a
+/// facade that silently loses work), `WorkerPool` round-robins submitted
+/// tasks across `worker_count` independent solver slots and executes
+/// them for real, cooperatively, on the calling thread — yielding to the
+/// JS event loop between tasks so the UI stays responsive. Every result
+/// returned by `execute()`/`drainQueue()` comes from actually running the
+/// task through a real [`WorkerHandler`], never a fabricated answer.
 #[wasm_bindgen]
 pub struct WorkerPool {
     /// Worker info
     workers: Rc<RefCell<HashMap<usize, WorkerInfo>>>,
-    /// Task queue
+    /// Task queue (drained by `drainQueue()`)
     queue: Rc<RefCell<VecDeque<WorkerTask>>>,
     /// Next worker ID
     next_id: Rc<RefCell<usize>>,
@@ -229,45 +253,71 @@ pub struct WorkerPool {
     worker_count: usize,
     /// Enable verbose logging
     verbose: bool,
+    /// Per-slot solver handlers that actually execute submitted tasks.
+    handlers: Rc<RefCell<Vec<WorkerHandler>>>,
+    /// Round-robin cursor into `handlers`
+    next_handler: Rc<RefCell<usize>>,
 }
 
 #[wasm_bindgen]
 impl WorkerPool {
     /// Create a new worker pool
+    ///
+    /// `worker_count` independent solver slots are provisioned
+    /// immediately (there is no separate async "spawn" step since no
+    /// real OS/browser threads are created); call [`WorkerPool::init`]
+    /// to populate the reporting/stats bookkeeping.
     #[wasm_bindgen(constructor)]
     pub fn new(worker_count: usize) -> Self {
+        let handlers = (0..worker_count).map(|_| WorkerHandler::new()).collect();
         Self {
             workers: Rc::new(RefCell::new(HashMap::new())),
             queue: Rc::new(RefCell::new(VecDeque::new())),
             next_id: Rc::new(RefCell::new(0)),
             worker_count,
             verbose: false,
+            handlers: Rc::new(RefCell::new(handlers)),
+            next_handler: Rc::new(RefCell::new(0)),
         }
     }
 
     /// Initialize workers
+    ///
+    /// Populates worker bookkeeping (id/status/stats) if it has not been
+    /// populated yet, and marks every worker `Idle` (ready to execute)
+    /// since solver slots are already provisioned by the constructor.
+    /// Safe to call more than once (idempotent): it will not create
+    /// duplicate entries, it simply resets existing ones back to `Idle`.
     #[wasm_bindgen(js_name = init)]
     pub fn init(&self) {
-        let current_time = web_sys::window()
-            .and_then(|w| w.performance())
-            .map(|p| p.now())
-            .unwrap_or(0.0);
+        let current_time = now_ms();
+        let mut workers = self.workers.borrow_mut();
 
-        for _ in 0..self.worker_count {
-            let id = self.get_next_id();
-            self.workers.borrow_mut().insert(
-                id,
-                WorkerInfo {
+        if workers.is_empty() {
+            for _ in 0..self.worker_count {
+                let id = self.get_next_id();
+                workers.insert(
                     id,
-                    status: WorkerStatus::Starting,
-                    current_task: None,
-                    tasks_completed: 0,
-                    tasks_failed: 0,
-                    total_time_ms: 0.0,
-                    created_at: current_time,
-                },
-            );
+                    WorkerInfo {
+                        id,
+                        status: WorkerStatus::Idle,
+                        current_task: None,
+                        tasks_completed: 0,
+                        tasks_failed: 0,
+                        total_time_ms: 0.0,
+                        created_at: current_time,
+                    },
+                );
+            }
+        } else {
+            for info in workers.values_mut() {
+                if info.status != WorkerStatus::Failed {
+                    info.status = WorkerStatus::Idle;
+                    info.current_task = None;
+                }
+            }
         }
+        drop(workers);
 
         if self.verbose {
             web_sys::console::log_1(
@@ -276,7 +326,11 @@ impl WorkerPool {
         }
     }
 
-    /// Submit a task to the pool
+    /// Submit a task to the queue for later batch processing via
+    /// [`WorkerPool::drain_queue`].
+    ///
+    /// For immediate execution of a single task, prefer
+    /// [`WorkerPool::execute`].
     #[wasm_bindgen(js_name = submit)]
     pub fn submit(&self, task: WorkerTask) {
         self.queue.borrow_mut().push_back(task);
@@ -285,6 +339,126 @@ impl WorkerPool {
             web_sys::console::log_1(
                 &format!("Task queued, queue length: {}", self.queue_length()).into(),
             );
+        }
+    }
+
+    /// Execute a single task immediately (bypassing the queue) using the
+    /// next available (round-robin) solver slot, and return the real
+    /// result object produced by that slot's [`WorkerHandler`].
+    ///
+    /// # Errors
+    ///
+    /// Rejects if the pool has zero worker slots (constructed with
+    /// `worker_count == 0`).
+    #[wasm_bindgen(js_name = execute)]
+    pub async fn execute(&self, task: WorkerTask) -> Result<JsValue, JsValue> {
+        if self.handlers.borrow().is_empty() {
+            return Err(JsValue::from_str(
+                "WorkerPool has no worker slots (constructed with worker_count == 0)",
+            ));
+        }
+        // Yield once so this genuinely goes through a microtask/event-loop
+        // turn rather than always resolving fully synchronously.
+        async_utils::yield_now().await;
+        Ok(self.run_one(task))
+    }
+
+    /// Drain and execute every task currently queued by [`WorkerPool::submit`],
+    /// in FIFO order, round-robined across worker slots. Yields to the
+    /// event loop between tasks to keep the UI responsive. Returns the
+    /// real result objects, in submission order.
+    #[wasm_bindgen(js_name = drainQueue)]
+    pub async fn drain_queue(&self) -> Result<js_sys::Array, JsValue> {
+        if self.handlers.borrow().is_empty() && !self.queue.borrow().is_empty() {
+            return Err(JsValue::from_str(
+                "WorkerPool has no worker slots (constructed with worker_count == 0)",
+            ));
+        }
+
+        let results = js_sys::Array::new();
+        let mut processed = 0usize;
+        loop {
+            let task = self.queue.borrow_mut().pop_front();
+            let Some(task) = task else { break };
+
+            results.push(&self.run_one(task));
+            processed += 1;
+            if processed.is_multiple_of(4) {
+                async_utils::yield_now().await;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Run one task to completion on the next round-robin solver slot,
+    /// updating worker bookkeeping. Internal helper shared by `execute()`
+    /// and `drainQueue()`.
+    fn run_one(&self, task: WorkerTask) -> JsValue {
+        let handler_count = self.handlers.borrow().len();
+        // Guarded by callers, but stay honest rather than panicking/
+        // indexing out of bounds if this is ever reached with 0 slots.
+        if handler_count == 0 {
+            let error = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&error, &"status".into(), &"error".into());
+            let _ =
+                js_sys::Reflect::set(&error, &"error".into(), &"No worker slots available".into());
+            return error.into();
+        }
+
+        let slot = {
+            let mut next = self.next_handler.borrow_mut();
+            let idx = *next % handler_count;
+            *next = (*next + 1) % handler_count;
+            idx
+        };
+
+        self.set_worker_status(slot, WorkerStatus::Busy, Some(task.get_id()));
+        let start = now_ms();
+        let result = {
+            let mut handlers = self.handlers.borrow_mut();
+            handlers[slot].handle_task(task)
+        };
+        let elapsed = now_ms() - start;
+        self.record_completion(slot, elapsed, Self::result_is_error(&result));
+
+        if self.verbose {
+            web_sys::console::log_1(&format!("Worker {} completed task", slot).into());
+        }
+
+        result
+    }
+
+    fn result_is_error(result: &JsValue) -> bool {
+        if let Ok(status) = js_sys::Reflect::get(result, &"status".into())
+            && let Some(s) = status.as_string()
+        {
+            return s == "error";
+        }
+        js_sys::Reflect::has(result, &"error".into()).unwrap_or(false)
+    }
+
+    fn set_worker_status(
+        &self,
+        worker_id: usize,
+        status: WorkerStatus,
+        current_task: Option<String>,
+    ) {
+        if let Some(info) = self.workers.borrow_mut().get_mut(&worker_id) {
+            info.status = status;
+            info.current_task = current_task;
+        }
+    }
+
+    fn record_completion(&self, worker_id: usize, elapsed_ms: f64, failed: bool) {
+        if let Some(info) = self.workers.borrow_mut().get_mut(&worker_id) {
+            info.status = WorkerStatus::Idle;
+            info.current_task = None;
+            info.total_time_ms += elapsed_ms;
+            if failed {
+                info.tasks_failed += 1;
+            } else {
+                info.tasks_completed += 1;
+            }
         }
     }
 
@@ -439,21 +613,71 @@ impl WorkerHandler {
     fn handle_solve(&mut self, data: JsValue) -> JsValue {
         let result = js_sys::Object::new();
 
-        // Extract logic and assertions from data
+        // Extract logic from data
         if let Ok(logic) = js_sys::Reflect::get(&data, &"logic".into())
             && let Some(logic_str) = logic.as_string()
         {
             self.ctx.set_logic(&logic_str);
         }
 
-        // Execute assertions
+        // Optional declarations: an array of `{name, sort}` objects,
+        // processed before assertions so assertions referencing them
+        // don't spuriously fail to parse as "undeclared symbol".
+        if let Ok(declarations) = js_sys::Reflect::get(&data, &"declarations".into())
+            && let Some(arr) = declarations.dyn_ref::<js_sys::Array>()
+        {
+            for decl in arr.iter() {
+                let name = js_sys::Reflect::get(&decl, &"name".into())
+                    .ok()
+                    .and_then(|v| v.as_string());
+                let sort = js_sys::Reflect::get(&decl, &"sort".into())
+                    .ok()
+                    .and_then(|v| v.as_string());
+                match (name, sort) {
+                    (Some(name), Some(sort)) => {
+                        let script = format!("(declare-const {} {})", name, sort);
+                        if let Err(e) = self.ctx.execute_script(&script) {
+                            return Self::solve_error(
+                                &result,
+                                format!("Failed to declare '{}': {}", name, e),
+                            );
+                        }
+                    }
+                    _ => {
+                        return Self::solve_error(
+                            &result,
+                            "Invalid declaration entry: expected {name, sort}".to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Execute assertions. Any parse/type error must abort the task
+        // with an explicit error result instead of being silently
+        // dropped -- proceeding to check-sat on a partial/emptied
+        // assertion set could answer "sat" for a problem the caller
+        // intended to be constrained (or unsat).
         if let Ok(assertions) = js_sys::Reflect::get(&data, &"assertions".into())
             && let Some(arr) = assertions.dyn_ref::<js_sys::Array>()
         {
             for assertion in arr.iter() {
-                if let Some(formula) = assertion.as_string() {
-                    let script = format!("(assert {})", formula);
-                    let _ = self.ctx.execute_script(&script);
+                match assertion.as_string() {
+                    Some(formula) => {
+                        let script = format!("(assert {})", formula);
+                        if let Err(e) = self.ctx.execute_script(&script) {
+                            return Self::solve_error(
+                                &result,
+                                format!("Failed to assert '{}': {}", formula, e),
+                            );
+                        }
+                    }
+                    None => {
+                        return Self::solve_error(
+                            &result,
+                            "Assertion entries must be strings".to_string(),
+                        );
+                    }
                 }
             }
         }
@@ -469,6 +693,13 @@ impl WorkerHandler {
         let _ = js_sys::Reflect::set(&result, &"status".into(), &status.into());
 
         result.into()
+    }
+
+    /// Build an error result object: `{ status: "error", error: message }`.
+    fn solve_error(result: &js_sys::Object, message: String) -> JsValue {
+        let _ = js_sys::Reflect::set(result, &"status".into(), &"error".into());
+        let _ = js_sys::Reflect::set(result, &"error".into(), &message.into());
+        result.clone().into()
     }
 
     fn handle_check_sat(&mut self, _data: JsValue) -> JsValue {

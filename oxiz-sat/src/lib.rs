@@ -7,7 +7,11 @@
 //! - Clause learning with first-UIP scheme and recursive minimization
 //! - Preprocessing (BCE, BVE, subsumption elimination)
 //! - Incremental solving (push/pop)
-//! - DRAT proof generation
+//! - DRAT/LRAT proof *writers* (`DratWriter` / `LratWriter`) for emitting
+//!   checkable certificates. NOTE: the CDCL search loop does not yet auto-log
+//!   learned/deleted clauses, so these writers are the supported entry point and
+//!   the caller drives emission; automatic proof logging from `solve()` is not
+//!   wired. See the `proof` module for the writer API.
 //! - Local search integration
 //! - Parallel portfolio solving
 //! - AllSAT enumeration

@@ -5,7 +5,7 @@
 //! - Alethe to LFSC: Convert SMT proofs to typed proof format
 
 use crate::alethe::{AletheProof, AletheRule, AletheStep};
-use crate::drat::{DratProof, DratStep};
+use crate::drat::{Clause as DratClause, DratProof, DratStep, Lit};
 use crate::lfsc::{LfscProof, LfscSort, LfscTerm};
 use std::fmt;
 
@@ -46,6 +46,33 @@ impl fmt::Display for ConversionError {
 
 impl std::error::Error for ConversionError {}
 
+/// Convert a DRAT clause's literals into their Alethe term representation:
+/// `p<n>` for a positive literal `n`, `(not p<n>)` for a negative literal.
+/// The `0` terminator (if present in the raw literal vector) is dropped.
+fn drat_clause_to_alethe_terms(clause: &[Lit]) -> Vec<String> {
+    clause
+        .iter()
+        .filter(|&&lit| lit != 0)
+        .map(|&lit| {
+            if lit > 0 {
+                format!("p{}", lit)
+            } else {
+                format!("(not p{})", -lit)
+            }
+        })
+        .collect()
+}
+
+/// Canonical form of a DRAT clause for set-equality comparison: terminator
+/// stripped, literals sorted. This intentionally does *not* deduplicate
+/// literals, so a clause with a repeated literal only matches another
+/// clause with the same repetition.
+fn canonical_clause(clause: &[Lit]) -> Vec<Lit> {
+    let mut v: Vec<Lit> = clause.iter().copied().filter(|&l| l != 0).collect();
+    v.sort_unstable();
+    v
+}
+
 /// Converter for proof formats.
 ///
 /// This is a placeholder for future conversion implementations.
@@ -84,83 +111,92 @@ impl FormatConverter {
         self
     }
 
-    /// Convert DRAT proof to Alethe proof.
+    /// Convert a DRAT proof to an Alethe proof.
+    ///
+    /// Plain DRAT (Deletion Resolution Asymmetric Tautology) steps only
+    /// record the *clause* added or deleted at each step -- unlike LRAT, they
+    /// carry no RAT/RUP witness data (no antecedent clause ids), so the
+    /// actual resolution chain that justifies a derived clause cannot be
+    /// recovered from the DRAT trace alone. Likewise, DRAT itself has no
+    /// notion of "this clause came from the original problem" -- that
+    /// distinction only exists relative to the original CNF, which is why
+    /// this function takes `input_clauses` (the original problem clauses)
+    /// as an explicit parameter, exactly as an external DRAT checker like
+    /// `drat-trim` is invoked with both the CNF file and the proof file.
     ///
     /// This conversion maps:
-    /// - DRAT Add steps to Alethe Input steps (for clauses from the problem)
-    /// - Subsequent Add steps to Resolution steps
-    /// - Delete steps are skipped (Alethe is monotonic)
+    /// - Add steps whose clause matches one of `input_clauses` (as a set of
+    ///   literals, each input clause consumed at most once) to Alethe
+    ///   `Input` steps.
+    /// - Delete steps are skipped (Alethe is monotonic); in `strict_mode`
+    ///   this returns [`ConversionError::InformationLoss`] instead, since
+    ///   the deletion cannot be represented.
     ///
-    /// Note: This is a best-effort conversion. DRAT proofs are untyped and
-    /// don't contain all the information needed for a complete Alethe proof.
+    /// Add steps whose clause does **not** match any (remaining) input
+    /// clause are *derived* clauses. Faithfully representing such a step in
+    /// Alethe requires knowing which earlier clauses it resolves against,
+    /// which plain DRAT does not record. Rather than fabricate a plausible
+    /// but unverifiable resolution chain (e.g. "the last two clauses seen"),
+    /// this function returns [`ConversionError::InformationLoss`] for that
+    /// step. Converting proofs with genuinely derived clauses requires an
+    /// input format that records real justifications (e.g. LRAT).
     ///
     /// # Examples
     ///
     /// ```
-    /// use oxiz_proof::conversion::{FormatConverter};
+    /// use oxiz_proof::conversion::FormatConverter;
     /// use oxiz_proof::drat::DratProof;
     ///
     /// let converter = FormatConverter::new();
     /// let mut drat = DratProof::new();
     ///
-    /// // Add some clauses
+    /// // Add some clauses that are both present in the original problem.
     /// drat.add_clause(vec![1, 2, -3]);
     /// drat.add_clause(vec![-1, 4]);
     ///
+    /// let input_clauses = vec![vec![1, 2, -3], vec![-1, 4]];
+    ///
     /// // Convert to Alethe
-    /// let alethe = converter.drat_to_alethe(&drat).unwrap();
+    /// let alethe = converter.drat_to_alethe(&drat, &input_clauses).unwrap();
     /// assert_eq!(alethe.len(), 2);
     /// ```
-    pub fn drat_to_alethe(&self, drat: &DratProof) -> ConversionResult<AletheProof> {
+    pub fn drat_to_alethe(
+        &self,
+        drat: &DratProof,
+        input_clauses: &[DratClause],
+    ) -> ConversionResult<AletheProof> {
         let mut alethe = AletheProof::new();
 
-        // Track step indices for premises
-        let mut step_indices = Vec::new();
+        // Canonicalized (sorted, terminator-stripped) copies of the input
+        // clauses, consumed as they are matched against Add steps so that
+        // repeated input clauses are each only credited once.
+        let mut remaining_inputs: Vec<Vec<Lit>> =
+            input_clauses.iter().map(|c| canonical_clause(c)).collect();
 
         for (i, step) in drat.steps().iter().enumerate() {
             match step {
                 DratStep::Add(clause) => {
-                    // Convert DRAT literals to Alethe terms
-                    let alethe_clause: Vec<String> = clause
-                        .iter()
-                        .map(|&lit| {
-                            if lit == 0 {
-                                // Terminator - skip
-                                return String::new();
-                            }
-                            if lit > 0 {
-                                format!("p{}", lit)
-                            } else {
-                                format!("(not p{})", -lit)
-                            }
-                        })
-                        .filter(|s| !s.is_empty())
-                        .collect();
+                    let alethe_clause = drat_clause_to_alethe_terms(clause);
+                    let canonical = canonical_clause(clause);
 
-                    // First few clauses are inputs, later ones are derived
-                    let rule = if i < 5 {
-                        // Heuristic: first clauses are likely from the problem
-                        AletheRule::Input
-                    } else {
-                        // Derived clauses use resolution
-                        AletheRule::Resolution
-                    };
-
-                    // Add the step
-                    let premises = if rule == AletheRule::Resolution && !step_indices.is_empty() {
-                        // Use last two steps as premises (simplified heuristic)
-                        let len = step_indices.len();
-                        if len >= 2 {
-                            vec![step_indices[len - 2], step_indices[len - 1]]
-                        } else {
-                            vec![step_indices[len - 1]]
+                    match remaining_inputs.iter().position(|c| *c == canonical) {
+                        Some(pos) => {
+                            remaining_inputs.remove(pos);
+                            alethe.step(alethe_clause, AletheRule::Input, Vec::new(), Vec::new());
                         }
-                    } else {
-                        Vec::new()
-                    };
-
-                    let idx = alethe.step(alethe_clause, rule, premises, Vec::new());
-                    step_indices.push(idx);
+                        None => {
+                            return Err(ConversionError::InformationLoss {
+                                reason: format!(
+                                    "DRAT step {i} adds clause {clause:?} that does not match any \
+                                     (remaining) input clause; it is a derived clause whose true \
+                                     resolution premises are not recoverable from plain DRAT (no \
+                                     RAT/RUP witness data). Refusing to fabricate a resolution \
+                                     chain -- convert from LRAT (or another format that records \
+                                     real antecedents) for a faithful Alethe proof."
+                                ),
+                            });
+                        }
+                    }
                 }
                 DratStep::Delete(_clause) => {
                     // Alethe is monotonic, so deletions are not represented
@@ -570,7 +606,7 @@ mod tests {
         let converter = FormatConverter::new();
         let drat = DratProof::new();
         let alethe = converter
-            .drat_to_alethe(&drat)
+            .drat_to_alethe(&drat, &[])
             .expect("test operation should succeed");
 
         assert!(alethe.is_empty());
@@ -583,7 +619,7 @@ mod tests {
         drat.add_clause(vec![1, 2, -3]);
 
         let alethe = converter
-            .drat_to_alethe(&drat)
+            .drat_to_alethe(&drat, &[vec![1, 2, -3]])
             .expect("test operation should succeed");
 
         assert_eq!(alethe.len(), 1);
@@ -602,34 +638,39 @@ mod tests {
         drat.add_clause(vec![-2, 4]);
         drat.add_clause(vec![2, -3]);
 
+        let input_clauses = vec![vec![1, 2], vec![-1, 3], vec![-2, 4], vec![2, -3]];
         let alethe = converter
-            .drat_to_alethe(&drat)
+            .drat_to_alethe(&drat, &input_clauses)
             .expect("test operation should succeed");
 
         assert_eq!(alethe.len(), 4);
-        // First clauses should be Input
+        // Every clause matches an input clause, so all steps are Input.
         let output = alethe.to_string();
         assert!(output.contains(":rule input"));
+        assert!(!output.contains(":rule resolution"));
     }
 
     #[test]
-    fn test_drat_to_alethe_with_resolution() {
+    fn test_drat_to_alethe_derived_clause_is_rejected() {
+        // A DRAT proof frequently contains clauses that are *derived*
+        // (learned via resolution/RUP) rather than copied from the input
+        // problem. Plain DRAT carries no witness data for how such a clause
+        // was derived, so the converter must refuse to fabricate a
+        // resolution chain for it instead of silently guessing one.
         let converter = FormatConverter::new();
         let mut drat = DratProof::new();
+        drat.add_clause(vec![1, 2]);
+        // This clause does not match the (only) supplied input clause.
+        drat.add_clause(vec![3, 4]);
 
-        // Add enough clauses to trigger resolution heuristic
-        for i in 1..=6 {
-            drat.add_clause(vec![i, -i]);
+        let result = converter.drat_to_alethe(&drat, &[vec![1, 2]]);
+        assert!(result.is_err());
+        match result {
+            Err(ConversionError::InformationLoss { reason }) => {
+                assert!(reason.contains("derived clause"));
+            }
+            other => panic!("Expected InformationLoss error, got {other:?}"),
         }
-
-        let alethe = converter
-            .drat_to_alethe(&drat)
-            .expect("test operation should succeed");
-
-        assert_eq!(alethe.len(), 6);
-        let output = alethe.to_string();
-        // Later clauses should use resolution
-        assert!(output.contains(":rule resolution"));
     }
 
     #[test]
@@ -640,9 +681,10 @@ mod tests {
         drat.delete_clause(vec![1, 2]);
         drat.add_clause(vec![3, 4]);
 
+        let input_clauses = vec![vec![1, 2], vec![3, 4]];
         // Should succeed in non-strict mode, skipping deletion
         let alethe = converter
-            .drat_to_alethe(&drat)
+            .drat_to_alethe(&drat, &input_clauses)
             .expect("test operation should succeed");
 
         // Only the additions should be present
@@ -657,7 +699,7 @@ mod tests {
         drat.delete_clause(vec![1, 2]);
 
         // Should fail in strict mode
-        let result = converter.drat_to_alethe(&drat);
+        let result = converter.drat_to_alethe(&drat, &[vec![1, 2]]);
         assert!(result.is_err());
 
         if let Err(ConversionError::InformationLoss { reason }) = result {
@@ -675,8 +717,9 @@ mod tests {
         drat.add_clause(vec![-1]);
         drat.add_clause(vec![]); // Empty clause (contradiction)
 
+        let input_clauses = vec![vec![1], vec![-1], vec![]];
         let alethe = converter
-            .drat_to_alethe(&drat)
+            .drat_to_alethe(&drat, &input_clauses)
             .expect("test operation should succeed");
 
         assert_eq!(alethe.len(), 3);
@@ -1032,7 +1075,9 @@ mod tests {
     // Property-based tests
 
     proptest! {
-        /// DRAT to Alethe conversion should never lose steps (except deletions in non-strict mode)
+        /// DRAT to Alethe conversion should never lose steps for Add clauses
+        /// that are genuinely present in the supplied input clause set
+        /// (except deletions, which are dropped in non-strict mode).
         #[test]
         fn prop_drat_to_alethe_preserves_additions(
             clauses in prop::collection::vec(
@@ -1044,12 +1089,16 @@ mod tests {
             let mut drat = DratProof::new();
 
             let mut add_count = 0;
-            for clause in clauses {
-                drat.add_clause(clause);
+            for clause in &clauses {
+                drat.add_clause(clause.clone());
                 add_count += 1;
             }
 
-            let alethe = converter.drat_to_alethe(&drat).expect("test operation should succeed");
+            // Every added clause is also a genuine input clause here, so the
+            // conversion must succeed (no fabricated derivations required).
+            let alethe = converter
+                .drat_to_alethe(&drat, &clauses)
+                .expect("test operation should succeed");
 
             // Alethe should have the same number of steps as DRAT additions
             prop_assert_eq!(alethe.len(), add_count);
@@ -1064,9 +1113,9 @@ mod tests {
             let mut drat = DratProof::new();
 
             drat.add_clause(clauses.clone());
-            drat.delete_clause(clauses);
+            drat.delete_clause(clauses.clone());
 
-            let result = converter.drat_to_alethe(&drat);
+            let result = converter.drat_to_alethe(&drat, &[clauses]);
             prop_assert!(result.is_err());
         }
 
@@ -1155,14 +1204,21 @@ mod tests {
             let mut drat = DratProof::new();
 
             // Add prefix clauses
-            for clause in prefix_clauses {
-                drat.add_clause(clause);
+            for clause in &prefix_clauses {
+                drat.add_clause(clause.clone());
             }
 
             // Add empty clause (contradiction)
             drat.add_clause(vec![]);
 
-            let alethe = converter.drat_to_alethe(&drat).expect("test operation should succeed");
+            // All added clauses (including the empty one) are genuine input
+            // clauses here, so no derivation is required.
+            let mut input_clauses = prefix_clauses;
+            input_clauses.push(vec![]);
+
+            let alethe = converter
+                .drat_to_alethe(&drat, &input_clauses)
+                .expect("test operation should succeed");
 
             // Should successfully convert
             prop_assert!(!alethe.is_empty());

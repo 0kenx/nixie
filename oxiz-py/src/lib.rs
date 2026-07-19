@@ -27,15 +27,17 @@ pub mod optimizer;
 pub mod results;
 pub mod solver_py;
 pub mod term;
+pub mod theories;
 
 use pyo3::prelude::*;
 
 /// OxiZ SMT Solver Python module
 #[pymodule]
 fn oxiz(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Core term types
+    // Core term and sort types
     m.add_class::<term::PyTerm>()?;
     m.add_class::<term::PyTermManager>()?;
+    m.add_class::<term::PySort>()?;
 
     // Solver result enumerations
     m.add_class::<results::PySolverResult>()?;
@@ -48,6 +50,9 @@ fn oxiz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<solver_py::PySolver>()?;
     m.add_class::<optimizer::PyOptimizer>()?;
 
+    // FP rounding-mode sentinel class
+    m.add_class::<theories::PyFPRoundingMode>()?;
+
     // Module-level boolean / arithmetic combinators
     m.add_function(wrap_pyfunction!(builtins::And, m)?)?;
     m.add_function(wrap_pyfunction!(builtins::Or, m)?)?;
@@ -59,6 +64,36 @@ fn oxiz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(builtins::and_tm, m)?)?;
     m.add_function(wrap_pyfunction!(builtins::or_tm, m)?)?;
     m.add_function(wrap_pyfunction!(builtins::not_tm, m)?)?;
+
+    // String theory combinators
+    m.add_function(wrap_pyfunction!(theories::StringVal, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::StringSort, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::Concat, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::Length, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::Contains, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::PrefixOf, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::SuffixOf, m)?)?;
+
+    // Array theory combinators
+    m.add_function(wrap_pyfunction!(theories::ArraySort, m)?)?;
+
+    // Sort constructors for base sorts
+    m.add_function(wrap_pyfunction!(theories::IntSort, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::BoolSort, m)?)?;
+
+    // Floating-point sort and value constructors
+    m.add_function(wrap_pyfunction!(theories::FPSort, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::FPVal, m)?)?;
+
+    // Floating-point arithmetic combinators
+    m.add_function(wrap_pyfunction!(theories::fp_add, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::fp_sub, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::fp_mul, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::fp_div, m)?)?;
+
+    // Quantifier combinators
+    m.add_function(wrap_pyfunction!(theories::ForAll, m)?)?;
+    m.add_function(wrap_pyfunction!(theories::Exists, m)?)?;
 
     // Version metadata
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

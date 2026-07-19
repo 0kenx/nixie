@@ -521,18 +521,30 @@ impl Ieee754Engine {
                 }
             }
             FpClass::PositiveSubnormal | FpClass::NegativeSubnormal => {
-                // Subnormal: no implicit bit, exponent is minimum (1 - bias)
-                let shift = 128 - (format.significand_bits - 1);
+                // Subnormal: no implicit bit, value = 0.frac * 2^(1 - bias).
+                // Align on the same scale as normals (shift = 128 - significand_bits)
+                // so that a fully-set frac would land its MSB one bit below bit 127
+                // (matching the "no implicit bit" semantics); this may leave leading
+                // zeros in `aligned_sig` for anything but the largest subnormal.
+                let shift = 128 - format.significand_bits;
                 let aligned_sig = (value.significand as u128) << shift;
                 let unbiased_exp = 1 - format.bias();
 
-                UnpackedFloat {
+                let mut unpacked = UnpackedFloat {
                     sign: value.sign,
                     exponent: unbiased_exp,
                     significand: aligned_sig,
                     precision: format.significand_bits,
                     class,
-                }
+                };
+                // Renormalize so the significand is MSB-aligned at bit 127, as all
+                // arithmetic (add/mul/div/sqrt/compare) assumes for finite non-zero
+                // values. This adjusts the exponent below the smallest normal
+                // exponent as needed; `class` is left untouched so callers can still
+                // observe the original subnormal classification.
+                unpacked.normalize();
+                unpacked.class = class;
+                unpacked
             }
         }
     }
@@ -614,7 +626,8 @@ impl Ieee754Engine {
         }
 
         // Apply rounding based on mode
-        let round_up = self.should_round_up(unpacked.sign, guard, round, sticky);
+        let pre_round_lsb = significand & 1;
+        let round_up = self.should_round_up(unpacked.sign, guard, round, sticky, pre_round_lsb);
         if round_up {
             significand = significand.wrapping_add(1);
             // Check for significand overflow
@@ -711,8 +724,20 @@ impl Ieee754Engine {
     }
 
     /// Determine if we should round up based on rounding mode and extra bits
+    ///
+    /// `lsb` is the least-significant bit of the (pre-rounding) truncated
+    /// significand; it is only consulted by `RoundNearestTiesToEven` to break
+    /// exact ties in favor of the even result, per IEEE 754's default
+    /// rounding mode.
     #[must_use]
-    fn should_round_up(&self, sign: bool, guard: u128, round: u128, sticky: u128) -> bool {
+    fn should_round_up(
+        &self,
+        sign: bool,
+        guard: u128,
+        round: u128,
+        sticky: u128,
+        lsb: u128,
+    ) -> bool {
         match self.rounding_mode {
             FpRoundingMode::RoundNearestTiesToEven => {
                 // Round to nearest, ties to even
@@ -721,10 +746,11 @@ impl Ieee754Engine {
                 } else if round != 0 || sticky != 0 {
                     true
                 } else {
-                    // Exact tie: round to even (check LSB)
-                    // This requires checking the LSB of the significand
-                    // For simplicity, we round up in ties (this should check LSB)
-                    true
+                    // Exact tie (guard=1, round=0, sticky=0): round to whichever
+                    // candidate has an even LSB. If the truncated result is
+                    // already even (lsb == 0), stay; otherwise round up to make
+                    // it even.
+                    lsb != 0
                 }
             }
             FpRoundingMode::RoundNearestTiesToAway => {
@@ -1045,22 +1071,25 @@ impl Ieee754Engine {
         //
         // Strategy: similar to mul/div, compute sqrt then normalize
 
-        let mut sig = ua.significand;
+        let sig = ua.significand;
         let mut exp = ua.exponent;
 
-        // For odd exponents, shift sig left by 1 (multiply by 2) to make exp even
-        // sqrt(x × 2^(2k+1)) = sqrt(x × 2) × 2^k
-        if exp & 1 != 0 {
-            if sig <= (u128::MAX >> 1) {
-                sig <<= 1;
-            }
+        // unpack() always left-aligns finite non-zero significands so the MSB
+        // sits at bit 127 (sig ∈ [2^127, 2^128)); it can therefore never be
+        // shifted left by 1 without losing that top bit. To handle an odd
+        // exponent (sqrt(x × 2^(2k+1)) = sqrt(x × 2) × 2^k = sqrt(2) ×
+        // sqrt(x) × 2^k) we instead compute the even-exponent sqrt(x) first
+        // and fold the extra factor of sqrt(2) into the *result* significand
+        // afterwards (see below), which never needs more than 128 bits.
+        let odd_exponent = exp & 1 != 0;
+        if odd_exponent {
             exp -= 1;
         }
 
         // Now exp is even
-        // Compute sqrt(sig) where sig ∈ [2^127, 2^129)
+        // Compute sqrt(sig) where sig ∈ [2^127, 2^128)
         let sqrt_val = integer_sqrt(sig);
-        // sqrt_val ∈ [2^63.5, 2^64.5)
+        // sqrt_val ∈ [2^63.5, 2^64)
 
         // We need to compute: result_sig = sqrt(sig) × 2^63.5
         // This equals: sqrt(sig) × 2^63 × sqrt(2)
@@ -1089,6 +1118,19 @@ impl Ieee754Engine {
         // We need to shift left by 64 more to get the MSB at bit 127
         let mut result_sig = high << 64;
         let mut result_exp = exp / 2;
+
+        // For an originally-odd exponent, `result_sig` currently holds
+        // sqrt(x) × 2^127 (x = sig / 2^127 ∈ [1, 2)); multiply in the missing
+        // factor of sqrt(2) via the same fixed-point trick to get sqrt(2x) ×
+        // 2^127, which is what corresponds to the true (odd) exponent's
+        // radicand. sqrt(2x) ∈ [√2, 2) so this stays MSB-aligned at bit 127.
+        if odd_exponent {
+            let (high2, sticky2) = Self::mul128(result_sig, SQRT_2_FIXED);
+            result_sig = high2 << 64;
+            if sticky2 && (result_sig & 1) == 0 {
+                result_sig |= 1;
+            }
+        }
 
         // Check if normalization is needed (MSB should be at bit 127)
         if result_sig != 0 && (result_sig & (1u128 << 127)) == 0 {

@@ -9,10 +9,48 @@
 //! Reference: Z3's `opt/maxsmt.cpp`
 
 use crate::maxsat::{MaxSatConfig, MaxSatError, MaxSatResult, Weight};
-use oxiz_core::ast::TermId;
+use num_bigint::BigInt;
+use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_solver::{Solver, SolverResult};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use thiserror::Error;
+
+/// Compute the greatest common divisor of two `BigInt`s (Euclidean algorithm).
+fn bigint_gcd(a: &BigInt, b: &BigInt) -> BigInt {
+    let zero = BigInt::from(0);
+    let (mut a, mut b) = (a.clone(), b.clone());
+    while b != zero {
+        let r = &a % &b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+/// Compute the least common multiple of two positive `BigInt`s.
+fn bigint_lcm(a: &BigInt, b: &BigInt) -> BigInt {
+    let zero = BigInt::from(0);
+    if *a == zero || *b == zero {
+        return zero;
+    }
+    (a / bigint_gcd(a, b)) * b
+}
+
+/// Convert a soft-constraint [`Weight`] to an exact integer cost scaled by
+/// `scale` (a common multiple of every rational weight's denominator, so
+/// rational weights are represented exactly rather than coerced).
+fn scaled_weight_int(weight: &Weight, scale: &BigInt) -> BigInt {
+    match weight {
+        Weight::Int(n) => n * scale,
+        Weight::Rational(r) => {
+            let factor = scale / r.denom();
+            r.numer() * factor
+        }
+        // Effectively-hard: dominate every finite soft weight.
+        Weight::Infinite => BigInt::from(i64::MAX / 2) * scale,
+    }
+}
 
 /// Errors that can occur during MaxSMT solving
 #[derive(Error, Debug)]
@@ -29,6 +67,13 @@ pub enum MaxSmtError {
     /// Resource limit
     #[error("resource limit")]
     ResourceLimit,
+    /// [`MaxSmtSolver::solve`] was called without a term manager.
+    ///
+    /// MaxSMT optimization needs the [`TermManager`] that owns the constraint
+    /// terms to build the selector encoding and drive the SMT solver. Use
+    /// [`MaxSmtSolver::solve_with`] instead.
+    #[error("MaxSMT requires a term manager: call solve_with(&mut terms)")]
+    RequiresTermManager,
 }
 
 /// Result of MaxSMT solving
@@ -274,89 +319,205 @@ impl MaxSmtSolver {
         var
     }
 
-    /// Solve the MaxSMT problem
+    /// Solve the MaxSMT problem.
     ///
-    /// This is the main entry point for MaxSMT optimization.
+    /// MaxSMT optimization cannot proceed without the [`TermManager`] that owns
+    /// the constraint terms — it is needed to build the selector-variable
+    /// encoding and invoke the SMT solver. Historically this method was a stub
+    /// that always returned `Unknown` regardless of the input, silently
+    /// mis-reporting every instance as unsolved. It now fails honestly; use
+    /// [`Self::solve_with`] and pass the owning term manager instead.
     pub fn solve(&mut self) -> Result<MaxSmtResult, MaxSmtError> {
-        // Trivial case: no soft constraints
+        Err(MaxSmtError::RequiresTermManager)
+    }
+
+    /// Solve the MaxSMT problem against the [`TermManager`] that owns the
+    /// constraint terms.
+    ///
+    /// Uses a selector-variable encoding: each soft constraint `t_i` with
+    /// weight `w_i` gets a fresh boolean selector `b_i` and the hard
+    /// implication `b_i → t_i`, plus an integer cost variable `cost_i` that is
+    /// `0` when `b_i` holds and `w_i` otherwise. Binary search over the total
+    /// cost budget then finds the minimum-cost (maximum-satisfaction)
+    /// assignment. Rational weights are scaled to exact integers, so mixed
+    /// integer/rational weights are handled without coercion.
+    ///
+    /// On success the per-constraint satisfaction flags and the lower/upper
+    /// cost bounds are updated so [`Self::cost`], [`Self::satisfied`], and
+    /// [`Self::unsatisfied`] report the optimal assignment.
+    pub fn solve_with(&mut self, terms: &mut TermManager) -> Result<MaxSmtResult, MaxSmtError> {
+        let int_sort = terms.sorts.int_sort;
+        let bool_sort = terms.sorts.bool_sort;
+
+        // Trivial case: no soft constraints — just check hard feasibility.
         if self.soft_constraints.is_empty() {
-            return self.check_hard_satisfiable();
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, terms);
+            }
+            self.stats.smt_calls += 1;
+            return Ok(match solver.check(terms) {
+                SolverResult::Sat => MaxSmtResult::Optimal,
+                SolverResult::Unsat => MaxSmtResult::Unsatisfiable,
+                SolverResult::Unknown => MaxSmtResult::Unknown,
+            });
         }
 
-        // Check if hard constraints alone are satisfiable
-        match self.check_hard_satisfiable()? {
-            MaxSmtResult::Unsatisfiable => return Err(MaxSmtError::Unsatisfiable),
-            MaxSmtResult::Unknown => return Ok(MaxSmtResult::Unknown),
-            _ => {}
-        }
-
-        // Use stratified solving if we have groups with different weights
-        if self.has_different_weights() {
-            return self.solve_stratified();
-        }
-
-        // Use core-guided approach
-        self.solve_core_guided()
-    }
-
-    /// Check if hard constraints are satisfiable
-    fn check_hard_satisfiable(&mut self) -> Result<MaxSmtResult, MaxSmtError> {
-        // This would integrate with the actual SMT solver
-        // For now, return Unknown as placeholder
-        self.stats.smt_calls += 1;
-        Ok(MaxSmtResult::Unknown)
-    }
-
-    /// Check if weights differ
-    fn has_different_weights(&self) -> bool {
-        if self.soft_constraints.is_empty() {
-            return false;
-        }
-        let first = &self.soft_constraints[0].weight;
-        self.soft_constraints.iter().any(|c| &c.weight != first)
-    }
-
-    /// Solve using stratified approach
-    fn solve_stratified(&mut self) -> Result<MaxSmtResult, MaxSmtError> {
-        // Collect unique weight levels
-        let mut weight_levels: Vec<Weight> = self
-            .soft_constraints
-            .iter()
-            .map(|c| c.weight.clone())
-            .collect();
-        weight_levels.sort();
-        weight_levels.dedup();
-        weight_levels.reverse(); // Highest weight first
-
-        // Solve for each level
-        for level in weight_levels {
-            let active_ids: Vec<SoftSmtId> = self
-                .soft_constraints
-                .iter()
-                .filter(|c| c.weight >= level)
-                .map(|c| c.id)
-                .collect();
-
-            if !active_ids.is_empty() {
-                self.stats.smt_calls += 1;
+        // Scale so every (possibly rational) weight is an exact integer.
+        let mut weight_scale = BigInt::from(1);
+        for sc in &self.soft_constraints {
+            if let Weight::Rational(r) = &sc.weight {
+                weight_scale = bigint_lcm(&weight_scale, r.denom());
             }
         }
 
-        Ok(MaxSmtResult::Unknown)
-    }
+        let total_weight: BigInt = self
+            .soft_constraints
+            .iter()
+            .map(|sc| scaled_weight_int(&sc.weight, &weight_scale))
+            .fold(BigInt::from(0), |acc, w| acc + w);
 
-    /// Solve using core-guided approach
-    fn solve_core_guided(&mut self) -> Result<MaxSmtResult, MaxSmtError> {
-        // This would implement the full core-guided MaxSMT algorithm
-        // Similar to MaxSAT Fu-Malik but with SMT integration
-        // Placeholder - would integrate with SMT solver
-        // 1. Check satisfiability with current assumptions
-        // 2. If SAT, we have a candidate solution
-        // 3. If UNSAT, extract core and relax
+        // Build selectors, implications, and cost definitions.
+        let num_soft = self.soft_constraints.len();
+        let mut sel_vars: Vec<TermId> = Vec::with_capacity(num_soft);
+        let mut cost_vars: Vec<TermId> = Vec::with_capacity(num_soft);
+        let mut selector_implications: Vec<TermId> = Vec::with_capacity(num_soft);
+        let mut cost_defs: Vec<TermId> = Vec::with_capacity(num_soft * 2);
 
-        self.stats.smt_calls += 1;
+        for sc in &self.soft_constraints {
+            let sel_name = format!("__maxsmt_sel_{}", sc.id.0);
+            let cost_name = format!("__maxsmt_cost_{}", sc.id.0);
+            let sel = terms.mk_var(&sel_name, bool_sort);
+            let cost_var = terms.mk_var(&cost_name, int_sort);
+            sel_vars.push(sel);
+            cost_vars.push(cost_var);
 
-        Ok(MaxSmtResult::Unknown)
+            // b_i → t_i
+            selector_implications.push(terms.mk_implies(sel, sc.term));
+
+            // cost_i = ite(b_i, 0, w_i), encoded as two implications.
+            let weight_int = scaled_weight_int(&sc.weight, &weight_scale);
+            let w_term = terms.mk_int(weight_int);
+            let zero = terms.mk_int(0i64);
+            let not_sel = terms.mk_not(sel);
+            let cost_eq_zero = terms.mk_eq(cost_var, zero);
+            let cost_eq_w = terms.mk_eq(cost_var, w_term);
+            cost_defs.push(terms.mk_implies(sel, cost_eq_zero));
+            cost_defs.push(terms.mk_implies(not_sel, cost_eq_w));
+        }
+
+        let cost_sum = terms.mk_add(cost_vars.iter().copied());
+
+        // Feasibility of the hard part.
+        let feasible = {
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, terms);
+            }
+            for &imp in &selector_implications {
+                solver.assert(imp, terms);
+            }
+            for &cd in &cost_defs {
+                solver.assert(cd, terms);
+            }
+            self.stats.smt_calls += 1;
+            solver.check(terms) == SolverResult::Sat
+        };
+        if !feasible {
+            return Ok(MaxSmtResult::Unsatisfiable);
+        }
+
+        // Binary search for the minimum feasible cost budget.
+        let mut lo = BigInt::from(0);
+        let mut hi = total_weight.clone();
+        let mut search_incomplete = false;
+
+        while lo < hi {
+            let mid: BigInt = (lo.clone() + hi.clone()) / 2i32;
+            let bound_term = terms.mk_int(mid.clone());
+            let cost_le_mid = terms.mk_le(cost_sum, bound_term);
+
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, terms);
+            }
+            for &imp in &selector_implications {
+                solver.assert(imp, terms);
+            }
+            for &cd in &cost_defs {
+                solver.assert(cd, terms);
+            }
+            solver.assert(cost_le_mid, terms);
+
+            self.stats.smt_calls += 1;
+            match solver.check(terms) {
+                SolverResult::Sat => hi = mid,
+                SolverResult::Unsat => lo = mid + BigInt::from(1),
+                SolverResult::Unknown => {
+                    search_incomplete = true;
+                    break;
+                }
+            }
+        }
+
+        // Final solve at `lo` to read the optimal model and per-constraint
+        // satisfaction from the selector variables.
+        let mut sel_truth = vec![false; sel_vars.len()];
+        let mut have_model = false;
+        {
+            let bound_term = terms.mk_int(lo.clone());
+            let cost_le_lo = terms.mk_le(cost_sum, bound_term);
+            let mut solver = Solver::new();
+            for &h in &self.hard_constraints {
+                solver.assert(h, terms);
+            }
+            for &imp in &selector_implications {
+                solver.assert(imp, terms);
+            }
+            for &cd in &cost_defs {
+                solver.assert(cd, terms);
+            }
+            solver.assert(cost_le_lo, terms);
+            self.stats.smt_calls += 1;
+            match solver.check(terms) {
+                SolverResult::Sat => {
+                    if solver.model().is_some() {
+                        for (i, &sel) in sel_vars.iter().enumerate() {
+                            // Re-borrow the model each step: `eval` needs
+                            // `&mut terms`, which the borrow checker keeps
+                            // disjoint from the immutable model borrow.
+                            if let Some(model) = solver.model() {
+                                let v = model.eval(sel, terms);
+                                sel_truth[i] =
+                                    matches!(terms.get(v).map(|t| &t.kind), Some(TermKind::True));
+                            }
+                        }
+                        have_model = true;
+                    }
+                }
+                SolverResult::Unsat | SolverResult::Unknown => search_incomplete = true,
+            }
+        }
+
+        if !have_model {
+            return Ok(MaxSmtResult::Unknown);
+        }
+
+        // Record per-constraint satisfaction from the selectors.
+        for (i, &sat) in sel_truth.iter().enumerate() {
+            self.soft_constraints[i].set_satisfied(sat);
+        }
+
+        // The exact optimal cost, in the original (unscaled) weight domain.
+        let opt_cost = self.cost();
+        self.lower_bound = opt_cost.clone();
+        self.upper_bound = opt_cost;
+
+        if search_incomplete {
+            Ok(MaxSmtResult::Satisfiable)
+        } else {
+            Ok(MaxSmtResult::Optimal)
+        }
     }
 
     /// Get satisfied soft constraint IDs

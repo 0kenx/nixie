@@ -208,6 +208,23 @@ impl Solver {
             }
         }
 
+        // Check: Store–store extensionality conflicts.
+        // For a positive equality between two store terms, e.g.
+        //   (= (store a i 1) (store b i 2))
+        // extensionality requires select(lhs, k) = select(rhs, k) for every k.
+        // Reading both sides at each store index via the read-over-write axiom
+        // exposes a direct contradiction when the forced values differ (here at
+        // index i: 1 ≠ 2 → UNSAT).  This is the sound conflict half of the array
+        // honesty story; the SAT-side honesty gate lives in
+        // `array_atoms_need_theory` (consulted by the Context layer), because the
+        // EUF congruence core alone can place two store terms in one class
+        // WITHOUT enforcing element-wise agreement — a source of spurious `Sat`.
+        for &(x, y) in &self.collect_positive_array_term_equalities(manager) {
+            if self.store_extensionality_conflict(x, y, manager) {
+                return true;
+            }
+        }
+
         // Check: Cross-theory conflict (QF_ABV with variable equalities + BV arithmetic)
         // Example: x=#x05, select(a,x)=bvadd(x,#x01), select(a,#x05)=#x10
         // select(a,x) evaluates via x=5 to select(a,5)=6, but select(a,5)=16 → conflict
@@ -335,9 +352,11 @@ impl Solver {
             negated_select_assertions,
             read_conflicts,
             true,
+            true,
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_array_constraints_inner(
         &self,
         term: TermId,
@@ -349,7 +368,25 @@ impl Solver {
         negated_select_assertions: &mut Vec<(TermId, TermId)>,
         read_conflicts: &mut Vec<(TermId, TermId)>,
         in_positive_context: bool,
+        // Whether the truth value of `term` is *directly asserted* (top-level
+        // assertion, a conjunct of an asserted And, or under a Not with the
+        // polarity tracked in `in_positive_context`).  This is `false` once we
+        // descend into the operands of an equality: `(= a b)` asserts only that
+        // `a` and `b` are *equal*, NOT that either operand holds on its own.  A
+        // nested Boolean equality such as `(= p (= (select (store a 3 5) 3) 6))`
+        // must therefore NOT collect the inner select-equality as an asserted
+        // read-over-write fact -- doing so produced a spurious UNSAT for a
+        // formula that is SAT with `p = false`.
+        collect_facts: bool,
     ) {
+        // Inside an equality operand nothing is individually asserted, so we
+        // must not collect any read-over-write / extensionality facts from this
+        // subtree.  Descending further could only reinterpret non-asserted
+        // Boolean structure (nested Eq/And/Not) as asserted, which is unsound.
+        if !collect_facts {
+            return;
+        }
+
         let Some(term_data) = manager.get(term) else {
             return;
         };
@@ -435,6 +472,11 @@ impl Solver {
                     }
                 }
 
+                // Descend into the operands with `collect_facts = false`: an
+                // equality's operands are not individually asserted, so any
+                // Boolean structure inside them (a nested Eq/And/Not) must not
+                // be treated as an asserted read-over-write fact.  The
+                // asserted equality itself has already been recorded above.
                 self.collect_array_constraints_inner(
                     *lhs,
                     manager,
@@ -445,6 +487,7 @@ impl Solver {
                     negated_select_assertions,
                     read_conflicts,
                     in_positive_context,
+                    false,
                 );
                 self.collect_array_constraints_inner(
                     *rhs,
@@ -456,6 +499,7 @@ impl Solver {
                     negated_select_assertions,
                     read_conflicts,
                     in_positive_context,
+                    false,
                 );
             }
             TermKind::And(args) => {
@@ -470,6 +514,7 @@ impl Solver {
                         negated_select_assertions,
                         read_conflicts,
                         in_positive_context,
+                        collect_facts,
                     );
                 }
             }
@@ -477,7 +522,8 @@ impl Solver {
                 // Don't collect from OR branches - they represent disjunctions
             }
             TermKind::Not(inner) => {
-                // Flip the context when entering a Not
+                // Flip the context when entering a Not; a Not preserves direct
+                // assertedness (asserting `(not X)` asserts `X` is false).
                 self.collect_array_constraints_inner(
                     *inner,
                     manager,
@@ -488,6 +534,7 @@ impl Solver {
                     negated_select_assertions,
                     read_conflicts,
                     !in_positive_context,
+                    collect_facts,
                 );
             }
             _ => {}
@@ -1448,6 +1495,156 @@ impl Solver {
             }
         }
 
+        false
+    }
+
+    /// True when `term` has an array sort.
+    fn is_array_sorted(&self, term: TermId, manager: &TermManager) -> bool {
+        manager.get(term).is_some_and(|d| {
+            manager
+                .sorts
+                .get(d.sort)
+                .is_some_and(|s| matches!(s.kind, oxiz_core::SortKind::Array { .. }))
+        })
+    }
+
+    /// True when `term` is a `Store` expression (a structurally committed array
+    /// value, as opposed to a plain array variable).
+    fn is_store_term(&self, term: TermId, manager: &TermManager) -> bool {
+        manager
+            .get(term)
+            .is_some_and(|d| matches!(d.kind, TermKind::Store(..)))
+    }
+
+    /// Collect positive (asserted-true) equalities `(= X Y)` where **both** sides
+    /// are `Store` terms of array sort and `X` and `Y` are not the identical term.
+    ///
+    /// These are exactly the array equalities the EUF congruence core cannot
+    /// decide soundly on its own: it may unify the two store terms into a single
+    /// class without ever checking that their bases agree element-wise. Reflexive
+    /// equalities (`X == Y`) are trivially satisfiable and excluded. Equalities
+    /// appearing under a `Not` (i.e. disequalities) are excluded — a disequality
+    /// of two distinct store terms is soundly satisfiable by keeping them apart.
+    fn collect_positive_array_term_equalities(
+        &self,
+        manager: &TermManager,
+    ) -> Vec<(TermId, TermId)> {
+        let mut out = Vec::new();
+        for &assertion in &self.assertions {
+            self.scan_positive_array_eq(assertion, true, manager, &mut out);
+        }
+        out
+    }
+
+    /// Recursive polarity-aware walker for
+    /// [`Solver::collect_positive_array_term_equalities`]. Descends through `And`
+    /// conjuncts (assertedness preserved) and flips polarity through `Not`; only
+    /// records store=store equalities encountered in positive polarity.
+    fn scan_positive_array_eq(
+        &self,
+        term: TermId,
+        positive: bool,
+        manager: &TermManager,
+        out: &mut Vec<(TermId, TermId)>,
+    ) {
+        let Some(data) = manager.get(term) else {
+            return;
+        };
+        match &data.kind {
+            TermKind::And(args) => {
+                for &arg in args {
+                    self.scan_positive_array_eq(arg, positive, manager, out);
+                }
+            }
+            TermKind::Not(inner) => {
+                self.scan_positive_array_eq(*inner, !positive, manager, out);
+            }
+            TermKind::Eq(lhs, rhs)
+                if positive
+                    && *lhs != *rhs
+                    && self.is_store_term(*lhs, manager)
+                    && self.is_store_term(*rhs, manager)
+                    && self.is_array_sorted(*lhs, manager)
+                    && self.is_array_sorted(*rhs, manager) =>
+            {
+                out.push((*lhs, *rhs));
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect the store indices along the store chain rooted at `array` (i.e. the
+    /// index of every `(store base idx val)` node until a non-store base is
+    /// reached).
+    fn collect_store_indices(&self, array: TermId, manager: &TermManager, out: &mut Vec<TermId>) {
+        if let Some(data) = manager.get(array) {
+            if let TermKind::Store(base, idx, _val) = &data.kind {
+                out.push(*idx);
+                self.collect_store_indices(*base, manager, out);
+            }
+        }
+    }
+
+    /// Evaluate `(select array index)` through the read-over-write axiom, chasing
+    /// nested stores. Returns `Some(value)` only when the value is forced (the
+    /// index provably matches a store index, or provably differs at every store
+    /// down to a store whose index matches); returns `None` when the outcome is
+    /// ambiguous (base is a variable, or index/store-index relationship unknown).
+    fn eval_read(&self, array: TermId, index: TermId, manager: &TermManager) -> Option<TermId> {
+        let data = manager.get(array)?;
+        if let TermKind::Store(base, store_idx, stored_val) = &data.kind {
+            if self.terms_equal_simple(*store_idx, index, manager) {
+                return Some(*stored_val);
+            }
+            if self.are_different_values(*store_idx, index, manager) {
+                return self.eval_read(*base, index, manager);
+            }
+            // The relationship between `store_idx` and `index` is unknown: cannot
+            // decide which value the read yields.
+            return None;
+        }
+        None
+    }
+
+    /// Detect an extensionality conflict between two store terms `x` and `y`:
+    /// if reading both at some common store index yields two provably different
+    /// concrete values, then `x = y` is unsatisfiable.
+    fn store_extensionality_conflict(&self, x: TermId, y: TermId, manager: &TermManager) -> bool {
+        let mut indices = Vec::new();
+        self.collect_store_indices(x, manager, &mut indices);
+        self.collect_store_indices(y, manager, &mut indices);
+        for idx in indices {
+            if let (Some(vx), Some(vy)) = (
+                self.eval_read(x, idx, manager),
+                self.eval_read(y, idx, manager),
+            ) {
+                if self.are_different_values(vx, vy, manager) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Array soundness honesty gate (SAT side).
+    ///
+    /// Returns `true` when the assertion set contains a positive equality between
+    /// two store terms that the [`store_extensionality_conflict`] check did not
+    /// refute. Such an equality is *not* decided by the syntactic array checks or
+    /// the EUF congruence core (which can satisfy `store_a = store_b` by merging
+    /// the two terms into one class without enforcing that their bases agree at
+    /// every index). Trusting the resulting assignment would risk a spurious
+    /// `Sat`, so the caller (the `Context` command layer) downgrades `Sat` to
+    /// `Unknown` when this returns `true` — never reporting `Sat` while an
+    /// unchecked array atom remains.
+    ///
+    /// [`store_extensionality_conflict`]: Solver::store_extensionality_conflict
+    pub(crate) fn array_atoms_need_theory(&self, manager: &TermManager) -> bool {
+        for &(x, y) in &self.collect_positive_array_term_equalities(manager) {
+            if !self.store_extensionality_conflict(x, y, manager) {
+                return true;
+            }
+        }
         false
     }
 

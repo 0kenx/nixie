@@ -480,4 +480,55 @@ impl Solver {
             _ => {}
         }
     }
+
+    /// Returns `true` if `kind` is a string-theory operation or predicate whose
+    /// value / truth the incomplete string checks above cannot certify.
+    ///
+    /// These atoms are mapped to fresh SAT variables by `encode.rs` and are
+    /// never evaluated by a real string theory, so a positive `Sat` answer that
+    /// relies on them is unsound.  Bare string literals are excluded — they only
+    /// participate through structural equality, which the EUF core handles.
+    fn is_string_theory_atom(kind: &TermKind) -> bool {
+        matches!(
+            kind,
+            TermKind::StrConcat(_, _)
+                | TermKind::StrLen(_)
+                | TermKind::StrSubstr(_, _, _)
+                | TermKind::StrAt(_, _)
+                | TermKind::StrContains(_, _)
+                | TermKind::StrPrefixOf(_, _)
+                | TermKind::StrSuffixOf(_, _)
+                | TermKind::StrIndexOf(_, _, _)
+                | TermKind::StrReplace(_, _, _)
+                | TermKind::StrReplaceAll(_, _, _)
+                | TermKind::StrToInt(_)
+                | TermKind::IntToStr(_)
+                | TermKind::StrInRe(_, _)
+        )
+    }
+
+    /// Returns `true` when the current assertion set contains any string-theory
+    /// atom that the incomplete string conflict checks cannot decide.
+    ///
+    /// When this holds and no definite string conflict was found, the solver
+    /// MUST answer `Unknown` rather than let the SAT core treat the atom as a
+    /// free Boolean — the latter would report `Sat` for unsatisfiable formulas
+    /// such as `(= s "abc") ∧ (str.contains s "xyz")`.
+    pub(super) fn string_atoms_need_theory(&self, manager: &TermManager) -> bool {
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = self.assertions.clone();
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
+            if Self::is_string_theory_atom(&term_data.kind) {
+                return true;
+            }
+            super::term_walk::collect_structural_children(&term_data.kind, &mut stack);
+        }
+        false
+    }
 }

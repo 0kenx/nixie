@@ -9,8 +9,9 @@
 //!
 //! Reference: Z3's `muz/spacer/spacer_context.h` frames class.
 
-use crate::chc::PredId;
-use oxiz_core::TermId;
+use crate::chc::{ChcSystem, PredId};
+use crate::smt::{SmtError, SmtSolver, build_frame_formula};
+use oxiz_core::{TermId, TermManager};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -545,30 +546,74 @@ impl FrameManager {
         true
     }
 
-    /// Try to propagate all frames
-    /// Returns true if a fixpoint is detected
-    pub fn propagate(&mut self) -> bool {
-        // Try to push all lemmas to higher levels
+    /// Try to propagate all frames, checking genuine inductiveness (via
+    /// [`SmtSolver::is_lemma_inductive`]) for each lemma before promoting
+    /// it to a higher level.
+    ///
+    /// This previously called [`PredicateFrames::propagate_level`] (which
+    /// bumps every lemma's recorded level unconditionally, with no
+    /// inductiveness check at all) directly, so `all_propagated` was
+    /// always `true` and this method always declared a fixpoint on its
+    /// very first level -- silently fabricating a safety proof for any
+    /// external caller of this public API. It now mirrors exactly what
+    /// the crate's real PDR solve loop (`Spacer::propagate` in
+    /// `pdr.rs`) already does correctly: each lemma is checked with a
+    /// genuine consecution query before being pushed.
+    ///
+    /// Returns `Ok(true)` if a fixpoint is detected (every lemma at the
+    /// current level is genuinely inductive), `Ok(false)` otherwise.
+    pub fn propagate(
+        &mut self,
+        terms: &mut TermManager,
+        system: &ChcSystem,
+    ) -> Result<bool, SmtError> {
         for level in 1..=self.current_level {
-            let mut all_propagated = true;
+            let mut all_pushed = true;
 
-            for frames in self.frames.values_mut() {
-                if !frames.propagate_level(level) {
-                    all_propagated = false;
+            let pred_ids: Vec<PredId> = self.frames.keys().copied().collect();
+            for pred_id in pred_ids {
+                let lemmas_to_push: Vec<LemmaId> = match self.frames.get(&pred_id) {
+                    Some(pred_frames) => pred_frames.lemmas_at_level(level).map(|l| l.id).collect(),
+                    None => Vec::new(),
+                };
+
+                for lemma_id in lemmas_to_push {
+                    let Some(lemma_formula) = self
+                        .frames
+                        .get(&pred_id)
+                        .and_then(|pf| pf.get_lemma(lemma_id))
+                        .map(|l| l.formula)
+                    else {
+                        continue;
+                    };
+
+                    let frame_formula = build_frame_formula(terms, self, pred_id, level);
+                    let mut smt = SmtSolver::new(terms, system);
+                    let can_push =
+                        smt.is_lemma_inductive(pred_id, lemma_formula, level, frame_formula)?;
+
+                    if can_push {
+                        if let Some(pred_frames) = self.frames.get_mut(&pred_id) {
+                            pred_frames.propagate(lemma_id, level + 1);
+                        }
+                    } else {
+                        all_pushed = false;
+                    }
                 }
             }
 
-            // If all lemmas at this level were pushed, we have a fixpoint
-            if all_propagated && level == self.current_level {
+            // If all lemmas at this level were genuinely pushed, we have
+            // a fixpoint.
+            if all_pushed && level == self.current_level {
                 // Promote all lemmas at this level to infinity
                 for frames in self.frames.values_mut() {
                     frames.propagate_to_infinity(level);
                 }
-                return true;
+                return Ok(true);
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// Compress all frames by removing old lemmas
@@ -799,5 +844,113 @@ mod tests {
 
         assert_eq!(frames.lemmas_at_level(1).count(), 1);
         assert_eq!(frames.inductive_lemmas().count(), 2);
+    }
+
+    /// Regression tests for the `sweep-backend-misc` triage sweep:
+    /// `FrameManager::propagate` used to bump every lemma's level
+    /// unconditionally (no inductiveness check at all), so it always
+    /// declared a fixpoint on its very first level regardless of whether
+    /// any lemma was actually inductive.
+    mod propagate_regression {
+        use super::*;
+        use crate::chc::PredicateApp;
+        use crate::smt::canon_cur_vars;
+
+        /// Build a tiny CHC system: `Init: x=0`, `Trans: x'=x+1`.
+        fn build_system() -> (TermManager, ChcSystem, PredId) {
+            let mut terms = TermManager::new();
+            let mut system = ChcSystem::new();
+            let pred = system.declare_predicate("FrPropInv", [terms.sorts.int_sort]);
+
+            let x = terms.mk_var("fr_prop_x", terms.sorts.int_sort);
+            let zero = terms.mk_int(0);
+            let init_c = terms.mk_eq(x, zero);
+            system.add_init_rule(
+                [("fr_prop_x".to_string(), terms.sorts.int_sort)],
+                init_c,
+                pred,
+                [x],
+            );
+
+            let x_next = terms.mk_var("fr_prop_x_next", terms.sorts.int_sort);
+            let one = terms.mk_int(1);
+            let x_plus_one = terms.mk_add([x, one]);
+            let trans_c = terms.mk_eq(x_next, x_plus_one);
+            system.add_transition_rule(
+                [
+                    ("fr_prop_x".to_string(), terms.sorts.int_sort),
+                    ("fr_prop_x_next".to_string(), terms.sorts.int_sort),
+                ],
+                [PredicateApp::new(pred, [x])],
+                trans_c,
+                pred,
+                [x_next],
+            );
+
+            (terms, system, pred)
+        }
+
+        #[test]
+        fn genuinely_inductive_lemma_reaches_fixpoint() {
+            let (mut terms, system, pred) = build_system();
+            let mut manager = FrameManager::new();
+
+            // `true` is trivially preserved by any transition.
+            let true_term = terms.mk_true();
+            let lemma_id = manager.add_lemma(pred, true_term, 1);
+            manager.next_level();
+            assert_eq!(manager.current_level(), 1);
+
+            let fixpoint = manager
+                .propagate(&mut terms, &system)
+                .expect("SMT queries should not error");
+            assert!(
+                fixpoint,
+                "a genuinely inductive lemma must yield a real fixpoint"
+            );
+
+            let lemma = manager
+                .get(pred)
+                .and_then(|pf| pf.get_lemma(lemma_id))
+                .expect("lemma must still exist");
+            assert!(
+                lemma.is_inductive(),
+                "the pushed lemma must be promoted to the infinity level"
+            );
+        }
+
+        #[test]
+        fn non_inductive_lemma_blocks_fixpoint() {
+            let (mut terms, system, pred) = build_system();
+            let mut manager = FrameManager::new();
+
+            // Genuinely NOT inductive: `x = 0` does not survive
+            // `x' = x + 1`.
+            let cur_vars = canon_cur_vars(&mut terms, &system, pred);
+            let zero = terms.mk_int(0);
+            let bad_lemma = terms.mk_eq(cur_vars[0], zero);
+            let bad_id = manager.add_lemma(pred, bad_lemma, 1);
+            manager.next_level();
+
+            let fixpoint = manager
+                .propagate(&mut terms, &system)
+                .expect("SMT queries should not error");
+            assert!(
+                !fixpoint,
+                "a non-inductive lemma must NOT be reported as a fixpoint \
+                 (the old bug declared a fixpoint unconditionally)"
+            );
+
+            let lemma = manager
+                .get(pred)
+                .and_then(|pf| pf.get_lemma(bad_id))
+                .expect("lemma must still exist");
+            assert_eq!(
+                lemma.level(),
+                1,
+                "a lemma that failed its inductiveness check must not be \
+                 pushed to a higher level"
+            );
+        }
     }
 }

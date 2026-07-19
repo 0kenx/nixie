@@ -106,6 +106,23 @@ impl FpRewriter {
         matches!(t.kind, TermKind::FpNaN { .. })
     }
 
+    /// Check if a term is *provably* finite: a concrete finite literal or
+    /// zero. `!is_infinity(t)` is **not** the same thing — it is also true
+    /// for a symbolic FP term (a free variable, or any expression this
+    /// rewriter hasn't reduced to a literal), which could be assigned NaN,
+    /// +inf, or -inf by a satisfying model. Rules like `inf + x -> inf` or
+    /// `x / inf -> 0` are only sound when the *other* operand is known to
+    /// be finite, not merely "not syntactically an infinity constant".
+    fn is_finite(&self, term: TermId, manager: &TermManager) -> bool {
+        let Some(t) = manager.get(term) else {
+            return false;
+        };
+        matches!(
+            t.kind,
+            TermKind::FpLit { .. } | TermKind::FpPlusZero { .. } | TermKind::FpMinusZero { .. }
+        )
+    }
+
     /// Get FP width info (eb, sb) from a term
     fn get_fp_width(&self, term: TermId, manager: &TermManager) -> Option<(u32, u32)> {
         let t = manager.get(term)?;
@@ -242,22 +259,25 @@ impl FpRewriter {
                 return RewriteResult::Rewritten(manager.mk_fp_nan(eb, sb));
             }
 
-            // inf + x → inf (for finite x)
-            if self.is_pos_inf(lhs, manager) && !self.is_infinity(rhs, manager) {
+            // inf + x → inf, but only when `x` is *provably* finite: a
+            // symbolic `x` could be assigned NaN (giving inf + NaN = NaN)
+            // by some model, so `!is_infinity(x)` alone is not sufficient
+            // (it's also true for any unresolved symbolic term).
+            if self.is_pos_inf(lhs, manager) && self.is_finite(rhs, manager) {
                 ctx.stats_mut().record_rule("fp_add_pos_inf");
                 return RewriteResult::Rewritten(lhs);
             }
-            if self.is_pos_inf(rhs, manager) && !self.is_infinity(lhs, manager) {
+            if self.is_pos_inf(rhs, manager) && self.is_finite(lhs, manager) {
                 ctx.stats_mut().record_rule("fp_add_pos_inf");
                 return RewriteResult::Rewritten(rhs);
             }
 
-            // -inf + x → -inf (for finite x)
-            if self.is_neg_inf(lhs, manager) && !self.is_infinity(rhs, manager) {
+            // -inf + x → -inf (same finiteness caveat as above).
+            if self.is_neg_inf(lhs, manager) && self.is_finite(rhs, manager) {
                 ctx.stats_mut().record_rule("fp_add_neg_inf");
                 return RewriteResult::Rewritten(lhs);
             }
-            if self.is_neg_inf(rhs, manager) && !self.is_infinity(lhs, manager) {
+            if self.is_neg_inf(rhs, manager) && self.is_finite(lhs, manager) {
                 ctx.stats_mut().record_rule("fp_add_neg_inf");
                 return RewriteResult::Rewritten(rhs);
             }
@@ -340,10 +360,12 @@ impl FpRewriter {
             return RewriteResult::Rewritten(manager.mk_fp_nan(eb, sb));
         }
 
-        // x/inf → 0 (for finite x)
+        // x/inf → 0, but only when `x` is *provably* finite (see
+        // `is_finite`'s doc comment): a symbolic `x` could be NaN or
+        // infinite under some model, in which case `x/inf` is NaN, not 0.
         if self.simplify_infinity
             && self.is_infinity(rhs, manager)
-            && !self.is_infinity(lhs, manager)
+            && self.is_finite(lhs, manager)
             && let Some((eb, sb)) = self.get_fp_width(lhs, manager)
         {
             ctx.stats_mut().record_rule("fp_div_by_inf");
@@ -721,6 +743,57 @@ mod tests {
 
         let t = manager.get(result.term()).expect("term should exist");
         assert!(matches!(t.kind, TermKind::True));
+    }
+
+    #[test]
+    fn test_fp_add_inf_plus_symbolic_not_folded_to_inf() {
+        // Regression test: `inf + x -> inf` used to fire for *any* `x` that
+        // wasn't syntactically an infinity/NaN literal, including a plain
+        // symbolic variable — unsound, since a model could assign that
+        // variable NaN (inf + NaN = NaN, not inf).
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let fp_sort = manager.sorts.float_sort(8, 24);
+        let x = manager.mk_var("x", fp_sort);
+        let inf = manager.mk_fp_plus_infinity(8, 24);
+        let add = manager.mk_fp_add(RoundingMode::RNE, inf, x);
+
+        let result = rewriter.rewrite(add, &mut ctx, &mut manager);
+        assert!(
+            !result.was_rewritten(),
+            "inf + <symbolic> must not be folded to inf"
+        );
+    }
+
+    #[test]
+    fn test_fp_add_inf_plus_finite_literal_folds_to_inf() {
+        // The rule must still fire for a genuinely finite operand.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let inf = manager.mk_fp_plus_infinity(8, 24);
+        let finite = manager.mk_fp_plus_zero(8, 24);
+        let add = manager.mk_fp_add(RoundingMode::RNE, inf, finite);
+
+        let result = rewriter.rewrite(add, &mut ctx, &mut manager);
+        assert!(result.was_rewritten());
+        assert_eq!(result.term(), inf);
+    }
+
+    #[test]
+    fn test_fp_div_symbolic_by_inf_not_folded_to_zero() {
+        // Regression test: `x/inf -> 0` used to fire for any symbolic `x`.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let fp_sort = manager.sorts.float_sort(8, 24);
+        let x = manager.mk_var("x", fp_sort);
+        let inf = manager.mk_fp_plus_infinity(8, 24);
+        let div = manager.mk_fp_div(RoundingMode::RNE, x, inf);
+
+        let result = rewriter.rewrite(div, &mut ctx, &mut manager);
+        assert!(
+            !result.was_rewritten(),
+            "<symbolic>/inf must not be folded to 0"
+        );
     }
 
     #[test]

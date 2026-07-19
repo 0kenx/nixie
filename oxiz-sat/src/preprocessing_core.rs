@@ -59,6 +59,13 @@ pub struct Preprocessor {
     eliminated: HashSet<Var>,
     /// Clauses to remove
     removed_clauses: HashSet<ClauseId>,
+    /// Pure literals whose clauses were removed by [`Self::pure_literal_elimination`].
+    ///
+    /// Deleting a pure literal's clauses is only satisfiability-preserving if the
+    /// literal is fixed to its satisfying polarity in the reconstructed model;
+    /// otherwise the reported model can falsify a deleted (but still asserted)
+    /// original clause. The caller must apply these to the model.
+    eliminated_pure_literals: Vec<Lit>,
 }
 
 impl Preprocessor {
@@ -69,7 +76,16 @@ impl Preprocessor {
             occurrences: OccurrenceList::new(num_vars),
             eliminated: HashSet::new(),
             removed_clauses: HashSet::new(),
+            eliminated_pure_literals: Vec::new(),
         }
+    }
+
+    /// Pure literals recorded during the last (and any prior) call to
+    /// [`Self::pure_literal_elimination`]. Each must be fixed to its polarity
+    /// (true) in the reconstructed model so the deleted clauses stay satisfied.
+    #[must_use]
+    pub fn eliminated_pure_literals(&self) -> &[Lit] {
+        &self.eliminated_pure_literals
     }
 
     /// Build occurrence lists from clause database
@@ -217,6 +233,7 @@ impl Preprocessor {
 
         // Remove clauses containing pure literals
         for lit in pure_literals {
+            let mut removed_any = false;
             for &clause_id in self.occurrences.get(lit).iter() {
                 if !self.removed_clauses.contains(&clause_id)
                     && let Some(clause) = clauses.get_mut(clause_id)
@@ -226,7 +243,13 @@ impl Preprocessor {
                     clause.deleted = true;
                     self.removed_clauses.insert(clause_id);
                     eliminated += 1;
+                    removed_any = true;
                 }
+            }
+            // Record the pure literal so the caller can fix it to `true` in the
+            // reconstructed model, keeping the deleted clauses satisfied.
+            if removed_any {
+                self.eliminated_pure_literals.push(lit);
             }
         }
 

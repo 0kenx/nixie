@@ -79,17 +79,47 @@ impl UnsatCore {
             .any(|a| a.name.as_deref() == Some(name))
     }
 
-    /// Minimize the core by removing redundant assertions
-    /// This is a placeholder - actual minimization requires a solver
+    /// Deduplicate the core by removing repeated assertions.
+    ///
+    /// This does *not* attempt to shrink the core further (that requires a
+    /// solver to re-check unsatisfiability after each removal — see
+    /// [`Self::minimize_with`]); it only drops assertions that name/term
+    /// the exact same [`TermId`] as one already kept.
     pub fn minimize(&mut self) {
-        // In a real implementation, this would:
-        // 1. Try to remove each assertion one at a time
-        // 2. Check if the remaining set is still unsat
-        // 3. If yes, keep the assertion removed
-        // 4. If no, restore the assertion
-        // For now, we just deduplicate
         let mut seen = FxHashSet::default();
         self.assertions.retain(|a| seen.insert(a.term));
+    }
+
+    /// Minimize the core via deletion-based MUS extraction, using
+    /// `is_unsat` to re-check satisfiability after each tentative removal.
+    ///
+    /// For each assertion (in turn): tentatively remove it, ask `is_unsat`
+    /// whether the remaining assertions are still unsatisfiable, and keep
+    /// it removed only if so; otherwise restore it. The result is a subset
+    /// of the original core that is still reported unsatisfiable by
+    /// `is_unsat` and from which no single further assertion can be
+    /// dropped without losing unsatisfiability (a "delta-minimal" — though
+    /// not necessarily globally minimum-cardinality — unsat core).
+    ///
+    /// Also deduplicates repeated assertions first (see [`Self::minimize`]),
+    /// since a duplicate is trivially redundant regardless of what
+    /// `is_unsat` would say.
+    pub fn minimize_with(&mut self, is_unsat: impl Fn(&[TermId]) -> bool) {
+        self.minimize();
+
+        let mut i = 0;
+        while i < self.assertions.len() {
+            let removed = self.assertions.remove(i);
+            let remaining_terms = self.term_ids();
+            if is_unsat(&remaining_terms) {
+                // Still unsat without `removed`: drop it for good, don't
+                // advance `i` (the next element has shifted into position `i`).
+            } else {
+                // Needed for unsatisfiability: put it back and move on.
+                self.assertions.insert(i, removed);
+                i += 1;
+            }
+        }
     }
 }
 

@@ -12,6 +12,7 @@
 
 import * as vscode from "vscode";
 import * as cp from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import {
   LanguageClient,
@@ -298,6 +299,26 @@ function getConfig<T>(key: string, defaultValue: T): T {
 }
 
 /**
+ * Check whether `filePath` exists and is executable.
+ *
+ * POSIX has a real executable bit, checked via `fs.accessSync(..., X_OK)`.
+ * Windows has no such concept for arbitrary files -- executability there is
+ * conferred by extension (`.exe`, `.cmd`, ...) -- so existence is the only
+ * meaningful check on that platform.
+ */
+function isExecutableFile(filePath: string): boolean {
+  try {
+    if (process.platform === "win32") {
+      return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+    }
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Find oxiz executable path
  */
 function findOxizPath(): string {
@@ -308,6 +329,15 @@ function findOxizPath(): string {
     return configPath;
   }
 
+  // `test -x` (used below to previously implement this check) is a Unix
+  // shell builtin with no equivalent `cmd.exe`/PowerShell command, so on
+  // Windows every `cp.execSync` call here always threw and workspace-local
+  // builds were silently never found -- it always fell through to searching
+  // PATH. Use Node's own `fs` APIs instead, which work identically on every
+  // platform `vscode` supports, and account for the platform-specific binary
+  // name while at it.
+  const binaryName = process.platform === "win32" ? "oxiz.exe" : "oxiz";
+
   // Check workspace for local build
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (workspaceFolders) {
@@ -316,21 +346,20 @@ function findOxizPath(): string {
         folder.uri.fsPath,
         "target",
         "release",
-        "oxiz"
+        binaryName
       );
-      try {
-        cp.execSync(`test -x "${localPath}"`);
+      if (isExecutableFile(localPath)) {
         return localPath;
-      } catch {
-        // Not found, continue
       }
 
-      const debugPath = path.join(folder.uri.fsPath, "target", "debug", "oxiz");
-      try {
-        cp.execSync(`test -x "${debugPath}"`);
+      const debugPath = path.join(
+        folder.uri.fsPath,
+        "target",
+        "debug",
+        binaryName
+      );
+      if (isExecutableFile(debugPath)) {
         return debugPath;
-      } catch {
-        // Not found, continue
       }
     }
   }

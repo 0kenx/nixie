@@ -53,7 +53,8 @@ use crate::euf::EufSolver;
 use crate::lru_cache::LruCache;
 #[allow(unused_imports)]
 use crate::prelude::*;
-use crate::theory::{Theory, TheoryId, TheoryResult};
+use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
+use num_rational::Rational64;
 use oxiz_core::ast::TermId;
 use oxiz_core::error::Result;
 
@@ -397,25 +398,61 @@ impl TheoryCombiner {
         }
     }
 
-    /// Extract the arrangement of shared variables from the arithmetic model
+    /// Extract the arrangement of shared variables from the arithmetic model.
+    ///
+    /// This used to unconditionally assert a disequality for EVERY pair of
+    /// shared variables regardless of their actual arithmetic values ("for
+    /// now, assume they're different"), fabricating a spurious `!=` even
+    /// when the arithmetic model gives two shared variables the SAME
+    /// value. Asserting that fabricated disequality into EUF could
+    /// conflict with an equality EUF independently derives (e.g. via
+    /// congruence), producing a wrong `Unsat` that has nothing to do with
+    /// the actual problem. The arrangement must instead reflect what the
+    /// arithmetic model actually says: variables with the same value are
+    /// equal, variables with different values are disequal.
     fn extract_arrangement_from_arith(&self) -> EqualityArrangement {
         let mut arrangement = EqualityArrangement::new();
 
-        // Get values of all shared variables in the arithmetic model
         let shared_vars: Vec<TermId> = self.shared_vars.iter().copied().collect();
 
-        // Compare all pairs to determine equalities/disequalities
-        for i in 0..shared_vars.len() {
-            for j in (i + 1)..shared_vars.len() {
-                let vi = shared_vars[i];
-                let vj = shared_vars[j];
-
-                // In a full implementation, we would query the arithmetic model
-                // to determine if vi == vj
-                // For now, assume they're different (conservative)
-                arrangement.add_disequality(vi, vj);
+        // Group shared variables by their actual arithmetic-model value so
+        // same-value pairs become equalities and different-value pairs
+        // become disequalities -- the arrangement must partition the
+        // variables consistently with the model, not assume everything is
+        // pairwise distinct.
+        let mut by_value: FxHashMap<Rational64, Vec<TermId>> = FxHashMap::default();
+        let mut unvalued: Vec<TermId> = Vec::new();
+        for &v in &shared_vars {
+            match self.arith.value(v) {
+                Some(val) => by_value.entry(val).or_default().push(v),
+                // A shared variable the arithmetic theory has no value for
+                // (e.g. not actually interned there) cannot be honestly
+                // arranged -- skip it rather than guessing.
+                None => unvalued.push(v),
             }
         }
+
+        // Same value: equal.
+        for group in by_value.values() {
+            for w in group.windows(2) {
+                arrangement.add_equality(w[0], w[1]);
+            }
+        }
+
+        // Different values: disequal. Compare one representative per
+        // value-group (transitively, everything in one group is already
+        // asserted equal to the others in that group).
+        let representatives: Vec<TermId> = by_value
+            .values()
+            .filter_map(|group| group.first().copied())
+            .collect();
+        for i in 0..representatives.len() {
+            for j in (i + 1)..representatives.len() {
+                arrangement.add_disequality(representatives[i], representatives[j]);
+            }
+        }
+
+        let _ = unvalued; // Intentionally excluded from the arrangement (see above).
 
         arrangement
     }
@@ -500,11 +537,34 @@ impl TheoryCombiner {
                 self.euf.merge(node_a, node_b, TermId::new(0))?;
             }
 
-            // Propagate to arithmetic if it didn't originate there
-            // (Arithmetic equalities are handled via bounds: x = y means x <= y and x >= y)
+            // Propagate to arithmetic if it didn't originate there. This
+            // used to be a no-op ("would be implemented here"), so an
+            // equality EUF (or a caller) discovered between two shared
+            // variables never actually reached the simplex -- arithmetic
+            // stayed unaware of it and could derive a model inconsistent
+            // with it. `notify_equality` (via `TheoryCombination`) encodes
+            // `a = b` as `a <= b AND a >= b` in the simplex, exactly the
+            // real Nelson-Oppen propagation direction this theory needs.
+            //
+            // `notify_equality` returning `false` is ambiguous by the
+            // trait's own design (see `ArithSolver`/`BvSolver`'s impls): it
+            // means EITHER "not relevant to me, politely ignored" OR "both
+            // sides ARE mine and this equality genuinely conflicts". Only
+            // the second is an actual cross-theory conflict; `is_relevant`
+            // on both terms distinguishes the two.
             if source != TheoryId::LRA && source != TheoryId::LIA {
-                // Arithmetic propagation would be implemented here
-                // For now, we assume the caller handles arithmetic constraints directly
+                let both_relevant = self.arith.is_relevant(a) && self.arith.is_relevant(b);
+                let accepted = self.arith.notify_equality(EqualityNotification {
+                    lhs: a,
+                    rhs: b,
+                    reason: None,
+                });
+                if !accepted && both_relevant {
+                    // Arithmetic already knew about both terms and still
+                    // rejected the equality: a genuine cross-theory
+                    // conflict, not a fabricated one.
+                    return Ok(TheoryResult::Unsat(vec![a, b]));
+                }
             }
         }
 
@@ -536,64 +596,107 @@ impl TheoryCombiner {
     /// 3. Propagate new equalities to other theories
     /// 4. Repeat until fixed point or conflict
     fn check_nelson_oppen(&mut self) -> Result<TheoryResult> {
+        // The fixpoint loop must terminate. `extract_euf_equalities` re-reports
+        // every currently-equal shared pair on every call (it has no notion of
+        // "new since last round"), so without deduplication a single equal pair
+        // would set `changed = true` forever. We therefore track which canonical
+        // shared pairs have already been queued for propagation and only treat a
+        // genuinely new pair as progress. A hard iteration cap acts as a final
+        // safety net against any other non-converging propagation source.
         let mut changed = true;
+        let mut seen_pairs: FxHashSet<(TermId, TermId)> = FxHashSet::default();
+
+        // Upper bound on rounds: for n shared variables there are at most
+        // n*(n-1)/2 distinct equalities to discover, so O(n^2) rounds suffice
+        // for the EUF-equality fixpoint. Add a constant floor for the
+        // propagation/theory-check interplay on small inputs.
+        let n = self.shared_vars.len();
+        let max_iterations = n.saturating_mul(n).saturating_add(16);
+        let mut iterations = 0usize;
 
         while changed {
             changed = false;
 
-            // Check EUF
+            iterations += 1;
+            if iterations > max_iterations {
+                // Fixpoint did not converge within the theoretical bound.
+                // Report Unknown rather than spinning forever: soundness demands
+                // we never fabricate Sat from a truncated search.
+                return Ok(TheoryResult::Unknown);
+            }
+
+            // Check EUF. `TheoryResult::Propagate` carries `(literal,
+            // reasons)` pairs -- propositions EUF wants asserted, NOT
+            // equalities between two terms -- so it must not be
+            // (mis)treated as an equality source (previously this pushed
+            // `(lit, lit, EUF)`, a trivially-true self-equality that wasted
+            // propagation rounds and inflated `equalities_propagated` with
+            // no-ops). The actual EUF-discovered equalities between shared
+            // variables come from `extract_euf_equalities` below, which
+            // genuinely compares distinct shared-variable pairs via the
+            // E-graph's union-find.
             match self.euf.check()? {
-                TheoryResult::Sat => {}
+                TheoryResult::Sat | TheoryResult::Propagate(_) => {}
                 TheoryResult::Unsat(reason) => {
                     return Ok(TheoryResult::Unsat(reason));
-                }
-                TheoryResult::Propagate(props) => {
-                    for (lit, _reason) in props {
-                        // Extract equalities from propagations
-                        // This is simplified - a full implementation would parse the term
-                        self.pending_equalities.push((lit, lit, TheoryId::EUF));
-                        changed = true;
-                    }
                 }
                 TheoryResult::Unknown => {
                     return Ok(TheoryResult::Unknown);
                 }
             }
 
-            // Check arithmetic
+            // Check arithmetic. Same reasoning as EUF above: `Propagate`
+            // is not an equality source. Arithmetic's genuine
+            // Nelson-Oppen equalities come from its `TheoryCombination`
+            // implementation (`get_shared_equalities`), which does real
+            // model-based extraction with entailment verification --
+            // unlike the old `(lit, lit)` self-equality placeholder.
             match self.arith.check()? {
-                TheoryResult::Sat => {}
+                TheoryResult::Sat | TheoryResult::Propagate(_) => {}
                 TheoryResult::Unsat(reason) => {
                     return Ok(TheoryResult::Unsat(reason));
-                }
-                TheoryResult::Propagate(props) => {
-                    for (lit, _reason) in props {
-                        self.pending_equalities.push((lit, lit, TheoryId::LRA));
-                        changed = true;
-                    }
                 }
                 TheoryResult::Unknown => {
                     return Ok(TheoryResult::Unknown);
                 }
             }
+            let arith_theory_id = self.arith.id();
+            for eq in self.arith.get_shared_equalities() {
+                if !self.shared_vars.contains(&eq.lhs) || !self.shared_vars.contains(&eq.rhs) {
+                    continue;
+                }
+                if seen_pairs.insert(Self::canonical_pair(eq.lhs, eq.rhs)) {
+                    self.pending_equalities
+                        .push((eq.lhs, eq.rhs, arith_theory_id));
+                    changed = true;
+                }
+            }
 
-            // Propagate any new equalities
+            // Propagate any new equalities (only mark progress if there was work)
             if !self.pending_equalities.is_empty() {
                 self.propagate()?;
                 changed = true;
             }
 
-            // Check for new EUF equalities between shared variables
+            // Check for new EUF equalities between shared variables. Only pairs
+            // not previously queued count as progress, otherwise the same set of
+            // equal pairs would be re-extracted indefinitely.
             let new_euf_equalities = self.extract_euf_equalities();
-            if !new_euf_equalities.is_empty() {
-                for (a, b) in new_euf_equalities {
+            for (a, b) in new_euf_equalities {
+                if seen_pairs.insert(Self::canonical_pair(a, b)) {
                     self.pending_equalities.push((a, b, TheoryId::EUF));
+                    changed = true;
                 }
-                changed = true;
             }
         }
 
         Ok(TheoryResult::Sat)
+    }
+
+    /// Canonicalize an unordered pair of terms so `(a, b)` and `(b, a)` map to
+    /// the same key for deduplication.
+    fn canonical_pair(a: TermId, b: TermId) -> (TermId, TermId) {
+        if a.raw() <= b.raw() { (a, b) } else { (b, a) }
     }
 
     /// Check using model-based theory combination
@@ -602,6 +705,21 @@ impl TheoryCombiner {
     /// 1. Gets a model from one theory (e.g., EUF)
     /// 2. Checks if other theories accept this arrangement
     /// 3. If not, learns a blocking clause and tries another arrangement
+    ///
+    /// Known limitations (honest, not silently wrong):
+    /// - Only the arrangement's EQUALITIES are asserted into arithmetic
+    ///   (via `notify_equality`, encoding `a = b` as bounds). Arithmetic
+    ///   has no API for asserting a DISEQUALITY (that requires a
+    ///   disjunctive case-split -- `a < b OR a > b` -- which this crate's
+    ///   `ArithSolver` does not yet expose), so an inconsistency that only
+    ///   shows up through a disequality the EUF arrangement demands is not
+    ///   caught here.
+    /// - This checks exactly ONE arrangement per call rather than
+    ///   systematically searching alternative arrangements on conflict (the
+    ///   literature's full "model-based theory combination" backtracks
+    ///   over arrangements); the cached lemma at least prevents the SAME
+    ///   arrangement from being retried, but does not drive EUF toward a
+    ///   different one.
     fn check_model_based(&mut self) -> Result<TheoryResult> {
         // First check EUF for consistency
         match self.euf.check()? {
@@ -621,16 +739,35 @@ impl TheoryCombiner {
         // Check if arithmetic accepts this arrangement
         self.push();
 
-        // Add the arrangement as constraints to arithmetic
-        for (a, b) in &arrangement.equalities {
-            // Would assert a = b in arithmetic
-            // For now, we skip this as it requires more integration
-            let _ = (a, b);
-        }
-
-        for (a, b) in &arrangement.disequalities {
-            // Would assert a != b in arithmetic
-            let _ = (a, b);
+        // Actually assert the arrangement's equalities into arithmetic
+        // (previously a no-op: `let _ = (a, b);`, so arithmetic's model
+        // could silently disagree with EUF's about shared variables and
+        // this function would still report `Sat`). If arithmetic itself
+        // rejects one of these equalities outright, that IS the genuine,
+        // correctly-attributed conflict -- report it directly rather than
+        // going on to call `check()` and blaming whatever THAT finds on
+        // this arrangement.
+        for &(a, b) in &arrangement.equalities {
+            // As in `propagate()`: `notify_equality` returning `false`
+            // means either "not relevant" (both sides unknown to
+            // arithmetic -- not a conflict) or a genuine rejection (both
+            // sides ARE known and still incompatible). Only the latter is
+            // an actual conflict.
+            let both_relevant = self.arith.is_relevant(a) && self.arith.is_relevant(b);
+            let accepted = self.arith.notify_equality(EqualityNotification {
+                lhs: a,
+                rhs: b,
+                reason: None,
+            });
+            if !accepted && both_relevant {
+                self.pop();
+                self.cache_lemma(TheoryLemma {
+                    assumptions: vec![a, b],
+                    conclusion: vec![],
+                    theory: self.arith.id(),
+                });
+                return Ok(TheoryResult::Unsat(vec![a, b]));
+            }
         }
 
         let arith_result = self.arith.check()?;
@@ -643,7 +780,7 @@ impl TheoryCombiner {
                 self.cache_lemma(TheoryLemma {
                     assumptions: arrangement.equalities.iter().map(|(a, _)| *a).collect(),
                     conclusion: vec![],
-                    theory: TheoryId::LRA,
+                    theory: self.arith.id(),
                 });
                 Ok(TheoryResult::Unsat(reason))
             }
@@ -883,53 +1020,99 @@ impl TheoryCombiner {
     ///
     /// Useful for debugging and ensuring model correctness.
     #[must_use]
-    pub fn verify_model(&self, _model: &[(TermId, TermId)]) -> bool {
-        // In a full implementation:
-        // 1. For each shared variable, check all theories agree on its value
-        // 2. For each theory, verify the model satisfies all constraints
-        // 3. Check all propagated equalities hold
+    pub fn verify_model(&self, model: &[(TermId, TermId)]) -> bool {
+        // Cross-theory consistency check: for every `(term, representative)`
+        // pair the model claims are equal, confirm that every component
+        // theory which actually knows about BOTH terms agrees they are
+        // equal. This does not (yet) re-check theory-internal constraint
+        // satisfaction beyond what `EufSolver`/`ArithSolver` expose here,
+        // so it is not a complete verifier, but it is a real, sound check
+        // rather than an unconditional `true` that could never catch a
+        // genuinely inconsistent model.
+        for &(term, rep) in model {
+            if term == rep {
+                continue;
+            }
 
-        // For now, conservatively return true
+            if let (Some(term_node), Some(rep_node)) =
+                (self.euf.term_to_node(term), self.euf.term_to_node(rep))
+                && !self.euf.are_equal_immutable(term_node, rep_node)
+            {
+                return false;
+            }
+
+            if let (Some(term_val), Some(rep_val)) = (self.arith.value(term), self.arith.value(rep))
+                && term_val != rep_val
+            {
+                return false;
+            }
+        }
         true
     }
 
     /// Complete a partial model by assigning values to all variables
     ///
-    /// Given a partial model (some variables assigned), complete it by:
-    /// 1. Propagating implied equalities
-    /// 2. Assigning default values to unassigned variables
-    /// 3. Ensuring all constraints are satisfied
+    /// Given a partial model (some variables assigned), a full
+    /// implementation would:
+    /// 1. Identify all unassigned shared variables
+    /// 2. For each theory, get theory-specific assignments
+    /// 3. Propagate equalities to ensure consistency
+    /// 4. Check for conflicts and backtrack if needed
     ///
-    /// Returns None if the partial model cannot be completed.
+    /// None of that is implemented yet: this is an identity pass-through
+    /// (the input is returned unchanged, never `None`), which is honest
+    /// about doing no completion work but means callers must not treat a
+    /// `Some` result as evidence the model is actually complete or
+    /// conflict-checked.
     pub fn complete_model(&self, partial: Vec<(TermId, TermId)>) -> Option<Vec<(TermId, TermId)>> {
-        let complete = partial;
-
-        // In a full implementation:
-        // 1. Identify all unassigned shared variables
-        // 2. For each theory, get theory-specific assignments
-        // 3. Propagate equalities to ensure consistency
-        // 4. Check for conflicts and backtrack if needed
-
-        // For now, just return the input as-is
-        Some(complete)
+        Some(partial)
     }
 
-    /// Extract variable assignments from the model
+    /// Extract variable assignments from the model.
     ///
-    /// Converts the equality-based model representation into a map
-    /// from variables to their canonical representatives.
+    /// Converts the equality-based model representation (a list of
+    /// `(term, term)` pairs asserting equality) into a map from every term
+    /// mentioned to its canonical representative, via union-find over the
+    /// input pairs. Two terms connected directly OR TRANSITIVELY by the
+    /// model's equalities map to the same representative.
     #[must_use]
     pub fn extract_assignments(&self, model: &[(TermId, TermId)]) -> FxHashMap<TermId, TermId> {
-        let mut assignments = FxHashMap::default();
+        let mut parent: FxHashMap<TermId, TermId> = FxHashMap::default();
 
-        // Build equivalence classes from equalities
-        for &(a, b) in model {
-            // In a simplified implementation, just map each term to itself
-            // A full implementation would use union-find to compute canonical representatives
-            assignments.entry(a).or_insert(a);
-            assignments.entry(b).or_insert(b);
+        fn find(parent: &mut FxHashMap<TermId, TermId>, x: TermId) -> TermId {
+            let p = *parent.entry(x).or_insert(x);
+            if p == x {
+                return x;
+            }
+            let root = find(parent, p);
+            parent.insert(x, root);
+            root
         }
 
+        fn union(parent: &mut FxHashMap<TermId, TermId>, a: TermId, b: TermId) {
+            let ra = find(parent, a);
+            let rb = find(parent, b);
+            if ra != rb {
+                // Canonicalize on the smaller raw id for a deterministic
+                // representative regardless of union order.
+                if ra.raw() <= rb.raw() {
+                    parent.insert(rb, ra);
+                } else {
+                    parent.insert(ra, rb);
+                }
+            }
+        }
+
+        for &(a, b) in model {
+            union(&mut parent, a, b);
+        }
+
+        let keys: Vec<TermId> = parent.keys().copied().collect();
+        let mut assignments = FxHashMap::default();
+        for k in keys {
+            let root = find(&mut parent, k);
+            assignments.insert(k, root);
+        }
         assignments
     }
 
@@ -1206,6 +1389,31 @@ mod tests {
 
         // Check should succeed with no constraints
         assert!(matches!(combiner.check(), Ok(TheoryResult::Sat)));
+    }
+
+    #[test]
+    fn test_nelson_oppen_terminates_with_equal_shared_pair() {
+        // Regression (audit theories-p3): once two shared variables are EUF-equal,
+        // extract_euf_equalities re-reports the pair every round. Without
+        // deduplication check() spins forever. This test must simply RETURN.
+        let mut combiner = TheoryCombiner::new();
+
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+        combiner.add_shared_var(a);
+        combiner.add_shared_var(b);
+
+        // Make a and b equal inside EUF.
+        let na = combiner.euf_mut().intern(a);
+        let nb = combiner.euf_mut().intern(b);
+        combiner
+            .euf_mut()
+            .merge(na, nb, TermId::new(0))
+            .expect("merge must not error");
+
+        // Must terminate (previously looped forever) and report Sat.
+        let result = combiner.check().expect("check must not error");
+        assert!(matches!(result, TheoryResult::Sat));
     }
 
     #[test]
@@ -1536,6 +1744,203 @@ mod tests {
         assert!(
             hits > 0 || misses > 0,
             "at least one stat should be nonzero"
+        );
+    }
+
+    // Audit regression (theories-combination): `extract_arrangement_from_arith`
+    // used to unconditionally assert a disequality for EVERY pair of shared
+    // variables ("for now, assume they're different"), regardless of their
+    // actual arithmetic values. It must instead partition shared variables
+    // by their real arithmetic-model value: same value -> equality,
+    // different value -> disequality.
+    #[test]
+    fn audit_extract_arrangement_reflects_arithmetic_values() {
+        let mut combiner = TheoryCombiner::new();
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let z = TermId::new(3);
+        combiner.add_shared_var(x);
+        combiner.add_shared_var(y);
+        combiner.add_shared_var(z);
+
+        combiner.arith_mut().assert_eq(
+            &[(x, Rational64::from_integer(1))],
+            Rational64::from_integer(5),
+            TermId::new(10),
+        );
+        combiner.arith_mut().assert_eq(
+            &[(y, Rational64::from_integer(1))],
+            Rational64::from_integer(5),
+            TermId::new(11),
+        );
+        combiner.arith_mut().assert_eq(
+            &[(z, Rational64::from_integer(1))],
+            Rational64::from_integer(7),
+            TermId::new(12),
+        );
+        combiner
+            .arith_mut()
+            .check()
+            .expect("arithmetic check should succeed");
+
+        let arrangement = combiner.extract_arrangement_from_arith();
+
+        let has_pair = |pairs: &[(TermId, TermId)], p: TermId, q: TermId| {
+            pairs
+                .iter()
+                .any(|&(a, b)| (a == p && b == q) || (a == q && b == p))
+        };
+
+        assert!(
+            has_pair(&arrangement.equalities, x, y),
+            "x and y share the same arithmetic value (5) and must be arranged equal"
+        );
+        assert!(
+            !has_pair(&arrangement.disequalities, x, y),
+            "x and y must NOT be arranged disequal when they share a value \
+             (the old bug asserted every pair disequal unconditionally)"
+        );
+        assert!(
+            has_pair(&arrangement.disequalities, x, z)
+                || has_pair(&arrangement.disequalities, y, z),
+            "the value-7 group (z) must be arranged disequal from the value-5 group (x, y)"
+        );
+    }
+
+    // Audit regression (theories-combination): `propagate()` never actually
+    // forwarded an equality into arithmetic when it originated elsewhere
+    // ("Arithmetic propagation would be implemented here" -- a no-op). If
+    // arithmetic already has conflicting information about the two
+    // propagated terms, forwarding the equality must now surface that
+    // conflict instead of silently doing nothing.
+    #[test]
+    fn audit_propagate_forwards_equality_to_arithmetic() {
+        let mut combiner = TheoryCombiner::new();
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        combiner.add_shared_var(x);
+        combiner.add_shared_var(y);
+
+        // Both already known to arithmetic, with DIFFERENT values.
+        combiner.arith_mut().assert_eq(
+            &[(x, Rational64::from_integer(1))],
+            Rational64::from_integer(3),
+            TermId::new(10),
+        );
+        combiner.arith_mut().assert_eq(
+            &[(y, Rational64::from_integer(1))],
+            Rational64::from_integer(9),
+            TermId::new(11),
+        );
+
+        combiner.propagate_equality(x, y, TheoryId::EUF);
+        let result = combiner.propagate().expect("propagate must not error");
+        // `notify_equality` itself only ADDS the `x = y` constraint to the
+        // simplex (it does not re-run `check()`), so `propagate()` succeeding
+        // is expected here; the real assertion is that arithmetic actually
+        // received the constraint at all.
+        assert!(matches!(result, TheoryResult::Sat));
+
+        // Now that arithmetic actually has `x = y` (alongside the
+        // previously-asserted `x = 3` and `y = 9`), its own `check()` must
+        // find the resulting inconsistency. Before this fix, `propagate()`
+        // never forwarded the equality at all, so arithmetic would never
+        // have learned about it and this `check()` would incorrectly stay
+        // `Sat`.
+        let arith_result = combiner
+            .arith_mut()
+            .check()
+            .expect("arithmetic check must not error");
+        assert!(
+            matches!(arith_result, TheoryResult::Unsat(_)),
+            "arithmetic must detect x=3 & y=9 & x=y as inconsistent once the \
+             equality actually reaches the simplex; got {arith_result:?}"
+        );
+    }
+
+    // Audit regression (theories-combination): `propagate()`'s arithmetic
+    // forwarding must not treat "arithmetic doesn't know these terms" as a
+    // conflict (that would break the ordinary case of propagating a
+    // pure-EUF equality between terms arithmetic never interned).
+    #[test]
+    fn audit_propagate_ignores_terms_arithmetic_does_not_know() {
+        let mut combiner = TheoryCombiner::new();
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        combiner.add_shared_var(x);
+        combiner.add_shared_var(y);
+
+        combiner.propagate_equality(x, y, TheoryId::EUF);
+        let result = combiner.propagate().expect("propagate must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "propagating an equality between terms arithmetic never interned \
+             must not be treated as a conflict; got {result:?}"
+        );
+    }
+
+    // Audit regression (theories-combination): `extract_assignments` used
+    // to map every term trivially to itself, ignoring the equalities in
+    // `model` entirely. It must compute real union-find equivalence
+    // classes (including transitive equalities).
+    #[test]
+    fn audit_extract_assignments_uses_real_union_find() {
+        let combiner = TheoryCombiner::new();
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+        let c = TermId::new(3);
+
+        // a = b, b = c (transitively a = b = c).
+        let model = vec![(a, b), (b, c)];
+        let assignments = combiner.extract_assignments(&model);
+
+        assert_eq!(
+            assignments.get(&a),
+            assignments.get(&c),
+            "a and c must share a representative (transitively equal via b)"
+        );
+        assert_eq!(assignments.get(&a), assignments.get(&b));
+    }
+
+    // Audit regression (theories-combination): `verify_model` used to
+    // unconditionally return `true`. It must now actually check the
+    // model's claimed equalities against a component theory that knows
+    // about both terms.
+    #[test]
+    fn audit_verify_model_detects_euf_inconsistency() {
+        let mut combiner = TheoryCombiner::new();
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+
+        // EUF knows about both `a` and `b` but does NOT consider them
+        // equal (no merge performed).
+        let _ = combiner.euf_mut().intern(a);
+        let _ = combiner.euf_mut().intern(b);
+
+        let model = vec![(a, b)];
+        assert!(
+            !combiner.verify_model(&model),
+            "verify_model must reject a claimed equality EUF (which knows both terms) disagrees with"
+        );
+    }
+
+    #[test]
+    fn audit_verify_model_accepts_euf_confirmed_equality() {
+        let mut combiner = TheoryCombiner::new();
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+
+        let na = combiner.euf_mut().intern(a);
+        let nb = combiner.euf_mut().intern(b);
+        combiner
+            .euf_mut()
+            .merge(na, nb, TermId::new(99))
+            .expect("merge must not error");
+
+        let model = vec![(a, b)];
+        assert!(
+            combiner.verify_model(&model),
+            "verify_model must accept an equality EUF actually confirms"
         );
     }
 }

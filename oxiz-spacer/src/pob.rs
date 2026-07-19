@@ -5,9 +5,10 @@
 //!
 //! Reference: Z3's `muz/spacer/spacer_context.h` pob class.
 
-use crate::chc::PredId;
+use crate::chc::{ChcSystem, PredId};
 use crate::frames::LemmaId;
-use oxiz_core::TermId;
+use crate::smt::{SmtError, SmtSolver};
+use oxiz_core::{TermId, TermManager};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -436,14 +437,44 @@ impl PobQueue {
     }
 
     /// Check subsumption: is there a POB that subsumes the given state?
-    #[must_use]
-    pub fn is_subsumed(&self, pred: PredId, _post: TermId, level: u32) -> bool {
-        // A POB is subsumed if there's a closed POB at a higher level
-        // with a more general (subsuming) post-condition
-        // For now, simple check: any closed POB at higher level for same predicate
-        self.pobs
+    ///
+    /// Check whether `post` at `level` is subsumed by an already-closed
+    /// POB for the same predicate at an equal-or-higher level.
+    ///
+    /// A closed POB with post-condition `q` genuinely subsumes `post`
+    /// exactly when `post` implies `q` (`post ∧ ¬q` is UNSAT): every state
+    /// matching `post` also matches the already-blocked `q`, so whatever
+    /// blocked `q` already covers `post` too.
+    ///
+    /// This previously ignored `post` entirely (the parameter wasn't even
+    /// named -- `_post`) and reported *any* closed POB at a high-enough
+    /// level as a subsumer, regardless of whether its state had anything
+    /// to do with `post`. That would silently treat unrelated proof
+    /// obligations as already handled, which is unsound: it could cause a
+    /// genuinely reachable bad state to be skipped as "subsumed" by a
+    /// completely unrelated blocked state.
+    pub fn is_subsumed(
+        &self,
+        terms: &mut TermManager,
+        system: &ChcSystem,
+        pred: PredId,
+        post: TermId,
+        level: u32,
+    ) -> Result<bool, SmtError> {
+        for p in self
+            .pobs
             .iter()
-            .any(|p| p.pred == pred && p.is_closed() && p.level() >= level)
+            .filter(|p| p.pred == pred && p.is_closed() && p.level() >= level)
+        {
+            let not_q = terms.mk_not(p.post);
+            let mut smt = SmtSolver::new(terms, system);
+            // `is_blocked_by(not_q, post)` checks `not_q ∧ post` UNSAT,
+            // i.e. `post => p.post` is valid.
+            if smt.is_blocked_by(not_q, post)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Get the derivation trace from a POB to root
@@ -691,5 +722,73 @@ mod tests {
 
         let popped = manager.pop();
         assert_eq!(popped, Some(id1));
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression tests for the `sweep-backend-misc` triage sweep.
+    // -----------------------------------------------------------------------
+
+    /// `is_subsumed` used to ignore its `post` parameter entirely and
+    /// report *any* closed POB at a high-enough level as a subsumer. This
+    /// verifies it now performs a real semantic check: a closed POB only
+    /// subsumes `post` when `post` actually implies the closed POB's
+    /// state.
+    #[test]
+    fn test_is_subsumed_checks_actual_implication() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+        let pred = system.declare_predicate("SubsInv", [terms.sorts.int_sort]);
+
+        let x = terms.mk_var("subs_x", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let ninety_nine = terms.mk_int(99);
+        let five = terms.mk_int(5);
+        let neg_five = terms.mk_int(-5);
+
+        // A closed POB whose state is "x = 99": entirely unrelated to
+        // anything we'll query below.
+        let mut queue = PobQueue::new();
+        let unrelated_post = terms.mk_eq(x, ninety_nine);
+        let unrelated_id = queue.create(pred, unrelated_post, 2, 0);
+        queue.close(unrelated_id, LemmaId::new(0));
+
+        let query_post = terms.mk_eq(x, five);
+
+        // Only the unrelated closed POB exists so far: x=5 must NOT be
+        // reported as subsumed merely because *some* closed POB exists at
+        // this level (the old bug's exact failure mode).
+        let subsumed_by_unrelated = queue
+            .is_subsumed(&mut terms, &system, pred, query_post, 2)
+            .expect("SMT query should not error");
+        assert!(
+            !subsumed_by_unrelated,
+            "an unrelated closed POB (x=99) must not subsume x=5"
+        );
+
+        // Now add a closed POB whose state is the genuinely more general
+        // "x >= 0": x=5 implies x>=0, so it must now be subsumed.
+        let general_post = terms.mk_ge(x, zero);
+        let general_id = queue.create(pred, general_post, 2, 0);
+        queue.close(general_id, LemmaId::new(1));
+
+        let subsumed_by_general = queue
+            .is_subsumed(&mut terms, &system, pred, query_post, 2)
+            .expect("SMT query should not error");
+        assert!(
+            subsumed_by_general,
+            "x=5 implies the closed POB's x>=0, so it must be subsumed"
+        );
+
+        // x=-5 does NOT imply x>=0 and has nothing to do with x=99
+        // either, so it must not be considered subsumed by either closed
+        // POB.
+        let neg_query_post = terms.mk_eq(x, neg_five);
+        let neg_subsumed = queue
+            .is_subsumed(&mut terms, &system, pred, neg_query_post, 2)
+            .expect("SMT query should not error");
+        assert!(
+            !neg_subsumed,
+            "x=-5 is not implied by either closed POB's state"
+        );
     }
 }

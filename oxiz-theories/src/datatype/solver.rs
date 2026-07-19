@@ -7,6 +7,24 @@ use oxiz_core::ast::TermId;
 use oxiz_core::error::Result;
 use smallvec::SmallVec;
 
+/// Union-find find with iterative path halving.
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+/// Union-find union of the classes containing `a` and `b`.
+fn uf_union(parent: &mut [usize], a: usize, b: usize) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        parent[ra] = rb;
+    }
+}
+
 /// A field in a constructor
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
@@ -195,6 +213,26 @@ struct DtConstraint {
     reason: TermId,
 }
 
+/// An undo record on the datatype solver's mutation trail.
+///
+/// Every mutation to a map that outlives a single assertion (constructor tags,
+/// constructor/selector/recognizer applications, and negated-recognizer
+/// exclusions) is trailed so that `pop()` can restore the exact pre-scope state.
+/// Each entry stores the *previous* value of a key (`None` = key was absent).
+#[derive(Debug, Clone)]
+enum DtTrailEntry {
+    /// Previous `term_info` value for a term.
+    TermInfo(TermId, Option<DatatypeValue>),
+    /// Previous `constructor_apps` value for a term.
+    ConstructorApp(TermId, Option<(String, Vec<TermId>)>),
+    /// Previous `selector_apps` value for a term.
+    SelectorApp(TermId, Option<(String, TermId)>),
+    /// Previous `recognizer_apps` value for a term.
+    RecognizerApp(TermId, Option<(String, TermId)>),
+    /// Previous excluded-constructor list for a term.
+    Excluded(TermId, Option<Vec<(u32, TermId)>>),
+}
+
 /// Datatype Theory Solver
 #[derive(Debug)]
 pub struct DatatypeSolver {
@@ -210,8 +248,13 @@ pub struct DatatypeSolver {
     selector_apps: FxHashMap<TermId, (String, TermId)>,
     /// Recognizer applications: term -> (recognizer_name, argument)
     recognizer_apps: FxHashMap<TermId, (String, TermId)>,
+    /// Negated recognizers: term -> list of (excluded_constructor_tag, reason).
+    /// Asserting `not(is-C(t))` records that `t` cannot be constructed by `C`.
+    excluded_constructors: FxHashMap<TermId, Vec<(u32, TermId)>>,
     /// Context stack for push/pop
     context_stack: Vec<ContextState>,
+    /// Mutation trail for precise backtracking of non-constraint state.
+    trail: Vec<DtTrailEntry>,
     /// Shared equalities derived by the datatype theory for Nelson-Oppen combination.
     /// These include constructor injectivity equalities and recognizer propagations.
     shared_equalities: Vec<EqualityNotification>,
@@ -221,6 +264,8 @@ pub struct DatatypeSolver {
 #[derive(Debug, Clone)]
 struct ContextState {
     num_constraints: usize,
+    /// Trail length at the time of push; `pop()` unwinds back to here.
+    trail_len: usize,
 }
 
 impl Default for DatatypeSolver {
@@ -240,9 +285,57 @@ impl DatatypeSolver {
             constructor_apps: FxHashMap::default(),
             selector_apps: FxHashMap::default(),
             recognizer_apps: FxHashMap::default(),
+            excluded_constructors: FxHashMap::default(),
             context_stack: Vec::new(),
+            trail: Vec::new(),
             shared_equalities: Vec::new(),
         }
+    }
+
+    /// Record the previous `term_info` value for `term` on the trail, when a
+    /// context scope is active. Must be called *before* mutating the entry.
+    fn trail_term_info(&mut self, term: TermId) {
+        if self.context_stack.is_empty() {
+            return;
+        }
+        let prev = self.term_info.get(&term).cloned();
+        self.trail.push(DtTrailEntry::TermInfo(term, prev));
+    }
+
+    /// Record the previous `constructor_apps` value for `term` on the trail.
+    fn trail_constructor_app(&mut self, term: TermId) {
+        if self.context_stack.is_empty() {
+            return;
+        }
+        let prev = self.constructor_apps.get(&term).cloned();
+        self.trail.push(DtTrailEntry::ConstructorApp(term, prev));
+    }
+
+    /// Record the previous `selector_apps` value for `term` on the trail.
+    fn trail_selector_app(&mut self, term: TermId) {
+        if self.context_stack.is_empty() {
+            return;
+        }
+        let prev = self.selector_apps.get(&term).cloned();
+        self.trail.push(DtTrailEntry::SelectorApp(term, prev));
+    }
+
+    /// Record the previous `recognizer_apps` value for `term` on the trail.
+    fn trail_recognizer_app(&mut self, term: TermId) {
+        if self.context_stack.is_empty() {
+            return;
+        }
+        let prev = self.recognizer_apps.get(&term).cloned();
+        self.trail.push(DtTrailEntry::RecognizerApp(term, prev));
+    }
+
+    /// Record the previous excluded-constructor list for `term` on the trail.
+    fn trail_excluded(&mut self, term: TermId) {
+        if self.context_stack.is_empty() {
+            return;
+        }
+        let prev = self.excluded_constructors.get(&term).cloned();
+        self.trail.push(DtTrailEntry::Excluded(term, prev));
     }
 
     /// Register a datatype
@@ -258,12 +351,19 @@ impl DatatypeSolver {
 
     /// Register a term as a datatype value
     pub fn register_term(&mut self, term: TermId, datatype: &str) {
-        self.term_info.entry(term).or_insert_with(|| DatatypeValue {
+        if self.term_info.contains_key(&term) {
+            return;
+        }
+        self.trail_term_info(term);
+        self.term_info.insert(
             term,
-            datatype: datatype.to_string(),
-            constructor: None,
-            fields: SmallVec::new(),
-        });
+            DatatypeValue {
+                term,
+                datatype: datatype.to_string(),
+                constructor: None,
+                fields: SmallVec::new(),
+            },
+        );
     }
 
     /// Register a constructor application
@@ -277,25 +377,29 @@ impl DatatypeSolver {
 
         if let Some((sort_name, cons_tag)) = dt_info {
             self.register_term(result, &sort_name);
-            if let Some(tag) = cons_tag
-                && let Some(info) = self.term_info.get_mut(&result)
-            {
-                info.constructor = Some(tag);
-                info.fields = args.iter().map(|&t| Some(t)).collect();
+            if let Some(tag) = cons_tag {
+                self.trail_term_info(result);
+                if let Some(info) = self.term_info.get_mut(&result) {
+                    info.constructor = Some(tag);
+                    info.fields = args.iter().map(|&t| Some(t)).collect();
+                }
             }
         }
+        self.trail_constructor_app(result);
         self.constructor_apps
             .insert(result, (constructor.to_string(), args));
     }
 
     /// Register a selector application
     pub fn register_selector(&mut self, result: TermId, selector: &str, arg: TermId) {
+        self.trail_selector_app(result);
         self.selector_apps
             .insert(result, (selector.to_string(), arg));
     }
 
     /// Register a recognizer application
     pub fn register_recognizer(&mut self, result: TermId, recognizer: &str, arg: TermId) {
+        self.trail_recognizer_app(result);
         self.recognizer_apps
             .insert(result, (recognizer.to_string(), arg));
     }
@@ -327,18 +431,23 @@ impl DatatypeSolver {
         });
     }
 
+    /// Look up the tag of a constructor by name across all registered datatypes.
+    fn constructor_tag_of_name(&self, constructor: &str) -> Option<u32> {
+        self.find_datatype_for_constructor(constructor)
+            .and_then(|dt| dt.get_constructor(constructor))
+            .map(|c| c.tag)
+    }
+
     /// Assert that a term has a specific constructor
     pub fn assert_constructor(&mut self, term: TermId, constructor: &str) {
         // Extract constructor tag without holding borrow
-        let cons_tag = self
-            .find_datatype_for_constructor(constructor)
-            .and_then(|dt| dt.get_constructor(constructor))
-            .map(|c| c.tag);
+        let cons_tag = self.constructor_tag_of_name(constructor);
 
-        if let Some(tag) = cons_tag
-            && let Some(info) = self.term_info.get_mut(&term)
-        {
-            info.constructor = Some(tag);
+        if let Some(tag) = cons_tag {
+            self.trail_term_info(term);
+            if let Some(info) = self.term_info.get_mut(&term) {
+                info.constructor = Some(tag);
+            }
         }
     }
 
@@ -423,6 +532,28 @@ impl DatatypeSolver {
             return Some(conflict);
         }
 
+        // Check equality-class constructor conflicts: two constructor
+        // applications with different tags of the same datatype that end up in
+        // the same equivalence class (via transitive equalities) cannot be
+        // equal. This closes the `x = y ∧ y = C(..) ∧ x = D(..)` gap that the
+        // syntactic mutual-exclusivity check above misses.
+        if let Some(conflict) = self.check_equality_class_constructor_conflict() {
+            return Some(conflict);
+        }
+
+        // Check negated-recognizer exclusions: `not(is-C(t))` forbids `t` from
+        // being constructed by `C`.
+        if let Some(conflict) = self.check_excluded_constructors() {
+            return Some(conflict);
+        }
+
+        // Check acyclicity (the "occurs check" of inductive datatypes): no term
+        // may be a proper subterm of itself, e.g. `x = cons(h, x)` has no finite
+        // model.
+        if let Some(conflict) = self.check_acyclicity() {
+            return Some(conflict);
+        }
+
         // Check distinctness: different constructors => different values
         for constraint in &self.constraints {
             if constraint.is_eq {
@@ -480,6 +611,213 @@ impl DatatypeSolver {
         }
 
         None
+    }
+
+    /// Collect the reasons of every asserted equality constraint (deduplicated).
+    ///
+    /// Used as a conservative — but always sound — conflict explanation for the
+    /// class-based and acyclicity checks: the detected inconsistency depends on
+    /// the merges induced by these equalities, and a superset of a genuine
+    /// conflict core is still a valid conflict clause.
+    fn all_equality_reasons(&self) -> Vec<TermId> {
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        let mut out = Vec::new();
+        for c in &self.constraints {
+            if c.is_eq && seen.insert(c.reason) {
+                out.push(c.reason);
+            }
+        }
+        out
+    }
+
+    /// Build equivalence classes over all terms appearing in equality
+    /// constraints and constructor applications, merging along `is_eq`
+    /// constraints. Returns the term→index map and the union-find parent array.
+    fn build_equality_classes(&self) -> (FxHashMap<TermId, usize>, Vec<usize>) {
+        let mut idx: FxHashMap<TermId, usize> = FxHashMap::default();
+        let mut parent: Vec<usize> = Vec::new();
+
+        {
+            let mut intern = |t: TermId| {
+                if let Some(&i) = idx.get(&t) {
+                    i
+                } else {
+                    let i = parent.len();
+                    idx.insert(t, i);
+                    parent.push(i);
+                    i
+                }
+            };
+            for c in &self.constraints {
+                if c.is_eq {
+                    let _ = intern(c.lhs);
+                    let _ = intern(c.rhs);
+                }
+            }
+            for (t, (_, args)) in &self.constructor_apps {
+                let _ = intern(*t);
+                for a in args {
+                    let _ = intern(*a);
+                }
+            }
+        }
+
+        for c in &self.constraints {
+            if c.is_eq
+                && let (Some(&a), Some(&b)) = (idx.get(&c.lhs), idx.get(&c.rhs))
+            {
+                uf_union(&mut parent, a, b);
+            }
+        }
+
+        (idx, parent)
+    }
+
+    /// Detect two constructor applications with different tags (same datatype)
+    /// that share an equivalence class.
+    fn check_equality_class_constructor_conflict(&self) -> Option<Vec<TermId>> {
+        let (idx, mut parent) = self.build_equality_classes();
+
+        // Per class: the first (tag, datatype) witnessed by a member term.
+        let mut class_tag: FxHashMap<usize, (u32, String)> = FxHashMap::default();
+
+        for (&term, &i) in &idx {
+            let tag = match self.get_constructor_tag(term) {
+                Some(t) => t,
+                None => continue,
+            };
+            let datatype = match self.term_info.get(&term) {
+                Some(v) => v.datatype.clone(),
+                None => continue,
+            };
+            let rep = uf_find(&mut parent, i);
+            match class_tag.get(&rep) {
+                Some((prev_tag, prev_dt)) => {
+                    if *prev_dt == datatype && *prev_tag != tag {
+                        return Some(self.all_equality_reasons());
+                    }
+                }
+                None => {
+                    class_tag.insert(rep, (tag, datatype));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check negated-recognizer exclusions for conflicts.
+    fn check_excluded_constructors(&self) -> Option<Vec<TermId>> {
+        for (&arg, excl) in &self.excluded_constructors {
+            // The term is known to be a constructor whose tag is excluded.
+            if let Some(tag) = self.get_constructor_tag(arg) {
+                for (etag, ereason) in excl {
+                    if *etag == tag {
+                        return Some(vec![*ereason]);
+                    }
+                }
+            }
+
+            // Every constructor of the datatype has been excluded: unsatisfiable.
+            if let Some(dt) = self
+                .term_info
+                .get(&arg)
+                .and_then(|v| self.datatypes.get(&v.datatype))
+            {
+                let excluded_tags: FxHashSet<u32> = excl.iter().map(|(t, _)| *t).collect();
+                if !dt.constructors.is_empty()
+                    && dt
+                        .constructors
+                        .iter()
+                        .all(|c| excluded_tags.contains(&c.tag))
+                {
+                    return Some(excl.iter().map(|(_, r)| *r).collect());
+                }
+            }
+        }
+        None
+    }
+
+    /// Acyclicity (occurs) check: no datatype term may contain itself as a
+    /// proper subterm. Builds equivalence classes over equalities, then treats
+    /// each constructor application as a directed edge from its class to each
+    /// argument's class. A cycle in this class graph witnesses an infinite term
+    /// (e.g. `x = cons(h, x)`), which has no finite model.
+    fn check_acyclicity(&self) -> Option<Vec<TermId>> {
+        let (idx, mut parent) = self.build_equality_classes();
+        let n = parent.len();
+        if n == 0 {
+            return None;
+        }
+
+        // Resolve every representative first so the edge set is stable.
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (t, (_, args)) in &self.constructor_apps {
+            let ti = match idx.get(t) {
+                Some(&i) => i,
+                None => continue,
+            };
+            let rep_t = uf_find(&mut parent, ti);
+            for a in args {
+                if let Some(&ai) = idx.get(a) {
+                    let rep_a = uf_find(&mut parent, ai);
+                    adjacency[rep_t].push(rep_a);
+                }
+            }
+        }
+
+        // Iterative three-colour DFS cycle detection (0 = white, 1 = grey,
+        // 2 = black). A grey target on an out-edge is a back edge → cycle.
+        let mut color = vec![0u8; n];
+        let mut found_cycle = false;
+        'roots: for start in 0..n {
+            if color[start] != 0 {
+                continue;
+            }
+            let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+            color[start] = 1;
+            while let Some(&(node, ci)) = stack.last() {
+                if ci < adjacency[node].len() {
+                    let next = adjacency[node][ci];
+                    if let Some(top) = stack.last_mut() {
+                        top.1 = ci + 1;
+                    }
+                    match color[next] {
+                        1 => {
+                            found_cycle = true;
+                            break 'roots;
+                        }
+                        0 => {
+                            color[next] = 1;
+                            stack.push((next, 0));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    color[node] = 2;
+                    stack.pop();
+                }
+            }
+        }
+
+        if !found_cycle {
+            return None;
+        }
+
+        // Build the conflict explanation from the equalities that induced the
+        // merges. If the cycle is purely structural (a self-referential
+        // constructor application with no equalities), fall back to the offending
+        // application terms so the conflict is still non-empty.
+        let reasons = self.all_equality_reasons();
+        if reasons.is_empty() {
+            let apps: Vec<TermId> = self.constructor_apps.keys().copied().collect();
+            if apps.is_empty() {
+                // Should be unreachable given a cycle exists, but stay honest.
+                return None;
+            }
+            return Some(apps);
+        }
+        Some(reasons)
     }
 
     /// Generate theory propagations
@@ -549,9 +887,20 @@ impl Theory for DatatypeSolver {
         Ok(TheoryResult::Sat)
     }
 
-    fn assert_false(&mut self, _term: TermId) -> Result<TheoryResult> {
-        // Handle negated recognizer assertions
-        // This means the term is NOT of that constructor
+    fn assert_false(&mut self, term: TermId) -> Result<TheoryResult> {
+        // Handle negated recognizer assertions: `not(is-C(arg))` means `arg` is
+        // NOT constructed by `C`. Record the exclusion so later checks can detect
+        // conflicts (rather than silently dropping the constraint).
+        if let Some((rec_name, arg)) = self.recognizer_apps.get(&term).cloned() {
+            let cons_name = rec_name.strip_prefix("is-").unwrap_or(&rec_name);
+            if let Some(tag) = self.constructor_tag_of_name(cons_name) {
+                self.trail_excluded(arg);
+                self.excluded_constructors
+                    .entry(arg)
+                    .or_default()
+                    .push((tag, term));
+            }
+        }
         Ok(TheoryResult::Sat)
     }
 
@@ -571,12 +920,64 @@ impl Theory for DatatypeSolver {
     fn push(&mut self) {
         self.context_stack.push(ContextState {
             num_constraints: self.constraints.len(),
+            trail_len: self.trail.len(),
         });
     }
 
     fn pop(&mut self) {
         if let Some(state) = self.context_stack.pop() {
             self.constraints.truncate(state.num_constraints);
+
+            // Unwind the mutation trail in reverse, restoring each key's
+            // pre-scope value so constructor tags and application/exclusion maps
+            // do not leak across backtracking.
+            while self.trail.len() > state.trail_len {
+                let Some(entry) = self.trail.pop() else {
+                    break;
+                };
+                match entry {
+                    DtTrailEntry::TermInfo(term, prev) => match prev {
+                        Some(v) => {
+                            self.term_info.insert(term, v);
+                        }
+                        None => {
+                            self.term_info.remove(&term);
+                        }
+                    },
+                    DtTrailEntry::ConstructorApp(term, prev) => match prev {
+                        Some(v) => {
+                            self.constructor_apps.insert(term, v);
+                        }
+                        None => {
+                            self.constructor_apps.remove(&term);
+                        }
+                    },
+                    DtTrailEntry::SelectorApp(term, prev) => match prev {
+                        Some(v) => {
+                            self.selector_apps.insert(term, v);
+                        }
+                        None => {
+                            self.selector_apps.remove(&term);
+                        }
+                    },
+                    DtTrailEntry::RecognizerApp(term, prev) => match prev {
+                        Some(v) => {
+                            self.recognizer_apps.insert(term, v);
+                        }
+                        None => {
+                            self.recognizer_apps.remove(&term);
+                        }
+                    },
+                    DtTrailEntry::Excluded(term, prev) => match prev {
+                        Some(v) => {
+                            self.excluded_constructors.insert(term, v);
+                        }
+                        None => {
+                            self.excluded_constructors.remove(&term);
+                        }
+                    },
+                }
+            }
         }
     }
 
@@ -587,7 +988,9 @@ impl Theory for DatatypeSolver {
         self.constructor_apps.clear();
         self.selector_apps.clear();
         self.recognizer_apps.clear();
+        self.excluded_constructors.clear();
         self.context_stack.clear();
+        self.trail.clear();
         self.shared_equalities.clear();
     }
 
@@ -1213,6 +1616,224 @@ mod tests {
             matches!(result, Ok(TheoryResult::Sat)),
             "Expected SAT when different variables equal same constructor"
         );
+    }
+
+    #[test]
+    fn test_acyclicity_self_cons_is_unsat() {
+        // Regression (audit theories-p3): x = cons(h, x) has no finite model and
+        // must be reported UNSAT by the acyclicity (occurs) check.
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let x = TermId::new(1);
+        let head = TermId::new(2);
+        let cons = TermId::new(3);
+        let reason = TermId::new(100);
+
+        // cons(head, x)
+        solver.register_constructor(cons, "cons", vec![head, x]);
+        // x = cons(head, x)
+        solver.assert_eq(x, cons, reason);
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unsat(_)),
+            "cyclic term x = cons(h, x) must be UNSAT"
+        );
+    }
+
+    #[test]
+    fn test_acyclicity_acyclic_is_sat() {
+        // A finite well-founded term must remain SAT.
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let nil = TermId::new(1);
+        let head = TermId::new(2);
+        let cons = TermId::new(3);
+        let x = TermId::new(4);
+        let reason = TermId::new(100);
+
+        solver.register_constructor(nil, "nil", vec![]);
+        solver.register_constructor(cons, "cons", vec![head, nil]);
+        solver.assert_eq(x, cons, reason);
+
+        let result = solver.check().expect("check must not error");
+        assert!(matches!(result, TheoryResult::Sat));
+    }
+
+    #[test]
+    fn test_transitive_constructor_conflict() {
+        // Regression: x = y, y = Monday, x = Tuesday should be UNSAT even though
+        // no single variable is directly equated to two constructors.
+        let mut solver = DatatypeSolver::new();
+        let weekday = DatatypeDecl::enumeration("Weekday", &["Monday", "Tuesday"]);
+        solver.register_datatype(weekday);
+
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let monday = TermId::new(3);
+        let tuesday = TermId::new(4);
+        solver.register_constructor(monday, "Monday", vec![]);
+        solver.register_constructor(tuesday, "Tuesday", vec![]);
+
+        solver.assert_eq(x, y, TermId::new(100));
+        solver.assert_eq(y, monday, TermId::new(101));
+        solver.assert_eq(x, tuesday, TermId::new(102));
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unsat(_)),
+            "x=y ∧ y=Monday ∧ x=Tuesday must be UNSAT"
+        );
+    }
+
+    #[test]
+    fn test_pop_restores_constructor_tag() {
+        // Regression (audit theories-p3): a recognizer/constructor tag asserted
+        // inside a scope must not survive pop().
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let x = TermId::new(1);
+        let cons = TermId::new(2);
+        let head = TermId::new(3);
+        let tail = TermId::new(4);
+        solver.register_term(x, "List");
+        solver.register_constructor(cons, "cons", vec![head, tail]);
+
+        solver.push();
+        // Inside the scope: x is a cons.
+        solver.assert_constructor(x, "cons");
+        assert_eq!(
+            solver.get_constructor_tag(x),
+            solver.get_constructor_tag(cons)
+        );
+        solver.pop();
+
+        // After pop, x must no longer carry the cons tag.
+        assert_eq!(
+            solver.get_constructor_tag(x),
+            None,
+            "constructor tag must be undone by pop()"
+        );
+    }
+
+    #[test]
+    fn test_pop_restores_constructor_app() {
+        // A constructor application registered inside a scope must be removed by
+        // pop() so later checks do not see leaked apps.
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let cons = TermId::new(2);
+        let head = TermId::new(3);
+        let tail = TermId::new(4);
+
+        solver.push();
+        solver.register_constructor(cons, "cons", vec![head, tail]);
+        assert!(solver.get_constructor_tag(cons).is_some());
+        solver.pop();
+
+        assert_eq!(
+            solver.get_constructor_tag(cons),
+            None,
+            "constructor app must be undone by pop()"
+        );
+        assert!(!solver.is_datatype_term(cons));
+    }
+
+    #[test]
+    fn test_negated_recognizer_all_excluded_is_unsat() {
+        // not(is-nil(x)) ∧ not(is-cons(x)) excludes every constructor of List,
+        // so x has no possible value -> UNSAT.
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let x = TermId::new(1);
+        solver.register_term(x, "List");
+
+        let is_nil = TermId::new(10);
+        let is_cons = TermId::new(11);
+        solver.register_recognizer(is_nil, "is-nil", x);
+        solver.register_recognizer(is_cons, "is-cons", x);
+
+        solver
+            .assert_false(is_nil)
+            .expect("assert_false must not error");
+        solver
+            .assert_false(is_cons)
+            .expect("assert_false must not error");
+
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unsat(_)),
+            "excluding all constructors of x must be UNSAT"
+        );
+    }
+
+    #[test]
+    fn test_negated_recognizer_conflicts_with_constructor() {
+        // is-cons asserted true (x is cons) together with not(is-cons(x)) is a
+        // direct contradiction.
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let x = TermId::new(1);
+        solver.register_term(x, "List");
+
+        let is_cons_pos = TermId::new(10);
+        let is_cons_neg = TermId::new(11);
+        solver.register_recognizer(is_cons_pos, "is-cons", x);
+        solver.register_recognizer(is_cons_neg, "is-cons", x);
+
+        // Assert is-cons(x) true -> x has constructor cons.
+        solver
+            .assert_true(is_cons_pos)
+            .expect("assert_true must not error");
+        // Assert not(is-cons(x)) -> x excludes cons.
+        solver
+            .assert_false(is_cons_neg)
+            .expect("assert_false must not error");
+
+        let result = solver.check().expect("check must not error");
+        assert!(matches!(result, TheoryResult::Unsat(_)));
+    }
+
+    #[test]
+    fn test_negated_recognizer_undone_by_pop() {
+        // A negated recognizer asserted inside a scope must not constrain the
+        // term after pop().
+        let mut solver = DatatypeSolver::new();
+        solver.register_datatype(DatatypeDecl::list("Int"));
+
+        let x = TermId::new(1);
+        solver.register_term(x, "List");
+        let is_nil = TermId::new(10);
+        let is_cons = TermId::new(11);
+        solver.register_recognizer(is_nil, "is-nil", x);
+        solver.register_recognizer(is_cons, "is-cons", x);
+
+        solver
+            .assert_false(is_nil)
+            .expect("assert_false must not error");
+
+        solver.push();
+        solver
+            .assert_false(is_cons)
+            .expect("assert_false must not error");
+        // Both constructors excluded inside the scope -> UNSAT.
+        assert!(matches!(
+            solver.check().expect("check must not error"),
+            TheoryResult::Unsat(_)
+        ));
+        solver.pop();
+
+        // After pop, only is-nil is excluded -> SAT (x could be cons).
+        assert!(matches!(
+            solver.check().expect("check must not error"),
+            TheoryResult::Sat
+        ));
     }
 
     #[test]

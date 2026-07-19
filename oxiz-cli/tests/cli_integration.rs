@@ -70,18 +70,33 @@ fn test_simple_sat_problem() {
 
     fs::remove_file(temp_file).ok();
 
-    // Check that the command executed without crashing
-    // Note: The actual result depends on oxiz-solver implementation
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should not crash
+    // `(assert (= x 42))` is trivially satisfiable. The previous version of
+    // this test accepted "sat", "unsat"-adjacent, *or* an explicit error as
+    // all being a "pass", which meant it could never actually catch a
+    // regression that made the CLI misreport or error on an easy SAT
+    // instance -- only a hard crash would fail it. Assert the real,
+    // specific expectation instead.
     assert!(
-        output.status.success()
-            || stdout.contains("sat")
-            || stdout.contains("error")
-            || stderr.contains("error"),
-        "Unexpected failure: stdout={}, stderr={}",
+        output.status.success(),
+        "solving a trivially satisfiable formula must exit successfully: \
+         stdout={}, stderr={}",
+        stdout,
+        stderr
+    );
+    assert!(
+        !stdout.contains("(error") && !stderr.contains("error"),
+        "solving a trivially satisfiable formula must not report an error: \
+         stdout={}, stderr={}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "sat"),
+        "expected a 'sat' result line for a trivially satisfiable formula: \
+         stdout={}, stderr={}",
         stdout,
         stderr
     );

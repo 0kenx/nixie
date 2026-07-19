@@ -10,6 +10,7 @@ use crate::prelude::*;
 pub mod buchberger;
 pub mod buchberger_enhanced;
 pub mod f4;
+pub(crate) mod linear_arith;
 pub mod syzygy;
 
 // Re-export standard Buchberger algorithm and NRA solver

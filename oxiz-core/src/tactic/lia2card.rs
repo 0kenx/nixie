@@ -422,7 +422,11 @@ impl<'a> Lia2CardTactic<'a> {
         for i in 0..n {
             let mut row = Vec::with_capacity(k + 1);
             for j in 0..=k {
-                let name = format!("__card_s_{}_{}", i, j);
+                // Include the per-tactic aux_var_counter so that counter
+                // variables from distinct cardinality constraints (or
+                // distinct encoding passes, e.g. Exactly's AtMost/AtLeast
+                // pair) never alias to the same interned term.
+                let name = format!("__card_s_{}_{}_{}", self.aux_var_counter, i, j);
                 row.push(self.manager.mk_var(&name, bool_sort));
                 self.aux_var_counter += 1;
             }
@@ -546,9 +550,14 @@ impl<'a> Lia2CardTactic<'a> {
             let end = (start + group_size).min(n);
             let group: Vec<_> = vars[start..end].to_vec();
 
-            // Create commander variable for this group
-            let cmd_name = format!("__card_cmd_{}", g);
+            // Create commander variable for this group. The group index `g`
+            // alone is not unique across distinct cardinality constraints (or
+            // across the AtMost/AtLeast passes used to encode Exactly), so
+            // fold in the per-tactic aux_var_counter to guarantee a fresh,
+            // globally-unique interned name.
+            let cmd_name = format!("__card_cmd_{}_{}", self.aux_var_counter, g);
             let cmd = self.manager.mk_var(&cmd_name, bool_sort);
+            self.aux_var_counter += 1;
             commanders.push(cmd);
 
             // Within group: at most one, and if any, commander is true

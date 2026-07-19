@@ -63,6 +63,13 @@ pub struct EasySolver {
     vars: std::collections::HashMap<String, (TermId, SortId)>,
     limits: Option<ResourceLimits>,
     last_result: Option<SolverResult>,
+    /// First error encountered while building constraints (e.g. an
+    /// `assert_*` call referencing a variable name that was never declared
+    /// via `int_var`/`real_var`/`bool_var`). Builder methods that hit an
+    /// error record it here instead of silently dropping the constraint;
+    /// [`EasySolver::check_sat`] surfaces it as [`EasyResult::Error`]
+    /// instead of proceeding to solve an incomplete formula.
+    pending_error: Option<String>,
 }
 
 impl Default for EasySolver {
@@ -81,6 +88,19 @@ impl EasySolver {
             vars: std::collections::HashMap::new(),
             limits: None,
             last_result: None,
+            pending_error: None,
+        }
+    }
+
+    /// Record that `name` was referenced by an `assert_*` builder call but
+    /// was never declared. The error is sticky: once set, it is not
+    /// overwritten by later errors, and `check_sat` will report it instead
+    /// of solving a formula that is silently missing constraints.
+    fn record_unknown_var(&mut self, name: &str) {
+        if self.pending_error.is_none() {
+            self.pending_error = Some(format!(
+                "unknown variable '{name}': declare it with int_var/real_var/bool_var before asserting on it"
+            ));
         }
     }
 
@@ -130,6 +150,8 @@ impl EasySolver {
             let val = self.tm.mk_int(BigInt::from(value));
             let constraint = self.tm.mk_gt(term, val);
             self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
@@ -140,6 +162,8 @@ impl EasySolver {
             let val = self.tm.mk_int(BigInt::from(value));
             let constraint = self.tm.mk_lt(term, val);
             self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
@@ -150,6 +174,8 @@ impl EasySolver {
             let val = self.tm.mk_int(BigInt::from(value));
             let constraint = self.tm.mk_ge(term, val);
             self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
@@ -160,6 +186,8 @@ impl EasySolver {
             let val = self.tm.mk_int(BigInt::from(value));
             let constraint = self.tm.mk_le(term, val);
             self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
@@ -170,25 +198,47 @@ impl EasySolver {
             let val = self.tm.mk_int(BigInt::from(value));
             let constraint = self.tm.mk_eq(term, val);
             self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
 
     /// Assert that two variables are equal.
     pub fn assert_eq_vars(&mut self, name1: &str, name2: &str) -> &mut Self {
-        if let (Some(&(t1, _)), Some(&(t2, _))) = (self.vars.get(name1), self.vars.get(name2)) {
-            let constraint = self.tm.mk_eq(t1, t2);
-            self.solver.assert(constraint, &mut self.tm);
+        match (self.vars.get(name1).copied(), self.vars.get(name2).copied()) {
+            (Some((t1, _)), Some((t2, _))) => {
+                let constraint = self.tm.mk_eq(t1, t2);
+                self.solver.assert(constraint, &mut self.tm);
+            }
+            (t1, t2) => {
+                if t1.is_none() {
+                    self.record_unknown_var(name1);
+                }
+                if t2.is_none() {
+                    self.record_unknown_var(name2);
+                }
+            }
         }
         self
     }
 
     /// Assert that two variables are not equal.
     pub fn assert_neq_vars(&mut self, name1: &str, name2: &str) -> &mut Self {
-        if let (Some(&(t1, _)), Some(&(t2, _))) = (self.vars.get(name1), self.vars.get(name2)) {
-            let eq = self.tm.mk_eq(t1, t2);
-            let neq = self.tm.mk_not(eq);
-            self.solver.assert(neq, &mut self.tm);
+        match (self.vars.get(name1).copied(), self.vars.get(name2).copied()) {
+            (Some((t1, _)), Some((t2, _))) => {
+                let eq = self.tm.mk_eq(t1, t2);
+                let neq = self.tm.mk_not(eq);
+                self.solver.assert(neq, &mut self.tm);
+            }
+            (t1, t2) => {
+                if t1.is_none() {
+                    self.record_unknown_var(name1);
+                }
+                if t2.is_none() {
+                    self.record_unknown_var(name2);
+                }
+            }
         }
         self
     }
@@ -197,6 +247,8 @@ impl EasySolver {
     pub fn assert_true(&mut self, name: &str) -> &mut Self {
         if let Some(&(term, _)) = self.vars.get(name) {
             self.solver.assert(term, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
@@ -206,17 +258,29 @@ impl EasySolver {
         if let Some(&(term, _)) = self.vars.get(name) {
             let neg = self.tm.mk_not(term);
             self.solver.assert(neg, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
         }
         self
     }
 
     /// Assert `var1 + var2 = value`.
     pub fn assert_sum_eq(&mut self, var1: &str, var2: &str, value: i64) -> &mut Self {
-        if let (Some(&(t1, _)), Some(&(t2, _))) = (self.vars.get(var1), self.vars.get(var2)) {
-            let sum = self.tm.mk_add([t1, t2]);
-            let val = self.tm.mk_int(BigInt::from(value));
-            let constraint = self.tm.mk_eq(sum, val);
-            self.solver.assert(constraint, &mut self.tm);
+        match (self.vars.get(var1).copied(), self.vars.get(var2).copied()) {
+            (Some((t1, _)), Some((t2, _))) => {
+                let sum = self.tm.mk_add([t1, t2]);
+                let val = self.tm.mk_int(BigInt::from(value));
+                let constraint = self.tm.mk_eq(sum, val);
+                self.solver.assert(constraint, &mut self.tm);
+            }
+            (t1, t2) => {
+                if t1.is_none() {
+                    self.record_unknown_var(var1);
+                }
+                if t2.is_none() {
+                    self.record_unknown_var(var2);
+                }
+            }
         }
         self
     }
@@ -243,7 +307,15 @@ impl EasySolver {
     }
 
     /// Check satisfiability.
+    ///
+    /// If a prior `assert_*` call referenced an undeclared variable, that
+    /// error is reported here (as [`EasyResult::Error`]) instead of solving
+    /// a formula that is silently missing a constraint.
     pub fn check_sat(&mut self) -> EasyResult {
+        if let Some(ref err) = self.pending_error {
+            self.last_result = None;
+            return EasyResult::Error(err.clone());
+        }
         let result = if let Some(ref limits) = self.limits {
             match self.solver.check_with_limits(&mut self.tm, limits) {
                 Ok(r) => r,
@@ -337,6 +409,7 @@ impl EasySolver {
         self.tm = TermManager::new();
         self.vars.clear();
         self.last_result = None;
+        self.pending_error = None;
     }
 
     fn format_term_value(&self, kind: &TermKind, _sort: SortId) -> String {
@@ -521,5 +594,65 @@ mod tests {
         assert!(solver.get_model_value("x").is_none());
         assert!(solver.get_int_value("x").is_none());
         assert!(solver.get_bool_value("x").is_none());
+    }
+
+    // Regression tests: `assert_*` on an undeclared variable name must not
+    // silently drop the constraint. Previously the builder methods matched
+    // on `self.vars.get(name)` and did nothing on `None`, so a typo'd
+    // variable name (e.g. asserting on "y" after declaring "Y") produced a
+    // solver result for a strictly weaker (incomplete) formula with no
+    // indication anything was wrong. They must now surface as
+    // `EasyResult::Error` from `check_sat`.
+
+    #[test]
+    fn test_assert_gt_unknown_var_is_reported() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("typo_x", 5);
+        let result = solver.check_sat();
+        assert!(result.is_error(), "expected Error, got {result:?}");
+        if let EasyResult::Error(msg) = result {
+            assert!(msg.contains("typo_x"));
+        }
+    }
+
+    #[test]
+    fn test_assert_unknown_var_does_not_silently_solve_wrong_formula() {
+        // Without the fix, this would silently drop the "x < 3" constraint
+        // (typo: "xx") and incorrectly report Sat for what should be
+        // detected as a builder error, since the real intended formula
+        // (x > 5 AND x < 3) is unsatisfiable.
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("x", 5).assert_lt("xx", 3);
+        let result = solver.check_sat();
+        assert!(result.is_error(), "expected Error, got {result:?}");
+    }
+
+    #[test]
+    fn test_assert_eq_vars_unknown_reports_both_names() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_eq_vars("x", "missing_y");
+        let result = solver.check_sat();
+        assert!(result.is_error());
+        if let EasyResult::Error(msg) = result {
+            assert!(msg.contains("missing_y"));
+        }
+    }
+
+    #[test]
+    fn test_assert_sum_eq_unknown_var_reports_error() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_sum_eq("x", "missing_y", 7);
+        let result = solver.check_sat();
+        assert!(result.is_error());
+    }
+
+    #[test]
+    fn test_reset_clears_pending_error() {
+        let mut solver = EasySolver::new();
+        solver.assert_gt("missing", 5);
+        assert!(solver.check_sat().is_error());
+        solver.reset();
+        solver.int_var("x").assert_gt("x", 0);
+        assert!(solver.check_sat().is_sat());
     }
 }

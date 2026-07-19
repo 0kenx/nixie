@@ -1,8 +1,8 @@
 # oxiz-sat TODO
 
-Last Updated: 2026-06-09 (v0.2.3)
+Last Updated: 2026-07-19 (v0.2.4)
 
-Reference: Z3's `sat/` directory at `../z3/src/sat/`
+Reference: Z3's `sat/` directory
 
 ## Progress: 100% Complete (31,890 SLoC)
 

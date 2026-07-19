@@ -173,6 +173,74 @@ impl From<PyTerm> for TermId {
 }
 
 // ====================================================================== //
+// PySort                                                                   //
+// ====================================================================== //
+
+/// An SMT sort (type) object, returned by sort constructors such as
+/// :func:`FPSort`, :func:`ArraySort`, :func:`StringSort`, :func:`IntSort`,
+/// and :func:`BoolSort`.
+///
+/// Sort objects are lightweight wrappers around the ``SortId`` handle stored
+/// inside the ``TermManager``.  They carry extra metadata (``eb``, ``sb`` for
+/// FP sorts; ``is_array``, ``is_string`` flags) so that higher-level
+/// combinators can dispatch correctly.
+#[pyclass(name = "Sort", from_py_object)]
+#[derive(Clone)]
+pub struct PySort {
+    /// The underlying sort ID inside the TermManager.
+    pub(crate) id: ::oxiz::core::SortId,
+    /// Exponent bit-width for FP sorts, ``None`` otherwise.
+    pub(crate) eb: Option<u32>,
+    /// Significand bit-width for FP sorts, ``None`` otherwise.
+    pub(crate) sb: Option<u32>,
+    /// True when this is an array sort.
+    pub(crate) is_array: bool,
+    /// True when this is the string sort.
+    pub(crate) is_string: bool,
+}
+
+#[pymethods]
+impl PySort {
+    fn __repr__(&self) -> String {
+        if let (Some(eb), Some(sb)) = (self.eb, self.sb) {
+            format!("FPSort({}, {})", eb, sb)
+        } else if self.is_array {
+            "ArraySort(...)".to_string()
+        } else if self.is_string {
+            "StringSort".to_string()
+        } else {
+            format!("Sort({})", self.id.raw())
+        }
+    }
+
+    fn __eq__(&self, other: &PySort) -> bool {
+        self.id == other.id
+    }
+
+    fn __hash__(&self) -> u64 {
+        self.id.raw() as u64
+    }
+
+    /// True if this is a floating-point sort.
+    #[getter]
+    fn is_fp(&self) -> bool {
+        self.eb.is_some()
+    }
+
+    /// Exponent bit-width (FP sorts only, ``None`` otherwise).
+    #[getter]
+    fn eb(&self) -> Option<u32> {
+        self.eb
+    }
+
+    /// Significand bit-width (FP sorts only, ``None`` otherwise).
+    #[getter]
+    fn sb(&self) -> Option<u32> {
+        self.sb
+    }
+}
+
+// ====================================================================== //
 // PyTermManager                                                            //
 // ====================================================================== //
 
@@ -340,9 +408,17 @@ impl PyTermManager {
     // BitVec operations                                                    //
     // ------------------------------------------------------------------ //
 
-    fn mk_bv(&self, value: i64, width: u32) -> PyTerm {
+    /// Create a bitvector literal of `width` bits from an arbitrary-size
+    /// Python `int`.
+    ///
+    /// `value` is accepted as a native `num-bigint::BigInt` (via PyO3's
+    /// `num-bigint` conversion feature), so values that do not fit in an
+    /// `i64` - e.g. literals for bitvectors wider than 64 bits, which are
+    /// common in QF_BV crypto-style queries - round-trip exactly instead of
+    /// overflowing/truncating.
+    fn mk_bv(&self, value: BigInt, width: u32) -> PyTerm {
         let mut tm = self.inner.borrow_mut();
-        PyTerm::bare(tm.mk_bitvec(BigInt::from(value), width))
+        PyTerm::bare(tm.mk_bitvec(value, width))
     }
 
     fn mk_bv_concat(&self, lhs: &PyTerm, rhs: &PyTerm) -> PyTerm {
@@ -494,10 +570,30 @@ impl PyTermManager {
     // String operations                                                    //
     // ------------------------------------------------------------------ //
 
-    /// Create a string literal term.
+    /// Create a string literal term (alias: ``mk_string_val``).
     fn mk_string_lit(&self, value: &str) -> PyTerm {
         let mut tm = self.inner.borrow_mut();
         PyTerm::bare(tm.mk_string_lit(value))
+    }
+
+    /// Create a string literal term.
+    ///
+    /// This is the preferred name; ``mk_string_lit`` is an alias.
+    fn mk_string_val(&self, value: &str) -> PyTerm {
+        let mut tm = self.inner.borrow_mut();
+        PyTerm::bare(tm.mk_string_lit(value))
+    }
+
+    /// Compute the length of a string term (alias for ``mk_str_len``).
+    fn mk_str_length(&self, s: &PyTerm) -> PyTerm {
+        let mut tm = self.inner.borrow_mut();
+        PyTerm::bare(tm.mk_str_len(s.id))
+    }
+
+    /// Test whether ``s`` contains ``sub`` (alias for ``mk_str_contains``).
+    fn mk_str_contains_term(&self, s: &PyTerm, sub: &PyTerm) -> PyTerm {
+        let mut tm = self.inner.borrow_mut();
+        PyTerm::bare(tm.mk_str_contains(s.id, sub.id))
     }
 
     /// Concatenate two string terms.
@@ -926,7 +1022,7 @@ fn find_top_level_comma(s: &str) -> Option<usize> {
 /// Parse a rounding-mode string into a [`RoundingMode`].
 ///
 /// Valid values: ``"RNE"``, ``"RNA"``, ``"RTP"``, ``"RTN"``, ``"RTZ"``.
-fn parse_rounding_mode(rm: &str) -> PyResult<RoundingMode> {
+pub(crate) fn parse_rounding_mode(rm: &str) -> PyResult<RoundingMode> {
     match rm {
         "RNE" => Ok(RoundingMode::RNE),
         "RNA" => Ok(RoundingMode::RNA),

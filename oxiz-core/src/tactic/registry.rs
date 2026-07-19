@@ -13,8 +13,19 @@
 //!   because the factories are function pointers wrapped in `Box<dyn Fn>`.
 //! - Factories that require a `TermManager` (stateful tactics) are represented
 //!   by their *stateless* Newtype wrappers, which implement
-//!   [`crate::tactic::core::Tactic`] and internally create a temporary
-//!   manager when `apply` is called.
+//!   [`crate::tactic::core::Tactic`] and honestly return
+//!   [`TacticResult::NotApplicable`] (or an unchanged goal) from `apply`,
+//!   since [`Tactic::apply`] has no
+//!   `TermManager` parameter to allocate fresh terms with.
+//! - Tactics whose *real* transformation genuinely requires `&mut
+//!   TermManager` access (currently `ArithBoundsTactic::analyze` and
+//!   `BitBlaster::blast_goal`) are additionally exposed through a second,
+//!   parallel by-name dispatch path: [`ManagedTactic`] /
+//!   [`TacticRegistry::create_managed`]. This is the *real, working*
+//!   implementation — callers that hold a `&mut TermManager` (e.g. a
+//!   tactic-pipeline driver that owns the goal's term manager) should
+//!   prefer `create_managed` over `create` for these names to get an actual
+//!   transformation instead of a honest no-op/`NotApplicable`.
 //! - Tactics that have no zero-argument constructor (e.g. `DerTactic`,
 //!   `MbpTactic`) are excluded and documented below.
 //!
@@ -28,26 +39,35 @@
 //! | `CondTactic` / `WhenTactic` / `FailIfTactic` | Require combinator sub-tactics at construction. |
 //! | `TseitinCnfTactic` / `NnfTactic` (stateful) | Require `&mut TermManager`. |
 //! | `SkolemizationTactic` / `QuantifierInstantiationTactic` / `UniversalEliminationTactic` | Require `&mut TermManager`. |
-//! | `ArithBoundsTactic` | Registered as "arith-bounds" using `Default`. |
 //! | `FactorTactic` | Registered as "factor" using `Default`. |
 //! | `BvArray2UfTactic` | Registered as "bvarray2uf" using `Default`. |
+//!
+//! `ArithBoundsTactic` ("arith-bounds") and the bit-blasting engine
+//! (`BitBlaster`, "bit-blast") are registered on *both* paths: the plain
+//! [`Tactic`]-only path (honest `NotApplicable`/detection-only, for callers
+//! without manager access) and the [`ManagedTactic`] path (the real
+//! analysis/blasting, for callers with manager access).
 
 use std::collections::HashMap;
 
+use crate::ast::TermManager;
 use crate::error::Result;
 use crate::tactic::core::{Goal, Tactic, TacticResult};
 
-// ─── Type alias ──────────────────────────────────────────────────────────────
+// ─── Type aliases ────────────────────────────────────────────────────────────
 
 /// Type alias for a boxed tactic factory closure.
 type TacticFactory = Box<dyn Fn() -> Box<dyn Tactic> + Send + Sync>;
+
+/// Type alias for a boxed [`ManagedTactic`] factory closure.
+type ManagedTacticFactory = Box<dyn Fn() -> Box<dyn ManagedTactic> + Send + Sync>;
 
 // ─── Concrete tactic imports ─────────────────────────────────────────────────
 
 // Top-level stateless tactics
 use super::ackermann::StatelessAckermannizeTactic;
 use super::aggressive_simplify::StatelessAggressiveSimplifyTactic;
-use super::bitblast::StatelessBitBlastTactic;
+use super::bitblast::{BitBlaster, StatelessBitBlastTactic};
 use super::ctx_simplify::StatelessCtxSolverSimplifyTactic;
 use super::eliminate::StatelessEliminateUnconstrainedTactic;
 use super::pb2bv::StatelessPb2BvTactic;
@@ -69,6 +89,79 @@ use super::bv::bvarray2uf::{BvArray2UfConfig, BvArray2UfTactic};
 use super::lia2card::StatelessLia2CardTactic;
 use super::nla2bv::StatelessNla2BvTactic;
 
+// ─── ManagedTactic ───────────────────────────────────────────────────────────
+
+/// A tactic whose real transformation requires mutable access to the
+/// [`TermManager`] that owns the goal's terms (to allocate fresh Boolean
+/// variables, circuit terms, etc.).
+///
+/// This exists alongside [`Tactic`] rather than replacing it because
+/// [`Tactic::apply`] intentionally has no `TermManager` parameter (many
+/// tactics are genuinely stateless and manager-free). Implementors that
+/// *also* implement [`Tactic`] must keep that impl honest — e.g. by
+/// returning [`TacticResult::NotApplicable`] or the goal unchanged — since
+/// [`Tactic::apply`] structurally cannot perform the real transformation.
+pub trait ManagedTactic: Send + Sync {
+    /// The canonical registry name of this tactic.
+    fn name(&self) -> &str;
+
+    /// Apply the tactic to `goal`, allocating any new terms it needs in
+    /// `manager`.
+    fn apply_with_manager(
+        &mut self,
+        goal: &Goal,
+        manager: &mut TermManager,
+    ) -> Result<TacticResult>;
+
+    /// Get a description of the tactic.
+    fn description(&self) -> &str {
+        ""
+    }
+}
+
+impl ManagedTactic for ArithBoundsTactic {
+    fn name(&self) -> &str {
+        "arith-bounds"
+    }
+
+    fn apply_with_manager(
+        &mut self,
+        goal: &Goal,
+        manager: &mut TermManager,
+    ) -> Result<TacticResult> {
+        // `analyze` only reads the manager (it never allocates terms), so
+        // the `&mut TermManager` is implicitly reborrowed as `&TermManager`
+        // here.
+        self.analyze(goal, manager)
+    }
+
+    fn description(&self) -> &str {
+        "Extracts literal variable bounds, detects inconsistencies as early UNSAT, \
+         and drops assertions provably implied by the surviving bounds"
+    }
+}
+
+impl ManagedTactic for BitBlaster {
+    fn name(&self) -> &str {
+        "bit-blast"
+    }
+
+    fn apply_with_manager(
+        &mut self,
+        goal: &Goal,
+        manager: &mut TermManager,
+    ) -> Result<TacticResult> {
+        self.blast_goal(goal, manager)
+    }
+
+    fn description(&self) -> &str {
+        "Bit-blasts quantifier-free BitVector/Boolean formulas into pure Boolean circuits \
+         (ripple-carry arithmetic, shift-and-add multiplier, restoring divider, barrel \
+         shifter, MSB-to-LSB comparators); bails out honestly via NotApplicable on any \
+         unsupported construct"
+    }
+}
+
 // ─── TacticRegistry ──────────────────────────────────────────────────────────
 
 /// A registry mapping string names to zero-argument tactic constructor closures.
@@ -76,6 +169,7 @@ use super::nla2bv::StatelessNla2BvTactic;
 /// Call [`default_registry`] to obtain a pre-populated instance.
 pub struct TacticRegistry {
     factories: HashMap<&'static str, TacticFactory>,
+    managed_factories: HashMap<&'static str, ManagedTacticFactory>,
 }
 
 impl TacticRegistry {
@@ -84,6 +178,7 @@ impl TacticRegistry {
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
+            managed_factories: HashMap::new(),
         }
     }
 
@@ -98,12 +193,33 @@ impl TacticRegistry {
             .insert(name, Box::new(factory) as TacticFactory);
     }
 
+    /// Register a [`ManagedTactic`] factory under the given canonical name.
+    ///
+    /// Subsequent calls with the same name overwrite the previous registration.
+    pub fn register_managed<F>(&mut self, name: &'static str, factory: F)
+    where
+        F: Fn() -> Box<dyn ManagedTactic> + Send + Sync + 'static,
+    {
+        self.managed_factories
+            .insert(name, Box::new(factory) as ManagedTacticFactory);
+    }
+
     /// Create a fresh tactic instance by name.
     ///
     /// Returns `None` if `name` is not registered.
     #[must_use]
     pub fn create(&self, name: &str) -> Option<Box<dyn Tactic>> {
         self.factories.get(name).map(|f| f())
+    }
+
+    /// Create a fresh [`ManagedTactic`] instance by name.
+    ///
+    /// Returns `None` if `name` has no manager-aware registration — either
+    /// because the tactic doesn't need `TermManager` access at all (use
+    /// [`create`](Self::create) instead), or because it isn't registered.
+    #[must_use]
+    pub fn create_managed(&self, name: &str) -> Option<Box<dyn ManagedTactic>> {
+        self.managed_factories.get(name).map(|f| f())
     }
 
     /// Returns a sorted list of all registered tactic names.
@@ -114,10 +230,24 @@ impl TacticRegistry {
         v
     }
 
+    /// Returns a sorted list of all registered [`ManagedTactic`] names.
+    #[must_use]
+    pub fn managed_names(&self) -> Vec<&'static str> {
+        let mut v: Vec<_> = self.managed_factories.keys().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
     /// Returns `true` if `name` is registered in this registry.
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.factories.contains_key(name)
+    }
+
+    /// Returns `true` if `name` has a manager-aware registration.
+    #[must_use]
+    pub fn contains_managed(&self, name: &str) -> bool {
+        self.managed_factories.contains_key(name)
     }
 }
 
@@ -213,6 +343,19 @@ pub fn default_registry() -> TacticRegistry {
 
     // ── Utility ──────────────────────────────────────────────────────────────
     reg.register("skip", || Box::new(SkipTactic));
+
+    // ── Manager-aware tactics (real, TermManager-backed implementations) ─────
+    //
+    // These duplicate the "arith-bounds" / "bit-blast" names on the
+    // `create_managed` path with the *working* implementation: unlike their
+    // `Tactic`-only counterparts above (which are structurally limited to
+    // NotApplicable / detection-only, since `Tactic::apply` has no manager
+    // parameter), these call the real `ArithBoundsTactic::analyze` /
+    // `BitBlaster::blast_goal` entry points.
+    reg.register_managed("arith-bounds", || {
+        Box::new(ArithBoundsTactic::new(ArithBoundsConfig::default()))
+    });
+    reg.register_managed("bit-blast", || Box::new(BitBlaster::new()));
 
     reg
 }
@@ -340,5 +483,163 @@ mod tests {
         assert!(reg.contains("skip"));
         let tactic = reg.create("skip").unwrap();
         assert_eq!(tactic.name(), "skip");
+    }
+
+    // ── ManagedTactic wiring regression tests ─────────────────────────────
+    //
+    // Wave-1 left `ArithBoundsTactic::apply` and the `Tactic` impls around
+    // bit-blasting honestly `NotApplicable`/detection-only, because
+    // `Tactic::apply` has no `TermManager` parameter. These tests confirm
+    // that by-name lookup on the *managed* path returns the real,
+    // TermManager-backed implementations instead.
+
+    #[test]
+    fn test_registry_create_managed_unknown_returns_none() {
+        let reg = default_registry();
+        assert!(reg.create_managed("not-a-real-tactic").is_none());
+    }
+
+    #[test]
+    fn test_registry_managed_names_contains_arith_bounds_and_bit_blast() {
+        let reg = default_registry();
+        let names = reg.managed_names();
+        assert!(names.contains(&"arith-bounds"));
+        assert!(names.contains(&"bit-blast"));
+    }
+
+    #[test]
+    fn test_registry_managed_tactic_names_match_canonical() {
+        let reg = default_registry();
+        for name in reg.managed_names() {
+            let tactic = reg
+                .create_managed(name)
+                .expect("managed_names() entries must be creatable");
+            assert_eq!(
+                tactic.name(),
+                name,
+                "ManagedTactic::name() '{}' does not match registry key '{}'",
+                tactic.name(),
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_registry_managed_arith_bounds_detects_inconsistency() {
+        use crate::tactic::core::SolveResult;
+
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let ten = manager.mk_int(10);
+        let five = manager.mk_int(5);
+        let ge = manager.mk_ge(x, ten); // x >= 10
+        let le = manager.mk_le(x, five); // x <= 5
+
+        let goal = Goal::new(vec![ge, le]);
+        let reg = default_registry();
+        let mut tactic = reg
+            .create_managed("arith-bounds")
+            .expect("arith-bounds must be manager-aware registered");
+        let result = tactic
+            .apply_with_manager(&goal, &mut manager)
+            .expect("analyze should not error");
+
+        assert!(matches!(result, TacticResult::Solved(SolveResult::Unsat)));
+    }
+
+    #[test]
+    fn test_registry_managed_arith_bounds_drops_redundant_assertion() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let three = manager.mk_int(3);
+        let five = manager.mk_int(5);
+        let ge5 = manager.mk_ge(x, five); // x >= 5
+        let ge3 = manager.mk_ge(x, three); // x >= 3, implied by x >= 5
+
+        let goal = Goal::new(vec![ge5, ge3]);
+        let reg = default_registry();
+        let mut tactic = reg
+            .create_managed("arith-bounds")
+            .expect("arith-bounds must be manager-aware registered");
+        let result = tactic
+            .apply_with_manager(&goal, &mut manager)
+            .expect("analyze should not error");
+
+        match result {
+            TacticResult::SubGoals(goals) => {
+                assert_eq!(goals.len(), 1);
+                assert_eq!(goals[0].assertions, vec![ge5]);
+            }
+            other => panic!("expected SubGoals dropping the redundant assertion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_registry_managed_bit_blast_produces_pure_boolean_circuit() {
+        let mut manager = TermManager::new();
+        let a = manager.mk_bitvec(3u64, 4);
+        let b = manager.mk_bitvec(5u64, 4);
+        let sum = manager.mk_bv_add(a, b);
+        let expected = manager.mk_bitvec(8u64, 4); // 3 + 5 = 8
+        let eq = manager.mk_eq(sum, expected);
+
+        let goal = Goal::new(vec![eq]);
+        let reg = default_registry();
+        let mut tactic = reg
+            .create_managed("bit-blast")
+            .expect("bit-blast must be manager-aware registered");
+        let result = tactic
+            .apply_with_manager(&goal, &mut manager)
+            .expect("blast_goal should not error");
+
+        match result {
+            TacticResult::SubGoals(goals) => {
+                assert_eq!(goals.len(), 1);
+                // The blasted circuit for a valid arithmetic identity must
+                // simplify away to the Boolean constant `true` -- a real
+                // transformation happened, not a pass-through.
+                assert_eq!(goals[0].assertions, vec![manager.mk_true()]);
+            }
+            other => panic!("expected SubGoals with a blasted circuit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_registry_plain_arith_bounds_stays_honestly_not_applicable() {
+        // The plain `Tactic`-only path has no manager access and must stay
+        // an honest NotApplicable rather than silently doing (or faking)
+        // the real analysis performed on the managed path above.
+        let reg = default_registry();
+        let tactic = reg.create("arith-bounds").unwrap();
+        let goal = Goal::empty();
+        let result = tactic.apply(&goal).expect("apply should not error");
+        assert!(matches!(result, TacticResult::NotApplicable));
+    }
+
+    #[test]
+    fn test_registry_plain_bit_blast_is_detection_only() {
+        // The plain `Tactic`-only path cannot allocate terms, so even a
+        // goal with real BitVector content must come back unchanged (never
+        // partially/incorrectly "blasted").
+        let mut manager = TermManager::new();
+        let a = manager.mk_bitvec(3u64, 4);
+        let b = manager.mk_bitvec(5u64, 4);
+        let sum = manager.mk_bv_add(a, b);
+        let expected = manager.mk_bitvec(8u64, 4);
+        let eq = manager.mk_eq(sum, expected);
+
+        let reg = default_registry();
+        let tactic = reg.create("bit-blast").unwrap();
+        let goal = Goal::new(vec![eq]);
+        let result = tactic.apply(&goal).expect("apply should not error");
+        match result {
+            TacticResult::SubGoals(goals) => {
+                assert_eq!(goals.len(), 1);
+                assert_eq!(goals[0].assertions, vec![eq], "goal must be unchanged");
+            }
+            other => panic!("expected SubGoals with the goal unchanged, got {other:?}"),
+        }
     }
 }

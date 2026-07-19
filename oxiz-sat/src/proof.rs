@@ -243,25 +243,30 @@ impl<W: Write + Send> LratWriter<W> {
         self.next_id += 1;
 
         if let Some(writer) = &mut self.writer {
-            // LRAT format: <id> <lits> 0 [<hints>] 0
+            // LRAT addition line: `<id> <lits> 0 <hints> 0`.
+            //
+            // The hint section is a mandatory part of every LRAT *addition* line
+            // and MUST always be terminated by a trailing `0`, even when there are
+            // no hints. Emitting a hint-less line (`<id> <lits> 0`) — as the
+            // previous implementation did for original clauses and any clause
+            // added with an empty hint slice — produces a line with a single `0`
+            // terminator, which LRAT checkers parse as "literals continue" and
+            // then choke on the missing second `0`. Writing the second `0`
+            // unconditionally yields the well-formed `<id> <lits> 0 0` for the
+            // empty-hint case.
             write!(writer, "{} ", clause_id)?;
 
-            // Write literals
+            // Write literals, then their terminating `0`.
             for &lit in lits {
                 write!(writer, "{} ", lit.to_dimacs())?;
             }
-            write!(writer, "0")?;
+            write!(writer, "0 ")?;
 
-            // Write hints if provided
-            if !hints.is_empty() {
-                write!(writer, " ")?;
-                for &hint in hints {
-                    write!(writer, "{} ", hint)?;
-                }
-                write!(writer, "0")?;
+            // Write hints (possibly none) followed by the mandatory terminating `0`.
+            for &hint in hints {
+                write!(writer, "{} ", hint)?;
             }
-
-            writeln!(writer)?;
+            writeln!(writer, "0")?;
         }
 
         Ok(clause_id)
@@ -284,9 +289,18 @@ impl<W: Write + Send> LratWriter<W> {
         }
 
         if let Some(writer) = &mut self.writer {
-            // LRAT deletion format: <id> d <clause_id> 0
-            writeln!(writer, "{} d {} 0", self.next_id, clause_id)?;
-            self.next_id += 1;
+            // LRAT deletion line: `<id> d <clause_ids> 0`.
+            //
+            // Per the LRAT format spec the leading index of a deletion line is the
+            // id of the *most recently added* clause, and a deletion line does NOT
+            // introduce a new clause id. The previous implementation wrote
+            // `self.next_id` and then incremented it, which both mis-tagged the
+            // line (using a not-yet-assigned id) and burned a fresh id — so the
+            // next genuine `add_clause` skipped an id, desynchronising every
+            // subsequent hint reference and breaking LRAT checkers. Use the last
+            // assigned id (`next_id - 1`) and leave `next_id` untouched.
+            let last_added_id = self.next_id.saturating_sub(1);
+            writeln!(writer, "{} d {} 0", last_added_id, clause_id)?;
         }
 
         Ok(())
@@ -860,6 +874,81 @@ mod tests {
             !b_bytes.is_empty(),
             "reassigned sink must receive the clause bytes"
         );
-        assert_eq!(b_bytes, b"1 1 2 0\n");
+        // Empty-hint LRAT addition lines carry the mandatory trailing hint `0`,
+        // so the well-formed form is `1 1 2 0 0` (literals `0` then hints `0`).
+        assert_eq!(b_bytes, b"1 1 2 0 0\n");
+    }
+
+    // === LRAT format-spec regressions (delete id + hint-less line fixes) ===
+
+    #[test]
+    fn test_lrat_delete_does_not_consume_id() {
+        use std::io::Cursor;
+        let v0 = Var::new(0);
+        let v1 = Var::new(1);
+
+        let mut proof = LratWriter::<Cursor<Vec<u8>>>::with_writer(Cursor::new(Vec::new()));
+        let id1 = proof
+            .add_clause(&[Lit::pos(v0), Lit::pos(v1)], &[])
+            .expect("add id1");
+        assert_eq!(id1, 1);
+        let id2 = proof.add_clause(&[Lit::neg(v0)], &[id1]).expect("add id2");
+        assert_eq!(id2, 2);
+
+        // Deleting a clause must NOT burn a clause id: the next add is id 3.
+        proof.delete_clause(id1).expect("delete id1");
+        assert_eq!(
+            proof.next_id(),
+            3,
+            "delete_clause must not consume a fresh clause id"
+        );
+        let id3 = proof.add_clause(&[Lit::neg(v1)], &[id2]).expect("add id3");
+        assert_eq!(
+            id3, 3,
+            "clause id sequence must stay contiguous after a delete"
+        );
+    }
+
+    #[test]
+    fn test_lrat_original_clause_line_is_well_formed() {
+        // An original (hint-less) clause must emit `<id> <lits> 0 0` — the second
+        // `0` terminates the mandatory (empty) hint section.
+        let captured: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = BufWriter::new(SharedSink(captured.clone()));
+        let v0 = Var::new(0);
+        let v1 = Var::new(1);
+        {
+            let mut proof = LratWriter::<BufWriter<SharedSink>>::with_writer(sink);
+            proof
+                .add_original_clause(&[Lit::pos(v0), Lit::pos(v1)])
+                .expect("add original");
+            proof.flush().expect("flush");
+        }
+        let bytes = captured.lock().expect("lock").clone();
+        assert_eq!(bytes, b"1 1 2 0 0\n");
+    }
+
+    #[test]
+    fn test_lrat_delete_line_tagged_with_last_added_id() {
+        let captured: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = BufWriter::new(SharedSink(captured.clone()));
+        let v0 = Var::new(0);
+        let v1 = Var::new(1);
+        {
+            let mut proof = LratWriter::<BufWriter<SharedSink>>::with_writer(sink);
+            let id1 = proof
+                .add_clause(&[Lit::pos(v0), Lit::pos(v1)], &[])
+                .expect("add id1");
+            let _id2 = proof.add_clause(&[Lit::neg(v0)], &[id1]).expect("add id2");
+            // Deletion line must lead with the id of the last added clause (2).
+            proof.delete_clause(id1).expect("delete id1");
+            proof.flush().expect("flush");
+        }
+        let text = String::from_utf8(captured.lock().expect("lock").clone()).expect("utf8");
+        let delete_line = text
+            .lines()
+            .find(|l| l.contains(" d "))
+            .expect("a deletion line must be present");
+        assert_eq!(delete_line, "2 d 1 0");
     }
 }

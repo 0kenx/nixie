@@ -77,8 +77,14 @@ pub struct UfRewriter {
     commutative: FxHashSet<Spur>,
     /// Known associative symbols
     associative: FxHashSet<Spur>,
-    /// Congruence cache: (func, args_hash) -> canonical result
-    congruence_cache: FxHashMap<(Spur, u64), TermId>,
+    /// Congruence cache: (func, args) -> canonical result.
+    ///
+    /// Keyed by the *exact* argument list rather than a 64-bit hash of it:
+    /// a hash-only key can collide for two genuinely different argument
+    /// lists (rare, but not impossible — e.g. adversarial input, or simply
+    /// enough distinct applications), which would silently rewrite `f(a,b)`
+    /// to the cached result of an unrelated `f(c,d)`.
+    congruence_cache: FxHashMap<(Spur, SmallVec<[TermId; 4]>), TermId>,
 }
 
 impl UfRewriter {
@@ -141,13 +147,6 @@ impl UfRewriter {
         self.congruence_cache.clear();
     }
 
-    /// Hash arguments for congruence checking
-    fn hash_args(&self, args: &[TermId]) -> u64 {
-        use core::hash::{BuildHasher, BuildHasherDefault};
-        use rustc_hash::FxHasher;
-        BuildHasherDefault::<FxHasher>::default().hash_one(args)
-    }
-
     /// Create an Apply term with Spur-based function name
     fn mk_apply_with_spur(
         &self,
@@ -206,12 +205,12 @@ impl UfRewriter {
 
         // Check congruence cache
         if self.config.enable_congruence {
-            let args_hash = self.hash_args(args);
-            if let Some(&cached) = self.congruence_cache.get(&(func, args_hash)) {
+            let key = (func, args.clone());
+            if let Some(&cached) = self.congruence_cache.get(&key) {
                 return RewriteResult::Rewritten(cached);
             }
             // Cache this application
-            self.congruence_cache.insert((func, args_hash), term);
+            self.congruence_cache.insert(key, term);
         }
 
         RewriteResult::Unchanged(term)

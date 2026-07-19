@@ -77,6 +77,22 @@ pub struct BvSimplificationStats {
     pub bit_simplifications: u64,
 }
 
+/// Compute the all-ones mask for a bitvector of the given width.
+///
+/// `1u64 << width` is undefined-ish for `width >= 64` (panics on the
+/// shift-overflow debug check; wraps to a shift-by-`width % 64` — silently
+/// producing the *wrong* mask, e.g. `0` instead of `u64::MAX` for
+/// `width == 64` — in release). 64-bit bitvectors are a common width, so
+/// this guard is not just a defensive edge case.
+#[inline]
+fn width_mask(width: u32) -> u64 {
+    if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    }
+}
+
 /// BV simplifier.
 #[derive(Debug)]
 pub struct BvSimplifier {
@@ -153,8 +169,8 @@ impl BvSimplifier {
             && w1 == w2
         {
             self.stats.constant_foldings += 1;
-            let mask = (1u64 << w1) - 1;
-            return BvTerm::Const((v1 + v2) & mask, *w1);
+            let mask = width_mask(*w1);
+            return BvTerm::Const((v1.wrapping_add(*v2)) & mask, *w1);
         }
 
         // Algebraic identities
@@ -200,7 +216,7 @@ impl BvSimplifier {
 
             // x & ~0 = x
             if let BvTerm::Const(v, w) = right {
-                let all_ones = (1u64 << w) - 1;
+                let all_ones = width_mask(*w);
                 if *v == all_ones {
                     self.stats.algebraic_simplifications += 1;
                     return left.clone();
@@ -278,8 +294,8 @@ impl BvSimplifier {
             && let BvTerm::Const(v, w) = inner
         {
             self.stats.constant_foldings += 1;
-            let mask = (1u64 << w) - 1;
-            let negated = (!(v - 1)) & mask;
+            let mask = width_mask(*w);
+            let negated = (!(v.wrapping_sub(1))) & mask;
             return BvTerm::Const(negated, *w);
         }
 

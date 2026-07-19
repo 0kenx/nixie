@@ -14,12 +14,13 @@ use crate::assignment::{Assignment, Justification};
 use crate::clause::{ClauseDatabase, ClauseId, NULL_CLAUSE};
 use crate::restart::{RestartManager, RestartStrategy};
 use crate::types::{Atom, AtomKind, BoolVar, IneqAtom, Lbool, Literal, NULL_BOOL_VAR, PolyFactor};
+use decide::ArithDecision;
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 use oxiz_math::polynomial::{NULL_VAR, Polynomial, Var};
 use std::collections::{HashMap, HashSet};
 
-pub use propagate::PropagationResult;
+pub use propagate::{PropagationResult, TheoryPropagation};
 
 /// Atom identifier.
 pub type AtomId = u32;
@@ -160,6 +161,10 @@ pub struct NlsatSolver {
     /// Saved phase (polarity) for each boolean variable.
     /// true = positive polarity, false = negative polarity.
     pub(super) saved_phase: Vec<bool>,
+    /// Whether a search has already been run (drives incremental reset).
+    pub(super) searched: bool,
+    /// Whether an explicit empty (false) clause has been added.
+    pub(super) has_empty_clause: bool,
 }
 
 impl NlsatSolver {
@@ -199,6 +204,8 @@ impl NlsatSolver {
             restart_manager,
             recent_avg_lbd: 0.0,
             saved_phase: Vec::new(),
+            searched: false,
+            has_empty_clause: false,
         }
     }
 
@@ -409,7 +416,9 @@ impl NlsatSolver {
         }
 
         if literals.is_empty() {
-            // Empty clause - unsatisfiable
+            // Empty clause - unconditionally unsatisfiable. Record it so that
+            // solve() reports Unsat instead of silently dropping the constraint.
+            self.has_empty_clause = true;
             return Some(NULL_CLAUSE);
         }
 
@@ -501,8 +510,63 @@ impl NlsatSolver {
 
     // ========== Main Solve Loop ==========
 
+    /// Reset all search state to a clean level-0 configuration and rebuild the
+    /// unit assignments implied by the clause database.
+    ///
+    /// This is invoked at the start of an incremental re-solve so that a fresh
+    /// query is not evaluated on top of the previous search's trail, decision
+    /// levels or arithmetic model.
+    pub(super) fn reset_search_state(&mut self) {
+        self.assignment.clear();
+        self.propagation_queue.clear();
+        self.eval_cache.clear();
+        self.conflict_clause = None;
+
+        // Re-derive the level-0 unit assignments from every unit clause. Learned
+        // clauses are entailed by the originals, so replaying their units is
+        // sound. An immediately-falsified unit records a level-0 conflict.
+        let units: Vec<(ClauseId, Literal)> = self
+            .clauses
+            .clauses()
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, clause)| {
+                if clause.len() == 1 {
+                    clause.get(0).map(|lit| (idx as ClauseId, lit))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (cid, lit) in units {
+            let current = self.assignment.lit_value(lit);
+            if current.is_false() {
+                self.conflict_clause = Some(cid);
+            } else if current.is_undef() {
+                self.assignment.assign(lit, Justification::Unit);
+                self.save_phase(lit);
+                self.propagation_queue.push(lit);
+            }
+        }
+    }
+
     /// Solve the formula.
     pub fn solve(&mut self) -> SolverResult {
+        // An explicit empty clause makes the formula unconditionally Unsat.
+        if self.has_empty_clause {
+            return SolverResult::Unsat;
+        }
+
+        // Incremental re-solve: discard the trail, arithmetic model and decision
+        // levels left over from any previous search and rebuild the level-0
+        // state from the clause database. Without this the new problem would be
+        // explored on top of a stale assignment.
+        if self.searched {
+            self.reset_search_state();
+        }
+        self.searched = true;
+
         // Clear unsat core tracking from previous solve
         // (but only if there's no existing conflict from clause addition)
         if self.extract_unsat_core && self.conflict_clause.is_none() {
@@ -533,6 +597,13 @@ impl NlsatSolver {
         }
 
         loop {
+            // Honour the conflict budget (0 means unlimited). This bounds the
+            // search on hard instances and makes SolverResult::Unknown reachable
+            // instead of looping indefinitely.
+            if self.config.max_conflicts != 0 && self.stats.conflicts >= self.config.max_conflicts {
+                return SolverResult::Unknown;
+            }
+
             // Handle conflict
             if let Some(conflict_id) = self.conflict_clause.take() {
                 self.stats.conflicts += 1;
@@ -619,11 +690,19 @@ impl NlsatSolver {
             }
 
             // Theory propagation
-            if let Some(conflict_lits) = self.theory_propagate() {
-                self.stats.theory_conflicts += 1;
-                let cid = self.add_learned_clause(conflict_lits);
-                self.conflict_clause = Some(cid);
-                continue;
+            match self.theory_propagate() {
+                TheoryPropagation::Ok => {}
+                TheoryPropagation::Conflict(conflict_lits) => {
+                    self.stats.theory_conflicts += 1;
+                    let cid = self.add_learned_clause(conflict_lits);
+                    self.conflict_clause = Some(cid);
+                    continue;
+                }
+                TheoryPropagation::Unknown => {
+                    // A theory conflict we cannot soundly explain: report
+                    // Unknown rather than learning an invalid lemma.
+                    return SolverResult::Unknown;
+                }
             }
 
             // Make a decision
@@ -643,17 +722,38 @@ impl NlsatSolver {
 
             // Need to assign arithmetic variables
             if let Some(var) = self.next_arith_var() {
-                if let Some(value) = self.pick_arith_value(var) {
-                    self.assignment.set_arith(var, value);
-                    // After assigning an arithmetic variable, we may have new propagations
-                    continue;
-                } else {
-                    // No valid value for this variable - backtrack
-                    if self.assignment.level() == 0 {
-                        return SolverResult::Unsat;
+                match self.pick_arith_value(var) {
+                    ArithDecision::Value(value) => {
+                        self.assignment.set_arith(var, value);
+                        // New propagations may follow the arithmetic assignment.
+                        continue;
                     }
-                    self.backtrack(self.assignment.level() - 1);
-                    continue;
+                    ArithDecision::ProvedEmpty(lemma) => {
+                        // The pure single-variable constraints on `var` are
+                        // jointly infeasible over the reals. Learn the valid
+                        // lemma and let conflict analysis back-jump, so we never
+                        // re-make the identical decision (no infinite loop).
+                        self.stats.theory_conflicts += 1;
+                        let cid = self.add_learned_clause(lemma);
+                        self.conflict_clause = Some(cid);
+                        continue;
+                    }
+                    ArithDecision::IrrationalOnly => {
+                        // A real (algebraic) solution exists but has no rational
+                        // representation in the current model: report Unknown
+                        // rather than a fabricated model or a wrong Unsat.
+                        return SolverResult::Unknown;
+                    }
+                    ArithDecision::GreedyEmpty => {
+                        if self.assignment.level() == 0 {
+                            // Fully-forced infeasible arithmetic state.
+                            return SolverResult::Unsat;
+                        }
+                        // Emptiness is conditional on earlier greedy choices and
+                        // cannot be certified as a variable-local lemma; report
+                        // Unknown instead of looping on the same decision.
+                        return SolverResult::Unknown;
+                    }
                 }
             }
 

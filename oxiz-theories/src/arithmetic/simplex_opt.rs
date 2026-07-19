@@ -255,11 +255,68 @@ impl Simplex {
             }
         }
 
+        // If the loop exhausted the pivot budget without proving optimality or
+        // unboundedness, `result` is still `Unknown`. We MUST NOT relabel that
+        // truncated search as `Optimal`: the current assignment is feasible but
+        // possibly far from optimal, and callers rely on `Unknown` meaning "the
+        // search was cut off". Only the no-entering-variable branch (which sets
+        // `Optimal` inside the loop) may report optimality.
         if matches!(result, SimplexOptStatus::Unknown) {
             self.update_assignment();
-            result = SimplexOptStatus::Optimal(self.eval_linexpr(obj));
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SimplexConfig;
+    use num_traits::One;
+
+    #[test]
+    fn test_pivot_limit_reports_unknown_not_optimal() {
+        // Regression (audit theories-p3): when the pivot budget is exhausted the
+        // optimizer must NOT relabel the truncated search as Optimal. With
+        // max_pivots = 0 the optimization loop body never runs, so optimality
+        // cannot be proven and the honest result is Unknown.
+        let config = SimplexConfig {
+            max_pivots: 0,
+            ..SimplexConfig::default()
+        };
+        let mut simplex = Simplex::with_config(config);
+
+        let x = simplex.new_var();
+        // 0 <= x <= 5, feasible immediately (no pivots needed to be feasible).
+        simplex.set_lower(x, Rational64::zero(), 0);
+        simplex.set_upper(x, Rational64::from_integer(5), 1);
+
+        // Objective: minimize x.
+        let mut obj = LinExpr::new();
+        obj.add_term(x, Rational64::one());
+
+        let status = simplex.optimize_linexpr(&obj);
+        assert_eq!(
+            status,
+            SimplexOptStatus::Unknown,
+            "pivot budget of 0 must yield Unknown, never a fabricated Optimal"
+        );
+    }
+
+    #[test]
+    fn test_optimal_reported_when_budget_sufficient() {
+        // With an adequate pivot budget the same problem is solved to optimality.
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        simplex.set_lower(x, Rational64::zero(), 0);
+        simplex.set_upper(x, Rational64::from_integer(5), 1);
+
+        let mut obj = LinExpr::new();
+        obj.add_term(x, Rational64::one());
+
+        let status = simplex.optimize_linexpr(&obj);
+        // Minimum of x over [0, 5] is 0.
+        assert_eq!(status, SimplexOptStatus::Optimal(Rational64::zero()));
     }
 }

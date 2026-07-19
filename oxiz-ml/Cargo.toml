@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "Machine Learning-Guided Heuristics for OxiZ SMT Solver"
 keywords = ["machine-learning", "smt", "solver", "heuristics", "neural-network"]
-categories = ["algorithms", "machine-learning", "science"]
+categories = ["algorithms", "science"]
 
 [dependencies]
 oxiz-core = { workspace = true, features = ["std"] }

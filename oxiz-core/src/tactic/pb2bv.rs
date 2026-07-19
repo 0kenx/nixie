@@ -105,22 +105,26 @@ impl<'a> Pb2BvTactic<'a> {
         let t = self.manager.get(term)?;
 
         match &t.kind {
+            // NOTE: `extract_linear_bool_comb` returns `(terms, const)` for
+            // `lhs = Σ(coeff*var) + const`. Every branch below used to bind
+            // that constant as `_lhs_const` and drop it — silently turning
+            // e.g. `2x + 3y + 5 <= 10` into `2x + 3y <= 10` instead of the
+            // correct `2x + 3y <= 5`. It must be folded into `bound`.
             TermKind::Le(lhs, rhs) => {
-                // lhs <= rhs
-                // Convert to: lhs - rhs <= 0, then to: lhs <= rhs
-                let (terms, _lhs_const) = self.extract_linear_bool_comb(*lhs)?;
+                // lhs_terms + lhs_const <= rhs  <=>  lhs_terms <= rhs - lhs_const
+                let (terms, lhs_const) = self.extract_linear_bool_comb(*lhs)?;
                 let rhs_val = self.extract_int_const(*rhs)?;
 
                 Some(PbConstraint {
                     terms,
-                    bound: rhs_val,
+                    bound: rhs_val - lhs_const,
                     is_le: true,
                 })
             }
             TermKind::Ge(lhs, rhs) => {
-                // lhs >= rhs => -lhs <= -rhs => rhs <= lhs
-                // Convert to: -lhs + rhs <= 0
-                let (mut terms, _lhs_const) = self.extract_linear_bool_comb(*lhs)?;
+                // lhs_terms + lhs_const >= rhs
+                //   <=> -lhs_terms <= lhs_const - rhs
+                let (mut terms, lhs_const) = self.extract_linear_bool_comb(*lhs)?;
                 let rhs_val = self.extract_int_const(*rhs)?;
 
                 // Negate all coefficients
@@ -130,24 +134,25 @@ impl<'a> Pb2BvTactic<'a> {
 
                 Some(PbConstraint {
                     terms,
-                    bound: -rhs_val,
+                    bound: lhs_const - rhs_val,
                     is_le: true,
                 })
             }
             TermKind::Lt(lhs, rhs) => {
-                // lhs < rhs => lhs <= rhs - 1
-                let (terms, _lhs_const) = self.extract_linear_bool_comb(*lhs)?;
+                // lhs_terms + lhs_const < rhs  <=>  lhs_terms <= rhs - lhs_const - 1
+                let (terms, lhs_const) = self.extract_linear_bool_comb(*lhs)?;
                 let rhs_val = self.extract_int_const(*rhs)?;
 
                 Some(PbConstraint {
                     terms,
-                    bound: rhs_val - 1,
+                    bound: rhs_val - lhs_const - 1,
                     is_le: true,
                 })
             }
             TermKind::Gt(lhs, rhs) => {
-                // lhs > rhs => rhs < lhs => rhs <= lhs - 1
-                let (mut terms, _lhs_const) = self.extract_linear_bool_comb(*lhs)?;
+                // lhs_terms + lhs_const > rhs
+                //   <=> -lhs_terms <= lhs_const - rhs - 1
+                let (mut terms, lhs_const) = self.extract_linear_bool_comb(*lhs)?;
                 let rhs_val = self.extract_int_const(*rhs)?;
 
                 for term in &mut terms {
@@ -156,17 +161,18 @@ impl<'a> Pb2BvTactic<'a> {
 
                 Some(PbConstraint {
                     terms,
-                    bound: -rhs_val - 1,
+                    bound: lhs_const - rhs_val - 1,
                     is_le: true,
                 })
             }
             TermKind::Eq(lhs, rhs) => {
-                let (terms, _lhs_const) = self.extract_linear_bool_comb(*lhs)?;
+                // lhs_terms + lhs_const = rhs  <=>  lhs_terms = rhs - lhs_const
+                let (terms, lhs_const) = self.extract_linear_bool_comb(*lhs)?;
                 let rhs_val = self.extract_int_const(*rhs)?;
 
                 Some(PbConstraint {
                     terms,
-                    bound: rhs_val,
+                    bound: rhs_val - lhs_const,
                     is_le: false, // equality
                 })
             }

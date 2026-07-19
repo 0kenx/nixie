@@ -7,13 +7,11 @@ use oxiz_spacer::chc::ChcSystem;
 use oxiz_spacer::parser::ChcParser;
 use oxiz_spacer::pdr::{Spacer, SpacerConfig, SpacerResult};
 
-/// Test basic CHC solving: prove that x >= 0 is an invariant when x starts at 0 and increments
+/// Test basic CHC solving: prove that x >= 0 is an invariant when x starts at 0 and increments.
 ///
-/// NOTE: This test requires full arithmetic theory integration which is not yet complete.
-/// The SMT solver needs to properly encode arithmetic constraints (>=, <, etc.) to the
-/// simplex solver for this test to terminate in reasonable time.
+/// End-to-end: exercises the real sequential Spacer/PDR engine on a
+/// single-predicate linear CHC system and requires a `Safe` verdict.
 #[test]
-#[ignore = "Requires complete arithmetic theory integration (see Constraint::Ge handling in solver.rs)"]
 fn test_simple_counter_invariant() {
     let mut terms = TermManager::new();
     let mut system = ChcSystem::new();
@@ -66,9 +64,16 @@ fn test_simple_counter_invariant() {
     assert!(matches!(result, Ok(SpacerResult::Safe)));
 }
 
-/// Test unsafe case: counter that can go negative
+/// Test unsafe case: counter that can go negative.
+///
+/// DEFERRED / still ignored: the sequential PDR engine (`pdr.rs`, outside this
+/// task's ownership) does not yet detect the counterexample for a *decrementing*
+/// counter — it exhausts its SMT-query budget (~60s) and returns `Unknown`
+/// instead of `Unsafe`. Blocking-based counterexample extraction for this
+/// fragment is an engine limitation to be fixed in `pdr.rs`, not in the
+/// distributed / existential / BMC modules covered here.
 #[test]
-#[ignore = "Requires complete arithmetic theory integration"]
+#[ignore = "pdr.rs engine does not yet find the counterexample for a decrementing counter (returns Unknown after exhausting the SMT-query budget); tracked as an engine limitation"]
 fn test_counter_unsafe() {
     let mut terms = TermManager::new();
     let mut system = ChcSystem::new();
@@ -123,7 +128,6 @@ fn test_counter_unsafe() {
 
 /// Test CHC with boolean variables
 #[test]
-#[ignore = "Requires complete arithmetic theory integration"]
 fn test_boolean_state_machine() {
     let mut terms = TermManager::new();
     let mut system = ChcSystem::new();
@@ -242,7 +246,6 @@ fn test_empty_system() {
 
 /// Test system with only init rules (no transitions)
 #[test]
-#[ignore = "Requires complete arithmetic theory integration"]
 fn test_init_only() {
     let mut terms = TermManager::new();
     let mut system = ChcSystem::new();

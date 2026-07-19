@@ -12,11 +12,54 @@ use crate::maxsat::{MaxSatConfig, MaxSatError, MaxSatResult, Weight};
 use crate::objective::{Objective, ObjectiveId, ObjectiveKind};
 use crate::pareto::ParetoConfig;
 use num_bigint::BigInt;
-use num_rational::BigRational;
+use num_rational::{BigRational, Rational64};
+use num_traits::ToPrimitive;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
-use oxiz_solver::{OptimizationResult, Optimizer, Solver, SolverResult};
+use oxiz_solver::{Model, Solver, SolverResult};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
+
+/// Compute the greatest common divisor of two non-negative `BigInt`s
+/// (Euclidean algorithm).
+fn bigint_gcd(a: &BigInt, b: &BigInt) -> BigInt {
+    let zero = BigInt::from(0);
+    let (mut a, mut b) = (a.clone(), b.clone());
+    while b != zero {
+        let r = &a % &b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+/// Compute the least common multiple of two positive `BigInt`s.
+fn bigint_lcm(a: &BigInt, b: &BigInt) -> BigInt {
+    let zero = BigInt::from(0);
+    if *a == zero || *b == zero {
+        return zero;
+    }
+    (a / bigint_gcd(a, b)) * b
+}
+
+/// Convert a soft-constraint [`Weight`] to an exact integer cost, scaled by
+/// `scale`. `scale` must be a common multiple of every rational weight's
+/// denominator (see callers) so that rational weights are represented
+/// exactly rather than truncated/coerced.
+fn scaled_weight_int(weight: &Weight, scale: &BigInt) -> BigInt {
+    match weight {
+        Weight::Int(n) => n * scale,
+        Weight::Rational(r) => {
+            // `scale` is a multiple of `r.denom()` by construction, so this
+            // division is always exact.
+            let factor = scale / r.denom();
+            r.numer() * factor
+        }
+        // Infinite weight is treated as an effectively-hard constraint: use
+        // a sentinel far larger than the sum of every other (scaled) soft
+        // weight so it always dominates the optimization.
+        Weight::Infinite => BigInt::from(i64::MAX / 2) * scale,
+    }
+}
 
 /// Errors that can occur during optimization
 #[derive(Error, Debug)]
@@ -214,6 +257,156 @@ fn term_id_to_model_value(val: TermId, tm: &TermManager) -> Option<ModelValue> {
     }
 }
 
+/// Recursively evaluate a boolean-valued term against a stored model.
+///
+/// The model maps *leaf* terms (variables / atoms the solver assigned) to
+/// concrete [`ModelValue`]s. A soft constraint term, however, may be an
+/// arbitrary boolean expression such as `(not p)`, `(and p q)`, or an
+/// arithmetic atom like `(<= x 3)` — none of which appear directly as a model
+/// key. Evaluating only by direct lookup (the historical behavior) therefore
+/// reported every compound soft term as unsatisfied, over-counting the cost.
+/// This walks the term structure, looking leaves up in the model.
+///
+/// Returns `None` when the value cannot be determined from the model.
+fn model_eval_bool(
+    term: TermId,
+    model: &FxHashMap<TermId, ModelValue>,
+    tm: &TermManager,
+) -> Option<bool> {
+    // A direct model entry always wins (leaf assignment).
+    if let Some(ModelValue::Bool(b)) = model.get(&term) {
+        return Some(*b);
+    }
+
+    let t = tm.get(term)?;
+    match &t.kind {
+        TermKind::True => Some(true),
+        TermKind::False => Some(false),
+        TermKind::Not(a) => model_eval_bool(*a, model, tm).map(|b| !b),
+        TermKind::And(args) => {
+            let mut all_true = true;
+            for &a in args {
+                match model_eval_bool(a, model, tm) {
+                    Some(true) => {}
+                    Some(false) => return Some(false),
+                    None => all_true = false,
+                }
+            }
+            if all_true { Some(true) } else { None }
+        }
+        TermKind::Or(args) => {
+            let mut any_unknown = false;
+            for &a in args {
+                match model_eval_bool(a, model, tm) {
+                    Some(true) => return Some(true),
+                    Some(false) => {}
+                    None => any_unknown = true,
+                }
+            }
+            if any_unknown { None } else { Some(false) }
+        }
+        TermKind::Xor(a, b) => {
+            Some(model_eval_bool(*a, model, tm)? ^ model_eval_bool(*b, model, tm)?)
+        }
+        TermKind::Implies(a, b) => match model_eval_bool(*a, model, tm) {
+            Some(false) => Some(true),
+            Some(true) => model_eval_bool(*b, model, tm),
+            None => match model_eval_bool(*b, model, tm) {
+                Some(true) => Some(true),
+                _ => None,
+            },
+        },
+        TermKind::Ite(c, then_t, else_t) => match model_eval_bool(*c, model, tm)? {
+            true => model_eval_bool(*then_t, model, tm),
+            false => model_eval_bool(*else_t, model, tm),
+        },
+        TermKind::Eq(a, b) => {
+            // Try boolean equality first, then numeric equality.
+            if let (Some(ba), Some(bb)) = (
+                model_eval_bool(*a, model, tm),
+                model_eval_bool(*b, model, tm),
+            ) {
+                return Some(ba == bb);
+            }
+            let na = model_eval_num(*a, model, tm)?;
+            let nb = model_eval_num(*b, model, tm)?;
+            Some(na == nb)
+        }
+        TermKind::Distinct(args) => {
+            let mut vals = Vec::with_capacity(args.len());
+            for &a in args {
+                vals.push(model_eval_num(a, model, tm)?);
+            }
+            for i in 0..vals.len() {
+                for j in (i + 1)..vals.len() {
+                    if vals[i] == vals[j] {
+                        return Some(false);
+                    }
+                }
+            }
+            Some(true)
+        }
+        TermKind::Lt(a, b) => Some(model_eval_num(*a, model, tm)? < model_eval_num(*b, model, tm)?),
+        TermKind::Le(a, b) => {
+            Some(model_eval_num(*a, model, tm)? <= model_eval_num(*b, model, tm)?)
+        }
+        TermKind::Gt(a, b) => Some(model_eval_num(*a, model, tm)? > model_eval_num(*b, model, tm)?),
+        TermKind::Ge(a, b) => {
+            Some(model_eval_num(*a, model, tm)? >= model_eval_num(*b, model, tm)?)
+        }
+        _ => None,
+    }
+}
+
+/// Recursively evaluate a numeric (integer/real) term against a stored model.
+///
+/// Returns `None` when the term uses an operation this lightweight evaluator
+/// does not model exactly (e.g. integer division / modulo), so callers stay
+/// conservative rather than fabricating a value.
+fn model_eval_num(
+    term: TermId,
+    model: &FxHashMap<TermId, ModelValue>,
+    tm: &TermManager,
+) -> Option<BigRational> {
+    if let Some(mv) = model.get(&term) {
+        return match mv {
+            ModelValue::Int(n) => Some(BigRational::from(n.clone())),
+            ModelValue::Rational(r) => Some(r.clone()),
+            ModelValue::BitVec(_, n) => Some(BigRational::from(n.clone())),
+            ModelValue::Bool(_) => None,
+        };
+    }
+
+    let t = tm.get(term)?;
+    match &t.kind {
+        TermKind::IntConst(n) => Some(BigRational::from(n.clone())),
+        TermKind::RealConst(r) => Some(BigRational::new(
+            BigInt::from(*r.numer()),
+            BigInt::from(*r.denom()),
+        )),
+        TermKind::BitVecConst { value, .. } => Some(BigRational::from(value.clone())),
+        TermKind::Neg(a) => Some(-model_eval_num(*a, model, tm)?),
+        TermKind::Add(args) => {
+            let mut acc = BigRational::from(BigInt::from(0));
+            for &a in args {
+                acc += model_eval_num(a, model, tm)?;
+            }
+            Some(acc)
+        }
+        TermKind::Sub(a, b) => {
+            Some(model_eval_num(*a, model, tm)? - model_eval_num(*b, model, tm)?)
+        }
+        TermKind::Mul(args) => {
+            let mut acc = BigRational::from(BigInt::from(1));
+            for &a in args {
+                acc *= model_eval_num(a, model, tm)?;
+            }
+            Some(acc)
+        }
+        _ => None,
+    }
+}
+
 /// Convert a `TermId` value term into a `Weight` (for storing objective bounds).
 fn term_id_to_weight(val: TermId, tm: &TermManager) -> Weight {
     let Some(t) = tm.get(val) else {
@@ -227,6 +420,101 @@ fn term_id_to_weight(val: TermId, tm: &TermManager) -> Weight {
         }
         _ => Weight::Infinite,
     }
+}
+
+/// Snapshot a solver [`Model`] into the `TermId -> ModelValue` map used
+/// throughout `OptContext`. Shared by every optimization path so the
+/// (var-term, value-term) -> `ModelValue` conversion logic lives in one place.
+fn snapshot_model(model: &Model, tm: &TermManager) -> FxHashMap<TermId, ModelValue> {
+    model
+        .assignments()
+        .iter()
+        .filter_map(|(&var_term, &val_term)| {
+            let mv = term_id_to_model_value(val_term, tm)?;
+            Some((var_term, mv))
+        })
+        .collect()
+}
+
+/// Floor of `x / 2` (correct for negative operands, unlike truncating
+/// division). Used by the integer objective binary search below.
+fn floor_half(x: BigInt) -> BigInt {
+    let two = BigInt::from(2);
+    let q = &x / &two;
+    let r = x - &q * &two;
+    if r.sign() == num_bigint::Sign::Minus {
+        q - BigInt::from(1)
+    } else {
+        q
+    }
+}
+
+/// Pareto dominance over already-evaluated objective values.
+///
+/// `p` dominates `q` iff `p` is no worse than `q` in every objective and
+/// strictly better in at least one ("better" = smaller for `Minimize`, larger
+/// for `Maximize`). Relies on `Weight`'s numeric (variant-independent) `Ord`
+/// so Int/Rational objective values compare correctly against each other.
+fn dominates_weights(p: &[Weight], q: &[Weight], kinds: &[ObjectiveKind]) -> bool {
+    use std::cmp::Ordering;
+    let mut strictly_better = false;
+    for i in 0..kinds.len() {
+        let ord = p[i].cmp(&q[i]);
+        let (no_worse, better) = match kinds[i] {
+            ObjectiveKind::Minimize => (ord != Ordering::Greater, ord == Ordering::Less),
+            ObjectiveKind::Maximize => (ord != Ordering::Less, ord == Ordering::Greater),
+        };
+        if !no_worse {
+            return false;
+        }
+        if better {
+            strictly_better = true;
+        }
+    }
+    strictly_better
+}
+
+/// Outcome of a bounded feasibility probe for an integer objective bound.
+enum IntBoundProbe {
+    /// A feasible model was found; carries the attained objective value.
+    Sat(BigInt, Model),
+    /// The bound is infeasible.
+    Unsat,
+    /// The solver could not decide (incomplete/timeout/non-concrete value).
+    Unknown,
+}
+
+/// Outcome of a bounded feasibility probe for a real (rational) objective bound.
+enum RealBoundProbe {
+    /// A feasible model was found; carries the attained objective value.
+    Sat(Rational64, Model),
+    /// The bound is infeasible.
+    Unsat,
+    /// The solver could not decide (incomplete/timeout/non-concrete value).
+    Unknown,
+}
+
+/// Outcome of a single-objective search (see [`OptContext::optimize_int_objective`]
+/// / [`OptContext::optimize_real_objective`]).
+enum SingleObjOutcome {
+    /// The search proved `value` is the exact optimum.
+    Optimal {
+        value: Weight,
+        model: FxHashMap<TermId, ModelValue>,
+    },
+    /// `value` is feasible but optimality was not proven (iteration budget,
+    /// deadline, or solver `Unknown` cut the search short). Must never be
+    /// reported to callers as `Optimal`.
+    Feasible {
+        value: Weight,
+        model: FxHashMap<TermId, ModelValue>,
+    },
+    /// The objective is unbounded in its optimization direction.
+    Unbounded,
+    /// The hard constraints (plus any fixed prior objectives) are unsatisfiable.
+    Unsat,
+    /// The solver could not decide even the initial feasibility check.
+    Unknown,
 }
 
 /// Optimization context wrapping the SMT solver.
@@ -481,9 +769,41 @@ impl OptContext {
         }
     }
 
+    /// Build a fresh [`Solver`], honoring the configured `timeout_ms`
+    /// (0 = no timeout). Previously the timeout was accepted but silently
+    /// dropped on every solve path.
+    fn new_solver(&self) -> Solver {
+        let mut solver = Solver::new();
+        if self.config.timeout_ms > 0 {
+            solver.set_timeout(core::time::Duration::from_millis(self.config.timeout_ms));
+        }
+        solver
+    }
+
+    /// Compute the wall-clock deadline for one top-level `optimize()` call from
+    /// `config.timeout_ms` (0 = no deadline). `new_solver()` already bounds each
+    /// *individual* `Solver::check` to `timeout_ms`, but a search that issues many
+    /// solver calls (binary search, Pareto enumeration, ...) needs this additional
+    /// wall-clock cap so the whole call — not just one solve inside it — actually
+    /// stops within roughly `timeout_ms`.
+    fn deadline(&self) -> Option<std::time::Instant> {
+        if self.config.timeout_ms == 0 {
+            return None;
+        }
+        // A `checked_add` overflow (astronomically large timeout) degrades to "no
+        // deadline" rather than panicking.
+        std::time::Instant::now()
+            .checked_add(core::time::Duration::from_millis(self.config.timeout_ms))
+    }
+
+    /// True once `deadline` (if any) has passed.
+    fn deadline_passed(deadline: Option<std::time::Instant>) -> bool {
+        deadline.is_some_and(|d| std::time::Instant::now() >= d)
+    }
+
     /// Check satisfiability (ignoring soft constraints and objectives)
     pub fn check_sat(&mut self) -> OptResult {
-        let mut solver = Solver::new();
+        let mut solver = self.new_solver();
         for &term in &self.hard_constraints {
             solver.assert(term, &mut self.terms);
         }
@@ -564,15 +884,22 @@ impl OptContext {
         let mut selector_implications: Vec<TermId> = Vec::with_capacity(num_soft);
         let mut cost_defs: Vec<TermId> = Vec::with_capacity(num_soft * 2);
 
+        // Determine the scale factor needed to represent every soft weight
+        // (including rational ones) as an exact integer. Coercing rational
+        // weights to a constant would silently change which constraints get
+        // sacrificed whenever rational and integer weights are mixed.
+        let mut weight_scale = BigInt::from(1);
+        for sc in &self.soft_constraints {
+            if let Weight::Rational(r) = &sc.weight {
+                weight_scale = bigint_lcm(&weight_scale, r.denom());
+            }
+        }
+
         // Pre-compute total weight for upper bound of binary search.
         let total_weight: BigInt = self
             .soft_constraints
             .iter()
-            .map(|sc| match &sc.weight {
-                Weight::Int(n) => n.clone(),
-                Weight::Rational(_) => BigInt::from(1), // treat rational as 1 for bound
-                Weight::Infinite => BigInt::from(i64::MAX / 2),
-            })
+            .map(|sc| scaled_weight_int(&sc.weight, &weight_scale))
             .fold(BigInt::from(0), |acc, w| acc + w);
 
         for sc in &self.soft_constraints {
@@ -592,11 +919,7 @@ impl OptContext {
 
             // cost_i = ite(b_i, 0, w_i)
             // Encoded as two implications: b_i → cost_i = 0; ¬b_i → cost_i = w_i
-            let weight_int = match &sc.weight {
-                Weight::Int(n) => n.clone(),
-                Weight::Rational(_) => BigInt::from(1),
-                Weight::Infinite => BigInt::from(i64::MAX / 2),
-            };
+            let weight_int = scaled_weight_int(&sc.weight, &weight_scale);
             let w_term = self.terms.mk_int(weight_int);
             let zero = self.terms.mk_int(0i64);
             let not_sel = self.terms.mk_not(sel);
@@ -618,7 +941,7 @@ impl OptContext {
         // First check feasibility with no soft constraints (hi = total cost).
         // We need to know if hard constraints are satisfiable at all.
         let feasible = {
-            let mut solver = Solver::new();
+            let mut solver = self.new_solver();
             for &h in &self.hard_constraints {
                 solver.assert(h, &mut self.terms);
             }
@@ -638,13 +961,17 @@ impl OptContext {
 
         // Binary search for minimum cost.
         let mut best_model_snapshot: Option<FxHashMap<TermId, ModelValue>> = None;
+        // Becomes true if the inner solver ever answers Unknown: in that
+        // case the search did not converge and we must not report the
+        // result as a proven optimum.
+        let mut search_incomplete = false;
 
         while lo < hi {
             let mid: BigInt = (lo.clone() + hi.clone()) / 2i32;
             let bound_term = self.terms.mk_int(mid.clone());
             let cost_le_mid = self.terms.mk_le(cost_sum, bound_term);
 
-            let mut solver = Solver::new();
+            let mut solver = self.new_solver();
             for &h in &self.hard_constraints {
                 solver.assert(h, &mut self.terms);
             }
@@ -676,15 +1003,19 @@ impl OptContext {
                 SolverResult::Unsat => {
                     lo = mid + BigInt::from(1i32);
                 }
-                SolverResult::Unknown => break,
+                SolverResult::Unknown => {
+                    search_incomplete = true;
+                    break;
+                }
             }
         }
 
-        // Solve once more at lo to get the actual optimal model.
-        {
+        // Solve once more at lo to get the actual optimal model (only
+        // meaningful if the search above actually converged).
+        if !search_incomplete {
             let bound_term = self.terms.mk_int(lo.clone());
             let cost_le_lo = self.terms.mk_le(cost_sum, bound_term);
-            let mut solver = Solver::new();
+            let mut solver = self.new_solver();
             for &h in &self.hard_constraints {
                 solver.assert(h, &mut self.terms);
             }
@@ -696,110 +1027,525 @@ impl OptContext {
             }
             solver.assert(cost_le_lo, &mut self.terms);
             self.stats.solver_calls += 1;
-            if solver.check(&mut self.terms) == SolverResult::Sat
-                && let Some(model) = solver.model()
-            {
-                best_model_snapshot = Some(
-                    model
-                        .assignments()
-                        .iter()
-                        .filter_map(|(&k, &v)| {
-                            let mv = term_id_to_model_value(v, &self.terms)?;
-                            Some((k, mv))
-                        })
-                        .collect(),
-                );
+            match solver.check(&mut self.terms) {
+                SolverResult::Sat => {
+                    if let Some(model) = solver.model() {
+                        best_model_snapshot = Some(
+                            model
+                                .assignments()
+                                .iter()
+                                .filter_map(|(&k, &v)| {
+                                    let mv = term_id_to_model_value(v, &self.terms)?;
+                                    Some((k, mv))
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+                SolverResult::Unsat => {
+                    // The binary search's own invariant (Sat at `hi`, Unsat
+                    // strictly below `lo`) guarantees `lo` is feasible; an
+                    // Unsat here would mean that invariant broke down.
+                    // Treat conservatively as non-convergence rather than
+                    // fabricating an optimum.
+                    search_incomplete = true;
+                }
+                SolverResult::Unknown => {
+                    search_incomplete = true;
+                }
             }
         }
 
         self.best_model = best_model_snapshot;
-        Ok(OptResult::Optimal)
+        if search_incomplete {
+            // The search did not prove optimality. Report whatever feasible
+            // model (if any) was found along the way, honestly labeled as
+            // non-optimal rather than claiming a proven optimum.
+            if self.best_model.is_some() {
+                Ok(OptResult::Satisfiable)
+            } else {
+                Ok(OptResult::Unknown)
+            }
+        } else {
+            Ok(OptResult::Optimal)
+        }
     }
 
-    /// Optimize a single objective using `oxiz_solver::Optimizer`.
+    /// Optimize a single objective.
+    ///
+    /// This drives its own binary-search (integer objectives) / strict-
+    /// improvement (real objectives) loop directly against [`Self::new_solver`]
+    /// rather than delegating to `oxiz_solver::Optimizer`, because the latter
+    /// builds every internal probe solver with no timeout at all — it has no
+    /// hook to honor `config.timeout_ms`. Every solver call here goes through
+    /// `new_solver()` (so each individual `check` is itself timeout-bounded) and
+    /// the loop additionally checks `Self::deadline_passed` between iterations,
+    /// so the whole search — not just one solve inside it — respects
+    /// `timeout_ms`. On timeout the best feasible value found so far is
+    /// reported as `Satisfiable`, never a fabricated `Optimal`.
     fn optimize_single_objective(&mut self) -> Result<OptResult, OptError> {
         let obj = match self.objectives.first().cloned() {
             Some(obj) => obj,
             None => return Ok(OptResult::Unknown),
         };
 
-        let mut opt = Optimizer::new();
+        let is_int = self
+            .terms
+            .get(obj.term)
+            .is_some_and(|t| t.sort == self.terms.sorts.int_sort);
 
-        // Assert all hard constraints.
-        for &h in &self.hard_constraints {
-            opt.assert(h);
-        }
+        let deadline = self.deadline();
+        let outcome = if is_int {
+            self.optimize_int_objective(obj.term, obj.kind, deadline)
+        } else {
+            self.optimize_real_objective(obj.term, obj.kind, deadline)
+        };
 
-        // Register the objective.
-        match obj.kind {
-            ObjectiveKind::Minimize => opt.minimize(obj.term),
-            ObjectiveKind::Maximize => opt.maximize(obj.term),
-        }
-
-        self.stats.solver_calls += 1;
-        match opt.optimize(&mut self.terms) {
-            OptimizationResult::Optimal { value, model } => {
-                // Store objective bound.
-                let bound = term_id_to_weight(value, &self.terms);
-                self.lower_bounds.insert(obj.id, bound.clone());
-                self.upper_bounds.insert(obj.id, bound);
-
-                // Snapshot the model.
-                let snapshot = model
-                    .assignments()
-                    .iter()
-                    .filter_map(|(&k, &v)| {
-                        let mv = term_id_to_model_value(v, &self.terms)?;
-                        Some((k, mv))
-                    })
-                    .collect();
-                self.best_model = Some(snapshot);
+        match outcome {
+            SingleObjOutcome::Optimal { value, model } => {
+                self.lower_bounds.insert(obj.id, value.clone());
+                self.upper_bounds.insert(obj.id, value);
+                self.best_model = Some(model);
                 Ok(OptResult::Optimal)
             }
-            OptimizationResult::Unbounded => Ok(OptResult::Unbounded),
-            OptimizationResult::Unsat => Ok(OptResult::Unsatisfiable),
-            OptimizationResult::Unknown => Ok(OptResult::Unknown),
+            SingleObjOutcome::Feasible { value, model } => {
+                self.lower_bounds.insert(obj.id, value.clone());
+                self.upper_bounds.insert(obj.id, value);
+                self.best_model = Some(model);
+                Ok(OptResult::Satisfiable)
+            }
+            SingleObjOutcome::Unbounded => Ok(OptResult::Unbounded),
+            SingleObjOutcome::Unsat => Ok(OptResult::Unsatisfiable),
+            SingleObjOutcome::Unknown => Ok(OptResult::Unknown),
         }
     }
 
-    /// Optimize using Pareto (multiple objectives) via `oxiz_solver::Optimizer`.
+    /// Probe `obj_term <= bound` (minimize) / `obj_term >= bound` (maximize)
+    /// on a fresh, timeout-bounded solver seeded with the hard constraints.
+    fn probe_int_bound(
+        &mut self,
+        obj_term: TermId,
+        bound: &BigInt,
+        minimize: bool,
+    ) -> IntBoundProbe {
+        let bound_term = self.terms.mk_int(bound.clone());
+        let constraint = if minimize {
+            self.terms.mk_le(obj_term, bound_term)
+        } else {
+            self.terms.mk_ge(obj_term, bound_term)
+        };
+        let mut solver = self.new_solver();
+        for &h in &self.hard_constraints {
+            solver.assert(h, &mut self.terms);
+        }
+        solver.assert(constraint, &mut self.terms);
+        self.stats.solver_calls += 1;
+        match solver.check(&mut self.terms) {
+            SolverResult::Sat => match solver.model() {
+                Some(model) => {
+                    let model = model.clone();
+                    let value_term = model.eval(obj_term, &mut self.terms);
+                    match self.terms.get(value_term).map(|t| t.kind.clone()) {
+                        Some(TermKind::IntConst(n)) => IntBoundProbe::Sat(n, model),
+                        _ => IntBoundProbe::Unknown,
+                    }
+                }
+                None => IntBoundProbe::Unknown,
+            },
+            SolverResult::Unsat => IntBoundProbe::Unsat,
+            SolverResult::Unknown => IntBoundProbe::Unknown,
+        }
+    }
+
+    /// Probe a real objective bound (`<`/`>` when `strict`, else `<=`/`>=`,
+    /// direction chosen by `minimize`) on a fresh, timeout-bounded solver.
+    fn probe_real_bound(
+        &mut self,
+        obj_term: TermId,
+        bound: Rational64,
+        minimize: bool,
+        strict: bool,
+    ) -> RealBoundProbe {
+        let bound_term = self.terms.mk_real(bound);
+        let constraint = match (minimize, strict) {
+            (true, false) => self.terms.mk_le(obj_term, bound_term),
+            (true, true) => self.terms.mk_lt(obj_term, bound_term),
+            (false, false) => self.terms.mk_ge(obj_term, bound_term),
+            (false, true) => self.terms.mk_gt(obj_term, bound_term),
+        };
+        let mut solver = self.new_solver();
+        for &h in &self.hard_constraints {
+            solver.assert(h, &mut self.terms);
+        }
+        solver.assert(constraint, &mut self.terms);
+        self.stats.solver_calls += 1;
+        match solver.check(&mut self.terms) {
+            SolverResult::Sat => match solver.model() {
+                Some(model) => {
+                    let model = model.clone();
+                    let value_term = model.eval(obj_term, &mut self.terms);
+                    match self.terms.get(value_term).map(|t| t.kind.clone()) {
+                        Some(TermKind::RealConst(v)) => RealBoundProbe::Sat(v, model),
+                        Some(TermKind::IntConst(n)) => match n.to_i64() {
+                            Some(i) => RealBoundProbe::Sat(Rational64::from_integer(i), model),
+                            None => RealBoundProbe::Unknown,
+                        },
+                        _ => RealBoundProbe::Unknown,
+                    }
+                }
+                None => RealBoundProbe::Unknown,
+            },
+            SolverResult::Unsat => RealBoundProbe::Unsat,
+            SolverResult::Unknown => RealBoundProbe::Unknown,
+        }
+    }
+
+    /// Optimize an integer objective by bounded binary search (mirrors
+    /// `oxiz_solver::Optimizer::optimize_int`), with periodic `deadline` checks
+    /// so a slow search yields an honest `Feasible` (unproven) result instead of
+    /// running unbounded.
+    fn optimize_int_objective(
+        &mut self,
+        obj_term: TermId,
+        kind: ObjectiveKind,
+        deadline: Option<std::time::Instant>,
+    ) -> SingleObjOutcome {
+        let minimize = matches!(kind, ObjectiveKind::Minimize);
+        // 2^40 is far larger than any realistic finite optimum yet small enough
+        // that the i64-based simplex never overflows while probing near it.
+        let threshold = BigInt::from(1u64 << 40);
+        let one = BigInt::from(1);
+
+        // Phase 1: initial feasibility + attained value.
+        let (mut best_value, mut best_model) = {
+            let mut solver = self.new_solver();
+            for &h in &self.hard_constraints {
+                solver.assert(h, &mut self.terms);
+            }
+            self.stats.solver_calls += 1;
+            match solver.check(&mut self.terms) {
+                SolverResult::Unsat => return SingleObjOutcome::Unsat,
+                SolverResult::Unknown => return SingleObjOutcome::Unknown,
+                SolverResult::Sat => match solver.model() {
+                    Some(model) => {
+                        let model = model.clone();
+                        let value_term = model.eval(obj_term, &mut self.terms);
+                        match self.terms.get(value_term).map(|t| t.kind.clone()) {
+                            Some(TermKind::IntConst(n)) => (n, model),
+                            // Not a concrete integer in this model: return the
+                            // feasible point as-is rather than driving a
+                            // numeric search we cannot interpret.
+                            _ => {
+                                return SingleObjOutcome::Feasible {
+                                    value: term_id_to_weight(value_term, &self.terms),
+                                    model: snapshot_model(&model, &self.terms),
+                                };
+                            }
+                        }
+                    }
+                    None => return SingleObjOutcome::Unknown,
+                },
+            }
+        };
+
+        if Self::deadline_passed(deadline) {
+            return SingleObjOutcome::Feasible {
+                value: Weight::Int(best_value),
+                model: snapshot_model(&best_model, &self.terms),
+            };
+        }
+
+        // Phase 2: unbounded-direction probe at the extreme representable bound.
+        let extreme = if minimize {
+            -threshold.clone()
+        } else {
+            threshold.clone()
+        };
+        match self.probe_int_bound(obj_term, &extreme, minimize) {
+            IntBoundProbe::Unknown => {
+                return SingleObjOutcome::Feasible {
+                    value: Weight::Int(best_value),
+                    model: snapshot_model(&best_model, &self.terms),
+                };
+            }
+            IntBoundProbe::Sat(_, _) => return SingleObjOutcome::Unbounded,
+            IntBoundProbe::Unsat => {}
+        }
+
+        // Phase 3: binary search in the now-finite bracket.
+        let (mut lo, mut hi) = if minimize {
+            ((-&threshold) + &one, best_value.clone())
+        } else {
+            (best_value.clone(), &threshold - &one)
+        };
+
+        let mut converged = false;
+        let mut guard = 0u32;
+        loop {
+            if lo >= hi {
+                converged = true;
+                break;
+            }
+            if Self::deadline_passed(deadline) {
+                break;
+            }
+            guard += 1;
+            if guard > 4096 {
+                break;
+            }
+            let mid = if minimize {
+                floor_half(&lo + &hi)
+            } else {
+                floor_half(&lo + &hi + &one)
+            };
+            match self.probe_int_bound(obj_term, &mid, minimize) {
+                IntBoundProbe::Unknown => break,
+                IntBoundProbe::Sat(val, model) => {
+                    best_model = model;
+                    best_value = val.clone();
+                    if minimize {
+                        hi = val;
+                    } else {
+                        lo = val;
+                    }
+                }
+                IntBoundProbe::Unsat => {
+                    if minimize {
+                        lo = &mid + &one;
+                    } else {
+                        hi = &mid - &one;
+                    }
+                }
+            }
+        }
+
+        let value = Weight::Int(best_value);
+        let model = snapshot_model(&best_model, &self.terms);
+        if converged {
+            SingleObjOutcome::Optimal { value, model }
+        } else {
+            SingleObjOutcome::Feasible { value, model }
+        }
+    }
+
+    /// Optimize a real objective via unbounded detection plus strict-improvement
+    /// search (mirrors `oxiz_solver::Optimizer::optimize_real`), with periodic
+    /// `deadline` checks between iterations.
+    fn optimize_real_objective(
+        &mut self,
+        obj_term: TermId,
+        kind: ObjectiveKind,
+        deadline: Option<std::time::Instant>,
+    ) -> SingleObjOutcome {
+        let minimize = matches!(kind, ObjectiveKind::Minimize);
+
+        // Phase 1: initial feasibility + attained value.
+        let (mut best_value, mut best_model) = {
+            let mut solver = self.new_solver();
+            for &h in &self.hard_constraints {
+                solver.assert(h, &mut self.terms);
+            }
+            self.stats.solver_calls += 1;
+            match solver.check(&mut self.terms) {
+                SolverResult::Unsat => return SingleObjOutcome::Unsat,
+                SolverResult::Unknown => return SingleObjOutcome::Unknown,
+                SolverResult::Sat => match solver.model() {
+                    Some(model) => {
+                        let model = model.clone();
+                        let value_term = model.eval(obj_term, &mut self.terms);
+                        match self.terms.get(value_term).map(|t| t.kind.clone()) {
+                            Some(TermKind::RealConst(v)) => (v, model),
+                            Some(TermKind::IntConst(n)) => match n.to_i64() {
+                                Some(i) => (Rational64::from_integer(i), model),
+                                None => return SingleObjOutcome::Unknown,
+                            },
+                            _ => {
+                                return SingleObjOutcome::Feasible {
+                                    value: term_id_to_weight(value_term, &self.terms),
+                                    model: snapshot_model(&model, &self.terms),
+                                };
+                            }
+                        }
+                    }
+                    None => return SingleObjOutcome::Unknown,
+                },
+            }
+        };
+
+        if Self::deadline_passed(deadline) {
+            return SingleObjOutcome::Feasible {
+                value: Weight::Rational(BigRational::new(
+                    BigInt::from(*best_value.numer()),
+                    BigInt::from(*best_value.denom()),
+                )),
+                model: snapshot_model(&best_model, &self.terms),
+            };
+        }
+
+        // Phase 2: unbounded detection. 2^40 fits the i64 numerator of
+        // `Rational64` with room to spare and keeps the theory solver well
+        // clear of overflow.
+        let huge = Rational64::from_integer(1i64 << 40);
+        let extreme = if minimize { -huge } else { huge };
+        match self.probe_real_bound(obj_term, extreme, minimize, false) {
+            RealBoundProbe::Sat(_, _) => return SingleObjOutcome::Unbounded,
+            RealBoundProbe::Unknown => {
+                let value = Weight::Rational(BigRational::new(
+                    BigInt::from(*best_value.numer()),
+                    BigInt::from(*best_value.denom()),
+                ));
+                return SingleObjOutcome::Feasible {
+                    value,
+                    model: snapshot_model(&best_model, &self.terms),
+                };
+            }
+            RealBoundProbe::Unsat => {}
+        }
+
+        // Phase 3: strict-improvement search for the exact attained optimum.
+        let max_iterations = 1000;
+        let mut converged = false;
+        for _ in 0..max_iterations {
+            if Self::deadline_passed(deadline) {
+                break;
+            }
+            match self.probe_real_bound(obj_term, best_value, minimize, true) {
+                RealBoundProbe::Sat(v, model) => {
+                    best_value = v;
+                    best_model = model;
+                }
+                RealBoundProbe::Unsat => {
+                    // No strictly-better solution exists — best_value is optimal.
+                    converged = true;
+                    break;
+                }
+                RealBoundProbe::Unknown => break,
+            }
+        }
+
+        let value = Weight::Rational(BigRational::new(
+            BigInt::from(*best_value.numer()),
+            BigInt::from(*best_value.denom()),
+        ));
+        let model = snapshot_model(&best_model, &self.terms);
+        if converged {
+            SingleObjOutcome::Optimal { value, model }
+        } else {
+            // Iteration budget or deadline exhausted without proving
+            // optimality: be honest, this is a feasible point only.
+            SingleObjOutcome::Feasible { value, model }
+        }
+    }
+
+    /// Optimize using Pareto (multiple objectives).
+    ///
+    /// Guided-improvement enumeration, driven directly against
+    /// [`Self::new_solver`] for the same reason as
+    /// [`Self::optimize_single_objective`]: `oxiz_solver::Optimizer` offers no
+    /// timeout hook. `deadline` is checked before each solver call; a search
+    /// that reaches the deadline (or the `max_points` cap) before the solver
+    /// proves no further improving point exists reports `Satisfiable` — the
+    /// front found so far — rather than a fabricated `Optimal`.
     fn optimize_pareto(&mut self) -> Result<OptResult, OptError> {
         if self.objectives.is_empty() {
             return Ok(self.check_sat());
         }
 
-        let mut opt = Optimizer::new();
+        let deadline = self.deadline();
 
-        for &h in &self.hard_constraints {
-            opt.assert(h);
+        // Objectives in priority order (lower `priority` value first) so the
+        // configured priorities are honored rather than silently ignored in
+        // favor of raw insertion order.
+        let mut ordered: Vec<Objective> = self.objectives.clone();
+        ordered.sort_by_key(|o| o.priority);
+        let kinds: Vec<ObjectiveKind> = ordered.iter().map(|o| o.kind).collect();
+        let obj_terms: Vec<TermId> = ordered.iter().map(|o| o.term).collect();
+
+        struct ParetoPointLocal {
+            values: Vec<Weight>,
+            model: FxHashMap<TermId, ModelValue>,
         }
 
-        for obj in &self.objectives {
-            match obj.kind {
-                ObjectiveKind::Minimize => opt.minimize(obj.term),
-                ObjectiveKind::Maximize => opt.maximize(obj.term),
+        let mut front: Vec<ParetoPointLocal> = Vec::new();
+        // Blocking clauses forcing each subsequent solution to strictly
+        // improve at least one objective relative to every point found so far.
+        let mut blocking: Vec<TermId> = Vec::new();
+        let max_points = 100; // Limit to avoid runaway search
+        let mut proved_complete = false;
+
+        for _ in 0..max_points {
+            if Self::deadline_passed(deadline) {
+                break;
+            }
+
+            let mut solver = self.new_solver();
+            for &h in &self.hard_constraints {
+                solver.assert(h, &mut self.terms);
+            }
+            for &b in &blocking {
+                solver.assert(b, &mut self.terms);
+            }
+            self.stats.solver_calls += 1;
+            match solver.check(&mut self.terms) {
+                SolverResult::Sat => {
+                    let Some(model) = solver.model() else {
+                        break;
+                    };
+                    let model = model.clone();
+
+                    let mut raw_values = Vec::with_capacity(obj_terms.len());
+                    for &term in &obj_terms {
+                        raw_values.push(model.eval(term, &mut self.terms));
+                    }
+                    let values: Vec<Weight> = raw_values
+                        .iter()
+                        .map(|&v| term_id_to_weight(v, &self.terms))
+                        .collect();
+
+                    // Remove any recorded point dominated by the new point.
+                    front.retain(|pt| !dominates_weights(&values, &pt.values, &kinds));
+
+                    // Record the new point unless (defensively) it is
+                    // dominated by a surviving one.
+                    let dominated = front
+                        .iter()
+                        .any(|pt| dominates_weights(&pt.values, &values, &kinds));
+                    if !dominated {
+                        front.push(ParetoPointLocal {
+                            values: values.clone(),
+                            model: snapshot_model(&model, &self.terms),
+                        });
+                    }
+
+                    // Block all solutions weakly dominated by this point: a
+                    // future solution must strictly improve at least one
+                    // objective.
+                    let mut improvement_disjuncts = Vec::with_capacity(obj_terms.len());
+                    for (idx, &term) in obj_terms.iter().enumerate() {
+                        let current_value = raw_values[idx];
+                        let improvement = match kinds[idx] {
+                            ObjectiveKind::Minimize => self.terms.mk_lt(term, current_value),
+                            ObjectiveKind::Maximize => self.terms.mk_gt(term, current_value),
+                        };
+                        improvement_disjuncts.push(improvement);
+                    }
+                    blocking.push(self.terms.mk_or(improvement_disjuncts));
+                }
+                SolverResult::Unsat => {
+                    proved_complete = true;
+                    break;
+                }
+                SolverResult::Unknown => break,
             }
         }
 
-        self.stats.solver_calls += 1;
-        let pareto_points = opt.pareto_optimize(&mut self.terms);
-
-        if pareto_points.is_empty() {
+        if front.is_empty() {
             return Ok(OptResult::Unsatisfiable);
         }
 
         self.pareto_front.clear();
-        for point in &pareto_points {
-            let snapshot: FxHashMap<TermId, ModelValue> = point
-                .model
-                .assignments()
-                .iter()
-                .filter_map(|(&k, &v)| {
-                    let mv = term_id_to_model_value(v, &self.terms)?;
-                    Some((k, mv))
-                })
-                .collect();
-            self.pareto_front.push(snapshot);
+        for point in &front {
+            self.pareto_front.push(point.model.clone());
         }
 
         // Use the last Pareto point as the best model.
@@ -807,7 +1553,14 @@ impl OptContext {
             self.best_model = Some(last.clone());
         }
 
-        Ok(OptResult::Optimal)
+        if proved_complete {
+            Ok(OptResult::Optimal)
+        } else {
+            // The `max_points` cap or the deadline cut enumeration short
+            // before the solver proved no further improving point exists:
+            // the returned front is real but not proven complete.
+            Ok(OptResult::Satisfiable)
+        }
     }
 
     /// Reset the context
@@ -852,14 +1605,12 @@ impl OptContext {
             None => return false, // No model, can't determine satisfaction
         };
 
-        // Check if the constraint's term is satisfied in the model
-        // For now, we check if the term has a value in the model
-        // A full implementation would need to evaluate the term
-        match model.get(&soft.term) {
-            Some(ModelValue::Bool(true)) => true,
-            Some(ModelValue::Bool(false)) => false,
-            _ => false, // Non-boolean or not in model - conservatively say unsatisfied
-        }
+        // Recursively evaluate the (possibly compound) constraint term against
+        // the model. A direct lookup alone would mis-report any non-leaf soft
+        // term — e.g. `(not p)` or `(<= x 3)` — as unsatisfied, over-counting
+        // the cost. `None` (undeterminable) is treated conservatively as
+        // unsatisfied.
+        matches!(model_eval_bool(soft.term, model, &self.terms), Some(true))
     }
 
     /// Get the sum of weights of unsatisfied soft constraints

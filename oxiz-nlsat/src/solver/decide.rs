@@ -4,12 +4,61 @@
 //! and cylindrical algebraic decomposition (CAD) projection for feasibility.
 
 use super::NlsatSolver;
+use crate::cad::SturmSequence;
 use crate::interval_set::IntervalSet;
-use crate::types::{Atom, AtomKind, BoolVar, Literal};
+use crate::types::{Atom, AtomKind, BoolVar, IneqAtom, Literal};
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
+use oxiz_math::interval::Interval;
 use oxiz_math::polynomial::{Polynomial, Var};
 use rustc_hash::FxHashMap;
+
+/// Outcome of trying to pick a value for an arithmetic variable.
+///
+/// The NLSAT search assigns arithmetic variables to concrete rational sample
+/// points taken from sign-invariant cells. When no rational witness exists we
+/// must distinguish *why* so that the caller never reports a silently wrong
+/// answer:
+///
+/// * `Value` – a rational witness that provably lies inside the true feasible
+///   region of every currently-assigned constraint on the variable.
+/// * `ProvedEmpty` – the constraints on this variable that mention *only* this
+///   variable are jointly infeasible over the reals (verified exactly via Sturm
+///   root isolation). The attached literals form a valid theory lemma
+///   (`¬l_1 ∨ … ∨ ¬l_k`) that can be learned and back-jumped over.
+/// * `IrrationalOnly` – the true real feasible region is non-empty but contains
+///   no rational point (e.g. `x^2 = 2`). We cannot represent an algebraic
+///   witness in the current rational assignment, so the honest answer is
+///   `Unknown` rather than a fabricated model or a wrong `Unsat`.
+/// * `GreedyEmpty` – the intersection is empty but involves a constraint that
+///   couples this variable with earlier-assigned variables, so emptiness is
+///   conditional on those (greedy) choices and cannot be turned into a valid
+///   variable-local lemma.
+pub(super) enum ArithDecision {
+    /// A concrete rational witness inside the feasible region.
+    Value(BigRational),
+    /// Provably infeasible over the reals; carries a valid conflict lemma.
+    ProvedEmpty(Vec<Literal>),
+    /// Feasible over the reals but with no rational witness (algebraic only).
+    IrrationalOnly,
+    /// Empty under the current greedy assignment; not provably a global lemma.
+    GreedyEmpty,
+}
+
+/// Feasible-region information for a single arithmetic variable, accumulated
+/// across all currently-assigned constraints that mention it.
+pub(super) struct ArithRegions {
+    /// Rational witnesses guaranteed to be a subset of the true feasible set.
+    pub(super) inner: IntervalSet,
+    /// A superset of the true feasible set (used only to certify emptiness).
+    pub(super) outer: IntervalSet,
+    /// Literals (already negated) of the constraints that were intersected.
+    pub(super) blame: Vec<Literal>,
+    /// True iff every intersected constraint mentions *only* this variable.
+    pub(super) pure: bool,
+    /// True iff emptiness of `outer` can be trusted (roots fully isolated).
+    pub(super) reliable: bool,
+}
 
 impl NlsatSolver {
     /// Make a decision.
@@ -88,52 +137,344 @@ impl NlsatSolver {
     }
 
     /// Pick a value for an arithmetic variable.
-    pub(super) fn pick_arith_value(&mut self, var: Var) -> Option<BigRational> {
-        // Get the feasible region for this variable
-        let feasible = self.compute_feasible_region(var);
+    ///
+    /// Returns an [`ArithDecision`] that distinguishes a concrete rational
+    /// witness from the various flavours of "no rational value" so the caller
+    /// can react soundly (learn a lemma, back-jump, or report `Unknown`) instead
+    /// of collapsing every failure into a wrong `Unsat`.
+    pub(super) fn pick_arith_value(&mut self, var: Var) -> ArithDecision {
+        let regions = self.compute_arith_regions(var);
 
-        // Early termination: if feasible region is empty, record and return None
-        if feasible.is_empty() {
-            if self.config.early_termination {
-                self.stats.early_terminations += 1;
+        // A rational witness inside `inner` satisfies every intersected
+        // constraint by construction, so it is always safe to commit to it.
+        if !regions.inner.is_empty()
+            && let Some(value) = regions.inner.sample()
+        {
+            return ArithDecision::Value(value);
+        }
+
+        if self.config.early_termination {
+            self.stats.early_terminations += 1;
+        }
+
+        // No rational witness. Classify the emptiness.
+        if regions.pure && regions.reliable {
+            if regions.outer.is_empty() {
+                // The pure single-variable constraints are jointly infeasible
+                // over the reals: `¬l_1 ∨ … ∨ ¬l_k` is a valid theory lemma.
+                return ArithDecision::ProvedEmpty(regions.blame);
             }
+            // Real solutions exist but none are rational (algebraic only).
+            return ArithDecision::IrrationalOnly;
+        }
+
+        // Emptiness is conditional on earlier greedy variable choices.
+        ArithDecision::GreedyEmpty
+    }
+
+    /// Accumulate feasible-region information for `var` across every assigned
+    /// constraint that mentions it.
+    pub(super) fn compute_arith_regions(&self, var: Var) -> ArithRegions {
+        let mut inner = IntervalSet::reals();
+        let mut outer = IntervalSet::reals();
+        let mut blame = Vec::new();
+        let mut pure = true;
+        let mut reliable = true;
+
+        for atom in &self.atoms {
+            match atom {
+                Atom::Ineq(ineq) => {
+                    let involves_var = ineq.factors.iter().any(|f| f.poly.vars().contains(&var));
+                    if !involves_var {
+                        continue;
+                    }
+                    let val = self.assignment.bool_value(ineq.bool_var);
+                    if val.is_undef() {
+                        continue;
+                    }
+                    let is_true = val.is_true();
+
+                    match self.ineq_atom_region(ineq, var, is_true) {
+                        None => continue, // does not constrain `var`
+                        Some((a_inner, a_outer, a_reliable)) => {
+                            inner = inner.intersect(&a_inner);
+                            outer = outer.intersect(&a_outer);
+                            reliable = reliable && a_reliable;
+
+                            // "pure" iff the constraint mentions no variable
+                            // other than `var` (so its infeasibility is not
+                            // conditional on an earlier assignment).
+                            let atom_pure = ineq
+                                .factors
+                                .iter()
+                                .all(|f| f.poly.vars().iter().all(|v| *v == var));
+                            pure = pure && atom_pure;
+
+                            let lit = if is_true {
+                                Literal::negative(ineq.bool_var)
+                            } else {
+                                Literal::positive(ineq.bool_var)
+                            };
+                            if !blame.contains(&lit) {
+                                blame.push(lit);
+                            }
+                        }
+                    }
+                }
+                Atom::Root(root) => {
+                    let involves_var = root.var == var || root.poly.vars().contains(&var);
+                    if !involves_var {
+                        continue;
+                    }
+                    let val = self.assignment.bool_value(root.bool_var);
+                    if val.is_undef() {
+                        continue;
+                    }
+                    let is_true = val.is_true();
+                    let constraint = self.atom_constraint_on_var(atom, var, is_true);
+                    if constraint.is_reals() {
+                        continue;
+                    }
+                    inner = inner.intersect(&constraint);
+                    outer = outer.intersect(&constraint);
+                    // Root-atom regions are approximate; never let them certify
+                    // a global emptiness lemma.
+                    reliable = false;
+
+                    let root_pure = root.var == var && root.poly.vars().iter().all(|v| *v == var);
+                    pure = pure && root_pure;
+
+                    let lit = if is_true {
+                        Literal::negative(root.bool_var)
+                    } else {
+                        Literal::positive(root.bool_var)
+                    };
+                    if !blame.contains(&lit) {
+                        blame.push(lit);
+                    }
+                }
+            }
+        }
+
+        ArithRegions {
+            inner,
+            outer,
+            blame,
+            pure,
+            reliable,
+        }
+    }
+
+    /// Compute `(inner, outer, reliable)` feasible regions for a single
+    /// inequality atom on `var`, using exact Sturm root isolation so that
+    /// irrational roots are never silently dropped.
+    ///
+    /// * `inner` – a subset of the true real feasible region containing only
+    ///   rational points (safe to sample as a witness).
+    /// * `outer` – a superset of the true real feasible region (empty only if
+    ///   the true region is empty).
+    /// * `reliable` – whether `outer`'s emptiness can be trusted (all roots
+    ///   isolated into singleton-root brackets).
+    ///
+    /// Returns `None` when the atom places no constraint on `var` under the
+    /// current partial assignment (e.g. another variable is still unassigned).
+    fn ineq_atom_region(
+        &self,
+        ineq: &IneqAtom,
+        var: Var,
+        is_true: bool,
+    ) -> Option<(IntervalSet, IntervalSet, bool)> {
+        // Only single-factor atoms are handled precisely; multi-factor atoms
+        // are treated as unconstraining (matches the historical behaviour).
+        if ineq.factors.len() != 1 {
+            return None;
+        }
+        let factor = &ineq.factors[0];
+
+        // Substitute every assigned variable other than `var`.
+        let mut sub_poly = factor.poly.clone();
+        for v in factor.poly.vars() {
+            if v != var {
+                if let Some(val) = self.assignment.arith_value(v) {
+                    sub_poly = sub_poly.substitute(v, &Polynomial::constant(val.clone()));
+                } else {
+                    // Another variable is unassigned: no constraint yet.
+                    return None;
+                }
+            }
+        }
+
+        // Constant after substitution: the constraint is decided outright.
+        if sub_poly.is_constant() {
+            let value = sub_poly.eval(&FxHashMap::default());
+            let sign = rational_sign(&value);
+            let ok = sign_satisfies(ineq.kind, is_true, sign);
+            return if ok {
+                Some((IntervalSet::reals(), IntervalSet::reals(), true))
+            } else {
+                Some((IntervalSet::empty(), IntervalSet::empty(), true))
+            };
+        }
+
+        // Must be univariate in `var` for the interval machinery.
+        if !sub_poly.is_univariate() {
+            return None;
+        }
+        // Guard: the remaining variable must actually be `var`.
+        if sub_poly.degree(var) == 0 {
             return None;
         }
 
-        // Sample a point from the feasible region
-        feasible.sample()
+        Some(self.univariate_regions(&sub_poly, var, ineq.kind, is_true))
     }
 
-    /// Compute the feasible region for an arithmetic variable.
-    pub(super) fn compute_feasible_region(&self, var: Var) -> IntervalSet {
-        let mut region = IntervalSet::reals();
+    /// Build `(inner, outer, reliable)` interval sets for a univariate
+    /// polynomial constraint using Sturm root isolation.
+    fn univariate_regions(
+        &self,
+        poly: &Polynomial,
+        var: Var,
+        kind: AtomKind,
+        is_true: bool,
+    ) -> (IntervalSet, IntervalSet, bool) {
+        // Exact rational roots (used for precise inner cell boundaries and for
+        // rational equality witnesses).
+        let rational_roots = self.find_univariate_roots(poly, var);
 
-        // Intersect with constraints from all satisfied atoms
-        for atom in &self.atoms {
-            if let Atom::Ineq(ineq) = atom {
-                // Check if this atom involves the variable
-                let involves_var = ineq.factors.iter().any(|f| f.poly.vars().contains(&var));
-                if !involves_var {
-                    continue;
+        // All distinct real roots (rational *and* irrational) via Sturm.
+        let sturm = SturmSequence::new(poly, var);
+        let num_distinct = sturm.count_roots() as usize;
+        let mut iso = sturm.isolate_roots();
+        iso.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut reliable = iso.len() == num_distinct;
+
+        // Classify each isolating bracket, preferring exact rational roots.
+        let mut reprs: Vec<RootRepr> = Vec::new();
+        let mut used = vec![false; rational_roots.len()];
+        for (lo, hi) in &iso {
+            let mut in_bracket: Vec<(usize, BigRational)> = Vec::new();
+            for (idx, r) in rational_roots.iter().enumerate() {
+                if !used[idx] && r >= lo && r <= hi {
+                    in_bracket.push((idx, r.clone()));
                 }
-
-                // Check if this atom is assigned
-                let val = self.assignment.bool_value(ineq.bool_var);
-                if val.is_undef() {
-                    continue;
+            }
+            match in_bracket.len() {
+                0 => reprs.push(RootRepr {
+                    lo: lo.clone(),
+                    hi: hi.clone(),
+                    exact: None,
+                }),
+                1 => {
+                    let (idx, r) = in_bracket[0].clone();
+                    used[idx] = true;
+                    reprs.push(RootRepr {
+                        lo: r.clone(),
+                        hi: r.clone(),
+                        exact: Some(r),
+                    });
                 }
+                _ => {
+                    // Multiple rational roots collapsed into one bracket: coarse.
+                    reliable = false;
+                    for (idx, r) in in_bracket {
+                        used[idx] = true;
+                        reprs.push(RootRepr {
+                            lo: r.clone(),
+                            hi: r.clone(),
+                            exact: Some(r),
+                        });
+                    }
+                }
+            }
+        }
+        // Any rational root not covered by a bracket (defensive).
+        for (idx, r) in rational_roots.iter().enumerate() {
+            if !used[idx] {
+                reprs.push(RootRepr {
+                    lo: r.clone(),
+                    hi: r.clone(),
+                    exact: Some(r.clone()),
+                });
+            }
+        }
+        reprs.sort_by(|a, b| a.lo.cmp(&b.lo));
 
-                // Get the constraint on var from this atom
-                let constraint = self.atom_constraint_on_var(atom, var, val.is_true());
-                region = region.intersect(&constraint);
+        let mut inner = IntervalSet::empty();
+        let mut outer = IntervalSet::empty();
 
-                if region.is_empty() {
-                    break;
+        // No roots: the polynomial has constant sign over the whole line.
+        if reprs.is_empty() {
+            let sign = self.eval_sign(poly, var, &BigRational::zero());
+            if sign_satisfies(kind, is_true, sign) {
+                return (IntervalSet::reals(), IntervalSet::reals(), true);
+            }
+            return (IntervalSet::empty(), IntervalSet::empty(), reliable);
+        }
+
+        let n = reprs.len();
+
+        // Region left of the first root: (-∞, r_0).
+        let left_sample = &reprs[0].lo - BigRational::one();
+        if sign_satisfies(kind, is_true, self.eval_sign(poly, var, &left_sample)) {
+            inner = inner.union(&IntervalSet::lt(reprs[0].lo.clone()));
+            outer = outer.union(&IntervalSet::lt(reprs[0].hi.clone()));
+        }
+
+        // Regions strictly between consecutive roots.
+        for i in 0..n - 1 {
+            let a = &reprs[i];
+            let b = &reprs[i + 1];
+            if a.hi < b.lo {
+                let mid = (&a.hi + &b.lo) / BigRational::from_integer(2.into());
+                if sign_satisfies(kind, is_true, self.eval_sign(poly, var, &mid)) {
+                    inner = inner.union(&IntervalSet::from_interval(Interval::open(
+                        a.hi.clone(),
+                        b.lo.clone(),
+                    )));
+                    outer = outer.union(&IntervalSet::from_interval(Interval::open(
+                        a.lo.clone(),
+                        b.hi.clone(),
+                    )));
+                }
+            } else {
+                // Brackets touch/overlap (e.g. two roots isolated by adjacent
+                // intervals sharing an endpoint): we cannot sample the cell
+                // between them to learn its sign. Conservatively assume it may
+                // satisfy the target and fold it into the `outer` superset so
+                // emptiness is never wrongly claimed; `inner` gains nothing.
+                outer = outer.union(&IntervalSet::from_interval(Interval::open(
+                    a.lo.clone(),
+                    b.hi.clone(),
+                )));
+            }
+        }
+
+        // Region right of the last root: (r_{n-1}, +∞).
+        let right_sample = &reprs[n - 1].hi + BigRational::one();
+        if sign_satisfies(kind, is_true, self.eval_sign(poly, var, &right_sample)) {
+            inner = inner.union(&IntervalSet::gt(reprs[n - 1].hi.clone()));
+            outer = outer.union(&IntervalSet::gt(reprs[n - 1].lo.clone()));
+        }
+
+        // Roots themselves (sign 0) for equality-flavoured targets.
+        if sign_satisfies(kind, is_true, 0) {
+            for r in &reprs {
+                if let Some(exact) = &r.exact {
+                    inner = inner.union(&IntervalSet::point(exact.clone()));
+                    outer = outer.union(&IntervalSet::point(exact.clone()));
+                } else {
+                    // Irrational root: no rational witness, but the outer
+                    // region must cover it so emptiness is not wrongly claimed.
+                    outer = outer.union(&IntervalSet::from_interval(Interval::closed(
+                        r.lo.clone(),
+                        r.hi.clone(),
+                    )));
                 }
             }
         }
 
-        region
+        (inner, outer, reliable)
     }
 
     /// Get the constraint that an atom places on a variable.
@@ -241,9 +582,26 @@ impl NlsatSolver {
                 let sturm = SturmSequence::new(&sub_poly, var);
                 let root_intervals = sturm.isolate_roots();
 
-                // Check if we have enough roots
+                // Check if we have enough roots. `root_index` is only
+                // guaranteed to exist for the polynomial's *generic*
+                // structure; for this specific substitution of the other
+                // variables, the i-th real root can fail to exist at all
+                // (e.g. a pair of real roots became complex). When that
+                // happens, the *positive* assertion `x op root[i](p)` can
+                // never hold for any `x` (there is no such root to compare
+                // against), so its feasible region is correctly empty --
+                // but that also means the assertion's *negation* is
+                // vacuously true for every `x`, so the negated atom's
+                // feasible region must be the full real line, not empty
+                // too. Returning `empty()` unconditionally here regardless
+                // of `atom_is_true` would wrongly shrink the negated atom's
+                // feasible set to nothing.
                 if (root.root_index as usize) > root_intervals.len() || root.root_index == 0 {
-                    return IntervalSet::empty();
+                    return if atom_is_true {
+                        IntervalSet::empty()
+                    } else {
+                        IntervalSet::reals()
+                    };
                 }
 
                 // Get the i-th root interval
@@ -560,6 +918,43 @@ impl NlsatSolver {
     }
 }
 
+/// A representative for one distinct real root of a univariate polynomial.
+///
+/// For a rational root `exact` is `Some(r)` and `lo == hi == r`. For an
+/// irrational root `exact` is `None` and `[lo, hi]` is an isolating interval
+/// that brackets exactly one root.
+struct RootRepr {
+    lo: BigRational,
+    hi: BigRational,
+    exact: Option<BigRational>,
+}
+
+/// Sign of a rational value as `-1`, `0`, or `1`.
+fn rational_sign(value: &BigRational) -> i8 {
+    if value.is_zero() {
+        0
+    } else if value.is_positive() {
+        1
+    } else {
+        -1
+    }
+}
+
+/// Whether a polynomial of the given `sign` at a point satisfies the atom
+/// `kind` under the given polarity.
+///
+/// `sign` is `-1`, `0`, or `1` for `p < 0`, `p = 0`, `p > 0` respectively.
+fn sign_satisfies(kind: AtomKind, is_true: bool, sign: i8) -> bool {
+    let holds = match kind {
+        AtomKind::Eq => sign == 0,
+        AtomKind::Lt => sign < 0,
+        AtomKind::Gt => sign > 0,
+        // Root kinds are handled elsewhere; treat as unconstrained.
+        _ => return true,
+    };
+    if is_true { holds } else { !holds }
+}
+
 // ─── Helpers for rational root theorem ──────────────────────────────────────
 
 /// Euclidean GCD for non-negative BigInts.
@@ -631,4 +1026,78 @@ fn poly_from_int_coeffs(
         })
         .collect();
     Polynomial::from_terms(terms, MonomialOrder::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::RootAtom;
+
+    // Regression test for the item: when a root atom's index references a
+    // root that doesn't exist for the current substitution (here, `x^2 + 1`
+    // has zero real roots at all, so root index 1 never exists), the
+    // *positive* assertion `x = root[1](x^2+1)` can never hold for any x
+    // (correctly empty), but its negation `x != root[1](x^2+1)` is
+    // vacuously true for every x -- the feasible region must be the full
+    // real line, not empty too.
+    #[test]
+    fn test_root_atom_missing_root_negated_yields_full_set_not_empty() {
+        let solver = NlsatSolver::new();
+        let x: Var = 0;
+
+        // x^2 + 1: no real roots.
+        let x_poly = Polynomial::from_var(x);
+        let poly = Polynomial::add(
+            &Polynomial::mul(&x_poly, &x_poly),
+            &Polynomial::constant(BigRational::one()),
+        );
+
+        let root_atom = RootAtom::new(AtomKind::RootEq, x, 1, poly);
+        let atom = Atom::Root(root_atom);
+
+        // Positive polarity: no such root exists, so nothing can satisfy
+        // `x = root[1](p)` -- correctly empty.
+        let positive_region = solver.atom_constraint_on_var(&atom, x, true);
+        assert!(
+            positive_region.is_empty(),
+            "positive root-atom assertion referencing a nonexistent root \
+             must be infeasible"
+        );
+
+        // Negated polarity: the (unsatisfiable) positive assertion's
+        // negation is vacuously true everywhere.
+        let negated_region = solver.atom_constraint_on_var(&atom, x, false);
+        assert!(
+            negated_region.is_reals(),
+            "negated root-atom assertion referencing a nonexistent root must \
+             be the full real line, not empty: {negated_region:?}"
+        );
+    }
+
+    // Same scenario but for an inequality root-atom kind (RootLt), to cover
+    // more than just the RootEq branch's point/complement pairing.
+    #[test]
+    fn test_root_atom_missing_root_negated_yields_full_set_not_empty_for_inequality() {
+        let solver = NlsatSolver::new();
+        let x: Var = 0;
+
+        let x_poly = Polynomial::from_var(x);
+        let poly = Polynomial::add(
+            &Polynomial::mul(&x_poly, &x_poly),
+            &Polynomial::constant(BigRational::one()),
+        );
+
+        let root_atom = RootAtom::new(AtomKind::RootLt, x, 1, poly);
+        let atom = Atom::Root(root_atom);
+
+        let positive_region = solver.atom_constraint_on_var(&atom, x, true);
+        assert!(positive_region.is_empty());
+
+        let negated_region = solver.atom_constraint_on_var(&atom, x, false);
+        assert!(
+            negated_region.is_reals(),
+            "negated inequality root-atom assertion referencing a nonexistent \
+             root must be the full real line, not empty: {negated_region:?}"
+        );
+    }
 }

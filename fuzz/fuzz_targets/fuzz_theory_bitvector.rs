@@ -35,7 +35,7 @@ struct BvConstraint {
 fuzz_target!(|data: &[u8]| {
     let mut unstructured = Unstructured::new(data);
 
-    let bitwidth: u8 = match unstructured.arbitrary() {
+    let bitwidth: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => match n % 4 {
             0 => 8,
             1 => 16,
@@ -45,12 +45,12 @@ fuzz_target!(|data: &[u8]| {
         Err(_) => return,
     };
 
-    let num_vars: u8 = match unstructured.arbitrary() {
+    let num_vars: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 8) + 1,
         Err(_) => return,
     };
 
-    let num_constraints: u8 = match unstructured.arbitrary() {
+    let num_constraints: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 15) + 1,
         Err(_) => return,
     };
@@ -59,7 +59,7 @@ fuzz_target!(|data: &[u8]| {
     let mut tm = TermManager::new();
 
     // Create bitvector sort
-    let bv_sort = tm.mk_bv_sort(bitwidth as u32);
+    let bv_sort = tm.sorts.bitvec(bitwidth as u32);
 
     // Create variables
     let mut vars = Vec::new();
@@ -81,22 +81,22 @@ fuzz_target!(|data: &[u8]| {
 
         // Build bitvector expression
         let bv_expr = match constraint.op {
-            BvOp::And => tm.mk_bvand(v1, v2),
-            BvOp::Or => tm.mk_bvor(v1, v2),
-            BvOp::Xor => tm.mk_bvxor(v1, v2),
-            BvOp::Not => tm.mk_bvnot(v1),
-            BvOp::Add => tm.mk_bvadd(v1, v2),
-            BvOp::Sub => tm.mk_bvsub(v1, v2),
-            BvOp::Mul => tm.mk_bvmul(v1, v2),
-            BvOp::UDiv => tm.mk_bvudiv(v1, v2),
-            BvOp::URem => tm.mk_bvurem(v1, v2),
-            BvOp::Shl => tm.mk_bvshl(v1, v2),
-            BvOp::LShr => tm.mk_bvlshr(v1, v2),
-            BvOp::AShr => tm.mk_bvashr(v1, v2),
+            BvOp::And => tm.mk_bv_and(v1, v2),
+            BvOp::Or => tm.mk_bv_or(v1, v2),
+            BvOp::Xor => tm.mk_bv_xor(v1, v2),
+            BvOp::Not => tm.mk_bv_not(v1),
+            BvOp::Add => tm.mk_bv_add(v1, v2),
+            BvOp::Sub => tm.mk_bv_sub(v1, v2),
+            BvOp::Mul => tm.mk_bv_mul(v1, v2),
+            BvOp::UDiv => tm.mk_bv_udiv(v1, v2),
+            BvOp::URem => tm.mk_bv_urem(v1, v2),
+            BvOp::Shl => tm.mk_bv_shl(v1, v2),
+            BvOp::LShr => tm.mk_bv_lshr(v1, v2),
+            BvOp::AShr => tm.mk_bv_ashr(v1, v2),
         };
 
         // Create equality constraint
-        let const_bv = tm.mk_bv_const(constraint.value, bitwidth as u32);
+        let const_bv = tm.mk_bitvec(constraint.value, bitwidth as u32);
         let eq = tm.mk_eq(bv_expr, const_bv);
 
         solver.assert(eq, &mut tm);

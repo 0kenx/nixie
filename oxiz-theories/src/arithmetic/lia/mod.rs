@@ -167,21 +167,46 @@ mod tests {
 
     #[test]
     fn test_disjunctive_cut() {
-        let solver = LiaSolver::new();
+        // A disjunctive (split) cut must be derived from the actual simplex
+        // tableau row of a fractional basic variable — never fabricated from a
+        // scalar value. Build a small LP whose optimum is fractional.
+        let mut solver = LiaSolver::new();
+        let x = solver.new_var();
+        let y = solver.new_var();
+        solver.simplex.set_lower(x, Rational64::zero(), 0);
+        solver.simplex.set_lower(y, Rational64::zero(), 1);
 
-        // Test disjunctive cut generation for fractional value
-        let var = 0;
-        let value = Rational64::new(5, 2); // 2.5
+        // x + 2y <= 2 ; 3x + 2y <= 4  -> max(x + y) is the fractional vertex (1, 1/2)
+        let mut c1 = LinExpr::new();
+        c1.add_term(x, Rational64::one());
+        c1.add_term(y, Rational64::from_integer(2));
+        c1.add_constant(-Rational64::from_integer(2));
+        solver.simplex.add_le(c1, 2);
+        let mut c2 = LinExpr::new();
+        c2.add_term(x, Rational64::from_integer(3));
+        c2.add_term(y, Rational64::from_integer(2));
+        c2.add_constant(-Rational64::from_integer(4));
+        solver.simplex.add_le(c2, 3);
 
-        let cut = solver.generate_disjunctive_cut(var, value);
+        // Maximise x + y (== minimise -(x + y)).
+        let mut obj = LinExpr::new();
+        obj.add_term(x, -Rational64::one());
+        obj.add_term(y, -Rational64::one());
+        let _ = solver.simplex.optimize_linexpr(&obj);
+
+        // A fractional basic integer variable yields a real split cut.
+        let frac = [x, y]
+            .into_iter()
+            .find(|&v| !solver.simplex.value(v).is_integer())
+            .expect("LP optimum should be fractional");
+        let value = solver.simplex.value(frac);
+        let cut = solver.generate_disjunctive_cut(frac, value);
         assert!(cut.is_some());
-
         let cut = cut.expect("test operation should succeed");
         assert!(!cut.terms.is_empty());
 
-        // Should not generate cut for integer value
-        let int_value = Rational64::from_integer(3);
-        let no_cut = solver.generate_disjunctive_cut(var, int_value);
+        // Should not generate a cut for an integer value.
+        let no_cut = solver.generate_disjunctive_cut(frac, Rational64::from_integer(3));
         assert!(no_cut.is_none());
     }
 

@@ -18,7 +18,7 @@ use core::fmt;
 use core::ops::{Add, Neg, Sub};
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 /// A delta-rational number: r + δ*k
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,41 +130,67 @@ impl DeltaRational {
     }
 
     /// Multiply by a rational scalar.
+    ///
+    /// When `r` is a non-integer (or an integer too large for `i64`), the
+    /// scaled infinitesimal coefficient `k*r` cannot be represented exactly
+    /// by the `i64` `delta_coeff` field. Previously this silently rounded
+    /// it to `0`, which erases a strict-inequality encoding entirely (e.g.
+    /// `x < 5` represented as `5 - δ` would become plain `5`, i.e. `x <=
+    /// 5`) — unsound for callers relying on the strict/non-strict
+    /// distinction. Instead, the *sign* of the infinitesimal offset is
+    /// preserved: its exact symbolic magnitude is meaningless on its own
+    /// (δ is an arbitrarily small placeholder), but its sign is exactly
+    /// what encodes which side of the rational value the strict bound sits
+    /// on, and that must survive scaling by any nonzero factor.
     pub fn mul_rational(&self, r: &BigRational) -> Self {
         if r.is_zero() {
             return Self::zero();
         }
 
-        // (a + δ*k) * r = a*r + δ*(k*r)
-        // But delta coefficient must be integer, so we only support integer r for now
-        if r.is_integer() {
-            let r_int = r.numer().to_string().parse::<i64>().unwrap_or(0);
-            Self::new(&self.rational * r, self.delta_coeff * r_int)
-        } else {
-            // For non-integer rationals, we can't maintain integer delta coefficient
-            // Just multiply the rational part
-            Self::new(&self.rational * r, 0)
+        let new_rational = &self.rational * r;
+
+        // No infinitesimal part to lose: exact regardless of `r`.
+        if self.delta_coeff == 0 {
+            return Self::new(new_rational, 0);
         }
+
+        // (a + δ*k) * r = a*r + δ*(k*r); exact only when `k*r` is an i64.
+        if r.is_integer()
+            && let Some(r_int) = r.numer().to_i64()
+        {
+            return Self::new(new_rational, self.delta_coeff.saturating_mul(r_int));
+        }
+
+        let same_sign = (self.delta_coeff > 0) == r.is_positive();
+        Self::new(new_rational, if same_sign { 1 } else { -1 })
     }
 
-    /// Divide by a positive rational scalar.
+    /// Divide by a nonzero rational scalar.
+    ///
+    /// See [`Self::mul_rational`] for why a non-integer (or `i64`-overflowing)
+    /// `r` preserves only the *sign* of the infinitesimal coefficient rather
+    /// than silently dropping it to `0`.
     pub fn div_rational(&self, r: &BigRational) -> Option<Self> {
         if r.is_zero() {
             return None;
         }
 
-        // (a + δ*k) / r = a/r + δ*(k/r)
-        if r.is_integer() && r.is_positive() {
-            let r_int = r.numer().to_string().parse::<i64>().unwrap_or(1);
-            if r_int != 0 {
-                Some(Self::new(&self.rational / r, self.delta_coeff / r_int))
-            } else {
-                None
-            }
-        } else {
-            // For non-integer rationals, just divide the rational part
-            Some(Self::new(&self.rational / r, 0))
+        let new_rational = &self.rational / r;
+
+        if self.delta_coeff == 0 {
+            return Some(Self::new(new_rational, 0));
         }
+
+        // (a + δ*k) / r = a/r + δ*(k/r); exact only when `k/r` is an i64.
+        if r.is_integer()
+            && let Some(r_int) = r.numer().to_i64()
+            && r_int != 0
+        {
+            return Some(Self::new(new_rational, self.delta_coeff / r_int));
+        }
+
+        let same_sign = (self.delta_coeff > 0) == r.is_positive();
+        Some(Self::new(new_rational, if same_sign { 1 } else { -1 }))
     }
 
     /// Compare two delta-rationals.

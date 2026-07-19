@@ -42,6 +42,48 @@ fn run_smtlib_file(file: &Path) -> Result<(String, bool), String> {
     Ok((stdout, success))
 }
 
+/// Extract a SMT-LIB benchmark's declared expected status from its
+/// `(set-info :status sat|unsat|unknown)` directive, if present.
+///
+/// Returns `None` for `unknown` (or if the directive is absent/unparsable),
+/// since there is nothing concrete to check the solver's answer against in
+/// that case.
+fn expected_status(file: &Path) -> Option<String> {
+    let content = fs::read_to_string(file).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(idx) = trimmed.find(":status") {
+            let rest = trimmed[idx + ":status".len()..].trim_start();
+            let word: String = rest
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != ')')
+                .collect();
+            if word == "sat" || word == "unsat" {
+                return Some(word);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Extract oxiz's actual reported answer from its CLI stdout: the first line
+/// that is exactly `sat`, `unsat`, or `unknown` (ignoring model output,
+/// comments, and other surrounding text). Note this deliberately does *not*
+/// use `str::contains`, since `"unsat".contains("sat")` is always true and
+/// would make it impossible to tell the two answers apart.
+fn actual_status(output: &str) -> Option<&'static str> {
+    for line in output.lines() {
+        match line.trim() {
+            "sat" => return Some("sat"),
+            "unsat" => return Some("unsat"),
+            "unknown" => return Some("unknown"),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Collect all .smt2 files from a directory
 fn collect_smt2_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -92,15 +134,38 @@ fn test_smtlib_benchmarks() {
     for file in &files {
         match run_smtlib_file(file) {
             Ok((output, _success)) => {
-                if output.contains("sat") || output.contains("unsat") || output.contains("unknown")
-                {
-                    passed += 1;
-                } else if output.contains("error") {
-                    errors += 1;
-                    println!("Error in {}: {}", file.display(), output);
-                } else {
-                    failed += 1;
-                    println!("Unexpected output from {}: {}", file.display(), output);
+                match actual_status(&output) {
+                    Some(status) => {
+                        // If the benchmark declares an expected sat/unsat
+                        // status via `(set-info :status ...)`, the reported
+                        // answer must actually match it. Previously "passed"
+                        // only meant *some* sat/unsat/unknown substring
+                        // appeared anywhere in the output -- since
+                        // `"unsat".contains("sat")` is always true, a solver
+                        // that confidently reported the wrong answer on
+                        // every single benchmark still scored a 100% "pass"
+                        // rate here.
+                        match expected_status(file) {
+                            Some(expected) if expected != status => {
+                                failed += 1;
+                                println!(
+                                    "Wrong answer for {}: expected {}, got {}",
+                                    file.display(),
+                                    expected,
+                                    status
+                                );
+                            }
+                            _ => passed += 1,
+                        }
+                    }
+                    None if output.contains("(error") => {
+                        errors += 1;
+                        println!("Error in {}: {}", file.display(), output);
+                    }
+                    None => {
+                        failed += 1;
+                        println!("Unexpected output from {}: {}", file.display(), output);
+                    }
                 }
             }
             Err(e) => {
@@ -120,8 +185,15 @@ fn test_smtlib_benchmarks() {
         (passed as f64 / files.len() as f64) * 100.0
     );
 
-    // Don't fail the test if no files were processed or if there are known issues
-    // This allows the test to be informational rather than strict
+    // Unlike before, a wrong sat/unsat answer (as opposed to an "unknown" or
+    // a run-time error, both of which are honest and remain non-fatal here)
+    // now actually fails this test -- that is the entire point of running
+    // against benchmarks with a known expected status.
+    assert_eq!(
+        failed, 0,
+        "{failed} benchmark(s) produced an incorrect or unparseable result; see the \
+         per-file output above for details"
+    );
 }
 
 #[test]

@@ -29,6 +29,10 @@ impl Solver {
         // Track allocation in memory optimizer for pool accounting
         let _pool_buf = self.memory_optimizer.allocate(learnt_clause.len());
 
+        // Record the learned clause in the DRAT proof (no-op unless enabled). It
+        // is RUP-derivable from the current database by 1-UIP construction.
+        self.drat_add(&learnt_clause);
+
         if learnt_clause.len() == 1 {
             // Store unit learned clause in database for persistence across backtracks
             let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
@@ -125,6 +129,10 @@ impl Solver {
 
         // Remove subsumed clauses
         for cid in to_remove {
+            // Purge binary-graph edges and record the DRAT deletion before the
+            // clause's literals become inaccessible.
+            self.purge_binary_edges(cid);
+            self.drat_delete(cid);
             self.clauses.remove(cid);
             self.stats.deleted_clauses += 1;
         }
@@ -222,6 +230,7 @@ impl Solver {
                 let buf = self.memory_optimizer.allocate(num_lits);
                 self.memory_optimizer.free(buf, num_lits);
             }
+            self.drat_delete(*cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -232,6 +241,7 @@ impl Solver {
                 let buf = self.memory_optimizer.allocate(num_lits);
                 self.memory_optimizer.free(buf, num_lits);
             }
+            self.drat_delete(*cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -242,6 +252,7 @@ impl Solver {
                 let buf = self.memory_optimizer.allocate(num_lits);
                 self.memory_optimizer.free(buf, num_lits);
             }
+            self.drat_delete(*cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -304,6 +315,97 @@ impl Solver {
         self.model.resize(self.num_vars, LBool::Undef);
         for i in 0..self.num_vars {
             self.model[i] = self.trail.value(Var::new(i as u32));
+        }
+
+        // Reconstruct pure literals eliminated during inprocessing. Their clauses
+        // were deleted on the promise that the literal is fixed to its polarity;
+        // the search may have assigned the variable the opposite phase, so force
+        // it here. This can only satisfy additional clauses: no remaining clause
+        // contains the opposite polarity (that is exactly what "pure" means).
+        for &lit in &self.pure_literal_reconstruction {
+            let idx = lit.var().index();
+            if idx < self.model.len() {
+                self.model[idx] = if lit.is_pos() {
+                    LBool::True
+                } else {
+                    LBool::False
+                };
+            }
+        }
+    }
+
+    /// Remove the literal at `idx` from a learned clause and rebuild its two
+    /// watches so the two-watched-literal invariant is preserved.
+    ///
+    /// Vivification and inprocessing strengthening shrink a clause in place. If
+    /// the removed literal sat at a watched position (index 0 or 1), the stale
+    /// watcher would keep pointing at a literal no longer in the clause, breaking
+    /// watch firing — a watched literal becoming false would no longer re-examine
+    /// the clause, causing missed unit propagations and, if index 0 were removed
+    /// repeatedly, a clause left effectively unwatched (a missed conflict). This
+    /// detaches the old watches (always keyed on the pre-removal literals at
+    /// positions 0 and 1), removes the literal, re-selects the two best watch
+    /// literals (mirroring [`Solver::add_clause`]), and re-attaches them.
+    pub(super) fn remove_literal_and_rewatch(&mut self, clause_id: ClauseId, idx: usize) {
+        let mut lits: Vec<Lit> = match self.clauses.get(clause_id) {
+            Some(c) if !c.deleted && c.lits.len() > 2 && idx < c.lits.len() => {
+                c.lits.iter().copied().collect()
+            }
+            _ => return,
+        };
+
+        // Snapshot the pre-strengthening literals so the DRAT proof can retire the
+        // original clause once the shorter (still F-entailed) form is recorded.
+        let original_lits = lits.clone();
+
+        // Detach the existing watches (keyed on the current positions 0 and 1).
+        let old_w0 = lits[0];
+        let old_w1 = lits[1];
+        self.watches.remove_clause(old_w0.negate(), clause_id);
+        self.watches.remove_clause(old_w1.negate(), clause_id);
+
+        // Remove the redundant literal.
+        lits.remove(idx);
+
+        // Re-select the two best watch literals: prefer a satisfied literal, then
+        // an unassigned one, and finally the latest-falsified. Mirrors
+        // `Solver::add_clause` so a watched literal always fires when re-falsified.
+        let n = lits.len();
+        let mut best = 0;
+        for i in 1..n {
+            if self.watch_rank(lits[i]) > self.watch_rank(lits[best]) {
+                best = i;
+            }
+        }
+        lits.swap(0, best);
+        let mut second = 1;
+        for i in 2..n {
+            if self.watch_rank(lits[i]) > self.watch_rank(lits[second]) {
+                second = i;
+            }
+        }
+        lits.swap(1, second);
+
+        let w0 = lits[0];
+        let w1 = lits[1];
+
+        // Write the reordered literals back into the clause.
+        if let Some(clause) = self.clauses.get_mut(clause_id) {
+            clause.lits.clear();
+            clause.lits.extend(lits.iter().copied());
+        }
+
+        // Re-attach watches on the new positions 0 and 1.
+        self.watches.add(w0.negate(), Watcher::new(clause_id, w1));
+        self.watches.add(w1.negate(), Watcher::new(clause_id, w0));
+
+        // Record the in-place strengthening in the DRAT proof: add the shorter
+        // clause (RUP-derivable — vivification proved it entailed) then delete the
+        // original, keeping the proof's clause set consistent with the database.
+        if self.drat.is_some() {
+            let new_lits: SmallVec<[Lit; 8]> = lits.iter().copied().collect();
+            self.drat_add(&new_lits);
+            self.drat_delete_lits(&original_lits);
         }
     }
 
@@ -373,15 +475,19 @@ impl Solver {
                 // Backtrack
                 self.backtrack(saved_level);
 
-                if conflict
-                    && let Some(clause) = self.clauses.get_mut(clause_id)
-                    && clause.lits.len() > 2
-                {
-                    // The literal at skip_idx is implied by the rest
-                    // We can remove it from the clause (vivification succeeded)
-                    clause.lits.remove(skip_idx);
-                    vivified_count += 1;
-                    break; // Done with this clause
+                if conflict {
+                    // The literal at skip_idx is implied by the rest, so it can
+                    // be dropped (vivification succeeded). Remove it *and* rebuild
+                    // the clause's watches so the two-watched invariant survives.
+                    let removable = self
+                        .clauses
+                        .get(clause_id)
+                        .is_some_and(|c| !c.deleted && c.lits.len() > 2 && skip_idx < c.lits.len());
+                    if removable {
+                        self.remove_literal_and_rewatch(clause_id, skip_idx);
+                        vivified_count += 1;
+                        break; // Done with this clause
+                    }
                 }
             }
         }
@@ -399,8 +505,29 @@ impl Solver {
         // Create preprocessor with current number of variables
         let mut preprocessor = Preprocessor::new(self.num_vars);
 
-        // Apply lightweight preprocessing techniques
-        let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses);
+        // Pure-literal elimination deletes original clauses; that is only
+        // satisfiability-preserving if the pure literal is fixed to its polarity
+        // in the reconstructed model. It is also unsound across incremental
+        // scopes, where a later `add_clause` could reintroduce the opposite
+        // polarity after the clauses were dropped, so it is only run at the base
+        // assertion level (no active `push`).
+        if self.assertion_levels.len() <= 1 {
+            let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses);
+            // Record each eliminated pure literal so `save_model` can fix it to
+            // `true`, keeping the deleted clauses satisfied even if the search
+            // later assigns the variable the opposite phase. Keep at most one
+            // polarity per variable (the first recorded).
+            for &lit in preprocessor.eliminated_pure_literals() {
+                let already = self
+                    .pure_literal_reconstruction
+                    .iter()
+                    .any(|existing| existing.var() == lit.var());
+                if !already {
+                    self.pure_literal_reconstruction.push(lit);
+                }
+            }
+        }
+
         let _subsumption = preprocessor.subsumption_elimination(&mut self.clauses);
 
         // On-the-fly clause strengthening
@@ -449,75 +576,77 @@ impl Solver {
                 _ => continue,
             };
 
-            // Try to remove each literal by checking if the remaining clause is still valid
-            let mut literals_to_remove = Vec::new();
+            // Correct self-subsumption / vivification.
+            //
+            // A literal `l_k` of clause C is redundant iff the formula F already
+            // entails C \ {l_k}. To prove that, assert the negation of every
+            // *other* literal of C and propagate: a conflict means
+            //   F ∧ ¬(C \ {l_k}) ⊨ ⊥   ⇔   F ⊨ (C \ {l_k}),
+            // so `l_k` can be dropped while the clause stays F-entailed.
+            //
+            // The previous implementation asserted only ¬l_k and, on conflict,
+            // concluded F ⊨ l_k (a backbone) — then removed l_k. That is the
+            // wrong direction: F ⊨ l_k does NOT imply F ⊨ C \ {l_k}, so the
+            // shrunken clause excluded legitimate models and could flip SAT to
+            // UNSAT whenever inprocessing was enabled. This version negates the
+            // *other* literals (matching `vivify_clauses`) and never assigns an
+            // already-assigned variable.
+            let mut removed_idx: Option<usize> = None;
 
-            for (i, &lit) in clause_lits.iter().enumerate() {
-                // Save current trail state
+            for skip_idx in 0..clause_lits.len() {
                 let saved_level = self.trail.decision_level();
-
-                // Try assigning this literal to false
                 self.trail.new_decision_level();
-                self.trail.assign_decision(lit.negate());
 
-                // Propagate
-                let conflict = self.propagate();
+                let mut conflict = false;
+                let mut already_sat = false;
 
-                // Backtrack
-                self.backtrack(saved_level);
-
-                if conflict.is_some() {
-                    // Assigning this literal to false causes a conflict
-                    // This means the rest of the clause implies this literal
-                    // So this literal can potentially be removed (strengthening)
-
-                    // But we need to be careful: only remove if the remaining clause
-                    // is still non-tautological and non-empty
-                    let mut remaining: Vec<Lit> = clause_lits
-                        .iter()
-                        .enumerate()
-                        .filter(|(j, _)| *j != i)
-                        .map(|(_, &l)| l)
-                        .collect();
-
-                    // Check if remaining clause is still valid (at least 2 literals)
-                    if remaining.len() >= 2 {
-                        // Check it's not a tautology
-                        remaining.sort_by_key(|l| l.code());
-                        let mut is_tautology = false;
-                        for k in 0..remaining.len() - 1 {
-                            if remaining[k] == remaining[k + 1].negate() {
-                                is_tautology = true;
-                                break;
-                            }
-                        }
-
-                        if !is_tautology {
-                            literals_to_remove.push(i);
-                            break; // Only remove one literal at a time
+                for (i, &lit) in clause_lits.iter().enumerate() {
+                    if i == skip_idx {
+                        continue;
+                    }
+                    let value = self.trail.lit_value(lit);
+                    if value.is_true() {
+                        // C \ {skip_idx} is already satisfied under F, so this
+                        // probe cannot justify removing skip_idx.
+                        already_sat = true;
+                        break;
+                    } else if value.is_false() {
+                        continue;
+                    } else {
+                        self.trail.assign_decision(lit.negate());
+                        if self.propagate().is_some() {
+                            conflict = true;
+                            break;
                         }
                     }
+                }
+
+                self.backtrack(saved_level);
+
+                if conflict && !already_sat && clause_lits.len() > 2 {
+                    removed_idx = Some(skip_idx);
+                    break; // Only remove one literal at a time
                 }
             }
 
-            // Apply strengthening if we found literals to remove
-            if !literals_to_remove.is_empty() {
-                // First, remove literals
-                if let Some(clause) = self.clauses.get_mut(*clause_id) {
-                    // Remove literals in reverse order to preserve indices
-                    for &idx in literals_to_remove.iter().rev() {
-                        if idx < clause.lits.len() {
-                            clause.lits.remove(idx);
-                        }
-                    }
+            // Apply strengthening if we found a redundant literal.
+            if let Some(idx) = removed_idx {
+                // Remove the redundant literal and rebuild the clause's watches
+                // (removing a watched literal in place would break the
+                // two-watched invariant, causing missed propagations/conflicts).
+                let removable = self
+                    .clauses
+                    .get(*clause_id)
+                    .is_some_and(|c| !c.deleted && c.lits.len() > 2 && idx < c.lits.len());
+                if removable {
+                    self.remove_literal_and_rewatch(*clause_id, idx);
                 }
 
-                // Then, recompute LBD (after the mutable borrow ends)
+                // Recompute LBD after the removal.
                 if let Some(clause) = self.clauses.get(*clause_id) {
                     let lits_clone = clause.lits.clone();
                     let new_lbd = self.compute_lbd(&lits_clone);
 
-                    // Now update the LBD
                     if let Some(clause) = self.clauses.get_mut(*clause_id) {
                         clause.lbd = new_lbd;
                     }

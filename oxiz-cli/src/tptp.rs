@@ -320,6 +320,27 @@ impl TptpFormula {
             TptpFormula::False => "false".to_string(),
         }
     }
+
+    /// Convert to SMT-LIB2, universally closing over this formula's own
+    /// free variables (`(forall ((V U) ...) <formula>)`).
+    ///
+    /// Per the TPTP standard, a variable free in an FOF formula is
+    /// implicitly universally quantified from the outside -- `axiom(X):
+    /// p(X)` means `axiom: forall X. p(X)`, not "p holds for some
+    /// particular X". This must be used for every role except the
+    /// (negated) conjecture, whose free variables are instead legitimately
+    /// Skolemizable (see [`TptpProblem::to_smtlib2`]).
+    fn to_smtlib2_closed(&self) -> String {
+        let mut free: Vec<String> = self.free_variables().into_iter().collect();
+        let body = self.to_smtlib2();
+        if free.is_empty() {
+            return body;
+        }
+        // Sort for deterministic output.
+        free.sort();
+        let bindings: Vec<String> = free.iter().map(|v| format!("({} U)", v)).collect();
+        format!("(forall ({}) {})", bindings.join(" "), body)
+    }
 }
 
 /// A single TPTP statement (fof declaration)
@@ -907,18 +928,45 @@ impl TptpProblem {
     }
 
     /// Convert the TPTP problem to SMT-LIB2 format
+    ///
+    /// # Free variables
+    ///
+    /// Per the TPTP standard, a variable free in an FOF formula is
+    /// implicitly universally quantified: `axiom(ax1, axiom, p(X))` means
+    /// `forall X. p(X)`, not "p holds for some particular X". Declaring `X`
+    /// as a global constant and asserting the open formula `p(x0)` (as this
+    /// function used to do for every role) is a *weaker* statement than the
+    /// intended axiom -- a refutation that genuinely needs the universally
+    /// quantified axiom can then come out satisfiable, so a `Theorem` could
+    /// be misreported as `CounterSatisfiable`.
+    ///
+    /// The one legitimate exception is the (negated) conjecture: negating
+    /// `forall X. P(X)` gives `exists X. not P(X)`, and Skolemizing that
+    /// existential -- picking an arbitrary fresh witness constant for `X`
+    /// -- is sound for a satisfiability-preserving refutation check. So
+    /// only conjecture/negated-conjecture free variables are declared as
+    /// constants; every other role's formula is closed with an explicit
+    /// `forall` over its own free variables instead (see
+    /// [`TptpFormula::to_smtlib2_closed`]).
     pub fn to_smtlib2(&self) -> String {
         let mut output = String::new();
 
         // Collect all predicates and functions
         let mut predicates: HashMap<String, usize> = HashMap::new();
         let mut functions: HashMap<String, usize> = HashMap::new();
-        let mut free_vars: HashSet<String> = HashSet::new();
+        // Only the (negated) conjecture's free variables are Skolemized as
+        // global constants; see the doc comment above.
+        let mut skolem_vars: HashSet<String> = HashSet::new();
 
         for stmt in &self.statements {
             stmt.formula.collect_predicates(&mut predicates);
             stmt.formula.collect_functions(&mut functions);
-            free_vars.extend(stmt.formula.free_variables());
+            if matches!(
+                stmt.role,
+                TptpRole::Conjecture | TptpRole::NegatedConjecture
+            ) {
+                skolem_vars.extend(stmt.formula.free_variables());
+            }
         }
 
         // Set logic (use UF for uninterpreted functions)
@@ -945,12 +993,14 @@ impl TptpProblem {
             }
         }
 
-        // Declare free variables as constants
-        for var in &free_vars {
+        // Declare the (negated) conjecture's free variables as Skolem
+        // constants -- see the doc comment on `to_smtlib2` for why this is
+        // only sound for that role.
+        for var in &skolem_vars {
             output.push_str(&format!("(declare-const {} U)\n", var));
         }
 
-        if !functions.is_empty() || !free_vars.is_empty() {
+        if !functions.is_empty() || !skolem_vars.is_empty() {
             output.push('\n');
         }
 
@@ -976,7 +1026,14 @@ impl TptpProblem {
         let mut has_conjecture = false;
 
         for stmt in &self.statements {
-            let formula_str = stmt.formula.to_smtlib2();
+            // Conjecture/negated-conjecture free variables are Skolem
+            // constants declared above, so the formula is used as-is; every
+            // other role's free variables must instead be universally
+            // closed (see the doc comment on `to_smtlib2`).
+            let formula_str = match stmt.role {
+                TptpRole::Conjecture | TptpRole::NegatedConjecture => stmt.formula.to_smtlib2(),
+                _ => stmt.formula.to_smtlib2_closed(),
+            };
 
             match stmt.role {
                 TptpRole::Conjecture => {
@@ -1223,5 +1280,85 @@ mod tests {
         let smtlib = problem.to_smtlib2();
         assert!(smtlib.contains("(declare-fun f (U U) U)"));
         assert!(smtlib.contains("(declare-fun g (U) U)"));
+    }
+
+    #[test]
+    fn test_axiom_free_variable_is_universally_closed() {
+        // `X` is free in `p(X)` (no explicit `![X]:`), so per TPTP semantics
+        // this axiom means `forall X. p(X)`. It must not be weakened to a
+        // single arbitrary witness constant.
+        let input = "fof(ax1, axiom, p(X)).\n";
+        let problem = TptpProblem::parse(input).expect("should parse");
+        let smtlib = problem.to_smtlib2();
+
+        assert!(
+            smtlib.contains("(forall ((X U)) (p X))"),
+            "axiom free variable must be closed with forall: {smtlib}"
+        );
+        // The free variable must NOT be declared as a global witness
+        // constant -- that would defeat the point of closing it.
+        assert!(!smtlib.contains("(declare-const X U)"));
+    }
+
+    #[test]
+    fn test_hypothesis_free_variable_is_universally_closed() {
+        let input = "fof(h1, hypothesis, q(Y)).\n";
+        let problem = TptpProblem::parse(input).expect("should parse");
+        let smtlib = problem.to_smtlib2();
+        assert!(smtlib.contains("(forall ((Y U)) (q Y))"));
+    }
+
+    #[test]
+    fn test_conjecture_free_variable_is_still_skolemized() {
+        // For the (negated) conjecture, Skolemizing the free variable as an
+        // arbitrary fresh constant is sound (see module docs), so this case
+        // must keep working as before -- no forall here.
+        let input = "fof(conj, conjecture, p(X)).\n";
+        let problem = TptpProblem::parse(input).expect("should parse");
+        let smtlib = problem.to_smtlib2();
+
+        assert!(smtlib.contains("(declare-const X U)"));
+        assert!(smtlib.contains("(assert (not (p X)))"));
+        assert!(!smtlib.contains("forall"));
+    }
+
+    #[test]
+    fn test_negated_conjecture_free_variable_is_still_skolemized() {
+        let input = "fof(nc, negated_conjecture, p(X)).\n";
+        let problem = TptpProblem::parse(input).expect("should parse");
+        let smtlib = problem.to_smtlib2();
+
+        assert!(smtlib.contains("(declare-const X U)"));
+        assert!(smtlib.contains("(assert (p X))"));
+        assert!(!smtlib.contains("forall"));
+    }
+
+    #[test]
+    fn test_free_variable_of_same_name_is_not_shared_across_axioms() {
+        // Two independent axioms each use `X` as their own free variable.
+        // Each occurrence must be closed locally; they must not collapse
+        // onto one shared global witness (the old bug: both would resolve
+        // to the same `(declare-const X U)`, incorrectly identifying two
+        // logically unrelated variables).
+        let input = "fof(ax1, axiom, p(X)).\nfof(ax2, axiom, q(X)).\n";
+        let problem = TptpProblem::parse(input).expect("should parse");
+        let smtlib = problem.to_smtlib2();
+
+        assert!(smtlib.contains("(forall ((X U)) (p X))"));
+        assert!(smtlib.contains("(forall ((X U)) (q X))"));
+        assert!(!smtlib.contains("(declare-const X U)"));
+    }
+
+    #[test]
+    fn test_already_quantified_axiom_is_unaffected() {
+        // `X` is already explicitly bound by `![X]:`, so `free_variables()`
+        // is empty and no extra forall wrapping should be added.
+        let input = "fof(ax1, axiom, ![X]: p(X)).\n";
+        let problem = TptpProblem::parse(input).expect("should parse");
+        let smtlib = problem.to_smtlib2();
+
+        assert!(smtlib.contains("(assert (forall ((X U)) (p X)))"));
+        // Must not be double-wrapped in a second forall.
+        assert!(!smtlib.contains("(forall ((X U)) (forall"));
     }
 }

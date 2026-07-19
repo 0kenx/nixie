@@ -303,14 +303,84 @@ impl<'a> MbpEngine<'a> {
         }
     }
 
-    fn is_linear_real(&self, _term: TermId, _vars: &FxHashSet<Spur>) -> bool {
-        // For now, assume linear real
-        true
+    /// Whether `formula` contains only linear real arithmetic.
+    ///
+    /// Linearity is theory-agnostic (a product of two variables is
+    /// nonlinear whether the variables range over `Int` or `Real`), so this
+    /// currently coincides with [`Self::is_linear_int`]; `detect_projector`
+    /// tries this one first and falls back to the LIA check, matching the
+    /// existing "try LRA, then LIA" `Auto` dispatch order.
+    fn is_linear_real(&self, term: TermId, _vars: &FxHashSet<Spur>) -> bool {
+        !self.contains_nonlinear_arith(term)
     }
 
-    fn is_linear_int(&self, _term: TermId, _vars: &FxHashSet<Spur>) -> bool {
-        // For now, assume linear int
-        true
+    /// Whether `formula` contains only linear integer arithmetic. See
+    /// [`Self::is_linear_real`].
+    fn is_linear_int(&self, term: TermId, _vars: &FxHashSet<Spur>) -> bool {
+        !self.contains_nonlinear_arith(term)
+    }
+
+    /// Detect nonlinear arithmetic anywhere in `term`: a product of two or
+    /// more non-constant factors (e.g. `x * y`), or division/modulo by a
+    /// non-constant divisor (e.g. `x div y`).
+    ///
+    /// `project_lra`/`project_lia` implement Fourier-Motzkin /
+    /// Loos-Weispfenning-style elimination, which is only sound for
+    /// literals linear in the eliminated variables; running a nonlinear
+    /// literal through it would silently produce a wrong projection. This
+    /// check feeds [`Self::is_linear_real`]/[`Self::is_linear_int`] (used by
+    /// `detect_projector`'s theory selection), and `project_lra` also
+    /// independently refuses to eliminate a variable through any literal it
+    /// cannot decompose into a recognized bound -- see the `unprojectable`
+    /// handling there -- as defense in depth against exactly this class of
+    /// bug even when a caller bypasses `detect_projector` by requesting a
+    /// specific `ProjectorKind`.
+    fn contains_nonlinear_arith(&self, term: TermId) -> bool {
+        let Some(t) = self.manager.get(term) else {
+            return false;
+        };
+
+        match &t.kind {
+            TermKind::Mul(args) => {
+                let non_const_factors =
+                    args.iter().filter(|&&a| !self.is_arith_constant(a)).count();
+                non_const_factors >= 2 || args.iter().any(|&a| self.contains_nonlinear_arith(a))
+            }
+            TermKind::Div(lhs, rhs) | TermKind::Mod(lhs, rhs) => {
+                !self.is_arith_constant(*rhs)
+                    || self.contains_nonlinear_arith(*lhs)
+                    || self.contains_nonlinear_arith(*rhs)
+            }
+            TermKind::And(args) | TermKind::Or(args) | TermKind::Add(args) => {
+                args.iter().any(|&a| self.contains_nonlinear_arith(a))
+            }
+            TermKind::Not(a) | TermKind::Neg(a) => self.contains_nonlinear_arith(*a),
+            TermKind::Eq(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Sub(a, b) => {
+                self.contains_nonlinear_arith(*a) || self.contains_nonlinear_arith(*b)
+            }
+            TermKind::Ite(c, then_br, else_br) => {
+                self.contains_nonlinear_arith(*c)
+                    || self.contains_nonlinear_arith(*then_br)
+                    || self.contains_nonlinear_arith(*else_br)
+            }
+            TermKind::Apply { args, .. } => args.iter().any(|&a| self.contains_nonlinear_arith(a)),
+            _ => false,
+        }
+    }
+
+    /// Whether `term` is a numeric literal (no variables), used by
+    /// [`Self::contains_nonlinear_arith`] to recognize a constant
+    /// coefficient in a product.
+    fn is_arith_constant(&self, term: TermId) -> bool {
+        matches!(
+            self.manager.get(term).map(|t| &t.kind),
+            Some(TermKind::IntConst(_) | TermKind::RealConst(_) | TermKind::BitVecConst { .. })
+        )
     }
 
     /// LRA projector: Fourier-Motzkin style projection
@@ -329,10 +399,41 @@ impl<'a> MbpEngine<'a> {
             // Classify literals by variable occurrence
             let (lower_bounds, upper_bounds, others) = self.classify_bounds_for_var(literals, var);
 
+            // Literals that mention `var` but weren't recognized as a bound
+            // on it -- e.g. it appears inside a nonlinear term like
+            // `x * y <= 5`, or a linear combination such as `x + y <= 5`
+            // that this bare-variable bound matcher doesn't decompose --
+            // cannot be soundly eliminated here: doing so anyway would drop
+            // `var`'s occurrence from the projected formula while still
+            // reporting `var` as eliminated, silently changing the
+            // formula's meaning (this is what let nonlinear literals slip
+            // through as if they were linear). Leave `var` in `remaining`
+            // and keep the untouched literal(s) instead of fabricating an
+            // unsound projection.
+            let unprojectable: Vec<TermId> = others
+                .iter()
+                .copied()
+                .filter(|&lit| self.mentions_var(lit, var))
+                .collect();
+
             if lower_bounds.is_empty() && upper_bounds.is_empty() {
-                // Variable doesn't appear - trivially eliminate
-                eliminated.push(var);
-                remaining.retain(|&v| v != var);
+                if unprojectable.is_empty() {
+                    // Variable doesn't appear at all - trivially eliminate.
+                    eliminated.push(var);
+                    remaining.retain(|&v| v != var);
+                } else {
+                    result_formulas.extend(unprojectable);
+                }
+                continue;
+            }
+
+            if !unprojectable.is_empty() {
+                // At least one occurrence of `var` can't be decomposed into
+                // a bound; keep every literal mentioning `var` unchanged
+                // rather than eliminating `var` only partially/unsoundly.
+                result_formulas.extend(lower_bounds.iter().copied());
+                result_formulas.extend(upper_bounds.iter().copied());
+                result_formulas.extend(unprojectable);
                 continue;
             }
 

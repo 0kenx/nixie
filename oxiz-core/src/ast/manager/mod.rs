@@ -39,8 +39,14 @@ pub struct TermManager {
     pub(super) interner: Rodeo,
     /// Sort manager
     pub sorts: SortManager,
-    /// Cache for structural sharing
-    pub(super) cache: FxHashMap<TermKind, TermId>,
+    /// Cache for structural sharing.
+    ///
+    /// Keyed on `(TermKind, SortId)` rather than `TermKind` alone: two
+    /// structurally identical kinds that carry different sorts (most notably
+    /// `Var` with the same name but a different sort) must intern to distinct
+    /// terms, otherwise same-named variables of different sorts would alias and
+    /// silently type-confuse (wrong terms, wrong models).
+    pub(super) cache: FxHashMap<(TermKind, SortId), TermId>,
     /// True constant
     pub true_id: TermId,
     /// False constant
@@ -96,24 +102,27 @@ impl TermManager {
 
     /// Intern a term, returning its unique ID
     pub(crate) fn intern(&mut self, kind: TermKind, sort: SortId) -> TermId {
-        if let Some(&id) = self.cache.get(&kind) {
+        // Key on (kind, sort) so that identical kinds with distinct sorts do
+        // not alias (see the `cache` field documentation).
+        let key = (kind, sort);
+        if let Some(&id) = self.cache.get(&key) {
             return id;
         }
 
         let id = TermId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let term = Term {
             id,
-            kind: kind.clone(),
+            kind: key.0.clone(),
             sort,
         };
         // When the arena feature is enabled, also allocate in the bump arena
         #[cfg(feature = "arena")]
         {
-            let _ = self.arena.alloc_term(id, kind.clone(), sort);
+            let _ = self.arena.alloc_term(id, key.0.clone(), sort);
         }
 
         self.terms.push(term);
-        self.cache.insert(kind, id);
+        self.cache.insert(key, id);
         id
     }
 
@@ -450,6 +459,41 @@ mod tests {
         let eq1 = manager.mk_eq(x, y);
         let eq2 = manager.mk_eq(y, x);
         assert_eq!(eq1, eq2);
+    }
+
+    #[test]
+    fn test_bv_commutative_ops_canonicalize_operand_order() {
+        let mut manager = TermManager::new();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let y = manager.mk_var("y", bv8);
+
+        assert_eq!(manager.mk_bv_and(x, y), manager.mk_bv_and(y, x));
+        assert_eq!(manager.mk_bv_or(x, y), manager.mk_bv_or(y, x));
+        assert_eq!(manager.mk_bv_add(x, y), manager.mk_bv_add(y, x));
+        assert_eq!(manager.mk_bv_mul(x, y), manager.mk_bv_mul(y, x));
+        assert_eq!(manager.mk_bv_xor(x, y), manager.mk_bv_xor(y, x));
+    }
+
+    #[test]
+    fn test_bv_commutative_ops_canonicalize_const_var_order() {
+        let mut manager = TermManager::new();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let three = manager.mk_bitvec(3i64, 8);
+
+        assert_eq!(manager.mk_bv_mul(three, x), manager.mk_bv_mul(x, three));
+        assert_eq!(manager.mk_bv_add(three, x), manager.mk_bv_add(x, three));
+    }
+
+    #[test]
+    fn test_bv_sub_does_not_canonicalize_operand_order() {
+        let mut manager = TermManager::new();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let y = manager.mk_var("y", bv8);
+
+        assert_ne!(manager.mk_bv_sub(x, y), manager.mk_bv_sub(y, x));
     }
 
     #[test]

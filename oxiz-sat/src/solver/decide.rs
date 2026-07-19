@@ -226,6 +226,35 @@ impl Solver {
         }
     }
 
+    /// Seed the internal xorshift64 PRNG from a user-supplied `:random-seed`.
+    ///
+    /// The raw seed is mixed through a splitmix64 step before it becomes the
+    /// xorshift state, because xorshift64 has a fixed point at `0`: a raw seed of
+    /// `0` (the single most common user choice) would otherwise disable phase
+    /// randomization entirely.  The mixing also spreads nearby seeds (`1`, `2`,
+    /// `3`, …) into well-separated states so consecutive seeds explore genuinely
+    /// different search orders.  A seed of `0` maps to the historical default
+    /// state, so `set_random_seed(0)` reproduces the out-of-the-box behaviour.
+    pub fn set_random_seed(&mut self, seed: u64) {
+        self.rng_state = Self::seed_to_rng_state(seed);
+    }
+
+    /// Derive a nonzero xorshift64 state from a user seed via one splitmix64
+    /// round.  A seed of `0` (or any input that mixes to `0`) falls back to the
+    /// solver's historical default state so default behaviour is preserved.
+    #[must_use]
+    pub(crate) fn seed_to_rng_state(seed: u64) -> u64 {
+        const DEFAULT_STATE: u64 = 0x853c_49e6_748f_ea9b;
+        if seed == 0 {
+            return DEFAULT_STATE;
+        }
+        let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        if z == 0 { DEFAULT_STATE } else { z }
+    }
+
     /// Generate a random u64 using xorshift64
     pub(super) fn rand_u64(&mut self) -> u64 {
         let mut x = self.rng_state;

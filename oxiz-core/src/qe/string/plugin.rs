@@ -190,6 +190,20 @@ impl StringQePlugin {
     }
 
     /// Eliminate using length constraints.
+    ///
+    /// Sound only when *every* constraint relevant to `var` is a pure
+    /// length constraint (`length(x) op k`); mixed constraint kinds (word
+    /// equations, concatenation, `contains`, regex membership) are left to
+    /// [`Self::eliminate_by_automaton`] by returning `None` here.
+    ///
+    /// The relevant constraints form a conjunction of linear bounds and
+    /// equalities over the non-negative integer `length(var)`. We solve
+    /// that system directly: intersect all bounds and equalities, and the
+    /// quantifier is satisfiable (`true`) iff the resulting integer
+    /// interval/equality is non-empty, otherwise the constraints are
+    /// contradictory and the quantifier is unsatisfiable (`false`). This
+    /// mirrors Z3's `qe/qe_arith.cpp` bound-propagation approach, specialized
+    /// to a single non-negative variable.
     fn eliminate_by_length(&self, _var: VarId, constraints: &[&StringConstraint]) -> Option<Term> {
         // Check if all constraints are length-based
         let all_length = constraints
@@ -200,18 +214,62 @@ impl StringQePlugin {
             return None;
         }
 
-        // Simplified: would solve length constraints and check satisfiability
-        Some(self.create_true())
+        // String length is always a non-negative integer.
+        let mut lower: i64 = 0;
+        let mut upper: i64 = i64::MAX;
+        let mut equal_to: Option<i64> = None;
+
+        for c in constraints {
+            let (op, k) = match c {
+                StringConstraint::Length(_, op, k) => (*op, *k),
+                // Unreachable: `all_length` guaranteed every entry is
+                // `Length`, but stay honest rather than panicking.
+                _ => continue,
+            };
+
+            match op {
+                LengthOp::Equal => match equal_to {
+                    Some(existing) if existing != k => {
+                        // Two distinct required lengths: contradiction.
+                        return Some(self.create_false());
+                    }
+                    Some(_) => {}
+                    None => equal_to = Some(k),
+                },
+                LengthOp::Less => upper = upper.min(k.saturating_sub(1)),
+                LengthOp::LessEq => upper = upper.min(k),
+                LengthOp::Greater => lower = lower.max(k.saturating_add(1)),
+                LengthOp::GreaterEq => lower = lower.max(k),
+            }
+        }
+
+        let satisfiable = match equal_to {
+            Some(k) => k >= 0 && k >= lower && k <= upper,
+            None => lower <= upper,
+        };
+
+        Some(if satisfiable {
+            self.create_true()
+        } else {
+            self.create_false()
+        })
     }
 
     /// Eliminate using automaton construction.
+    ///
+    /// Real automata-based string quantifier elimination (word equations,
+    /// concatenation, `contains`, and regex membership) is not yet
+    /// implemented. Rather than fabricate a satisfiability result, this
+    /// conservatively gives up (`None`) so the caller keeps the quantifier
+    /// or falls back to another decision procedure. This must never be
+    /// changed to unconditionally return `true`/`false` without an actual
+    /// automaton construction and non-emptiness check behind it.
     fn eliminate_by_automaton(
         &self,
         _var: VarId,
         _constraints: &[&StringConstraint],
     ) -> Option<Term> {
-        // Simplified: would build automaton and check non-emptiness
-        Some(self.create_true())
+        None
     }
 
     /// Create a "true" term (placeholder).
@@ -219,6 +277,15 @@ impl StringQePlugin {
         Term {
             id: TermId(0),
             kind: TermKind::True,
+            sort: SortId(0),
+        }
+    }
+
+    /// Create a "false" term (placeholder).
+    fn create_false(&self) -> Term {
+        Term {
+            id: TermId(0),
+            kind: TermKind::False,
             sort: SortId(0),
         }
     }
@@ -287,6 +354,76 @@ mod tests {
 
         assert!(plugin.dependencies.contains_key(&0));
         assert!(plugin.dependencies.contains_key(&1));
+    }
+
+    #[test]
+    fn test_contradictory_length_constraints_yield_false_not_true() {
+        // exists x. length(x) = 5 && length(x) = 3 is UNSATISFIABLE.
+        // Regression for: plugin used to fabricate `true` for any
+        // constrained quantifier, including contradictory ones.
+        let mut plugin = StringQePlugin::default_config();
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::Equal, 5));
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::Equal, 3));
+
+        let result = plugin.eliminate(0).expect("length system is decidable");
+        assert_eq!(result.kind, TermKind::False);
+    }
+
+    #[test]
+    fn test_contradictory_length_bounds_yield_false() {
+        // exists x. length(x) > 10 && length(x) < 5 is UNSATISFIABLE.
+        let mut plugin = StringQePlugin::default_config();
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::Greater, 10));
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::Less, 5));
+
+        let result = plugin.eliminate(0).expect("length system is decidable");
+        assert_eq!(result.kind, TermKind::False);
+    }
+
+    #[test]
+    fn test_satisfiable_length_constraints_yield_true() {
+        // exists x. length(x) >= 3 && length(x) <= 7 is satisfiable.
+        let mut plugin = StringQePlugin::default_config();
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::GreaterEq, 3));
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::LessEq, 7));
+
+        let result = plugin.eliminate(0).expect("length system is decidable");
+        assert_eq!(result.kind, TermKind::True);
+    }
+
+    #[test]
+    fn test_negative_required_length_is_unsatisfiable() {
+        // exists x. length(x) = -1 is UNSATISFIABLE (lengths are >= 0).
+        let mut plugin = StringQePlugin::default_config();
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::Equal, -1));
+
+        let result = plugin.eliminate(0).expect("length system is decidable");
+        assert_eq!(result.kind, TermKind::False);
+    }
+
+    #[test]
+    fn test_mixed_constraints_give_up_honestly_instead_of_fabricating_true() {
+        // A word equation combined with a length bound is beyond the
+        // pure-length solver and the automaton builder is unimplemented,
+        // so eliminate() must honestly give up (`None`), never claim `true`.
+        let mut plugin = StringQePlugin::default_config();
+        plugin.add_constraint(StringConstraint::Equality(0, 1));
+        plugin.add_constraint(StringConstraint::Length(0, LengthOp::Equal, 5));
+
+        assert!(plugin.eliminate(0).is_none());
+        assert_eq!(plugin.stats().vars_eliminated, 0);
+    }
+
+    #[test]
+    fn test_unconstrained_var_still_eliminates_to_true() {
+        // No constraints mention the variable at all: exists x. true.
+        let mut plugin = StringQePlugin::default_config();
+        plugin.add_constraint(StringConstraint::Length(1, LengthOp::Equal, 5));
+
+        let result = plugin
+            .eliminate(0)
+            .expect("unconstrained var is trivially true");
+        assert_eq!(result.kind, TermKind::True);
     }
 
     #[test]

@@ -88,7 +88,14 @@ impl SplitClauseTactic {
         Self {
             config,
             stats: SplitClauseStats::default(),
-            next_var: 0,
+            // Variable IDs start at 1, matching the DIMACS/`Lit = i32`
+            // convention used throughout this module (and by callers who
+            // feed these clauses to a SAT solver): literal `0` cannot be
+            // negated distinctly from itself (`-0i32 == 0i32`), so an
+            // allocated variable of `0` would make `¬fresh` and `fresh`
+            // collapse to the same literal, silently breaking the very
+            // split this tactic exists to produce.
+            next_var: 1,
         }
     }
 

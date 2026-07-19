@@ -4,10 +4,16 @@ use crate::config::BvConfig;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
+use num_bigint::BigUint;
 use oxiz_core::ast::TermId;
 use oxiz_core::error::Result;
-use oxiz_sat::{LBool, Lit, Solver as SatSolver, SolverResult, Var};
+use oxiz_sat::{LBool, Lit, Solver as SatSolver, SolverConfig as SatConfig, SolverResult, Var};
 use smallvec::SmallVec;
+
+/// Division / remainder encodings (`bvudiv`, `bvurem`, `bvsdiv`, `bvsrem`).
+mod division;
+/// Barrel-shifter encodings (`bvshl`, `bvlshr`, `bvashr`).
+mod shifts;
 
 /// A bit vector variable (sequence of SAT variables)
 #[derive(Debug, Clone)]
@@ -78,7 +84,7 @@ impl BvSolver {
     #[must_use]
     pub fn with_config(config: BvConfig) -> Self {
         Self {
-            sat: SatSolver::new(),
+            sat: SatSolver::with_config(Self::embedded_sat_config()),
             term_to_bv: FxHashMap::default(),
             assertions: Vec::new(),
             context_stack: Vec::new(),
@@ -89,6 +95,39 @@ impl BvSolver {
             assertion_guard_terms: Vec::new(),
             last_sat_model: Vec::new(),
             bool_node: FxHashMap::default(),
+        }
+    }
+
+    /// SAT-solver configuration for the embedded bit-blasting engine.
+    ///
+    /// `BvSolver::check()` drives the SAT solver *incrementally*: it asserts
+    /// clauses, runs a full `solve()`, then discards that probe's search
+    /// residue so the next probe sees only the honestly-asserted clauses. The
+    /// residue cleanup relies on two contracts — `restore_to_trail_size`
+    /// (roll the trail back to the committed prefix) and `forget_learned_since`
+    /// (drop exactly the clauses this probe *learned*). The second contract
+    /// only covers clauses registered in the SAT solver's learned-clause list.
+    ///
+    /// Any search feature that injects *other* clauses into the database during
+    /// `solve()` therefore breaks the contract: those clauses are invisible to
+    /// `forget_learned_since`, survive both the per-probe cleanup and the
+    /// enclosing `pop()`, and leak into later probes. Because the bit-vector
+    /// unit constraints installed by `assert_const`/`assert_eq` sit on the
+    /// trail as bare level-0 decisions, such a leaked clause can implicitly
+    /// depend on a since-retracted assignment and spuriously force `Unsat` —
+    /// e.g. turning the genuinely satisfiable `a = x*3 ∧ a ≠ x ∧ a = 7` into a
+    /// false `Unsat` once an earlier probe has run.
+    ///
+    /// The two offenders are **lazy hyper-binary resolution** (adds derived
+    /// binary clauses mid-search) and **inprocessing** (adds/rewrites clauses
+    /// between search rounds). Both are pure performance heuristics — disabling
+    /// them costs only speed, never soundness or completeness — so the embedded
+    /// solver turns them off to keep the incremental cleanup contract exact.
+    fn embedded_sat_config() -> SatConfig {
+        SatConfig {
+            enable_lazy_hyper_binary: false,
+            enable_inprocessing: false,
+            ..SatConfig::default()
         }
     }
 
@@ -658,148 +697,6 @@ impl BvSolver {
         }
     }
 
-    /// Left shift: result = a << b
-    pub fn bv_shl(&mut self, result: TermId, a: TermId, shift_amount: TermId) {
-        if let (Some(va), Some(shift)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&shift_amount).cloned(),
-        ) {
-            assert_eq!(va.width, shift.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Build a barrel shifter
-            let mut current = va.bits.clone();
-
-            for s in 0..width.ilog2() + 1 {
-                let shift_by = 1 << s;
-                let mut next: SmallVec<[Var; 32]> = SmallVec::new();
-
-                for i in 0..width {
-                    let next_bit = self.sat.new_var();
-
-                    if i >= shift_by {
-                        // next_bit = shift[s] ? current[i - shift_by] : current[i]
-                        self.encode_mux(
-                            next_bit,
-                            shift.bits[s as usize],
-                            current[i - shift_by],
-                            current[i],
-                        );
-                    } else {
-                        // next_bit = shift[s] ? 0 : current[i]
-                        let zero = self.sat.new_var();
-                        self.sat.add_clause([Lit::neg(zero)]);
-                        self.encode_mux(next_bit, shift.bits[s as usize], zero, current[i]);
-                    }
-
-                    next.push(next_bit);
-                }
-
-                current = next;
-            }
-
-            for i in 0..width {
-                self.encode_bit_eq(r.bits[i], current[i]);
-            }
-        }
-    }
-
-    /// Logical right shift: result = a >> b (unsigned)
-    pub fn bv_lshr(&mut self, result: TermId, a: TermId, shift_amount: TermId) {
-        if let (Some(va), Some(shift)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&shift_amount).cloned(),
-        ) {
-            assert_eq!(va.width, shift.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Build a barrel shifter (right)
-            let mut current = va.bits.clone();
-
-            for s in 0..width.ilog2() + 1 {
-                let shift_by = 1 << s;
-                let mut next: SmallVec<[Var; 32]> = SmallVec::new();
-
-                for i in 0..width {
-                    let next_bit = self.sat.new_var();
-
-                    if i + shift_by < width {
-                        // next_bit = shift[s] ? current[i + shift_by] : current[i]
-                        self.encode_mux(
-                            next_bit,
-                            shift.bits[s as usize],
-                            current[i + shift_by],
-                            current[i],
-                        );
-                    } else {
-                        // next_bit = shift[s] ? 0 : current[i]
-                        let zero = self.sat.new_var();
-                        self.sat.add_clause([Lit::neg(zero)]);
-                        self.encode_mux(next_bit, shift.bits[s as usize], zero, current[i]);
-                    }
-
-                    next.push(next_bit);
-                }
-
-                current = next;
-            }
-
-            for i in 0..width {
-                self.encode_bit_eq(r.bits[i], current[i]);
-            }
-        }
-    }
-
-    /// Arithmetic right shift: result = a >> b (signed, sign-extends)
-    pub fn bv_ashr(&mut self, result: TermId, a: TermId, shift_amount: TermId) {
-        if let (Some(va), Some(shift)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&shift_amount).cloned(),
-        ) {
-            assert_eq!(va.width, shift.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Sign bit
-            let sign = va.bits[width - 1];
-
-            // Build a barrel shifter (right) with sign extension
-            let mut current = va.bits.clone();
-
-            for s in 0..width.ilog2() + 1 {
-                let shift_by = 1 << s;
-                let mut next: SmallVec<[Var; 32]> = SmallVec::new();
-
-                for i in 0..width {
-                    let next_bit = self.sat.new_var();
-
-                    if i + shift_by < width {
-                        // next_bit = shift[s] ? current[i + shift_by] : current[i]
-                        self.encode_mux(
-                            next_bit,
-                            shift.bits[s as usize],
-                            current[i + shift_by],
-                            current[i],
-                        );
-                    } else {
-                        // next_bit = shift[s] ? sign : current[i]
-                        self.encode_mux(next_bit, shift.bits[s as usize], sign, current[i]);
-                    }
-
-                    next.push(next_bit);
-                }
-
-                current = next;
-            }
-
-            for i in 0..width {
-                self.encode_bit_eq(r.bits[i], current[i]);
-            }
-        }
-    }
-
     /// Signed less than: a < b (two's complement)
     pub fn assert_slt(&mut self, a: TermId, b: TermId) {
         if let (Some(va), Some(vb)) = (
@@ -965,6 +862,16 @@ impl BvSolver {
 
     /// Encode ripple-carry adder: result = a + b
     fn encode_adder(&mut self, result: &[Var], a: &[Var], b: &[Var]) {
+        // Discard the carry-out: width-only wrapping addition.
+        let _ = self.encode_adder_carry(result, a, b);
+    }
+
+    /// Encode a ripple-carry adder `result = a + b` and return the final
+    /// carry-out variable (true iff the unsigned sum overflows `width` bits).
+    ///
+    /// Callers that must forbid wrap-around (e.g. the division/remainder
+    /// equation `a = q*b + r`) constrain the returned carry-out to 0.
+    fn encode_adder_carry(&mut self, result: &[Var], a: &[Var], b: &[Var]) -> Var {
         assert_eq!(result.len(), a.len());
         assert_eq!(result.len(), b.len());
 
@@ -973,11 +880,12 @@ impl BvSolver {
         self.sat.add_clause([Lit::neg(carry)]); // Initial carry = 0
 
         for i in 0..width {
-            let next_carry = self.sat.new_var(); // Overflow carry ignored for last iteration
-
+            let next_carry = self.sat.new_var();
             self.encode_full_adder(result[i], next_carry, a[i], b[i], carry);
             carry = next_carry;
         }
+
+        carry
     }
 
     /// Encode addition with constant: result = a + const
@@ -1090,413 +998,6 @@ impl BvSolver {
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
         self.sat
             .add_clause([Lit::pos(out), Lit::pos(a), Lit::pos(b)]);
-    }
-
-    /// Unsigned division: result = a / b (unsigned)
-    /// If b = 0, result is all 1s (SMT-LIB semantics)
-    pub fn bv_udiv(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Check if divisor is zero
-            let b_is_zero = self.sat.new_var();
-            let mut all_zero_lits: SmallVec<[Var; 32]> = SmallVec::new();
-            for &bit in &vb.bits {
-                all_zero_lits.push(bit);
-            }
-            self.encode_all_zero(b_is_zero, &all_zero_lits);
-
-            // Create quotient and remainder variables
-            let mut quot_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            let mut rem_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                quot_bits.push(self.sat.new_var());
-                rem_bits.push(self.sat.new_var());
-            }
-
-            // Encode: full_prod = quot * b using double-width to detect overflow
-            // full_prod[0..width-1] = low bits, full_prod[width..2*width-1] = high bits
-            let mut full_prod_bits: SmallVec<[Var; 64]> = SmallVec::new();
-            for _ in 0..(2 * width) {
-                full_prod_bits.push(self.sat.new_var());
-            }
-            self.encode_mul_full(&full_prod_bits, &quot_bits, &vb.bits);
-
-            // The low bits are our prod
-            let prod_bits: SmallVec<[Var; 32]> = full_prod_bits[0..width].iter().copied().collect();
-
-            // Enforce: high bits of product are zero (no overflow) when b != 0
-            for i in width..(2 * width) {
-                // ~b_is_zero => ~full_prod_bits[i]
-                // b_is_zero | ~full_prod_bits[i]
-                self.sat
-                    .add_clause([Lit::pos(b_is_zero), Lit::neg(full_prod_bits[i])]);
-            }
-
-            // Encode: sum = prod + rem
-            let mut sum_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                sum_bits.push(self.sat.new_var());
-            }
-            self.encode_adder(&sum_bits, &prod_bits, &rem_bits);
-
-            // Enforce: a = sum (the division equation)
-            for i in 0..width {
-                self.encode_bit_eq(va.bits[i], sum_bits[i]);
-            }
-
-            // Enforce: rem < b (when b != 0)
-            let rem_lt_b = self.sat.new_var();
-            self.encode_ult_result(&rem_bits, &vb.bits, rem_lt_b);
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::pos(rem_lt_b)]);
-
-            // All 1s for division by zero result
-            let mut all_ones: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                let one = self.sat.new_var();
-                self.sat.add_clause([Lit::pos(one)]);
-                all_ones.push(one);
-            }
-
-            // result = b_is_zero ? all_ones : quot_bits
-            for i in 0..width {
-                self.encode_mux(r.bits[i], b_is_zero, all_ones[i], quot_bits[i]);
-            }
-        }
-    }
-
-    /// Unsigned remainder: result = a % b (unsigned)
-    /// If b = 0, result = a (SMT-LIB semantics)
-    pub fn bv_urem(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Check if divisor is zero
-            let b_is_zero = self.sat.new_var();
-            let mut all_zero_lits: SmallVec<[Var; 32]> = SmallVec::new();
-            for &bit in &vb.bits {
-                all_zero_lits.push(bit);
-            }
-            self.encode_all_zero(b_is_zero, &all_zero_lits);
-
-            // Create quotient bits (unconstrained - solver will find values)
-            let mut quot_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                quot_bits.push(self.sat.new_var());
-            }
-
-            // Create remainder bits (unconstrained - solver will find values)
-            let mut rem_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                rem_bits.push(self.sat.new_var());
-            }
-
-            // Encode: full_prod = quot * b using double-width to detect overflow
-            let mut full_prod_bits: SmallVec<[Var; 64]> = SmallVec::new();
-            for _ in 0..(2 * width) {
-                full_prod_bits.push(self.sat.new_var());
-            }
-            self.encode_mul_full(&full_prod_bits, &quot_bits, &vb.bits);
-
-            // The low bits are our prod
-            let prod_bits: SmallVec<[Var; 32]> = full_prod_bits[0..width].iter().copied().collect();
-
-            // Enforce: high bits of product are zero (no overflow) when b != 0
-            for i in width..(2 * width) {
-                self.sat
-                    .add_clause([Lit::pos(b_is_zero), Lit::neg(full_prod_bits[i])]);
-            }
-
-            // Encode: sum = prod + rem
-            let mut sum_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                sum_bits.push(self.sat.new_var());
-            }
-            self.encode_adder(&sum_bits, &prod_bits, &rem_bits);
-
-            // Enforce: a = sum (the division equation a = q*b + r)
-            for i in 0..width {
-                self.encode_bit_eq(va.bits[i], sum_bits[i]);
-            }
-
-            // Encode: rem < b (remainder must be less than divisor)
-            let rem_lt_b = self.sat.new_var();
-            self.encode_ult_result(&rem_bits, &vb.bits, rem_lt_b);
-            // This constraint only applies when b != 0
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::pos(rem_lt_b)]);
-
-            // result = b_is_zero ? a : rem_bits
-            for i in 0..width {
-                self.encode_mux(r.bits[i], b_is_zero, va.bits[i], rem_bits[i]);
-            }
-        }
-    }
-
-    /// Signed division: result = a / b (signed, two's complement)
-    /// If b = 0, result = all 1s (SMT-LIB semantics)
-    pub fn bv_sdiv(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Check if divisor is zero
-            let b_is_zero = self.sat.new_var();
-            let mut all_zero_lits: SmallVec<[Var; 32]> = SmallVec::new();
-            for &bit in &vb.bits {
-                all_zero_lits.push(bit);
-            }
-            self.encode_all_zero(b_is_zero, &all_zero_lits);
-
-            // Get sign bits
-            let sign_a = va.bits[width - 1];
-            let sign_b = vb.bits[width - 1];
-
-            // Compute absolute values using MUX
-            let mut abs_a: SmallVec<[Var; 32]> = SmallVec::new();
-            let mut abs_b: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                abs_a.push(self.sat.new_var());
-                abs_b.push(self.sat.new_var());
-            }
-
-            // neg_a = -a (two's complement)
-            let mut neg_a: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                neg_a.push(self.sat.new_var());
-            }
-            self.encode_two_complement(&neg_a, &va.bits);
-
-            // abs_a = sign_a ? neg_a : a
-            for i in 0..width {
-                self.encode_mux(abs_a[i], sign_a, neg_a[i], va.bits[i]);
-            }
-
-            // neg_b = -b (two's complement)
-            let mut neg_b: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                neg_b.push(self.sat.new_var());
-            }
-            self.encode_two_complement(&neg_b, &vb.bits);
-
-            // abs_b = sign_b ? neg_b : b
-            for i in 0..width {
-                self.encode_mux(abs_b[i], sign_b, neg_b[i], vb.bits[i]);
-            }
-
-            // Create quot_abs and rem_abs for unsigned division
-            let mut quot_abs: SmallVec<[Var; 32]> = SmallVec::new();
-            let mut rem_abs: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                quot_abs.push(self.sat.new_var());
-                rem_abs.push(self.sat.new_var());
-            }
-
-            // Encode division constraint: abs_a = quot_abs * abs_b + rem_abs
-            // Use double-width multiplication to detect overflow
-            let mut full_prod: SmallVec<[Var; 64]> = SmallVec::new();
-            for _ in 0..(2 * width) {
-                full_prod.push(self.sat.new_var());
-            }
-            self.encode_mul_full(&full_prod, &quot_abs, &abs_b);
-
-            // The low bits are our prod
-            let prod: SmallVec<[Var; 32]> = full_prod[0..width].iter().copied().collect();
-
-            // Enforce: high bits of product are zero (no overflow) when b != 0
-            for i in width..(2 * width) {
-                self.sat
-                    .add_clause([Lit::pos(b_is_zero), Lit::neg(full_prod[i])]);
-            }
-
-            let mut sum: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                sum.push(self.sat.new_var());
-            }
-            self.encode_adder(&sum, &prod, &rem_abs);
-
-            // Enforce abs_a = sum (unconditionally - division equation always holds)
-            for i in 0..width {
-                self.encode_bit_eq(abs_a[i], sum[i]);
-            }
-
-            // Enforce rem_abs < abs_b (unconditionally for well-formed division)
-            let rem_lt_b = self.sat.new_var();
-            self.encode_ult_result(&rem_abs, &abs_b, rem_lt_b);
-            // Only enforce when b != 0
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::pos(rem_lt_b)]);
-
-            // Result sign: sign_a XOR sign_b
-            let result_sign = self.sat.new_var();
-            self.encode_xor(result_sign, sign_a, sign_b);
-
-            // neg_quot = -quot_abs
-            let mut neg_quot: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                neg_quot.push(self.sat.new_var());
-            }
-            self.encode_two_complement(&neg_quot, &quot_abs);
-
-            // signed_quot = result_sign ? neg_quot : quot_abs
-            let mut signed_quot: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                signed_quot.push(self.sat.new_var());
-            }
-            for i in 0..width {
-                self.encode_mux(signed_quot[i], result_sign, neg_quot[i], quot_abs[i]);
-            }
-
-            // All 1s for division by zero result
-            let mut all_ones: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                let one = self.sat.new_var();
-                self.sat.add_clause([Lit::pos(one)]); // Force to 1
-                all_ones.push(one);
-            }
-
-            // result = b_is_zero ? all_ones : signed_quot
-            for i in 0..width {
-                self.encode_mux(r.bits[i], b_is_zero, all_ones[i], signed_quot[i]);
-            }
-        }
-    }
-
-    /// Signed remainder: result = a % b (signed)
-    /// Sign of result matches sign of dividend a
-    /// If b = 0, result = a (SMT-LIB semantics)
-    pub fn bv_srem(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
-
-            // Check if divisor is zero
-            let b_is_zero = self.sat.new_var();
-            let mut all_zero_lits: SmallVec<[Var; 32]> = SmallVec::new();
-            for &bit in &vb.bits {
-                all_zero_lits.push(bit);
-            }
-            self.encode_all_zero(b_is_zero, &all_zero_lits);
-
-            // Get sign bits
-            let sign_a = va.bits[width - 1];
-            let sign_b = vb.bits[width - 1];
-
-            // Compute absolute values using MUX
-            let mut abs_a: SmallVec<[Var; 32]> = SmallVec::new();
-            let mut abs_b: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                abs_a.push(self.sat.new_var());
-                abs_b.push(self.sat.new_var());
-            }
-
-            // neg_a = -a (two's complement)
-            let mut neg_a: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                neg_a.push(self.sat.new_var());
-            }
-            self.encode_two_complement(&neg_a, &va.bits);
-
-            // abs_a = sign_a ? neg_a : a
-            for i in 0..width {
-                self.encode_mux(abs_a[i], sign_a, neg_a[i], va.bits[i]);
-            }
-
-            // neg_b = -b (two's complement)
-            let mut neg_b: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                neg_b.push(self.sat.new_var());
-            }
-            self.encode_two_complement(&neg_b, &vb.bits);
-
-            // abs_b = sign_b ? neg_b : b
-            for i in 0..width {
-                self.encode_mux(abs_b[i], sign_b, neg_b[i], vb.bits[i]);
-            }
-
-            // Create quot_abs and rem_abs for unsigned division
-            let mut quot_abs: SmallVec<[Var; 32]> = SmallVec::new();
-            let mut rem_abs: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                quot_abs.push(self.sat.new_var());
-                rem_abs.push(self.sat.new_var());
-            }
-
-            // Encode division constraint: abs_a = quot_abs * abs_b + rem_abs
-            // Use double-width multiplication to detect overflow
-            let mut full_prod: SmallVec<[Var; 64]> = SmallVec::new();
-            for _ in 0..(2 * width) {
-                full_prod.push(self.sat.new_var());
-            }
-            self.encode_mul_full(&full_prod, &quot_abs, &abs_b);
-
-            // The low bits are our prod
-            let prod: SmallVec<[Var; 32]> = full_prod[0..width].iter().copied().collect();
-
-            // Enforce: high bits of product are zero (no overflow) when b != 0
-            for i in width..(2 * width) {
-                self.sat
-                    .add_clause([Lit::pos(b_is_zero), Lit::neg(full_prod[i])]);
-            }
-
-            let mut sum: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                sum.push(self.sat.new_var());
-            }
-            self.encode_adder(&sum, &prod, &rem_abs);
-
-            // Enforce abs_a = sum (unconditionally - division equation always holds)
-            for i in 0..width {
-                self.encode_bit_eq(abs_a[i], sum[i]);
-            }
-
-            // Enforce rem_abs < abs_b (only when b != 0)
-            let rem_lt_b = self.sat.new_var();
-            self.encode_ult_result(&rem_abs, &abs_b, rem_lt_b);
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::pos(rem_lt_b)]);
-
-            // neg_rem = -rem_abs (for negative dividend case)
-            let mut neg_rem: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                neg_rem.push(self.sat.new_var());
-            }
-            self.encode_two_complement(&neg_rem, &rem_abs);
-
-            // signed_rem = sign_a ? neg_rem : rem_abs
-            // (sign of result matches sign of dividend)
-            let mut signed_rem: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                signed_rem.push(self.sat.new_var());
-            }
-            for i in 0..width {
-                self.encode_mux(signed_rem[i], sign_a, neg_rem[i], rem_abs[i]);
-            }
-
-            // result = b_is_zero ? a : signed_rem
-            for i in 0..width {
-                self.encode_mux(r.bits[i], b_is_zero, va.bits[i], signed_rem[i]);
-            }
-        }
     }
 
     // ===== Additional helper encoding functions =====
@@ -1691,34 +1192,62 @@ impl BvSolver {
         self.reduce_columns_and_add(result, &mut columns);
     }
 
-    /// Get the value of a bit vector from the model
+    /// Get the value of a bit vector from the model, as a `u64`.
+    ///
+    /// Returns `None` for bit-vectors wider than 64 bits: a `u64` cannot
+    /// represent their value, and `1u64 << i` for `i >= 64` would panic in
+    /// debug builds (shift amount >= bit width) or silently wrap to a wrong
+    /// bit (release builds mask the shift amount modulo 64) rather than
+    /// error out. Callers needing the full-width value should use
+    /// [`Self::get_value_big`] instead; callers of this method already
+    /// treat `None` as "value unavailable from this solver" and fall back
+    /// accordingly (e.g. `oxiz-solver`'s model builder falls back to the
+    /// arithmetic theory's value, then to a default of `0`).
     #[must_use]
     pub fn get_value(&self, term: TermId) -> Option<u64> {
         let bv = self.term_to_bv.get(&term)?;
-        // Prefer the snapshot captured at the last SAT check: the live trail has
-        // been backtracked to root and would read all-`Undef` (→ 0). Fall back
-        // to the live model only when no snapshot exists (e.g. direct unit-test
-        // usage that reads before any backtrack).
-        let live = self.sat.model();
-        let snapshot = &self.last_sat_model;
-
-        let read = |var: Var| -> bool {
-            let idx = var.index();
-            if let Some(v) = snapshot.get(idx)
-                && v.is_defined()
-            {
-                return v.is_true();
-            }
-            live.get(idx).is_some_and(|v| v.is_true())
-        };
+        if bv.bits.len() > u64::BITS as usize {
+            return None;
+        }
 
         let mut value = 0u64;
         for (i, &var) in bv.bits.iter().enumerate() {
-            if read(var) {
+            if self.read_model_bit(var) {
                 value |= 1 << i;
             }
         }
         Some(value)
+    }
+
+    /// Get the value of a bit vector from the model as an arbitrary-width
+    /// [`BigUint`], correctly supporting widths beyond 64 bits (unlike
+    /// [`Self::get_value`]).
+    #[must_use]
+    pub fn get_value_big(&self, term: TermId) -> Option<BigUint> {
+        let bv = self.term_to_bv.get(&term)?;
+        let mut value = BigUint::ZERO;
+        for (i, &var) in bv.bits.iter().enumerate() {
+            if self.read_model_bit(var) {
+                value.set_bit(i as u64, true);
+            }
+        }
+        Some(value)
+    }
+
+    /// Read a single SAT variable's boolean value from the model.
+    ///
+    /// Prefers the snapshot captured at the last SAT check: the live trail
+    /// has been backtracked to root and would read all-`Undef` (→ 0). Falls
+    /// back to the live model only when no snapshot exists (e.g. direct
+    /// unit-test usage that reads before any backtrack).
+    fn read_model_bit(&self, var: Var) -> bool {
+        let idx = var.index();
+        if let Some(v) = self.last_sat_model.get(idx)
+            && v.is_defined()
+        {
+            return v.is_true();
+        }
+        self.sat.model().get(idx).is_some_and(|v| v.is_true())
     }
 }
 
@@ -1771,7 +1300,36 @@ impl Theory for BvSolver {
         let committed_trail = self.sat.trail_size();
         let learned_before = self.sat.learned_clause_count();
 
-        let result = match self.sat.solve() {
+        let mut solve_result = self.sat.solve();
+
+        // Defensive re-verification of an `Unsat` verdict.
+        //
+        // Audit regression (theories-bv): the SAME unsound-learned-clause
+        // hazard documented above for *cross-probe* contamination can also
+        // corrupt THIS probe's own verdict, within a single `solve()` call:
+        // conflict analysis resolves through the bare, clause-less level-0
+        // decision literals that `assert_const`/`assert_eq` install (see
+        // `Solver::forget_learned_since`'s doc comment), and an internal
+        // restart can expose a learned clause that implicitly -- and
+        // unsoundly -- depended on one of them. This has been observed to
+        // turn a genuinely SATISFIABLE bit-blasted formula (e.g. an
+        // inverse `bvudiv` constraint with a free divisor) into a `solve()`
+        // call that reports `Unsat` on its FIRST attempt, even though
+        // discarding this probe's learned clauses and solving again -- on
+        // nothing but the original, honestly-asserted clauses -- finds a
+        // model. Clause learning is sound only if every learned clause is
+        // logically entailed by the original clauses; discarding learned
+        // clauses can therefore only WEAKEN the formula (never strengthen
+        // it), so retrying after `forget_learned_since` can never turn a
+        // truly UNSAT formula into a false `Sat` -- it can only correct a
+        // false `Unsat` back to the true `Sat`, or confirm the `Unsat`.
+        if matches!(solve_result, SolverResult::Unsat) {
+            self.sat.restore_to_trail_size(committed_trail);
+            self.sat.forget_learned_since(learned_before);
+            solve_result = self.sat.solve();
+        }
+
+        let result = match solve_result {
             SolverResult::Sat => {
                 // Snapshot the satisfying assignment BEFORE rolling the trail
                 // back — the rollback discards the model, so `get_value` must
@@ -1929,15 +1487,22 @@ impl BvSolver {
     /// if two distinct BV terms evaluate to the same bit-vector value in
     /// the current SAT model, we derive an equality between them.
     fn extract_model_equalities(&mut self) {
-        // Collect (term, value) pairs from the current model
+        // Collect (term, value) pairs from the current model.
+        //
+        // Keyed by `BigUint` rather than `u64`: bit-vectors wider than 64
+        // bits are fully supported by the bit-blaster (each bit is just
+        // another SAT variable), so a `u64` key would require `1u64 << i`
+        // for `i >= 64`, which panics in debug builds and silently wraps
+        // (masking the shift amount mod 64, corrupting the computed value
+        // and potentially deriving a bogus equality) in release builds.
         let model = self.sat.model();
-        let mut value_map: FxHashMap<u64, Vec<TermId>> = FxHashMap::default();
+        let mut value_map: FxHashMap<BigUint, Vec<TermId>> = FxHashMap::default();
 
         for (&term, bv_var) in &self.term_to_bv {
-            let mut value = 0u64;
+            let mut value = BigUint::ZERO;
             for (i, &var) in bv_var.bits.iter().enumerate() {
                 if model.get(var.index()).is_some_and(|v| v.is_true()) {
-                    value |= 1u64 << i;
+                    value.set_bit(i as u64, true);
                 }
             }
             value_map.entry(value).or_default().push(term);
@@ -1961,6 +1526,81 @@ impl BvSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (theories-bv, 811-line solver.rs refactor): a genuinely
+    /// satisfiable 8-bit multiplication + disjunction pattern must not return
+    /// a false `Unsat` after an earlier probe has run on the same solver.
+    ///
+    /// Root cause: lazy hyper-binary resolution injected derived binary clauses
+    /// into the SAT database mid-`solve()`; those clauses were *not* tracked in
+    /// the learned-clause list, so `check()`'s per-probe `forget_learned_since`
+    /// cleanup (and the enclosing `pop()`) could not remove them. Left behind,
+    /// such a clause — implicitly resting on a since-retracted level-0 decision
+    /// installed by `assert_const` — spuriously forced `Unsat` on the next
+    /// probe. `embedded_sat_config()` now disables that heuristic (and
+    /// inprocessing) so the incremental cleanup contract stays exact.
+    ///
+    /// Drives the same `a = x*3 ∧ a ≠ x ∧ (a = x ∨ a = 7)` disjunction as the
+    /// `oxiz-solver` integration test `bv_mul_aux_disjunction_const_is_sat_8bit`
+    /// via explicit `push`/`check`/`pop` branches: branch `a = x` is UNSAT, the
+    /// following branch `a = 7` is SAT (e.g. x=173: 173*3 = 519 ≡ 7 mod 256).
+    fn run_mul_disjunction_branches(width: u32) -> (TheoryResult, TheoryResult) {
+        let mut solver = BvSolver::new();
+        let x = TermId::new(1);
+        let three = TermId::new(2);
+        let a = TermId::new(3);
+        let seven = TermId::new(4);
+        solver.new_bv(x, width);
+        solver.assert_const(three, 3, width);
+        solver.bv_mul(a, x, three);
+        solver.assert_neq(a, x);
+
+        // Disjunct 1: a = x  (=> UNSAT: x*3 = x with x != x is impossible).
+        solver.push();
+        solver.assert_eq(a, x);
+        let r1 = solver.check().expect("check should succeed");
+        solver.pop();
+
+        // Disjunct 2: a = 7  (=> SAT, and must NOT be poisoned by disjunct 1).
+        solver.push();
+        solver.new_bv(seven, width);
+        solver.assert_const(seven, 7, width);
+        solver.assert_eq(a, seven);
+        let r2 = solver.check().expect("check should succeed");
+        solver.pop();
+        (r1, r2)
+    }
+
+    #[test]
+    fn bv_mul_disjunction_incremental_stays_sat_4bit() {
+        let (r1, r2) = run_mul_disjunction_branches(4);
+        assert!(matches!(r1, TheoryResult::Unsat(_)), "a=x branch {r1:?}");
+        assert!(matches!(r2, TheoryResult::Sat), "a=7 branch {r2:?}");
+    }
+
+    #[test]
+    fn bv_mul_disjunction_incremental_stays_sat_8bit() {
+        let (r1, r2) = run_mul_disjunction_branches(8);
+        assert!(matches!(r1, TheoryResult::Unsat(_)), "a=x branch {r1:?}");
+        assert!(matches!(r2, TheoryResult::Sat), "a=7 branch {r2:?}");
+    }
+
+    #[test]
+    fn bv_mul_disjunction_single_check_is_sat_8bit() {
+        // The same pattern collapsed into one probe: a = x*3, a != x, a = 7.
+        // SAT with x=173 (173*3 = 519 ≡ 7 mod 256, and 7 != 173).
+        let mut solver = BvSolver::new();
+        let x = TermId::new(1);
+        let three = TermId::new(2);
+        let a = TermId::new(3);
+        solver.new_bv(x, 8);
+        solver.assert_const(three, 3, 8);
+        solver.bv_mul(a, x, three);
+        solver.assert_neq(a, x);
+        solver.assert_const(a, 7, 8);
+        let r = solver.check().expect("check should succeed");
+        assert!(matches!(r, TheoryResult::Sat), "got {r:?}");
+    }
 
     #[test]
     fn test_bv_eq() {
@@ -2004,5 +1644,136 @@ mod tests {
 
         let result = solver.check().expect("test operation should succeed");
         assert!(matches!(result, TheoryResult::Unsat(_)));
+    }
+
+    // Audit regression (theories-bv): `BvSolver::check()` could return a
+    // false `Unsat` for a genuinely satisfiable "inverse" bit-vector
+    // constraint (fixed dividend/quotient, free divisor) because its own
+    // first internal `solve()` call could hit an unsound learned clause
+    // (resolved through a bare, clause-less level-0 decision literal
+    // installed by `assert_const`). `check()` now re-verifies an `Unsat`
+    // verdict by discarding this probe's learned clauses and retrying once
+    // before trusting it. This was previously worked around at the test
+    // level by `#[ignore]`ing `test_bv10_udiv` in `tests/test_bv10.rs`.
+    #[test]
+    fn audit_check_recovers_from_first_attempt_false_unsat() {
+        let mut solver = BvSolver::new();
+        let width = 8u32;
+
+        let dividend = TermId::new(1);
+        let divisor = TermId::new(2);
+        let quotient = TermId::new(3);
+        let result = TermId::new(4);
+
+        solver.new_bv(dividend, width);
+        solver.new_bv(divisor, width);
+        solver.new_bv(quotient, width);
+        solver.new_bv(result, width);
+
+        solver.assert_const(dividend, 100, width);
+        solver.assert_const(quotient, 5, width);
+        solver.bv_udiv(result, dividend, divisor);
+        solver.assert_eq(result, quotient);
+
+        let outcome = solver.check().expect("check should succeed");
+        assert!(
+            matches!(outcome, TheoryResult::Sat),
+            "100 / divisor = 5 is satisfiable (e.g. divisor in 17..=20); got {outcome:?}"
+        );
+
+        let d = solver
+            .get_value(divisor)
+            .expect("divisor should have a value");
+        assert_eq!(100 / d, 5, "witness divisor {d} must satisfy 100/d = 5");
+    }
+
+    // Audit regression (theories-bv): `get_value` computed `1u64 << i` for
+    // every bit index, which panics (debug) or silently wraps to a wrong
+    // value (release) once a bit-vector is wider than 64 bits. It must now
+    // honestly report "unavailable" (`None`) instead, while a new
+    // `get_value_big` correctly returns the full-width value.
+    #[test]
+    fn get_value_returns_none_for_width_over_64_get_value_big_is_correct() {
+        let mut solver = BvSolver::new();
+        let a = TermId::new(1);
+
+        solver.new_bv(a, 100);
+        // Manually force bit 0 and bit 99 true, everything else false --
+        // exercises the exact `i >= 64` shift that used to panic/wrap.
+        let bv = solver
+            .term_to_bv
+            .get(&a)
+            .cloned()
+            .expect("bv var must exist after new_bv");
+        for (i, &var) in bv.bits.iter().enumerate() {
+            if i == 0 || i == 99 {
+                solver.sat.add_clause([Lit::pos(var)]);
+            } else {
+                solver.sat.add_clause([Lit::neg(var)]);
+            }
+        }
+
+        let result = solver.check().expect("test operation should succeed");
+        assert!(matches!(result, TheoryResult::Sat));
+
+        assert_eq!(
+            solver.get_value(a),
+            None,
+            "get_value must honestly report unavailable for width > 64, not panic or wrap"
+        );
+
+        let mut expected = BigUint::ZERO;
+        expected.set_bit(0, true);
+        expected.set_bit(99, true);
+        assert_eq!(
+            solver.get_value_big(a),
+            Some(expected),
+            "get_value_big must return the correct full-width value"
+        );
+    }
+
+    // Audit regression (theories-bv): `extract_model_equalities` (used for
+    // Nelson-Oppen model-based equality sharing) keyed its value map by
+    // `u64`, computed via the same panicking/wrapping `1u64 << i` shift for
+    // bit-vectors wider than 64 bits. It must now correctly detect equal
+    // wide values via a `BigUint`-keyed map instead.
+    #[test]
+    fn extract_model_equalities_handles_width_over_64() {
+        let mut solver = BvSolver::new();
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+
+        solver.new_bv(a, 70);
+        solver.new_bv(b, 70);
+
+        // Force both `a` and `b` to the same 70-bit value (bit 69 set).
+        for &term in &[a, b] {
+            let bv = solver
+                .term_to_bv
+                .get(&term)
+                .cloned()
+                .expect("bv var must exist after new_bv");
+            for (i, &var) in bv.bits.iter().enumerate() {
+                if i == 69 {
+                    solver.sat.add_clause([Lit::pos(var)]);
+                } else {
+                    solver.sat.add_clause([Lit::neg(var)]);
+                }
+            }
+        }
+
+        assert!(matches!(solver.sat.solve(), SolverResult::Sat));
+
+        // Must not panic (previously `1u64 << 69` would panic in debug /
+        // silently wrap -- and possibly corrupt equality detection -- in
+        // release).
+        solver.extract_model_equalities();
+
+        let shared = solver.get_shared_equalities();
+        assert_eq!(
+            shared.len(),
+            1,
+            "a and b share the same 70-bit value and must be reported equal"
+        );
     }
 }

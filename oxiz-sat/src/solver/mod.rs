@@ -6,6 +6,7 @@ pub mod heuristic;
 mod incremental;
 mod learn;
 mod propagate;
+mod search_ext;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -20,6 +21,7 @@ use crate::prelude::*;
 use crate::trail::{Reason, Trail};
 use crate::vsids::VSIDS;
 use crate::watched::{WatchLists, Watcher};
+use core::sync::atomic::{AtomicBool, Ordering};
 use smallvec::SmallVec;
 
 /// Binary implication graph for efficient binary clause propagation
@@ -53,6 +55,16 @@ impl BinaryImplicationGraph {
     fn clear(&mut self) {
         for implications in &mut self.implications {
             implications.clear();
+        }
+    }
+
+    /// Remove every edge belonging to `clause_id` that is keyed under `trigger`.
+    /// Used to purge binary implications when a clause is retracted so the graph
+    /// does not accumulate stale (and, after slot reuse, misleading) edges.
+    fn remove_clause_edges(&mut self, trigger: Lit, clause_id: ClauseId) {
+        let idx = trigger.code() as usize;
+        if idx < self.implications.len() {
+            self.implications[idx].retain(|(_, cid)| *cid != clause_id);
         }
     }
 }
@@ -395,6 +407,31 @@ pub struct Solver {
     pub(super) clause_bump_increment: f64,
     /// Memory optimizer with size-class pools for clause allocation
     pub(super) memory_optimizer: MemoryOptimizer,
+    /// Model-reconstruction stack for pure literals eliminated during
+    /// inprocessing. Pure-literal elimination deletes clauses that are only
+    /// satisfiable *if* the pure literal is fixed to its polarity; the search
+    /// itself may assign the variable the opposite phase, so each recorded
+    /// literal is forced to `true` in the reconstructed model (see
+    /// [`Solver::save_model`]). At most one polarity per variable is recorded.
+    pub(super) pure_literal_reconstruction: Vec<Lit>,
+    /// Optional cooperative interrupt flag. When set to `true` by another thread
+    /// (e.g. a portfolio coordinator on timeout), the search loop stops at the
+    /// next check and returns [`SolverResult::Unknown`]. `None` means no external
+    /// interrupt is wired.
+    pub(super) interrupt: Option<Arc<AtomicBool>>,
+    /// Optional conflict budget. When `Some(n)`, the search loop returns
+    /// [`SolverResult::Unknown`] once `n` conflicts have been reached instead of
+    /// running unbounded. `None` (the default) means no conflict limit. This is
+    /// the resource budget consulted by the CDCL loop and drives, e.g.,
+    /// `oxiz-cli --timeout`-style bounded solving.
+    pub(super) max_conflicts: Option<u64>,
+    /// Optional DRAT proof logger. When `Some`, the CDCL loop emits a DRAT
+    /// addition line for every learned clause, a deletion line for every clause
+    /// dropped by clause-database reduction / subsumption / vivification /
+    /// incremental forgetting, and the empty clause when unconditional UNSAT is
+    /// derived. `None` (the default) means no proof is produced and every DRAT
+    /// hook is a no-op, so proof logging costs nothing when unused.
+    pub(super) drat: Option<crate::proof::DratWriter>,
 }
 
 impl Default for Solver {
@@ -452,7 +489,135 @@ impl Solver {
             chrono_backtrack: ChronoBacktrack::new(chrono_enabled, chrono_threshold),
             clause_bump_increment: 1.0,
             memory_optimizer: MemoryOptimizer::new(),
+            pure_literal_reconstruction: Vec::new(),
+            interrupt: None,
+            max_conflicts: None,
+            drat: None,
         }
+    }
+
+    /// Enable DRAT proof logging to `path`.
+    ///
+    /// While enabled, the CDCL search emits a DRAT proof: one addition line per
+    /// learned clause, one deletion line per clause removed by database
+    /// reduction / subsumption / vivification / incremental forgetting, and the
+    /// empty clause when unconditional UNSAT is derived. The resulting file can
+    /// be checked by any DRAT proof checker. Enabling it does not change the
+    /// search itself — only whether the trace is recorded.
+    pub fn enable_drat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let mut writer = crate::proof::DratWriter::new();
+        writer.enable(path)?;
+        self.drat = Some(writer);
+        Ok(())
+    }
+
+    /// Disable DRAT proof logging (flushing any buffered output).
+    pub fn disable_drat_proof(&mut self) {
+        if let Some(mut writer) = self.drat.take() {
+            writer.disable();
+        }
+    }
+
+    /// Returns `true` when DRAT proof logging is currently enabled.
+    #[must_use]
+    pub fn drat_proof_enabled(&self) -> bool {
+        self.drat.is_some()
+    }
+
+    /// Emit a DRAT addition line for `lits` (no-op when proof logging is off).
+    pub(super) fn drat_add(&mut self, lits: &[Lit]) {
+        if let Some(writer) = &mut self.drat {
+            let _ = writer.add_clause(lits);
+        }
+    }
+
+    /// Emit a DRAT deletion line for the clause `clause_id`, reading its literals
+    /// before it is removed from the database (no-op when proof logging is off or
+    /// the clause is already gone).
+    pub(super) fn drat_delete(&mut self, clause_id: ClauseId) {
+        if self.drat.is_none() {
+            return;
+        }
+        let lits: Option<SmallVec<[Lit; 8]>> = self.clauses.get(clause_id).and_then(|c| {
+            if c.deleted {
+                None
+            } else {
+                Some(c.lits.iter().copied().collect())
+            }
+        });
+        if let (Some(writer), Some(lits)) = (&mut self.drat, lits) {
+            let _ = writer.delete_clause(&lits);
+        }
+    }
+
+    /// Emit a DRAT deletion line for an explicit literal set (used when a clause
+    /// is strengthened in place and its pre-strengthening form must be retired).
+    pub(super) fn drat_delete_lits(&mut self, lits: &[Lit]) {
+        if let Some(writer) = &mut self.drat {
+            let _ = writer.delete_clause(lits);
+        }
+    }
+
+    /// Emit the empty clause (the DRAT proof of unconditional UNSAT).
+    pub(super) fn drat_emit_empty(&mut self) {
+        if let Some(writer) = &mut self.drat {
+            let _ = writer.add_clause(&[]);
+        }
+    }
+
+    /// Purge every binary-implication-graph edge belonging to `clause_id`.
+    ///
+    /// The binary graph is a direct-index fast path over binary clauses; unlike
+    /// the watch lists (which lazily skip deleted clauses) it is consulted
+    /// without a liveness check at its call sites' hot loop, so a retracted
+    /// binary clause must have its edges physically removed. Reads the clause's
+    /// literals, so it must run *before* the clause is removed from the database.
+    pub(super) fn purge_binary_edges(&mut self, clause_id: ClauseId) {
+        let binary_lits = self.clauses.get(clause_id).and_then(|c| {
+            if c.lits.len() == 2 && !c.deleted {
+                Some((c.lits[0], c.lits[1]))
+            } else {
+                None
+            }
+        });
+        if let Some((a, b)) = binary_lits {
+            self.binary_graph.remove_clause_edges(a.negate(), clause_id);
+            self.binary_graph.remove_clause_edges(b.negate(), clause_id);
+        }
+    }
+
+    /// Attach a cooperative interrupt flag.
+    ///
+    /// While solving, the CDCL loop periodically checks this flag; if another
+    /// thread sets it to `true`, the current `solve*` call abandons the search
+    /// and returns [`SolverResult::Unknown`]. Combined with
+    /// [`Solver::set_max_conflicts`], this lets callers bound solving by both
+    /// wall-clock time (via an external timer that sets the flag) and work.
+    pub fn set_interrupt(&mut self, flag: Arc<AtomicBool>) {
+        self.interrupt = Some(flag);
+    }
+
+    /// Set the conflict budget (`None` clears it). When set, the CDCL search
+    /// loop returns [`SolverResult::Unknown`] once the budget is reached.
+    pub fn set_max_conflicts(&mut self, max_conflicts: Option<u64>) {
+        self.max_conflicts = max_conflicts;
+    }
+
+    /// Returns `true` when the search must stop early: the conflict budget has
+    /// been reached or an external interrupt flag has been raised.
+    #[inline]
+    pub(super) fn should_stop_search(&self) -> bool {
+        if let Some(max) = self.max_conflicts
+            && self.stats.conflicts >= max
+        {
+            return true;
+        }
+        if let Some(flag) = &self.interrupt
+            && flag.load(Ordering::Relaxed)
+        {
+            return true;
+        }
+        false
     }
 
     /// Create a new variable
@@ -640,6 +805,37 @@ impl Solver {
             self.backtrack_to_root();
         }
 
+        // Choose the two watch literals *before* storing the clause, following
+        // MiniSat's attachClause invariant: watch the two literals that are the
+        // last to become false under the current assignment. Ranking prefers a
+        // true literal, then an unassigned one, and only then a false literal at
+        // the highest decision level (see `watch_rank`).
+        //
+        // The previous code unconditionally watched `clause_lits[0..2]`. After a
+        // prior `solve()` left a full trail (with `prop_head == len`), a clause
+        // whose two lowest-code literals are false-but-already-propagated would
+        // have both watches on false literals; those watch events never fire
+        // again, so the clause could be silently falsified. A later `solve()`
+        // could then return Sat on a model violating the clause, or miss a
+        // conflict on an actually-UNSAT formula. Watching the two
+        // latest-falsified literals restores the invariant that a watched
+        // literal becoming false always re-examines the clause.
+        let n = clause_lits.len();
+        let mut best = 0;
+        for i in 1..n {
+            if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[best]) {
+                best = i;
+            }
+        }
+        clause_lits.swap(0, best);
+        let mut second = 1;
+        for i in 2..n {
+            if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[second]) {
+                second = i;
+            }
+        }
+        clause_lits.swap(1, second);
+
         let clause_id = self.clauses.add_original(clause_lits.iter().copied());
 
         // Track clause for incremental solving
@@ -647,7 +843,6 @@ impl Solver {
             current_level_clauses.push(clause_id);
         }
 
-        // Set up watches - prefer non-false literals for watching
         let lit0 = clause_lits[0];
         let lit1 = clause_lits[1];
 
@@ -659,6 +854,24 @@ impl Solver {
         true
     }
 
+    /// Rank a literal for two-watched-literal selection; a higher rank is a
+    /// better watch. A true literal is best (the clause is satisfied through it),
+    /// then an unassigned literal, and finally a false literal — and among false
+    /// literals the one assigned at the highest decision level (falsified latest)
+    /// is preferred. Watching the two highest-ranked literals mirrors MiniSat's
+    /// attachClause invariant so a watch always fires when a watched literal is
+    /// (re)falsified.
+    fn watch_rank(&self, l: Lit) -> (u8, u32) {
+        let v = self.trail.lit_value(l);
+        if v.is_true() {
+            (2, u32::MAX)
+        } else if v.is_false() {
+            (0, self.trail.level(l.var()))
+        } else {
+            (1, u32::MAX)
+        }
+    }
+
     /// Add a clause from DIMACS literals
     pub fn add_clause_dimacs(&mut self, lits: &[i32]) -> bool {
         self.add_clause(lits.iter().map(|&l| Lit::from_dimacs(l)))
@@ -668,29 +881,57 @@ impl Solver {
     pub fn solve(&mut self) -> SolverResult {
         // Check if trivially unsatisfiable
         if self.trivially_unsat {
+            self.drat_emit_empty();
             return SolverResult::Unsat;
         }
 
         // Initial propagation
         if self.propagate().is_some() {
+            self.drat_emit_empty();
             return SolverResult::Unsat;
         }
 
         loop {
+            // Resource budget / interrupt check: honor a configured conflict
+            // limit or an external interrupt by returning Unknown rather than
+            // spinning forever on a hard instance.
+            if self.should_stop_search() {
+                return SolverResult::Unknown;
+            }
+
             // Propagate
             if let Some(conflict) = self.propagate() {
                 self.stats.conflicts += 1;
                 self.conflicts_since_inprocessing += 1;
 
                 if self.trail.decision_level() == 0 {
+                    // Conflict under only level-0 (unconditional) facts: the empty
+                    // clause is derivable, completing the DRAT proof of UNSAT.
+                    self.drat_emit_empty();
                     return SolverResult::Unsat;
                 }
 
                 // Analyze conflict
                 let (backtrack_level, learnt_clause) = self.analyze(conflict);
 
+                // Empty learned clause = genuine root-level (level-0) refutation:
+                // every conflict literal is false under unconditional facts, so
+                // the instance is UNSAT and the empty clause completes the DRAT
+                // proof. `analyze` can report this even above decision level 0
+                // when a clause is falsified purely at the root.
+                if learnt_clause.is_empty() {
+                    self.trivially_unsat = true;
+                    self.drat_emit_empty();
+                    return SolverResult::Unsat;
+                }
+
                 // Backtrack with phase saving
                 self.backtrack_with_phase_saving(backtrack_level);
+
+                // Emit the learned clause as a DRAT addition (RUP-derivable from
+                // the current database by construction of 1-UIP learning). Covers
+                // both the unit and general learned-clause branches below.
+                self.drat_add(&learnt_clause);
 
                 // Learn clause
                 if learnt_clause.len() == 1 {
@@ -842,6 +1083,22 @@ impl Solver {
             }
         }
 
+        // A prior solve() may have returned Sat while leaving its full model on the
+        // trail (decisions at levels > 0). Fully restart the search state by
+        // backtracking to the root BEFORE capturing `assumption_level_start` and
+        // testing the assumptions. Otherwise leftover model decisions masquerade as
+        // fixed level-0 facts: an assumption that merely disagrees with the previous
+        // arbitrary model would hit `value.is_false()` below and be reported as a
+        // false UNSAT (e.g. (a∨b); solve() picks ¬a,b; then assumptions=[a] must be
+        // SAT, not UNSAT). This is the standard incremental / MaxSAT entry protocol.
+        self.backtrack_with_phase_saving(0);
+
+        // Clear conflict-analysis marks so a stale `seen` array left by a previous
+        // solve cannot pollute the extracted assumption core.
+        for s in &mut self.seen {
+            *s = false;
+        }
+
         // Initial propagation at level 0
         if self.propagate().is_some() {
             return (SolverResult::Unsat, Some(Vec::new()));
@@ -869,9 +1126,10 @@ impl Solver {
             self.trail.assign_decision(lit);
 
             // Propagate after each assumption
-            if let Some(_conflict) = self.propagate() {
-                // Conflict during assumption propagation
-                let core = self.analyze_assumption_conflict(assumptions);
+            if let Some(conflict) = self.propagate() {
+                // Conflict during assumption propagation: collect the full set of
+                // contributing assumptions from the conflict clause.
+                let core = self.analyze_assumption_conflict(assumptions, conflict);
                 self.backtrack(assumption_level_start);
                 return (SolverResult::Unsat, Some(core));
             }
@@ -879,6 +1137,13 @@ impl Solver {
 
         // Now solve normally
         loop {
+            // Resource budget / interrupt check: abandon under-assumption search
+            // and report Unknown when the conflict budget or interrupt fires.
+            if self.should_stop_search() {
+                self.backtrack(assumption_level_start);
+                return (SolverResult::Unknown, None);
+            }
+
             if let Some(conflict) = self.propagate() {
                 self.stats.conflicts += 1;
 
@@ -887,12 +1152,24 @@ impl Solver {
 
                 if backtrack_level <= assumption_level_start {
                     // Conflict forces backtracking past assumptions - UNSAT
-                    let core = self.analyze_assumption_conflict(assumptions);
+                    let core = self.analyze_assumption_conflict(assumptions, conflict);
                     self.backtrack(assumption_level_start);
                     return (SolverResult::Unsat, Some(core));
                 }
 
                 let (bt_level, learnt_clause) = self.analyze(conflict);
+
+                // Empty learned clause = genuine root-level (level-0) refutation.
+                // The `backtrack_level <= assumption_level_start` guard above
+                // already routes all-level-0 conflicts to the UNSAT-core path, so
+                // this is a belt-and-braces guard that also avoids an empty-clause
+                // index panic in `learn_clause`.
+                if learnt_clause.is_empty() {
+                    let core = self.analyze_assumption_conflict(assumptions, conflict);
+                    self.backtrack(assumption_level_start);
+                    return (SolverResult::Unsat, Some(core));
+                }
+
                 self.backtrack_with_phase_saving(bt_level.max(assumption_level_start + 1));
                 self.learn_clause(learnt_clause);
 
@@ -921,208 +1198,6 @@ impl Solver {
                     self.save_model();
                     self.backtrack(assumption_level_start);
                     return (SolverResult::Sat, None);
-                }
-            }
-        }
-    }
-
-    /// Solve with theory integration via callbacks
-    ///
-    /// This implements the CDCL(T) loop:
-    /// 1. BCP (Boolean Constraint Propagation)
-    /// 2. Theory propagation (via callback)
-    /// 3. On conflict: analyze and learn
-    /// 4. Decision
-    /// 5. Final theory check when all vars assigned
-    pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
-        if self.trivially_unsat {
-            return SolverResult::Unsat;
-        }
-
-        // Initial propagation
-        if self.propagate().is_some() {
-            return SolverResult::Unsat;
-        }
-
-        // Track how many assignments have been sent to the theory.
-        // We only send NEW assignments (not previously processed ones) to avoid
-        // duplicate theory constraints that would cause spurious UNSAT.
-        let mut theory_processed: usize = 0;
-
-        loop {
-            // Boolean propagation
-            if let Some(conflict) = self.propagate() {
-                self.stats.conflicts += 1;
-
-                if self.trail.decision_level() == 0 {
-                    return SolverResult::Unsat;
-                }
-
-                let (backtrack_level, learnt_clause) = self.analyze(conflict);
-                theory.on_backtrack(backtrack_level);
-                self.backtrack_with_phase_saving(backtrack_level);
-                // After backtrack, the trail may be shorter; update processed count
-                theory_processed = theory_processed.min(self.trail.assignments().len());
-                self.learn_clause(learnt_clause);
-
-                self.vsids.decay();
-                self.clauses.decay_activity(self.config.clause_decay);
-                self.handle_clause_deletion_and_restart();
-                continue;
-            }
-
-            // Theory propagation check after each assignment
-            loop {
-                // Get only NEW (unprocessed) assignments and notify theory
-                let assignments = self.trail.assignments().to_vec();
-                let mut theory_conflict = None;
-                let mut theory_propagations = Vec::new();
-
-                // Check only NEW assignments with theory (skip already-processed ones).
-                // Guard against stale theory_processed after backtracks/restarts.
-                let safe_start = theory_processed.min(assignments.len());
-                for &lit in &assignments[safe_start..] {
-                    match theory.on_assignment(lit) {
-                        TheoryCheckResult::Sat => {}
-                        TheoryCheckResult::Conflict(conflict_lits) => {
-                            theory_conflict = Some(conflict_lits);
-                            break;
-                        }
-                        TheoryCheckResult::Propagated(props) => {
-                            theory_propagations.extend(props);
-                        }
-                    }
-                }
-                // Update processed count
-                theory_processed = assignments.len();
-
-                // Handle theory conflict
-                if let Some(conflict_lits) = theory_conflict {
-                    self.stats.conflicts += 1;
-
-                    if self.trail.decision_level() == 0 {
-                        return SolverResult::Unsat;
-                    }
-
-                    let (backtrack_level, learnt_clause) =
-                        self.analyze_theory_conflict(&conflict_lits);
-
-                    // Empty learned clause signals all-level-0 conflict = fundamental UNSAT
-                    if learnt_clause.is_empty() {
-                        self.trivially_unsat = true;
-                        return SolverResult::Unsat;
-                    }
-
-                    theory.on_backtrack(backtrack_level);
-                    self.backtrack_with_phase_saving(backtrack_level);
-                    // After backtrack, update theory_processed to trail length
-                    theory_processed = theory_processed.min(self.trail.assignments().len());
-                    self.learn_clause(learnt_clause);
-
-                    self.vsids.decay();
-                    self.clauses.decay_activity(self.config.clause_decay);
-                    self.handle_clause_deletion_and_restart();
-                    continue;
-                }
-
-                // Handle theory propagations
-                let mut made_propagation = false;
-                for (lit, reason_lits) in theory_propagations {
-                    if !self.trail.is_assigned(lit.var()) {
-                        // Add reason clause and propagate
-                        let clause_id = self.add_theory_reason_clause(&reason_lits, lit);
-                        self.trail.assign_propagation(lit, clause_id);
-                        made_propagation = true;
-                    }
-                }
-
-                if made_propagation {
-                    // Re-run Boolean propagation
-                    if let Some(conflict) = self.propagate() {
-                        self.stats.conflicts += 1;
-
-                        if self.trail.decision_level() == 0 {
-                            return SolverResult::Unsat;
-                        }
-
-                        let (backtrack_level, learnt_clause) = self.analyze(conflict);
-                        theory.on_backtrack(backtrack_level);
-                        self.backtrack_with_phase_saving(backtrack_level);
-                        // After backtrack, the trail is shorter; update processed count
-                        theory_processed = theory_processed.min(self.trail.assignments().len());
-                        self.learn_clause(learnt_clause);
-
-                        self.vsids.decay();
-                        self.clauses.decay_activity(self.config.clause_decay);
-                        self.handle_clause_deletion_and_restart();
-                    }
-                    continue;
-                }
-
-                break;
-            }
-
-            // Try to decide
-            if let Some(var) = self.pick_branch_var() {
-                self.stats.decisions += 1;
-                self.trail.new_decision_level();
-                let new_level = self.trail.decision_level();
-                theory.on_new_level(new_level);
-
-                let polarity = if self.rand_bool(self.config.random_polarity_prob) {
-                    self.rand_bool(0.5)
-                } else {
-                    self.phase[var.index()]
-                };
-                let lit = if polarity {
-                    Lit::pos(var)
-                } else {
-                    Lit::neg(var)
-                };
-                self.trail.assign_decision(lit);
-            } else {
-                // All variables assigned - do final theory check
-                match theory.final_check() {
-                    TheoryCheckResult::Sat => {
-                        self.save_model();
-                        return SolverResult::Sat;
-                    }
-                    TheoryCheckResult::Conflict(conflict_lits) => {
-                        self.stats.conflicts += 1;
-
-                        if self.trail.decision_level() == 0 {
-                            return SolverResult::Unsat;
-                        }
-
-                        let (backtrack_level, learnt_clause) =
-                            self.analyze_theory_conflict(&conflict_lits);
-
-                        // If all conflict literals are at level 0, analyze_theory_conflict
-                        // returns an empty learned clause as a signal of fundamental UNSAT.
-                        if learnt_clause.is_empty() {
-                            self.trivially_unsat = true;
-                            return SolverResult::Unsat;
-                        }
-
-                        theory.on_backtrack(backtrack_level);
-                        self.backtrack_with_phase_saving(backtrack_level);
-                        // After backtrack, update theory_processed
-                        theory_processed = theory_processed.min(self.trail.assignments().len());
-                        self.learn_clause(learnt_clause);
-
-                        self.vsids.decay();
-                        self.clauses.decay_activity(self.config.clause_decay);
-                        self.handle_clause_deletion_and_restart();
-                    }
-                    TheoryCheckResult::Propagated(props) => {
-                        // Handle late propagations
-                        for (lit, reason_lits) in props {
-                            if !self.trail.is_assigned(lit.var()) {
-                                let clause_id = self.add_theory_reason_clause(&reason_lits, lit);
-                                self.trail.assign_propagation(lit, clause_id);
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -1191,6 +1266,17 @@ impl Solver {
             // Remove all clauses added at this assertion level
             if let Some(clause_ids_to_remove) = self.assertion_clause_ids.pop() {
                 for clause_id in clause_ids_to_remove {
+                    // Purge any binary-implication-graph edges for this clause
+                    // before removing it. Unlike the watch lists (which lazily
+                    // skip deleted clauses during propagation), the binary graph
+                    // is consulted directly, so leaving stale edges behind would
+                    // let a retracted binary clause keep propagating after pop().
+                    self.purge_binary_edges(clause_id);
+
+                    // Record the retraction in the DRAT proof (if enabled) before
+                    // the clause's literals become inaccessible.
+                    self.drat_delete(clause_id);
+
                     // Remove from clause database
                     self.clauses.remove(clause_id);
 
@@ -1281,6 +1367,10 @@ impl Solver {
         self.global_lbd_sum = 0;
         self.global_lbd_count = 0;
         self.conflicts_since_local_restart = 0;
+        self.pure_literal_reconstruction.clear();
+        // Drop any proof logger: its clause ids refer to the now-cleared database,
+        // so continuing to emit against it would produce a meaningless proof.
+        self.drat = None;
     }
 
     /// Get the current trail (for theory solvers)
@@ -1353,571 +1443,4 @@ impl Solver {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty_sat() {
-        let mut solver = Solver::new();
-        assert_eq!(solver.solve(), SolverResult::Sat);
-    }
-
-    #[test]
-    fn test_simple_sat() {
-        let mut solver = Solver::new();
-        let _x = solver.new_var();
-        let _y = solver.new_var();
-
-        // x or y
-        solver.add_clause_dimacs(&[1, 2]);
-        // not x or y
-        solver.add_clause_dimacs(&[-1, 2]);
-
-        assert_eq!(solver.solve(), SolverResult::Sat);
-        assert!(solver.model_value(Var::new(1)).is_true()); // y must be true
-    }
-
-    #[test]
-    fn test_simple_unsat() {
-        let mut solver = Solver::new();
-        let _x = solver.new_var();
-
-        // x
-        solver.add_clause_dimacs(&[1]);
-        // not x
-        solver.add_clause_dimacs(&[-1]);
-
-        assert_eq!(solver.solve(), SolverResult::Unsat);
-    }
-
-    #[test]
-    fn test_pigeonhole_2_1() {
-        // 2 pigeons, 1 hole - UNSAT
-        let mut solver = Solver::new();
-        let _p1h1 = solver.new_var(); // pigeon 1 in hole 1
-        let _p2h1 = solver.new_var(); // pigeon 2 in hole 1
-
-        // Each pigeon must be in some hole
-        solver.add_clause_dimacs(&[1]); // p1 in h1
-        solver.add_clause_dimacs(&[2]); // p2 in h1
-
-        // No hole can have two pigeons
-        solver.add_clause_dimacs(&[-1, -2]); // not (p1h1 and p2h1)
-
-        assert_eq!(solver.solve(), SolverResult::Unsat);
-    }
-
-    #[test]
-    fn test_3sat_random() {
-        let mut solver = Solver::new();
-        for _ in 0..10 {
-            solver.new_var();
-        }
-
-        // Random 3-SAT instance (likely SAT)
-        solver.add_clause_dimacs(&[1, 2, 3]);
-        solver.add_clause_dimacs(&[-1, 4, 5]);
-        solver.add_clause_dimacs(&[2, -3, 6]);
-        solver.add_clause_dimacs(&[-4, 7, 8]);
-        solver.add_clause_dimacs(&[5, -6, 9]);
-        solver.add_clause_dimacs(&[-7, 8, 10]);
-        solver.add_clause_dimacs(&[1, -8, -9]);
-        solver.add_clause_dimacs(&[-2, 3, -10]);
-
-        let result = solver.solve();
-        assert_eq!(result, SolverResult::Sat);
-    }
-
-    #[test]
-    fn test_luby_sequence() {
-        // Luby sequence: 1, 1, 2, 1, 1, 2, 4, 1, 1, 2, 1, 1, 2, 4, 8, ...
-        assert_eq!(Solver::luby(0), 1);
-        assert_eq!(Solver::luby(1), 1);
-        assert_eq!(Solver::luby(2), 2);
-        assert_eq!(Solver::luby(3), 1);
-        assert_eq!(Solver::luby(4), 1);
-        assert_eq!(Solver::luby(5), 2);
-        assert_eq!(Solver::luby(6), 4);
-        assert_eq!(Solver::luby(7), 1);
-    }
-
-    #[test]
-    fn test_phase_saving() {
-        let mut solver = Solver::new();
-        for _ in 0..5 {
-            solver.new_var();
-        }
-
-        // Set up a problem where phase saving helps
-        solver.add_clause_dimacs(&[1, 2]);
-        solver.add_clause_dimacs(&[-1, 3]);
-        solver.add_clause_dimacs(&[-2, 4]);
-        solver.add_clause_dimacs(&[-3, -4, 5]);
-        solver.add_clause_dimacs(&[-5, 1]);
-
-        let result = solver.solve();
-        assert_eq!(result, SolverResult::Sat);
-    }
-
-    #[test]
-    fn test_lbd_computation() {
-        // Test that clause deletion can handle a problem that generates learned clauses
-        let mut solver = Solver::with_config(SolverConfig {
-            clause_deletion_threshold: 5, // Trigger deletion quickly
-            ..SolverConfig::default()
-        });
-
-        for _ in 0..20 {
-            solver.new_var();
-        }
-
-        // A harder problem to generate more conflicts and learned clauses
-        // PHP(3,2): 3 pigeons, 2 holes - UNSAT
-        // Variables: p_i_h (pigeon i in hole h)
-        // p11=1, p12=2, p21=3, p22=4, p31=5, p32=6
-
-        // Each pigeon must be in some hole
-        solver.add_clause_dimacs(&[1, 2]); // p1 in h1 or h2
-        solver.add_clause_dimacs(&[3, 4]); // p2 in h1 or h2
-        solver.add_clause_dimacs(&[5, 6]); // p3 in h1 or h2
-
-        // No hole can have two pigeons
-        solver.add_clause_dimacs(&[-1, -3]); // not (p1h1 and p2h1)
-        solver.add_clause_dimacs(&[-1, -5]); // not (p1h1 and p3h1)
-        solver.add_clause_dimacs(&[-3, -5]); // not (p2h1 and p3h1)
-        solver.add_clause_dimacs(&[-2, -4]); // not (p1h2 and p2h2)
-        solver.add_clause_dimacs(&[-2, -6]); // not (p1h2 and p3h2)
-        solver.add_clause_dimacs(&[-4, -6]); // not (p2h2 and p3h2)
-
-        let result = solver.solve();
-        assert_eq!(result, SolverResult::Unsat);
-        // Verify we had some conflicts (and thus learned clauses)
-        assert!(solver.stats().conflicts > 0);
-    }
-
-    #[test]
-    fn test_clause_activity_decay() {
-        let mut solver = Solver::new();
-        for _ in 0..10 {
-            solver.new_var();
-        }
-
-        // Add some clauses
-        solver.add_clause_dimacs(&[1, 2, 3]);
-        solver.add_clause_dimacs(&[-1, 4, 5]);
-        solver.add_clause_dimacs(&[-2, -3, 6]);
-
-        // Solve (should be SAT)
-        let result = solver.solve();
-        assert_eq!(result, SolverResult::Sat);
-    }
-
-    #[test]
-    fn test_clause_minimization() {
-        // Test that clause minimization works correctly on a problem
-        // that will generate learned clauses
-        let mut solver = Solver::new();
-
-        for _ in 0..15 {
-            solver.new_var();
-        }
-
-        // A problem structure that generates conflicts and learned clauses
-        // Graph coloring with 3 colors on 5 vertices
-        // Vertices: 1-5, Colors: R(0-4), G(5-9), B(10-14)
-
-        // Each vertex has at least one color
-        solver.add_clause_dimacs(&[1, 6, 11]); // v1: R or G or B
-        solver.add_clause_dimacs(&[2, 7, 12]); // v2
-        solver.add_clause_dimacs(&[3, 8, 13]); // v3
-        solver.add_clause_dimacs(&[4, 9, 14]); // v4
-        solver.add_clause_dimacs(&[5, 10, 15]); // v5
-
-        // At most one color per vertex (pairwise exclusion)
-        solver.add_clause_dimacs(&[-1, -6]); // v1: not (R and G)
-        solver.add_clause_dimacs(&[-1, -11]); // v1: not (R and B)
-        solver.add_clause_dimacs(&[-6, -11]); // v1: not (G and B)
-
-        solver.add_clause_dimacs(&[-2, -7]);
-        solver.add_clause_dimacs(&[-2, -12]);
-        solver.add_clause_dimacs(&[-7, -12]);
-
-        solver.add_clause_dimacs(&[-3, -8]);
-        solver.add_clause_dimacs(&[-3, -13]);
-        solver.add_clause_dimacs(&[-8, -13]);
-
-        // Adjacent vertices have different colors (edges: 1-2, 2-3, 3-4, 4-5)
-        solver.add_clause_dimacs(&[-1, -2]); // edge 1-2: not both R
-        solver.add_clause_dimacs(&[-6, -7]); // edge 1-2: not both G
-        solver.add_clause_dimacs(&[-11, -12]); // edge 1-2: not both B
-
-        solver.add_clause_dimacs(&[-2, -3]); // edge 2-3
-        solver.add_clause_dimacs(&[-7, -8]);
-        solver.add_clause_dimacs(&[-12, -13]);
-
-        let result = solver.solve();
-        assert_eq!(result, SolverResult::Sat);
-
-        // The solver may or may not have conflicts/learned clauses depending on
-        // the decision heuristic. The key is that the result is correct.
-        // If there are learned clauses, minimization would have been applied.
-    }
-
-    /// A simple theory callback that does nothing (pure SAT)
-    struct NullTheory;
-
-    impl TheoryCallback for NullTheory {
-        fn on_assignment(&mut self, _lit: Lit) -> TheoryCheckResult {
-            TheoryCheckResult::Sat
-        }
-
-        fn final_check(&mut self) -> TheoryCheckResult {
-            TheoryCheckResult::Sat
-        }
-
-        fn on_backtrack(&mut self, _level: u32) {}
-    }
-
-    #[test]
-    fn test_solve_with_theory_sat() {
-        let mut solver = Solver::new();
-        let mut theory = NullTheory;
-
-        let _x = solver.new_var();
-        let _y = solver.new_var();
-
-        // x or y
-        solver.add_clause_dimacs(&[1, 2]);
-        // not x or y
-        solver.add_clause_dimacs(&[-1, 2]);
-
-        assert_eq!(solver.solve_with_theory(&mut theory), SolverResult::Sat);
-        assert!(solver.model_value(Var::new(1)).is_true()); // y must be true
-    }
-
-    #[test]
-    fn test_solve_with_theory_unsat() {
-        let mut solver = Solver::new();
-        let mut theory = NullTheory;
-
-        let _x = solver.new_var();
-
-        // x
-        solver.add_clause_dimacs(&[1]);
-        // not x
-        solver.add_clause_dimacs(&[-1]);
-
-        assert_eq!(solver.solve_with_theory(&mut theory), SolverResult::Unsat);
-    }
-
-    /// A theory that forces x0 => x1 (if x0 is true, x1 must be true)
-    struct ImplicationTheory {
-        /// Track if x0 is assigned true
-        x0_true: bool,
-    }
-
-    impl ImplicationTheory {
-        fn new() -> Self {
-            Self { x0_true: false }
-        }
-    }
-
-    impl TheoryCallback for ImplicationTheory {
-        fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
-            // If x0 becomes true, propagate x1
-            if lit.var().index() == 0 && lit.is_pos() {
-                self.x0_true = true;
-                // Propagate: x1 must be true because x0 is true
-                // The reason is: ~x0 (if x0 were false, we wouldn't need x1)
-                let reason: SmallVec<[Lit; 8]> = smallvec::smallvec![Lit::pos(Var::new(0))];
-                return TheoryCheckResult::Propagated(vec![(Lit::pos(Var::new(1)), reason)]);
-            }
-            TheoryCheckResult::Sat
-        }
-
-        fn final_check(&mut self) -> TheoryCheckResult {
-            TheoryCheckResult::Sat
-        }
-
-        fn on_backtrack(&mut self, _level: u32) {
-            self.x0_true = false;
-        }
-    }
-
-    #[test]
-    fn test_theory_propagation() {
-        let mut solver = Solver::new();
-        let mut theory = ImplicationTheory::new();
-
-        let _x0 = solver.new_var();
-        let _x1 = solver.new_var();
-
-        // Force x0 to be true
-        solver.add_clause_dimacs(&[1]);
-
-        let result = solver.solve_with_theory(&mut theory);
-        assert_eq!(result, SolverResult::Sat);
-
-        // x0 should be true (forced by clause)
-        assert!(solver.model_value(Var::new(0)).is_true());
-        // x1 should also be true (propagated by theory)
-        assert!(solver.model_value(Var::new(1)).is_true());
-    }
-
-    /// Theory that says x0 and x1 can't both be true
-    struct MutexTheory {
-        x0_true: Option<Lit>,
-        x1_true: Option<Lit>,
-    }
-
-    impl MutexTheory {
-        fn new() -> Self {
-            Self {
-                x0_true: None,
-                x1_true: None,
-            }
-        }
-    }
-
-    impl TheoryCallback for MutexTheory {
-        fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
-            if lit.var().index() == 0 && lit.is_pos() {
-                self.x0_true = Some(lit);
-            }
-            if lit.var().index() == 1 && lit.is_pos() {
-                self.x1_true = Some(lit);
-            }
-
-            // If both are true, conflict
-            if self.x0_true.is_some() && self.x1_true.is_some() {
-                // Conflict clause: ~x0 or ~x1 (at least one must be false)
-                let conflict: SmallVec<[Lit; 8]> = smallvec::smallvec![
-                    Lit::pos(Var::new(0)), // x0 is true (we negate in conflict)
-                    Lit::pos(Var::new(1))  // x1 is true
-                ];
-                return TheoryCheckResult::Conflict(conflict);
-            }
-            TheoryCheckResult::Sat
-        }
-
-        fn final_check(&mut self) -> TheoryCheckResult {
-            if self.x0_true.is_some() && self.x1_true.is_some() {
-                let conflict: SmallVec<[Lit; 8]> =
-                    smallvec::smallvec![Lit::pos(Var::new(0)), Lit::pos(Var::new(1))];
-                return TheoryCheckResult::Conflict(conflict);
-            }
-            TheoryCheckResult::Sat
-        }
-
-        fn on_backtrack(&mut self, _level: u32) {
-            self.x0_true = None;
-            self.x1_true = None;
-        }
-    }
-
-    #[test]
-    fn test_theory_conflict() {
-        let mut solver = Solver::new();
-        let mut theory = MutexTheory::new();
-
-        let _x0 = solver.new_var();
-        let _x1 = solver.new_var();
-
-        // Force both x0 and x1 to be true (should cause theory conflict)
-        solver.add_clause_dimacs(&[1]);
-        solver.add_clause_dimacs(&[2]);
-
-        let result = solver.solve_with_theory(&mut theory);
-        assert_eq!(result, SolverResult::Unsat);
-    }
-
-    #[test]
-    fn test_solve_with_assumptions_sat() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-        let x1 = solver.new_var();
-
-        // x0 \/ x1
-        solver.add_clause([Lit::pos(x0), Lit::pos(x1)]);
-
-        // Assume x0 = true
-        let assumptions = [Lit::pos(x0)];
-        let (result, core) = solver.solve_with_assumptions(&assumptions);
-
-        assert_eq!(result, SolverResult::Sat);
-        assert!(core.is_none());
-    }
-
-    #[test]
-    fn test_solve_with_assumptions_unsat() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-        let x1 = solver.new_var();
-
-        // x0 -> ~x1 (encoded as ~x0 \/ ~x1)
-        solver.add_clause([Lit::neg(x0), Lit::neg(x1)]);
-
-        // Assume both x0 = true and x1 = true (should be UNSAT)
-        let assumptions = [Lit::pos(x0), Lit::pos(x1)];
-        let (result, core) = solver.solve_with_assumptions(&assumptions);
-
-        assert_eq!(result, SolverResult::Unsat);
-        assert!(core.is_some());
-        let core = core.expect("UNSAT result must have conflict core");
-        // Core should contain at least one of the conflicting assumptions
-        assert!(!core.is_empty());
-    }
-
-    #[test]
-    fn test_solve_with_assumptions_core_extraction() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-        let x1 = solver.new_var();
-        let x2 = solver.new_var();
-
-        // ~x0 (x0 must be false)
-        solver.add_clause([Lit::neg(x0)]);
-
-        // Assume x0 = true, x1 = true, x2 = true
-        // Only x0 should be in the core
-        let assumptions = [Lit::pos(x0), Lit::pos(x1), Lit::pos(x2)];
-        let (result, core) = solver.solve_with_assumptions(&assumptions);
-
-        assert_eq!(result, SolverResult::Unsat);
-        assert!(core.is_some());
-        let core = core.expect("UNSAT result must have conflict core");
-        // x0 should be in the core
-        assert!(core.contains(&Lit::pos(x0)));
-    }
-
-    #[test]
-    fn test_solve_with_assumptions_incremental() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-        let x1 = solver.new_var();
-
-        // x0 \/ x1
-        solver.add_clause([Lit::pos(x0), Lit::pos(x1)]);
-
-        // First: assume ~x0 (should be SAT with x1 = true)
-        let (result1, _) = solver.solve_with_assumptions(&[Lit::neg(x0)]);
-        assert_eq!(result1, SolverResult::Sat);
-
-        // Second: assume ~x0 and ~x1 (should be UNSAT)
-        let (result2, core2) = solver.solve_with_assumptions(&[Lit::neg(x0), Lit::neg(x1)]);
-        assert_eq!(result2, SolverResult::Unsat);
-        assert!(core2.is_some());
-
-        // Third: assume x0 (should be SAT again)
-        let (result3, _) = solver.solve_with_assumptions(&[Lit::pos(x0)]);
-        assert_eq!(result3, SolverResult::Sat);
-    }
-
-    #[test]
-    fn test_push_pop_simple() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-
-        // Should be SAT (x0 can be true or false)
-        assert_eq!(solver.solve(), SolverResult::Sat);
-
-        // Push and add unit clause: x0
-        solver.push();
-        solver.add_clause([Lit::pos(x0)]);
-        assert_eq!(solver.solve(), SolverResult::Sat);
-        assert!(solver.model_value(x0).is_true());
-
-        // Pop - should be SAT again
-        solver.pop();
-        let result = solver.solve();
-        assert_eq!(
-            result,
-            SolverResult::Sat,
-            "After pop, expected SAT but got {:?}. trivially_unsat={}",
-            result,
-            solver.trivially_unsat
-        );
-    }
-
-    #[test]
-    fn test_push_pop_incremental() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-        let x1 = solver.new_var();
-        let x2 = solver.new_var();
-
-        // Base level: x0 \/ x1
-        solver.add_clause([Lit::pos(x0), Lit::pos(x1)]);
-        assert_eq!(solver.solve(), SolverResult::Sat);
-
-        // Push and add: ~x0
-        solver.push();
-        solver.add_clause([Lit::neg(x0)]);
-        assert_eq!(solver.solve(), SolverResult::Sat);
-        // x1 must be true
-        assert!(solver.model_value(x1).is_true());
-
-        // Push again and add: ~x1 (should be UNSAT)
-        solver.push();
-        solver.add_clause([Lit::neg(x1)]);
-        assert_eq!(solver.solve(), SolverResult::Unsat);
-
-        // Pop back one level (remove ~x1, keep ~x0)
-        solver.pop();
-        assert_eq!(solver.solve(), SolverResult::Sat);
-        assert!(solver.model_value(x1).is_true());
-
-        // Pop back to base level (remove ~x0)
-        solver.pop();
-        assert_eq!(solver.solve(), SolverResult::Sat);
-        // Either x0 or x1 can be true now
-
-        // Push and add different clause: x0 /\ x2
-        solver.push();
-        solver.add_clause([Lit::pos(x0)]);
-        solver.add_clause([Lit::pos(x2)]);
-        assert_eq!(solver.solve(), SolverResult::Sat);
-        assert!(solver.model_value(x0).is_true());
-        assert!(solver.model_value(x2).is_true());
-
-        // Pop and verify clauses are removed
-        solver.pop();
-        assert_eq!(solver.solve(), SolverResult::Sat);
-    }
-
-    #[test]
-    fn test_push_pop_with_learned_clauses() {
-        let mut solver = Solver::new();
-
-        let x0 = solver.new_var();
-        let x1 = solver.new_var();
-        let x2 = solver.new_var();
-
-        // Create a formula that will cause learning
-        // (x0 \/ x1) /\ (~x0 \/ x2) /\ (~x1 \/ x2)
-        solver.add_clause([Lit::pos(x0), Lit::pos(x1)]);
-        solver.add_clause([Lit::neg(x0), Lit::pos(x2)]);
-        solver.add_clause([Lit::neg(x1), Lit::pos(x2)]);
-
-        assert_eq!(solver.solve(), SolverResult::Sat);
-
-        // Push and add conflicting clause
-        solver.push();
-        solver.add_clause([Lit::neg(x2)]);
-
-        // This should be UNSAT and cause clause learning
-        assert_eq!(solver.solve(), SolverResult::Unsat);
-
-        // Pop - learned clauses from this level should be removed
-        solver.pop();
-
-        // Should be SAT again
-        assert_eq!(solver.solve(), SolverResult::Sat);
-    }
-}
+mod tests;

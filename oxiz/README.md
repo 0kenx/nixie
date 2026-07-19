@@ -6,7 +6,7 @@ Next-Generation SMT Solver in Pure Rust
 [![Documentation](https://docs.rs/oxiz/badge.svg)](https://docs.rs/oxiz)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/cool-japan/oxiz/blob/main/LICENSE)
 
-> **Version**: 0.2.0 | **Status**: Meta-crate | **Tests**: 1
+> **Version**: 0.2.4 | **Status**: Meta-crate | **Tests**: 1
 
 ## About
 
@@ -14,7 +14,7 @@ Next-Generation SMT Solver in Pure Rust
 designed to achieve feature parity with [Z3](https://github.com/Z3Prover/z3) while leveraging Rust's safety,
 performance, and concurrency features.
 
-**🎉 Major Milestone**: OxiZ has achieved **100% correctness parity with Z3** across all benchmark tests spanning core SMT-LIB logics, validating it as a production-ready solver.
+**🎉 Major Milestone**: OxiZ has achieved **100% correctness parity with Z3** across the benchmark suite spanning core SMT-LIB logics tracked by the project. See the [CHANGELOG](../CHANGELOG.md) for current status and known limitations before relying on it for production workloads.
 
 ## Features
 
@@ -33,21 +33,21 @@ Add OxiZ to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-oxiz = "0.2.0"  # Default includes solver
+oxiz = "0.2.4"  # Default: std + core solver
 ```
 
 With specific features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.2.0", features = ["nlsat", "optimization"] }
+oxiz = { version = "0.2.4", features = ["nlsat", "optimization"] }
 ```
 
 All features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.2.0", features = ["full"] }
+oxiz = { version = "0.2.4", features = ["full"] }
 ```
 
 ### Basic Usage
@@ -87,13 +87,15 @@ match solver.check(&mut tm) {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `solver` | Core SMT solver (SAT + theories) | ✓ |
-| `nlsat` | Nonlinear real arithmetic | |
-| `optimization` | MaxSMT and optimization | |
-| `spacer` | CHC solver for verification | |
-| `proof` | Proof generation | |
-| `standard` | Common features (solver + nlsat + opt + proof) | |
-| `full` | All features | |
+| `std` | Standard library support (core solver requires this for SMT-LIB2 parsing) | ✓ |
+| `nlsat` | Nonlinear real arithmetic (implies `std`) | |
+| `optimization` | MaxSMT and optimization (implies `std`) | |
+| `spacer` | CHC solver for verification (implies `std`) | |
+| `proof` | Proof generation (implies `std`) | |
+| `standard` | Common features (`nlsat` + `optimization` + `proof`) | |
+| `full` | All features (`standard` + `spacer`) | |
+
+Note: the core SAT/theory solver (`Solver`, `TermManager`) is always available — it is not gated behind a `solver` feature.
 
 ## Theory Support
 

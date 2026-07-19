@@ -218,8 +218,11 @@ impl BvRewriter {
             return RewriteResult::Rewritten(manager.mk_bitvec(&v1 ^ &v2, w1));
         }
 
-        // No direct XOR method, return unchanged using OR as fallback for the term
-        RewriteResult::Unchanged(manager.mk_bv_or(lhs, rhs))
+        // None of the simplification rules above applied: rebuild the
+        // original XOR term (`TermManager::mk_bv_xor` exists and must be
+        // used here — building an OR term instead, as this previously did,
+        // silently changed `x ^ y` into `x | y`).
+        RewriteResult::Unchanged(manager.mk_bv_xor(lhs, rhs))
     }
 
     /// Rewrite BV NOT
@@ -413,8 +416,8 @@ impl BvRewriter {
             return RewriteResult::Rewritten(manager.mk_bitvec(result, w1));
         }
 
-        // No direct SHL method available, return unchanged
-        RewriteResult::Unchanged(lhs)
+        // Symbolic shift: rebuild the term rather than dropping the shift.
+        RewriteResult::Unchanged(manager.mk_bv_shl(lhs, rhs))
     }
 
     /// Rewrite BV logical shift right
@@ -458,8 +461,8 @@ impl BvRewriter {
             return RewriteResult::Rewritten(manager.mk_bitvec(result, w1));
         }
 
-        // No direct LSHR method available, return unchanged
-        RewriteResult::Unchanged(lhs)
+        // Symbolic shift: rebuild the term rather than dropping the shift.
+        RewriteResult::Unchanged(manager.mk_bv_lshr(lhs, rhs))
     }
 
     /// Rewrite BV equality
@@ -726,6 +729,48 @@ mod tests {
     }
 
     #[test]
+    fn test_bvshl_symbolic_preserves_shift() {
+        // Regression for: x << y (both symbolic) must NOT collapse to `x`.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let bv_sort = manager.sorts.bitvec(32);
+        let x = manager.mk_var("x", bv_sort);
+        let y = manager.mk_var("y", bv_sort);
+        let shl = manager.mk_bv_shl(x, y);
+
+        let result = rewriter.rewrite(shl, &mut ctx, &mut manager);
+        // The rewrite legitimately reports "unchanged" (no simplification
+        // applies), but the returned term must still be the shift, not `x`.
+        assert_ne!(
+            result.term(),
+            x,
+            "symbolic BvShl must not be replaced by its lhs operand"
+        );
+        let t = manager.get(result.term()).expect("term should exist");
+        assert!(matches!(t.kind, TermKind::BvShl(l, r) if l == x && r == y));
+    }
+
+    #[test]
+    fn test_bvlshr_symbolic_preserves_shift() {
+        // Regression for: x >> y (both symbolic) must NOT collapse to `x`.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let bv_sort = manager.sorts.bitvec(32);
+        let x = manager.mk_var("x", bv_sort);
+        let y = manager.mk_var("y", bv_sort);
+        let lshr = manager.mk_bv_lshr(x, y);
+
+        let result = rewriter.rewrite(lshr, &mut ctx, &mut manager);
+        assert_ne!(
+            result.term(),
+            x,
+            "symbolic BvLshr must not be replaced by its lhs operand"
+        );
+        let t = manager.get(result.term()).expect("term should exist");
+        assert!(matches!(t.kind, TermKind::BvLshr(l, r) if l == x && r == y));
+    }
+
+    #[test]
     fn test_bveq_self() {
         let (mut manager, _ctx, _rewriter) = setup();
 
@@ -737,5 +782,26 @@ mod tests {
         // Verify the simplification happened at creation time
         let t = manager.get(eq).expect("term should exist");
         assert!(matches!(t.kind, TermKind::True));
+    }
+
+    #[test]
+    fn test_bvxor_symbolic_stays_xor_not_or() {
+        // Regression test: the "no direct XOR method" fallback used to
+        // rebuild the term as `mk_bv_or(lhs, rhs)`, silently turning `x ^ y`
+        // into `x | y` whenever none of the simplification rules fired.
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let bv_sort = manager.sorts.bitvec(32);
+        let x = manager.mk_var("x", bv_sort);
+        let y = manager.mk_var("y", bv_sort);
+        let xor = manager.mk_bv_xor(x, y);
+
+        let result = rewriter.rewrite(xor, &mut ctx, &mut manager);
+        let t = manager.get(result.term()).expect("term should exist");
+        assert!(
+            matches!(t.kind, TermKind::BvXor(l, r) if l == x && r == y),
+            "expected the term to remain a BvXor(x, y), got {:?}",
+            t.kind
+        );
     }
 }

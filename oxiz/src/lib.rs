@@ -41,28 +41,28 @@
 //!
 //! ```toml
 //! [dependencies]
-//! oxiz = "0.2.3"  # Default: std + core solver
+//! oxiz = "0.2.4"  # Default: std + core solver
 //! ```
 //!
 //! For no_std (e.g., zkVM):
 //!
 //! ```toml
 //! [dependencies]
-//! oxiz = { version = "0.2.3", default-features = false }
+//! oxiz = { version = "0.2.4", default-features = false }
 //! ```
 //!
 //! With additional features:
 //!
 //! ```toml
 //! [dependencies]
-//! oxiz = { version = "0.2.3", features = ["nlsat", "optimization"] }
+//! oxiz = { version = "0.2.4", features = ["nlsat", "optimization"] }
 //! ```
 //!
 //! Or use all features:
 //!
 //! ```toml
 //! [dependencies]
-//! oxiz = { version = "0.2.3", features = ["full"] }
+//! oxiz = { version = "0.2.4", features = ["full"] }
 //! ```
 //!
 //! ### Basic SMT Solving
@@ -107,12 +107,12 @@
 //! ### SMT-LIB2 Format
 //!
 //! ```rust
-//! use oxiz::{Solver, TermManager};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use oxiz::solver::Context;
 //!
-//! let mut solver = Solver::new();
-//! let mut tm = TermManager::new();
+//! let mut ctx = Context::new();
 //!
-//! // Parse SMT-LIB2 script
+//! // Parse and execute an SMT-LIB2 script
 //! let script = r#"
 //!     (declare-const x Int)
 //!     (declare-const y Int)
@@ -121,8 +121,10 @@
 //!     (check-sat)
 //! "#;
 //!
-//! // Execute commands
-//! // solver.execute_script(script, &mut tm)?;
+//! let output = ctx.execute_script(script)?;
+//! assert_eq!(output.last().map(String::as_str), Some("sat"));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Feature Flags

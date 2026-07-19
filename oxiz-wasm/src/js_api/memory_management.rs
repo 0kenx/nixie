@@ -246,11 +246,20 @@ impl SharedMemoryView {
 }
 
 /// Memory manager with tracking and leak detection
+///
+/// Unlike [`MemoryPool`], which only tracks aggregate byte counts,
+/// `MemoryManager` keeps the actual allocated buffers alive (keyed by an
+/// opaque allocation id) so they can be retrieved with [`MemoryManager::get`]
+/// and returned to the pool with [`MemoryManager::free`]. This makes
+/// `allocate`/`free`/`get` a real (not merely bookkeeping) memory API.
 #[wasm_bindgen]
 pub struct MemoryManager {
-    /// Memory pool
+    /// Memory pool used to satisfy new allocations and recycle freed ones
     pool: MemoryPool,
-    /// Active allocations
+    /// Buffers that are currently allocated and not yet freed, keyed by id
+    buffers: Rc<RefCell<HashMap<usize, Vec<u8>>>>,
+    /// Active allocations (bookkeeping metadata, populated when leak
+    /// detection is enabled)
     active: Rc<RefCell<HashMap<usize, AllocationInfo>>>,
     /// Next allocation ID
     next_id: Rc<RefCell<usize>>,
@@ -274,6 +283,7 @@ impl MemoryManager {
     pub fn new() -> Self {
         Self {
             pool: MemoryPool::new(),
+            buffers: Rc::new(RefCell::new(HashMap::new())),
             active: Rc::new(RefCell::new(HashMap::new())),
             next_id: Rc::new(RefCell::new(0)),
             leak_detection: false,
@@ -287,6 +297,11 @@ impl MemoryManager {
     }
 
     /// Allocate memory
+    ///
+    /// Returns an opaque allocation id. The backing buffer is kept alive
+    /// internally and can be read with [`MemoryManager::get`], overwritten
+    /// with [`MemoryManager::set`], and returned to the pool with
+    /// [`MemoryManager::free`].
     #[wasm_bindgen(js_name = allocate)]
     pub fn allocate(&self, size: usize) -> usize {
         let buffer = self.pool.allocate(size);
@@ -309,24 +324,67 @@ impl MemoryManager {
             );
         }
 
-        // Store buffer (in a real implementation, we'd have a way to retrieve it)
-        drop(buffer);
+        // Keep the buffer alive and retrievable by id instead of dropping it.
+        self.buffers.borrow_mut().insert(id, buffer);
         id
     }
 
-    /// Free memory
-    #[wasm_bindgen(js_name = free)]
-    pub fn free(&self, id: usize) -> bool {
-        if self.leak_detection {
-            self.active.borrow_mut().remove(&id);
-        }
-        true
+    /// Read the current contents of an allocation.
+    ///
+    /// Returns `undefined` (via `None`) if `id` does not refer to a live
+    /// allocation (never allocated, or already freed).
+    #[wasm_bindgen(js_name = get)]
+    pub fn get(&self, id: usize) -> Option<Vec<u8>> {
+        self.buffers.borrow().get(&id).cloned()
     }
 
-    /// Get active allocation count
+    /// Overwrite the contents of an allocation.
+    ///
+    /// The allocation is resized to `data.len()`. Returns `false` if `id`
+    /// does not refer to a live allocation.
+    #[wasm_bindgen(js_name = set)]
+    pub fn set(&self, id: usize, data: &[u8]) -> bool {
+        let mut buffers = self.buffers.borrow_mut();
+        match buffers.get_mut(&id) {
+            Some(buffer) => {
+                *buffer = data.to_vec();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Get the size in bytes of a live allocation, or `undefined` if `id`
+    /// does not refer to one.
+    #[wasm_bindgen(js_name = sizeOf)]
+    pub fn size_of(&self, id: usize) -> Option<usize> {
+        self.buffers.borrow().get(&id).map(Vec::len)
+    }
+
+    /// Free memory
+    ///
+    /// Returns `true` if `id` referred to a live allocation that was just
+    /// freed and returned to the pool, or `false` if `id` was never
+    /// allocated or was already freed (honest double-free reporting).
+    #[wasm_bindgen(js_name = free)]
+    pub fn free(&self, id: usize) -> bool {
+        let buffer = self.buffers.borrow_mut().remove(&id);
+        match buffer {
+            Some(buffer) => {
+                if self.leak_detection {
+                    self.active.borrow_mut().remove(&id);
+                }
+                self.pool.free(buffer);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Get the number of live (allocated, not yet freed) allocations.
     #[wasm_bindgen(js_name = activeCount)]
     pub fn active_count(&self) -> usize {
-        self.active.borrow().len()
+        self.buffers.borrow().len()
     }
 
     /// Detect memory leaks
@@ -464,6 +522,51 @@ mod tests {
         let id2 = manager.allocate(200);
 
         assert!(id1 != id2);
+    }
+
+    #[test]
+    fn test_memory_manager_allocate_is_not_a_no_op() {
+        let manager = MemoryManager::new();
+
+        let id = manager.allocate(16);
+        // The buffer must actually be retrievable, not dropped.
+        let buf = manager.get(id).expect("allocated buffer should exist");
+        assert_eq!(buf.len(), 16); // next_power_of_two(16) == 16
+        assert_eq!(manager.active_count(), 1);
+    }
+
+    #[test]
+    fn test_memory_manager_set_and_get_round_trip() {
+        let manager = MemoryManager::new();
+        let id = manager.allocate(8);
+
+        assert!(manager.set(id, &[1, 2, 3, 4]));
+        let data = manager.get(id).expect("buffer should exist");
+        assert_eq!(data, vec![1, 2, 3, 4]);
+        assert_eq!(manager.size_of(id), Some(4));
+    }
+
+    #[test]
+    fn test_memory_manager_free_is_honest() {
+        let manager = MemoryManager::new();
+        let id = manager.allocate(32);
+
+        // First free succeeds because the allocation is live.
+        assert!(manager.free(id));
+        // The buffer must no longer be retrievable after free.
+        assert!(manager.get(id).is_none());
+        // A second free (or freeing an id that never existed) must report
+        // false rather than unconditionally claiming success.
+        assert!(!manager.free(id));
+        assert!(!manager.free(99_999));
+    }
+
+    #[test]
+    fn test_memory_manager_get_unknown_id() {
+        let manager = MemoryManager::new();
+        assert!(manager.get(42).is_none());
+        assert!(!manager.set(42, &[1, 2, 3]));
+        assert_eq!(manager.size_of(42), None);
     }
 
     #[test]

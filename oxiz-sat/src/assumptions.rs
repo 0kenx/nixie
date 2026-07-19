@@ -6,6 +6,7 @@
 use crate::literal::Lit;
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::solver::{Solver, SolverResult};
 
 #[cfg(test)]
 use crate::literal::Var;
@@ -225,13 +226,48 @@ impl AssumptionCoreMinimizer {
         self.fixed_assumptions.insert(lit);
     }
 
-    /// Minimize a core using deletion-based minimization
-    pub fn minimize_deletion(&self, core: &[Lit]) -> Vec<Lit> {
-        // Simple deletion: try removing each assumption and see if still UNSAT
-        // This is a placeholder - actual implementation would need solver access
-        let mut minimal = core.to_vec();
-        minimal.retain(|&lit| self.fixed_assumptions.contains(&lit));
-        minimal
+    /// Minimize a core using deletion-based minimization.
+    ///
+    /// For each assumption literal in `core` that is not marked
+    /// [`Self::add_fixed`] (fixed assumptions always stay in the result),
+    /// tentatively removes it and re-checks
+    /// [`Solver::solve_with_assumptions`] on the rest against `solver`'s
+    /// base formula: if the reduced set is still `Unsat`, the literal
+    /// wasn't needed and stays removed; otherwise it is restored. This is
+    /// the standard deletion-based ("linear search") core-minimization
+    /// algorithm, and genuinely verifying each removal requires solver
+    /// access to the base formula `core` was extracted from — without that,
+    /// there is no sound way to know which assumptions are actually
+    /// necessary, so a caller must pass the same (or an equivalent) solver
+    /// instance.
+    pub fn minimize_deletion(&self, solver: &mut Solver, core: &[Lit]) -> Vec<Lit> {
+        if core.is_empty() {
+            return Vec::new();
+        }
+
+        let mut current: Vec<Lit> = core.to_vec();
+        let mut i = 0;
+        while i < current.len() {
+            if self.fixed_assumptions.contains(&current[i]) {
+                i += 1;
+                continue;
+            }
+
+            let mut candidate = current.clone();
+            candidate.remove(i);
+
+            let (result, _core) = solver.solve_with_assumptions(&candidate);
+            if matches!(result, SolverResult::Unsat) {
+                // Still UNSAT without this literal: keep it removed and
+                // re-examine the element that shifted into slot `i`.
+                current = candidate;
+            } else {
+                // Sat or Unknown: this literal was actually needed, keep it.
+                i += 1;
+            }
+        }
+
+        current
     }
 
     /// Minimize a core using QuickXplain algorithm
@@ -434,5 +470,82 @@ mod tests {
         assert_eq!(ctx.stats().total_calls, 1);
         assert_eq!(ctx.stats().unsat_calls, 1);
         assert_eq!(ctx.stats().avg_core_size(), 3.0);
+    }
+
+    // Regression test for the discard-everything item: previously
+    // `minimize_deletion` retained only literals already marked
+    // `add_fixed` and dropped everything else unconditionally, so with no
+    // fixed assumptions (the common case) it always returned an empty
+    // "core" -- regardless of whether the input core was genuinely UNSAT.
+    // A single-assumption core that's actually needed must survive.
+    #[test]
+    fn test_minimize_deletion_keeps_necessary_single_assumption() {
+        let mut solver = Solver::new();
+        // Base formula forces x0 = false.
+        solver.add_clause([Lit::neg(Var(0))]);
+
+        let minimizer = AssumptionCoreMinimizer::new();
+        // x1 = true is irrelevant to the conflict and should be dropped;
+        // x0 = true genuinely conflicts with the base formula and must stay.
+        let core = vec![Lit::pos(Var(0)), Lit::pos(Var(1))];
+
+        let minimized = minimizer.minimize_deletion(&mut solver, &core);
+
+        assert_eq!(minimized, vec![Lit::pos(Var(0))]);
+    }
+
+    // Both assumptions are jointly (but not individually) necessary: the
+    // minimizer must keep both while still dropping a genuinely irrelevant
+    // third assumption, and the result must remain UNSAT.
+    #[test]
+    fn test_minimize_deletion_keeps_jointly_necessary_pair_drops_irrelevant() {
+        let mut solver = Solver::new();
+        // x0 ∨ x1
+        solver.add_clause([Lit::pos(Var(0)), Lit::pos(Var(1))]);
+
+        let minimizer = AssumptionCoreMinimizer::new();
+        let core = vec![
+            Lit::neg(Var(0)),
+            Lit::neg(Var(1)),
+            Lit::pos(Var(2)), // irrelevant to the x0 ∨ x1 conflict
+        ];
+
+        let minimized = minimizer.minimize_deletion(&mut solver, &core);
+
+        assert_eq!(minimized, vec![Lit::neg(Var(0)), Lit::neg(Var(1))]);
+
+        // The minimized core must still actually be UNSAT (never return an
+        // over-pruned, unverified result).
+        let (result, _) = solver.solve_with_assumptions(&minimized);
+        assert!(matches!(result, SolverResult::Unsat));
+    }
+
+    // A literal marked `add_fixed` must always survive minimization even if
+    // the solver could prove it removable.
+    #[test]
+    fn test_minimize_deletion_always_keeps_fixed_assumptions() {
+        let mut solver = Solver::new();
+        solver.add_clause([Lit::neg(Var(0))]);
+
+        let mut minimizer = AssumptionCoreMinimizer::new();
+        // x1 = true is logically irrelevant, but pinned as fixed.
+        minimizer.add_fixed(Lit::pos(Var(1)));
+
+        let core = vec![Lit::pos(Var(0)), Lit::pos(Var(1))];
+        let minimized = minimizer.minimize_deletion(&mut solver, &core);
+
+        assert!(minimized.contains(&Lit::pos(Var(0))));
+        assert!(minimized.contains(&Lit::pos(Var(1))));
+    }
+
+    // Empty input must minimize to empty (not panic or invent literals).
+    #[test]
+    fn test_minimize_deletion_empty_core() {
+        let mut solver = Solver::new();
+        solver.add_clause([Lit::pos(Var(0))]);
+
+        let minimizer = AssumptionCoreMinimizer::new();
+        let minimized = minimizer.minimize_deletion(&mut solver, &[]);
+        assert!(minimized.is_empty());
     }
 }

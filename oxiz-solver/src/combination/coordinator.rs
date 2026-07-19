@@ -138,6 +138,10 @@ pub struct TheoryCoordinator {
     pending_equalities: VecDeque<EqualityProp>,
     /// Memoized implied equalities by theory and decision level.
     theory_propagation_cache: FxHashMap<(TheoryId, u32), Vec<EqualityProp>>,
+    /// Every theory that has asserted a formula built around a given
+    /// `TermId`. Used by [`Self::identify_shared_terms`] to detect terms
+    /// genuinely shared across two or more theories.
+    formula_theories: FxHashMap<TermId, FxHashSet<TheoryId>>,
     /// Equality propagation history for proof certificates.
     propagated_equalities_log: Vec<EqualityProp>,
     /// Last generated theory-combination certificate.
@@ -157,6 +161,7 @@ impl TheoryCoordinator {
             shared_terms: FxHashMap::default(),
             pending_equalities: VecDeque::new(),
             theory_propagation_cache: FxHashMap::default(),
+            formula_theories: FxHashMap::default(),
             propagated_equalities_log: Vec::new(),
             #[cfg(feature = "std")]
             last_certificate: None,
@@ -175,6 +180,13 @@ impl TheoryCoordinator {
         if let Some(solver) = self.theories.get_mut(&theory) {
             solver.assert_formula(formula)?;
             self.clear_from_level(self.current_level as u32);
+
+            // Record that `theory` now uses `formula`, so `identify_shared_terms`
+            // can tell whether it is also used by any other registered theory.
+            self.formula_theories
+                .entry(formula)
+                .or_default()
+                .insert(theory);
 
             // Identify shared terms
             self.identify_shared_terms(formula)?;
@@ -321,10 +333,27 @@ impl TheoryCoordinator {
         Ok(())
     }
 
-    /// Identify shared terms in a formula
-    fn identify_shared_terms(&mut self, _formula: TermId) -> Result<(), String> {
-        // Placeholder: would traverse formula AST and identify terms used by multiple theories
-        // For now, just update stats
+    /// Identify shared terms in a formula.
+    ///
+    /// This module operates on opaque `TermId` handles (a bare `usize`) with
+    /// no attached AST, so it cannot literally "traverse the formula" to
+    /// find shared sub-terms the way a `TermManager`-backed combination
+    /// engine could. What it *can* determine soundly, using only the
+    /// bookkeeping this coordinator already owns, is whether `formula`
+    /// itself has been asserted under two or more distinct theories -- by
+    /// the Nelson-Oppen definition, that makes it an interface/shared term
+    /// subject to equality propagation. Callers that need finer-grained
+    /// sub-term sharing register it explicitly via [`Self::add_shared_term`].
+    fn identify_shared_terms(&mut self, formula: TermId) -> Result<(), String> {
+        if let Some(theories) = self.formula_theories.get(&formula)
+            && theories.len() > 1
+        {
+            let owners: Vec<TheoryId> = theories.iter().copied().collect();
+            for theory in owners {
+                self.add_shared_term(formula, theory);
+            }
+        }
+
         self.stats.shared_terms_count = self.shared_terms.len();
         Ok(())
     }
@@ -685,6 +714,58 @@ mod tests {
         coordinator.add_shared_term(1, TheoryId::BitVector);
 
         assert!(coordinator.is_shared_term(1));
+        assert_eq!(coordinator.stats.shared_terms_count, 1);
+    }
+
+    /// Audit regression: `identify_shared_terms` used to be a pure no-op
+    /// (it only re-derived `shared_terms_count` from whatever was already
+    /// in `shared_terms`, which nothing ever populated automatically).
+    /// Asserting the *same* formula id under two different theories must
+    /// now be enough, on its own -- with no manual `add_shared_term` call
+    /// -- for the coordinator to recognize it as shared.
+    #[test]
+    fn test_audit_identify_shared_terms_detects_cross_theory_sharing() {
+        let config = CoordinatorConfig::default();
+        let mut coordinator = TheoryCoordinator::new(config);
+
+        coordinator.register_theory(Box::new(MockTheory {
+            id: TheoryId::Arithmetic,
+            sat_result: SatResult::Sat,
+            implied_equalities: Vec::new(),
+        }));
+        coordinator.register_theory(Box::new(MockTheory {
+            id: TheoryId::BitVector,
+            sat_result: SatResult::Sat,
+            implied_equalities: Vec::new(),
+        }));
+
+        // Not yet shared: only Arithmetic has ever asserted term `7`.
+        coordinator
+            .assert_formula(7, TheoryId::Arithmetic)
+            .expect("assert should succeed");
+        assert!(
+            !coordinator.is_shared_term(7),
+            "a term asserted under only one theory must not be reported as shared"
+        );
+
+        // Now BitVector also asserts the very same term id: it must be
+        // recognized as shared automatically, purely from bookkeeping
+        // `identify_shared_terms` performs internally.
+        coordinator
+            .assert_formula(7, TheoryId::BitVector)
+            .expect("assert should succeed");
+        assert!(
+            coordinator.is_shared_term(7),
+            "a term asserted under two distinct theories must be detected as shared"
+        );
+        assert_eq!(coordinator.stats.shared_terms_count, 1);
+
+        // A term asserted under a single theory only must still not be
+        // reported as shared (no false positives).
+        coordinator
+            .assert_formula(9, TheoryId::Arithmetic)
+            .expect("assert should succeed");
+        assert!(!coordinator.is_shared_term(9));
         assert_eq!(coordinator.stats.shared_terms_count, 1);
     }
 

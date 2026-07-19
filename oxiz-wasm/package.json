@@ -1,6 +1,6 @@
 {
   "name": "@cooljapan/oxiz",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "WebAssembly bindings for OxiZ SMT Solver - Pure Rust SMT solving in the browser",
   "main": "pkg/oxiz_wasm.js",
   "types": "pkg/oxiz_wasm.d.ts",
@@ -9,6 +9,10 @@
     "pkg/oxiz_wasm.d.ts",
     "pkg/oxiz_wasm_bg.wasm",
     "pkg/oxiz_wasm_bg.wasm.d.ts",
+    "pkg-nodejs/oxiz_wasm.js",
+    "pkg-nodejs/oxiz_wasm.d.ts",
+    "pkg-nodejs/oxiz_wasm_bg.wasm",
+    "pkg-nodejs/oxiz_wasm_bg.wasm.d.ts",
     "README.md",
     "LICENSE"
   ],
@@ -17,10 +21,10 @@
     "build:nodejs": "wasm-pack build --target nodejs --release --out-dir pkg-nodejs",
     "build:bundler": "wasm-pack build --target bundler --release --out-dir pkg-bundler",
     "build:all": "npm run build && npm run build:nodejs && npm run build:bundler",
-    "optimize": "command -v wasm-opt > /dev/null && wasm-opt -Oz -o pkg/oxiz_wasm_bg.wasm pkg/oxiz_wasm_bg.wasm || echo 'wasm-opt not found, skipping optimization'",
+    "optimize": "command -v wasm-opt > /dev/null && wasm-opt -Oz -o pkg/oxiz_wasm_bg.wasm pkg/oxiz_wasm_bg.wasm && wasm-opt -Oz -o pkg-nodejs/oxiz_wasm_bg.wasm pkg-nodejs/oxiz_wasm_bg.wasm || echo 'wasm-opt not found, skipping optimization'",
     "test": "wasm-pack test --headless --chrome",
     "test:firefox": "wasm-pack test --headless --firefox",
-    "prepublishOnly": "npm run build && npm run optimize"
+    "prepublishOnly": "npm run build && npm run build:nodejs && npm run optimize"
   },
   "repository": {
     "type": "git",

@@ -403,26 +403,29 @@ impl ClauseDatabase {
 
     /// Add a clause to the database
     ///
-    /// Uses the memory pool (free list) to reuse deleted clause slots when available
+    /// # Soundness: why removed slots are NOT recycled
+    ///
+    /// `remove` only *marks* a clause deleted and relies on **lazy** watcher
+    /// cleanup: stale watch-list entries pointing at a removed clause are detached
+    /// on-the-fly during propagation (via the `deleted` flag), not eagerly when the
+    /// clause is removed. If we reused a freed `ClauseId` for a *different* clause,
+    /// those not-yet-cleaned stale watchers would suddenly reference a live but
+    /// unrelated clause. Propagation does not re-validate that the watched literal
+    /// belongs to the clause, so it could force a bogus unit propagation (or corrupt
+    /// the real watchers' positions via its in-place swaps) — an unsound result that
+    /// can flip SAT instances to UNSAT.
+    ///
+    /// Until a full watch-list garbage-collection pass exists (which would rewrite
+    /// every watcher for a relocated clause), we therefore always allocate a fresh
+    /// slot, guaranteeing a `ClauseId` maps to exactly one clause for its entire
+    /// lifetime. Freed slots stay marked `deleted` and are reclaimed only by their
+    /// lazy watcher-cleanup path. `free_list` is retained for stats/compaction and a
+    /// future GC, but is intentionally never popped here.
     pub fn add(&mut self, clause: Clause) -> ClauseId {
         // Update statistics
         self.update_stats_add(&clause);
 
-        // Try to reuse a slot from the free list
-        if let Some(id) = self.free_list.pop() {
-            // Reuse this slot
-            if let Some(slot) = self.clauses.get_mut(id.index()) {
-                *slot = clause.clone();
-                if clause.learned {
-                    self.num_learned += 1;
-                } else {
-                    self.num_original += 1;
-                }
-                return id;
-            }
-        }
-
-        // No free slot available, allocate new
+        // Always allocate a new slot (see soundness note above — no free_list reuse).
         let id = ClauseId::new(self.clauses.len() as u32);
         if clause.learned {
             self.num_learned += 1;

@@ -8,7 +8,7 @@ This document invites researchers, developers, and the broader formal methods co
 
 OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Satisfiability Modulo Theories) solver. It is developed as part of the COOLJAPAN open-source ecosystem and is designed to match — and ultimately surpass — the capabilities of state-of-the-art solvers such as Z3, while offering the safety, reproducibility, and ergonomics that Rust uniquely provides.
 
-**Key facts about OxiZ v0.2.0:**
+**Key facts about OxiZ (current release):**
 
 - 100% Z3 parity across **19 SMT-LIB logic families** (168/168 benchmark instances)
 - **6,031 unit tests** across all crates
@@ -25,7 +25,7 @@ OxiZ is actively developed at: [https://github.com/cool-japan/oxiz](https://gith
 
 ### 1. Broad logic coverage — 19 divisions ready
 
-OxiZ v0.2.0 is ready to compete across the following SMT-LIB logic families:
+OxiZ is ready to compete across the following SMT-LIB logic families:
 
 | Division | Status |
 |----------|--------|
@@ -243,6 +243,6 @@ The OxiZ project is grateful to the SMT-COMP organizers for maintaining an open 
 
 ---
 
-*OxiZ v0.2.0 — COOLJAPAN OU (Team Kitasan)*
+*OxiZ — COOLJAPAN OU (Team Kitasan)*
 *Repository: [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz)*
 *Competition contact: open an issue with tag `[SMT-COMP 2026]`*

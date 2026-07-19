@@ -54,7 +54,7 @@ Benchmarks are derived from:
 
 2. **Build OxiZ**:
    ```bash
-   cd /Users/kitasan/work/oxiz
+   cd "$(git rev-parse --show-toplevel)"
    cargo build --release
    ```
 

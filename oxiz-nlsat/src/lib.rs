@@ -15,97 +15,78 @@
 //! - **Variable Ordering**: Strategies for CAD variable ordering
 //! - **Interval Sets**: Representation of solution intervals
 //! - **Explanation**: Conflict explanation for CDCL integration
+//!
+//! ## Public API surface
+//!
+//! Only modules that are actually wired into the solving pipeline, are
+//! standalone user-facing solvers/tactics, or are tested public utilities are
+//! part of the public API: [`solver`], [`nia`], [`maxsat`], [`simplify`],
+//! [`cad`], [`types`], [`clause`], [`assignment`], [`interval_set`],
+//! [`restart`], [`var_order`], [`portfolio`], and the tested utility modules
+//! [`evaluator`] and [`monotonicity`].
+//!
+//! A large family of correct-but-currently-unwired helper modules (SAT-style
+//! preprocessing/inprocessing, structural analysis, alternative CAD/evaluator
+//! implementations, proof logging, ...) were found by the architecture audit
+//! to be exported but never called by the solver. They have been demoted to
+//! `pub(crate)` (removed from the public API) rather than advertised as
+//! working features; each retains a header note explaining the triage. They
+//! remain compiled and tested so they can be wired in later without rework.
 
 pub mod assignment;
-pub mod assumptions;
-pub mod asymmetric_literal_addition;
-pub mod bce;
-pub mod bound_propagation;
-pub mod bve;
+pub(crate) mod assumptions;
+pub(crate) mod asymmetric_literal_addition;
+pub(crate) mod bce;
+pub(crate) mod bound_propagation;
+pub(crate) mod bve;
 pub mod cad;
-pub mod cad_optimization;
-pub mod chrono_bt;
+pub(crate) mod cad_optimization;
+pub(crate) mod chrono_bt;
 pub mod clause;
-pub mod clause_tiers;
-pub mod discriminant;
-pub mod eval_cache;
+pub(crate) mod clause_tiers;
+pub(crate) mod discriminant;
+pub(crate) mod eval_cache;
 pub mod evaluator;
-pub mod explain;
-pub mod grobner_preprocess;
-pub mod incremental_cad;
-pub mod inprocessing;
+pub(crate) mod explain;
+pub(crate) mod grobner_preprocess;
+pub(crate) mod incremental_cad;
+pub(crate) mod inprocessing;
 pub mod interval_set;
-pub mod lemma;
-pub mod lookahead;
+pub(crate) mod lemma;
+pub(crate) mod lookahead;
 pub mod maxsat;
 pub mod monotonicity;
 pub mod nia;
 pub mod portfolio;
-pub mod proof;
+pub(crate) mod proof;
 pub mod restart;
-pub mod root_hints;
+pub(crate) mod root_hints;
 pub mod simplify;
 pub mod solver;
-pub mod structure_analyzer;
-pub mod subsumption;
-pub mod symmetry;
-pub mod theory_conflict;
+pub(crate) mod structure_analyzer;
+pub(crate) mod subsumption;
+pub(crate) mod symmetry;
+pub(crate) mod theory_conflict;
 pub mod types;
 pub mod var_order;
-pub mod vivification;
-pub mod watched_literals;
+pub(crate) mod vivification;
+pub(crate) mod watched_literals;
 
-// Re-exports
-pub use assumptions::{AssumptionManager, Scope};
-pub use asymmetric_literal_addition::{AlaConfig, AlaEngine, AlaStats};
-pub use bce::{BceConfig, BceEngine, BceStats};
-pub use bound_propagation::{BoundPropagator, Interval};
-pub use bve::{BveConfig, BveEngine, BveStats};
+// Re-exports (public API). Only modules that are wired into the solver or are
+// standalone user-facing entry points are re-exported here; see the module
+// list above for why the rest are `pub(crate)`.
 pub use cad::{
     CadCell, CadConfig, CadDecomposer, CadError, CadLifter, CadPoint, CadProjection, ProjectionSet,
     SampleStrategy, SturmSequence,
 };
-pub use cad_optimization::{
-    CadOptConfig, CadOptStats, CadOrderingAnalyzer, HongProjection, OrderingHeuristic,
-    PartialCadBuilder, ProjectionConflict, SampleCache,
-};
-pub use chrono_bt::{
-    BacktrackDecision, ChronoBacktracker, ChronoConfig, ChronoStats, ConflictAnalysisResult,
-};
-pub use clause_tiers::{ClauseTier, ClauseTierConfig, ClauseTierManager, ClauseTierStats};
-pub use discriminant::{DiscriminantAnalyzer, DiscriminantSign, DiscriminantStats, RootInfo};
-pub use eval_cache::{CachedSign, EvalCache, EvalCacheConfig, EvalCacheStats, SignPattern};
-pub use grobner_preprocess::{
-    GroebnerConfig, GroebnerPreprocessor, GroebnerStats, PreprocessResult,
-};
-pub use incremental_cad::{CacheStats, CadSnapshot, IncrementalCad};
-pub use inprocessing::{InprocessConfig, InprocessStats, Inprocessor};
-pub use lookahead::{LookaheadConfig, LookaheadEngine, LookaheadResult, LookaheadStats};
 pub use maxsat::{MaxSatConfig, MaxSatResult, MaxSatSolver, MaxSatStats, SoftConstraint};
-pub use monotonicity::{
-    MonotonicityAnalyzer, MonotonicityDirection, MonotonicityInfo, MonotonicityStats,
-};
 pub use nia::{BranchingStrategy, NiaConfig, NiaSolver, NiaStats, VarType};
+// `cutting_planes` types are re-exported because they are part of the public
+// `nia` configuration/statistics surface (see `nia::NiaConfig`).
 pub use oxiz_math::lp::cutting_planes::{
     CutType, CuttingPlane, CuttingPlaneConfig, CuttingPlaneGenerator, CuttingPlaneStats,
 };
 pub use portfolio::{PortfolioConfig, PortfolioResult, PortfolioSolver, PortfolioStats};
-pub use proof::{
-    CadOperation, Proof, ProofBuilder, ProofError, ProofId, ProofMetadata, ProofRule, ProofStats,
-    ProofStep, TheoryExplanation,
-};
 pub use restart::{RestartManager, RestartStrategy};
-pub use root_hints::{
-    PolynomialRootHints, RootHint, RootHintsCache, RootHintsConfig, RootHintsStats,
-};
 pub use solver::NlsatSolver;
-pub use structure_analyzer::{ProblemClass, SolverStrategy, StructureAnalyzer, StructureStats};
-pub use subsumption::{SubsumptionChecker, SubsumptionConfig, SubsumptionStats};
-pub use symmetry::{Permutation, SymmetryDetector, SymmetryGroup, SymmetryStats};
-pub use theory_conflict::{
-    ConflictInfo, ConflictPatterns, TheoryConflictConfig, TheoryConflictStats,
-    TheoryConflictTracker,
-};
 pub use var_order::{OrderingAnalyzer, OrderingStats, OrderingStrategy, VariableOrdering};
-pub use vivification::{VivificationConfig, VivificationStats, Vivifier};
-pub use watched_literals::{WatchEntry, WatchStats, WatchedLiterals, WatchedPropagator};

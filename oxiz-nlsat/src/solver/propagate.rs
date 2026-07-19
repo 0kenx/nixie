@@ -23,6 +23,20 @@ pub enum PropagationResult {
     TheoryConflict(Vec<Literal>),
 }
 
+/// Outcome of theory propagation.
+#[derive(Debug, Clone)]
+pub enum TheoryPropagation {
+    /// No conflict; any implied literals were propagated.
+    Ok,
+    /// A theory conflict with a valid explanatory lemma to learn.
+    Conflict(Vec<Literal>),
+    /// A theory conflict that cannot be explained with a provably-valid lemma.
+    ///
+    /// Rather than learn a clause that might exclude satisfiable assignments
+    /// (turning SAT into a wrong UNSAT), the search reports `Unknown`.
+    Unknown,
+}
+
 impl NlsatSolver {
     /// Perform boolean constraint propagation.
     ///
@@ -210,7 +224,7 @@ impl NlsatSolver {
     }
 
     /// Perform theory propagation (evaluate polynomial constraints).
-    pub(super) fn theory_propagate(&mut self) -> Option<Vec<Literal>> {
+    pub(super) fn theory_propagate(&mut self) -> TheoryPropagation {
         // Track literals for phase saving (to avoid borrow checker issues)
         let mut lits_to_save = Vec::new();
 
@@ -240,9 +254,13 @@ impl NlsatSolver {
                                 Literal::negative(bool_var)
                             };
 
-                            // Return conflict clause explaining why this is unsatisfiable
-                            let explanation = self.explain_theory_conflict(atom_id, lit);
-                            return Some(explanation);
+                            // Return a valid conflict lemma if one can be
+                            // certified; otherwise report Unknown rather than
+                            // learning a possibly-invalid clause.
+                            return match self.explain_theory_conflict(atom_id, lit) {
+                                Some(lemma) => TheoryPropagation::Conflict(lemma),
+                                None => TheoryPropagation::Unknown,
+                            };
                         }
                         (Lbool::Undef, result) if !result.is_undef() => {
                             // Theory propagation
@@ -252,6 +270,15 @@ impl NlsatSolver {
                                 Literal::negative(bool_var)
                             };
                             self.assignment.assign(lit, Justification::Theory);
+                            // Enqueue for BCP: without this, any clause
+                            // watching `lit` (or `!lit`) is never re-examined,
+                            // so a clause that should become unit or
+                            // conflicting as a direct consequence of this
+                            // theory-derived assignment would be silently
+                            // missed. Every other assignment path in the
+                            // solver (see `Self::propagate`) pairs `assign`
+                            // with a `propagation_queue.push`.
+                            self.propagation_queue.push(lit);
                             lits_to_save.push(lit);
                             self.stats.theory_propagations += 1;
                         }
@@ -279,9 +306,13 @@ impl NlsatSolver {
                                 Literal::negative(bool_var)
                             };
 
-                            // Return conflict clause explaining why this is unsatisfiable
-                            let explanation = self.explain_theory_conflict(atom_id, lit);
-                            return Some(explanation);
+                            // Return a valid conflict lemma if one can be
+                            // certified; otherwise report Unknown rather than
+                            // learning a possibly-invalid clause.
+                            return match self.explain_theory_conflict(atom_id, lit) {
+                                Some(lemma) => TheoryPropagation::Conflict(lemma),
+                                None => TheoryPropagation::Unknown,
+                            };
                         }
                         (Lbool::Undef, result) if !result.is_undef() => {
                             // Theory propagation
@@ -291,6 +322,15 @@ impl NlsatSolver {
                                 Literal::negative(bool_var)
                             };
                             self.assignment.assign(lit, Justification::Theory);
+                            // Enqueue for BCP: without this, any clause
+                            // watching `lit` (or `!lit`) is never re-examined,
+                            // so a clause that should become unit or
+                            // conflicting as a direct consequence of this
+                            // theory-derived assignment would be silently
+                            // missed. Every other assignment path in the
+                            // solver (see `Self::propagate`) pairs `assign`
+                            // with a `propagation_queue.push`.
+                            self.propagation_queue.push(lit);
                             lits_to_save.push(lit);
                             self.stats.theory_propagations += 1;
                         }
@@ -305,7 +345,7 @@ impl NlsatSolver {
             self.save_phase(lit);
         }
 
-        None
+        TheoryPropagation::Ok
     }
 
     /// Check if we can evaluate an atom (all required variables assigned).
@@ -512,65 +552,171 @@ impl NlsatSolver {
         Lbool::from_bool(result)
     }
 
-    /// Explain a theory conflict.
+    /// Explain a theory conflict, returning a *valid* learned clause or `None`.
+    ///
+    /// A theory conflict occurs when a boolean literal contradicts the sign of
+    /// its polynomial under the current arithmetic model. A learned clause
+    /// `¬l_1 ∨ … ∨ ¬l_k` is only sound if the conjunction `l_1 ∧ … ∧ l_k` is
+    /// genuinely unsatisfiable over the reals; a clause built from "every atom
+    /// sharing a variable" is *not* — those atoms are frequently jointly
+    /// satisfiable, so learning it can exclude real models and produce a wrong
+    /// UNSAT.
+    ///
+    /// We therefore only emit a lemma when infeasibility can be *certified*: the
+    /// conflicting atom mentions a single arithmetic variable and the exact
+    /// (Sturm-isolated) intersection of all constraints on that variable is
+    /// empty. In that case the negated constraint literals form a valid lemma.
+    /// Otherwise (genuine multivariate coupling, which requires CAD projection
+    /// to explain) we return `None` and the caller reports `Unknown` instead of
+    /// fabricating an unsound clause.
     pub(super) fn explain_theory_conflict(
         &mut self,
         atom_id: AtomId,
-        conflicting_lit: Literal,
-    ) -> Vec<Literal> {
-        let mut explanation = Vec::new();
-
-        // The conflicting literal is part of the explanation
-        explanation.push(conflicting_lit.negate());
-
-        // Collect variables involved in conflict first
-        let mut conflict_vars = Vec::new();
-
-        // Add arithmetic variable assignments that led to this conflict
-        // For each assigned arithmetic variable, find the atoms that constrained it
-        if let Some(Atom::Ineq(ineq)) = self.get_atom(atom_id) {
-            for factor in &ineq.factors {
-                for var in factor.poly.vars() {
-                    conflict_vars.push(var);
-
-                    // Find atoms that assigned this variable
-                    for (other_id, other_atom) in self.atoms.iter().enumerate() {
-                        if other_id == atom_id as usize {
-                            continue;
+        _conflicting_lit: Literal,
+    ) -> Option<Vec<Literal>> {
+        // Collect the arithmetic variables of the conflicting atom.
+        let mut vars: Vec<oxiz_math::polynomial::Var> = Vec::new();
+        match self.get_atom(atom_id)? {
+            Atom::Ineq(ineq) => {
+                for factor in &ineq.factors {
+                    for var in factor.poly.vars() {
+                        if !vars.contains(&var) {
+                            vars.push(var);
                         }
-
-                        if let Atom::Ineq(other_ineq) = other_atom {
-                            let has_var = other_ineq
-                                .factors
-                                .iter()
-                                .any(|f| f.poly.vars().contains(&var));
-                            if has_var {
-                                let bool_var = other_ineq.bool_var;
-                                let val = self.assignment.bool_value(bool_var);
-                                if !val.is_undef() {
-                                    let lit = if val.is_true() {
-                                        Literal::negative(bool_var)
-                                    } else {
-                                        Literal::positive(bool_var)
-                                    };
-                                    if !explanation.contains(&lit)
-                                        && !explanation.contains(&lit.negate())
-                                    {
-                                        explanation.push(lit);
-                                    }
-                                }
-                            }
-                        }
+                    }
+                }
+            }
+            Atom::Root(root) => {
+                if !vars.contains(&root.var) {
+                    vars.push(root.var);
+                }
+                for var in root.poly.vars() {
+                    if !vars.contains(&var) {
+                        vars.push(var);
                     }
                 }
             }
         }
 
-        // Bump activity for variables involved in conflict
-        for var in conflict_vars {
-            self.bump_arith_activity(var);
+        // Only single-variable conflicts can be soundly explained here.
+        if vars.len() != 1 {
+            return None;
         }
+        let var = vars[0];
+        self.bump_arith_activity(var);
 
-        explanation
+        // Certify infeasibility with the exact feasible-region computation.
+        let regions = self.compute_arith_regions(var);
+        if regions.pure && regions.reliable && regions.outer.is_empty() && !regions.blame.is_empty()
+        {
+            Some(regions.blame)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::AtomKind;
+    use num_rational::BigRational;
+    use oxiz_math::polynomial::Polynomial;
+
+    // Regression test for the item: `theory_propagate` previously called
+    // `self.assignment.assign(lit, Justification::Theory)` without a
+    // matching `self.propagation_queue.push(lit)` (unlike every other
+    // assignment path in this solver, e.g. `Self::propagate`'s own unit
+    // propagation). That meant a clause watching the theory-derived literal
+    // was never re-examined by BCP, so a consequence that should have
+    // followed immediately (a unit propagation or a conflict) could be
+    // silently missed.
+    #[test]
+    fn test_theory_propagate_enqueues_derived_literal_for_bcp() {
+        let mut solver = NlsatSolver::new();
+        let x = solver.new_arith_var();
+
+        // Atom: x > 0. Its boolean variable starts Undef; theory_propagate
+        // must derive its truth value once `x`'s arithmetic value is known.
+        let poly = Polynomial::from_var(x);
+        let atom_id = solver.new_ineq_atom(poly, AtomKind::Gt);
+        let lit_true = solver.atom_literal(atom_id, true);
+
+        // Fix x = 1 directly (bypassing decision machinery), as a
+        // unit-level test of `theory_propagate` in isolation.
+        solver
+            .assignment
+            .set_arith(x, BigRational::from_integer(1.into()));
+
+        assert!(solver.propagation_queue.is_empty());
+
+        let result = solver.theory_propagate();
+        assert!(
+            matches!(result, TheoryPropagation::Ok),
+            "no theory conflict expected: {result:?}"
+        );
+
+        // x = 1 > 0, so the atom evaluates true: theory_propagate must both
+        // (a) actually assign the literal...
+        assert!(solver.assignment.bool_value(lit_true.var()).is_true());
+        // ...and (b) enqueue it for BCP -- otherwise any clause watching
+        // this literal (or its negation) is never re-examined.
+        assert!(
+            solver.propagation_queue.contains(&lit_true),
+            "theory-propagated literal must be enqueued for BCP: queue = {:?}",
+            solver.propagation_queue
+        );
+    }
+
+    // End-to-end regression: a clause whose unit-propagation consequence
+    // depends on a theory-derived literal must actually fire. `x > 0` is
+    // asserted (forcing the atom's literal true only via theory evaluation
+    // of the arithmetic decision, not via a direct boolean assertion), and
+    // a second clause `(¬(x > 0) ∨ y)` requires `y` to become true as a
+    // consequence -- reachable only if BCP sees the theory-propagated
+    // literal.
+    #[test]
+    fn test_theory_propagated_literal_drives_dependent_clause_via_bcp() {
+        let mut solver = NlsatSolver::new();
+        let x = solver.new_arith_var();
+
+        let poly = Polynomial::from_var(x);
+        let atom_x_gt_0 = solver.new_ineq_atom(poly, AtomKind::Gt);
+        let lit_x_gt_0 = solver.atom_literal(atom_x_gt_0, true);
+
+        // Assert x > 0 as a fact, but only indirectly: force it through the
+        // arithmetic value and let theory evaluation derive the literal.
+        solver
+            .assignment
+            .set_arith(x, BigRational::from_integer(1.into()));
+
+        // A second atom `y`, whose underlying arithmetic variable is
+        // deliberately left unassigned: `can_evaluate_atom` will therefore
+        // skip it in `theory_propagate`, so its boolean literal can only be
+        // pinned by BCP via the clause below, never by theory evaluation.
+        let y_var = solver.new_arith_var();
+        let atom_y = solver.new_ineq_atom(Polynomial::from_var(y_var), AtomKind::Gt);
+        let lit_y = solver.atom_literal(atom_y, true);
+
+        // Clause: ¬(x > 0) ∨ y  -- i.e. if x > 0 holds, y must hold too.
+        solver.add_clause(vec![lit_x_gt_0.negate(), lit_y]);
+
+        assert!(solver.propagation_queue.is_empty());
+        let theory_result = solver.theory_propagate();
+        assert!(
+            matches!(theory_result, TheoryPropagation::Ok),
+            "no theory conflict expected: {theory_result:?}"
+        );
+
+        // The literal must be queued (see the previous test) so that
+        // running BCP now sees it and fires the pending unit propagation.
+        let bcp_result = solver.propagate();
+        assert!(matches!(bcp_result, PropagationResult::Ok));
+
+        assert!(
+            solver.assignment.bool_value(lit_y.var()).is_true(),
+            "the clause (¬(x>0) ∨ y) must have unit-propagated y once BCP \
+             saw the theory-derived (x>0) literal"
+        );
     }
 }

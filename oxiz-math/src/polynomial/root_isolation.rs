@@ -76,13 +76,26 @@ impl RootIsolator {
         // Build Sturm sequence
         let sturm_seq = self.build_sturm_sequence(&poly);
 
-        // Count sign variations at endpoints
+        // Count sign variations at endpoints. Normalize a reversed/degenerate
+        // interval (`left > right`) up front rather than let a Sturm
+        // sign-variation count for the (higher-x) `left` come out smaller
+        // than for `right` — sign variations are non-increasing as x
+        // increases, so a reversed pair would otherwise underflow the
+        // `usize` subtraction below.
         let (left, right) = interval;
+        let (left, right) = if left <= right {
+            (left, right)
+        } else {
+            (right, left)
+        };
         let left_variations = self.count_sign_variations(&sturm_seq, &left);
         let right_variations = self.count_sign_variations(&sturm_seq, &right);
         self.stats.sturm_evaluations += 2;
 
-        let num_roots = left_variations - right_variations;
+        // Defense in depth: even for a well-ordered interval, use a
+        // saturating subtraction so a degenerate/edge-case count (e.g. an
+        // interval collapsing to a point) can never panic.
+        let num_roots = left_variations.saturating_sub(right_variations);
 
         if num_roots == 0 {
             return vec![];
@@ -173,13 +186,13 @@ impl RootIsolator {
         let mut intervals = Vec::new();
 
         // Roots in [left, mid]
-        let left_roots = left_vars - mid_vars;
+        let left_roots = left_vars.saturating_sub(mid_vars);
         if left_roots > 0 {
             intervals.extend(self.isolate_roots(poly, (left.clone(), mid.clone())));
         }
 
         // Roots in [mid, right]
-        let right_roots = mid_vars - right_vars;
+        let right_roots = mid_vars.saturating_sub(right_vars);
         if right_roots > 0 {
             intervals.extend(self.isolate_roots(poly, (mid, right)));
         }

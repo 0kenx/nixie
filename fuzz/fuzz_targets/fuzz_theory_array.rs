@@ -27,12 +27,12 @@ struct ArrayConstraint {
 fuzz_target!(|data: &[u8]| {
     let mut unstructured = Unstructured::new(data);
 
-    let num_arrays: u8 = match unstructured.arbitrary() {
+    let num_arrays: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 5) + 1,
         Err(_) => return,
     };
 
-    let num_ops: u8 = match unstructured.arbitrary() {
+    let num_ops: u8 = match unstructured.arbitrary::<u8>() {
         Ok(n) => (n % 15) + 1,
         Err(_) => return,
     };
@@ -41,7 +41,8 @@ fuzz_target!(|data: &[u8]| {
     let mut tm = TermManager::new();
 
     // Create array sort: Array[Int, Int]
-    let array_sort = tm.mk_array_sort(tm.sorts.int_sort, tm.sorts.int_sort);
+    let (int_sort, int_sort2) = (tm.sorts.int_sort, tm.sorts.int_sort);
+    let array_sort = tm.sorts.array(int_sort, int_sort2);
 
     // Create array variables
     let mut arrays = Vec::new();
@@ -76,7 +77,8 @@ fuzz_target!(|data: &[u8]| {
                 // Assert something about the stored array
                 let idx2 = tm.mk_int(BigInt::from(constraint.index_value + 1));
                 let select = tm.mk_select(stored, idx2);
-                let ge = tm.mk_ge(select, tm.mk_int(BigInt::from(-100)));
+                let lower_bound = tm.mk_int(BigInt::from(-100));
+                let ge = tm.mk_ge(select, lower_bound);
                 solver.assert(ge, &mut tm);
             }
             ArrayOp::Equals => {

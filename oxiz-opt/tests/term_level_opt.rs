@@ -4,7 +4,7 @@
 //! optimization all produce *correct* results when wired to the real solver.
 
 use num_bigint::BigInt;
-use oxiz_opt::{ModelValue, OptContext, OptResult, Weight};
+use oxiz_opt::{ModelValue, OptConfig, OptContext, OptResult, Weight};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -229,6 +229,176 @@ fn omt_unsat_objective() {
             OptResult::Unsatisfiable | OptResult::Unknown | OptResult::Optimal
         ),
         "expected Unsatisfiable/Unknown/Optimal, got {:?}",
+        result
+    );
+}
+
+/// minimize x  subject to  x >= 3/2 (real sort)  →  optimal x = 3/2
+///
+/// Regression for `OptContext::optimize_real_objective`, which reimplements
+/// the strict-improvement search directly against `new_solver()` (see
+/// `optimize_single_objective`'s doc comment) instead of delegating to
+/// `oxiz_solver::Optimizer`.
+#[test]
+fn omt_minimize_real_objective_lower_bound() {
+    let mut ctx = OptContext::new();
+
+    let x = ctx.terms.mk_var("x_real", ctx.terms.sorts.real_sort);
+    let three_half = ctx.terms.mk_real(num_rational::Rational64::new(3, 2));
+    let c = ctx.terms.mk_ge(x, three_half);
+    ctx.add_hard(c);
+    ctx.minimize(x);
+
+    let result = ctx.optimize().expect("optimize should not error");
+    assert!(
+        matches!(
+            result,
+            OptResult::Optimal | OptResult::Satisfiable | OptResult::Unknown
+        ),
+        "expected Optimal/Satisfiable/Unknown, got {:?}",
+        result
+    );
+
+    if matches!(result, OptResult::Optimal) {
+        match ctx.get_model_value(x) {
+            Some(ModelValue::Rational(r)) => {
+                assert_eq!(
+                    *r,
+                    num_rational::BigRational::new(BigInt::from(3), BigInt::from(2)),
+                    "x must equal 3/2, got {r}"
+                );
+            }
+            other => panic!("expected a rational model value, got {other:?}"),
+        }
+    }
+}
+
+// ── timeout_ms honoring ─────────────────────────────────────────────────────
+//
+// `OptConfig::timeout_ms` used to be threaded into `new_solver()` (bounding
+// each *individual* SMT call) but was never consulted by the multi-call
+// search loops in `optimize_single_objective` / `optimize_pareto` — those
+// delegated wholesale to `oxiz_solver::Optimizer`, which has no timeout hook
+// at all. A slow instance could therefore run for however long the
+// (unbounded) internal binary search / Pareto enumeration took, regardless of
+// `timeout_ms`. These tests lock in that the *whole* call now respects an
+// overall wall-clock deadline, and that a deadline cutoff is reported
+// honestly (never a fabricated `Optimal`).
+
+/// A generous timeout must not prevent a normally-provable optimum from being
+/// found (i.e. the deadline plumbing doesn't itself introduce false
+/// non-optimality).
+#[test]
+fn omt_minimize_with_generous_timeout_still_proves_optimal() {
+    let config = OptConfig {
+        timeout_ms: 5_000,
+        ..Default::default()
+    };
+    let mut ctx = OptContext::with_config(config);
+
+    let x = ctx.terms.mk_var("x_gt", ctx.terms.sorts.int_sort);
+    let three = ctx.terms.mk_int(3i64);
+    let c = ctx.terms.mk_ge(x, three);
+    ctx.add_hard(c);
+    ctx.minimize(x);
+
+    let result = ctx.optimize().expect("optimize should not error");
+    assert_eq!(
+        result,
+        OptResult::Optimal,
+        "a generous timeout should still allow the search to prove optimality"
+    );
+    assert_eq!(model_int(&ctx, x), Some(BigInt::from(3i64)));
+}
+
+/// An extremely tight timeout must bound the *total* wall-clock time of
+/// `optimize()` (not just one inner SMT call), and any reported value must
+/// remain honest: feasible, and never claimed `Optimal` unless actually
+/// proven.
+#[test]
+fn omt_minimize_tiny_timeout_bounds_runtime_and_stays_honest() {
+    let config = OptConfig {
+        timeout_ms: 1,
+        ..Default::default()
+    };
+    let mut ctx = OptContext::with_config(config);
+
+    let x = ctx.terms.mk_var("x_tt", ctx.terms.sorts.int_sort);
+    let target = ctx.terms.mk_int(123_456i64);
+    let c = ctx.terms.mk_ge(x, target);
+    ctx.add_hard(c);
+    ctx.minimize(x);
+
+    let start = std::time::Instant::now();
+    let result = ctx.optimize().expect("optimize should not error");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "a 1ms timeout must bound total runtime, took {elapsed:?}"
+    );
+    assert!(
+        matches!(
+            result,
+            OptResult::Optimal | OptResult::Satisfiable | OptResult::Unknown
+        ),
+        "expected an honest result variant, got {:?}",
+        result
+    );
+    // Whatever value is reported must remain feasible (>= 123456), even
+    // though optimality may not have been proven under such a tight deadline.
+    if let Some(val) = model_int(&ctx, x) {
+        assert!(
+            val >= BigInt::from(123_456i64),
+            "reported x must remain feasible, got {}",
+            val
+        );
+    }
+}
+
+/// Same guarantee as above, for the Pareto (multi-objective) path.
+#[test]
+fn pareto_tiny_timeout_bounds_runtime_and_stays_honest() {
+    let config = OptConfig {
+        timeout_ms: 1,
+        ..Default::default()
+    };
+    let mut ctx = OptContext::with_config(config);
+
+    let x = ctx.terms.mk_var("xpt", ctx.terms.sorts.int_sort);
+    let y = ctx.terms.mk_var("ypt", ctx.terms.sorts.int_sort);
+    let zero_x = ctx.terms.mk_int(0i64);
+    let hundred_x = ctx.terms.mk_int(100i64);
+    let zero_y = ctx.terms.mk_int(0i64);
+    let hundred_y = ctx.terms.mk_int(100i64);
+    let c1 = ctx.terms.mk_ge(x, zero_x);
+    let c2 = ctx.terms.mk_le(x, hundred_x);
+    let c3 = ctx.terms.mk_ge(y, zero_y);
+    let c4 = ctx.terms.mk_le(y, hundred_y);
+    ctx.add_hard(c1);
+    ctx.add_hard(c2);
+    ctx.add_hard(c3);
+    ctx.add_hard(c4);
+    ctx.minimize(x);
+    ctx.minimize(y);
+
+    let start = std::time::Instant::now();
+    let result = ctx.optimize().expect("optimize should not error");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "a 1ms timeout must bound total Pareto enumeration runtime, took {elapsed:?}"
+    );
+    assert!(
+        matches!(
+            result,
+            OptResult::Optimal
+                | OptResult::Satisfiable
+                | OptResult::Unknown
+                | OptResult::Unsatisfiable
+        ),
+        "expected an honest result variant, got {:?}",
         result
     );
 }

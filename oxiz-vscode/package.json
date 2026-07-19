@@ -4,10 +4,10 @@
   "description": "VS Code extension for OxiZ SMT Solver with SMT-LIB2 language support",
   "version": "0.1.3",
   "publisher": "cooljapan-ou",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cooljapan-ou/oxiz"
+    "url": "https://github.com/cool-japan/oxiz"
   },
   "engines": {
     "vscode": "^1.85.0"

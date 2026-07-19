@@ -323,14 +323,24 @@ mod polynomial_square_free_properties {
     use super::*;
 
     proptest! {
-        /// Test square_free doesn't panic
+        /// `square_free` on `c * x^2` (a double root at x=0) must actually
+        /// remove the repeated factor: the result should be nonzero, have
+        /// strictly lower degree than the input, and still vanish at the
+        /// shared root x=0 (roots of `p / gcd(p, p')` are exactly the
+        /// distinct roots of `p`). A tautological `prop_assert!(true)` here
+        /// would pass even if `square_free` were a no-op or returned zero.
         #[test]
-        fn square_free_works(c in 1i64..10i64) {
+        fn square_free_removes_repeated_root(c in 1i64..10i64) {
             let p = Polynomial::from_coeffs_int(&[(c, &[(0, 2)])]);
 
-            // Just verify it doesn't panic
-            let _sf = p.square_free();
-            prop_assert!(true);
+            let sf = p.square_free();
+
+            prop_assert!(!sf.is_zero());
+            prop_assert!(sf.degree(0) < p.degree(0));
+
+            let mut assignment = FxHashMap::default();
+            assignment.insert(0, rat(0));
+            prop_assert!(sf.eval(&assignment).is_zero());
         }
     }
 }

@@ -41,7 +41,7 @@ pub use manager::{GCStatistics, SubstitutionBuilder, TermManager};
 pub use model::{FunctionInterpretation, Model, ModelValue};
 pub use normal_forms::{
     eliminate_universal_quantifiers, extract_cnf_clauses, is_cnf, is_dnf, is_nnf, simplify_boolean,
-    skolemize, to_cnf, to_dnf, to_nnf,
+    skolemize, skolemize_with_counter, to_cnf, to_dnf, to_nnf,
 };
 #[cfg(feature = "std")]
 pub use parallel::{

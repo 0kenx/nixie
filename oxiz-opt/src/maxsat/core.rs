@@ -10,7 +10,15 @@ use oxiz_sat::{Lit, Solver as SatSolver, SolverResult};
 use smallvec::SmallVec;
 
 /// Weight of a soft clause (can be integer, rational, or infinite).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// Equality and ordering are defined by *numeric value*, not by enum variant.
+/// `Weight::Int(5)` and `Weight::Rational(5/1)` compare equal, and
+/// `Weight::Int(1_000_000)` is correctly greater than `Weight::Rational(1/2)`.
+/// `Weight::Infinite` is greater than every finite value. This total order is
+/// relied on by stratification, core min-weight extraction, hardening
+/// thresholds, and Pareto dominance — a variant-order comparison would corrupt
+/// all of those optimization decisions when integer and rational weights mix.
+#[derive(Debug, Clone)]
 pub enum Weight {
     /// Integer weight
     Int(BigInt),
@@ -18,6 +26,75 @@ pub enum Weight {
     Rational(BigRational),
     /// Infinite weight (effectively hard)
     Infinite,
+}
+
+impl Weight {
+    /// Compare two weights by exact numeric value.
+    ///
+    /// Finite weights are compared as exact rationals (integers are promoted),
+    /// and `Infinite` is treated as greater than every finite value.
+    fn cmp_value(&self, other: &Weight) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Weight::Infinite, Weight::Infinite) => Ordering::Equal,
+            (Weight::Infinite, _) => Ordering::Greater,
+            (_, Weight::Infinite) => Ordering::Less,
+            (Weight::Int(a), Weight::Int(b)) => a.cmp(b),
+            // At least one operand is rational (and neither is infinite):
+            // compare as exact rationals so the numeric order is respected.
+            _ => self.as_rational_value().cmp(&other.as_rational_value()),
+        }
+    }
+
+    /// Promote a finite weight to its exact rational value. Only called for
+    /// finite weights; `Infinite` maps to zero (never reached in `cmp_value`).
+    fn as_rational_value(&self) -> BigRational {
+        match self {
+            Weight::Int(n) => BigRational::from(n.clone()),
+            Weight::Rational(r) => r.clone(),
+            Weight::Infinite => BigRational::zero(),
+        }
+    }
+}
+
+impl PartialEq for Weight {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp_value(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for Weight {}
+
+impl PartialOrd for Weight {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Weight {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cmp_value(other)
+    }
+}
+
+impl std::hash::Hash for Weight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            // Distinct tag; `Infinite` is only equal to itself.
+            Weight::Infinite => 2u8.hash(state),
+            _ => {
+                1u8.hash(state);
+                // Hash the canonical (reduced) rational form so that any two
+                // numerically-equal finite weights — e.g. `Int(5)` and
+                // `Rational(5/1)` — hash identically, keeping `Hash` consistent
+                // with the value-based `PartialEq`. `BigRational` is always
+                // stored in lowest terms with a positive denominator.
+                let r = self.as_rational_value();
+                r.numer().hash(state);
+                r.denom().hash(state);
+            }
+        }
+    }
 }
 
 impl Weight {

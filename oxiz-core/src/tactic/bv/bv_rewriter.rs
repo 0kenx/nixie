@@ -17,6 +17,8 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::{TermId, TermKind, TermManager};
+use num_bigint::BigInt;
+use num_traits::Zero;
 
 /// Bit-vector width.
 pub type BvWidth = u32;
@@ -336,76 +338,88 @@ impl BvRewriterTactic {
 
     // Helper methods
 
-    fn is_bv_zero(&self, _term: TermId) -> bool {
-        // Simplified: would check if term is a BV constant with value 0
-        false
+    /// Mask consisting of `width` set bits (i.e. `2^width - 1`), used to
+    /// recognize/construct the all-ones bit-vector constant.
+    fn all_ones_mask(width: BvWidth) -> BigInt {
+        if width == 0 {
+            BigInt::zero()
+        } else {
+            (BigInt::from(1) << width) - BigInt::from(1)
+        }
     }
 
-    fn is_bv_one(&self, _term: TermId) -> bool {
-        // Simplified: would check if term is a BV constant with value 1
-        false
+    fn is_bv_zero(&self, term: TermId) -> bool {
+        matches!(
+            self.manager.get(term).map(|t| &t.kind),
+            Some(TermKind::BitVecConst { value, .. }) if value.is_zero()
+        )
     }
 
-    fn is_bv_all_ones(&self, _term: TermId) -> bool {
-        // Simplified: would check if term is a BV constant with all bits set
-        false
+    fn is_bv_one(&self, term: TermId) -> bool {
+        matches!(
+            self.manager.get(term).map(|t| &t.kind),
+            Some(TermKind::BitVecConst { value, .. }) if *value == BigInt::from(1)
+        )
     }
 
-    fn make_bv_zero(&mut self, _width: BvWidth) -> TermId {
-        // Simplified: would create BV constant 0 of given width
-        TermId(0)
+    fn is_bv_all_ones(&self, term: TermId) -> bool {
+        matches!(
+            self.manager.get(term).map(|t| &t.kind),
+            Some(TermKind::BitVecConst { value, width }) if *value == Self::all_ones_mask(*width)
+        )
+    }
+
+    fn make_bv_zero(&mut self, width: BvWidth) -> TermId {
+        self.manager.mk_bitvec(0u64, width)
     }
 
     #[allow(dead_code)]
-    fn make_bv_one(&mut self, _width: BvWidth) -> TermId {
-        // Simplified: would create BV constant 1 of given width
-        TermId(0)
+    fn make_bv_one(&mut self, width: BvWidth) -> TermId {
+        self.manager.mk_bitvec(1u64, width)
     }
 
     #[allow(dead_code)]
-    fn make_bv_all_ones(&mut self, _width: BvWidth) -> TermId {
-        // Simplified: would create BV constant ~0 of given width
-        TermId(0)
+    fn make_bv_all_ones(&mut self, width: BvWidth) -> TermId {
+        self.manager.mk_bitvec(Self::all_ones_mask(width), width)
     }
 
-    fn get_bv_width(&self, _term: TermId) -> BvWidth {
-        // Simplified: would get bit-vector width from term
-        32
+    /// Get the bit-vector width of `term` from its sort. Falls back to 32
+    /// only for malformed/dangling term ids, which cannot occur for terms
+    /// reached through well-typed `BvXor`/etc. arguments.
+    fn get_bv_width(&self, term: TermId) -> BvWidth {
+        self.manager
+            .get(term)
+            .and_then(|t| self.manager.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width())
+            .unwrap_or(32)
     }
 
-    fn reconstruct_bv_add(&mut self, _arg1: TermId, _arg2: TermId) -> TermId {
-        // Simplified: would reconstruct BvAdd term
-        TermId(0)
+    fn reconstruct_bv_add(&mut self, arg1: TermId, arg2: TermId) -> TermId {
+        self.manager.mk_bv_add(arg1, arg2)
     }
 
-    fn reconstruct_bv_mul(&mut self, _arg1: TermId, _arg2: TermId) -> TermId {
-        // Simplified: would reconstruct BvMul term
-        TermId(0)
+    fn reconstruct_bv_mul(&mut self, arg1: TermId, arg2: TermId) -> TermId {
+        self.manager.mk_bv_mul(arg1, arg2)
     }
 
-    fn reconstruct_bv_and(&mut self, _arg1: TermId, _arg2: TermId) -> TermId {
-        // Simplified: would reconstruct BvAnd term
-        TermId(0)
+    fn reconstruct_bv_and(&mut self, arg1: TermId, arg2: TermId) -> TermId {
+        self.manager.mk_bv_and(arg1, arg2)
     }
 
-    fn reconstruct_bv_or(&mut self, _arg1: TermId, _arg2: TermId) -> TermId {
-        // Simplified: would reconstruct BvOr term
-        TermId(0)
+    fn reconstruct_bv_or(&mut self, arg1: TermId, arg2: TermId) -> TermId {
+        self.manager.mk_bv_or(arg1, arg2)
     }
 
-    fn reconstruct_bv_xor(&mut self, _arg1: TermId, _arg2: TermId) -> TermId {
-        // Simplified: would reconstruct BvXor term
-        TermId(0)
+    fn reconstruct_bv_xor(&mut self, arg1: TermId, arg2: TermId) -> TermId {
+        self.manager.mk_bv_xor(arg1, arg2)
     }
 
-    fn reconstruct_bv_not(&mut self, _arg: TermId) -> TermId {
-        // Simplified: would reconstruct BvNot term
-        TermId(0)
+    fn reconstruct_bv_not(&mut self, arg: TermId) -> TermId {
+        self.manager.mk_bv_not(arg)
     }
 
-    fn reconstruct_bv_sub(&mut self, _arg1: TermId, _arg2: TermId) -> TermId {
-        // Simplified: would reconstruct BvSub term
-        TermId(0)
+    fn reconstruct_bv_sub(&mut self, arg1: TermId, arg2: TermId) -> TermId {
+        self.manager.mk_bv_sub(arg1, arg2)
     }
 
     /// Clear rewrite cache.
@@ -468,5 +482,106 @@ mod tests {
 
         tactic.clear_cache();
         assert!(tactic.cache.is_empty());
+    }
+
+    // Regression tests for the data-corruption bug where every
+    // reconstruct_* helper returned the arbitrary sentinel `TermId(0)`
+    // instead of a real reconstructed (or simplified) term.
+
+    #[test]
+    fn test_rewrite_add_zero_returns_original_term() {
+        let mut manager = TermManager::default();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let zero = manager.mk_bitvec(0u64, 8);
+        let add = manager.mk_bv_add(x, zero);
+
+        let mut tactic = BvRewriterTactic::default_config(manager);
+        let result = tactic.rewrite(add);
+
+        assert_ne!(result, TermId(0));
+        assert_eq!(result, x);
+    }
+
+    #[test]
+    fn test_rewrite_and_self_returns_original_term() {
+        let mut manager = TermManager::default();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let and_term = manager.mk_bv_and(x, x);
+
+        let mut tactic = BvRewriterTactic::default_config(manager);
+        let result = tactic.rewrite(and_term);
+
+        assert_ne!(result, TermId(0));
+        assert_eq!(result, x);
+    }
+
+    #[test]
+    fn test_rewrite_generic_add_reconstructs_valid_bv_term() {
+        let mut manager = TermManager::default();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let y = manager.mk_var("y", bv8);
+        let add = manager.mk_bv_add(x, y);
+
+        let mut tactic = BvRewriterTactic::default_config(manager);
+        let result = tactic.rewrite(add);
+
+        // Must not be the old data-corrupting sentinel.
+        assert_ne!(result, TermId(0));
+        // Must be exactly the (interned) reconstructed addition term.
+        let expected = tactic.manager.mk_bv_add(x, y);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rewrite_xor_self_returns_zero_constant() {
+        let mut manager = TermManager::default();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let xor_term = manager.mk_bv_xor(x, x);
+
+        let mut tactic = BvRewriterTactic::default_config(manager);
+        let result = tactic.rewrite(xor_term);
+
+        assert_ne!(result, TermId(0));
+        let term = tactic
+            .manager
+            .get(result)
+            .expect("rewritten term must exist");
+        match &term.kind {
+            TermKind::BitVecConst { value, width } => {
+                assert!(value.is_zero());
+                assert_eq!(*width, 8);
+            }
+            other => panic!("expected BitVecConst 0, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_is_bv_all_ones_detection() {
+        let mut manager = TermManager::default();
+        let all_ones = manager.mk_bitvec(0xFFu64, 8);
+        let not_all_ones = manager.mk_bitvec(0x0Fu64, 8);
+        let tactic = BvRewriterTactic::default_config(manager);
+
+        assert!(tactic.is_bv_all_ones(all_ones));
+        assert!(!tactic.is_bv_all_ones(not_all_ones));
+    }
+
+    #[test]
+    fn test_rewrite_and_with_all_ones_returns_other_operand() {
+        let mut manager = TermManager::default();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let all_ones = manager.mk_bitvec(0xFFu64, 8);
+        let and_term = manager.mk_bv_and(x, all_ones);
+
+        let mut tactic = BvRewriterTactic::default_config(manager);
+        let result = tactic.rewrite(and_term);
+
+        assert_ne!(result, TermId(0));
+        assert_eq!(result, x);
     }
 }

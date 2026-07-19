@@ -74,9 +74,13 @@ pub mod visualization;
 mod builder;
 mod cnf;
 mod convert;
-mod premise;
 mod quantifier;
 mod resolution;
+
+// Premise tracking: public because `CraigInterpolator::new` (see `craig`)
+// takes a `PremiseTracker` by value, so callers outside this crate need to
+// be able to name and construct these types.
+pub mod premise;
 
 // Public modules with useful analysis and utility tools
 pub mod stats;
@@ -124,6 +128,7 @@ pub use normalize::{canonicalize_conclusions, normalize_proof};
 pub use parallel::{ParallelCheckResult, ParallelConfig, ParallelProcessor, ParallelStatsComputer};
 pub use pattern::{LemmaPattern, PatternExtractor, PatternStructure};
 pub use pcc::{CodeLocation, PccBuilder, ProofCarryingCode, SafetyProperty, VerificationCondition};
+pub use premise::{Premise, PremiseDependency, PremiseId, PremiseTracker};
 pub use proof::{Proof, ProofNode, ProofNodeId, ProofStats, ProofStep};
 #[cfg(feature = "arena")]
 pub use recorder::ArenaProofStepId;

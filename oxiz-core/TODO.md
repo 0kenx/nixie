@@ -1,8 +1,8 @@
 # oxiz-core TODO
 
-Last Updated: 2026-03-28
+Last Updated: 2026-07-19 (v0.2.4)
 
-Reference: Z3's `ast/`, `util/`, and `tactic/` directories at `../z3/src/`
+Reference: Z3's `ast/`, `util/`, and `tactic/` directories
 
 ## Progress: 100% Complete ✓
 
