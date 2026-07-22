@@ -42,28 +42,35 @@ impl ArrayChecker {
         if clause.is_empty() {
             return CheckResult::Invalid("Empty conflict clause".to_string());
         }
-
-        // For array theory, conflicts arise from:
-        // 1. Contradictory read/write combinations
-        // 2. Equality propagation conflicts
-
-        // Simplified: assume valid for now
-        // Real implementation would check select/store axioms
-        CheckResult::Valid
+        // A propositional tautology is a sound conflict in any theory.
+        if super::clause_has_complementary_pair(clause) {
+            return CheckResult::Valid;
+        }
+        // A genuine array conflict must be certified against the select/store
+        // (read-over-write / extensionality) axiom instances, which requires
+        // the term structure this checker does not have. Report Unknown rather
+        // than rubber-stamp it as Valid.
+        CheckResult::Unknown("Array conflict requires select/store axiom certification".to_string())
     }
 
-    /// Check array propagation
-    fn check_array_propagation(&self, _literal: Literal, _explanation: &[Literal]) -> CheckResult {
-        // Array propagations include:
-        // - i = j => select(a, i) = select(a, j)
-        // - store(a, i, v) = store(b, j, w) => i = j AND v = w (for equal arrays)
-        CheckResult::Valid
+    /// Check array propagation.
+    fn check_array_propagation(&self, literal: Literal, explanation: &[Literal]) -> CheckResult {
+        if super::explanation_entails(literal, explanation) {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Array propagation not certifiable from literal identities".to_string(),
+            )
+        }
     }
 
-    /// Check model for array consistency
-    fn check_array_model(&self, _assignments: &[(TermId, bool)]) -> CheckResult {
-        // Verify array assignments satisfy select/store semantics
-        CheckResult::Valid
+    /// Check model for array consistency.
+    fn check_array_model(&self, assignments: &[(TermId, bool)]) -> CheckResult {
+        if assignments.is_empty() {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown("Array model consistency requires term evaluation".to_string())
+        }
     }
 
     /// Enable/disable extensionality checking
@@ -135,12 +142,18 @@ mod tests {
     }
 
     #[test]
-    fn test_array_conflict_valid() {
+    fn test_array_conflict_tautology_valid_but_plain_unknown() {
         let checker = ArrayChecker::new();
         let t1 = TermId::from(1u32);
-        let clause = vec![Literal::pos(t1)];
-        let result = checker.check_conflict(&clause);
-        assert!(result.is_valid());
+        // Tautology conflict is soundly valid.
+        assert!(
+            checker
+                .check_conflict(&[Literal::pos(t1), Literal::neg(t1)])
+                .is_valid()
+        );
+        // A single opaque literal cannot be certified -> Unknown, not Valid.
+        let result = checker.check_conflict(&[Literal::pos(t1)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
@@ -149,19 +162,22 @@ mod tests {
         let t1 = TermId::from(1u32);
         let t2 = TermId::from(2u32);
 
-        let literal = Literal::pos(t1);
-        let explanation = vec![Literal::pos(t2)];
-        let result = checker.check_propagation(literal, &explanation);
-        assert!(result.is_valid());
+        assert!(
+            checker
+                .check_propagation(Literal::pos(t1), &[Literal::pos(t1)])
+                .is_valid()
+        );
+        let result = checker.check_propagation(Literal::pos(t1), &[Literal::pos(t2)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
     fn test_array_model_check() {
         let checker = ArrayChecker::new();
         let t1 = TermId::from(1u32);
-        let assignments = vec![(t1, true)];
-        let result = checker.check_model(&assignments);
-        assert!(result.is_valid());
+        assert!(checker.check_model(&[]).is_valid());
+        let result = checker.check_model(&[(t1, true)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]

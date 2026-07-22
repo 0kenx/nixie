@@ -719,4 +719,53 @@ mod tests_2 {
             "after popping the conversion scope, the plain problem is Sat again; got {after:?}"
         );
     }
+
+    /// Regression: a subnormal constant constrained to be `fp.isNormal` is
+    /// UNSAT. This previously returned a spurious `Sat` because `check()`
+    /// blindly re-solved on an `Unsat` verdict and the re-solve rubber-stamped
+    /// the fully-assigned (but clause-violating) trail as satisfiable.
+    #[test]
+    fn test_is_normal_of_subnormal_constant_is_unsat() {
+        let mut solver = FpSolver::new();
+        let a = TermId::new(1);
+        // Smallest positive FLOAT32 subnormal: exponent 0, significand 1.
+        let subnormal = FpValue::from_f32(f32::from_bits(1));
+        assert!(subnormal.is_subnormal(), "fixture must be subnormal");
+        solver.assert_const(a, &subnormal);
+        solver.assert_is_normal(a);
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unsat(_)),
+            "subnormal constant asserted fp.isNormal must be Unsat; got {result:?}"
+        );
+    }
+
+    /// Positive control: a genuinely normal constant asserted `fp.isNormal`
+    /// remains satisfiable.
+    #[test]
+    fn test_is_normal_of_normal_constant_is_sat() {
+        let mut solver = FpSolver::new();
+        let a = TermId::new(1);
+        solver.assert_const(a, &FpValue::from_f32(1.5));
+        solver.assert_is_normal(a);
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Sat),
+            "normal constant asserted fp.isNormal must be Sat; got {result:?}"
+        );
+    }
+
+    /// A zero constant constrained to be `fp.isNormal` is UNSAT.
+    #[test]
+    fn test_is_normal_of_zero_constant_is_unsat() {
+        let mut solver = FpSolver::new();
+        let a = TermId::new(1);
+        solver.assert_const(a, &FpValue::pos_zero(FpFormat::FLOAT32));
+        solver.assert_is_normal(a);
+        let result = solver.check().expect("check must not error");
+        assert!(
+            matches!(result, TheoryResult::Unsat(_)),
+            "zero constant asserted fp.isNormal must be Unsat; got {result:?}"
+        );
+    }
 }

@@ -38,8 +38,10 @@ use crate::prelude::*;
 pub mod advanced_regex;
 pub mod automata;
 pub mod char_ops;
+pub mod ground_solver;
 pub mod normalization;
 mod regex;
+pub mod regex_membership;
 pub mod regex_solver;
 pub mod replace_operations;
 pub mod sequence;
@@ -49,7 +51,9 @@ mod unicode;
 pub mod word_eq;
 
 // Core exports
+pub use ground_solver::{GroundStringOutcome, solve_ground_string};
 pub use regex::{Regex, RegexOp};
+pub use regex_membership::{WordSearch, compile_regex, search_word};
 pub use regex_solver::{
     Regex as RegexSolverRegex, RegexSolver, RegexSolverConfig, RegexSolverStats, StrVar,
     StringConstraint,

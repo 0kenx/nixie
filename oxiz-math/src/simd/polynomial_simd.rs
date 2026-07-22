@@ -5,7 +5,7 @@
 
 #[allow(unused_imports)]
 use crate::prelude::*;
-use core::ops::{Add, Mul, Sub};
+use core::ops::{Add, Div, Mul, Sub};
 use num_traits::{One, Zero};
 
 /// Add two polynomials using SIMD-friendly patterns.
@@ -237,11 +237,31 @@ pub fn poly_eval_horner_i64(coeffs: &[i64], x: i64) -> i64 {
 }
 
 /// Polynomial GCD using SIMD-friendly operations.
+///
+/// Requires `T: Div<Output = T>` (exact division), i.e. `T` should be a
+/// field (`f64`, `BigRational`, ...) for the result to be mathematically
+/// exact; see `poly_divide`'s docs for the caveat on ring-only `T` (e.g.
+/// `i64`/`BigInt`).
 pub fn simd_poly_gcd<T>(mut a: Vec<T>, mut b: Vec<T>) -> Vec<T>
 where
-    T: Clone + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Zero + PartialEq,
+    T: Clone
+        + Add<Output = T>
+        + Sub<Output = T>
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Zero
+        + PartialEq,
 {
-    // Euclidean algorithm
+    // Euclidean algorithm. `poly_divide` guarantees `degree(remainder) <
+    // degree(divisor)` strictly, so `b`'s degree strictly decreases every
+    // iteration and the loop is guaranteed to terminate in at most
+    // `deg(a) + 1` steps.
+    //
+    // Before this fix (MATH-4), `poly_divide` was a stub that always
+    // returned the *entire dividend* as the "remainder" regardless of the
+    // divisor, so `b` never shrank: the loop assigned `a = b; b = a_old;`
+    // every iteration, cycling between the two original inputs forever for
+    // any pair of non-zero, non-dividing polynomials.
     while !is_zero_poly(&b) {
         let (_, remainder) = poly_divide(&a, &b);
         a = b;
@@ -259,15 +279,96 @@ where
     coeffs.iter().all(|c| c.is_zero())
 }
 
-/// Polynomial division (simplified for SIMD context).
-fn poly_divide<T>(dividend: &[T], _divisor: &[T]) -> (Vec<T>, Vec<T>)
+/// Trim highest-degree (last-index) zero coefficients from a dense,
+/// ascending-order (constant term first) coefficient vector -- the same
+/// "leading zero" convention [`simd_poly_add`] uses. An all-zero or empty
+/// input trims down to an empty vector.
+fn trim_trailing_zeros<T: Clone + Zero + PartialEq>(coeffs: &[T]) -> Vec<T> {
+    let mut v = coeffs.to_vec();
+    while v.last().is_some_and(|c| *c == T::zero()) {
+        v.pop();
+    }
+    v
+}
+
+/// Polynomial long division: `dividend = quotient * divisor + remainder`
+/// with `degree(remainder) < degree(divisor)`. Coefficients are in
+/// ascending order of degree (constant term first), matching the rest of
+/// this module.
+///
+/// # Exactness
+///
+/// This divides leading coefficients using `T`'s `/` operator, which is
+/// exact when `T` is a field (`f64`, `BigRational`, ...). For a coefficient
+/// ring without exact division (e.g. `i64`, `BigInt`), `/` truncates, so
+/// the result is only an *approximate* quotient/remainder; callers needing
+/// exact integer polynomial division should use
+/// [`crate::polynomial::Polynomial::pseudo_div_univariate`] instead, which
+/// avoids the issue via pseudo-division scaling.
+///
+/// Division by the zero polynomial (or an all-zero `divisor` slice) is
+/// mathematically undefined; rather than panicking or looping forever,
+/// this returns `(0, dividend)` -- "no reduction possible".
+fn poly_divide<T>(dividend: &[T], divisor: &[T]) -> (Vec<T>, Vec<T>)
 where
-    T: Clone + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Zero,
+    T: Clone
+        + Add<Output = T>
+        + Sub<Output = T>
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Zero
+        + PartialEq,
 {
-    // Simplified: returns (quotient, remainder)
-    // Real implementation would do full polynomial long division
-    // For now, stub implementation
-    (vec![T::zero()], dividend.to_vec())
+    let trimmed_divisor = trim_trailing_zeros(divisor);
+    if trimmed_divisor.is_empty() {
+        return (vec![T::zero()], dividend.to_vec());
+    }
+
+    let mut remainder = trim_trailing_zeros(dividend);
+    let divisor_degree = trimmed_divisor.len() - 1;
+    let lc_divisor = trimmed_divisor[divisor_degree].clone();
+
+    if remainder.len() <= divisor_degree {
+        // deg(dividend) < deg(divisor): nothing to reduce.
+        return (vec![T::zero()], remainder);
+    }
+
+    let mut quotient = vec![T::zero(); remainder.len() - divisor_degree];
+
+    // Standard coefficient-wise long division, highest degree first. Each
+    // iteration strictly shrinks `remainder` by one element (its top
+    // coefficient is cancelled to exactly zero by construction and then
+    // dropped), so this always terminates.
+    while remainder.len() > divisor_degree {
+        let rem_degree = remainder.len() - 1;
+        let lc_rem = remainder[rem_degree].clone();
+
+        if lc_rem == T::zero() {
+            remainder.pop();
+            continue;
+        }
+
+        let shift = rem_degree - divisor_degree;
+        let factor = lc_rem / lc_divisor.clone();
+        quotient[shift] = factor.clone();
+
+        for (i, dc) in trimmed_divisor.iter().enumerate() {
+            let idx = shift + i;
+            remainder[idx] = remainder[idx].clone() - factor.clone() * dc.clone();
+        }
+
+        // The top coefficient is now exactly cancelled by construction;
+        // drop it so the next iteration's degree strictly decreases even
+        // if a non-exact `T` (e.g. floating point) left a residual value
+        // distinct from `T::zero()` there.
+        remainder.pop();
+    }
+
+    if remainder.is_empty() {
+        remainder.push(T::zero());
+    }
+
+    (quotient, remainder)
 }
 
 #[cfg(test)]
@@ -343,5 +444,89 @@ mod tests {
         let result = simd_poly_compose(&p, &q);
         // p(q(x)) = 1 + (2x)^2 = 1 + 4x^2
         assert_eq!(result, vec![1.0, 0.0, 4.0]);
+    }
+
+    // -- Regression tests for MATH-4 (poly_divide / simd_poly_gcd stub) --
+
+    #[test]
+    fn test_poly_divide_exact() {
+        // x^2 / (x+1) = (x-1) remainder 1: x^2 = (x-1)(x+1) + 1.
+        let dividend = vec![0.0, 0.0, 1.0]; // x^2
+        let divisor = vec![1.0, 1.0]; // 1 + x
+        let (quotient, remainder) = poly_divide(&dividend, &divisor);
+        assert_eq!(quotient, vec![-1.0, 1.0]); // x - 1
+        assert_eq!(remainder, vec![1.0]); // 1
+    }
+
+    #[test]
+    fn test_poly_divide_exact_no_remainder() {
+        // x^2 - 1 = (x-1)(x+1), so dividing by (x-1) leaves remainder 0.
+        let dividend = vec![-1.0, 0.0, 1.0]; // x^2 - 1
+        let divisor = vec![-1.0, 1.0]; // x - 1
+        let (quotient, remainder) = poly_divide(&dividend, &divisor);
+        assert_eq!(quotient, vec![1.0, 1.0]); // x + 1
+        assert!(
+            is_zero_poly(&remainder),
+            "expected exact division, got {remainder:?}"
+        );
+    }
+
+    #[test]
+    fn test_poly_divide_degree_less_than_divisor_is_noop() {
+        let dividend = vec![5.0]; // constant 5
+        let divisor = vec![1.0, 1.0]; // x + 1 (higher degree)
+        let (quotient, remainder) = poly_divide(&dividend, &divisor);
+        assert!(is_zero_poly(&quotient));
+        assert_eq!(remainder, vec![5.0]);
+    }
+
+    #[test]
+    fn test_poly_divide_by_zero_polynomial_no_panic() {
+        // Regression test for R3-adjacent robustness: division by the zero
+        // polynomial must not panic.
+        let dividend = vec![1.0, 2.0, 3.0];
+        let zero_divisor = vec![0.0, 0.0];
+        let (quotient, remainder) = poly_divide(&dividend, &zero_divisor);
+        assert!(is_zero_poly(&quotient));
+        assert_eq!(remainder, dividend);
+    }
+
+    #[test]
+    fn test_simd_poly_gcd_terminates_and_finds_common_factor() {
+        // Regression test for MATH-4: `simd_poly_gcd` used to infinite-loop
+        // because `poly_divide` was a stub that never reduced the
+        // remainder (it always returned the full dividend back), so `b`
+        // cycled between the two original inputs forever. With real
+        // division this must terminate promptly and find the shared
+        // factor.
+        //
+        // gcd(x^2 - 1, x - 1) = x - 1 (x-1 exactly divides x^2-1).
+        let a = vec![-1.0, 0.0, 1.0]; // x^2 - 1
+        let b = vec![-1.0, 1.0]; // x - 1
+
+        let gcd = simd_poly_gcd(a, b);
+        assert_eq!(gcd, vec![-1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_simd_poly_gcd_coprime_is_nonzero() {
+        // x - 1 and x - 2 are coprime; their GCD is a nonzero constant.
+        let a = vec![-1.0, 1.0]; // x - 1
+        let b = vec![-2.0, 1.0]; // x - 2
+
+        let gcd = simd_poly_gcd(a, b);
+        assert!(
+            !is_zero_poly(&gcd),
+            "coprime polynomials must have a non-zero GCD"
+        );
+    }
+
+    #[test]
+    fn test_simd_poly_gcd_with_zero_input_terminates() {
+        let a = vec![-1.0, 1.0]; // x - 1
+        let b = vec![0.0];
+
+        let gcd = simd_poly_gcd(a.clone(), b);
+        assert_eq!(gcd, a);
     }
 }

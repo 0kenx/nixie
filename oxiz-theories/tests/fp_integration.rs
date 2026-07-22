@@ -282,18 +282,126 @@ fn test_fp_predicate_is_normal() {
     solver.new_fp(a, FpFormat::FLOAT32);
     solver.assert_is_normal(a);
 
+    // `assert_is_normal` constrains the exponent to be nonzero and not
+    // all-ones (i.e. neither subnormal/zero nor NaN/infinity), which is
+    // always satisfiable (e.g. exponent = 1, any significand). A solver
+    // that answers Unsat/Unknown here has a real bug, so this must be a
+    // hard assertion, not a vacuous `if Sat` guard.
     let result = solver.check().expect("check should succeed");
-    // Note: The current implementation of assert_is_normal may have some
-    // constraint encoding issues that can lead to UNSAT in some cases.
-    // For now, we just verify the method can be called without panicking.
-    if matches!(result, TheoryResult::Sat) {
-        let val = solver.get_value(a).expect("value should exist");
-        assert!(val.is_normal());
-        assert!(!val.is_zero());
-        assert!(!val.is_nan());
-        assert!(!val.is_infinite());
-    }
-    // TODO: Fix constraint encoding in assert_is_normal to reliably produce SAT
+    assert!(matches!(result, TheoryResult::Sat));
+    let val = solver.get_value(a).expect("value should exist");
+    assert!(val.is_normal());
+    assert!(!val.is_zero());
+    assert!(!val.is_nan());
+    assert!(!val.is_infinite());
+}
+
+/// `fp.isNormal` must reject a value whose classification is pinned to a
+/// mutually exclusive predicate by direct construction (`assert_is_zero` /
+/// `assert_is_nan`, each building its own encode_is_* reification over the
+/// same underlying exponent/significand bits as `assert_is_normal`). These
+/// two directions confirm `assert_is_normal`'s own encoding is sound: it
+/// correctly conflicts with `is_zero` and with `is_nan` via the shared
+/// bit-level variables, with no `assert_const` in the picture.
+#[test]
+fn test_fp_predicate_is_normal_conflicts_with_is_zero() {
+    let mut solver = FpSolver::new();
+
+    let a = term(1);
+    solver.new_fp(a, FpFormat::FLOAT32);
+    solver.assert_is_normal(a);
+    solver.assert_is_zero(a);
+
+    let result = solver.check().expect("check should succeed");
+    assert!(matches!(result, TheoryResult::Unsat(_)));
+}
+
+#[test]
+fn test_fp_predicate_is_normal_conflicts_with_is_nan() {
+    let mut solver = FpSolver::new();
+
+    let a = term(1);
+    solver.new_fp(a, FpFormat::FLOAT32);
+    solver.assert_is_normal(a);
+    solver.assert_is_nan(a);
+
+    let result = solver.check().expect("check should succeed");
+    assert!(matches!(result, TheoryResult::Unsat(_)));
+}
+
+/// `fp.isNormal` must also reject the negative case: a value pinned to
+/// the subnormal-only range (exponent field all zero, nonzero
+/// significand) can never be normal, so asserting both `fp.isNormal` and
+/// a concrete subnormal constant must be Unsat.
+///
+/// CONFIRMED PRODUCTION BUG (out of scope for this pass -- do not fix
+/// here; this test documents it for whichever wave owns oxiz-sat /
+/// oxiz-theories check() plumbing):
+///
+/// `FpSolver::assert_is_normal`'s own clauses are sound in isolation (see
+/// the two tests above), but this combination -- `assert_const` with a
+/// subnormal value *before* `assert_is_normal` -- currently returns `Sat`
+/// with a model equal to the literal subnormal constant, which plainly
+/// violates `assert_is_normal`'s own `exp_nonzero` clause. Root cause,
+/// traced through both crates:
+///
+/// - `oxiz_sat::Solver::add_clause` special-cases unit (single-literal)
+///   clauses by pushing them straight onto the trail via
+///   `trail.assign_decision(lit)` with **no backing clause** (see
+///   `oxiz-sat/src/solver/mod.rs`, the `len() == 1` arm). Both
+///   `assert_const`'s per-bit fixing and `assert_is_normal`'s
+///   `exp_nonzero`/`is_nan`/`is_inf`/`is_zero` unit clauses go through
+///   this path.
+/// - The multi-literal definitional clause
+///   `[¬exp_nonzero, e_1, ..., e_8]` is added *before* `exp_nonzero` is
+///   pinned true, at which point every `e_i` is already false (from the
+///   prior `assert_const`); nothing re-validates that clause against the
+///   trail when `exp_nonzero` is fixed true immediately afterward, so the
+///   resulting violation is only ever surfaced later, through search-time
+///   conflict analysis -- not through `add_clause`-time propagation.
+/// - `FpSolver::check()` (`oxiz-theories/src/fp/solver/mod.rs`, the `if
+///   matches!(solve_result, SolverResult::Unsat) { restore_to_trail_size
+///   (..); forget_learned_since(..); solve_result = self.sat.solve(); }`
+///   double-solve) unconditionally discards learned clauses and retries
+///   whenever the first `solve()` reports Unsat, mirroring a workaround
+///   documented for `BvSolver` against a *spurious*-Unsat failure mode.
+///   Here the first `Unsat` is genuine (confirmed by the two tests
+///   above using the same encoding without `assert_const`), but the
+///   blanket retry cannot distinguish "spurious" from "genuine" and the
+///   second, learned-clause-free `solve()` fails to re-derive the same
+///   conflict, yielding a false `Sat`.
+///
+/// This is a soundness bug spanning `oxiz-sat`'s unit-clause fast path
+/// and/or `oxiz-theories`'s blanket double-solve retry, not an error in
+/// `assert_is_normal`'s constraint logic. Fixing it requires either making
+/// `oxiz_sat::Solver::add_clause`'s unit-clause fast path re-validate
+/// affected multi-literal clauses, or making the double-solve retry
+/// distinguish genuine from spurious Unsat -- both out of this test
+/// file's scope. Un-ignore once fixed.
+#[test]
+#[ignore = "confirmed production bug: FpSolver::check() double-solve retry \
+            (oxiz-theories/src/fp/solver/mod.rs) turns a genuine Unsat \
+            (assert_const subnormal + assert_is_normal) into a spurious \
+            Sat; root cause traced into oxiz_sat::Solver::add_clause's \
+            unit-clause fast path -- see doc comment above, out of scope \
+            for this pass"]
+fn test_fp_predicate_is_normal_rejects_subnormal_range() {
+    let mut solver = FpSolver::new();
+
+    let a = term(1);
+    // A subnormal FLOAT32 value: exponent field = 0, nonzero significand.
+    let subnormal = FpValue {
+        sign: false,
+        exponent: 0,
+        significand: 1,
+        format: FpFormat::FLOAT32,
+    };
+    assert!(subnormal.is_subnormal());
+    solver.assert_const(a, &subnormal);
+    solver.assert_is_normal(a);
+
+    let result = solver.check().expect("check should succeed");
+    assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
 #[test]

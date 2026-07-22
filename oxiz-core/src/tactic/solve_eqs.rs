@@ -41,14 +41,33 @@ impl<'a> SolveEqsTactic<'a> {
         contains_term(term, var, self.manager)
     }
 
-    /// Apply Gaussian elimination to solve equations
+    /// Apply Gaussian elimination to solve equations.
     pub fn apply_mut(&mut self, goal: &Goal) -> Result<TacticResult> {
+        Ok(self.apply_mut_with_converter(goal)?.0)
+    }
+
+    /// Apply Gaussian elimination, additionally returning a [`ModelConverter`]
+    /// that reconstructs the eliminated variables' values from a model of the
+    /// transformed sub-goal.
+    ///
+    /// Each solved equation `x = expr` removes `x` and substitutes `expr` for
+    /// it. Given a model over the surviving variables, the converter recovers
+    /// each eliminated `x` by evaluating its `expr` under the model (in
+    /// reverse elimination order, since an earlier-eliminated variable's
+    /// defining expression may reference a later-eliminated one). Returns
+    /// `Some(converter)` only for the `SubGoals` transformation case.
+    pub fn apply_mut_with_converter(
+        &mut self,
+        goal: &Goal,
+    ) -> Result<(TacticResult, Option<Box<dyn ModelConverter>>)> {
         if goal.assertions.is_empty() {
-            return Ok(TacticResult::NotApplicable);
+            return Ok((TacticResult::NotApplicable, None));
         }
 
         let mut current_assertions = goal.assertions.clone();
         let mut total_changed = false;
+        // Ordered record of (eliminated_var, defining_expr) for the converter.
+        let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
 
         for _ in 0..self.max_iterations {
             let mut iteration_changed = false;
@@ -68,6 +87,7 @@ impl<'a> SolveEqsTactic<'a> {
             if let (Some(idx), Some((var, expr))) = (solved_equation_index, solution) {
                 iteration_changed = true;
                 total_changed = true;
+                eliminations.push((var, expr));
 
                 // Build substitution map
                 let mut subst = crate::prelude::FxHashMap::default();
@@ -96,7 +116,7 @@ impl<'a> SolveEqsTactic<'a> {
         }
 
         if !total_changed {
-            return Ok(TacticResult::NotApplicable);
+            return Ok((TacticResult::NotApplicable, None));
         }
 
         // Check for trivially true/false
@@ -105,7 +125,7 @@ impl<'a> SolveEqsTactic<'a> {
 
         // Check if any assertion is false
         if current_assertions.contains(&false_id) {
-            return Ok(TacticResult::Solved(SolveResult::Unsat));
+            return Ok((TacticResult::Solved(SolveResult::Unsat), None));
         }
 
         // Filter out true assertions
@@ -116,13 +136,18 @@ impl<'a> SolveEqsTactic<'a> {
 
         // If all assertions are true, goal is SAT
         if filtered.is_empty() {
-            return Ok(TacticResult::Solved(SolveResult::Sat));
+            return Ok((TacticResult::Solved(SolveResult::Sat), None));
         }
 
-        Ok(TacticResult::SubGoals(vec![Goal {
-            assertions: filtered,
-            precision: goal.precision,
-        }]))
+        let converter: Box<dyn ModelConverter> = Box::new(SolveEqsConverter { eliminations });
+
+        Ok((
+            TacticResult::SubGoals(vec![Goal {
+                assertions: filtered,
+                precision: goal.precision,
+            }]),
+            Some(converter),
+        ))
     }
 
     /// Concrete implementation that returns actual TermIds (not pending computations)
@@ -227,6 +252,33 @@ impl<'a> SolveEqsTactic<'a> {
     }
 }
 
+/// Model converter for [`SolveEqsTactic`].
+///
+/// Stores the ordered `(eliminated_var, defining_expr)` pairs produced by the
+/// tactic. To convert a model of the transformed sub-goal into a model of the
+/// original goal, it evaluates each defining expression under the current
+/// (progressively extended) model in **reverse** elimination order: the first
+/// variable eliminated may be defined in terms of a variable eliminated later,
+/// so later ones must be reconstructed first.
+struct SolveEqsConverter {
+    eliminations: Vec<(TermId, TermId)>,
+}
+
+impl ModelConverter for SolveEqsConverter {
+    fn convert(&self, model: &TacticModel, manager: &mut TermManager) -> TacticModel {
+        let mut result = model.clone();
+        for (var, expr) in self.eliminations.iter().rev() {
+            // Substitute the known values into the defining expression and
+            // simplify; with a complete model over the surviving variables
+            // this yields the eliminated variable's concrete value.
+            let substituted = manager.substitute(*expr, &result.values);
+            let value = manager.simplify(substituted);
+            result.values.insert(*var, value);
+        }
+        result
+    }
+}
+
 /// Stateless version for the Tactic trait
 #[derive(Debug, Default)]
 pub struct StatelessSolveEqsTactic;
@@ -236,12 +288,19 @@ impl Tactic for StatelessSolveEqsTactic {
         "solve-eqs"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        Ok(TacticResult::SubGoals(vec![(*goal).clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Gaussian elimination substitutes solved variables, which requires a
+        // `&mut TermManager` to build the substituted terms. The manager-free
+        // `Tactic::apply` cannot do this, so it honestly reports
+        // NotApplicable rather than returning the goal unchanged as if it had
+        // solved anything. Use `SolveEqsTactic::apply_mut` (or the registry's
+        // `create_managed` path) for the real transformation.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Gaussian elimination for linear equations - solves x = expr and substitutes"
+        "Gaussian elimination for linear equations - solves x = expr and substitutes \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }
 
@@ -307,6 +366,17 @@ impl Coefficient {
             numerator: num_bigint::BigInt::from(self.numerator.magnitude().clone()),
             denominator: num_bigint::BigInt::from(self.denominator.magnitude().clone()),
         }
+    }
+
+    /// Whether this coefficient is exactly ±1 (a magnitude-one integer).
+    ///
+    /// Used by the integer-soundness guard in [`FourierMotzkinTactic`]: an
+    /// integer variable is exactly eliminable (real shadow == integer
+    /// projection) only when, for every lower/upper pair, its coefficient is a
+    /// unit on at least one side — the Omega-test exact-shadow condition.
+    fn is_unit_magnitude(&self) -> bool {
+        self.denominator == num_bigint::BigInt::from(1)
+            && Signed::abs(&self.numerator) == num_bigint::BigInt::from(1)
     }
 
     /// Multiply two coefficients
@@ -580,6 +650,12 @@ impl<'a> FourierMotzkinTactic<'a> {
         // Phase 4: Eliminate variables
         let mut eliminated_any = false;
 
+        // Real-sorted variables are exactly eliminable by Fourier-Motzkin;
+        // any other sort (Int, or an unexpected sort) requires the
+        // integer-exactness guard below before a pairwise elimination is
+        // sound (P4-1104).
+        let real_sort = self.manager.sorts.real_sort;
+
         // Sort variables by elimination cost
         let mut vars_to_eliminate: Vec<_> = all_vars.iter().copied().collect();
         vars_to_eliminate.sort_by_key(|&var| {
@@ -604,13 +680,38 @@ impl<'a> FourierMotzkinTactic<'a> {
                 continue;
             }
 
-            // Trivial elimination: no lower or upper bounds
+            // Trivial elimination: no lower or upper bounds.
+            //
+            // A variable that is unbounded below (only upper bounds) or above
+            // (only lower bounds) can always be given a value satisfying its
+            // constraints — over the reals *and* over the integers — so
+            // dropping those constraints is a sound projection for both. No
+            // integer-exactness guard is needed here.
             if lower_indices.is_empty() || upper_indices.is_empty() {
                 // Mark constraints involving this variable as dead
                 for &idx in lower_indices.iter().chain(upper_indices.iter()) {
                     constraints[idx].dead = true;
                 }
                 eliminated_any = true;
+                continue;
+            }
+
+            // Integer-soundness guard (P4-1104): Fourier-Motzkin resolution
+            // computes the *real* shadow of the projection. For an integer
+            // variable, the real shadow coincides with the exact integer
+            // projection only when every (lower, upper) pair has a unit (±1)
+            // coefficient on at least one side (the Omega-test exact-shadow
+            // condition). If some pair has |coeff| > 1 on both sides, the real
+            // shadow is a strict over-approximation of the integer projection,
+            // so eliminating the variable would be unsound — e.g. the system
+            // 1 <= 2x <= 1 is real-feasible (x = 1/2) but integer-infeasible,
+            // and eliminating x used to collapse it to `true` and report Sat.
+            // In that case we skip this variable, leaving its constraints
+            // intact rather than fabricating an exact integer projection.
+            let requires_integral = self.manager.get(var).is_none_or(|t| t.sort != real_sort);
+            if requires_integral
+                && !Self::integer_elimination_exact(&constraints, var, lower_indices, upper_indices)
+            {
                 continue;
             }
 
@@ -719,6 +820,43 @@ impl<'a> FourierMotzkinTactic<'a> {
             assertions: new_assertions,
             precision: goal.precision,
         }]))
+    }
+
+    /// Whether eliminating the integer variable `var` by pairwise resolution
+    /// is *exact* over the integers.
+    ///
+    /// Returns `true` iff for every live (lower, upper) pair the coefficient
+    /// of `var` is a unit (±1) on at least one side. Under that condition the
+    /// Omega-test dark shadow equals the real shadow, so Fourier-Motzkin's
+    /// real projection coincides with the exact integer projection and the
+    /// elimination preserves (integer) equisatisfiability. If any pair has
+    /// |coeff| > 1 on both sides, the elimination is a strict
+    /// over-approximation and must be skipped (P4-1104).
+    fn integer_elimination_exact(
+        constraints: &[LinearConstraint],
+        var: TermId,
+        lowers: &[usize],
+        uppers: &[usize],
+    ) -> bool {
+        for &li in lowers {
+            let lc = &constraints[li];
+            if lc.dead {
+                continue;
+            }
+            let lower_is_unit = lc.get_coeff(var).is_unit_magnitude();
+            for &ui in uppers {
+                let uc = &constraints[ui];
+                if uc.dead {
+                    continue;
+                }
+                // The pair is exact iff at least one side has a unit
+                // coefficient on `var`.
+                if !lower_is_unit && !uc.get_coeff(var).is_unit_magnitude() {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Extract a linear constraint from a term
@@ -1070,12 +1208,18 @@ impl Tactic for StatelessFourierMotzkinTactic {
         "fm"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        Ok(TacticResult::SubGoals(vec![(*goal).clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Fourier-Motzkin resolution builds new constraint terms, requiring a
+        // `&mut TermManager`. The manager-free path honestly reports
+        // NotApplicable instead of returning the goal unchanged. Use
+        // `FourierMotzkinTactic::apply_mut` (or `create_managed`) for the real
+        // elimination.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Fourier-Motzkin variable elimination for linear arithmetic"
+        "Fourier-Motzkin variable elimination for linear arithmetic \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }
 
@@ -1525,13 +1669,17 @@ impl Tactic for StatelessNnfTactic {
         "nnf"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        // Without a term manager, we can only return the goal unchanged
-        Ok(TacticResult::SubGoals(vec![(*goal).clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // NNF conversion rebuilds terms with negations pushed inward, which
+        // needs a `&mut TermManager`. The manager-free path honestly reports
+        // NotApplicable instead of returning the goal unchanged. Use
+        // `NnfTactic::apply_mut` (or `create_managed`) for the real conversion.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Convert formulas to Negation Normal Form"
+        "Convert formulas to Negation Normal Form \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }
 
@@ -1583,12 +1731,17 @@ impl Tactic for StatelessCnfTactic {
         "tseitin-cnf"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        // Without a term manager, we can only return the goal unchanged
-        Ok(TacticResult::SubGoals(vec![(*goal).clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Tseitin CNF conversion introduces auxiliary variables and rebuilt
+        // clauses, requiring a `&mut TermManager`. The manager-free path
+        // honestly reports NotApplicable instead of returning the goal
+        // unchanged. Use `TseitinCnfTactic::apply_mut` (or `create_managed`)
+        // for the real conversion.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Convert formulas to Conjunctive Normal Form using Tseitin transformation"
+        "Convert formulas to Conjunctive Normal Form using Tseitin transformation \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }

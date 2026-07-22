@@ -1,5 +1,5 @@
 //! Advanced Bit-Vector Rewriter
-#![allow(dead_code, missing_docs, clippy::type_complexity)] // Under development - not yet fully integrated
+#![allow(dead_code, missing_docs, clippy::type_complexity)] // Self-contained; not wired into the default solve path (bv_rewriter is authoritative)
 //!
 //! This module implements sophisticated bit-vector simplification and rewriting:
 //! - Constant folding and propagation
@@ -7,11 +7,27 @@
 //! - Bit-width reduction
 //! - Strength reduction (expensive ops → cheap ops)
 //! - Pattern-based rewriting
+//!
+//! # Handle space
+//!
+//! This rewriter operates in its **own** opaque handle space ([`BvHandle`], a
+//! plain `usize`), *not* the crate's hash-consed AST [`crate::ast::TermId`].
+//! Constants are interned by value (equal constants share a handle) and every
+//! composite term (`mk_add`, `mk_mul`, …) is interned by its structure, so
+//! distinct terms always receive distinct, non-colliding handles and a
+//! composite handle can never be mistaken for a constant. It is *not* wired
+//! into the real solver — `bv_rewriter.rs` is the authoritative AST-backed
+//! rewriter — but its simplification helpers are internally sound.
 
-/// Placeholder term identifier
 #[allow(unused_imports)]
 use crate::prelude::*;
-pub type TermId = usize;
+
+/// Opaque handle for a bit-vector term in this rewriter's local store.
+///
+/// This is intentionally **not** the crate's AST `TermId`: this module is a
+/// self-contained calculator over `u64` constant values and interned opaque
+/// composite handles (see the module docs).
+pub type BvHandle = usize;
 
 /// Bit-vector operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -64,7 +80,7 @@ pub struct RewriteRule {
     /// Pattern to match
     pub pattern: Pattern,
     /// Replacement term constructor
-    pub replacement: Box<dyn Fn(&[TermId]) -> Option<TermId>>,
+    pub replacement: Box<dyn Fn(&[BvHandle]) -> Option<BvHandle>>,
 }
 
 /// Pattern for matching
@@ -123,8 +139,19 @@ pub struct AdvancedBvRewriter {
     stats: RewriterStats,
     /// Rewrite rules
     rules: Vec<RewriteRule>,
-    /// Constant cache
-    constants: FxHashMap<TermId, u64>,
+    /// Constant cache: handle -> concrete value.
+    constants: FxHashMap<BvHandle, u64>,
+    /// Next fresh handle to allocate. Handle `0` is reserved as an invalid
+    /// sentinel so no real term ever collides with it.
+    next_handle: BvHandle,
+    /// Interning of constants by value, so equal constants share a handle.
+    const_intern: FxHashMap<u64, BvHandle>,
+    /// Interning of composite terms by `(op, lhs, rhs, width)`, so
+    /// structurally equal composites share a handle (and are always distinct
+    /// from constant handles).
+    composite_intern: FxHashMap<(BvOp, BvHandle, BvHandle, usize), BvHandle>,
+    /// Structure of each composite handle (for introspection/debugging).
+    composites: FxHashMap<BvHandle, (BvOp, BvHandle, BvHandle, usize)>,
 }
 
 impl AdvancedBvRewriter {
@@ -135,10 +162,39 @@ impl AdvancedBvRewriter {
             stats: RewriterStats::default(),
             rules: Vec::new(),
             constants: FxHashMap::default(),
+            next_handle: 1,
+            const_intern: FxHashMap::default(),
+            composite_intern: FxHashMap::default(),
+            composites: FxHashMap::default(),
         };
 
         rewriter.initialize_rules();
         rewriter
+    }
+
+    /// Allocate a fresh, previously-unused handle.
+    fn fresh_handle(&mut self) -> BvHandle {
+        let h = self.next_handle;
+        self.next_handle += 1;
+        h
+    }
+
+    /// Intern a composite term, returning a stable handle for a given
+    /// `(op, lhs, rhs, width)` structure.
+    fn intern_composite(
+        &mut self,
+        op: BvOp,
+        lhs: BvHandle,
+        rhs: BvHandle,
+        width: usize,
+    ) -> BvHandle {
+        if let Some(&h) = self.composite_intern.get(&(op, lhs, rhs, width)) {
+            return h;
+        }
+        let h = self.fresh_handle();
+        self.composite_intern.insert((op, lhs, rhs, width), h);
+        self.composites.insert(h, (op, lhs, rhs, width));
+        h
     }
 
     /// Initialize rewrite rules
@@ -173,7 +229,7 @@ impl AdvancedBvRewriter {
     }
 
     /// Rewrite a bit-vector term
-    pub fn rewrite(&mut self, term: TermId) -> Result<TermId, String> {
+    pub fn rewrite(&mut self, term: BvHandle) -> Result<BvHandle, String> {
         let mut current = term;
         let mut iteration = 0;
 
@@ -193,7 +249,7 @@ impl AdvancedBvRewriter {
     }
 
     /// Perform one rewrite pass
-    fn rewrite_once(&mut self, term: TermId) -> Result<TermId, String> {
+    fn rewrite_once(&mut self, term: BvHandle) -> Result<BvHandle, String> {
         // Try constant folding first
         if self.config.enable_constant_folding
             && let Some(folded) = self.try_constant_fold(term)?
@@ -230,7 +286,7 @@ impl AdvancedBvRewriter {
     }
 
     /// Try constant folding
-    fn try_constant_fold(&mut self, _term: TermId) -> Result<Option<TermId>, String> {
+    fn try_constant_fold(&mut self, _term: BvHandle) -> Result<Option<BvHandle>, String> {
         // Placeholder: would check if all operands are constants
         // and compute result
 
@@ -243,7 +299,7 @@ impl AdvancedBvRewriter {
     }
 
     /// Try algebraic simplifications
-    fn try_algebraic_simplify(&self, _term: TermId) -> Result<Option<TermId>, String> {
+    fn try_algebraic_simplify(&self, _term: BvHandle) -> Result<Option<BvHandle>, String> {
         // Placeholder: would pattern match and apply algebraic rules
 
         // Example simplifications:
@@ -262,7 +318,7 @@ impl AdvancedBvRewriter {
     }
 
     /// Try strength reduction (expensive ops → cheap ops)
-    fn try_strength_reduction(&self, _term: TermId) -> Result<Option<TermId>, String> {
+    fn try_strength_reduction(&self, _term: BvHandle) -> Result<Option<BvHandle>, String> {
         // Placeholder: would identify and replace expensive operations
 
         // Example reductions:
@@ -276,7 +332,7 @@ impl AdvancedBvRewriter {
     }
 
     /// Try bit-width reduction
-    fn try_bit_width_reduction(&self, _term: TermId) -> Result<Option<TermId>, String> {
+    fn try_bit_width_reduction(&self, _term: BvHandle) -> Result<Option<BvHandle>, String> {
         // Placeholder: would analyze value ranges and reduce bit-widths
 
         // Example reductions:
@@ -289,10 +345,10 @@ impl AdvancedBvRewriter {
     /// Simplify bit-vector addition
     pub fn simplify_add(
         &mut self,
-        lhs: TermId,
-        rhs: TermId,
+        lhs: BvHandle,
+        rhs: BvHandle,
         width: usize,
-    ) -> Result<TermId, String> {
+    ) -> Result<BvHandle, String> {
         // Check for constants
         if let (Some(&lhs_val), Some(&rhs_val)) =
             (self.constants.get(&lhs), self.constants.get(&rhs))
@@ -323,10 +379,10 @@ impl AdvancedBvRewriter {
     /// Simplify bit-vector multiplication
     pub fn simplify_mul(
         &mut self,
-        lhs: TermId,
-        rhs: TermId,
+        lhs: BvHandle,
+        rhs: BvHandle,
         width: usize,
-    ) -> Result<TermId, String> {
+    ) -> Result<BvHandle, String> {
         // Check for constants
         if let (Some(&lhs_val), Some(&rhs_val)) =
             (self.constants.get(&lhs), self.constants.get(&rhs))
@@ -364,10 +420,10 @@ impl AdvancedBvRewriter {
     /// Simplify bit-vector AND
     pub fn simplify_and(
         &mut self,
-        lhs: TermId,
-        rhs: TermId,
+        lhs: BvHandle,
+        rhs: BvHandle,
         width: usize,
-    ) -> Result<TermId, String> {
+    ) -> Result<BvHandle, String> {
         // Check for constants
         if let (Some(&lhs_val), Some(&rhs_val)) =
             (self.constants.get(&lhs), self.constants.get(&rhs))
@@ -402,10 +458,10 @@ impl AdvancedBvRewriter {
     /// Simplify bit-vector OR
     pub fn simplify_or(
         &mut self,
-        lhs: TermId,
-        rhs: TermId,
+        lhs: BvHandle,
+        rhs: BvHandle,
         width: usize,
-    ) -> Result<TermId, String> {
+    ) -> Result<BvHandle, String> {
         // Check for constants
         if let (Some(&lhs_val), Some(&rhs_val)) =
             (self.constants.get(&lhs), self.constants.get(&rhs))
@@ -444,10 +500,10 @@ impl AdvancedBvRewriter {
     /// Simplify bit-vector XOR
     pub fn simplify_xor(
         &mut self,
-        lhs: TermId,
-        rhs: TermId,
+        lhs: BvHandle,
+        rhs: BvHandle,
         width: usize,
-    ) -> Result<TermId, String> {
+    ) -> Result<BvHandle, String> {
         // Check for constants
         if let (Some(&lhs_val), Some(&rhs_val)) =
             (self.constants.get(&lhs), self.constants.get(&rhs))
@@ -477,10 +533,10 @@ impl AdvancedBvRewriter {
     /// Simplify shift left
     pub fn simplify_shl(
         &mut self,
-        value: TermId,
-        shift: TermId,
+        value: BvHandle,
+        shift: BvHandle,
         width: usize,
-    ) -> Result<TermId, String> {
+    ) -> Result<BvHandle, String> {
         // Check for constant shift
         if let Some(&shift_val) = self.constants.get(&shift) {
             if shift_val == 0 {
@@ -508,19 +564,19 @@ impl AdvancedBvRewriter {
 
     // Helper methods
 
-    fn is_zero(&self, term: TermId) -> bool {
+    fn is_zero(&self, term: BvHandle) -> bool {
         self.constants.get(&term) == Some(&0)
     }
 
-    fn is_one(&self, term: TermId) -> bool {
+    fn is_one(&self, term: BvHandle) -> bool {
         self.constants.get(&term) == Some(&1)
     }
 
-    fn is_all_ones(&self, term: TermId, width: usize) -> bool {
+    fn is_all_ones(&self, term: BvHandle, width: usize) -> bool {
         self.constants.get(&term) == Some(&self.mask(width))
     }
 
-    fn is_power_of_two(&self, term: TermId) -> Option<u64> {
+    fn is_power_of_two(&self, term: BvHandle) -> Option<u64> {
         if let Some(&val) = self.constants.get(&term)
             && val > 0
             && (val & (val - 1)) == 0
@@ -530,8 +586,16 @@ impl AdvancedBvRewriter {
         None
     }
 
-    fn is_negation(&self, _lhs: TermId, _rhs: TermId) -> bool {
-        // Placeholder: would check if rhs = -lhs
+    /// Whether `rhs` is known to be the two's-complement negation of `lhs`.
+    ///
+    /// This handle space does not track symbolic negation relationships (there
+    /// is no `mk_neg`), and the both-constant case is already folded by the
+    /// callers before this check is reached, so there is no additional
+    /// information to exploit here. It therefore conservatively returns
+    /// `false` — a *sound* under-approximation: the `x + (-x) → 0` rule simply
+    /// never fires, which can miss a simplification but never produces a wrong
+    /// result.
+    fn is_negation(&self, _lhs: BvHandle, _rhs: BvHandle) -> bool {
         false
     }
 
@@ -543,36 +607,51 @@ impl AdvancedBvRewriter {
         }
     }
 
-    // Term constructors (placeholders)
+    // Term constructors.
+    //
+    // Constants are interned by value; composites by structure. Every handle
+    // returned here is either an interned constant (present in `constants`) or
+    // a fresh interned composite handle — never a fabricated `0`, and never a
+    // collision between a composite and a constant.
 
-    fn mk_const(&mut self, value: u64, _width: usize) -> Result<TermId, String> {
-        let id = value as TermId; // Simplified
-        self.constants.insert(id, value);
-        Ok(id)
+    fn mk_const(&mut self, value: u64, width: usize) -> Result<BvHandle, String> {
+        let value = value & self.mask(width);
+        if let Some(&h) = self.const_intern.get(&value) {
+            return Ok(h);
+        }
+        let h = self.fresh_handle();
+        self.const_intern.insert(value, h);
+        self.constants.insert(h, value);
+        Ok(h)
     }
 
-    fn mk_add(&self, _lhs: TermId, _rhs: TermId, _width: usize) -> Result<TermId, String> {
-        Ok(0)
+    fn mk_add(&mut self, lhs: BvHandle, rhs: BvHandle, width: usize) -> Result<BvHandle, String> {
+        Ok(self.intern_composite(BvOp::Add, lhs, rhs, width))
     }
 
-    fn mk_mul(&self, _lhs: TermId, _rhs: TermId, _width: usize) -> Result<TermId, String> {
-        Ok(0)
+    fn mk_mul(&mut self, lhs: BvHandle, rhs: BvHandle, width: usize) -> Result<BvHandle, String> {
+        Ok(self.intern_composite(BvOp::Mul, lhs, rhs, width))
     }
 
-    fn mk_and(&self, _lhs: TermId, _rhs: TermId, _width: usize) -> Result<TermId, String> {
-        Ok(0)
+    fn mk_and(&mut self, lhs: BvHandle, rhs: BvHandle, width: usize) -> Result<BvHandle, String> {
+        Ok(self.intern_composite(BvOp::And, lhs, rhs, width))
     }
 
-    fn mk_or(&self, _lhs: TermId, _rhs: TermId, _width: usize) -> Result<TermId, String> {
-        Ok(0)
+    fn mk_or(&mut self, lhs: BvHandle, rhs: BvHandle, width: usize) -> Result<BvHandle, String> {
+        Ok(self.intern_composite(BvOp::Or, lhs, rhs, width))
     }
 
-    fn mk_xor(&self, _lhs: TermId, _rhs: TermId, _width: usize) -> Result<TermId, String> {
-        Ok(0)
+    fn mk_xor(&mut self, lhs: BvHandle, rhs: BvHandle, width: usize) -> Result<BvHandle, String> {
+        Ok(self.intern_composite(BvOp::Xor, lhs, rhs, width))
     }
 
-    fn mk_shl(&self, _value: TermId, _shift: TermId, _width: usize) -> Result<TermId, String> {
-        Ok(0)
+    fn mk_shl(
+        &mut self,
+        value: BvHandle,
+        shift: BvHandle,
+        width: usize,
+    ) -> Result<BvHandle, String> {
+        Ok(self.intern_composite(BvOp::Shl, value, shift, width))
     }
 
     /// Get statistics
@@ -590,6 +669,66 @@ mod tests {
         let config = RewriterConfig::default();
         let rewriter = AdvancedBvRewriter::new(config);
         assert_eq!(rewriter.stats.rewrites_applied, 0);
+    }
+
+    // ── TODO-1012: sound handle allocation (no fake 0, no collisions) ─────
+
+    #[test]
+    fn test_composite_handles_are_distinct_and_nonzero() {
+        let mut r = AdvancedBvRewriter::new(RewriterConfig::default());
+        // Symbolic operands: bare handles that are not registered constants.
+        let x = 100usize;
+        let y = 200usize;
+        let zero = r.mk_const(0, 8).expect("mk_const");
+
+        // An unsimplifiable composite must get a fresh, non-zero handle that
+        // is distinct from the constant-0 handle. (Previously every composite
+        // fallback returned the fake handle 0, colliding with the constant 0.)
+        let add = r.mk_add(x, y, 8).expect("mk_add");
+        assert_ne!(add, 0, "composite must not be the reserved 0 sentinel");
+        assert_ne!(add, zero, "composite must not collide with the constant 0");
+        assert!(
+            !r.constants.contains_key(&add),
+            "a composite handle is never a registered constant"
+        );
+
+        // Structural interning: identical structure shares a handle.
+        let add2 = r.mk_add(x, y, 8).expect("mk_add");
+        assert_eq!(add, add2);
+
+        // Distinct structure yields a distinct handle.
+        let mul = r.mk_mul(x, y, 8).expect("mk_mul");
+        assert_ne!(add, mul);
+        assert_ne!(mul, zero);
+    }
+
+    #[test]
+    fn test_symbolic_add_not_folded_to_zero() {
+        // Regression: a symbolic `simplify_add` used to return the fake handle
+        // 0, which aliased the constant 0 and made downstream `is_zero`
+        // wrongly fire. It must now return a real, non-constant handle.
+        let mut r = AdvancedBvRewriter::new(RewriterConfig::default());
+        let x = 100usize;
+        let y = 200usize;
+        let sum = r.simplify_add(x, y, 8).expect("simplify_add");
+        assert!(
+            !r.constants.contains_key(&sum),
+            "symbolic sum must not be a constant"
+        );
+        assert!(
+            !r.is_zero(sum),
+            "symbolic sum must not be mistaken for zero"
+        );
+    }
+
+    #[test]
+    fn test_equal_constants_share_handle() {
+        let mut r = AdvancedBvRewriter::new(RewriterConfig::default());
+        let a = r.mk_const(7, 8).expect("mk_const");
+        let b = r.mk_const(7, 8).expect("mk_const");
+        assert_eq!(a, b, "equal constants must intern to the same handle");
+        let c = r.mk_const(9, 8).expect("mk_const");
+        assert_ne!(a, c, "distinct constants must get distinct handles");
     }
 
     #[test]

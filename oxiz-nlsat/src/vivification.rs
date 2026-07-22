@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), not part of the public API. WIRED: the
+// solver strengthens learned clauses at decision level 0 via real unit
+// propagation (`solver::inprocess::vivify_learned`), recording results through
+// `Vivifier::note_vivified`. The in-module `vivify_clause` (self-subsuming/
+// tautology removal over a bare slice) is retained as a lightweight fallback.
 //! Vivification for clause strengthening.
 //!
 //! Vivification is a powerful clause strengthening technique that uses
@@ -67,6 +71,15 @@ impl Vivifier {
     /// Get the statistics.
     pub fn stats(&self) -> &VivificationStats {
         &self.stats
+    }
+
+    /// Record that a clause was strengthened by the solver's unit-propagation
+    /// based vivification (which runs against the full clause database rather
+    /// than a bare slice; see `NlsatSolver::vivify_learned`), removing
+    /// `literals_removed` literals.
+    pub fn note_vivified(&mut self, literals_removed: u64) {
+        self.stats.clauses_vivified += 1;
+        self.stats.literals_removed += literals_removed;
     }
 
     /// Get the configuration.

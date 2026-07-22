@@ -147,7 +147,28 @@ impl MaxHsSolver {
 
             match result {
                 SolverResult::Sat => {
-                    // All soft clauses are satisfied
+                    // `self.sat_solver` only ever contains *every* soft
+                    // clause (added as a hard constraint) on the very
+                    // first iteration -- once a minimal correction set
+                    // (MCS) is found, `block_hitting_set` rebuilds
+                    // `sat_solver` with the current hitting set's members
+                    // removed (see below), so a later SAT here just
+                    // confirms that removal is sufficient, not that every
+                    // original soft clause is jointly satisfiable.
+                    //
+                    // On that genuine first-iteration SAT (`self.mcses`
+                    // still empty), every soft clause co-exists in
+                    // `sat_solver` and is jointly satisfiable, so the true
+                    // optimum cost is 0 -- previously left unset, so
+                    // `best_cost()` incorrectly reported the
+                    // `Weight::Infinite` initial placeholder for such
+                    // instances. On any later iteration, `best_cost` was
+                    // already set to the correct value (the accepted
+                    // hitting set's cost) in the `Unsat` branch below and
+                    // must not be overwritten.
+                    if self.mcses.is_empty() {
+                        self.best_cost = Weight::zero();
+                    }
                     return Ok(MaxSatResult::Optimal);
                 }
                 SolverResult::Unsat => {
@@ -415,6 +436,35 @@ mod tests {
 
         // Should have cost 1 (one clause must be violated)
         assert_eq!(*solver.best_cost(), Weight::from(1));
+    }
+
+    /// `OPT-MAXHS-BESTCOST-INF` regression: when every soft clause is
+    /// jointly satisfiable on the very first SAT check, `best_cost` must
+    /// report the true optimum cost of 0, not the `Weight::Infinite`
+    /// initial placeholder.
+    #[test]
+    fn test_maxhs_immediately_satisfiable_reports_cost_zero() {
+        let mut solver = MaxHsSolver::new();
+
+        // Hard: x0 \/ x1 (trivially satisfiable alongside the softs below).
+        solver.add_hard([Lit::from_dimacs(1), Lit::from_dimacs(2)]);
+
+        // Soft clauses that can all be satisfied simultaneously (x0=true,
+        // x1=true satisfies both).
+        solver.add_soft(SoftId(0), [Lit::from_dimacs(1)], Weight::from(1));
+        solver.add_soft(SoftId(1), [Lit::from_dimacs(2)], Weight::from(1));
+
+        let result = solver.solve();
+        assert!(
+            matches!(result, Ok(MaxSatResult::Optimal)),
+            "expected Optimal: {result:?}"
+        );
+        assert_eq!(
+            *solver.best_cost(),
+            Weight::zero(),
+            "every soft clause is jointly satisfiable, so the true optimum \
+             cost is 0, not Infinite"
+        );
     }
 
     #[test]

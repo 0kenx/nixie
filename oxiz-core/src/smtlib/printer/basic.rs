@@ -4,18 +4,48 @@ use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::{SortId, SortKind};
+use core::cell::Cell;
 use core::fmt::Write;
+
+/// Maximum `write_term` recursion depth before printing degrades to a
+/// truncation marker instead of continuing to descend, mirroring the
+/// depth caps applied elsewhere in the crate (e.g.
+/// `ast::manager::query::MAX_QUERY_RECURSION_DEPTH`,
+/// `simplification`'s `SIMPLIFICATION_MAX_DEPTH`). Terms built directly
+/// via the `mk_*` builder API bypass those parser-/rewriter-side caps, so
+/// without a bound here, printing a pathologically deep (but validly
+/// constructed) term could overflow the native call stack.
+const MAX_PRINT_DEPTH: u32 = 2000;
 
 /// Printer for SMT-LIB2 format
 pub struct Printer<'a> {
     pub(super) manager: &'a TermManager,
+    /// Current `write_term` recursion depth on this printer. `Cell`
+    /// because `write_term` takes `&self` (it is called recursively and
+    /// re-entrantly from many call sites, all of which stay unchanged —
+    /// see `write_term`'s depth-guard wrapper below).
+    depth: Cell<u32>,
+}
+
+/// RAII guard that decrements a [`Printer`]'s `depth` counter on drop
+/// (including on early return), keeping the depth bookkeeping accurate
+/// regardless of which path through `write_term_at_depth` returns.
+struct PrintDepthGuard<'p, 'a>(&'p Printer<'a>);
+
+impl Drop for PrintDepthGuard<'_, '_> {
+    fn drop(&mut self) {
+        self.0.depth.set(self.0.depth.get().saturating_sub(1));
+    }
 }
 
 impl<'a> Printer<'a> {
     /// Create a new printer
     #[must_use]
     pub fn new(manager: &'a TermManager) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            depth: Cell::new(0),
+        }
     }
 
     /// Print a term to a string
@@ -26,8 +56,30 @@ impl<'a> Printer<'a> {
         buf
     }
 
-    /// Write a term to a writer
+    /// Write a term to a writer.
+    ///
+    /// Bounds recursion at `MAX_PRINT_DEPTH`: past that depth, printing
+    /// degrades gracefully to a truncation marker (`...`) instead of
+    /// recursing further and risking a native stack overflow. See
+    /// `write_term_at_depth` for the actual
+    /// per-`TermKind` printing logic — every recursive call within it
+    /// still goes back through this wrapper, so the depth check applies
+    /// at every level without needing to touch each call site.
     pub fn write_term(&self, w: &mut impl Write, term_id: TermId) {
+        let depth = self.depth.get();
+        if depth >= MAX_PRINT_DEPTH {
+            let _ = write!(w, "...");
+            return;
+        }
+        self.depth.set(depth + 1);
+        let _guard = PrintDepthGuard(self);
+        self.write_term_at_depth(w, term_id);
+    }
+
+    /// Per-`TermKind` printing logic for [`write_term`](Self::write_term);
+    /// see that method's doc comment for the depth-guarding this relies
+    /// on.
+    fn write_term_at_depth(&self, w: &mut impl Write, term_id: TermId) {
         let Some(term) = self.manager.get(term_id) else {
             let _ = write!(w, "?{}", term_id.0);
             return;
@@ -862,5 +914,66 @@ impl<'a> Printer<'a> {
         let mut buf = String::new();
         self.write_sort(&mut buf, sort_id);
         buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression tests for: "Recursive term printers lack an explicit
+    // depth cap" — `write_term` must degrade gracefully (truncate) past
+    // `MAX_PRINT_DEPTH` instead of recursing without bound.
+
+    #[test]
+    fn write_term_truncates_past_max_print_depth_instead_of_overflowing_stack() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+
+        // Build a chain of nested `not`s deeper than MAX_PRINT_DEPTH via
+        // the crate-internal `intern` (bypassing `mk_not`'s double
+        // negation simplification, which would otherwise collapse this
+        // chain instead of building it) — exactly the "term constructed
+        // directly via the builder API, not routed through a depth-capped
+        // parser/rewriter" case MAX_PRINT_DEPTH exists to guard.
+        let mut term = manager.mk_true();
+        for _ in 0..(MAX_PRINT_DEPTH as usize + 500) {
+            term = manager.intern(TermKind::Not(term), bool_sort);
+        }
+
+        let printer = Printer::new(&manager);
+        let printed = printer.print_term(term);
+        assert!(
+            printed.contains("..."),
+            "expected a truncation marker once MAX_PRINT_DEPTH is exceeded, got a string of len {}",
+            printed.len()
+        );
+    }
+
+    #[test]
+    fn write_term_prints_normal_depth_terms_without_truncation() {
+        let mut manager = TermManager::new();
+        let x = manager.mk_var("x", manager.sorts.bool_sort);
+        let y = manager.mk_var("y", manager.sorts.bool_sort);
+        let and = manager.mk_and([x, y]);
+
+        let printer = Printer::new(&manager);
+        let printed = printer.print_term(and);
+        assert_eq!(printed, "(and x y)");
+        assert!(!printed.contains("..."));
+    }
+
+    #[test]
+    fn write_term_depth_counter_resets_between_independent_calls() {
+        // The depth counter must not leak across independent top-level
+        // `write_term` calls on the same `Printer` — verified by printing
+        // a normal term successfully more than once in a row.
+        let mut manager = TermManager::new();
+        let x = manager.mk_var("x", manager.sorts.bool_sort);
+        let not_x = manager.mk_not(x);
+
+        let printer = Printer::new(&manager);
+        assert_eq!(printer.print_term(not_x), "(not x)");
+        assert_eq!(printer.print_term(not_x), "(not x)");
     }
 }

@@ -12,6 +12,11 @@ use oxiz_core::sort::{SortId, SortKind};
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
+/// Model / value / sort output formatting for `(get-model)`, `(get-value ..)`,
+/// and the function-interpretation extensions. Split into a child module so
+/// this file stays under the 2000-line policy limit.
+mod model_fmt;
+
 /// Raw function interpretation: a list of `(arg_strings, value_string)` entries
 /// together with an `else_value` string and the function arity.
 ///
@@ -264,6 +269,18 @@ impl Context {
         self.solver.assert(term, &mut self.terms);
     }
 
+    /// Add a named assertion (from `(assert (! phi :named name))`).
+    ///
+    /// The name is threaded into the solver's named-assertion tracking so that,
+    /// with `:produce-unsat-cores` enabled, `(get-unsat-core)` can report the
+    /// user labels of the assertions that participate in an `unsat` refutation.
+    /// The name is only recorded by the solver when unsat-core production is on;
+    /// otherwise this behaves exactly like [`Context::assert`].
+    pub fn assert_named(&mut self, term: TermId, name: &str) {
+        self.assertions.push(term);
+        self.solver.assert_named(term, name, &mut self.terms);
+    }
+
     /// Check satisfiability
     pub fn check_sat(&mut self) -> SolverResult {
         let mut result = self.solver.check(&mut self.terms);
@@ -408,291 +425,6 @@ impl Context {
         }
         let value = self.solver.model()?.eval(term, &mut self.terms);
         Some(value)
-    }
-
-    /// Get the model (if SAT)
-    /// Returns a list of (name, sort, value) tuples
-    pub fn get_model(&self) -> Option<Vec<(String, String, String)>> {
-        if self.last_result != Some(SolverResult::Sat) {
-            return None;
-        }
-
-        let mut model = Vec::new();
-        let solver_model = self.solver.model()?;
-
-        for decl in &self.declared_consts {
-            let value = if let Some(val) = solver_model.get(decl.term) {
-                self.format_value(val)
-            } else {
-                // Default value based on sort
-                self.default_value(decl.sort)
-            };
-            let sort_name = self.format_sort_name(decl.sort);
-            model.push((decl.name.clone(), sort_name, value));
-        }
-
-        Some(model)
-    }
-
-    /// Build a raw function interpretation for a declared uninterpreted function.
-    ///
-    /// Derives entries from the EUF congruence closure rather than from raw
-    /// `Apply` terms alone.  For every application `f(a1, …, an)` interned in the
-    /// E-graph, the arguments and the result are canonicalized through their
-    /// equivalence-class representatives, so:
-    ///
-    /// - Two applications whose arguments are pairwise congruent (e.g. `f(a)` and
-    ///   `f(b)` when `a = b` is implied by the assertions) collapse to a **single**
-    ///   entry keyed by the shared argument class.
-    /// - The reported argument and result strings are **model values** taken from
-    ///   the class (resolving through the representative), not raw term ids.
-    /// - When an application has no direct model value, the value of any congruent
-    ///   member of its class is used.
-    ///
-    /// `else_value` is chosen as the most frequently occurring entry value (ties
-    /// broken by first occurrence), mirroring how Z3 selects a default; if there
-    /// are no entries it falls back to the return sort's default value.
-    ///
-    /// Returns `None` when:
-    /// - the last check was not `Sat`, or
-    /// - no model is available, or
-    /// - `func_name` is not a declared function.
-    ///
-    /// The return type is `(entries, else_value_string, arity)` to avoid
-    /// pulling `oxiz_core::model` types into this file.
-    pub fn get_func_interp_raw(&self, func_name: &str) -> Option<RawFuncInterp> {
-        if self.last_result != Some(SolverResult::Sat) {
-            return None;
-        }
-        let solver_model = self.solver.model()?;
-
-        // Find the declared function so we know its arity and default sort.
-        let decl = self.declared_funs.iter().find(|d| d.name == func_name)?;
-        let arity = decl.arg_sorts.len();
-        let default_else = self.default_value(decl.ret_sort);
-
-        // Resolve `func_name` to the EUF function-symbol id.  For an `Apply`
-        // term the EUF id is the underlying value of the function-name `Spur`,
-        // so we recover it from any matching application term (read-only — no
-        // mutable interner access required).
-        let mut func_id: Option<u32> = None;
-        for idx in 0..(self.terms.len() as u32) {
-            let tid = TermId(idx);
-            let Some(term) = self.terms.get(tid) else {
-                continue;
-            };
-            if let TermKind::Apply {
-                func: func_spur, ..
-            } = &term.kind
-                && self.terms.resolve_str(*func_spur) == func_name
-            {
-                func_id = Some(func_spur.into_inner().get());
-                break;
-            }
-        }
-
-        // No application of this function exists in the E-graph: the function is
-        // declared but never applied, so its interpretation is purely the default.
-        let Some(func_id) = func_id else {
-            return Some((Vec::new(), default_else, arity));
-        };
-
-        // Pull congruence-closed application entries from the EUF solver.  Each
-        // entry already has its argument and result classes canonicalized, so
-        // congruence (e.g. f(a) == f(b) when a == b) is applied for us.
-        let euf_entries = self.solver.euf_function_entries(func_id);
-
-        // Deduplicate on the canonical argument-class representative tuple so
-        // congruent applications produce exactly one entry.  Because congruence
-        // forces congruent applications into the same result class, the values
-        // agree in a consistent model.
-        let mut seen_arg_keys: crate::prelude::HashSet<smallvec::SmallVec<[u32; 4]>> =
-            crate::prelude::HashSet::new();
-        let mut entries: Vec<(Vec<String>, String)> = Vec::new();
-        for entry in &euf_entries {
-            // Resolve the result value first: skip applications whose class has
-            // no concrete model value (an unconstrained application contributes
-            // nothing observable beyond the else-branch).
-            let Some(val_str) = self.class_value_string(&entry.result_class_terms, solver_model)
-            else {
-                continue;
-            };
-
-            if !seen_arg_keys.insert(entry.arg_reps.clone()) {
-                continue; // already emitted this congruence class of arguments
-            }
-
-            // Resolve each argument to its canonical model value.  Falls back to
-            // the default value for the corresponding argument sort when the
-            // class carries no concrete value (rare: an unconstrained argument).
-            let arg_strs: Vec<String> = entry
-                .arg_class_terms
-                .iter()
-                .enumerate()
-                .map(|(i, members)| {
-                    self.class_value_string(members, solver_model)
-                        .unwrap_or_else(|| {
-                            decl.arg_sorts
-                                .get(i)
-                                .map_or_else(|| "?".to_string(), |&s| self.default_value(s))
-                        })
-                })
-                .collect();
-            entries.push((arg_strs, val_str));
-        }
-
-        // Pick `else_value`: the most common entry value (ties → first seen),
-        // matching Z3's habit of reusing an existing value as the default.
-        let else_value = Self::most_common_value(&entries).unwrap_or(default_else);
-
-        Some((entries, else_value, arity))
-    }
-
-    /// Resolve an equivalence class (its member `TermId`s) to a formatted model
-    /// value string, by finding the first member that carries either a direct
-    /// model assignment or is itself a literal constant.
-    ///
-    /// Returns `None` when no member of the class has an observable value.
-    fn class_value_string(
-        &self,
-        members: &[TermId],
-        solver_model: &crate::solver::Model,
-    ) -> Option<String> {
-        for &member in members {
-            // Direct model assignment (covers variables and applications whose
-            // value was extracted from an equality constraint).
-            if let Some(val_term) = solver_model.get(member) {
-                return Some(self.format_value(val_term));
-            }
-            // The member may itself be a literal constant (e.g. the term `5` in
-            // `f(a) = 5`), which has no separate model entry but is its own value.
-            if let Some(term) = self.terms.get(member)
-                && matches!(
-                    term.kind,
-                    TermKind::True
-                        | TermKind::False
-                        | TermKind::IntConst(_)
-                        | TermKind::RealConst(_)
-                        | TermKind::BitVecConst { .. }
-                )
-            {
-                return Some(self.format_value(member));
-            }
-        }
-        None
-    }
-
-    /// Choose the most frequently occurring value among the interpretation
-    /// entries, breaking ties in favour of the earliest occurrence.  Returns
-    /// `None` for an empty entry list.
-    fn most_common_value(entries: &[(Vec<String>, String)]) -> Option<String> {
-        let mut counts: crate::prelude::HashMap<&str, (usize, usize)> =
-            crate::prelude::HashMap::new();
-        for (order, (_, value)) in entries.iter().enumerate() {
-            let slot = counts.entry(value.as_str()).or_insert((0, order));
-            slot.0 += 1;
-        }
-        counts
-            .into_iter()
-            .max_by(|(_, (count_a, order_a)), (_, (count_b, order_b))| {
-                // Higher count wins; on a tie the smaller insertion order wins,
-                // so we reverse the order comparison.
-                count_a.cmp(count_b).then_with(|| order_b.cmp(order_a))
-            })
-            .map(|(value, _)| value.to_string())
-    }
-
-    /// Format a sort ID to its SMT-LIB2 name.
-    ///
-    /// Handles every `SortKind` that [`Context::parse_sort_name`] can
-    /// produce (its inverse), including compound `(Array ..)`/`(_
-    /// BitVec ..)`/`(_ FloatingPoint ..)` forms and previously
-    /// declared uninterpreted/datatype sorts by name, so
-    /// `get-model`/`get-value` output reflects a declared constant's
-    /// real sort instead of falling back to a generic placeholder.
-    fn format_sort_name(&self, sort: SortId) -> String {
-        let Some(s) = self.terms.sorts.get(sort) else {
-            return "Unknown".to_string();
-        };
-        match &s.kind {
-            SortKind::Bool => "Bool".to_string(),
-            SortKind::Int => "Int".to_string(),
-            SortKind::Real => "Real".to_string(),
-            SortKind::String => "String".to_string(),
-            SortKind::BitVec(w) => format!("(_ BitVec {w})"),
-            SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
-            SortKind::Array { domain, range } => {
-                let domain_str = self.format_sort_name(*domain);
-                let range_str = self.format_sort_name(*range);
-                format!("(Array {domain_str} {range_str})")
-            }
-            SortKind::Uninterpreted(spur) => self.terms.resolve_str(*spur).to_string(),
-            SortKind::Datatype(_) => self
-                .terms
-                .sorts
-                .datatype_name(sort)
-                .map_or_else(|| "Unknown".to_string(), ToString::to_string),
-            SortKind::Parameter(_) | SortKind::Parametric { .. } => "Unknown".to_string(),
-        }
-    }
-
-    /// Format a model value
-    fn format_value(&self, term: TermId) -> String {
-        match self.terms.get(term).map(|t| &t.kind) {
-            Some(TermKind::True) => "true".to_string(),
-            Some(TermKind::False) => "false".to_string(),
-            Some(TermKind::IntConst(n)) => n.to_string(),
-            Some(TermKind::RealConst(r)) => {
-                if *r.denom() == 1 {
-                    format!("{}.0", r.numer())
-                } else {
-                    format!("(/ {} {})", r.numer(), r.denom())
-                }
-            }
-            Some(TermKind::BitVecConst { value, width }) => {
-                format!(
-                    "#b{:0>width$}",
-                    format!("{:b}", value),
-                    width = *width as usize
-                )
-            }
-            _ => "?".to_string(),
-        }
-    }
-
-    /// Get a default value for a sort
-    fn default_value(&self, sort: SortId) -> String {
-        if sort == self.terms.sorts.bool_sort {
-            "false".to_string()
-        } else if sort == self.terms.sorts.int_sort {
-            "0".to_string()
-        } else if sort == self.terms.sorts.real_sort {
-            "0.0".to_string()
-        } else if let Some(s) = self.terms.sorts.get(sort) {
-            if let Some(w) = s.bitvec_width() {
-                format!("#b{:0>width$}", "0", width = w as usize)
-            } else {
-                "?".to_string()
-            }
-        } else {
-            "?".to_string()
-        }
-    }
-
-    /// Format the model as SMT-LIB2
-    pub fn format_model(&self) -> String {
-        match self.get_model() {
-            None => "(error \"No model available\")".to_string(),
-            Some(model) if model.is_empty() => "(model)".to_string(),
-            Some(model) => {
-                let mut lines = vec!["(model".to_string()];
-                for (name, sort, value) in model {
-                    lines.push(format!("  (define-fun {} () {} {})", name, sort, value));
-                }
-                lines.push(")".to_string());
-                lines.join("\n")
-            }
-        }
     }
 
     /// Push a context level
@@ -880,6 +612,15 @@ impl Context {
         self.options.get(key).map(String::as_str)
     }
 
+    /// Whether SMT-LIB `:print-success` mode is currently enabled.
+    ///
+    /// When on, `execute_script` emits a `success` acknowledgement after every
+    /// command that succeeds without producing its own response (per SMT-LIB
+    /// 2.6).  Defaults to off until `(set-option :print-success true)` is seen.
+    fn print_success_enabled(&self) -> bool {
+        self.get_option("print-success") == Some("true")
+    }
+
     /// Format an option value
     fn format_option(&self, key: &str) -> String {
         match self.get_option(key) {
@@ -891,11 +632,13 @@ impl Context {
                     "produce-unsat-cores" => "false".to_string(),
                     "produce-proofs" => "false".to_string(),
                     "produce-assignments" => "false".to_string(),
-                    // Honest default: this solver's command loop does not emit
-                    // the SMT-LIB `success` acknowledgement, so print-success
-                    // mode is effectively off.  Reporting `true` here (the
-                    // standard's nominal default) would advertise behavior the
-                    // runner never performs.
+                    // print-success is honored by `execute_script` (a `success`
+                    // line is emitted after each silently-succeeding command
+                    // once enabled), but defaults to off — matching common
+                    // solver behavior — so that scripts that never opt in keep
+                    // their existing terse output.  Once `(set-option
+                    // :print-success true)` is issued, the `Some(val)` branch
+                    // above reports the real `true`.
                     "print-success" => "false".to_string(),
                     _ => "unsupported".to_string(),
                 }
@@ -1106,6 +849,99 @@ impl Context {
         self.solver.get_unsat_core()
     }
 
+    /// Compute the unit consequences of the current assertions together with
+    /// `assumptions`, restricted to literals over `variables` (the SMT-LIB /
+    /// Z3 `(get-consequences (A..) (V..))` query).
+    ///
+    /// Model-guided algorithm (mirrors Z3's `solver::get_consequences`):
+    ///
+    ///   1. Check satisfiability of the assertions under `assumptions`.  If it
+    ///      is `unsat`/`unknown`, report exactly that — there is no model to
+    ///      seed candidate consequences from.
+    ///   2. Otherwise read each queried variable's polarity from the model
+    ///      (the candidate consequences).  Every polarity is extracted **up
+    ///      front**, because each certification check in step 3 rebuilds and
+    ///      overwrites the solver's model.
+    ///   3. Certify each candidate literal `lit` by checking whether
+    ///      `A ∧ ¬lit` is unsatisfiable; if so `A ⊨ lit`, so `lit` is a genuine
+    ///      consequence.
+    ///
+    /// Returns the output lines: `sat` followed by the Z3-shaped
+    /// `((=> (and A) lit) ...)` implication list, or a single
+    /// `unsat`/`unknown`/error line.
+    #[cfg(feature = "std")]
+    fn get_consequences(&mut self, assumptions: &[TermId], variables: &[TermId]) -> Vec<String> {
+        let bool_sort = self.terms.sorts.bool_sort;
+        // Every assumption and queried variable must be Boolean-sorted.
+        let all_bool = assumptions
+            .iter()
+            .chain(variables.iter())
+            .all(|&t| self.terms.get(t).map(|term| term.sort) == Some(bool_sort));
+        if !all_bool {
+            return vec!["(error \"get-consequences expects Boolean terms\")".to_string()];
+        }
+
+        // Base satisfiability under the assumptions.
+        match self.check_with_assumptions_raw(assumptions) {
+            SolverResult::Unsat => return vec!["unsat".to_string()],
+            SolverResult::Unknown => return vec!["unknown".to_string()],
+            SolverResult::Sat => {}
+        }
+
+        // PHASE 1: extract each variable's model polarity BEFORE any further
+        // check (each certification check below overwrites the model).
+        let mut candidates: Vec<(TermId, bool)> = Vec::new();
+        for &v in variables {
+            // Re-fetch the model each iteration; the immutable borrow ends
+            // within the statement so `self.terms` can be borrowed mutably by
+            // `eval` (disjoint fields — the same pattern as `eval_in_model`).
+            let value = match self.solver.model() {
+                Some(m) => m.eval(v, &mut self.terms),
+                None => continue,
+            };
+            match self.terms.get(value).map(|t| &t.kind) {
+                Some(TermKind::True) => candidates.push((v, true)),
+                Some(TermKind::False) => candidates.push((v, false)),
+                // Not pinned to a Boolean constant in the model: not a forced
+                // consequence, so skip it.
+                _ => {}
+            }
+        }
+
+        // PHASE 2: certify each candidate literal by refuting its negation
+        // under the assumptions.
+        let mut implied: Vec<TermId> = Vec::new();
+        for (v, pol) in candidates {
+            let lit = if pol { v } else { self.terms.mk_not(v) };
+            let neg = self.terms.mk_not(lit);
+            let mut asm2 = assumptions.to_vec();
+            asm2.push(neg);
+            if self.check_with_assumptions_raw(&asm2) == SolverResult::Unsat {
+                implied.push(lit);
+            }
+        }
+
+        // Restore a consistent `sat` state so a following get-model/get-value
+        // reads a model built under exactly `assumptions` (the last
+        // certification check left the solver in an arbitrary state).
+        let _ = self.check_with_assumptions_raw(assumptions);
+        self.last_result = Some(SolverResult::Sat);
+        self.last_assumptions = assumptions.to_vec();
+
+        // Build the Z3-shaped implication list.  The antecedent is `(and A)`
+        // rendered directly — NOT via `mk_implies`, which simplifies away the
+        // antecedent for an empty/singleton assumption set.
+        let ante = self.terms.mk_and(assumptions.iter().copied());
+        let printer = oxiz_core::smtlib::Printer::new(&self.terms);
+        let ante_str = printer.print_term(ante);
+        let impls: Vec<String> = implied
+            .iter()
+            .map(|&lit| format!("(=> {} {})", ante_str, printer.print_term(lit)))
+            .collect();
+
+        vec!["sat".to_string(), format!("({})", impls.join(" "))]
+    }
+
     /// Split a sort-expression string into its top-level whitespace
     /// separated tokens, treating a parenthesized group as a single
     /// token (so nested compound sorts like `(Array Int (_ BitVec 8))`
@@ -1228,6 +1064,28 @@ impl Context {
         let mut output = Vec::new();
 
         for cmd in commands {
+            // A command that produces its own SMT-LIB response must not
+            // additionally emit the `:print-success` acknowledgement.  Compute
+            // this before `cmd` is consumed by the match below (the `matches!`
+            // patterns bind nothing, so `cmd` is not moved).
+            let emits_own_response = matches!(
+                cmd,
+                Command::CheckSat
+                    | Command::CheckSatAssuming(_)
+                    | Command::GetConsequences(_, _)
+                    | Command::GetModel
+                    | Command::GetAssertions
+                    | Command::GetAssignment
+                    | Command::GetProof
+                    | Command::GetOption(_)
+                    | Command::GetUnsatCore
+                    | Command::GetUnsatAssumptions
+                    | Command::GetValue(_)
+                    | Command::GetInfo(_)
+                    | Command::Echo(_)
+                    | Command::Simplify(_)
+            );
+            let output_len_before = output.len();
             match cmd {
                 Command::SetLogic(logic) => {
                     self.set_logic(&logic);
@@ -1251,6 +1109,13 @@ impl Context {
                 }
                 Command::Assert(term) => {
                     self.assert(term);
+                }
+                Command::AssertNamed(term, name) => {
+                    // Register the assertion under its `:named` label so that,
+                    // with `:produce-unsat-cores` enabled, `(get-unsat-core)`
+                    // reports the user label when this assertion participates
+                    // in an `unsat` refutation.
+                    self.assert_named(term, &name);
                 }
                 Command::CheckSat => {
                     let result = self.check_sat();
@@ -1277,6 +1142,11 @@ impl Context {
                     self.reset_assertions();
                 }
                 Command::Exit => {
+                    // Per SMT-LIB, a successful `exit` is acknowledged before
+                    // the interpreter terminates.
+                    if self.print_success_enabled() {
+                        output.push("success".to_string());
+                    }
                     break;
                 }
                 Command::Echo(msg) => {
@@ -1323,6 +1193,10 @@ impl Context {
                         SolverResult::Unknown => "unknown".to_string(),
                     });
                 }
+                Command::GetConsequences(assumptions, variables) => {
+                    let out = self.get_consequences(&assumptions, &variables);
+                    output.extend(out);
+                }
                 Command::Simplify(term) => {
                     // Simplify and output the term
                     let simplified = self.terms.simplify(term);
@@ -1330,14 +1204,23 @@ impl Context {
                     output.push(printer.print_term(simplified));
                 }
                 Command::GetUnsatCore => {
-                    if let Some(core) = self.solver.get_unsat_core() {
-                        if core.names.is_empty() {
-                            output.push("()".to_string());
-                        } else {
+                    // Minimize the conservative core (greedy deletion-based) so
+                    // the reported set contains only assertions actually needed
+                    // for the refutation, not every named assertion.  Fall back
+                    // to the raw core when minimization is unavailable
+                    // (unsat-core production disabled).
+                    let core = self
+                        .solver
+                        .minimize_unsat_core(&mut self.terms)
+                        .or_else(|| self.solver.get_unsat_core().cloned());
+                    match core {
+                        Some(core) if !core.names.is_empty() => {
                             output.push(format!("({})", core.names.join(" ")));
                         }
-                    } else {
-                        output.push("(error \"No unsat core available\")".to_string());
+                        Some(_) => output.push("()".to_string()),
+                        None => {
+                            output.push("(error \"No unsat core available\")".to_string());
+                        }
                     }
                 }
                 Command::GetUnsatAssumptions => {
@@ -1487,6 +1370,17 @@ impl Context {
                         }
                     }
                 }
+            }
+
+            // Emit the `:print-success` acknowledgement for a command that
+            // succeeded *silently* — no response of its own and no error it
+            // pushed (a pushed error is left as the command's response).  `exit`
+            // handles its own acknowledgement before breaking out of the loop.
+            if self.print_success_enabled()
+                && !emits_own_response
+                && output.len() == output_len_before
+            {
+                output.push("success".to_string());
             }
         }
 

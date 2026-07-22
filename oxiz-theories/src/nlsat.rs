@@ -131,7 +131,19 @@ impl<'a> TermPolyTranslator<'a> {
             return v;
         }
         let v = self.nlsat.nlsat_mut().new_arith_var();
-        if self.integer_mode {
+        // Assign integrality from the variable's *actual* sort, not the global
+        // `integer_mode` flag. In mixed QF_NIRA problems only genuinely
+        // Int-sorted variables may carry the integrality constraint; Real
+        // variables must stay real (the NiaSolver default), otherwise a
+        // satisfiable non-integral real assignment is spuriously rejected and
+        // the solver reports a false UNSAT.
+        // Reference: Z3's mixed Int/Real handling in nlsat/nlsat_solver.cpp.
+        let is_int_var = self
+            .manager
+            .get(term_id)
+            .map(|t| t.sort == self.manager.sorts.int_sort)
+            .unwrap_or(self.integer_mode);
+        if is_int_var {
             self.nlsat.set_var_type(v, VarType::Integer);
         }
         self.var_cache.insert(term_id, v);
@@ -241,13 +253,25 @@ struct PolyAtom {
 // Assertion-level translation (integer mode)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Extract polynomial atoms from a top-level assertion.
+///
+/// `incomplete` is set to `true` whenever some part of the assertion could
+/// **not** be captured as a pure conjunction of polynomial atoms — an
+/// unrecognized top-level connective (`Or`/`Not`/`Distinct`/`Ite`/…) or a
+/// comparison whose operand does not translate to a polynomial (e.g. it
+/// contains `Div`/`Mod`/an uninterpreted apply). The dispatcher must treat a
+/// `Sat` verdict as untrustworthy once `incomplete` is set, because the solver
+/// then only sees a strictly weaker (relaxed) subproblem. Reference: Z3's
+/// nlsat/nlsat_solver.cpp only trusts a model for the full atom set.
 fn extract_poly_atoms(
     term_id: TermId,
     manager: &TermManager,
     translator: &mut TermPolyTranslator<'_>,
     out: &mut Vec<PolyAtom>,
+    incomplete: &mut bool,
 ) {
     let Some(term) = manager.get(term_id) else {
+        *incomplete = true;
         return;
     };
     match &term.kind.clone() {
@@ -258,6 +282,8 @@ fn extract_poly_atoms(
                     kind: AtomKind::Eq,
                     positive: true,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Lt(lhs, rhs) => {
@@ -268,6 +294,8 @@ fn extract_poly_atoms(
                     kind: AtomKind::Gt,
                     positive: true,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Le(lhs, rhs) => {
@@ -278,6 +306,8 @@ fn extract_poly_atoms(
                     kind: AtomKind::Lt,
                     positive: false,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Gt(lhs, rhs) => {
@@ -288,6 +318,8 @@ fn extract_poly_atoms(
                     kind: AtomKind::Gt,
                     positive: true,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Ge(lhs, rhs) => {
@@ -298,14 +330,22 @@ fn extract_poly_atoms(
                     kind: AtomKind::Lt,
                     positive: false,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::And(args) => {
             for &arg in args.iter() {
-                extract_poly_atoms(arg, manager, translator, out);
+                extract_poly_atoms(arg, manager, translator, out, incomplete);
             }
         }
-        _ => {}
+        _ => {
+            // Any other top-level shape (Or/Not/Distinct/Ite/…) belongs to the
+            // boolean abstraction layer, not to this pure-conjunction fast
+            // path. Dropping it silently would let the solver "prove" Sat on a
+            // relaxed problem, so flag the extraction as incomplete instead.
+            *incomplete = true;
+        }
     }
 }
 
@@ -342,8 +382,15 @@ pub fn dispatch_nia_constraints(
     let mut translator = TermPolyTranslator::new(manager, &mut nia, integer_mode);
 
     let mut poly_atoms: Vec<PolyAtom> = Vec::new();
+    let mut incomplete = false;
     for &assertion in assertions {
-        extract_poly_atoms(assertion, manager, &mut translator, &mut poly_atoms);
+        extract_poly_atoms(
+            assertion,
+            manager,
+            &mut translator,
+            &mut poly_atoms,
+            &mut incomplete,
+        );
     }
 
     if poly_atoms.is_empty() {
@@ -352,6 +399,12 @@ pub fn dispatch_nia_constraints(
 
     let unsat_is_trustworthy =
         !has_unsupported_ops && poly_atoms.iter().all(|atom| atom.poly.is_univariate());
+    // A `Sat` verdict is only sound when the solver saw the *entire* assertion
+    // set as a conjunction of translatable atoms. If any top-level term was
+    // dropped (a disjunction, an untranslatable operand, …) the solver worked
+    // on a strictly weaker problem, so its model may violate the dropped
+    // constraint — fall through to CDCL(T) instead of trusting Sat.
+    let sat_is_trustworthy = !incomplete;
 
     for atom in &poly_atoms {
         let atom_id = translator
@@ -366,9 +419,9 @@ pub fn dispatch_nia_constraints(
     }
 
     match translator.nlsat.solve() {
+        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::Sat),
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
-        SolverResult::Sat => Some(NlDispatchResult::Sat),
-        SolverResult::Unsat | SolverResult::Unknown => None,
+        SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,
     }
 }
 
@@ -447,13 +500,17 @@ impl<'a> RealPolyTranslator<'a> {
     }
 }
 
+/// Real-arithmetic analogue of [`extract_poly_atoms`]. See its documentation
+/// for the meaning of `incomplete`.
 fn extract_real_poly_atoms(
     term_id: TermId,
     manager: &TermManager,
     translator: &mut RealPolyTranslator<'_>,
     out: &mut Vec<PolyAtom>,
+    incomplete: &mut bool,
 ) {
     let Some(term) = manager.get(term_id) else {
+        *incomplete = true;
         return;
     };
     match &term.kind.clone() {
@@ -464,6 +521,8 @@ fn extract_real_poly_atoms(
                     kind: AtomKind::Eq,
                     positive: true,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Lt(lhs, rhs) => {
@@ -473,6 +532,8 @@ fn extract_real_poly_atoms(
                     kind: AtomKind::Gt,
                     positive: true,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Le(lhs, rhs) => {
@@ -482,6 +543,8 @@ fn extract_real_poly_atoms(
                     kind: AtomKind::Lt,
                     positive: false,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Gt(lhs, rhs) => {
@@ -491,6 +554,8 @@ fn extract_real_poly_atoms(
                     kind: AtomKind::Gt,
                     positive: true,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::Ge(lhs, rhs) => {
@@ -500,14 +565,18 @@ fn extract_real_poly_atoms(
                     kind: AtomKind::Lt,
                     positive: false,
                 });
+            } else {
+                *incomplete = true;
             }
         }
         TermKind::And(args) => {
             for &arg in args.iter() {
-                extract_real_poly_atoms(arg, manager, translator, out);
+                extract_real_poly_atoms(arg, manager, translator, out, incomplete);
             }
         }
-        _ => {}
+        _ => {
+            *incomplete = true;
+        }
     }
 }
 
@@ -525,8 +594,15 @@ pub fn dispatch_nra_constraints(
     let mut translator = RealPolyTranslator::new(manager, &mut nlsat);
 
     let mut poly_atoms: Vec<PolyAtom> = Vec::new();
+    let mut incomplete = false;
     for &assertion in assertions {
-        extract_real_poly_atoms(assertion, manager, &mut translator, &mut poly_atoms);
+        extract_real_poly_atoms(
+            assertion,
+            manager,
+            &mut translator,
+            &mut poly_atoms,
+            &mut incomplete,
+        );
     }
 
     if poly_atoms.is_empty() {
@@ -534,6 +610,9 @@ pub fn dispatch_nra_constraints(
     }
 
     let unsat_is_trustworthy = poly_atoms.iter().all(|atom| atom.kind != AtomKind::Eq);
+    // See `dispatch_nia_constraints`: trusting Sat under a dropped (relaxed)
+    // constraint is unsound, so only accept Sat when extraction was complete.
+    let sat_is_trustworthy = !incomplete;
 
     for atom in &poly_atoms {
         let atom_id = translator.nlsat.new_ineq_atom(atom.poly.clone(), atom.kind);
@@ -542,9 +621,9 @@ pub fn dispatch_nra_constraints(
     }
 
     match translator.nlsat.solve() {
+        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::Sat),
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
-        SolverResult::Sat => Some(NlDispatchResult::Sat),
-        SolverResult::Unsat | SolverResult::Unknown => None,
+        SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,
     }
 }
 

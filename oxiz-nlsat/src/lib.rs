@@ -40,6 +40,7 @@ pub(crate) mod bce;
 pub(crate) mod bound_propagation;
 pub(crate) mod bve;
 pub mod cad;
+pub(crate) mod cad_algebraic;
 pub(crate) mod cad_optimization;
 pub(crate) mod chrono_bt;
 pub mod clause;
@@ -70,7 +71,6 @@ pub(crate) mod theory_conflict;
 pub mod types;
 pub mod var_order;
 pub(crate) mod vivification;
-pub(crate) mod watched_literals;
 
 // Re-exports (public API). Only modules that are wired into the solver or are
 // standalone user-facing entry points are re-exported here; see the module

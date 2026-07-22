@@ -194,6 +194,77 @@ impl Checkpoint {
     }
 }
 
+/// Record separator used to pack multiple (possibly multi-line) output
+/// elements into one metadata string without losing element boundaries.
+const RESULT_SEP: char = '\u{1e}';
+
+impl Checkpoint {
+    /// Attach the completed-solve result (status + full output) to this
+    /// checkpoint so a later `--resume` can replay it without re-solving.
+    pub fn set_result(&mut self, status: &str, output: &[String]) {
+        self.progress
+            .metadata
+            .insert("result_status".to_string(), status.to_string());
+        self.progress.metadata.insert(
+            "result_output".to_string(),
+            output.join(&RESULT_SEP.to_string()),
+        );
+    }
+
+    /// The recorded solve output, if this checkpoint carries one.
+    pub fn result_output(&self) -> Option<Vec<String>> {
+        self.progress.metadata.get("result_output").map(|s| {
+            if s.is_empty() {
+                Vec::new()
+            } else {
+                s.split(RESULT_SEP).map(str::to_string).collect()
+            }
+        })
+    }
+}
+
+/// Build a [`SolverState`] from the real post-solve counters exposed by the
+/// context.
+///
+/// Only the genuinely-observable counters are populated; the mid-search
+/// internals (`learned_clauses`, `assignments`, `vsids_scores`) are left empty
+/// because `oxiz-solver` exposes no hook to snapshot them, and fabricating
+/// them would be dishonest. This checkpoint therefore records a *completed*
+/// problem and its result (a resumable solve record), not a pause/resume of an
+/// in-progress CDCL search.
+pub fn solver_state_from_counts(
+    conflicts: usize,
+    decisions: usize,
+    propagations: usize,
+    restarts: usize,
+) -> SolverState {
+    SolverState {
+        learned_clauses: Vec::new(),
+        assignments: Vec::new(),
+        decision_level: 0,
+        conflicts,
+        decisions,
+        propagations,
+        vsids_scores: Vec::new(),
+        restarts,
+    }
+}
+
+/// Find a stored checkpoint in `dir` whose problem matches `problem` exactly
+/// and that carries a recorded result, if any.
+pub fn find_for_problem(dir: &Path, problem: &str) -> Option<Checkpoint> {
+    let files = Checkpoint::list_checkpoints(dir).ok()?;
+    for file in files {
+        if let Ok(checkpoint) = Checkpoint::load(&file)
+            && checkpoint.problem == problem
+            && checkpoint.result_output().is_some()
+        {
+            return Some(checkpoint);
+        }
+    }
+    None
+}
+
 impl SolverState {
     /// Create a new empty solver state
     #[allow(dead_code)]

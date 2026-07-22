@@ -421,6 +421,50 @@ mod tests {
         assert!(matches!(result, Ok(MaxSatResult::Optimal)));
     }
 
+    /// `OPT-FUMALIK-HARDONLY` regression: Fu-Malik (the default algorithm)
+    /// must not under-report the optimum via the "all soft clauses relaxed
+    /// -> just check hard-only satisfiability" shortcut, which used to
+    /// silently drop the accumulated at-most-one relaxation constraints.
+    ///
+    /// Hard: "at least 3 of x0..x4 true", encoded as one clause per
+    /// 3-element subset of {0,1,2,3,4} (10 clauses total) forcing at least
+    /// one member of every 3-subset to be true -- equivalently, at most 2
+    /// of the 5 variables may be false. Soft: every `~x_i` (prefer every
+    /// variable false), unit weight. The true optimum is exactly 3: the
+    /// hard constraint forces at least 3 of the 5 variables true, so at
+    /// most 2 of the 5 `~x_i` soft clauses can be satisfied, i.e. at least
+    /// 3 must be violated. The old hard-only shortcut under-reported this
+    /// as 2.
+    #[test]
+    fn test_maxsat_fu_malik_exact_optimum_not_undercounted() {
+        let mut solver = MaxSatSolver::new(); // default algorithm is FuMalik
+
+        let vars: [u32; 5] = [0, 1, 2, 3, 4];
+        for i in 0..vars.len() {
+            for j in (i + 1)..vars.len() {
+                for k in (j + 1)..vars.len() {
+                    solver.add_hard([
+                        lit(vars[i], false),
+                        lit(vars[j], false),
+                        lit(vars[k], false),
+                    ]);
+                }
+            }
+        }
+
+        for &v in &vars {
+            solver.add_soft([lit(v, true)]);
+        }
+
+        let result = solver.solve();
+        assert!(matches!(result, Ok(MaxSatResult::Optimal)), "{result:?}");
+        assert_eq!(
+            solver.cost(),
+            Weight::from(3),
+            "true optimum is 3 -- the hard-only shortcut used to under-report this as 2"
+        );
+    }
+
     #[test]
     fn test_weight_add_operator() {
         let w1 = Weight::from(5);

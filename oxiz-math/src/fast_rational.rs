@@ -203,17 +203,15 @@ impl FastRational {
                 if *den == 1 {
                     BigInt::from(*num)
                 } else {
-                    // ceil(n/d) for d > 0:
-                    //   positive: (n + d - 1) / d
-                    //   negative non-integer: n / d (Rust truncation rounds toward zero = ceiling)
-                    //   negative exact: n / d
-                    let q = if *num >= 0 {
-                        (*num + *den - 1) / *den
-                    } else {
-                        // Rust's truncation division rounds toward zero for negatives,
-                        // which is the ceiling for negative rationals.
-                        *num / *den
-                    };
+                    // Use `Integer::div_ceil`, which computes ceil(n/d) via
+                    // `div_rem` (truncating division + adjustment) rather
+                    // than `(n + d - 1) / d`. The naive formula overflows
+                    // `i64` whenever `num + den` exceeds `i64::MAX` (e.g.
+                    // `Small { num: i64::MAX, den: 2 }`); `div_rem` never
+                    // adds `num` and `den` together, so it cannot overflow
+                    // for any `den > 0` (guaranteed by the `Small`
+                    // invariant), mirroring `div_floor` used in `floor()`.
+                    let q = num.div_ceil(den);
                     BigInt::from(q)
                 }
             }
@@ -1209,6 +1207,49 @@ mod tests {
         let r = small(-7, 3);
         assert_eq!(r.floor(), BigInt::from(-3));
         assert_eq!(r.ceil(), BigInt::from(-2));
+    }
+
+    #[test]
+    fn test_ceil_i64_max_boundary_no_overflow() {
+        // Regression test for MATH-6: the naive `(num + den - 1) / den`
+        // formula overflows i64 when num is close to i64::MAX. `new_small`
+        // reduces to lowest terms via gcd, so use a numerator/denominator
+        // pair that stays in reduced form near i64::MAX (i64::MAX is odd,
+        // so gcd(i64::MAX, 2) == 1 and the value survives reduction as
+        // exactly `Small { num: i64::MAX, den: 2 }`, the case cited by the
+        // finding).
+        let r = FastRational::new_small(i64::MAX, 2);
+        let big = r.to_big_rational();
+        assert_eq!(r.ceil(), crate::rational::ceil(&big));
+        assert_eq!(r.floor(), crate::rational::floor(&big));
+        // Sanity: ceil == floor + 1 since i64::MAX/2 is non-integer.
+        assert_eq!(r.ceil(), r.floor() + BigInt::from(1));
+    }
+
+    #[test]
+    fn test_ceil_i64_min_boundary() {
+        // Negative boundary: i64::MIN / 2 is exact (no rounding needed),
+        // must not overflow or panic.
+        let r = FastRational::new_small(i64::MIN, 2);
+        assert_eq!(r.ceil(), BigInt::from(i64::MIN / 2));
+        assert_eq!(r.floor(), BigInt::from(i64::MIN / 2));
+    }
+
+    #[test]
+    fn test_ceil_large_positive_non_integer() {
+        // Large odd numerator over a larger denominator, near the i64
+        // boundary, to exercise the div_ceil path without triggering the
+        // `den == 1` fast path.
+        let r = FastRational::new_small(i64::MAX - 1, 4);
+        let ceil = r.ceil();
+        let floor = r.floor();
+        // ceil - floor is 0 (exact) or 1 (fractional); verify consistency
+        // via BigRational cross-check rather than duplicating arithmetic.
+        let big = r.to_big_rational();
+        let expected_floor = crate::rational::floor(&big);
+        let expected_ceil = crate::rational::ceil(&big);
+        assert_eq!(floor, expected_floor);
+        assert_eq!(ceil, expected_ceil);
     }
 
     #[test]

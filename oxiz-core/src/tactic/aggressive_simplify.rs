@@ -69,12 +69,18 @@ impl Tactic for StatelessAggressiveSimplifyTactic {
         "aggressive-simplify"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        Ok(TacticResult::SubGoals(vec![goal.clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Aggressive simplification rewrites terms and therefore needs a
+        // `&mut TermManager`. The manager-free path honestly reports
+        // NotApplicable rather than returning the goal unchanged. Use
+        // `AggressiveSimplifyTactic::apply_mut` (or `create_managed`) for the
+        // real transformation.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Applies aggressive Boolean and arithmetic simplifications"
+        "Applies aggressive Boolean and arithmetic simplifications \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }
 

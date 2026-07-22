@@ -882,11 +882,35 @@ impl Theory for ArithSolver {
 
     fn pop(&mut self) {
         if let Some(state) = self.context_stack.pop() {
-            self.var_to_term.truncate(state.num_vars);
+            // Roll back the term→var interning done since the matching push.
+            //
+            // `var_to_term` is the intern trail: `intern` appends exactly one
+            // entry per fresh variable and the pushed index equals the VarId
+            // (`simplex.new_var()` returns the current array length). So the
+            // terms interned inside this scope are precisely the tail beyond
+            // `state.num_vars`. Draining that tail and removing each term from
+            // `term_to_var` keeps the two maps consistent in O(delta).
+            //
+            // This is load-bearing for correctness: `simplex.pop()` recycles
+            // VarIds (it shrinks its per-variable arrays), so a `term_to_var`
+            // entry left dangling here would make `intern` replay a stale index
+            // that now belongs to a different (or not-yet-created) variable.
+            let cut = state.num_vars.min(self.var_to_term.len());
+            let removed: Vec<TermId> = self.var_to_term.drain(cut..).collect();
+            for term in removed {
+                self.term_to_var.remove(&term);
+            }
             self.reasons.truncate(state.num_reasons);
             self.reason_counter = state.num_reasons as u32;
             self.shared_equalities.truncate(state.num_shared_equalities);
             self.int_equalities.truncate(state.num_int_equalities);
+            // The LIA branch-and-bound model is a snapshot of the *last* check's
+            // integral assignment, keyed by VarId. Because VarIds are recycled
+            // across this pop, a leftover entry could be misread by `value()`
+            // for a freshly interned term that reuses the index before the next
+            // `check()` repopulates it. It is only valid immediately after a
+            // successful `check()`, so drop it on backtrack.
+            self.lia_model.clear();
             self.simplex.pop();
         }
     }
@@ -1545,5 +1569,94 @@ mod tests {
             result
         );
         solver.pop();
+    }
+
+    // ---- push/pop state-rollback regression (term_to_var / var_to_term) ----
+
+    /// `pop()` must roll back `term_to_var` in lockstep with `var_to_term`.
+    ///
+    /// Before the fix, `pop()` truncated `var_to_term` but left stale
+    /// `term_to_var` entries behind. Because the simplex recycles VarIds across
+    /// a pop, those stale entries made `intern()` replay indices that now belong
+    /// to a different (or not-yet-created) variable. This test inspects the
+    /// internal maps directly to prove the two stay consistent.
+    #[test]
+    fn regression_pop_rolls_back_term_to_var() {
+        let mut solver = ArithSolver::lra();
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+        let c = TermId::new(3);
+
+        // Intern `a` at the base level.
+        let va = solver.intern(a);
+        assert_eq!(va, 0);
+
+        solver.push();
+        // Intern two more terms inside the scope.
+        let vb = solver.intern(b);
+        let vc = solver.intern(c);
+        assert_eq!(vb, 1);
+        assert_eq!(vc, 2);
+        assert_eq!(solver.var_to_term.len(), 3);
+        assert_eq!(solver.term_to_var.len(), 3);
+
+        solver.pop();
+
+        // `var_to_term` is truncated back to just `[a]`.
+        assert_eq!(solver.var_to_term.len(), 1);
+        // `term_to_var` must be rolled back in lockstep: the scope-local terms
+        // `b` and `c` are gone, only `a` remains.
+        assert_eq!(solver.term_to_var.len(), 1);
+        assert!(solver.term_to_var.contains_key(&a));
+        assert!(!solver.term_to_var.contains_key(&b));
+        assert!(!solver.term_to_var.contains_key(&c));
+
+        // The core invariant: NO surviving mapping points at a truncated
+        // (out-of-range) variable index.
+        let live = solver.var_to_term.len() as VarId;
+        for (&term, &var) in &solver.term_to_var {
+            assert!(
+                var < live,
+                "term {term:?} maps to stale var {var} >= live var count {live}"
+            );
+        }
+
+        // Re-interning the truncated terms yields FRESH valid indices.
+        let vb2 = solver.intern(b);
+        assert_eq!(vb2, 1, "re-interned `b` should take the next fresh index");
+        assert!((vb2 as usize) < solver.var_to_term.len());
+        let vc2 = solver.intern(c);
+        assert_eq!(vc2, 2, "re-interned `c` should take the next fresh index");
+        assert_ne!(vb2, vc2);
+    }
+
+    /// A fresh term interned after a pop must NOT collide with a stale-but-since-
+    /// re-interned term that used to hold the recycled index.
+    ///
+    /// This is the recycled-index hazard the fix removes, observable purely
+    /// through the public `intern()` API: intern `a`, push, intern `b`, pop —
+    /// then intern a brand-new `c` (which the simplex hands the index `b` used
+    /// to occupy) and finally re-intern `b`. With the stale mapping still
+    /// present, `intern(b)` would return the same index as `c`.
+    #[test]
+    fn regression_pop_no_recycled_index_collision() {
+        let mut solver = ArithSolver::lra();
+        let a = TermId::new(11);
+        let b = TermId::new(22);
+        let c = TermId::new(33);
+
+        let _va = solver.intern(a);
+        solver.push();
+        let _vb = solver.intern(b);
+        solver.pop();
+
+        // `c` is new: the simplex hands it the index `b` used to occupy.
+        let vc = solver.intern(c);
+        // `b` was truncated: re-interning must allocate a *different* fresh index.
+        let vb2 = solver.intern(b);
+        assert_ne!(
+            vc, vb2,
+            "recycled var index {vc} collided with re-interned truncated term"
+        );
     }
 }

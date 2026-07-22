@@ -271,6 +271,18 @@ impl Solver {
         )
     }
 
+    /// Canonical EUF congruence-class representative node for `term`.
+    ///
+    /// Returns `None` when the term was never interned into the congruence
+    /// closure (it took part in no (dis)equality), so distinct such terms are
+    /// treated as distinct.  Model output uses this to give uninterpreted-sort
+    /// constants proven equal a *shared* abstract witness while keeping
+    /// distinct constants distinct.
+    pub(crate) fn euf_class_representative(&self, term: TermId) -> Option<u32> {
+        let node = self.euf.term_to_node(term)?;
+        Some(self.euf.find_immutable(node))
+    }
+
     /// Build unsat core for trivial conflicts (assertion of false)
     pub(super) fn build_unsat_core_trivial_false(&mut self) {
         if !self.produce_unsat_cores {
@@ -298,39 +310,33 @@ impl Solver {
         self.unsat_core = Some(core);
     }
 
-    /// Build unsat core from SAT solver conflict analysis
+    /// Build the initial (conservative) unsat core after `check()` returned
+    /// `Unsat`.
+    ///
+    /// This records every tracked assertion — a *valid* unsatisfiable set (a
+    /// superset of any minimal core is still unsatisfiable), but not minimal on
+    /// its own.  Minimization is deliberately left to query time: the SMT-LIB
+    /// `(get-unsat-core)` path drives greedy deletion-based minimization via
+    /// [`Solver::minimize_unsat_core`], which needs the `TermManager` to
+    /// re-solve subsets (unavailable here).  Doing it eagerly for every `Unsat`
+    /// solve — including the many that never issue `(get-unsat-core)` — would
+    /// pay the re-solve cost unconditionally, so the split is intentional.
+    ///
+    /// True assumption-literal-based extraction (one selector per assertion,
+    /// reading the SAT layer's failed-assumption set) would make this minimal
+    /// without re-solving, but requires the encoder to gate each assertion
+    /// behind a fresh selector variable — a larger change than this method.
     pub(super) fn build_unsat_core(&mut self) {
         if !self.produce_unsat_cores {
             self.unsat_core = None;
             return;
         }
 
-        // Build unsat core from the named assertions
-        // In assumption-based mode, we would use the failed assumptions from the SAT solver
-        // For now, we use a heuristic approach based on the conflict analysis
-
         let mut core = UnsatCore::new();
-
-        // If assumption_vars is populated, we can use assumption-based extraction
-        if !self.assumption_vars.is_empty() {
-            // Assumption-based core extraction
-            // Get the failed assumptions from the SAT solver
-            // Note: This requires SAT solver support for assumption tracking
-            // For now, include all named assertions as a conservative approach
-            for na in &self.named_assertions {
-                core.indices.push(na.index);
-                if let Some(ref name) = na.name {
-                    core.names.push(name.clone());
-                }
-            }
-        } else {
-            // Fallback: include all named assertions
-            // This provides a valid unsat core, though not necessarily minimal
-            for na in &self.named_assertions {
-                core.indices.push(na.index);
-                if let Some(ref name) = na.name {
-                    core.names.push(name.clone());
-                }
+        for na in &self.named_assertions {
+            core.indices.push(na.index);
+            if let Some(ref name) = na.name {
+                core.names.push(name.clone());
             }
         }
 

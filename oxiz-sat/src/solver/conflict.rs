@@ -464,6 +464,38 @@ impl Solver {
         &mut self,
         conflict_lits: &[Lit],
     ) -> (u32, SmallVec<[Lit; 16]>) {
+        // A well-formed theory conflict clause is fully falsified — every literal
+        // is assigned false on the trail — which is what makes the 1-UIP
+        // resolution below well-defined. The MBQI / quantifier-instantiation path,
+        // however, can hand us a "conflict" clause that still contains an
+        // UNASSIGNED literal. The usual cause is a variable that was assigned when
+        // the theory recorded the lemma but has since been unassigned by a
+        // backtrack: `Trail` leaves `VarInfo.level` stale on unassignment, so
+        // `trail.level()` reports a bogus non-zero level for it.
+        //
+        // Feeding such a clause into the all-false 1-UIP machinery is unsound. The
+        // stale level becomes a spurious `current_level`; the pivot counter is
+        // incremented for a literal that is not on the trail, so the backward
+        // trail walk can never discharge it and instead resolves against an
+        // unrelated variable at a lower level; the asserting literal is then
+        // duplicated at the computed backtrack level. That produces
+        // `backtrack_level == uip_level` (tripping the debug-assert below in debug
+        // builds) and, in release builds, corrupts the trail into a wrong
+        // top-level UNSAT on quantified UFLIA.
+        //
+        // A clause with an open literal is not a conflict at all but an
+        // *asserting* theory lemma: it is unit under the current assignment (one
+        // open literal, the rest false) and must simply propagate that literal.
+        // Route it to a dedicated, trail-safe handler; keep the 1-UIP path for
+        // genuine all-false conflicts (and for the pre-existing already-satisfied
+        // case, which does not corrupt the trail).
+        if conflict_lits
+            .iter()
+            .any(|&l| self.trail.lit_value(l) == LBool::Undef)
+        {
+            return self.analyze_theory_asserting_lemma(conflict_lits);
+        }
+
         self.learnt.clear();
         self.learnt.push(Lit::from_code(0)); // Placeholder
 
@@ -644,6 +676,96 @@ impl Solver {
                 .all(|lit| self.trail.level(lit.var()) <= backtrack_level),
             "theory: every non-asserting literal must be at or below the backtrack level"
         );
+
+        (backtrack_level, self.learnt.clone())
+    }
+
+    /// Build a learned clause from a theory lemma that is *asserting* rather than
+    /// *conflicting*: at least one of its literals is still unassigned while the
+    /// rest are false, so the clause is unit under the current assignment and must
+    /// propagate its open literal instead of driving 1-UIP resolution.
+    ///
+    /// The learned clause is the full, deduplicated theory lemma (dropping a
+    /// literal without resolving it would be unsound — the lemma's validity does
+    /// not carry over to any strict subset). It is returned with an unassigned
+    /// literal at index 0 — the asserting / watch-0 literal that `learn_clause`
+    /// will propagate — and the highest-level false literal at index 1 (watch 1).
+    ///
+    /// The backtrack level is the maximum decision level among the *assigned*
+    /// (false) literals only; an unassigned literal's `VarInfo.level` is stale and
+    /// must never be consulted. After backtracking to that level every false
+    /// literal remains assigned false and index 0 remains unassigned, so the
+    /// clause is unit and propagates index 0 — exactly the two-watched-literal
+    /// contract `learn_clause` relies on. Computing the level from assigned
+    /// literals alone is what keeps it in range with the live trail.
+    fn analyze_theory_asserting_lemma(
+        &mut self,
+        conflict_lits: &[Lit],
+    ) -> (u32, SmallVec<[Lit; 16]>) {
+        self.learnt.clear();
+
+        // Deduplicate by variable (a lemma may legitimately list a literal twice;
+        // it must appear at most once in the learned clause). First occurrence
+        // wins, preserving the theory's reported order.
+        let mut seen_vars: SmallVec<[u32; 16]> = SmallVec::new();
+        let mut asserting_idx: Option<usize> = None;
+        let mut vars_to_bump: SmallVec<[Var; 16]> = SmallVec::new();
+        for &lit in conflict_lits {
+            let vi = lit.var().index() as u32;
+            if seen_vars.contains(&vi) {
+                continue;
+            }
+            seen_vars.push(vi);
+            let idx = self.learnt.len();
+            self.learnt.push(lit);
+            if self.trail.lit_value(lit) == LBool::Undef {
+                if asserting_idx.is_none() {
+                    asserting_idx = Some(idx);
+                }
+            } else {
+                // Assigned (false, or — for the defensive already-satisfied case —
+                // true). Bump it so the heuristics still learn from the event.
+                vars_to_bump.push(lit.var());
+            }
+        }
+
+        // A lemma with no literals cannot arise from a real theory conflict; guard
+        // by signalling a fundamental refutation (empty clause), matching the
+        // all-level-0 convention of `analyze_theory_conflict`.
+        if self.learnt.is_empty() {
+            return (0, SmallVec::new());
+        }
+
+        // Place the (first) unassigned literal at index 0 as the asserting literal.
+        // `any(... == Undef)` in the caller guarantees `asserting_idx` is `Some`.
+        if let Some(ai) = asserting_idx {
+            self.learnt.swap(0, ai);
+        }
+
+        // Bump activity for the falsified literals, mirroring 1-UIP conflict
+        // analysis so branching heuristics still react to the near-conflict.
+        self.vsids.bump_batch(&vars_to_bump);
+        self.chb.bump_batch(&vars_to_bump);
+        self.lrb.on_reason_batch(&vars_to_bump);
+
+        // Backtrack level = highest decision level among the *assigned* (false)
+        // non-asserting literals; unassigned literals' stale levels are ignored.
+        // Promote that literal to index 1 to serve as the second watch.
+        let mut backtrack_level = 0u32;
+        let mut second_idx = 0usize;
+        for i in 1..self.learnt.len() {
+            let lit = self.learnt[i];
+            if self.trail.is_assigned(lit.var()) {
+                let level = self.trail.level(lit.var());
+                if level >= backtrack_level {
+                    backtrack_level = level;
+                    second_idx = i;
+                }
+            }
+        }
+        if second_idx >= 1 {
+            self.learnt.swap(1, second_idx);
+        }
 
         (backtrack_level, self.learnt.clone())
     }
@@ -1323,6 +1445,204 @@ mod tests {
         assert!(
             backtrack_level < uip_level,
             "backtrack level {backtrack_level} must be below asserting level {uip_level}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Regression: theory conflict clause containing an UNASSIGNED literal.
+    //
+    // The MBQI / quantifier-instantiation path builds its conflict clause from a
+    // per-atom polarity map that is not pruned on every SAT backtrack (notably a
+    // restart). It can therefore hand `analyze_theory_conflict` a "conflict" whose
+    // clause still lists a variable that has since been unassigned — its
+    // `VarInfo.level` left stale at the level it last held. Two OxiZ z3-parity
+    // reproducers (`injective_unsat.smt2`, `nested_quantifiers.smt2`) drove
+    // exactly this and panicked at the theory trail-consistency `debug_assert`
+    // ("asserting literal must be above the backtrack level"): the stale level
+    // became a bogus `current_level`, the 1-UIP counter was charged for a literal
+    // absent from the trail, and the asserting literal was duplicated at the
+    // backtrack level (`backtrack_level == uip_level`). In release the same trail
+    // corruption produced a wrong top-level UNSAT on a SAT instance.
+    //
+    // The fix recognizes such a clause as an *asserting theory lemma* (unit under
+    // the current assignment) and propagates its one open literal, keeping the
+    // whole (valid) lemma. These tests reconstruct the exact trail shape by hand.
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_theory_conflict_stale_unassigned_literal_is_asserting() {
+        use crate::Solver;
+
+        let mut solver = Solver::new();
+        let v0 = solver.new_var(); // becomes a false literal @ level 3
+        let v1 = solver.new_var(); // the stale, now-unassigned literal
+        let v2 = solver.new_var(); // becomes a false literal @ level 1
+
+        // Level 1: decide ¬v2, so the positive literal v2 is FALSE at level 1.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::neg(v2));
+
+        // Levels 2 and 3.
+        solver.trail.new_decision_level(); // level 2
+        solver.trail.new_decision_level(); // level 3
+        // Propagate ¬v0 at level 3, so the positive literal v0 is FALSE at level 3.
+        let r = solver.clauses.add_learned([Lit::neg(v0), Lit::pos(v2)]);
+        solver.trail.assign_propagation(Lit::neg(v0), r);
+
+        // Levels 4 and 5: assign v1, then backtrack it away so it becomes
+        // UNASSIGNED while `VarInfo.level` stays stale at 5.
+        solver.trail.new_decision_level(); // level 4
+        solver.trail.new_decision_level(); // level 5
+        solver.trail.assign_decision(Lit::pos(v1));
+        assert_eq!(solver.trail.decision_level(), 5);
+
+        solver.trail.backtrack_to(3);
+        assert_eq!(solver.trail.decision_level(), 3);
+        assert!(!solver.trail.is_assigned(v1), "v1 must be unassigned");
+        assert_eq!(
+            solver.trail.level(v1),
+            5,
+            "v1's level must remain stale at 5 after backtrack"
+        );
+
+        // Theory conflict clause: all three are meant to be the (false) clause
+        // literals, but v1 is now unassigned. Pre-fix this panicked / corrupted.
+        let conflict_lits = [Lit::pos(v0), Lit::pos(v1), Lit::pos(v2)];
+        let (backtrack_level, learnt) = solver.analyze_theory_conflict(&conflict_lits);
+
+        assert!(!learnt.is_empty(), "learned clause must not be empty");
+
+        // The asserting literal (index 0) is the unassigned one — the clause is
+        // unit and will propagate it — so backtracking never leaves it assigned.
+        assert_eq!(
+            learnt[0].var(),
+            v1,
+            "the unassigned literal must be the asserting (index-0) literal"
+        );
+        assert!(
+            !solver.trail.is_assigned(learnt[0].var()),
+            "the asserting literal must be unassigned"
+        );
+
+        // Backtrack level is the max level among the *assigned* (false) literals —
+        // never the unassigned literal's stale level 5.
+        assert_eq!(
+            backtrack_level, 3,
+            "backtrack level must be the max assigned (false) level, not the stale 5"
+        );
+
+        // Soundness: the full theory lemma is preserved — every original literal is
+        // present exactly once, none dropped (dropping would strengthen the clause
+        // and could be unsound).
+        let mut got: Vec<Lit> = learnt.to_vec();
+        got.sort_by_key(|l| l.code());
+        let mut want = vec![Lit::pos(v0), Lit::pos(v1), Lit::pos(v2)];
+        want.sort_by_key(|l| l.code());
+        assert_eq!(
+            got, want,
+            "learned clause must be the full deduplicated lemma"
+        );
+
+        // Every non-asserting literal is assigned and at a level <= backtrack level,
+        // so after backtracking the clause stays unit on the asserting literal.
+        for &lit in learnt.iter().skip(1) {
+            assert!(
+                solver.trail.is_assigned(lit.var()),
+                "non-asserting literal {lit:?} must be assigned"
+            );
+            assert!(
+                solver.trail.level(lit.var()) <= backtrack_level,
+                "non-asserting literal level {} exceeds backtrack level {backtrack_level}",
+                solver.trail.level(lit.var())
+            );
+        }
+    }
+
+    #[test]
+    fn test_theory_conflict_two_unassigned_literals_no_panic() {
+        // Defensive: a lemma with more than one open literal is not unit, but the
+        // handler must still produce a valid, non-corrupting result (an unassigned
+        // asserting literal, a backtrack level drawn only from assigned literals).
+        use crate::Solver;
+
+        let mut solver = Solver::new();
+        let v0 = solver.new_var(); // false @ level 2
+        let v1 = solver.new_var(); // unassigned, stale level 4
+        let v2 = solver.new_var(); // unassigned, stale level 3
+
+        // Level 1 (unused), level 2: v0 false via a decision on ¬v0.
+        solver.trail.new_decision_level(); // 1
+        solver.trail.new_decision_level(); // 2
+        solver.trail.assign_decision(Lit::neg(v0));
+
+        // Levels 3, 4: assign v2 then v1, then backtrack both away (stale levels).
+        solver.trail.new_decision_level(); // 3
+        solver.trail.assign_decision(Lit::pos(v2));
+        solver.trail.new_decision_level(); // 4
+        solver.trail.assign_decision(Lit::pos(v1));
+
+        solver.trail.backtrack_to(2);
+        assert_eq!(solver.trail.decision_level(), 2);
+        assert!(!solver.trail.is_assigned(v1));
+        assert!(!solver.trail.is_assigned(v2));
+
+        let conflict_lits = [Lit::pos(v0), Lit::pos(v1), Lit::pos(v2)];
+        let (backtrack_level, learnt) = solver.analyze_theory_conflict(&conflict_lits);
+
+        // No panic; the asserting literal is one of the unassigned vars; the
+        // backtrack level is the only assigned literal's level (2), never a stale
+        // level (3 or 4).
+        assert!(!learnt.is_empty());
+        assert!(
+            !solver.trail.is_assigned(learnt[0].var()),
+            "asserting literal must be unassigned"
+        );
+        assert_eq!(
+            backtrack_level, 2,
+            "backtrack level must come from the single assigned literal (level 2)"
+        );
+        // The full lemma is preserved (all three vars, once each).
+        let vars: std::collections::BTreeSet<u32> =
+            learnt.iter().map(|l| l.var().index() as u32).collect();
+        assert_eq!(vars.len(), 3, "all three distinct vars must be present");
+    }
+
+    #[test]
+    fn test_theory_conflict_all_false_still_uses_1uip() {
+        // Regression guard: a genuine, fully-falsified theory conflict must keep
+        // going through the 1-UIP path (asserting literal strictly above the
+        // backtrack level), unaffected by the unassigned-literal branch.
+        use crate::Solver;
+
+        let mut solver = Solver::new();
+        let v0 = solver.new_var();
+        let v1 = solver.new_var();
+        let v2 = solver.new_var();
+
+        // Level 1: decide v0 = true.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(v0));
+        // Level 2: decide v1 = true.
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(v1));
+        // Level 2: propagate v2 = true with reason (¬v1 ∨ v2).
+        let r = solver.clauses.add_learned([Lit::neg(v1), Lit::pos(v2)]);
+        solver.trail.assign_propagation(Lit::pos(v2), r);
+
+        // Conflict clause (¬v0 ∨ ¬v1 ∨ ¬v2): every literal is FALSE (assigned).
+        let conflict_lits = [Lit::neg(v0), Lit::neg(v1), Lit::neg(v2)];
+        let (backtrack_level, learnt) = solver.analyze_theory_conflict(&conflict_lits);
+
+        assert!(!learnt.is_empty());
+        let uip_level = solver.trail.level(learnt[0].var());
+        assert!(
+            solver.trail.is_assigned(learnt[0].var()),
+            "for an all-false conflict the 1-UIP asserting literal is assigned"
+        );
+        assert!(
+            uip_level > backtrack_level,
+            "1-UIP asserting literal level {uip_level} must be strictly above the \
+             backtrack level {backtrack_level}"
         );
     }
 }

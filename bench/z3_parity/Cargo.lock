@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-core"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "bumpalo",
  "hashbrown 0.17.0",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-math"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.0",
  "num-bigint",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-nlsat"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-proof"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-rational",
@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-sat"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.0",
  "libm",
@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-solver"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.0",
  "num-bigint",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-theories"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "egg",
  "hashbrown 0.17.0",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "oxiz-z3-parity"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "colored",

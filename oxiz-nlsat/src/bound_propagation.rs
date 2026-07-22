@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired (candidate for a
+// future flag). Interval bound propagation is a sound over-approximation ONLY as
+// an infeasibility detector: an empty interval is a genuine conflict, but it must
+// never be used to claim feasibility or fix a value, and its conflicts still need
+// sound blame literals. Needs that careful scoping before wiring.
 //! Bound propagation for polynomial constraints.
 //!
 //! This module implements interval-based bound propagation for polynomial

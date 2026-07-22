@@ -45,27 +45,37 @@ impl QuantChecker {
         if clause.is_empty() {
             return CheckResult::Invalid("Empty conflict clause".to_string());
         }
-
-        // For quantifier theory:
-        // 1. Check that instantiations are valid substitutions
-        // 2. Verify Skolem function consistency
-        // 3. Ensure no circular dependencies
-
-        CheckResult::Valid
+        if super::clause_has_complementary_pair(clause) {
+            return CheckResult::Valid;
+        }
+        // A genuine quantifier conflict (a bad instantiation or Skolem
+        // inconsistency) can only be certified against the instantiated body,
+        // which requires the term structure this checker does not have.
+        CheckResult::Unknown(
+            "Quantifier conflict requires checking the instantiation instances".to_string(),
+        )
     }
 
-    /// Check quantifier propagation
-    fn check_quant_propagation(&self, _literal: Literal, _explanation: &[Literal]) -> CheckResult {
-        // Quantifier propagations include:
-        // - Instantiation lemmas: ∀x.φ(x) => φ(t)
-        // - Skolem definitions
-        CheckResult::Valid
+    /// Check quantifier propagation.
+    fn check_quant_propagation(&self, literal: Literal, explanation: &[Literal]) -> CheckResult {
+        if super::explanation_entails(literal, explanation) {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Quantifier propagation not certifiable from literal identities".to_string(),
+            )
+        }
     }
 
-    /// Check model for quantifier satisfaction
-    fn check_quant_model(&self, _assignments: &[(TermId, bool)]) -> CheckResult {
-        // For finite model finding, check all quantified formulas
-        CheckResult::Valid
+    /// Check model for quantifier satisfaction.
+    fn check_quant_model(&self, assignments: &[(TermId, bool)]) -> CheckResult {
+        if assignments.is_empty() {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Quantifier model consistency requires evaluating quantified bodies".to_string(),
+            )
+        }
     }
 
     /// Verify an instantiation is correct
@@ -163,12 +173,16 @@ mod tests {
     }
 
     #[test]
-    fn test_quant_conflict_valid() {
+    fn test_quant_conflict_tautology_valid_but_plain_unknown() {
         let checker = QuantChecker::new();
         let t1 = TermId::from(1u32);
-        let clause = vec![Literal::pos(t1)];
-        let result = checker.check_conflict(&clause);
-        assert!(result.is_valid());
+        assert!(
+            checker
+                .check_conflict(&[Literal::pos(t1), Literal::neg(t1)])
+                .is_valid()
+        );
+        let result = checker.check_conflict(&[Literal::pos(t1)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
@@ -177,19 +191,22 @@ mod tests {
         let t1 = TermId::from(1u32);
         let t2 = TermId::from(2u32);
 
-        let literal = Literal::pos(t1);
-        let explanation = vec![Literal::pos(t2)];
-        let result = checker.check_propagation(literal, &explanation);
-        assert!(result.is_valid());
+        assert!(
+            checker
+                .check_propagation(Literal::pos(t1), &[Literal::pos(t1)])
+                .is_valid()
+        );
+        let result = checker.check_propagation(Literal::pos(t1), &[Literal::pos(t2)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
     fn test_quant_model_check() {
         let checker = QuantChecker::new();
         let t1 = TermId::from(1u32);
-        let assignments = vec![(t1, true)];
-        let result = checker.check_model(&assignments);
-        assert!(result.is_valid());
+        assert!(checker.check_model(&[]).is_valid());
+        let result = checker.check_model(&[(t1, true)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]

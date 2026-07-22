@@ -28,15 +28,17 @@ mod bcp_properties {
             // Unit clause: just p
             solver.assert(p, &mut tm);
 
+            // A bare unit clause `p` is trivially satisfiable -- must be
+            // Sat, not Unknown.
             let result = solver.check(&mut tm);
-
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // p should be true
-                    let p_val = model.get(p);
-                    let true_term = tm.mk_bool(true);
-                    prop_assert_eq!(p_val, Some(true_term));
-                }
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // p should be true
+                let p_val = model.get(p);
+                let true_term = tm.mk_bool(true);
+                prop_assert_eq!(p_val, Some(true_term));
             }
         }
 
@@ -54,15 +56,17 @@ mod bcp_properties {
             // ¬p
             solver.assert(tm.mk_not(p), &mut tm);
 
+            // (p ∨ q) ∧ ¬p forces q=true -- trivially satisfiable, must be
+            // Sat, not Unknown.
             let result = solver.check(&mut tm);
-
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // q should be true
-                    let q_val = model.get(q);
-                    let true_term = tm.mk_bool(true);
-                    prop_assert_eq!(q_val, Some(true_term));
-                }
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // q should be true
+                let q_val = model.get(q);
+                let true_term = tm.mk_bool(true);
+                prop_assert_eq!(q_val, Some(true_term));
             }
         }
 
@@ -85,14 +89,16 @@ mod bcp_properties {
             // Assert first variable
             solver.assert(vars[0], &mut tm);
 
+            // Setting all vars true satisfies the whole implication chain --
+            // trivially satisfiable, must be Sat, not Unknown.
             let result = solver.check(&mut tm);
-
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // All variables should have values
-                    for v in &vars {
-                        prop_assert!(model.get(*v).is_some());
-                    }
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // All variables should have values
+                for v in &vars {
+                    prop_assert!(model.get(*v).is_some());
                 }
             }
         }
@@ -117,22 +123,24 @@ mod bcp_properties {
                 solver.assert(tm.mk_not(q), &mut tm);
             }
 
+            // (p ∨ q ∨ r) remains satisfiable regardless of a/b since r is
+            // always free to be true -- trivially satisfiable, must be Sat.
             let result = solver.check(&mut tm);
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // At least one should be true
+                let p_val = model.get(p);
+                let q_val = model.get(q);
+                let r_val = model.get(r);
+                let true_term = tm.mk_bool(true);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // At least one should be true
-                    let p_val = model.get(p);
-                    let q_val = model.get(q);
-                    let r_val = model.get(r);
-                    let true_term = tm.mk_bool(true);
-
-                    prop_assert!(
-                        p_val == Some(true_term) ||
-                        q_val == Some(true_term) ||
-                        r_val == Some(true_term)
-                    );
-                }
+                prop_assert!(
+                    p_val == Some(true_term) ||
+                    q_val == Some(true_term) ||
+                    r_val == Some(true_term)
+                );
             }
         }
     }
@@ -157,17 +165,19 @@ mod theory_propagation_properties {
             solver.assert(tm.mk_eq(x, cn), &mut tm);
             solver.assert(tm.mk_eq(y, x), &mut tm);
 
+            // x=n ∧ y=x is a decidable QF_LIA equality chain with no
+            // contradiction -- trivially satisfiable, must be Sat.
             let result = solver.check(&mut tm);
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // Both should have the same value
+                let x_val = model.get(x);
+                let y_val = model.get(y);
 
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // Both should have the same value
-                    let x_val = model.get(x);
-                    let y_val = model.get(y);
-
-                    prop_assert_eq!(x_val, Some(cn));
-                    prop_assert_eq!(y_val, Some(cn));
-                }
+                prop_assert_eq!(x_val, Some(cn));
+                prop_assert_eq!(y_val, Some(cn));
             }
         }
 
@@ -193,15 +203,18 @@ mod theory_propagation_properties {
             solver.assert(tm.mk_eq(y, tb), &mut tm);
             solver.assert(tm.mk_eq(z, tc), &mut tm);
 
+            // Three independent equalities x=a, y=b, z=c have no
+            // interaction and no contradiction -- trivially satisfiable,
+            // must be Sat.
             let result = solver.check(&mut tm);
-
-            if matches!(result, SolverResult::Sat) {
-                if let Some(model) = solver.model() {
-                    // All should have values
-                    prop_assert!(model.get(x).is_some());
-                    prop_assert!(model.get(y).is_some());
-                    prop_assert!(model.get(z).is_some());
-                }
+            prop_assert_eq!(result, SolverResult::Sat);
+            let model = solver.model();
+            prop_assert!(model.is_some(), "Sat result must yield a model");
+            if let Some(model) = model {
+                // All should have values
+                prop_assert!(model.get(x).is_some());
+                prop_assert!(model.get(y).is_some());
+                prop_assert!(model.get(z).is_some());
             }
         }
     }

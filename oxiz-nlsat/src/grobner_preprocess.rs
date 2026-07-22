@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired (candidate for a
+// future feature flag). Groebner-basis simplification is sound only on the
+// equational (p=0) subset of atoms; applying it to inequalities is unsound, and
+// it spawns background threads that outlive their timeout. Needs equational
+// scoping + resource control before wiring.
 //! Gröbner Basis Preprocessing for NLSAT.
 //!
 //! This module implements Gröbner basis-based preprocessing for polynomial systems

@@ -34,7 +34,10 @@ mod solve_eqs;
 mod split;
 
 // Re-export core types
-pub use core::{Goal, Precision, SolveResult, Tactic, TacticResult};
+pub use core::{
+    ChainConverter, Goal, IdentityConverter, ModelConverter, Precision, SolveResult, Tactic,
+    TacticModel, TacticResult,
+};
 
 // Re-export registry
 pub use registry::{ManagedTactic, TacticRegistry, default_registry};
@@ -43,7 +46,9 @@ pub use registry::{ManagedTactic, TacticRegistry, default_registry};
 pub use ackermann::{AckermannizeTactic, StatelessAckermannizeTactic};
 pub use aggressive_simplify::{AggressiveSimplifyTactic, StatelessAggressiveSimplifyTactic};
 pub use bitblast::{BitBlastTactic, StatelessBitBlastTactic};
-pub use combinators::{OrElseTactic, ParallelTactic, RepeatTactic, ThenTactic, TimeoutTactic};
+pub use combinators::{
+    OrElseTactic, ParallelTactic, RepeatTactic, ThenTactic, TimeoutTactic, cancellation_requested,
+};
 pub use ctx_simplify::{CtxSolverSimplifyTactic, StatelessCtxSolverSimplifyTactic};
 pub use eliminate::{EliminateUnconstrainedTactic, StatelessEliminateUnconstrainedTactic};
 pub use pb2bv::{Pb2BvTactic, StatelessPb2BvTactic};
@@ -102,8 +107,10 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessSimplifyTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107): real
+        // simplification needs a TermManager (SimplifyTactic::apply_mut).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
     }
 
     #[test]
@@ -396,8 +403,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessBitBlastTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "bit-blast");
         assert!(!tactic.description().is_empty());
     }
@@ -513,8 +521,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessAckermannizeTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "ackermannize");
         assert!(!tactic.description().is_empty());
     }
@@ -643,8 +652,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessCtxSolverSimplifyTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "ctx-solver-simplify");
         assert!(!tactic.description().is_empty());
     }
@@ -766,8 +776,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessSplitTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "split");
         assert!(!tactic.description().is_empty());
     }
@@ -889,8 +900,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessEliminateUnconstrainedTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "elim-uncnstr");
         assert!(!tactic.description().is_empty());
     }
@@ -1116,8 +1128,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessSolveEqsTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "solve-eqs");
         assert!(!tactic.description().is_empty());
     }
@@ -1131,8 +1144,10 @@ mod tests {
         let result = timeout_tactic
             .apply(&goal)
             .expect("test operation should succeed");
-        // Should complete quickly (stateless simplify returns SubGoals)
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        // Should complete quickly. The manager-free stateless simplify is
+        // honestly NotApplicable (P4-1107); the timeout wrapper passes the
+        // inner result through unchanged.
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(timeout_tactic.name(), "timeout");
     }
 
@@ -1187,7 +1202,9 @@ mod tests {
         let result = timeout_tactic
             .apply(&goal)
             .expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        // Manager-free stateless simplify is honestly NotApplicable (P4-1107),
+        // passed through by the timeout wrapper.
+        assert!(matches!(result, TacticResult::NotApplicable));
     }
 
     // ========================================================================
@@ -1594,8 +1611,9 @@ mod tests {
         let goal = Goal::empty();
         let tactic = StatelessFourierMotzkinTactic;
 
+        // Manager-free path is honestly NotApplicable (P4-1107).
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
         assert_eq!(tactic.name(), "fm");
         assert!(!tactic.description().is_empty());
     }

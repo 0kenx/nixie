@@ -145,19 +145,25 @@ impl OptCommandProcessor {
         let mut objectives = Vec::new();
 
         for (idx, id) in self.objective_ids.iter().enumerate() {
-            if let Some(obj_value) = self
-                .context
-                .objective_value(crate::objective::ObjectiveId(idx as u32))
-            {
+            let obj_id = crate::objective::ObjectiveId(idx as u32);
+            if let Some(obj_value) = self.context.objective_value(obj_id) {
                 let value = weight_to_value_kind(obj_value);
 
-                // Get the objective to determine if it's minimize or maximize
-                // This is a simplified version - in reality we'd track this properly
-                let is_minimize = true; // Default assumption
+                // `OptContext::add_objective` allocates `ObjectiveId`s
+                // sequentially from 0 and pushes onto `self.objectives` in
+                // the same order, so `objectives()[idx]` is exactly the
+                // `Objective` this response entry describes -- read its
+                // real `kind`/`term` instead of hardcoding
+                // minimize/TermId(0), which silently mis-reported every
+                // `(maximize ...)` objective as a minimize with a
+                // meaningless term.
+                let objective = self.context.objectives().get(idx);
+                let is_minimize = objective.map(|o| o.is_minimize()).unwrap_or(true);
+                let term = objective.map(|o| o.term).unwrap_or(TermId::from(0));
 
                 objectives.push(ObjectiveValue {
                     id: id.clone(),
-                    term: TermId::from(0), // Would need to track this
+                    term,
                     is_minimize,
                     value,
                 });
@@ -380,6 +386,77 @@ mod tests {
 
         assert_eq!(proc.context().num_objectives(), 2);
         assert_eq!(proc.objective_ids.len(), 2);
+    }
+
+    /// `opt-2` regression: `(get-objectives)` must report the real
+    /// `is_minimize`/`term` for each objective instead of the hardcoded
+    /// `is_minimize = true` / `term = TermId::from(0)`. Verifies a
+    /// `maximize` objective round-trips as `is_minimize = false` with its
+    /// real term id (not the always-true/always-zero defaults the old
+    /// stub returned regardless of what command was actually issued).
+    #[test]
+    fn test_get_objectives_reports_real_sense_and_term_for_maximize() {
+        let mut proc = OptCommandProcessor::new();
+
+        let x = {
+            let ctx = proc.context_mut();
+            ctx.terms.mk_var("x", ctx.terms.sorts.int_sort)
+        };
+
+        proc.process(OptCommand::Maximize {
+            term: x,
+            id: Some("obj1".to_string()),
+        })
+        .expect("maximize command should succeed");
+
+        let response = proc.process(OptCommand::GetObjectives);
+        let CommandResponse::Objectives(objectives) =
+            response.expect("get-objectives should succeed")
+        else {
+            panic!("expected Objectives response");
+        };
+
+        assert_eq!(objectives.objectives.len(), 1);
+        let obj = &objectives.objectives[0];
+        assert_eq!(obj.id, Some("obj1".to_string()));
+        assert_eq!(
+            obj.term, x,
+            "must report the real objective term, not TermId(0)"
+        );
+        assert!(
+            !obj.is_minimize,
+            "a `maximize` objective must round-trip as is_minimize = false"
+        );
+    }
+
+    /// Companion to the maximize test above: a `minimize` objective must
+    /// still round-trip as `is_minimize = true`.
+    #[test]
+    fn test_get_objectives_reports_real_sense_and_term_for_minimize() {
+        let mut proc = OptCommandProcessor::new();
+
+        let y = {
+            let ctx = proc.context_mut();
+            ctx.terms.mk_var("y", ctx.terms.sorts.int_sort)
+        };
+
+        proc.process(OptCommand::Minimize {
+            term: y,
+            id: Some("obj2".to_string()),
+        })
+        .expect("minimize command should succeed");
+
+        let response = proc.process(OptCommand::GetObjectives);
+        let CommandResponse::Objectives(objectives) =
+            response.expect("get-objectives should succeed")
+        else {
+            panic!("expected Objectives response");
+        };
+
+        assert_eq!(objectives.objectives.len(), 1);
+        let obj = &objectives.objectives[0];
+        assert_eq!(obj.term, y);
+        assert!(obj.is_minimize);
     }
 
     #[test]

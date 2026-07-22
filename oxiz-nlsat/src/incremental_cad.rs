@@ -1,5 +1,11 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. An incremental
+// projection/resultant cache with backtrack snapshots that requires reworking the
+// assignment/backtrack model to be truly incremental (backtrack currently resets
+// all arithmetic state and clears every cache per conflict). Cache-invalidation
+// bugs would be subtle; pairs with cad_optimization. NOTE: the standalone full-CAD
+// path it consumes (crate::cad) now uses exact algebraic root samples
+// (crate::cad_algebraic) instead of rational midpoints.
 //! Incremental CAD for efficient updates and backtracking.
 //!
 //! This module provides incremental updates to the CAD decomposition,

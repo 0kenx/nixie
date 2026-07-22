@@ -1215,14 +1215,23 @@ impl TheoryCombiner {
     /// Presolve: simplify constraints before solving
     ///
     /// Performs:
-    /// 1. Singleton propagation: if a variable has only one possible value, substitute it
+    /// 1. Singleton detection: find shared variables whose EUF equivalence
+    ///    class already pins them to another term (a "singleton" value)
     /// 2. Subsumption elimination: remove redundant constraints
-    /// 3. Equality substitution: replace variables that are equal to constants
+    /// 3. Equality propagation: feed the discovered equalities into the
+    ///    same `propagate_equality`/`propagate` pipeline used by the main
+    ///    solve loop, so every theory that shares the variable actually
+    ///    observes the substitution instead of it being silently dropped
+    ///
+    /// Note: `TheoryCombiner` does not own the input formula, so it cannot
+    /// rewrite terms in place; propagating the equality is the mechanism
+    /// available to it for making the detected fact visible to arithmetic.
     pub fn presolve(&mut self) -> Result<PresolveStats> {
         let mut stats = PresolveStats::default();
 
         // Phase 1: Detect singleton variables in EUF
-        // Look for equivalence classes with only one member or all equal to a constant
+        // Look for shared variables whose equivalence class already
+        // contains another (canonical) term they can be replaced by.
         let singleton_eqs = self.detect_singletons_euf();
         stats.singleton_propagations = singleton_eqs.len();
 
@@ -1230,12 +1239,12 @@ impl TheoryCombiner {
         // This would check for contradictory bounds like x <= 5 && x >= 10
         // For now, we rely on the solver to detect this
 
-        // Phase 3: Propagate equalities to constants
-        // If we know x = 5, we can substitute 5 for x everywhere
-        for (var, _constant) in &singleton_eqs {
-            // Mark this variable for elimination
-            // In a full implementation, we would actually perform the substitution
-            let _ = var;
+        // Phase 3: Propagate the discovered equalities. This queues them
+        // through the real `propagate_equality`/`propagate` machinery
+        // (the same path EUF-native equalities take), so arithmetic (and
+        // any other theory sharing the variable) is actually notified.
+        for (var, representative) in singleton_eqs {
+            self.propagate_equality(var, representative, TheoryId::EUF);
             stats.vars_eliminated += 1;
         }
 
@@ -1244,20 +1253,47 @@ impl TheoryCombiner {
 
     /// Detect singleton variables in EUF
     ///
-    /// Returns pairs of (variable, representative) where the variable
-    /// is determined to have a single value
+    /// A shared variable is considered a "singleton" here when its EUF
+    /// equivalence class (queried via the real union-find, not a stub)
+    /// already contains another interned term. The canonical
+    /// representative for the whole class is the member with the smallest
+    /// `TermId` -- every member of the class agrees on that same
+    /// representative, so a class of `n` equal terms yields exactly
+    /// `n - 1` (non-canonical-member, representative) pairs rather than
+    /// reporting each direction of every pair symmetrically.
+    ///
+    /// Returns pairs of (variable, representative). A variable that was
+    /// never interned into EUF, or whose class contains nothing else, is
+    /// not returned -- there is nothing EUF can tell us about it yet.
     fn detect_singletons_euf(&self) -> Vec<(TermId, TermId)> {
-        let singletons = Vec::new();
+        let mut singletons = Vec::new();
 
-        // For each shared variable, check if it's in a singleton equivalence class
+        // For each shared variable, check whether EUF already knows it is
+        // equal to some other term by inspecting its equivalence class.
         for &term in &self.shared_vars {
-            // Check if this term is equal to itself only (singleton class)
-            // In a full implementation, we would query the EUF solver
-            // to find all members of the equivalence class
+            let Some(node) = self.euf.term_to_node(term) else {
+                // Never interned into EUF: no information available.
+                continue;
+            };
 
-            // For now, return empty list
-            // A full implementation would query the EUF solver's equivalence classes
-            let _ = term;
+            let root = self.euf.find_immutable(node);
+            let members = self.euf.class_members(root);
+            if members.len() <= 1 {
+                // Genuine singleton equivalence class: nothing to pin the
+                // variable to yet.
+                continue;
+            }
+
+            let representative = members
+                .iter()
+                .filter_map(|&idx| self.euf.node_term(idx))
+                .min_by_key(|candidate| candidate.raw());
+
+            if let Some(representative) = representative
+                && representative != term
+            {
+                singletons.push((term, representative));
+            }
         }
 
         singletons

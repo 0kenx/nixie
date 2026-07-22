@@ -65,7 +65,7 @@ impl Solver {
 
                 self.vsids.decay();
                 self.clauses.decay_activity(self.config.clause_decay);
-                self.handle_clause_deletion_and_restart();
+                self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                 continue;
             }
 
@@ -119,7 +119,7 @@ impl Solver {
 
                     self.vsids.decay();
                     self.clauses.decay_activity(self.config.clause_decay);
-                    self.handle_clause_deletion_and_restart();
+                    self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     continue;
                 }
 
@@ -160,7 +160,7 @@ impl Solver {
 
                         self.vsids.decay();
                         self.clauses.decay_activity(self.config.clause_decay);
-                        self.handle_clause_deletion_and_restart();
+                        self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     }
                     continue;
                 }
@@ -218,7 +218,7 @@ impl Solver {
 
                         self.vsids.decay();
                         self.clauses.decay_activity(self.config.clause_decay);
-                        self.handle_clause_deletion_and_restart();
+                        self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     }
                     TheoryCheckResult::Propagated(props) => {
                         // Handle late propagations
@@ -231,6 +231,36 @@ impl Solver {
                     }
                 }
             }
+        }
+    }
+
+    /// Run clause-database reduction and the restart check, keeping the theory's
+    /// view of the trail in sync.
+    ///
+    /// A restart backtracks the trail (to level 0 for the global strategies, or a
+    /// local level for `LocalLbd`) purely inside the Boolean core — `restart()`
+    /// only holds `&mut self` and cannot reach the theory. Without notifying the
+    /// theory, its per-atom polarity bookkeeping keeps the assignments the restart
+    /// just discarded and, on the next check, reports a "conflict" whose clause
+    /// still lists those now-unassigned literals. That stale clause is not a real
+    /// conflict (its open literals are unassigned), and feeding it into
+    /// conflict analysis corrupts the trail (see `analyze_theory_conflict`). By
+    /// detecting the trail shrinking and forwarding the new level through
+    /// `on_backtrack`, the theory unwinds exactly what the Boolean core did, so no
+    /// stale literal survives into the next theory check. `theory_processed` is
+    /// clamped to the shortened trail so the newly-restored prefix is re-sent to
+    /// the theory on the following iteration.
+    fn handle_deletion_restart_with_theory<T: TheoryCallback>(
+        &mut self,
+        theory: &mut T,
+        theory_processed: &mut usize,
+    ) {
+        let level_before = self.trail.decision_level();
+        self.handle_clause_deletion_and_restart();
+        let level_after = self.trail.decision_level();
+        if level_after < level_before {
+            theory.on_backtrack(level_after);
+            *theory_processed = (*theory_processed).min(self.trail.assignments().len());
         }
     }
 }

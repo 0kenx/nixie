@@ -15,10 +15,6 @@ std = ["rayon", "tracing", "rustc-hash/std", "oxiz-core/std"]
 profiling = ["std", "oxiz-core/profiling"]
 # Enable verbose debug output in conflict analysis
 analyze-debug = []
-# GPU acceleration backends (placeholder for future implementation)
-cuda = []
-opencl = []
-vulkan = []
 
 [dependencies]
 oxiz-core = { workspace = true, default-features = false }

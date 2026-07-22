@@ -277,13 +277,18 @@ impl Tactic for StatelessCtxSolverSimplifyTactic {
         "ctx-solver-simplify"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        // Without a term manager, we can only return the goal unchanged
-        Ok(TacticResult::SubGoals(vec![goal.clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Contextual simplification rewrites assertions using the others as
+        // context, which needs a `&mut TermManager`. The manager-free path
+        // honestly reports NotApplicable rather than returning the goal
+        // unchanged. Use `CtxSolverSimplifyTactic::apply_mut` (or
+        // `create_managed`) for the real transformation.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Simplifies assertions using other assertions as context"
+        "Simplifies assertions using other assertions as context \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }
 fn is_constant(kind: &crate::ast::TermKind) -> bool {

@@ -3,18 +3,22 @@
 mod analysis;
 mod cache;
 mod checkpoint;
+mod checkpointing;
 mod cicd;
+mod core_min;
 mod dashboard;
 mod dependency;
 mod diagnostic;
 mod dimacs;
 mod distributed;
 mod format;
+mod incremental;
 mod interactive;
 mod interpolate;
 mod learning;
 mod lsp;
 mod memory;
+mod ml_tactic;
 mod model_counter;
 mod portfolio;
 mod processor;
@@ -440,6 +444,11 @@ struct Args {
     #[arg(long)]
     incremental: bool,
 
+    /// Use the ML-guided tactic selector (oxiz-ml) to pick a solver posture
+    /// per formula and learn from outcomes (off by default)
+    #[arg(long)]
+    ml_tactic_selection: bool,
+
     /// Enable parallel portfolio solving (run multiple strategies concurrently)
     #[arg(long)]
     portfolio_mode: bool,
@@ -741,11 +750,16 @@ async fn main() {
         args.verbosity
     };
 
-    // Flags that are accepted on the command line for compatibility with the
-    // documented surface but currently have no backing implementation.
-    // Reported once, up front, rather than silently doing nothing (see
-    // `warn_unimplemented_flags`).
-    warn_unimplemented_flags(&args, verbosity);
+    // `--threads N`, when explicitly set (i.e. != the clap default), sizes the
+    // global Rayon pool used for parallel *file* processing and — via
+    // `execute_and_format` — routes a single-problem solve through the
+    // N-worker portfolio. Configure the pool here, once, before any parallel
+    // work starts. (`build_global` fails harmlessly if a pool already exists.)
+    if args.threads != DEFAULT_THREADS && args.threads >= 1 {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(args.threads)
+            .build_global();
+    }
 
     // Set up logging
     if verbosity >= Verbosity::Debug {
@@ -794,6 +808,11 @@ async fn main() {
     // Handle input
     if args.interactive {
         run_interactive(&mut ctx, &args, verbosity);
+    } else if args.incremental {
+        // Incremental mode streams top-level commands against a single
+        // persistent context (carried across files), honoring push/pop and
+        // cross-file declarations — see `incremental::run_incremental`.
+        incremental::run_incremental(&mut ctx, &args, verbosity);
     } else if args.input.is_empty() {
         run_stdin(&mut ctx, &args, verbosity);
     } else if args.watch {
@@ -809,64 +828,12 @@ async fn main() {
     // timeout-specific exit code), so there is nothing to reconcile here.
 }
 
-/// Warn (once, to stderr) about accepted-but-unimplemented flags.
-///
-/// `--minimize-core`, `--incremental`, the checkpoint/resume group, and
-/// `--threads` are all parsed by clap and previously had no effect
-/// whatsoever -- not even a record kept anywhere -- so a user relying on any
-/// of them got silently wrong expectations (e.g. believing a long-running
-/// solve was being checkpointed when it was not). Implementing them for real
-/// would require capabilities `oxiz-cli` does not have today:
-///
-/// - `--minimize-core`: a real minimal-unsat-core search (beyond the single
-///   core `--unsat-core` already extracts) needs a deletion-based or QuickXplain
-///   loop driven by the solver's internal core, which is large enough in scope
-///   to track separately rather than bolt on here.
-/// - `--incremental`: `push`/`pop` SMT-LIB commands already work
-///   unconditionally via `Context::execute_script` regardless of this flag,
-///   so there is no separate "incremental mode" to switch on.
-/// - `--checkpoint`/`--resume`/`--resume-from`/`--checkpoint-interval`: the
-///   `checkpoint` module can (de)serialize a `Checkpoint` record, but nothing
-///   populates one from a live search -- `oxiz-solver`'s CDCL loop exposes no
-///   hook to pause and snapshot itself mid-`check-sat`.
-/// - `--threads`: `SolverConfig::num_threads` exists, but `Context::set_option`
-///   has no wired key for it (only `--portfolio-mode`'s separate code path
-///   actually runs work across threads today).
-fn warn_unimplemented_flags(args: &Args, verbosity: Verbosity) {
-    if verbosity == Verbosity::Quiet {
-        return;
-    }
-    if args.minimize_core {
-        eprintln!(
-            "warning: --minimize-core is accepted but core minimization is not yet \
-             implemented; use --unsat-core for a (non-minimal) unsatisfiable subset"
-        );
-    }
-    if args.incremental {
-        eprintln!(
-            "warning: --incremental has no effect; push/pop are always supported \
-             regardless of this flag"
-        );
-    }
-    if args.checkpoint || args.resume || args.resume_from.is_some() {
-        eprintln!(
-            "warning: checkpointing (--checkpoint/--resume/--resume-from/--checkpoint-interval) \
-             is accepted but not yet implemented; the solve will run to completion or exit \
-             without ever saving or restoring a checkpoint"
-        );
-    }
-    // `4` is `--threads`' clap default (see the `Args` field below), so this
-    // mirrors the same "was it actually set?" heuristic `CliConfig::merge_with_args`
-    // already uses -- `Args` has no `Option<usize>` to distinguish "left at
-    // its default" from "explicitly passed 4".
-    if args.threads != 4 {
-        eprintln!(
-            "warning: --threads {} is accepted but not enforced outside of --portfolio-mode; \
-             the normal solving path does not use it",
-            args.threads
-        );
-    }
-}
+/// The clap default for `--threads`. Used as the "was it explicitly set?"
+/// sentinel: an explicit `--threads N` with `N != DEFAULT_THREADS` opts into
+/// parallel solving (Rayon pool sizing + N-worker portfolio routing), mirroring
+/// the same heuristic [`CliConfig::merge_with_args`] uses (`Args` has no
+/// `Option<usize>` to distinguish "left at its default" from "explicitly 4").
+const DEFAULT_THREADS: usize = 4;
 
 /// Apply configuration preset
 fn apply_preset(ctx: &mut Context, preset: &str) {
@@ -991,10 +958,16 @@ pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) {
              implemented; the first model found is reported as-is"
         );
     }
-    if args.enumerate_models && !args.quiet {
+    // `--enumerate-models` is implemented for real (see
+    // `enumerate_additional_models`, invoked from `execute_and_format`), so
+    // it no longer needs an "unimplemented" warning here. `--max-models`
+    // only means anything together with `--enumerate-models`; flag the
+    // combination that leaves it completely inert, mirroring the other
+    // dead-flag warnings in this function.
+    if args.max_models > 0 && !args.enumerate_models && !args.quiet {
         eprintln!(
-            "warning: --enumerate-models is accepted but model enumeration is not yet \
-             implemented; only the first model found is reported"
+            "warning: --max-models {} has no effect without --enumerate-models",
+            args.max_models
         );
     }
     if args.optimize && !args.quiet {
@@ -1261,6 +1234,200 @@ fn execute_script_with_timeout(
     }
 }
 
+/// Cap on additional models enumerated when `--enumerate-models` is used
+/// with `--max-models 0` ("unlimited"). Formulas over unbounded domains
+/// (`Int`/`Real`) have no natural enumeration bound, so an unbounded loop
+/// here would hang the CLI on an explicit "find them all" request; this
+/// gives that request a real (if large) stopping point instead of silently
+/// refusing to honor it.
+const UNLIMITED_ENUMERATION_SAFETY_CAP: usize = 1000;
+
+/// Wall-clock ceiling on the total time spent enumerating additional models
+/// beyond the first, so a pathological formula cannot hang the CLI
+/// indefinitely even before [`UNLIMITED_ENUMERATION_SAFETY_CAP`] is reached
+/// (each round re-solves a growing assertion set, so later rounds get
+/// steadily more expensive).
+const ENUMERATION_WALL_CLOCK_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Reconstructs a [`oxiz_core::sort::SortId`] from the subset of
+/// [`Context::get_model`]'s sort-name strings [`enumerate_additional_models`]
+/// knows how to re-assert equalities over: `Bool`, `Int`, `Real`, and
+/// fixed-width `(_ BitVec n)`. Returns `None` for anything else (arrays,
+/// datatypes, uninterpreted sorts, strings, floats, ...), which the caller
+/// treats the same as an unassigned variable: honestly excluded from the
+/// blocking clause rather than guessed at.
+fn resolve_basic_sort(ctx: &mut Context, sort_name: &str) -> Option<oxiz_core::sort::SortId> {
+    match sort_name {
+        "Bool" => Some(ctx.terms.sorts.bool_sort),
+        "Int" => Some(ctx.terms.sorts.int_sort),
+        "Real" => Some(ctx.terms.sorts.real_sort),
+        _ => {
+            let width_str = sort_name
+                .strip_prefix("(_ BitVec ")?
+                .strip_suffix(')')?
+                .trim();
+            let width: u32 = width_str.parse().ok()?;
+            Some(ctx.terms.sorts.bitvec(width))
+        }
+    }
+}
+
+/// Enumerate every satisfying model of the script that led here, up to
+/// `--max-models` (`0` means "unlimited", capped by
+/// [`UNLIMITED_ENUMERATION_SAFETY_CAP`]), and return the formatted output
+/// for all of them (including the one the normal `check-sat` already
+/// found -- callers do not need to separately request `(get-model)` for it).
+///
+/// Implements the classic blocking-clause technique: read back the current
+/// model, assert the negation of that exact assignment, and `check-sat`
+/// again; each additional `sat` result is one more distinct model, and
+/// `unsat` means every model has been found. The blocking equalities are
+/// built directly as terms (`TermManager::mk_var`/`mk_eq`/`mk_and`/`mk_not`)
+/// rather than through a re-parsed SMT-LIB snippet: `Context::execute_script`
+/// parses each call with a fresh, script-local symbol table (see
+/// `oxiz_core::smtlib::parser::terms`), so a *separate* `execute_script`
+/// call referencing a constant declared by an *earlier* call would not
+/// resolve it -- `TermManager::mk_var` is hash-consed on `(name, sort)`,
+/// so reconstructing that same pair here yields the identical `TermId` the
+/// original `declare-const` produced, with no re-parsing and no risk of
+/// re-registering a duplicate declaration.
+///
+/// The enumeration loop runs inside a single `push`/`pop` pair so the extra
+/// blocking assertions (and the `last_result`/model they leave behind)
+/// never leak into whatever the caller does with `ctx` afterwards -- the
+/// textual model output collected along the way, not any residual solver
+/// state, is what the caller actually surfaces to the user.
+///
+/// A variable whose sort [`resolve_basic_sort`] does not recognize, or that
+/// has no assignment to evaluate, is excluded from the blocking clause. If
+/// every declared constant in the current model falls into that category,
+/// enumeration honestly stops (rather than asserting a vacuous `(not (and))`
+/// blocking clause, which would misreport "no more models" after just one
+/// round).
+fn enumerate_additional_models(ctx: &mut Context, max_models: usize) -> Vec<String> {
+    let requested_cap = if max_models == 0 {
+        UNLIMITED_ENUMERATION_SAFETY_CAP
+    } else {
+        max_models
+    };
+    let mut lines = Vec::new();
+
+    // The caller only invokes this after confirming the script's own
+    // `check-sat` reported `sat`, so a model should always be available
+    // here; stay honest rather than panicking if that invariant is ever
+    // broken.
+    if ctx.get_model().is_none() {
+        return lines;
+    }
+    lines.push("; model 1:".to_string());
+    lines.push(ctx.format_model());
+
+    if requested_cap <= 1 {
+        lines.push(format!(
+            "; model enumeration stopped after 1 model(s): reached --max-models {max_models}"
+        ));
+        return lines;
+    }
+
+    ctx.push();
+    let start = std::time::Instant::now();
+    let mut found = 1usize;
+    let mut stop_reason: Option<String> = None;
+
+    while found < requested_cap {
+        if start.elapsed() > ENUMERATION_WALL_CLOCK_BUDGET {
+            stop_reason = Some(format!(
+                "; model enumeration stopped after {found} model(s): wall-clock budget \
+                 ({:.0}s) exceeded",
+                ENUMERATION_WALL_CLOCK_BUDGET.as_secs_f64()
+            ));
+            break;
+        }
+
+        let Some(model) = ctx.get_model() else {
+            stop_reason = Some(format!(
+                "; model enumeration stopped after {found} model(s): no model available"
+            ));
+            break;
+        };
+
+        let mut equalities = Vec::new();
+        for (name, sort_name, _value) in &model {
+            let Some(sort_id) = resolve_basic_sort(ctx, sort_name) else {
+                continue;
+            };
+            let var_term = ctx.terms.mk_var(name, sort_id);
+            let Some(value_term) = ctx.eval_in_model(var_term) else {
+                continue;
+            };
+            // A variable with no real assignment in the solver's model
+            // (e.g. genuinely unconstrained -- declared but never
+            // decided by any clause) evaluates to itself: `Model::eval`'s
+            // fallback for an unassigned `Var` returns the variable term
+            // unchanged. Building `(= var var)` on that pair would
+            // silently constant-fold to `true` (`TermManager::mk_eq`
+            // short-circuits reflexive equalities), and negating it into
+            // the blocking clause would assert `false` -- reporting "no
+            // further models" after the very next round regardless of
+            // how many models actually remain. Exclude it instead: an
+            // honest inability to pin this variable down for blocking,
+            // not a fabricated constraint.
+            if value_term == var_term {
+                continue;
+            }
+            equalities.push(ctx.terms.mk_eq(var_term, value_term));
+        }
+
+        if equalities.is_empty() {
+            stop_reason = Some(format!(
+                "; model enumeration stopped after {found} model(s): no variable in the model \
+                 has a sort this enumerator can re-assert as a blocking literal"
+            ));
+            break;
+        }
+
+        let conjunction = ctx.terms.mk_and(equalities);
+        let blocking = ctx.terms.mk_not(conjunction);
+        ctx.assert(blocking);
+
+        match ctx.check_sat() {
+            oxiz_solver::SolverResult::Sat => {
+                found += 1;
+                lines.push(format!("; model {found}:"));
+                lines.push(ctx.format_model());
+            }
+            oxiz_solver::SolverResult::Unsat => {
+                stop_reason = Some(format!(
+                    "; model enumeration complete: {found} model(s) total (no further \
+                     models exist)"
+                ));
+                break;
+            }
+            oxiz_solver::SolverResult::Unknown => {
+                stop_reason = Some(format!(
+                    "; model enumeration stopped after {found} model(s): solver returned \
+                     unknown"
+                ));
+                break;
+            }
+        }
+    }
+
+    match stop_reason {
+        Some(reason) => lines.push(reason),
+        None if max_models == 0 => lines.push(format!(
+            "; model enumeration stopped after {found} model(s): reached the internal safety \
+             cap of {UNLIMITED_ENUMERATION_SAFETY_CAP} (no --max-models limit was given)"
+        )),
+        None => lines.push(format!(
+            "; model enumeration stopped after {found} model(s): reached --max-models {max_models}"
+        )),
+    }
+
+    ctx.pop();
+    lines
+}
+
 pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -> String {
     // If format-smtlib mode, just format and return
     if args.format_smtlib {
@@ -1413,15 +1580,30 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
         // Continue with normal execution after tuning
     }
 
-    // If portfolio mode is enabled, use parallel strategy execution.
-    // `--strategy portfolio` (directly, via `--preset balanced`/`thorough`,
-    // or via `--auto-tune` picking it for a hard/quantified problem) is
-    // routed here too, so requesting the portfolio strategy by name actually
-    // dispatches to the real parallel-portfolio solver instead of silently
-    // falling through to a single-strategy solve.
+    // --resume/--resume-from: replay a previously-checkpointed result for this
+    // exact problem instead of re-solving, when a matching checkpoint exists.
+    if (args.resume || args.resume_from.is_some())
+        && let Some(lines) = checkpointing::try_resume(script, args)
+    {
+        if args.verbosity >= Verbosity::Verbose {
+            eprintln!("; resumed result from checkpoint");
+        }
+        return lines.join("\n");
+    }
+
+    // Portfolio / parallel routing. Reached when the user asked for the
+    // portfolio strategy (by name, `--preset`, or `--auto-tune`), enabled
+    // `--portfolio-mode`, OR set an explicit `--threads N` (N != the clap
+    // default) without `--parallel` file processing — in which case a single
+    // problem is solved by N portfolio workers (the real wiring of `--threads`
+    // into the parallel-solving entry point). `--strategy portfolio` requested
+    // by name thus dispatches to the real parallel-portfolio solver instead of
+    // silently falling through to a single-strategy solve.
     let strategy_requests_portfolio = args.strategy.as_deref() == Some("portfolio")
         || ctx.get_option("strategy") == Some("portfolio");
-    if args.portfolio_mode || strategy_requests_portfolio {
+    let threads_request_parallel =
+        args.threads != DEFAULT_THREADS && args.threads >= 1 && !args.parallel;
+    if args.portfolio_mode || strategy_requests_portfolio || threads_request_parallel {
         let timeout = if args.portfolio_timeout > 0 {
             args.portfolio_timeout
         } else if args.timeout > 0 {
@@ -1431,7 +1613,15 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
         };
 
         let logic = args.logic.as_deref();
-        match portfolio::solve_portfolio(script, args, logic, ctx, timeout) {
+        // An explicit `--threads N` bounds the number of concurrent worker
+        // strategies to N; otherwise the full default strategy set runs.
+        let strategies = if args.threads != DEFAULT_THREADS && args.threads >= 1 {
+            portfolio::strategies_for_thread_count(args.threads)
+        } else {
+            portfolio::get_default_strategies()
+        };
+        let worker_count = strategies.len();
+        match portfolio::solve_portfolio_custom(script, strategies, args, logic, ctx, timeout) {
             Ok(result) => {
                 // Format the output with strategy information
                 let mut output = result.output;
@@ -1439,8 +1629,8 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                     output.insert(
                         0,
                         format!(
-                            "; Portfolio solver: {} won in {}ms",
-                            result.strategy_name, result.time_ms
+                            "; Portfolio solver: {} won in {}ms ({} worker strategies)",
+                            result.strategy_name, result.time_ms, worker_count
                         ),
                     );
                 }
@@ -1451,6 +1641,17 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
             }
         }
     }
+
+    // ML-guided tactic selection (opt-in via `--ml-tactic-selection`).
+    // Extract formula features, apply a conservative (correctness-preserving)
+    // solver option for the recommended tactic, and remember the session so
+    // the outcome can be fed back after the solve. Off by default → no effect.
+    let mut ml_session = if args.ml_tactic_selection {
+        Some(ml_tactic::begin(ctx, script, args))
+    } else {
+        None
+    };
+    let ml_start = std::time::Instant::now();
 
     // Enforce `--timeout`/config-file timeout on the normal solving path.
     // `0` means "no timeout" (the documented default), matching the existing
@@ -1531,6 +1732,19 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                 output.push(validation_message);
             }
 
+            // Handle bounded model enumeration if requested. Only makes
+            // sense to run when the script's own `check-sat` reported
+            // `sat` -- an `unsat`/`unknown` result has no model to
+            // enumerate additional solutions from.
+            if args.enumerate_models
+                && output
+                    .iter()
+                    .any(|line| line.contains("sat") && !line.contains("unsat"))
+            {
+                let extra = enumerate_additional_models(ctx, args.max_models);
+                output.extend(extra);
+            }
+
             // Handle proof DOT generation if requested
             if let Some(ref dot_path) = args.proof_dot
                 && let Some(proof_line) = output.iter().find(|line| {
@@ -1607,6 +1821,31 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                 }
             }
 
+            // Real minimal-unsat-core search (deletion-based) when requested.
+            // Runs after every ctx-reading post-step above, since it resets and
+            // re-asserts subsets of the problem to prove minimality.
+            if args.minimize_core && output.iter().any(|line| line.trim() == "unsat") {
+                let extra = core_min::minimize_core(ctx);
+                output.extend(extra);
+            }
+
+            // Close out the ML session: attribute the outcome to the chosen
+            // tactic (a definite sat/unsat is a success) and surface the
+            // recommendation as a comment on the output.
+            if let Some(session) = ml_session.take() {
+                let was_successful = output
+                    .iter()
+                    .any(|line| matches!(line.trim(), "sat" | "unsat"));
+                let comment = session.comment().to_string();
+                session.finish(was_successful, ml_start.elapsed());
+                output.insert(0, comment);
+            }
+
+            // Persist a resumable checkpoint of this completed solve if asked.
+            if args.checkpoint {
+                checkpointing::write(script, args, ctx, &output);
+            }
+
             if args.smtcomp {
                 // SMT-COMP compatible output
                 output.join("\n")
@@ -1633,6 +1872,11 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
             }
         }
         Err(e) => {
+            // Close out any ML session even on a failed solve (records the
+            // unsuccessful outcome so the model does not over-credit the tactic).
+            if let Some(session) = ml_session.take() {
+                session.finish(false, ml_start.elapsed());
+            }
             if args.enhanced_errors {
                 // `OxizError::enhance` (oxiz-core) attaches a source-context
                 // snippet, a "did you mean?" suggestion (against currently

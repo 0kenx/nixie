@@ -1,10 +1,12 @@
 //! Main CDCL(T) SMT Solver module
 
+pub(super) mod array_axioms;
 pub(super) mod candidates;
 pub(super) mod check_array;
 pub(super) mod check_bv;
 pub(super) mod check_dt;
 pub(super) mod check_fp;
+pub(super) mod check_fp_model;
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
 pub(super) mod config;
@@ -136,6 +138,16 @@ pub struct Solver {
     /// affected sub-formula under-constrained, so the solver must answer
     /// `Unknown` rather than trust a model built over an incomplete encoding.
     pub(super) encode_depth_exceeded: bool,
+    /// Set to `true` when any array `select`/`store` operation is encoded.  Gates
+    /// the lazy array-axiom instantiation refinement (see
+    /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
+    pub(super) has_array_ops: bool,
+    /// Ground array-axiom instances (read-over-write / extensionality /
+    /// select-congruence) already added to the SAT core as lemmas, keyed by the
+    /// interned lemma term id.  Guarantees each valid instance is asserted at
+    /// most once, which makes the in-loop refinement in `check` terminate: every
+    /// refinement round either adds a strictly new instance or reports `Sat`.
+    pub(super) array_axiom_instances: FxHashSet<TermId>,
 }
 
 /// Maximum term-nesting depth the recursive Tseitin encoder will descend
@@ -152,7 +164,7 @@ pub(super) const ENCODE_DEPTH_LIMIT: u32 = 2000;
 /// ([`Solver::model_refutes_assertions`]).  Integers and reals are unified as an
 /// exact rational so mixed Int/Real arithmetic and comparisons fold without loss.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum EvalVal {
+pub(super) enum EvalVal {
     Bool(bool),
     Num(num_rational::Rational64),
 }
@@ -236,6 +248,8 @@ impl Solver {
             tracked_compound_terms: FxHashSet::default(),
             fp_constraint_cache: FxHashMap::default(),
             encode_depth_exceeded: false,
+            has_array_ops: false,
+            array_axiom_instances: FxHashSet::default(),
         }
     }
 
@@ -316,7 +330,7 @@ impl Solver {
     /// whose value cannot be fully determined (unsupported operator, unassigned
     /// leaf, mixed/ill-typed operands), so callers only ever act on a concrete
     /// `Some`.  `depth` guards against pathological nesting.
-    fn eval_in_model(
+    pub(super) fn eval_in_model(
         &self,
         term: TermId,
         model: &Model,
@@ -584,6 +598,16 @@ impl Solver {
             return SolverResult::Unsat;
         }
 
+        // Positive FP path (completeness without sacrificing soundness): before
+        // conceding `Unknown` on FP atoms below, try to construct and *verify* a
+        // concrete floating-point model.  `try_fp_model_sat` pins every FP-sorted
+        // term to a bit-exact IEEE-754 value and only reports success when every
+        // assertion evaluates to `true` under it, so the resulting `Sat` is a
+        // genuine model witness rather than a guess.
+        if self.fp_atoms_need_theory(manager) && self.try_fp_model_sat(manager) {
+            return SolverResult::Sat;
+        }
+
         // Honesty gate (soundness): there is no complete String / FP theory
         // wired into the CDCL(T) core — `encode.rs` maps string and FP atoms to
         // fresh SAT variables, and the checks above only detect a fixed set of
@@ -592,7 +616,16 @@ impl Solver {
         // treat it as a free Boolean, which would report a spurious `Sat` for
         // formulas like `(= s "abc") ∧ (str.contains s "xyz")` or
         // `fp.lt x y ∧ fp.lt y x`.
-        if self.string_atoms_need_theory(manager) || self.fp_atoms_need_theory(manager) {
+        if self.string_atoms_need_theory(manager) {
+            // Before conceding, try to construct and verify a concrete string
+            // model. A verified witness is a sound `Sat` certificate; otherwise
+            // keep the honest `Unknown`.
+            if self.ground_string_model_sat(manager) {
+                return SolverResult::Sat;
+            }
+            return SolverResult::Unknown;
+        }
+        if self.fp_atoms_need_theory(manager) {
             return SolverResult::Unknown;
         }
 
@@ -673,6 +706,12 @@ impl Solver {
         let max_mbqi_iterations = 100;
         let mut mbqi_iteration = 0;
 
+        // Lazy array-axiom refinement rounds (see `instantiate_array_axioms`).
+        // Bounded independently of the MBQI budget; deduplication guarantees
+        // saturation well within this generous cap for realistic inputs.
+        let max_array_refinement_rounds = 256;
+        let mut array_refinement_rounds = 0;
+
         loop {
             // Enforce the wall-clock timeout between MBQI rounds.  Mid-`solve`
             // enforcement lives in the theory callbacks (see TheoryManager).
@@ -719,6 +758,55 @@ impl Solver {
                             self.model = None;
                             self.unsat_core = None;
                             return SolverResult::Unknown;
+                        }
+                        // Lazy array-axiom instantiation: the syntactic array
+                        // pre-checks and EUF congruence do not implement a
+                        // complete array decision procedure, so a candidate `Sat`
+                        // may violate read-over-write / extensionality.  Watch the
+                        // array terms in this candidate model and assert every
+                        // axiom instance it does not already satisfy as a lemma,
+                        // then re-solve.  Only genuine array models survive.
+                        if self.has_array_ops && self.instantiate_array_axioms(manager) {
+                            array_refinement_rounds += 1;
+                            if array_refinement_rounds >= max_array_refinement_rounds {
+                                // Could not saturate the array axioms within the
+                                // round budget: do not fabricate a verdict.
+                                return SolverResult::Unknown;
+                            }
+                            // Re-solve with the freshly asserted array lemmas from
+                            // a clean state.  `add_clause` backtracked the SAT core
+                            // to root for the unit lemmas, but the incremental
+                            // theory solvers still hold the facts committed by the
+                            // just-refuted candidate model (e.g. a stale
+                            // `select = 6`).  Those cannot be surgically undone
+                            // (the solvers support only level-scoped pops), so we
+                            // drop the SAT trail to root and reset the three theory
+                            // solvers; the fresh `TheoryManager` then re-drives them
+                            // from scratch as the core re-decides — exactly the
+                            // reset-and-replay strategy of `resync_theory_state`.
+                            self.sat.backtrack_to_root();
+                            self.euf.reset();
+                            self.arith.reset();
+                            self.bv.reset();
+                            // Re-solve with the freshly asserted array lemmas.
+                            theory_manager = TheoryManager::new(
+                                manager,
+                                &mut self.euf,
+                                &mut self.arith,
+                                &mut self.bv,
+                                &self.bv_terms,
+                                &self.var_to_constraint,
+                                &self.var_to_parsed_arith,
+                                &self.term_to_var,
+                                &self.var_to_term,
+                                self.config.theory_mode,
+                                &mut self.statistics,
+                                self.config.max_conflicts,
+                                self.config.max_decisions,
+                                self.has_bv_arith_ops,
+                                self.config.timeout_ms,
+                            );
+                            continue;
                         }
                         self.unsat_core = None;
                         return SolverResult::Sat;
@@ -1347,6 +1435,8 @@ impl Solver {
         self.tracked_compound_terms.clear();
         self.fp_constraint_cache.clear();
         self.encode_depth_exceeded = false;
+        self.has_array_ops = false;
+        self.array_axiom_instances.clear();
     }
 
     /// Get the configuration

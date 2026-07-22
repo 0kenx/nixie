@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Inert data types
+// whose only consumer would be a sound projection-based explain path. The current
+// multivariate conflict certifier (solver::decide::certify_sign_conflict) returns
+// plain Vec<Literal> clauses, so these wrappers have no consumer yet; wire in
+// lockstep with a future certified single-cell explain engine.
 //! Theory lemma interface for NLSAT.
 //!
 //! This module provides structures for theory lemmas that explain

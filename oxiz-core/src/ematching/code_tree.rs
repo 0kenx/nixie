@@ -680,13 +680,36 @@ pub struct CodeTreeNode {
 }
 
 impl CodeTree {
-    /// Execute the code tree against a term
+    /// Execute the code tree against a term.
+    ///
+    /// Returns `Some(bindings)` for the first successful match (each entry is
+    /// the term bound to the corresponding pattern variable), or `None` if no
+    /// match exists.
     pub fn execute(&self, term: TermId, manager: &TermManager) -> Result<Option<Vec<TermId>>> {
-        let mut bindings = vec![None; self.num_vars];
-        let mut current_term = term;
-        let mut ip = self.root; // Instruction pointer
-        let mut term_stack = Vec::new(); // Stack for navigation
+        let bindings = vec![None; self.num_vars];
+        let term_stack = Vec::new();
+        self.run(self.root, term, bindings, term_stack, manager)
+    }
 
+    /// Interpret the instruction stream starting at `ip` with the supplied
+    /// resumption state (`current_term`, `bindings`, `term_stack`).
+    ///
+    /// `Choice` points are handled by real backtracking: the first
+    /// alternative is explored with a *clone* of the current register state
+    /// (bindings + term stack), so any bindings it makes are discarded if it
+    /// fails; the second alternative then resumes from the unmodified state
+    /// of this frame. This correctly explores both branches and restores
+    /// register state per choice point (TODO-939) — the previous
+    /// `execute_from` stub inspected only a single instruction and silently
+    /// dropped any first-branch match longer than an immediate `Yield`/`Halt`.
+    fn run(
+        &self,
+        mut ip: usize,
+        mut current_term: TermId,
+        mut bindings: Vec<Option<TermId>>,
+        mut term_stack: Vec<TermId>,
+        manager: &TermManager,
+    ) -> Result<Option<Vec<TermId>>> {
         loop {
             let Some(instr) = self.instructions.get(ip) else {
                 return Err(OxizError::EmatchError(format!(
@@ -839,14 +862,22 @@ impl CodeTree {
                 }
 
                 InstructionKind::Choice { first, second } => {
-                    // Try first alternative
-                    let result1 =
-                        self.execute_from(*first, current_term, &bindings, &term_stack, manager)?;
+                    // Explore the first alternative with a *clone* of the
+                    // current register state, so any bindings/navigation it
+                    // performs are discarded if it ultimately fails.
+                    let result1 = self.run(
+                        *first,
+                        current_term,
+                        bindings.clone(),
+                        term_stack.clone(),
+                        manager,
+                    )?;
                     if result1.is_some() {
                         return Ok(result1);
                     }
 
-                    // Try second alternative
+                    // First alternative failed: resume the second alternative
+                    // from this frame's unmodified state (real backtracking).
                     ip = *second;
                 }
 
@@ -860,40 +891,6 @@ impl CodeTree {
                 InstructionKind::Halt => {
                     return Ok(None);
                 }
-            }
-        }
-    }
-
-    /// Execute from a specific instruction pointer (for backtracking)
-    fn execute_from(
-        &self,
-        start_ip: usize,
-        term: TermId,
-        bindings: &[Option<TermId>],
-        term_stack: &[TermId],
-        _manager: &TermManager,
-    ) -> Result<Option<Vec<TermId>>> {
-        // Simplified implementation - would need full execution context
-        let new_bindings = bindings.to_vec();
-        let _current_term = term;
-        let ip = start_ip;
-        let _stack = term_stack.to_vec();
-
-        // Similar execution logic as main execute()
-        // (Abbreviated for space - single instruction check)
-        let Some(instr) = self.instructions.get(ip) else {
-            return Ok(None);
-        };
-
-        match &instr.kind {
-            InstructionKind::Yield { .. } => {
-                let result: Option<Vec<TermId>> = new_bindings.into_iter().collect();
-                Ok(result)
-            }
-            InstructionKind::Halt => Ok(None),
-            _ => {
-                // Simplified - would need full handling
-                Ok(None)
             }
         }
     }
@@ -984,5 +981,215 @@ mod tests {
 
         assert!(matches!(bind.kind, InstructionKind::Bind { .. }));
         assert_eq!(bind.next, Some(1));
+    }
+
+    // ── TODO-939: Choice backtracking regression tests ────────────────────
+    //
+    // Before the fix, `execute_from` inspected only the *single* instruction
+    // at a Choice's first branch and returned `Ok(None)` for anything other
+    // than an immediate `Yield`/`Halt`, so a legitimate first-branch match
+    // that required more than one instruction was silently dropped.
+
+    fn instr(kind: InstructionKind, next: Option<usize>) -> Instruction {
+        Instruction {
+            kind,
+            next,
+            alt: None,
+        }
+    }
+
+    #[test]
+    fn test_choice_explores_multi_instruction_first_branch() {
+        // Term is an equality; the first branch requires (Compare Eq -> Yield),
+        // i.e. more than a single immediate Yield. The old stub dropped it.
+        let mut manager = setup();
+        let s = manager.sorts.int_sort;
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let eq = manager.mk_eq(a, b);
+
+        let instructions = vec![
+            instr(
+                InstructionKind::Choice {
+                    first: 1,
+                    second: 3,
+                },
+                None,
+            ),
+            instr(
+                InstructionKind::Compare {
+                    expected: TermKindDiscriminant::Eq,
+                },
+                Some(2),
+            ),
+            instr(InstructionKind::Yield { pattern_id: 0 }, None),
+            instr(InstructionKind::Halt, None),
+        ];
+        let tree = CodeTree {
+            root: 0,
+            instructions,
+            num_vars: 0,
+        };
+
+        let result = tree.execute(eq, &manager).expect("execute must not error");
+        assert!(
+            result.is_some(),
+            "Choice first branch (Compare Eq -> Yield) must be explored and match"
+        );
+    }
+
+    #[test]
+    fn test_choice_falls_through_to_second_branch() {
+        // First branch requires Lt (fails on an Eq term); the second branch
+        // requires Eq (succeeds). Real backtracking must reach the second.
+        let mut manager = setup();
+        let s = manager.sorts.int_sort;
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let eq = manager.mk_eq(a, b);
+
+        let instructions = vec![
+            instr(
+                InstructionKind::Choice {
+                    first: 1,
+                    second: 3,
+                },
+                None,
+            ),
+            instr(
+                InstructionKind::Compare {
+                    expected: TermKindDiscriminant::Lt,
+                },
+                Some(2),
+            ),
+            instr(InstructionKind::Yield { pattern_id: 0 }, None),
+            instr(
+                InstructionKind::Compare {
+                    expected: TermKindDiscriminant::Eq,
+                },
+                Some(4),
+            ),
+            instr(InstructionKind::Yield { pattern_id: 1 }, None),
+        ];
+        let tree = CodeTree {
+            root: 0,
+            instructions,
+            num_vars: 0,
+        };
+
+        let result = tree.execute(eq, &manager).expect("execute must not error");
+        assert!(
+            result.is_some(),
+            "second Choice branch must match after the first fails"
+        );
+    }
+
+    #[test]
+    fn test_choice_both_branches_fail() {
+        // Neither branch matches an Eq term.
+        let mut manager = setup();
+        let s = manager.sorts.int_sort;
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let eq = manager.mk_eq(a, b);
+
+        let instructions = vec![
+            instr(
+                InstructionKind::Choice {
+                    first: 1,
+                    second: 3,
+                },
+                None,
+            ),
+            instr(
+                InstructionKind::Compare {
+                    expected: TermKindDiscriminant::Lt,
+                },
+                Some(2),
+            ),
+            instr(InstructionKind::Yield { pattern_id: 0 }, None),
+            instr(
+                InstructionKind::Compare {
+                    expected: TermKindDiscriminant::Gt,
+                },
+                Some(4),
+            ),
+            instr(InstructionKind::Yield { pattern_id: 1 }, None),
+        ];
+        let tree = CodeTree {
+            root: 0,
+            instructions,
+            num_vars: 0,
+        };
+
+        let result = tree.execute(eq, &manager).expect("execute must not error");
+        assert!(result.is_none(), "no branch matches, expected no match");
+    }
+
+    #[test]
+    fn test_choice_bindings_are_isolated_between_branches() {
+        // The first branch descends to the lhs and binds var 0 to `a`, then
+        // fails (Compare Lt on the parent Eq). The second branch descends to
+        // the rhs and binds var 0 to `b`. If register state were shared, the
+        // second branch's Bind would see var 0 already bound to `a` and fail
+        // on the inconsistent binding; with proper per-choice isolation it
+        // binds `b` and yields `[b]`.
+        let mut manager = setup();
+        let s = manager.sorts.int_sort;
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let eq = manager.mk_eq(a, b);
+
+        let instructions = vec![
+            instr(
+                InstructionKind::Choice {
+                    first: 1,
+                    second: 5,
+                },
+                None,
+            ),
+            // First branch: lhs -> bind v0=a -> ascend -> Compare Lt (fails).
+            instr(InstructionKind::DescendChild { child_idx: 0 }, Some(2)),
+            instr(
+                InstructionKind::Bind {
+                    var_idx: 0,
+                    sort: s,
+                },
+                Some(3),
+            ),
+            instr(InstructionKind::Ascend, Some(4)),
+            instr(
+                InstructionKind::Compare {
+                    expected: TermKindDiscriminant::Lt,
+                },
+                None,
+            ),
+            // Second branch: rhs -> bind v0=b -> ascend -> yield.
+            instr(InstructionKind::DescendChild { child_idx: 1 }, Some(6)),
+            instr(
+                InstructionKind::Bind {
+                    var_idx: 0,
+                    sort: s,
+                },
+                Some(7),
+            ),
+            instr(InstructionKind::Ascend, Some(8)),
+            instr(InstructionKind::Yield { pattern_id: 0 }, None),
+        ];
+        let tree = CodeTree {
+            root: 0,
+            instructions,
+            num_vars: 1,
+        };
+
+        let result = tree
+            .execute(eq, &manager)
+            .expect("execute must not error")
+            .expect("second branch must produce a match");
+        assert_eq!(
+            result,
+            vec![b],
+            "second branch must bind var 0 to b, unaffected by the first branch"
+        );
     }
 }

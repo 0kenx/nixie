@@ -8,6 +8,9 @@ repository.workspace = true
 description = "Python bindings for OxiZ SMT Solver"
 keywords = ["smt", "solver", "python", "pyo3", "bindings"]
 categories = ["algorithms", "science", "api-bindings"]
+# Distributed via PyPI through maturin (see pyproject.toml / scripts/build_python.sh),
+# not crates.io. Keep out of any workspace-wide `cargo publish` sweep.
+publish = false
 
 [lints]
 workspace = true

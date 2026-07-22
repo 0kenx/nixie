@@ -1,5 +1,8 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. A discriminant
+// based real-root-count pre-filter usable only as an advisory accelerator (skip
+// work / size buffers); it must never replace exact Sturm isolation for
+// feasibility decisions. Nice-to-have, not yet wired.
 //! Discriminant analysis for polynomial root counting.
 //!
 //! This module provides efficient discriminant computation and analysis

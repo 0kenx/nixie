@@ -505,6 +505,33 @@ impl Solver {
         // Create preprocessor with current number of variables
         let mut preprocessor = Preprocessor::new(self.num_vars);
 
+        // Snapshot every live clause's literals before the elimination passes
+        // below run. `Preprocessor::pure_literal_elimination` and
+        // `subsumption_elimination` retire clauses by setting `Clause::deleted`
+        // directly on `self.clauses` (they don't go through
+        // `ClauseDatabase::remove`) and report only a count, not which ids were
+        // touched. `drat_delete(id)` can't be used afterwards either — by
+        // design it refuses to read literals off a clause already marked
+        // deleted, to avoid ever emitting a deletion line with garbage
+        // literals. Without this snapshot the deletions below would never
+        // reach the DRAT proof: the checker would still accept the proof (an
+        // omitted deletion hint only makes it larger, never invalid), but the
+        // proof would keep clauses the live database no longer has, which is
+        // exactly the minimality gap this snapshot closes. Skipped entirely
+        // when proof logging is off.
+        let pre_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = if self.drat.is_some() {
+            self.clauses
+                .iter_ids()
+                .filter_map(|id| {
+                    self.clauses
+                        .get(id)
+                        .map(|c| (id, c.lits.iter().copied().collect()))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         // Pure-literal elimination deletes original clauses; that is only
         // satisfiability-preserving if the pure literal is fixed to its polarity
         // in the reconstructed model. It is also unsound across incremental
@@ -529,6 +556,15 @@ impl Solver {
         }
 
         let _subsumption = preprocessor.subsumption_elimination(&mut self.clauses);
+
+        // Emit a DRAT deletion line for every clause the two passes above
+        // retired, identified by diffing against the pre-pass snapshot (any
+        // previously-live clause that is now deleted).
+        for (id, lits) in &pre_lits {
+            if self.clauses.get(*id).is_some_and(|c| c.deleted) {
+                self.drat_delete_lits(lits);
+            }
+        }
 
         // On-the-fly clause strengthening
         self.strengthen_clauses_inprocessing();
@@ -655,5 +691,89 @@ impl Solver {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for the `inprocess()` DRAT-deletion gap: pure-literal
+    /// elimination and subsumption elimination retire original clauses
+    /// directly on the clause database (setting `Clause::deleted` without
+    /// going through `ClauseDatabase::remove`), and every clause they retire
+    /// must show up as a `d`-line in the DRAT proof — not just the separate
+    /// on-the-fly-strengthening path (`remove_literal_and_rewatch`), which
+    /// already logged correctly before this fix.
+    #[test]
+    fn inprocess_drat_deletion_count_matches_removed_clauses() {
+        let path = std::env::temp_dir().join("oxiz_sat_inprocess_drat_deletion_count.drat");
+
+        let mut solver = Solver::new();
+        let y = solver.new_var();
+        let w1 = solver.new_var();
+        let w2 = solver.new_var();
+        let p = solver.new_var();
+        let q = solver.new_var();
+        let r = solver.new_var();
+
+        // Pure-literal family: `y` occurs only positively, across two
+        // clauses that must both be deleted by `pure_literal_elimination`.
+        solver.add_clause([Lit::pos(y), Lit::pos(w1)]);
+        solver.add_clause([Lit::pos(y), Lit::pos(w2)]);
+
+        // Subsumption pair: (p ∨ q) subsumes (p ∨ q ∨ r), so the latter must
+        // be deleted by `subsumption_elimination`.
+        solver.add_clause([Lit::pos(p), Lit::pos(q)]);
+        solver.add_clause([Lit::pos(p), Lit::pos(q), Lit::pos(r)]);
+
+        // Decoy giving w1, w2, p, q, r an opposite-polarity occurrence each,
+        // so none of them is independently pure (only `y` is) — this keeps
+        // the (p ∨ q ∨ r) deletion attributable to subsumption alone rather
+        // than being pre-empted by pure-literal elimination on `r`.
+        solver.add_clause([
+            Lit::neg(w1),
+            Lit::neg(w2),
+            Lit::neg(p),
+            Lit::neg(q),
+            Lit::neg(r),
+        ]);
+
+        solver
+            .enable_drat_proof(&path)
+            .expect("enable DRAT proof logging");
+
+        // `inprocess` only acts at decision level 0, which a freshly built
+        // solver already is.
+        assert_eq!(solver.trail.decision_level(), 0);
+        let live_before: Vec<ClauseId> = solver.clauses.iter_ids().collect();
+
+        solver.inprocess();
+
+        let removed: Vec<ClauseId> = live_before
+            .into_iter()
+            .filter(|&id| solver.clauses.get(id).is_some_and(|c| c.deleted))
+            .collect();
+        assert_eq!(
+            removed.len(),
+            3,
+            "expected exactly 3 clauses removed (2 pure-literal + 1 subsumed)"
+        );
+
+        solver.disable_drat_proof();
+
+        let contents = std::fs::read_to_string(&path).expect("read DRAT proof file");
+        std::fs::remove_file(&path).ok();
+
+        let deletion_lines = contents
+            .lines()
+            .filter(|line| line.trim_start().starts_with("d "))
+            .count();
+
+        assert_eq!(
+            deletion_lines,
+            removed.len(),
+            "DRAT deletion-line count must match the number of clauses inprocess() removed"
+        );
     }
 }

@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired (unsound unless
+// detection is exact). A false-positive symmetry emits a lex-ordering clause that
+// removes real solutions, turning SAT into wrong UNSAT; the automorphism detection
+// is the load-bearing correctness component and must be proven exact (and guarded
+// behind a flag) before wiring.
 //! Symmetry detection and breaking for polynomial constraints.
 //!
 //! This module detects symmetries in polynomial constraint systems and

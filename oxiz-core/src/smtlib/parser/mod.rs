@@ -65,10 +65,20 @@ pub enum Command {
     DefineFun(String, Vec<(String, String)>, String, TermId),
     /// Assert
     Assert(TermId),
+    /// Assert a term carrying a `:named` annotation (the assertion name).
+    ///
+    /// Produced when the top-level asserted expression is `(! phi :named foo)`,
+    /// so the solver can track the assertion by name for `(get-unsat-core)`.
+    AssertNamed(TermId, String),
     /// Check sat
     CheckSat,
     /// Check sat with assumptions
     CheckSatAssuming(Vec<TermId>),
+    /// Get consequences: `(get-consequences (assumptions...) (variables...))`.
+    ///
+    /// Returns the literals over `variables` that are entailed by the current
+    /// assertions together with `assumptions`.
+    GetConsequences(Vec<TermId>, Vec<TermId>),
     /// Get model
     GetModel,
     /// Get value
@@ -370,6 +380,19 @@ pub fn parse_script(input: &str, manager: &mut TermManager) -> Result<Vec<Comman
     let mut commands = Vec::new();
     while let Some(cmd) = parser.parse_command()? {
         commands.push(cmd);
+    }
+    // Surface any lexical errors accumulated while tokenizing. The lexer keeps
+    // producing a best-effort token stream after a malformed token (so the
+    // command loop above can still make progress), recording each problem in
+    // `errors()` instead of aborting. A genuine SMT-LIB script must be
+    // lexically well-formed, so once the whole input has been consumed we
+    // reject it if any lexical error was seen rather than silently solving a
+    // corrupted problem (leftover of todo-1174).
+    if let Some(err) = parser.lexer.errors().first() {
+        return Err(OxizError::ParseError {
+            position: err.pos,
+            message: format!("lexical error: {}", err.message),
+        });
     }
     Ok(commands)
 }

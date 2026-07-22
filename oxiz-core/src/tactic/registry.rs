@@ -279,6 +279,106 @@ impl Tactic for SkipTactic {
     }
 }
 
+// ─── Manager-backed wrappers for the stateful tactics ────────────────────────
+//
+// Each stateful tactic (`SimplifyTactic`, `SolveEqsTactic`, …) borrows a
+// `&mut TermManager` at construction and performs its real transformation in
+// `apply_mut`. Their `Tactic`-only newtypes cannot do this (the manager-free
+// `Tactic::apply` returns an honest `NotApplicable`). These zero-sized
+// [`ManagedTactic`] wrappers construct the stateful tactic with the caller's
+// manager and delegate to `apply_mut`, so `create_managed(name)` performs the
+// actual work (P4-1107).
+macro_rules! managed_stateful_wrapper {
+    ($wrapper:ident, $name:literal, $ctor:path, $desc:literal) => {
+        struct $wrapper;
+
+        impl ManagedTactic for $wrapper {
+            fn name(&self) -> &str {
+                $name
+            }
+
+            fn apply_with_manager(
+                &mut self,
+                goal: &Goal,
+                manager: &mut TermManager,
+            ) -> Result<TacticResult> {
+                $ctor(manager).apply_mut(goal)
+            }
+
+            fn description(&self) -> &str {
+                $desc
+            }
+        }
+    };
+}
+
+managed_stateful_wrapper!(
+    ManagedSimplify,
+    "simplify",
+    super::simplify::SimplifyTactic::new,
+    "Simplifies boolean and arithmetic expressions"
+);
+managed_stateful_wrapper!(
+    ManagedPropagateValues,
+    "propagate-values",
+    super::propagate::PropagateValuesTactic::new,
+    "Propagates constant values through the formula"
+);
+managed_stateful_wrapper!(
+    ManagedCtxSolverSimplify,
+    "ctx-solver-simplify",
+    super::ctx_simplify::CtxSolverSimplifyTactic::new,
+    "Simplifies assertions using other assertions as context"
+);
+managed_stateful_wrapper!(
+    ManagedAggressiveSimplify,
+    "aggressive-simplify",
+    super::aggressive_simplify::AggressiveSimplifyTactic::new,
+    "Applies aggressive Boolean and arithmetic simplifications"
+);
+managed_stateful_wrapper!(
+    ManagedElimUncnstr,
+    "elim-uncnstr",
+    super::eliminate::EliminateUnconstrainedTactic::new,
+    "Eliminates unconstrained variables from the formula"
+);
+managed_stateful_wrapper!(
+    ManagedSolveEqs,
+    "solve-eqs",
+    super::solve_eqs::SolveEqsTactic::new,
+    "Gaussian elimination for linear equations - solves x = expr and substitutes"
+);
+managed_stateful_wrapper!(
+    ManagedFourierMotzkin,
+    "fm",
+    super::solve_eqs::FourierMotzkinTactic::new,
+    "Fourier-Motzkin variable elimination for linear arithmetic"
+);
+managed_stateful_wrapper!(
+    ManagedNnf,
+    "nnf",
+    super::solve_eqs::NnfTactic::new,
+    "Convert formulas to Negation Normal Form"
+);
+managed_stateful_wrapper!(
+    ManagedTseitinCnf,
+    "tseitin-cnf",
+    super::solve_eqs::TseitinCnfTactic::new,
+    "Convert formulas to Conjunctive Normal Form using the Tseitin transformation"
+);
+managed_stateful_wrapper!(
+    ManagedAckermannize,
+    "ackermannize",
+    super::ackermann::AckermannizeTactic::new,
+    "Eliminates uninterpreted functions by adding functional consistency constraints"
+);
+managed_stateful_wrapper!(
+    ManagedSplit,
+    "split",
+    super::split::SplitTactic::new,
+    "Performs case splitting on boolean subterms"
+);
+
 // ─── default_registry ────────────────────────────────────────────────────────
 
 /// Build and return the default registry with all known zero-argument tactics
@@ -356,6 +456,24 @@ pub fn default_registry() -> TacticRegistry {
         Box::new(ArithBoundsTactic::new(ArithBoundsConfig::default()))
     });
     reg.register_managed("bit-blast", || Box::new(BitBlaster::new()));
+
+    // Manager-backed wrappers for the remaining stateful tactics. Their
+    // `Tactic`-only counterparts registered above are honest `NotApplicable`
+    // no-ops (they have no manager to transform with); these `create_managed`
+    // entries run the real `apply_mut` transformation (P4-1107).
+    reg.register_managed("simplify", || Box::new(ManagedSimplify));
+    reg.register_managed("propagate-values", || Box::new(ManagedPropagateValues));
+    reg.register_managed("ctx-solver-simplify", || Box::new(ManagedCtxSolverSimplify));
+    reg.register_managed("aggressive-simplify", || {
+        Box::new(ManagedAggressiveSimplify)
+    });
+    reg.register_managed("elim-uncnstr", || Box::new(ManagedElimUncnstr));
+    reg.register_managed("solve-eqs", || Box::new(ManagedSolveEqs));
+    reg.register_managed("fm", || Box::new(ManagedFourierMotzkin));
+    reg.register_managed("nnf", || Box::new(ManagedNnf));
+    reg.register_managed("tseitin-cnf", || Box::new(ManagedTseitinCnf));
+    reg.register_managed("ackermannize", || Box::new(ManagedAckermannize));
+    reg.register_managed("split", || Box::new(ManagedSplit));
 
     reg
 }
@@ -619,10 +737,11 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_plain_bit_blast_is_detection_only() {
-        // The plain `Tactic`-only path cannot allocate terms, so even a
-        // goal with real BitVector content must come back unchanged (never
-        // partially/incorrectly "blasted").
+    fn test_registry_plain_bit_blast_is_honestly_not_applicable() {
+        // The plain `Tactic`-only path cannot allocate terms, so even a goal
+        // with real BitVector content must come back honestly NotApplicable
+        // (never a silent goal-unchanged "success", never a partial/incorrect
+        // blast).
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(3u64, 4);
         let b = manager.mk_bitvec(5u64, 4);
@@ -634,12 +753,127 @@ mod tests {
         let tactic = reg.create("bit-blast").unwrap();
         let goal = Goal::new(vec![eq]);
         let result = tactic.apply(&goal).expect("apply should not error");
+        assert!(matches!(result, TacticResult::NotApplicable));
+    }
+
+    #[test]
+    fn test_registry_plain_transforming_tactics_are_not_applicable() {
+        // Every manager-requiring stateless tactic's plain path must be an
+        // honest NotApplicable rather than a silent goal-unchanged success
+        // (P4-1107). `skip` is intentionally excluded — its name honestly
+        // advertises a no-op.
+        let reg = default_registry();
+        let goal = Goal::empty();
+        for name in [
+            "simplify",
+            "propagate-values",
+            "ctx-solver-simplify",
+            "aggressive-simplify",
+            "elim-uncnstr",
+            "solve-eqs",
+            "fm",
+            "nnf",
+            "tseitin-cnf",
+            "ackermannize",
+            "split",
+            "bit-blast",
+            "arith-bounds",
+        ] {
+            let tactic = reg.create(name).unwrap();
+            let result = tactic.apply(&goal).expect("apply should not error");
+            assert!(
+                matches!(result, TacticResult::NotApplicable),
+                "plain path of '{name}' must be NotApplicable, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_registry_managed_solve_eqs_performs_real_substitution() {
+        // The managed path must actually solve `x = 5` and substitute, not
+        // return the goal unchanged.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let five = manager.mk_int(5);
+        let eq_x5 = manager.mk_eq(x, five); // x = 5
+        let x_gt_y = manager.mk_gt(x, y); // x > y
+
+        let goal = Goal::new(vec![eq_x5, x_gt_y]);
+        let reg = default_registry();
+        let mut tactic = reg
+            .create_managed("solve-eqs")
+            .expect("solve-eqs must be manager-aware registered");
+        let result = tactic
+            .apply_with_manager(&goal, &mut manager)
+            .expect("apply_mut should not error");
+
         match result {
             TacticResult::SubGoals(goals) => {
                 assert_eq!(goals.len(), 1);
-                assert_eq!(goals[0].assertions, vec![eq], "goal must be unchanged");
+                // The x = 5 equation is consumed and x is substituted, so the
+                // transformed goal is strictly smaller than the original and
+                // no longer contains the solved equation.
+                assert!(
+                    !goals[0].assertions.contains(&eq_x5),
+                    "solved equation must be removed"
+                );
+                assert!(goals[0].assertions.len() < 2);
             }
-            other => panic!("expected SubGoals with the goal unchanged, got {other:?}"),
+            other => panic!("expected SubGoals from real solve-eqs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_registry_managed_simplify_performs_real_simplification() {
+        // simplify on `(or true false)` must fold to a solved/true result,
+        // not return the goal unchanged.
+        let mut manager = TermManager::new();
+        let t = manager.mk_true();
+        let f = manager.mk_false();
+        let or_tf = manager.mk_or([t, f]); // simplifies to true
+
+        let goal = Goal::new(vec![or_tf]);
+        let reg = default_registry();
+        let mut tactic = reg
+            .create_managed("simplify")
+            .expect("simplify must be manager-aware registered");
+        let result = tactic
+            .apply_with_manager(&goal, &mut manager)
+            .expect("apply_mut should not error");
+
+        // `(or true false)` == true, so the single assertion folds away and
+        // the goal is solved SAT.
+        assert!(matches!(
+            result,
+            TacticResult::Solved(crate::tactic::core::SolveResult::Sat)
+        ));
+    }
+
+    #[test]
+    fn test_registry_managed_names_cover_transforming_tactics() {
+        let reg = default_registry();
+        let names = reg.managed_names();
+        for expected in [
+            "arith-bounds",
+            "bit-blast",
+            "simplify",
+            "propagate-values",
+            "ctx-solver-simplify",
+            "aggressive-simplify",
+            "elim-uncnstr",
+            "solve-eqs",
+            "fm",
+            "nnf",
+            "tseitin-cnf",
+            "ackermannize",
+            "split",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "managed registry missing '{expected}'"
+            );
         }
     }
 }

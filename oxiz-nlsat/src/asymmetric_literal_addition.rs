@@ -1,5 +1,8 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Sound but
+// marginal: its isolated unit propagation over a supplied clause set duplicates
+// the goal of vivification (which IS wired, and runs against the solver's real
+// BCP), with lower real strength. Prefer vivification.
 //! Asymmetric Literal Addition (ALA) for clause strengthening.
 //!
 //! ALA is a preprocessing technique that strengthens clauses by performing

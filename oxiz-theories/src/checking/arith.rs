@@ -58,30 +58,62 @@ impl ArithChecker {
         &self.config
     }
 
-    /// Check if a linear combination sums to a contradiction
-    /// e.g., x + y >= 5 AND x + y <= 4 is UNSAT
-    fn check_linear_conflict(&self, _clause: &[Literal]) -> CheckResult {
-        // For a conflict to be valid:
-        // 1. Negate all literals
-        // 2. Check if the resulting system is T-unsatisfiable
-        // 3. For linear arithmetic, this means checking for infeasibility
-
-        // Simplified check: assume valid if we have at least 2 literals
-        // (Real implementation would use Simplex or FM elimination)
-        CheckResult::Valid
+    /// Check that a conflict clause is T-valid, i.e. the conjunction of its
+    /// negated literals is arithmetically unsatisfiable.
+    ///
+    /// This checker operates on abstract literal identities only (it has no
+    /// access to the term manager), so it can soundly certify the two
+    /// theory-independent cases — an empty clause is *not* a valid conflict,
+    /// and a propositional tautology *is* — but a genuine linear-arithmetic
+    /// infeasibility (e.g. `x+y>=5 ∧ x+y<=4`) requires Simplex/Fourier–Motzkin
+    /// over the actual atoms and is reported as `Unknown` rather than being
+    /// rubber-stamped as `Valid`.
+    fn check_linear_conflict(&self, clause: &[Literal]) -> CheckResult {
+        if clause.is_empty() {
+            return CheckResult::Invalid(
+                "Empty conflict clause is trivially satisfiable".to_string(),
+            );
+        }
+        if super::clause_has_complementary_pair(clause) {
+            return CheckResult::Valid;
+        }
+        CheckResult::Unknown(
+            "Linear-arithmetic infeasibility not certifiable from literal identities \
+             (requires Simplex/Farkas over the atoms)"
+                .to_string(),
+        )
     }
 
-    /// Check propagation: explanation => literal
-    fn check_linear_propagation(&self, _literal: Literal, _explanation: &[Literal]) -> CheckResult {
-        // For propagation to be valid:
-        // explanation AND NOT(literal) should be T-unsatisfiable
-        CheckResult::Valid
+    /// Check propagation: `explanation => literal`.
+    ///
+    /// Sound structural certification only: if the explanation already contains
+    /// the propagated literal (or is itself contradictory) the entailment
+    /// holds; otherwise a real check would negate the literal and refute the
+    /// system, which is not available here, so the result is `Unknown`.
+    fn check_linear_propagation(&self, literal: Literal, explanation: &[Literal]) -> CheckResult {
+        if super::explanation_entails(literal, explanation) {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Arithmetic propagation not certifiable from literal identities".to_string(),
+            )
+        }
     }
 
-    /// Check model consistency
-    fn check_arith_model(&self, _assignments: &[(TermId, bool)]) -> CheckResult {
-        // Check that assignments satisfy arithmetic constraints
-        CheckResult::Valid
+    /// Check model consistency.
+    ///
+    /// With no assignments there is nothing to violate (vacuously consistent);
+    /// otherwise verifying that the assignment satisfies the arithmetic atoms
+    /// requires evaluating the terms, which this checker cannot do, so the
+    /// result is `Unknown`.
+    fn check_arith_model(&self, assignments: &[(TermId, bool)]) -> CheckResult {
+        if assignments.is_empty() {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Arithmetic model consistency requires term evaluation".to_string(),
+            )
+        }
     }
 }
 
@@ -141,14 +173,30 @@ mod tests {
     }
 
     #[test]
-    fn test_arith_conflict_check() {
+    fn test_arith_conflict_tautology_is_valid() {
+        // A clause containing p and ¬p is a sound theory-independent conflict.
+        let checker = ArithChecker::new();
+        let t1 = TermId::from(1u32);
+        let clause = vec![Literal::pos(t1), Literal::neg(t1)];
+        assert!(checker.check_conflict(&clause).is_valid());
+    }
+
+    #[test]
+    fn test_arith_conflict_empty_is_invalid() {
+        let checker = ArithChecker::new();
+        assert!(checker.check_conflict(&[]).is_invalid());
+    }
+
+    #[test]
+    fn test_arith_conflict_non_tautology_is_unknown_not_valid() {
+        // Regression: an uncertifiable conflict must NOT be rubber-stamped Valid.
         let checker = ArithChecker::new();
         let t1 = TermId::from(1u32);
         let t2 = TermId::from(2u32);
-
         let clause = vec![Literal::pos(t1), Literal::neg(t2)];
         let result = checker.check_conflict(&clause);
-        assert!(result.is_valid());
+        assert!(!result.is_valid());
+        assert!(!result.is_invalid());
     }
 
     #[test]
@@ -157,19 +205,26 @@ mod tests {
         let t1 = TermId::from(1u32);
         let t2 = TermId::from(2u32);
 
-        let literal = Literal::pos(t1);
-        let explanation = vec![Literal::pos(t2)];
-        let result = checker.check_propagation(literal, &explanation);
-        assert!(result.is_valid());
+        // Explanation contains the propagated literal -> entailed -> Valid.
+        assert!(
+            checker
+                .check_propagation(Literal::pos(t1), &[Literal::pos(t1), Literal::pos(t2)])
+                .is_valid()
+        );
+        // Explanation does not entail the literal -> Unknown, never Valid.
+        let result = checker.check_propagation(Literal::pos(t1), &[Literal::pos(t2)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
     fn test_arith_model_check() {
         let checker = ArithChecker::new();
         let t1 = TermId::from(1u32);
-        let assignments = vec![(t1, true)];
-        let result = checker.check_model(&assignments);
-        assert!(result.is_valid());
+        // Empty model is vacuously consistent.
+        assert!(checker.check_model(&[]).is_valid());
+        // A non-empty model cannot be certified without term evaluation.
+        let result = checker.check_model(&[(t1, true)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]

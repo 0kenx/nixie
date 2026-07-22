@@ -4,6 +4,45 @@ use super::core::*;
 use crate::error::Result;
 #[allow(unused_imports)]
 use crate::prelude::*;
+use core::cell::RefCell;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Grace period (in milliseconds) [`TimeoutTactic`] waits, after its
+/// deadline elapses, for a cooperative worker to notice
+/// [`cancellation_requested`] and finish before handing the still-running
+/// `JoinHandle` off to a background reaper. Capped by `timeout_ms` itself
+/// so a very short timeout does not turn into a long extra wait.
+const TIMEOUT_GRACE_PERIOD_MS: u64 = 500;
+
+thread_local! {
+    /// Cancellation flag for the [`Tactic::apply`] call currently
+    /// executing on this thread, installed by an enclosing
+    /// [`TimeoutTactic`] worker before it invokes the wrapped tactic.
+    /// `None` when no `TimeoutTactic` is on the call stack for this
+    /// thread.
+    static TACTIC_CANCEL_FLAG: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+/// Returns `true` if the [`Tactic`] currently executing on this thread has
+/// been asked to stop by an enclosing [`TimeoutTactic`] whose deadline has
+/// elapsed.
+///
+/// Long-running or looping tactics should poll this periodically (e.g.
+/// once per iteration of a fixpoint loop) and bail out promptly —
+/// returning `Ok(TacticResult::Failed(..))` — when it becomes `true`, so
+/// that `TimeoutTactic` can reclaim the worker thread within its grace
+/// period instead of leaving it to run to completion in the background.
+/// Tactics that never poll this still terminate correctly (the wrapping
+/// thread is always eventually joined, see `TimeoutTactic::apply`), just
+/// not promptly.
+pub fn cancellation_requested() -> bool {
+    TACTIC_CANCEL_FLAG.with(|flag| {
+        flag.borrow()
+            .as_ref()
+            .is_some_and(|f| f.load(Ordering::Relaxed))
+    })
+}
 
 /// Sequential combinator - applies tactics in sequence
 pub struct ThenTactic {
@@ -356,9 +395,16 @@ impl Tactic for TimeoutTactic {
         let (tx, rx) = mpsc::channel();
         let goal_clone = goal.clone();
         let tactic_clone = std::sync::Arc::clone(&self.tactic);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_worker = Arc::clone(&cancel);
 
-        // Spawn a thread to run the tactic
+        // Spawn a thread to run the tactic. The worker installs the
+        // shared cancellation flag into its own thread-local slot so that
+        // a cooperative tactic calling `cancellation_requested()` (or
+        // anything it calls) observes cancellation as soon as this
+        // `TimeoutTactic` gives up waiting.
         let handle = thread::spawn(move || {
+            TACTIC_CANCEL_FLAG.with(|flag| *flag.borrow_mut() = Some(cancel_for_worker));
             let result = tactic_clone.apply(&goal_clone);
             let _ = tx.send(result);
         });
@@ -371,8 +417,32 @@ impl Tactic for TimeoutTactic {
                 result
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Timeout exceeded
-                // Note: The thread will continue running but we ignore its result
+                // Timeout exceeded: ask the worker to stop cooperatively
+                // and give it a bounded grace period to notice and exit.
+                // Unlike a bare `drop(handle)`, the `JoinHandle` is never
+                // silently discarded: within the grace period it is
+                // joined directly; past the grace period it is handed to
+                // a dedicated reaper thread that blocks until the worker
+                // eventually finishes and joins it then. Either way the
+                // worker thread is always reclaimed — for tactics that
+                // never call `cancellation_requested()`, just not
+                // promptly.
+                cancel.store(true, Ordering::Relaxed);
+
+                let grace = Duration::from_millis(self.timeout_ms.min(TIMEOUT_GRACE_PERIOD_MS));
+                match rx.recv_timeout(grace) {
+                    Ok(_) => {
+                        let _ = handle.join();
+                    }
+                    Err(_) => {
+                        let _ = thread::Builder::new()
+                            .name("oxiz-timeout-tactic-reaper".to_string())
+                            .spawn(move || {
+                                let _ = handle.join();
+                            });
+                    }
+                }
+
                 Ok(TacticResult::Failed(format!(
                     "Tactic '{}' timed out after {}ms",
                     self.tactic.name(),
@@ -512,5 +582,100 @@ mod tests {
 
         let result = then.apply(&goal).expect("tactic should not error");
         assert!(matches!(result, TacticResult::Solved(SolveResult::Unsat)));
+    }
+
+    // Regression tests for: "TimeoutTactic leaks its worker thread on
+    // timeout" — the worker must be reclaimed (cooperatively, promptly, or
+    // eventually via the background reaper), never dropped-and-forgotten.
+
+    #[test]
+    fn timeout_tactic_reclaims_a_cooperative_worker_on_timeout() {
+        use std::time::Duration;
+
+        /// Loops checking `cancellation_requested()`, incrementing
+        /// `iterations` each pass, until cancelled or a large iteration
+        /// cap (a safety net against a misbehaving test never observing
+        /// cancellation).
+        #[derive(Debug)]
+        struct CooperativeLoop {
+            iterations: std::sync::Arc<AtomicUsize>,
+        }
+
+        impl Tactic for CooperativeLoop {
+            fn name(&self) -> &str {
+                "cooperative-loop"
+            }
+            fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+                for _ in 0..10_000 {
+                    if cancellation_requested() {
+                        return Ok(TacticResult::Failed("cancelled".to_string()));
+                    }
+                    self.iterations.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Ok(TacticResult::NotApplicable)
+            }
+        }
+
+        let iterations = std::sync::Arc::new(AtomicUsize::new(0));
+        let tactic = CooperativeLoop {
+            iterations: std::sync::Arc::clone(&iterations),
+        };
+        let timeout = TimeoutTactic::new(std::sync::Arc::new(tactic), 100);
+
+        let result = timeout
+            .apply(&Goal::new(vec![]))
+            .expect("apply should not error");
+        assert!(matches!(result, TacticResult::Failed(_)));
+
+        let count_at_return = iterations.load(Ordering::SeqCst);
+        // Give the (already-cancelled) worker a further beat to confirm it
+        // actually stopped looping rather than continuing in the
+        // background after `apply` returned.
+        std::thread::sleep(Duration::from_millis(200));
+        let count_after_pause = iterations.load(Ordering::SeqCst);
+
+        assert_eq!(
+            count_at_return, count_after_pause,
+            "the worker must have stopped incrementing once cancelled, not \
+             kept running detached in the background"
+        );
+    }
+
+    #[test]
+    fn timeout_tactic_returns_promptly_for_a_non_cooperative_worker() {
+        use std::time::{Duration, Instant};
+
+        /// Never checks `cancellation_requested()`; simulates a tactic
+        /// that cannot be cooperatively cancelled.
+        #[derive(Debug, Default)]
+        struct SlowNonCooperative;
+
+        impl Tactic for SlowNonCooperative {
+            fn name(&self) -> &str {
+                "slow-non-cooperative"
+            }
+            fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+                std::thread::sleep(Duration::from_secs(5));
+                Ok(TacticResult::NotApplicable)
+            }
+        }
+
+        let timeout = TimeoutTactic::from_box(Box::new(SlowNonCooperative), 20);
+        let start = Instant::now();
+        let result = timeout
+            .apply(&Goal::new(vec![]))
+            .expect("apply should not error");
+        let elapsed = start.elapsed();
+
+        assert!(matches!(result, TacticResult::Failed(_)));
+        // Must return well before the 5s worker naturally finishes: bound
+        // generously at 2s to absorb scheduling jitter while still proving
+        // `apply` did not block on the non-cooperative worker.
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "TimeoutTactic::apply must return promptly instead of blocking \
+             on a non-cooperative worker, elapsed = {elapsed:?}"
+        );
     }
 }

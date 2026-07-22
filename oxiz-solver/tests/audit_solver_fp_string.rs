@@ -65,10 +65,18 @@ fn str_prefixof_is_not_free_sat() {
     assert_ne!(solver.check(&mut manager), SolverResult::Sat);
 }
 
-/// A lone `str.contains` atom is undecided by the incomplete string checks, so
-/// the solver must answer `Unknown` rather than a free-Boolean `Sat`.
+/// A lone `(str.contains s t)` over two free string variables is genuinely
+/// SATISFIABLE (e.g. `s = t = ""`, since every string contains the empty
+/// string — Z3 returns exactly this model). The ground string solver now
+/// constructs and *verifies* such a witness, so the honest answer is `Sat`.
+///
+/// The soundness guarantee this file pins is "no *spurious* `Sat` for an
+/// unsatisfiable formula" — covered by `str_contains_is_not_free_sat` and
+/// `str_prefixof_is_not_free_sat`, which remain non-`Sat`. Returning a verified
+/// `Sat` for a genuinely satisfiable formula strengthens, not weakens, that
+/// guarantee.
 #[test]
-fn lone_string_atom_forces_unknown() {
+fn lone_satisfiable_string_atom_is_verified_sat() {
     let mut solver = Solver::new();
     let mut manager = TermManager::new();
 
@@ -78,7 +86,7 @@ fn lone_string_atom_forces_unknown() {
     let contains = manager.mk_str_contains(s, sub);
     solver.assert(contains, &mut manager);
 
-    assert_eq!(solver.check(&mut manager), SolverResult::Unknown);
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
 }
 
 // ──────────────────────────────────────────────────────────────────

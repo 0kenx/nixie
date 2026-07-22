@@ -64,13 +64,18 @@ impl Tactic for StatelessSimplifyTactic {
         "simplify"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        // Without a term manager, we can only return the goal unchanged
-        // Real simplification requires the mutable SimplifyTactic
-        Ok(TacticResult::SubGoals(vec![(*goal).clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Real simplification rewrites terms and therefore needs a
+        // `&mut TermManager`, which the manager-free `Tactic::apply` signature
+        // cannot provide. Report NotApplicable honestly rather than returning
+        // the goal unchanged as if it had been simplified. Use
+        // `SimplifyTactic::apply_mut` (or the registry's `create_managed`
+        // path) for the real transformation.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Simplifies boolean and arithmetic expressions"
+        "Simplifies boolean and arithmetic expressions \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }

@@ -345,22 +345,19 @@ pub fn get_default_strategies() -> Vec<StrategyConfig> {
     ]
 }
 
-/// Run portfolio solving with multiple strategies in parallel
-pub fn solve_portfolio(
-    script: &str,
-    args: &Args,
-    logic: Option<&str>,
-    _base_ctx: &Context,
-    timeout_secs: u64,
-) -> Result<PortfolioResult, String> {
-    solve_portfolio_custom(
-        script,
-        get_default_strategies(),
-        args,
-        logic,
-        _base_ctx,
-        timeout_secs,
-    )
+/// Select up to `num_threads` portfolio strategies to run concurrently.
+///
+/// The built-in strategies are genuinely distinct (distinct assertion
+/// orderings *and* distinct `(theory_mode, simplify, restart_strategy)`
+/// configs). Requesting fewer than the full set takes a prefix; requesting
+/// more than there are distinct strategies simply uses all of them (there is
+/// no benefit to spawning more workers than distinct strategies). `num_threads`
+/// of 0 is treated as 1, yielding a single-worker (effectively sequential)
+/// portfolio.
+pub fn strategies_for_thread_count(num_threads: usize) -> Vec<StrategyConfig> {
+    let all = get_default_strategies();
+    let n = num_threads.clamp(1, all.len());
+    all.into_iter().take(n).collect()
 }
 
 /// Run portfolio solving with custom strategies

@@ -273,20 +273,22 @@ impl Tactic for StatelessBitBlastTactic {
         "bit-blast"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
         // The `Tactic` trait only hands us `&Goal`, with no `TermManager`
         // access, so this dispatch path is structurally unable to allocate
         // the fresh Boolean variables and circuit terms a real bit-blast
-        // needs. It therefore always returns the goal unchanged (an
-        // honest, sound no-op) rather than fabricating a transformation.
-        // Callers that hold a `&mut TermManager` should use
-        // [`BitBlaster::blast_goal`] to get an actual Boolean-circuit
+        // needs. It therefore honestly reports NotApplicable rather than
+        // returning the goal unchanged (which would read as a successful
+        // no-op transformation to a combinator). Callers holding a
+        // `&mut TermManager` should use [`BitBlaster::blast_goal`] (exposed on
+        // the registry's `create_managed` path) for the real Boolean-circuit
         // encoding of BitVector operations.
-        Ok(TacticResult::SubGoals(vec![goal.clone()]))
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Detects BitVector operations (does not itself transform them; see BitBlaster for the real encoder)"
+        "Detects BitVector operations (does not itself transform them; requires a TermManager — \
+         see BitBlaster / create_managed for the real encoder; the manager-free path is NotApplicable)"
     }
 }
 
@@ -1188,11 +1190,15 @@ mod tests {
 
     #[test]
     fn test_stateless_bit_blast() {
+        // The manager-free `Tactic::apply` path cannot allocate circuit terms,
+        // so it honestly reports NotApplicable (P4-1107) rather than returning
+        // the goal unchanged. The real blast is exercised via
+        // `BitBlaster::blast_goal` / the registry's `create_managed` path.
         let goal = Goal::empty();
         let tactic = StatelessBitBlastTactic;
 
         let result = tactic.apply(&goal).expect("test operation should succeed");
-        assert!(matches!(result, TacticResult::SubGoals(_)));
+        assert!(matches!(result, TacticResult::NotApplicable));
     }
 
     /// Blast `eq` (expected to compare two constant bit-vector

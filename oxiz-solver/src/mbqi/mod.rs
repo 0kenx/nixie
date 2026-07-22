@@ -63,6 +63,7 @@ pub mod lazy_instantiation;
 pub mod macros;
 pub mod model_completion;
 pub mod patterns;
+mod sat_certify;
 
 // Re-export key types
 pub use conflict_driven::{ConflictDrivenInstantiator, ConflictScores};

@@ -42,7 +42,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.2.4"
+version = "0.3.0"
 edition = "2024"
 # Edition 2024 itself only requires rustc 1.85, but the workspace makes
 # pervasive use of let-chains (`if ... && let Some(x) = ... { }`, ~350
@@ -70,20 +70,20 @@ collapsible_if = "allow"
 
 [workspace.dependencies]
 # Meta crate
-oxiz = { version = "0.2.4", path = "oxiz" }
+oxiz = { version = "0.3.0", path = "oxiz" }
 
 # Core crates (default-features = false so downstream can control std)
-oxiz-core = { version = "0.2.4", path = "oxiz-core", default-features = false }
-oxiz-math = { version = "0.2.4", path = "oxiz-math", default-features = false }
-oxiz-sat = { version = "0.2.4", path = "oxiz-sat", default-features = false }
-oxiz-nlsat = { version = "0.2.4", path = "oxiz-nlsat" }
-oxiz-theories = { version = "0.2.4", path = "oxiz-theories", default-features = false }
-oxiz-solver = { version = "0.2.4", path = "oxiz-solver", default-features = false }
-oxiz-opt = { version = "0.2.4", path = "oxiz-opt" }
-oxiz-spacer = { version = "0.2.4", path = "oxiz-spacer" }
-oxiz-proof = { version = "0.2.4", path = "oxiz-proof" }
-oxiz-smtcomp = { version = "0.2.4", path = "oxiz-smtcomp" }
-oxiz-ml = { version = "0.2.4", path = "oxiz-ml" }
+oxiz-core = { version = "0.3.0", path = "oxiz-core", default-features = false }
+oxiz-math = { version = "0.3.0", path = "oxiz-math", default-features = false }
+oxiz-sat = { version = "0.3.0", path = "oxiz-sat", default-features = false }
+oxiz-nlsat = { version = "0.3.0", path = "oxiz-nlsat" }
+oxiz-theories = { version = "0.3.0", path = "oxiz-theories", default-features = false }
+oxiz-solver = { version = "0.3.0", path = "oxiz-solver", default-features = false }
+oxiz-opt = { version = "0.3.0", path = "oxiz-opt" }
+oxiz-spacer = { version = "0.3.0", path = "oxiz-spacer" }
+oxiz-proof = { version = "0.3.0", path = "oxiz-proof" }
+oxiz-smtcomp = { version = "0.3.0", path = "oxiz-smtcomp" }
+oxiz-ml = { version = "0.3.0", path = "oxiz-ml" }
 
 # Memory & Interning
 bumpalo = "3.20"
@@ -92,6 +92,13 @@ lasso = "0.7"
 
 # Parsing
 winnow = "1.0"
+rhai = "1.25"
+
+# SIMD
+wide = "1.5"
+
+# Synchronization
+parking_lot = "0.12"
 
 # E-graph / Rewriting
 egg = "0.11"

@@ -17,11 +17,8 @@
 use crate::solver::{AtomId, Model, NlsatSolver, SolverResult};
 use crate::types::{Atom, AtomKind, Literal};
 use num_rational::BigRational;
-use num_traits::{One, ToPrimitive};
-use oxiz_math::lp::cutting_planes::CuttingPlaneGenerator;
+use num_traits::ToPrimitive;
 use oxiz_math::polynomial::{Polynomial, Var};
-use rustc_hash::FxHashSet;
-use std::collections::HashSet;
 
 /// Integer variable type specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,10 +37,23 @@ pub struct NiaConfig {
     /// Maximum depth of the branch-and-bound tree.
     pub max_depth: usize,
     /// Enable cutting planes.
+    ///
+    /// Currently has no observable effect: [`NiaSolver::add_cutting_plane`]
+    /// is an honest no-op (see its doc comment for why a real
+    /// tableau-derived Gomory cut is out of scope for the CAD-based
+    /// [`NlsatSolver`] this solver wraps). Kept as a harmless, forward-
+    /// compatible toggle for a future real implementation.
     pub enable_cutting_planes: bool,
     /// Branching variable selection strategy.
     pub branching_strategy: BranchingStrategy,
-    /// Tolerance for integer proximity (values within this of an integer are rounded).
+    /// Reserved for a future f64-tolerance-based heuristic.
+    ///
+    /// No soundness-relevant decision in this module uses this value:
+    /// both `NiaSolver::is_integer_solution` (the Sat/Unsat gate) and
+    /// `NiaSolver::select_branching_variable`'s candidacy test use
+    /// exact rational integrality (`BigRational::is_integer`) instead, so
+    /// that a value merely *close* to an integer (e.g.
+    /// `1_000_000_000_001 / 1_000_000_000_000`) is never mistaken for one.
     pub int_tolerance: f64,
 }
 
@@ -87,13 +97,26 @@ pub enum BranchingStrategy {
 struct BranchNode {
     /// Decision level in the solver.
     level: u32,
-    /// Variables that have been branched on.
-    branched_vars: HashSet<Var>,
     /// Current depth in the tree.
     depth: usize,
     /// Path of bound constraints from the root to this node:
     /// `(var, bound, is_lower)` where `is_lower == true` means `var >= bound`
     /// and `is_lower == false` means `var <= bound`.
+    ///
+    /// A variable may appear more than once here: unlike an earlier design
+    /// that permanently forbade re-branching a variable once split (via a
+    /// `branched_vars: HashSet<Var>` hard filter), a still-fractional
+    /// integer variable can legitimately need several rounds of
+    /// floor/ceil splitting before its value settles on an integer (see
+    /// the NIA-4 audit finding). Termination remains guaranteed without an
+    /// explicit "already branched" guard because each additional split on
+    /// the same variable is a strict refinement of its bound: if `x <=
+    /// bound` already holds and the relaxation still returns a fractional
+    /// `value < bound`, then `floor(value) < bound` too (bound-width
+    /// strictly shrinks by at least one integer unit every time), and
+    /// symmetrically for `x >= bound` / `ceil(value) > bound`. That
+    /// monotonic narrowing, together with the existing `max_depth` /
+    /// `max_nodes` limits, bounds the search.
     path: Vec<(Var, BigRational, bool)>,
 }
 
@@ -331,7 +354,6 @@ impl NiaSolver {
     fn branch_and_bound(&mut self) -> SolverResult {
         let root_node = BranchNode {
             level: 0,
-            branched_vars: HashSet::new(),
             depth: 0,
             path: Vec::new(),
         };
@@ -404,7 +426,7 @@ impl NiaSolver {
                         }
 
                         // Solution is not integer - need to branch
-                        if let Some(branch_var) = self.select_branching_variable(&model, &node) {
+                        if let Some(branch_var) = self.select_branching_variable(&model) {
                             // Get current value of branch variable
                             if let Some(value) = model.arith_value(branch_var) {
                                 // Create two branches: x <= floor(value) and x >= ceil(value)
@@ -425,8 +447,18 @@ impl NiaSolver {
                                 );
                             }
                         } else {
-                            // No variable to branch on but solution is not integer
-                            // This shouldn't happen if var_types is set correctly
+                            // `is_integer_solution` above already rejected
+                            // this model as non-integral (exact rational
+                            // test), yet `select_branching_variable` (which
+                            // now uses the *same* exact test for
+                            // candidacy) found no branchable variable. This
+                            // should be unreachable in practice since both
+                            // checks agree, but if it ever happens this
+                            // node's fate is genuinely unresolved -- it
+                            // must NOT be silently dropped as if it were
+                            // refuted, or the search could wrongly
+                            // conclude Unsat once the stack empties.
+                            fully_explored = false;
                             continue;
                         }
                     }
@@ -445,26 +477,38 @@ impl NiaSolver {
     }
 
     /// Select which variable to branch on.
-    fn select_branching_variable(&self, model: &Model, node: &BranchNode) -> Option<Var> {
+    ///
+    /// Candidacy is gated on the *exact* rational integrality test
+    /// (`!value.is_integer()`), matching [`Self::is_integer_solution`]'s
+    /// authoritative soundness gate. It intentionally does NOT reuse the
+    /// lossy f64 `int_tolerance` window: a value that is f64-near-integer
+    /// but not exactly integral (e.g. `1_000_000_000_001 /
+    /// 1_000_000_000_000`) is rejected by `is_integer_solution` and must
+    /// still be selectable here, or the search would find no candidate for
+    /// a genuinely fractional node and silently drop it (see the NIA-3
+    /// audit finding). A variable may be selected again after already
+    /// having been branched on -- see the `path` doc comment on
+    /// [`BranchNode`] for why that remains sound and terminating.
+    fn select_branching_variable(&self, model: &Model) -> Option<Var> {
         let mut candidates: Vec<(Var, BigRational, f64)> = Vec::new();
 
         for var in 0..self.nlsat.num_arith_vars() {
-            // Skip if already branched
-            if node.branched_vars.contains(&var) {
-                continue;
-            }
-
             // Skip if not integer-typed
             if !self.is_integer_var(var) {
                 continue;
             }
 
-            // Get value from model
-            if let Some(value) = model.arith_value(var) {
+            // Get value from model.
+            if let Some(value) = model.arith_value(var)
+                && !value.is_integer()
+            {
+                // `frac` is used only to rank candidates by "how
+                // fractional" they are for the search-order heuristics
+                // below (ties broken by proximity to 0.5, etc.); it is
+                // non-authoritative, so the f64 approximation is fine
+                // here even though it was wrong as a candidacy gate.
                 let frac = self.fractional_part(value);
-                if frac > self.config.int_tolerance && frac < (1.0 - self.config.int_tolerance) {
-                    candidates.push((var, value.clone(), frac));
-                }
+                candidates.push((var, value.clone(), frac));
             }
         }
 
@@ -513,15 +557,11 @@ impl NiaSolver {
         bound: &BigRational,
         is_lower: bool, // true for x >= bound, false for x <= bound
     ) {
-        let mut new_branched = parent.branched_vars.clone();
-        new_branched.insert(var);
-
         let mut new_path = parent.path.clone();
         new_path.push((var, bound.clone(), is_lower));
 
         stack.push(BranchNode {
             level: parent.level + 1,
-            branched_vars: new_branched,
             depth: parent.depth + 1,
             path: new_path,
         });
@@ -532,17 +572,20 @@ impl NiaSolver {
     /// This is the authoritative soundness gate for branch-and-bound: once it
     /// returns `true`, the caller reports `model` as the solver's final `Sat`
     /// answer, so it must check *exact* integrality (`BigRational::is_integer`,
-    /// i.e. denominator `== 1` in lowest terms) rather than
-    /// [`Self::is_near_integer`]'s lossy `f64`-tolerance heuristic. That
-    /// heuristic converts the exact rational to `f64` (itself precision-losing
-    /// for large numerators/denominators) and accepts anything within
-    /// `int_tolerance` of a whole number, so a genuinely fractional value such
-    /// as `1_000_000_000_001 / 1_000_000_000_000` would be wrongly reported as
-    /// an integer solution, making the solver return `Sat` with a model that
-    /// does not actually satisfy the integrality constraint. `is_near_integer`
-    /// remains appropriate for the non-authoritative heuristics elsewhere in
-    /// this module (branching-variable selection, cut-generation eligibility),
-    /// where an approximate answer only affects search efficiency.
+    /// i.e. denominator `== 1` in lowest terms) rather than an f64-tolerance
+    /// heuristic. Such a heuristic would convert the exact rational to `f64`
+    /// (itself precision-losing for large numerators/denominators) and accept
+    /// anything within `int_tolerance` of a whole number, so a genuinely
+    /// fractional value such as `1_000_000_000_001 / 1_000_000_000_000` would
+    /// be wrongly reported as an integer solution, making the solver return
+    /// `Sat` with a model that does not actually satisfy the integrality
+    /// constraint. Every soundness-relevant integrality check in this module
+    /// -- this method and [`Self::select_branching_variable`]'s candidacy
+    /// gate -- uses the same exact test for that reason; only the
+    /// non-authoritative candidate-ranking heuristic
+    /// ([`Self::fractional_part`], used solely to order/tie-break already-
+    /// exact-confirmed candidates) remains `f64`-based, since an approximate
+    /// ranking only affects search efficiency, never correctness.
     fn is_integer_solution(&self, model: &Model) -> bool {
         for var in 0..self.nlsat.num_arith_vars() {
             if !self.is_integer_var(var) {
@@ -558,13 +601,12 @@ impl NiaSolver {
         true
     }
 
-    /// Check if a value is near an integer.
-    fn is_near_integer(&self, value: &BigRational) -> bool {
-        let frac = self.fractional_part(value);
-        frac < self.config.int_tolerance || frac > (1.0 - self.config.int_tolerance)
-    }
-
     /// Get the fractional part of a rational number.
+    ///
+    /// Non-authoritative: used only to rank already exact-confirmed
+    /// fractional candidates in [`Self::select_branching_variable`] (e.g.
+    /// picking the one closest to `0.5` for [`BranchingStrategy::MostFractional`]).
+    /// Never used as an integrality *test* -- see [`Self::is_integer_solution`].
     fn fractional_part(&self, value: &BigRational) -> f64 {
         // Convert to f64 for fractional part calculation
         let val_f64 = value.numer().to_f64().unwrap_or(0.0) / value.denom().to_f64().unwrap_or(1.0);
@@ -588,87 +630,44 @@ impl NiaSolver {
         &self.stats
     }
 
-    /// Add Gomory cutting planes to eliminate the current fractional solution.
+    /// Attempt to add Gomory cutting planes to eliminate the current
+    /// fractional solution.
     ///
-    /// For each integer variable with a fractional value in the model, generates
-    /// a Gomory fractional cut and asserts it as a polynomial constraint into
-    /// the NLSAT solver. This tightens the LP relaxation and can prune branches.
+    /// This is a deliberate, honest no-op: it always returns `false` and
+    /// never touches `self.nlsat`. A prior implementation built a
+    /// fabricated "row" for `oxiz_math::lp::cutting_planes::
+    /// CuttingPlaneGenerator::generate_gomory_cut`, consisting solely of
+    /// the identity term `coefficient 1 for var, RHS = value`. That is not
+    /// a real simplex-tableau row (which must express a
+    /// *basic* fractional variable as a combination of the problem's
+    /// *non-basic* variables); a coefficient of exactly `1` always has zero
+    /// fractional part, so the generator's cut was always empty and the
+    /// call was dead code in practice. Worse, had a non-empty cut ever come
+    /// out of a fabricated row, asserting it permanently onto the shared
+    /// `self.nlsat` (as the old code did) would have been UNSOUND: the
+    /// resulting "cut" would not actually be implied by the problem's real
+    /// constraints, so it could exclude genuine integer solutions and turn
+    /// a satisfiable problem into a reported `Unsat`.
     ///
-    /// Returns `true` if at least one cut was added, `false` otherwise.
-    pub fn add_cutting_plane(&mut self, model: &Model) -> bool {
-        // Build the set of integer variable IDs for the cut generator.
-        let integer_var_set: FxHashSet<usize> = self
-            .var_types
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, vtype)| {
-                if *vtype == VarType::Integer {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if integer_var_set.is_empty() {
-            return false;
-        }
-
-        let mut cut_gen = CuttingPlaneGenerator::new(integer_var_set.clone());
-        let mut cuts_added = false;
-
-        for &var in &integer_var_set {
-            let poly_var = var as Var;
-            let Some(value) = model.arith_value(poly_var) else {
-                continue;
-            };
-
-            // Only attempt to cut if the value is (heuristically) fractional.
-            // This is eligibility for an *optional* optimization (skipping a
-            // cut here just means one fewer pruning opportunity, not an
-            // incorrect answer), so the `int_tolerance` heuristic remains
-            // appropriate here, unlike `is_integer_solution`'s authoritative
-            // exact-integrality check.
-            if self.is_near_integer(value) {
-                continue;
-            }
-
-            // Build a row representing: var = value  (single-variable row).
-            // The row is: coefficient 1 for `var`, RHS = value.
-            // A Gomory cut for this row is: frac(var) >= frac(value),
-            // i.e. the fractional part of var must equal or exceed frac(value).
-            // Translated: the cut pushes var away from the current fractional value.
-            let row: Vec<(usize, BigRational)> = vec![(var, BigRational::one())];
-            let Some(cut) = cut_gen.generate_gomory_cut(var, &row, value) else {
-                continue;
-            };
-
-            if cut.coeffs.is_empty() {
-                continue;
-            }
-
-            // The Gomory cut is: sum(coeffs * vars) >= rhs
-            // Equivalently: sum(coeffs * vars) - rhs >= 0
-            // We assert NOT(sum(coeffs * vars) - rhs < 0).
-            let mut cut_poly = Polynomial::zero();
-            for (cut_var, coeff) in &cut.coeffs {
-                let var_poly = Polynomial::from_var(*cut_var as Var);
-                let term = Polynomial::mul(&var_poly, &Polynomial::constant(coeff.clone()));
-                cut_poly = Polynomial::add(&cut_poly, &term);
-            }
-            // Subtract the RHS constant.
-            let rhs_poly = Polynomial::constant(cut.rhs.clone());
-            let cut_lhs = Polynomial::sub(&cut_poly, &rhs_poly);
-
-            // Assert NOT(cut_lhs < 0) → cut_lhs >= 0
-            let atom_id = self.nlsat.new_ineq_atom(cut_lhs, AtomKind::Lt);
-            let lit = self.nlsat.atom_literal(atom_id, false); // negated
-            self.nlsat.add_clause(vec![lit]);
-            self.stats.cutting_planes += 1;
-            cuts_added = true;
-        }
-
-        cuts_added
+    /// [`NlsatSolver`] is a CAD-based nonlinear decision procedure, not a
+    /// simplex/LP engine, so it has no tableau to derive a real Gomory row
+    /// from; producing one would require building a separate LP-relaxation
+    /// subsystem, which is out of scope here. `oxiz-theories`'s LIA
+    /// branch-and-bound (`lia/branching.rs`) faces the identical situation
+    /// and, for the identical reason ("the available cut generators are
+    /// placeholders that do not derive valid inequalities from the
+    /// tableau"), deliberately does not generate cuts either -- this
+    /// mirrors that precedent instead of fabricating unsound ones.
+    /// Branch-and-bound alone (see `Self::branch_and_bound`) remains
+    /// sound and, for bounded problems, complete without cutting planes.
+    ///
+    /// Kept as a callable method (rather than deleted outright) so
+    /// `NiaConfig::enable_cutting_planes` remains a harmless, meaningful
+    /// toggle for existing callers and so a future tableau-backed
+    /// implementation has a stable call site to land in;
+    /// `stats().cutting_planes` is never incremented by this method.
+    pub fn add_cutting_plane(&mut self, _model: &Model) -> bool {
+        false
     }
 }
 
@@ -727,17 +726,6 @@ mod tests {
 
         assert_eq!(floor, rat(3));
         assert_eq!(ceil, rat(4));
-    }
-
-    #[test]
-    fn test_nia_is_near_integer() {
-        let solver = NiaSolver::new();
-
-        let int_val = BigRational::from_integer(5.into());
-        assert!(solver.is_near_integer(&int_val));
-
-        let frac_val = BigRational::new(5.into(), 2.into()); // 2.5
-        assert!(!solver.is_near_integer(&frac_val));
     }
 
     #[test]
@@ -810,17 +798,67 @@ mod tests {
         assert_eq!(stats.integer_solutions, 0);
     }
 
-    // Regression test: `is_near_integer`'s f64-tolerance heuristic
-    // (appropriate for branching-selection/cut-eligibility heuristics) must
-    // NOT be conflated with genuine, exact integrality.
+    /// Regression test for the NIA-5 audit finding: `add_cutting_plane` is
+    /// an honest no-op (see its doc comment), so even a problem that
+    /// genuinely exercises branch-and-bound with
+    /// `enable_cutting_planes: true` (the default) must never report any
+    /// cutting planes added. This pins the no-op so a future change can't
+    /// silently reintroduce the old fabricated-identity-row cut path
+    /// without a deliberate, reviewed test update.
     #[test]
-    fn test_near_integer_heuristic_vs_exact_integrality_diverge() {
-        let solver = NiaSolver::new();
+    fn test_add_cutting_plane_is_pinned_as_a_no_op() {
+        let mut solver = NiaSolver::new();
+        assert!(solver.config.enable_cutting_planes);
+
+        let var_x = solver.nlsat_mut().new_arith_var();
+        solver.set_var_type(var_x, VarType::Integer);
+
+        // x - 0.5 = 0  =>  real relaxation x = 0.5 (fractional), forcing a
+        // branch-and-bound round in which `enable_cutting_planes` gates a
+        // call to `add_cutting_plane`.
+        let x = Polynomial::from_var(var_x);
+        let half = BigRational::new(1.into(), 2.into());
+        let poly = Polynomial::sub(&x, &Polynomial::constant(half));
+        let atom = solver.nlsat_mut().new_ineq_atom(poly, AtomKind::Eq);
+        let lit = solver.nlsat().atom_literal(atom, true);
+        solver.nlsat_mut().add_clause(vec![lit]);
+
+        let _ = solver.solve();
+        assert_eq!(
+            solver.stats().cutting_planes,
+            0,
+            "add_cutting_plane is a documented no-op; it must never report \
+             a cut being added"
+        );
+
+        // Also exercise the method directly with a hand-built model.
+        let mut arith_values = std::collections::HashMap::new();
+        arith_values.insert(var_x, BigRational::new(3.into(), 2.into())); // 1.5
+        let model = Model {
+            bool_values: std::collections::HashMap::new(),
+            arith_values,
+        };
+        assert!(!solver.add_cutting_plane(&model));
+        assert_eq!(solver.stats().cutting_planes, 0);
+    }
+
+    // Regression test: a value within f64-tolerance distance of an integer
+    // (as `int_tolerance` used to gate on) must NOT be conflated with
+    // genuine, exact integrality -- this is the exact rational distinction
+    // that `is_integer_solution` and `select_branching_variable` now both
+    // rely on.
+    #[test]
+    fn test_near_integer_by_f64_tolerance_is_not_exactly_integer() {
         let near_one = BigRational::from_integer(1.into())
             + BigRational::new(1.into(), 1_000_000_000_000i64.into());
 
-        // The tolerance-based heuristic says "close enough to integer"...
-        assert!(solver.is_near_integer(&near_one));
+        // Within `NiaConfig::default().int_tolerance` (1e-6) of an integer
+        // when viewed through f64...
+        let frac = (near_one.numer().to_f64().unwrap_or(0.0)
+            / near_one.denom().to_f64().unwrap_or(1.0))
+        .fract()
+        .abs();
+        assert!(frac < NiaConfig::default().int_tolerance);
         // ...but it genuinely is not an integer.
         assert!(!near_one.is_integer());
     }
@@ -980,5 +1018,64 @@ mod tests {
 
         assert_eq!(floor, rat(-4));
         assert_eq!(ceil, rat(-4));
+    }
+
+    /// Regression test for the NIA-4 audit finding: two *successive*
+    /// rounds of branching on the same variable, driven directly through
+    /// `push_branch` (mirroring how `branch_and_bound` would grow the
+    /// path), must each still find that variable a valid branch candidate
+    /// as long as its relaxed value remains fractional, converging on the
+    /// correct final integer bound.
+    #[test]
+    fn test_push_branch_twice_on_same_var_preserves_candidacy() {
+        let mut solver = NiaSolver::new();
+        let var_x = solver.nlsat_mut().new_arith_var();
+        solver.set_var_type(var_x, VarType::Integer);
+
+        let root = BranchNode {
+            level: 0,
+            depth: 0,
+            path: Vec::new(),
+        };
+
+        // Round 1: relaxation returns x = 1.5 -> branch to x >= 2.
+        let mut stack = Vec::new();
+        NiaSolver::push_branch(&mut stack, &root, var_x, &rat(2), true);
+        let round1_node = stack.pop().expect("push_branch must push a node");
+        assert_eq!(round1_node.path, vec![(var_x, rat(2), true)]);
+
+        let mut model1_values = std::collections::HashMap::new();
+        model1_values.insert(var_x, BigRational::new(5.into(), 2.into())); // 2.5
+        let model1 = Model {
+            bool_values: std::collections::HashMap::new(),
+            arith_values: model1_values,
+        };
+        // Still fractional under the round-1 bound -> must be selectable
+        // again (this is exactly what the old `branched_vars` filter
+        // would have forbidden).
+        assert_eq!(solver.select_branching_variable(&model1), Some(var_x));
+
+        // Round 2: relaxation returns x = 2.5 -> branch to x >= 3.
+        NiaSolver::push_branch(&mut stack, &round1_node, var_x, &rat(3), true);
+        let round2_node = stack.pop().expect("push_branch must push a node");
+        assert_eq!(
+            round2_node.path,
+            vec![(var_x, rat(2), true), (var_x, rat(3), true)],
+            "the path must accumulate both rounds' bounds on the same var"
+        );
+
+        // Round 2's relaxation finally lands on an integer -> no longer a
+        // candidate.
+        let mut model2_values = std::collections::HashMap::new();
+        model2_values.insert(var_x, rat(3));
+        let model2 = Model {
+            bool_values: std::collections::HashMap::new(),
+            arith_values: model2_values,
+        };
+        assert_eq!(
+            solver.select_branching_variable(&model2),
+            None,
+            "an exactly-integer value must not be selected for further branching"
+        );
     }
 }

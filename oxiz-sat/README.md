@@ -96,11 +96,11 @@ The solver is optimized for:
 - Minimal allocations during solving
 - Fast unit propagation via two-watched literals
 
-## Status (v0.2.4)
+## Status (v0.3.0)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.2.4 |
+| Version | 0.3.0 |
 | Status | Stable |
 | Tests | 757 passing |
 | Source files | 81 |

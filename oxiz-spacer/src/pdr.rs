@@ -16,12 +16,15 @@
 
 use crate::chc::{ChcSystem, PredId, Rule};
 use crate::frames::{FrameManager, LemmaId};
+use crate::generalize::Generalizer;
 use crate::pob::{PobId, PobManager};
 use crate::reach::{CexState, Counterexample, ReachFactStore};
 use crate::smt::{SmtError, SmtSolver, canon_cur_vars, var_subst};
 use oxiz_core::ast::TermKind;
 use oxiz_core::{TermId, TermManager};
 use smallvec::SmallVec;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -153,6 +156,11 @@ pub struct Spacer<'a> {
     stats: SpacerStats,
     /// Current counterexample (if found)
     counterexample: Option<Counterexample>,
+    /// Optional cooperative cancellation token. When set and observed `true`
+    /// (e.g. by a parallel portfolio once a peer has decided), `solve` stops
+    /// at the next main-loop iteration and returns [`SpacerResult::Unknown`]
+    /// rather than an unsound answer.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> Spacer<'a> {
@@ -176,7 +184,20 @@ impl<'a> Spacer<'a> {
             reach_facts: ReachFactStore::new(),
             stats: SpacerStats::default(),
             counterexample: None,
+            cancel: None,
         }
+    }
+
+    /// Attach a cooperative cancellation token.
+    ///
+    /// Once the token is set to `true`, the next iteration of the main PDR
+    /// loop returns [`SpacerResult::Unknown`]. This lets a parallel portfolio
+    /// stop the losing engines as soon as one worker reaches a verdict,
+    /// without ever fabricating a Safe/Unsafe answer for a cancelled run.
+    #[must_use]
+    pub fn with_cancel(mut self, token: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(token);
+        self
     }
 
     /// Solve the CHC system.
@@ -218,6 +239,15 @@ impl<'a> Spacer<'a> {
 
         // Main PDR loop
         loop {
+            // Cooperative cancellation (e.g. a portfolio peer already decided).
+            if self
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                return Ok(SpacerResult::Unknown);
+            }
+
             // Check resource limits
             if self.stats.num_frames > self.config.max_level {
                 return Ok(SpacerResult::Unknown);
@@ -677,23 +707,140 @@ impl<'a> Spacer<'a> {
         Ok(None)
     }
 
-    /// Generalize a blocking lemma
+    /// Generalize a blocking lemma via MIC-style inductive generalization.
+    ///
+    /// The ungeneralized blocking lemma is `¬post`. When inductive
+    /// generalization is enabled we compute a minimal subcube `c ⊆ post` such
+    /// that the *stronger* blocking clause `¬c` is still a sound frame lemma —
+    /// it excludes every initial state and (for `level > 0`) is inductive
+    /// relative to `F_{level-1}` — and return `¬c`. Because `post ⇒ c` we have
+    /// `¬c ⇒ ¬post`, so the generalized clause still blocks the bad state while
+    /// excluding a strictly larger region. Without this, frames accumulate only
+    /// exact single-cube exclusions and the engine cannot converge on
+    /// non-trivial inductive invariants.
+    ///
+    /// Reference: Z3's `muz/spacer/spacer_generalizers.cpp` (inductive
+    /// generalization / MIC).
     fn generalize_blocking_lemma(&mut self, pob_id: PobId) -> Result<TermId, SpacerError> {
-        let pob = self
-            .pobs
-            .get(pob_id)
-            .ok_or_else(|| SpacerError::Internal("POB not found".to_string()))?;
+        let (pred, level, post) = {
+            let pob = self
+                .pobs
+                .get(pob_id)
+                .ok_or_else(|| SpacerError::Internal("POB not found".to_string()))?;
+            (pob.pred, pob.level(), pob.post)
+        };
 
-        // Basic generalization: negate the bad state
-        // In real implementation, apply inductive generalization
-        let lemma = self.terms.mk_not(pob.post);
-
-        if self.config.use_inductive_gen {
-            // Try to strengthen the lemma inductively
-            // This would involve MIC (Minimal Inductive Clause)
+        if !self.config.use_inductive_gen {
+            return Ok(self.terms.mk_not(post));
         }
 
-        Ok(lemma)
+        let start = std::time::Instant::now();
+        let cube = self.mic_generalize_cube(pred, post, level)?;
+        self.stats.generalization_time_us = self
+            .stats
+            .generalization_time_us
+            .saturating_add(start.elapsed().as_micros() as u64);
+
+        let generalized = match cube.len() {
+            // MIC keeps the cube non-empty; guard defensively so we never emit
+            // `¬true = false`, which would unsoundly collapse the frame to UNSAT.
+            0 => return Ok(self.terms.mk_not(post)),
+            1 => cube[0],
+            _ => self.terms.mk_and(cube),
+        };
+        Ok(self.terms.mk_not(generalized))
+    }
+
+    /// MIC (Minimal Inductive Clause) generalization of a blocking cube.
+    ///
+    /// Starting from the literals of `post`, greedily drop literals as long as
+    /// the blocking clause `¬(∧ remaining)` stays a sound frame lemma — see
+    /// [`Self::subcube_is_inductive_blocker`]. The returned subcube is a
+    /// non-empty subset of `post`'s literals. Increments
+    /// [`SpacerStats::num_mic_attempts`] whenever a real (multi-literal)
+    /// generalization is attempted.
+    fn mic_generalize_cube(
+        &mut self,
+        pred: PredId,
+        post: TermId,
+        level: u32,
+    ) -> Result<Vec<TermId>, SpacerError> {
+        let mut cube = Generalizer::extract_cube(self.terms, post);
+        if cube.len() <= 1 {
+            // A single-literal (or empty) cube cannot be generalized further.
+            return Ok(cube);
+        }
+
+        self.stats.num_mic_attempts = self.stats.num_mic_attempts.saturating_add(1);
+
+        let mut i = 0;
+        while i < cube.len() {
+            // Never drop the last remaining literal: `¬true = false` is not a
+            // sound frame lemma.
+            if cube.len() <= 1 {
+                break;
+            }
+            let removed = cube.remove(i);
+            if self.subcube_is_inductive_blocker(pred, &cube, level)? {
+                // Literal dropped successfully; keep `i` (the next literal has
+                // shifted into this slot).
+                continue;
+            }
+            // Restore: this literal is required for soundness.
+            cube.insert(i, removed);
+            i += 1;
+        }
+
+        Ok(cube)
+    }
+
+    /// Check that the blocking clause `¬(∧ cube)` is a sound frame lemma at
+    /// `level`:
+    ///
+    /// * **Initiation** — `Init ∧ (∧ cube)` is UNSAT, so `¬(∧ cube)` holds in
+    ///   every initial state. Checked at all levels.
+    /// * **Consecution** (`level > 0` only) — `¬(∧ cube)` is inductive relative
+    ///   to `F_{level-1}`: `F_{level-1} ∧ ¬(∧ cube) ∧ T ⇒ ¬(∧ cube)'` for every
+    ///   transition rule, with the clause assumed on the current state
+    ///   (standard Bradley relative inductive generalization).
+    ///
+    /// A `false` return means dropping the corresponding literal would break
+    /// one of these properties, so the literal must be kept.
+    fn subcube_is_inductive_blocker(
+        &mut self,
+        pred: PredId,
+        cube: &[TermId],
+        level: u32,
+    ) -> Result<bool, SpacerError> {
+        if cube.is_empty() {
+            return Ok(false);
+        }
+        let cube_conj = match cube.len() {
+            1 => cube[0],
+            _ => self.terms.mk_and(cube.iter().copied()),
+        };
+
+        // Initiation: the clause must still exclude every initial state.
+        if self.is_init_reachable(pred, cube_conj)? {
+            return Ok(false);
+        }
+
+        if level == 0 {
+            // F_0 is exactly Init, so initiation is the only requirement.
+            return Ok(true);
+        }
+
+        // Consecution relative to F_{level-1}, with the clause assumed on the
+        // current state. `is_lemma_inductive` checks, per rule, that
+        // `frame ∧ T ∧ ¬lemma'` is UNSAT; conjoining `¬cube` into the frame
+        // yields `F_{level-1} ∧ ¬cube ∧ T ∧ cube'` UNSAT.
+        let neg_cube = self.terms.mk_not(cube_conj);
+        let frame = self.build_frame_formula(pred, level - 1);
+        let frame_with_lemma = self.terms.mk_and([frame, neg_cube]);
+        let mut smt = SmtSolver::new(self.terms, self.system);
+        let inductive = smt.is_lemma_inductive(pred, neg_cube, level, frame_with_lemma)?;
+        self.stats.num_smt_queries = self.stats.num_smt_queries.saturating_add(1);
+        Ok(inductive)
     }
 
     /// Build a counterexample trace
@@ -1127,6 +1274,105 @@ mod tests {
             found, blocking_id,
             "find_blocking_lemma must return the lemma that actually \
              blocks the state, not just the first lemma at the level"
+        );
+    }
+
+    /// SP-01 regression: MIC-style inductive generalization must actually drop
+    /// irrelevant literals from a blocking cube. The transition keeps `x`
+    /// constant and only increments `y`, so blocking the bad cube
+    /// `(x = 5 ∧ y = 3)` should generalize to the single-literal clause
+    /// `¬(x = 5)` — the `y = 3` literal is dropped because `¬(x = 5)` is
+    /// inductive on its own, whereas `¬(y = 3)` is not. This proves the
+    /// generalized lemma is strictly shorter than the raw cube.
+    #[test]
+    fn test_mic_generalize_drops_irrelevant_literal() {
+        let mut terms = TermManager::new();
+        let mut system = ChcSystem::new();
+        let inv = system.declare_predicate("MicInv", [terms.sorts.int_sort, terms.sorts.int_sort]);
+
+        // Init: x = 0 ∧ y = 0 => Inv(x, y)
+        let x = terms.mk_var("mic_x", terms.sorts.int_sort);
+        let y = terms.mk_var("mic_y", terms.sorts.int_sort);
+        let zero = terms.mk_int(0);
+        let ix = terms.mk_eq(x, zero);
+        let iy = terms.mk_eq(y, zero);
+        let init = terms.mk_and([ix, iy]);
+        system.add_init_rule(
+            [
+                ("mic_x".to_string(), terms.sorts.int_sort),
+                ("mic_y".to_string(), terms.sorts.int_sort),
+            ],
+            init,
+            inv,
+            [x, y],
+        );
+
+        // Trans: Inv(x, y) ∧ x' = x ∧ y' = y + 1 => Inv(x', y')
+        let xp = terms.mk_var("mic_xp", terms.sorts.int_sort);
+        let yp = terms.mk_var("mic_yp", terms.sorts.int_sort);
+        let one = terms.mk_int(1);
+        let keep_x = terms.mk_eq(xp, x);
+        let y_plus_one = terms.mk_add([y, one]);
+        let step_y = terms.mk_eq(yp, y_plus_one);
+        let trans = terms.mk_and([keep_x, step_y]);
+        system.add_transition_rule(
+            [
+                ("mic_x".to_string(), terms.sorts.int_sort),
+                ("mic_y".to_string(), terms.sorts.int_sort),
+                ("mic_xp".to_string(), terms.sorts.int_sort),
+                ("mic_yp".to_string(), terms.sorts.int_sort),
+            ],
+            [PredicateApp::new(inv, [x, y])],
+            trans,
+            inv,
+            [xp, yp],
+        );
+
+        // A query so the system is well-formed (unused by this direct test).
+        let neg = terms.mk_lt(x, zero);
+        system.add_query(
+            [
+                ("mic_x".to_string(), terms.sorts.int_sort),
+                ("mic_y".to_string(), terms.sorts.int_sort),
+            ],
+            [PredicateApp::new(inv, [x, y])],
+            neg,
+        );
+
+        // Build the bad cube over the predicate's canonical current-state
+        // variables, the same namespace real POB cubes use.
+        let cur = canon_cur_vars(&mut terms, &system, inv);
+        assert_eq!(cur.len(), 2);
+        let five = terms.mk_int(5);
+        let three = terms.mk_int(3);
+        let lit_x = terms.mk_eq(cur[0], five);
+        let lit_y = terms.mk_eq(cur[1], three);
+        let post = terms.mk_and([lit_x, lit_y]);
+
+        let mut spacer = Spacer::new(&mut terms, &system);
+        spacer
+            .initialize()
+            .expect("initialization populates init reach facts");
+
+        let raw_cube = Generalizer::extract_cube(spacer.terms, post);
+        assert_eq!(raw_cube.len(), 2, "raw blocking cube has two literals");
+
+        let generalized = spacer
+            .mic_generalize_cube(inv, post, 1)
+            .expect("MIC generalization should not error");
+
+        assert_eq!(
+            generalized.len(),
+            1,
+            "MIC must drop the irrelevant y-literal, shrinking the cube 2 -> 1"
+        );
+        assert_eq!(
+            generalized[0], lit_x,
+            "the retained literal must be the inductive one (x = 5)"
+        );
+        assert!(
+            generalized.len() < raw_cube.len(),
+            "generalized lemma must be strictly shorter than the raw cube"
         );
     }
 }

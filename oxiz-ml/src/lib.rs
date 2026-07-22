@@ -87,7 +87,10 @@ pub use branching::{BranchingFeatures, BranchingLearner};
 pub use clause_learning::{DeletionPolicy, UsefulnessPredictor};
 pub use models::{DecisionTree, LinearModel, Model, NeuralNetwork};
 pub use restarts::{AdaptiveRestart, RestartPolicyLearner};
-pub use tactic::{FormulaFeatures, TacticSelector};
+pub use tactic::{
+    FormulaFeatures, FormulaStats, MlTacticEngine, TacticRecommendation, TacticSelector,
+    extract_formula_features, extract_formula_stats, tactic_name,
+};
 pub use training::{DataCollector, OfflineTrainer, OnlineLearner};
 
 /// Version information

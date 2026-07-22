@@ -318,17 +318,153 @@ impl EMatchPattern {
 
     /// Check if this pattern matches a ground term.
     ///
-    /// Returns the substitution if it matches, None otherwise.
-    /// This is a placeholder - real e-matching is much more sophisticated.
-    #[allow(dead_code)]
+    /// Both `self.pattern` and `term` are parsed as S-expressions (a
+    /// parenthesized prefix syntax, e.g. `(f x (g y))`), and the pattern is
+    /// unified against the term: pattern atoms listed in `self.vars` are
+    /// treated as variables that bind to whatever subterm occupies their
+    /// position (consistently -- the same variable must bind to the same
+    /// subterm everywhere it occurs), non-variable atoms must match the
+    /// term atom exactly, and compound terms must match functor arity
+    /// (list length) and recursively unify every argument.
+    ///
+    /// Returns the resulting substitution if the pattern matches, or `None`
+    /// if the pattern and term cannot be unified (or either fails to parse
+    /// as a well-formed S-expression).
     #[must_use]
-    pub fn matches(&self, _term: &str) -> Option<Substitution> {
-        // Real implementation would:
-        // 1. Parse both pattern and term into ASTs
-        // 2. Perform structural matching
-        // 3. Build substitution for pattern variables
-        // For now, return None (no match)
-        None
+    pub fn matches(&self, term: &str) -> Option<Substitution> {
+        let pattern_expr = SExpr::parse(&self.pattern)?;
+        let term_expr = SExpr::parse(term)?;
+
+        let vars: std::collections::HashSet<&str> = self.vars.iter().map(String::as_str).collect();
+        let mut subst = Substitution::default();
+
+        if Self::unify(&pattern_expr, &term_expr, &vars, &mut subst) {
+            Some(subst)
+        } else {
+            None
+        }
+    }
+
+    /// Recursively unify `pattern` against `term`, extending `subst` with
+    /// any new variable bindings. Returns `false` (leaving `subst` in an
+    /// unspecified but still-valid state) on a mismatch.
+    fn unify(
+        pattern: &SExpr,
+        term: &SExpr,
+        vars: &std::collections::HashSet<&str>,
+        subst: &mut Substitution,
+    ) -> bool {
+        match pattern {
+            SExpr::Atom(name) if vars.contains(name.as_str()) => {
+                let term_repr = term.to_string_repr();
+                match subst.get(name) {
+                    // Same variable bound again: must bind to the same subterm.
+                    Some(existing) => *existing == term_repr,
+                    None => {
+                        subst.insert(name.clone(), term_repr);
+                        true
+                    }
+                }
+            }
+            SExpr::Atom(name) => matches!(term, SExpr::Atom(other) if name == other),
+            SExpr::List(pattern_args) => match term {
+                SExpr::List(term_args) if pattern_args.len() == term_args.len() => pattern_args
+                    .iter()
+                    .zip(term_args.iter())
+                    .all(|(p, t)| Self::unify(p, t, vars, subst)),
+                _ => false,
+            },
+        }
+    }
+}
+
+/// A minimal S-expression (parenthesized prefix syntax) parser used by
+/// [`EMatchPattern::matches`] for structural e-matching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SExpr {
+    /// A single symbol (variable, constant, or function name).
+    Atom(String),
+    /// A parenthesized application, e.g. `(f a b)`.
+    List(Vec<SExpr>),
+}
+
+impl SExpr {
+    /// Parse a whole string as a single S-expression. Returns `None` if the
+    /// input is empty, unbalanced, or contains trailing tokens after the
+    /// first complete expression.
+    fn parse(input: &str) -> Option<Self> {
+        let tokens = Self::tokenize(input);
+        let mut iter = tokens.iter().peekable();
+        let expr = Self::parse_tokens(&mut iter)?;
+        if iter.next().is_some() {
+            return None;
+        }
+        Some(expr)
+    }
+
+    /// Split input into `(`, `)`, and whitespace-delimited atom tokens.
+    fn tokenize(input: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut chars = input.chars().peekable();
+
+        while let Some(&c) = chars.peek() {
+            if c == '(' || c == ')' {
+                tokens.push(c.to_string());
+                chars.next();
+            } else if c.is_whitespace() {
+                chars.next();
+            } else {
+                let mut atom = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == '(' || c == ')' || c.is_whitespace() {
+                        break;
+                    }
+                    atom.push(c);
+                    chars.next();
+                }
+                tokens.push(atom);
+            }
+        }
+
+        tokens
+    }
+
+    fn parse_tokens<'a, I>(iter: &mut std::iter::Peekable<I>) -> Option<Self>
+    where
+        I: Iterator<Item = &'a String>,
+    {
+        match iter.next()?.as_str() {
+            "(" => {
+                let mut items = Vec::new();
+                loop {
+                    match iter.peek().map(|token| token.as_str()) {
+                        Some(")") => {
+                            iter.next();
+                            break;
+                        }
+                        Some(_) => items.push(Self::parse_tokens(iter)?),
+                        // Unbalanced: ran out of tokens before a closing paren.
+                        None => return None,
+                    }
+                }
+                Some(Self::List(items))
+            }
+            // Unexpected closing paren with no matching open.
+            ")" => None,
+            atom => Some(Self::Atom(atom.to_string())),
+        }
+    }
+
+    /// Render back to the same parenthesized textual form used by patterns
+    /// and terms elsewhere in this module.
+    fn to_string_repr(&self) -> String {
+        match self {
+            Self::Atom(a) => a.clone(),
+            Self::List(items) => {
+                let inner: Vec<String> = items.iter().map(Self::to_string_repr).collect();
+                format!("({})", inner.join(" "))
+            }
+        }
     }
 }
 
@@ -493,6 +629,66 @@ mod tests {
         let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
         assert_eq!(pattern.pattern, "(f x)");
         assert_eq!(pattern.vars.len(), 1);
+    }
+
+    #[test]
+    fn test_ematch_simple_var_binding() {
+        // PF-05 regression: e-matching must actually unify, not always
+        // return None.
+        let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
+        let subst = pattern
+            .matches("(f a)")
+            .expect("pattern (f x) should match ground term (f a)");
+        assert_eq!(subst.get("x").map(String::as_str), Some("a"));
+    }
+
+    #[test]
+    fn test_ematch_nested_term() {
+        let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
+        let subst = pattern
+            .matches("(f (g a b))")
+            .expect("pattern (f x) should match a compound argument");
+        assert_eq!(subst.get("x").map(String::as_str), Some("(g a b)"));
+    }
+
+    #[test]
+    fn test_ematch_functor_mismatch_fails() {
+        let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
+        assert!(pattern.matches("(g a)").is_none());
+    }
+
+    #[test]
+    fn test_ematch_arity_mismatch_fails() {
+        let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
+        assert!(pattern.matches("(f a b)").is_none());
+    }
+
+    #[test]
+    fn test_ematch_repeated_var_must_be_consistent() {
+        // (f x x) only matches ground terms whose two arguments are equal.
+        let pattern = EMatchPattern::new("(f x x)", vec!["x".to_string()]);
+        assert!(pattern.matches("(f a a)").is_some());
+        assert!(pattern.matches("(f a b)").is_none());
+    }
+
+    #[test]
+    fn test_ematch_multiple_vars_and_constants() {
+        let pattern = EMatchPattern::new("(h x c y)", vec!["x".to_string(), "y".to_string()]);
+        let subst = pattern
+            .matches("(h a c b)")
+            .expect("constants must match literally while x, y bind");
+        assert_eq!(subst.get("x").map(String::as_str), Some("a"));
+        assert_eq!(subst.get("y").map(String::as_str), Some("b"));
+
+        // A mismatched literal constant position must fail.
+        assert!(pattern.matches("(h a d b)").is_none());
+    }
+
+    #[test]
+    fn test_ematch_malformed_input_fails_gracefully() {
+        let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
+        assert!(pattern.matches("(f a").is_none());
+        assert!(pattern.matches("f a)").is_none());
     }
 
     #[test]

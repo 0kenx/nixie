@@ -54,6 +54,27 @@ use crate::prelude::*;
 use oxiz_core::ast::TermId;
 use oxiz_core::error::Result;
 
+/// Compute the bitmask covering the low `width` bits of a `u64`.
+///
+/// This reasoner represents bounds/constants as plain `u64` values, so it
+/// can only faithfully model bit-vectors up to 64 bits wide. The SMT-LIB
+/// parser accepts widths up to 65536, so `width` here can legitimately
+/// exceed 64. Computing `(1u64 << width) - 1` directly for such a width is
+/// a debug-mode overflow panic and a release-mode wraparound (`<<` only
+/// uses the low 6 bits of the shift amount on `u64`), which would corrupt
+/// masking rather than merely losing precision. Saturating to `u64::MAX`
+/// for `width >= 64` is the same convention already used by
+/// `bv::propagator::Interval::new`/`full`/`contains`.
+#[inline]
+#[must_use]
+fn width_mask(width: u32) -> u64 {
+    if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    }
+}
+
 /// Sign information for a bitvector
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignInfo {
@@ -298,6 +319,15 @@ impl WordLevelReasoner {
         if width == 0 {
             return SignInfo::Unknown;
         }
+        if width > 64 {
+            // The true sign bit lives at position `width - 1 >= 64`, which
+            // this reasoner's u64-based interval cannot represent at all
+            // (any information about bits >= 64 was already lost when the
+            // interval was constructed). Guessing would be unsound, and
+            // `1u64 << (width - 1)` would itself be an out-of-range shift,
+            // so report Unknown rather than fabricate an answer.
+            return SignInfo::Unknown;
+        }
 
         let sign_bit = 1u64 << (width - 1);
 
@@ -339,11 +369,7 @@ impl WordLevelReasoner {
     /// Detect overflow for addition
     #[must_use]
     pub fn detect_add_overflow(&self, a: &Interval, b: &Interval) -> OverflowInfo {
-        let max_value = if a.width == 64 {
-            u64::MAX
-        } else {
-            (1u64 << a.width) - 1
-        };
+        let max_value = width_mask(a.width);
 
         // Check if a.upper + b.upper can overflow
         let sum_upper = a.upper.wrapping_add(b.upper);
@@ -364,11 +390,7 @@ impl WordLevelReasoner {
     /// Detect overflow for multiplication
     #[must_use]
     pub fn detect_mul_overflow(&self, a: &Interval, b: &Interval) -> OverflowInfo {
-        let max_value = if a.width == 64 {
-            u64::MAX
-        } else {
-            (1u64 << a.width) - 1
-        };
+        let max_value = width_mask(a.width);
 
         // Conservative check: if a.upper * b.upper would need more than width bits
         if a.upper > 0 && b.upper > max_value / a.upper {
@@ -499,11 +521,7 @@ impl WordLevelReasoner {
         // If both operands are constants, compute result
         if let (Some(va), Some(vb)) = (self.get_constant(a), self.get_constant(b)) {
             let result = va.wrapping_add(vb);
-            let mask = if width == 64 {
-                u64::MAX
-            } else {
-                (1u64 << width) - 1
-            };
+            let mask = width_mask(width);
             self.set_constant(c, result & mask, width);
             return Ok(());
         }
@@ -540,11 +558,7 @@ impl WordLevelReasoner {
         // Constants
         if let (Some(va), Some(vb)) = (self.get_constant(a), self.get_constant(b)) {
             let result = va.wrapping_sub(vb);
-            let mask = if width == 64 {
-                u64::MAX
-            } else {
-                (1u64 << width) - 1
-            };
+            let mask = width_mask(width);
             self.set_constant(c, result & mask, width);
             return Ok(());
         }
@@ -563,11 +577,7 @@ impl WordLevelReasoner {
         // Constants
         if let (Some(va), Some(vb)) = (self.get_constant(a), self.get_constant(b)) {
             let result = va.wrapping_mul(vb);
-            let mask = if width == 64 {
-                u64::MAX
-            } else {
-                (1u64 << width) - 1
-            };
+            let mask = width_mask(width);
             self.set_constant(c, result & mask, width);
             return Ok(());
         }
@@ -669,11 +679,7 @@ impl WordLevelReasoner {
     pub fn propagate_not(&mut self, c: TermId, a: TermId, width: u32) -> Result<()> {
         // Constants
         if let Some(va) = self.get_constant(a) {
-            let mask = if width == 64 {
-                u64::MAX
-            } else {
-                (1u64 << width) - 1
-            };
+            let mask = width_mask(width);
             self.set_constant(c, (!va) & mask, width);
             return Ok(());
         }
@@ -696,12 +702,13 @@ impl WordLevelReasoner {
         // If shift amount is constant
         if let Some(shift) = self.get_constant(b) {
             if let Some(va) = self.get_constant(a) {
-                let result = va << shift;
-                let mask = if width == 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << width) - 1
-                };
+                // `shift` is an arbitrary u64 constant read from the shift
+                // operand; a shift amount >= 64 is UB for the native `<<`
+                // operator on a u64. Per SMT-LIB BV semantics a shift by
+                // at least the bit-width shifts every bit out, so the
+                // result saturates to 0 rather than panicking or wrapping.
+                let result = if shift >= 64 { 0 } else { va << shift };
+                let mask = width_mask(width);
                 self.set_constant(c, result & mask, width);
                 return Ok(());
             }
@@ -722,7 +729,12 @@ impl WordLevelReasoner {
         // If shift amount is constant
         if let Some(shift) = self.get_constant(b) {
             if let Some(va) = self.get_constant(a) {
-                self.set_constant(c, va >> shift, width);
+                // Same UB hazard as `propagate_shl`: `shift >= 64` is an
+                // out-of-range shift for the native `>>` on u64. A logical
+                // right shift by at least the bit-width shifts every bit
+                // out, so saturate to 0 instead of panicking/wrapping.
+                let result = if shift >= 64 { 0 } else { va >> shift };
+                self.set_constant(c, result, width);
                 return Ok(());
             }
 
@@ -748,11 +760,7 @@ impl WordLevelReasoner {
                 self.set_constant(c, quotient, width);
             } else {
                 // Division by zero: SMT-LIB semantics = all 1s
-                let all_ones = if width == 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << width) - 1
-                };
+                let all_ones = width_mask(width);
                 self.set_constant(c, all_ones, width);
             }
             return Ok(());
@@ -797,29 +805,30 @@ impl WordLevelReasoner {
         high: usize,
         low: usize,
     ) -> Result<()> {
-        let extract_width = (high - low + 1) as u32;
+        let extract_width = (high.saturating_sub(low) + 1) as u32;
 
         // Constants
         if let Some(va) = self.get_constant(a) {
-            let mask = if extract_width == 64 {
-                u64::MAX
-            } else {
-                (1u64 << extract_width) - 1
-            };
-            let extracted = (va >> low) & mask;
+            let mask = width_mask(extract_width);
+            // `va` is this reasoner's u64 approximation of `a`'s value, so
+            // it holds no information above bit 63. A `low` bit-index at
+            // or beyond 64 (reachable for the wide bit-vectors the parser
+            // accepts) would additionally make the native `>>` an
+            // out-of-range shift; treat such an extract as all-zero bits
+            // rather than panicking or wrapping.
+            let extracted = if low >= 64 { 0 } else { (va >> low) & mask };
             self.set_constant(c, extracted, extract_width);
             return Ok(());
         }
 
         // Intervals
         if let Some(ia) = self.get_interval(a) {
-            let mask = if extract_width == 64 {
-                u64::MAX
+            let mask = width_mask(extract_width);
+            let (lower, upper) = if low >= 64 {
+                (0, 0)
             } else {
-                (1u64 << extract_width) - 1
+                ((ia.lower >> low) & mask, (ia.upper >> low) & mask)
             };
-            let lower = (ia.lower >> low) & mask;
-            let upper = (ia.upper >> low) & mask;
             self.set_interval(c, Interval::new(lower, upper, extract_width));
         }
 
@@ -835,19 +844,31 @@ impl WordLevelReasoner {
         high_width: u32,
         low_width: u32,
     ) -> Result<()> {
-        let total_width = high_width + low_width;
+        let total_width = high_width.saturating_add(low_width);
 
         // Constants
         if let (Some(vh), Some(vl)) = (self.get_constant(high), self.get_constant(low)) {
-            let result = (vh << low_width) | vl;
+            // `low_width` is itself a bit-vector width and can legitimately
+            // reach into the tens of thousands; shifting a u64 by >= 64 is
+            // an out-of-range shift. `vh` only ever holds this reasoner's
+            // low-64-bit approximation, so shifting it out entirely (past
+            // bit 63) is correctly represented as 0 rather than panicking.
+            let shifted_high = if low_width >= 64 { 0 } else { vh << low_width };
+            let result = shifted_high | vl;
             self.set_constant(c, result, total_width);
             return Ok(());
         }
 
         // Intervals
         if let (Some(ih), Some(il)) = (self.get_interval(high), self.get_interval(low)) {
-            let lower = (ih.lower << low_width) | il.lower;
-            let upper = (ih.upper << low_width) | il.upper;
+            let (lower, upper) = if low_width >= 64 {
+                (il.lower, il.upper)
+            } else {
+                (
+                    (ih.lower << low_width) | il.lower,
+                    (ih.upper << low_width) | il.upper,
+                )
+            };
             self.set_interval(c, Interval::new(lower, upper, total_width));
         }
 
@@ -1194,5 +1215,189 @@ mod tests {
 
         uf.union(b, c);
         assert_eq!(uf.find(a), uf.find(c));
+    }
+
+    // Regression tests for the width>64 unguarded-shift bug (audit finding
+    // R4): the SMT-LIB parser accepts bit-vector widths up to 65536, but
+    // this reasoner's Interval/constant representation is only u64-wide.
+    // Every site that used to compute `1u64 << width` (or shift by a raw
+    // width/shift-amount value) directly would panic in debug builds (and
+    // silently mis-mask in release) once width, or an operand derived from
+    // it, reached 64 or above. Intervals with width > 64 are built via a
+    // direct struct literal (all fields are `pub`) rather than
+    // `Interval::new`/`Interval::full`, so these tests exercise exactly the
+    // word-level reasoning functions owned by this module without
+    // depending on the sibling `propagator::Interval` constructors.
+
+    #[test]
+    fn test_width_mask_saturates_above_64() {
+        assert_eq!(width_mask(64), u64::MAX);
+        assert_eq!(width_mask(100), u64::MAX);
+        assert_eq!(width_mask(65536), u64::MAX);
+        assert_eq!(width_mask(8), 0xFF);
+        assert_eq!(width_mask(1), 1);
+        assert_eq!(width_mask(0), 0);
+    }
+
+    #[test]
+    fn test_infer_sign_from_interval_width_over_64_is_unknown_not_panic() {
+        let reasoner = WordLevelReasoner::new();
+
+        // Would previously compute `1u64 << (width - 1)` = `1u64 << 99`,
+        // an out-of-range shift.
+        let wide = Interval {
+            lower: 0,
+            upper: u64::MAX,
+            width: 100,
+        };
+
+        assert_eq!(reasoner.infer_sign_from_interval(&wide), SignInfo::Unknown);
+    }
+
+    #[test]
+    fn test_detect_add_overflow_width_over_64_does_not_panic() {
+        let reasoner = WordLevelReasoner::new();
+
+        let a = Interval {
+            lower: 0,
+            upper: u64::MAX,
+            width: 128,
+        };
+        let b = Interval {
+            lower: 0,
+            upper: 1,
+            width: 128,
+        };
+
+        // Must not panic; result is a valid OverflowInfo variant.
+        let _ = reasoner.detect_add_overflow(&a, &b);
+    }
+
+    #[test]
+    fn test_detect_mul_overflow_width_over_64_does_not_panic() {
+        let reasoner = WordLevelReasoner::new();
+
+        let a = Interval {
+            lower: 2,
+            upper: u64::MAX,
+            width: 200,
+        };
+        let b = Interval {
+            lower: 2,
+            upper: u64::MAX,
+            width: 200,
+        };
+
+        let _ = reasoner.detect_mul_overflow(&a, &b);
+    }
+
+    // NOTE: these constant-propagation functions all funnel their *result*
+    // through `set_constant`, which internally builds an
+    // `bv::propagator::Interval` (a sibling module outside this fix's
+    // scope). That constructor only special-cases width == 64 and is
+    // itself unguarded for width > 64, so these tests deliberately keep
+    // the declared bit-vector *width* at or under 64 while driving the
+    // *shift/index amount* (which this reasoner stores as a raw,
+    // width-unchecked `u64` constant) at or above 64 -- exactly the
+    // out-of-range-shift scenario this fix guards against, without
+    // depending on an unrelated file's separate bug.
+
+    #[test]
+    fn test_propagate_shl_shift_over_64_saturates_to_zero() {
+        let mut reasoner = WordLevelReasoner::new();
+
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+        let c = TermId::new(3);
+
+        reasoner.set_constant(a, 0xFF, 8);
+        // Shift amount itself at/above 64 used to be `va << shift`, an
+        // out-of-range native shift.
+        reasoner.set_constant(b, 70, 8);
+
+        reasoner
+            .propagate_shl(c, a, b, 8)
+            .expect("must not panic on an out-of-range shift amount");
+
+        assert_eq!(reasoner.get_constant(c), Some(0));
+    }
+
+    #[test]
+    fn test_propagate_lshr_shift_over_64_saturates_to_zero() {
+        let mut reasoner = WordLevelReasoner::new();
+
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+        let c = TermId::new(3);
+
+        reasoner.set_constant(a, u64::MAX, 8);
+        reasoner.set_constant(b, 65, 8);
+
+        reasoner
+            .propagate_lshr(c, a, b, 8)
+            .expect("must not panic on an out-of-range shift amount");
+
+        assert_eq!(reasoner.get_constant(c), Some(0));
+    }
+
+    #[test]
+    fn test_propagate_extract_low_over_64_does_not_panic() {
+        let mut reasoner = WordLevelReasoner::new();
+
+        let a = TermId::new(1);
+        let c = TermId::new(2);
+
+        reasoner.set_constant(a, u64::MAX, 8);
+
+        // `low >= 64` (the extract window starts past bit 63) used to make
+        // `va >> low` an out-of-range shift, independent of the extract's
+        // own width (kept <= 64 here: high - low + 1 == 31).
+        reasoner
+            .propagate_extract(c, a, 100, 70)
+            .expect("must not panic when the extract window starts past bit 63");
+
+        // This reasoner's u64 approximation of `a` has no information
+        // above bit 63, so bits extracted entirely above that are 0.
+        assert_eq!(reasoner.get_constant(c), Some(0));
+    }
+
+    #[test]
+    fn test_propagate_extract_high_less_than_low_does_not_underflow_panic() {
+        let mut reasoner = WordLevelReasoner::new();
+
+        let a = TermId::new(1);
+        let c = TermId::new(2);
+
+        reasoner.set_constant(a, 42, 8);
+
+        // A malformed (high < low) extract used to underflow the `usize`
+        // subtraction `high - low + 1` before this fix.
+        reasoner
+            .propagate_extract(c, a, 1, 5)
+            .expect("must not panic on a malformed extract range");
+    }
+
+    #[test]
+    fn test_propagate_concat_wide_low_width_does_not_panic() {
+        let mut reasoner = WordLevelReasoner::new();
+
+        let high = TermId::new(1);
+        let low = TermId::new(2);
+        let c = TermId::new(3);
+
+        reasoner.set_constant(high, 0, 1);
+        reasoner.set_constant(low, 0xCD, 8);
+
+        // `low_width = 64 >= 64` used to make `vh << low_width` an
+        // out-of-range shift. `high_width = 0` keeps `total_width` at the
+        // one boundary value (64) the sibling `Interval` constructor does
+        // already guard, isolating this test to this fix's shift guard.
+        reasoner
+            .propagate_concat(c, high, low, 0, 64)
+            .expect("must not panic when low_width >= 64");
+
+        // `high`'s contribution is entirely shifted out (0), so the
+        // result is exactly the low operand's value.
+        assert_eq!(reasoner.get_constant(c), Some(0xCD));
     }
 }

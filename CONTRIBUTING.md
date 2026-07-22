@@ -1,16 +1,12 @@
 # Contributing to OxiZ
 
-Welcome to OxiZ, and thank you for your interest in contributing!
+OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure
+Rust. It implements a modular CDCL(T) architecture that closely follows the design of Z3 while
+leveraging Rust's safety guarantees and modern language features.
 
-OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure Rust. We implement a modular CDCL(T) architecture that closely follows the design of Z3 while leveraging Rust's safety guarantees and modern features.
-
-**Project Statistics:**
-- ~173,500 lines of Rust code
-- 3,670+ tests
-- 12 workspace crates
-- ~90-95% Z3 feature parity
-
-We welcome contributions of all kinds: bug fixes, new features, documentation improvements, test additions, and performance optimizations. Every contribution helps make OxiZ better for the entire formal verification community.
+Issues and pull requests are welcome. The sections below describe how the code is organized,
+styled, and tested — treat this as a technical reference for working in the codebase rather than a
+process document.
 
 **Quick Links:**
 - [Documentation](docs/)
@@ -95,11 +91,12 @@ cd oxiz-wasm && wasm-pack build --target web
 
 ## Code Style
 
-OxiZ follows strict code quality standards. All contributions must adhere to these guidelines.
+OxiZ follows strict code quality standards, enforced in CI on every PR.
 
 ### NO WARNINGS POLICY
 
-**This is critical:** OxiZ enforces a strict NO WARNINGS policy. Your code must compile without any warnings from both the compiler and Clippy.
+**This is critical:** OxiZ enforces a strict NO WARNINGS policy. Code must compile without any
+warnings from both the compiler and Clippy.
 
 ```bash
 # Check for warnings (this must pass with no output)
@@ -218,163 +215,13 @@ mod tests {
 
 ---
 
-## Pull Request Process
-
-### Fork and Branch Workflow
-
-1. **Fork the repository** on GitHub
-
-2. **Clone your fork:**
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/oxiz.git
-   cd oxiz
-   git remote add upstream https://github.com/cool-japan/oxiz.git
-   ```
-
-3. **Create a feature branch:**
-   ```bash
-   git checkout -b feature/your-feature-name
-   # Or for bug fixes:
-   git checkout -b fix/issue-123-description
-   ```
-
-4. **Keep your branch updated:**
-   ```bash
-   git fetch upstream
-   git rebase upstream/main
-   ```
-
-### Commit Message Format
-
-We follow a structured commit message format:
-
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style changes (formatting, etc.)
-- `refactor`: Code refactoring without feature changes
-- `perf`: Performance improvements
-- `test`: Adding or modifying tests
-- `chore`: Build process or auxiliary tool changes
-
-**Examples:**
-
-```
-feat(oxiz-theories): add support for floating-point theory
-
-Implement IEEE 754 floating-point theory solver with:
-- Bit-blasting approach for precise semantics
-- Support for all rounding modes
-- Integration with existing CDCL(T) engine
-
-Closes #42
-```
-
-```
-fix(oxiz-sat): correct VSIDS decay computation
-
-The activity decay was being applied incorrectly during
-conflict analysis, causing suboptimal branching decisions.
-
-Fixes #123
-```
-
-### Pull Request Description Template
-
-When opening a PR, use this template:
-
-```markdown
-## Summary
-
-Brief description of what this PR does and why.
-
-## Changes
-
-- List of specific changes made
-- One item per line
-- Be specific and clear
-
-## Testing
-
-Describe how you tested these changes:
-- [ ] Unit tests added/updated
-- [ ] Integration tests added/updated
-- [ ] Doc tests added/updated
-- [ ] Manual testing performed
-
-## Related Issues
-
-Fixes #123
-Related to #456
-
-## Checklist
-
-- [ ] Code compiles without warnings (`cargo clippy -- -D warnings`)
-- [ ] Code is formatted (`cargo fmt --all`)
-- [ ] All tests pass (`cargo nextest run --all-features`)
-- [ ] Documentation updated if needed
-- [ ] Commit messages follow the format guidelines
-```
-
-### Review Process
-
-1. **Automated Checks:** All PRs must pass CI:
-   - Compilation on Linux/macOS/Windows
-   - All tests pass
-   - No Clippy warnings
-   - Code is formatted
-
-2. **Code Review:** At least one maintainer must approve the PR
-
-3. **Review Criteria:**
-   - Code correctness and quality
-   - Test coverage
-   - Documentation completeness
-   - Performance considerations
-   - Consistency with existing codebase
-
-4. **Addressing Feedback:**
-   - Respond to all review comments
-   - Make requested changes in new commits
-   - Mark conversations as resolved when addressed
-
-### CI Requirements
-
-All PRs must pass these checks:
-
-```bash
-# These commands must all succeed
-cargo build --all-features
-cargo test --all-features
-cargo clippy --all-features --all-targets -- -D warnings
-cargo fmt --all -- --check
-cargo doc --no-deps
-```
-
-### Merge Policy
-
-- PRs are merged using **squash and merge**
-- The squash commit message should summarize all changes
-- Branch is deleted after merge
-
----
-
 ## Testing Requirements
 
-OxiZ maintains high test coverage. All contributions must include appropriate tests.
+OxiZ maintains high test coverage. New code should include tests appropriate to the change.
 
 ### Unit Tests
 
-Every public API must have unit tests:
+Every public API should have unit tests:
 
 ```rust
 #[cfg(test)]
@@ -464,105 +311,30 @@ cargo nextest run test_cdcl
 
 # Run with output visible
 cargo nextest run -- --nocapture
-
-# Check test coverage (requires cargo-tarpaulin)
-cargo tarpaulin --all-features
 ```
 
 ### Coverage Expectations
 
-- New features: Aim for >80% coverage of new code
-- Bug fixes: Include a test that reproduces the bug
-- Critical paths (solving, proof generation): Aim for >90% coverage
+- New features: aim for >80% coverage of new code
+- Bug fixes: include a test that reproduces the bug
+- Critical paths (solving, proof generation): aim for >90% coverage
 
 ---
 
-## Issue Guidelines
+## Pull Requests
 
-### Bug Reports
+Fork the repository, create a feature branch, and open a PR against `main`. Keep changes focused
+and include tests for new behavior. All of the following must pass:
 
-When reporting a bug, include:
-
-```markdown
-## Bug Description
-
-Clear description of the bug.
-
-## Steps to Reproduce
-
-1. Step one
-2. Step two
-3. ...
-
-## Expected Behavior
-
-What should happen.
-
-## Actual Behavior
-
-What actually happens.
-
-## Environment
-
-- OxiZ version:
-- Rust version:
-- OS:
-
-## Minimal Reproduction
-
-```smt2
-; SMT-LIB2 input that triggers the bug
-(set-logic QF_LIA)
-(declare-const x Int)
-...
+```bash
+cargo build --all-features
+cargo test --all-features
+cargo clippy --all-features --all-targets -- -D warnings
+cargo fmt --all -- --check
+cargo doc --no-deps
 ```
 
-## Additional Context
-
-Any other relevant information.
-```
-
-### Feature Requests
-
-When requesting a feature:
-
-```markdown
-## Feature Description
-
-Clear description of the proposed feature.
-
-## Motivation
-
-Why this feature would be useful.
-
-## Proposed API
-
-```rust
-// Example of how the feature might look
-pub fn new_feature(&mut self, param: Type) -> Result<Output> {
-    // ...
-}
-```
-
-## Alternatives Considered
-
-Other approaches you've considered.
-```
-
-### Labels
-
-We use these labels for issues:
-
-| Label | Description |
-|-------|-------------|
-| `bug` | Something isn't working |
-| `enhancement` | New feature or request |
-| `documentation` | Documentation improvements |
-| `good first issue` | Good for newcomers |
-| `help wanted` | Extra attention is needed |
-| `performance` | Performance improvements |
-| `theory/*` | Specific theory solver |
-| `crate/*` | Specific crate |
+PRs are merged via squash-and-merge.
 
 ---
 
@@ -613,46 +385,6 @@ For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ---
 
-## Communication
+## License
 
-### GitHub Issues
-
-Use GitHub Issues for:
-- Bug reports
-- Feature requests
-- Documentation issues
-- Questions about implementation
-
-### GitHub Discussions
-
-Use GitHub Discussions for:
-- General questions about usage
-- Design discussions
-- Community announcements
-- Sharing benchmarks and use cases
-
-### Response Times
-
-We aim to:
-- Triage new issues within 48 hours
-- Provide initial PR review within 1 week
-- Respond to questions within a few days
-
-### Code of Conduct
-
-We are committed to providing a welcoming and inclusive environment for all contributors. We expect all participants to:
-
-- Be respectful and considerate
-- Accept constructive criticism gracefully
-- Focus on what is best for the community
-- Show empathy towards other community members
-
-Unacceptable behavior includes harassment, trolling, insults, and other unprofessional conduct.
-
----
-
-## Thank You!
-
-Thank you for taking the time to contribute to OxiZ. Your efforts help advance the state of SMT solving and formal verification. We look forward to your contributions!
-
-*If you have any questions not covered in this guide, please open an issue or start a discussion.*
+Licensed under Apache License 2.0 ([LICENSE](LICENSE)).

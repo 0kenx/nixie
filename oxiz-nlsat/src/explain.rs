@@ -1,5 +1,13 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), retained-unwired. Its top-level
+// `explain_theory_conflict`/`explain_var_constraint` assemble a lemma from every
+// atom sharing a variable, which is UNSOUND (such atoms are frequently jointly
+// satisfiable, so the lemma can turn SAT into wrong UNSAT). Multivariate theory
+// conflicts are instead certified soundly by the model-based sign-abstraction
+// single-cell certifier in `solver::decide::certify_sign_conflict`. The reusable
+// CAD building blocks here (project / resultant / leading_coefficient) are kept
+// for a future certified single-cell projection lemma; do NOT wire the top-level
+// assembly as-is.
 //! Conflict explanation for NLSAT.
 //!
 //! This module provides explanation generation for conflicts in the NLSAT solver.

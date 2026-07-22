@@ -29,6 +29,7 @@ use crate::fp::{FpFormat, FpRoundingMode, FpValue};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use core::cmp::Ordering;
+use num_bigint::{BigInt, BigUint};
 
 /// Extended precision representation for intermediate calculations
 ///
@@ -357,44 +358,64 @@ impl Ieee754Engine {
 
     /// Divide two 128-bit numbers and return left-aligned quotient and sticky bit
     ///
-    /// Computes dividend / divisor where both are normalized (MSB at bit 127).
-    /// Returns (quotient_left_aligned, has_nonzero_remainder)
+    /// Computes `dividend / divisor` where both are normalized (MSB at bit 127).
+    /// Returns `(quotient_left_aligned, has_nonzero_remainder)`.
     ///
-    /// For FP division: (dividend/2^127) / (divisor/2^127) = dividend/divisor
-    /// Result is in [0.5, 2.0), so we generate a 128-bit quotient with MSB at bit 126 or 127.
+    /// Concretely it computes `q = floor(dividend * 2^127 / divisor)` together
+    /// with a sticky flag recording whether the true quotient has a nonzero
+    /// remainder. Because both operands lie in `[2^127, 2^128)`, the exact
+    /// quotient `dividend / divisor` lies in `(0.5, 2.0)`, so `q` (that quotient
+    /// scaled by `2^127`) lies in `(2^126, 2^128)` — its MSB is at bit 126 or 127,
+    /// exactly what the caller's normalization step expects.
+    ///
+    /// The running remainder must hold 129 bits: after the shift-in step it can
+    /// momentarily reach just under `2 * divisor` (< 2^129) before a single
+    /// conditional subtraction restores the invariant `remainder < divisor`. The
+    /// earlier implementation kept the remainder in a bare `u128` and shifted it
+    /// left *before* subtracting, which silently dropped bit 127 whenever the
+    /// remainder's MSB was set — corrupting every division whose dividend
+    /// mantissa was smaller than the divisor's (the exact quotient in `(0.5, 1)`
+    /// case), returning zero. Tracking the overflow bit explicitly fixes that.
     #[must_use]
     fn div128(dividend: u128, divisor: u128) -> (u128, bool) {
         if divisor == 0 {
             return (u128::MAX, false);
         }
 
-        // For normalized inputs, quotient is in [0.5, 2.0)
-        // We need to generate 128 bits of quotient precision
-
-        // Start with dividend as the initial remainder
-        let mut remainder = dividend;
+        // 129-bit remainder: `rem_hi` is bit 128, `rem_lo` holds bits 0..=127.
+        let mut rem_lo: u128 = 0;
+        let mut rem_hi: bool = false;
         let mut quotient: u128 = 0;
 
-        // Generate 128 quotient bits
-        for i in 0..128 {
-            // Shift quotient left to make room for next bit
+        // Long division of the 255-bit numerator `dividend << 127`, MSB first:
+        // its top 128 bits are `dividend`, followed by 127 implicit zero bits.
+        for i in (0..255).rev() {
+            let bit: u128 = if i >= 127 {
+                (dividend >> (i - 127)) & 1
+            } else {
+                0
+            };
+            // rem = (rem << 1) | bit, carrying bit 127 of rem_lo into rem_hi.
+            let carry = (rem_lo >> 127) & 1 == 1;
+            rem_lo = (rem_lo << 1) | bit;
+            rem_hi = carry;
+
+            // Compare the 129-bit remainder against the 128-bit divisor.
+            let ge = rem_hi || rem_lo >= divisor;
             quotient <<= 1;
-
-            // Check if we can subtract divisor from doubled remainder
-            if remainder >= divisor {
-                remainder -= divisor;
+            if ge {
+                // Subtract divisor. A borrow can only occur when `rem_hi` is set
+                // (rem >= 2^128 > divisor), and consumes exactly that overflow
+                // bit; the post-subtraction remainder is always < divisor.
+                let (nl, borrow) = rem_lo.overflowing_sub(divisor);
+                rem_lo = nl;
+                rem_hi = rem_hi && !borrow;
                 quotient |= 1;
-            }
-
-            // Shift remainder left for next iteration (multiply by 2)
-            // We need to be careful not to lose the MSB
-            if i < 127 {
-                remainder <<= 1;
             }
         }
 
-        // Check if there's a non-zero remainder for sticky bit
-        let sticky = remainder != 0;
+        // Sticky: any nonzero remainder means the true quotient was inexact.
+        let sticky = rem_hi || rem_lo != 0;
 
         (quotient, sticky)
     }
@@ -1150,23 +1171,177 @@ impl Ieee754Engine {
         self.pack(&result, format)
     }
 
-    /// Fused multiply-add: (a * b) + c
+    /// Fused multiply-add: `round(a * b + c)` with a single rounding.
+    ///
+    /// Implements IEEE 754-2019 `fusedMultiplyAdd`. The product `a * b` is
+    /// formed exactly (the product of two `p`-bit significands is exact in
+    /// `2p` bits), `c` is added exactly at the aligned scale, and the result
+    /// is rounded exactly once to the target format. This is distinct from the
+    /// doubly-rounded `add(mul(a, b), c)`, which can differ by up to one ulp.
     pub fn fma(&mut self, a: &FpValue, b: &FpValue, c: &FpValue) -> FpValue {
         assert_eq!(a.format, b.format, "Format mismatch in FMA");
         assert_eq!(a.format, c.format, "Format mismatch in FMA");
+        let format = a.format;
 
-        // For a complete FMA, we would:
-        // 1. Compute a * b with full precision (no rounding)
-        // 2. Add c to the unrounded product
-        // 3. Round once at the end
-        //
-        // This is more accurate than (a * b) + c with two roundings
-        // For now, use simple implementation
-        let product = self.mul(a, b);
-        self.add(&product, c)
+        let ua = self.unpack(a);
+        let ub = self.unpack(b);
+        let uc = self.unpack(c);
+
+        // NaN inputs propagate to a quiet NaN; a signaling NaN raises invalid.
+        if ua.is_nan() || ub.is_nan() || uc.is_nan() {
+            self.invalid_flag = ua.class == FpClass::SignalingNaN
+                || ub.class == FpClass::SignalingNaN
+                || uc.class == FpClass::SignalingNaN;
+            return self.pack(&UnpackedFloat::quiet_nan(false), format);
+        }
+
+        let a_inf = ua.class.is_infinite();
+        let b_inf = ub.class.is_infinite();
+        let a_zero = ua.is_zero();
+        let b_zero = ub.is_zero();
+
+        // 0 * inf is an invalid operation regardless of the addend.
+        if (a_inf && b_zero) || (b_inf && a_zero) {
+            self.invalid_flag = true;
+            return self.pack(&UnpackedFloat::quiet_nan(false), format);
+        }
+
+        let prod_sign = ua.sign ^ ub.sign;
+
+        // If the product is infinite, the result is that infinity unless the
+        // addend is the opposite infinity (inf - inf is invalid).
+        if a_inf || b_inf {
+            if uc.class.is_infinite() && uc.sign != prod_sign {
+                self.invalid_flag = true;
+                return self.pack(&UnpackedFloat::quiet_nan(false), format);
+            }
+            return if prod_sign {
+                FpValue::neg_infinity(format)
+            } else {
+                FpValue::pos_infinity(format)
+            };
+        }
+
+        // Product is finite; a finite product plus an infinite addend is that
+        // infinity.
+        if uc.class.is_infinite() {
+            return if uc.sign {
+                FpValue::neg_infinity(format)
+            } else {
+                FpValue::pos_infinity(format)
+            };
+        }
+
+        // All operands finite. Form a*b + c exactly with arbitrary-precision
+        // integers, then round once. For a finite non-zero value the unpacked
+        // significand is left-aligned (MSB at bit 127), so the arithmetic value
+        // is `significand * 2^(exponent - 127)`; zeros have significand 0.
+        let prod_mag = BigUint::from(ua.significand) * BigUint::from(ub.significand);
+        let prod_exp2 = (ua.exponent as i64 - 127) + (ub.exponent as i64 - 127);
+        let c_mag = BigUint::from(uc.significand);
+        let c_exp2 = uc.exponent as i64 - 127;
+
+        // Align both addends to the common scale 2^e (e = min exponent).
+        let e = prod_exp2.min(c_exp2);
+        let prod_scaled = &prod_mag << ((prod_exp2 - e) as u64);
+        let c_scaled = &c_mag << ((c_exp2 - e) as u64);
+        let prod_signed = BigInt::from_biguint(sign_of(prod_sign), prod_scaled);
+        let c_signed = BigInt::from_biguint(sign_of(uc.sign), c_scaled);
+        let sum = prod_signed + c_signed;
+
+        if sum.sign() == num_bigint::Sign::NoSign {
+            // Exact zero result. Two same-signed zeros keep their sign; any
+            // exact cancellation is +0 except under round-toward-negative.
+            let both_zero = (a_zero || b_zero) && uc.is_zero();
+            let sign = if both_zero && prod_sign == uc.sign {
+                prod_sign
+            } else {
+                self.rounding_mode == FpRoundingMode::RoundTowardNegative
+            };
+            return if sign {
+                FpValue::neg_zero(format)
+            } else {
+                FpValue::pos_zero(format)
+            };
+        }
+
+        let sign = sum.sign() == num_bigint::Sign::Minus;
+        let mag = sum.magnitude().clone();
+        self.round_exact_to_fp(sign, &mag, e, false, format)
     }
 
-    /// Remainder: a - n * b where n is a / b rounded to integer
+    /// Round an exact value `sign * magnitude * 2^exp2` to `format` with a
+    /// single correctly-rounded step. `extra_sticky` records nonzero value
+    /// discarded below `magnitude`'s least-significant bit (used when the
+    /// caller has already truncated). `magnitude` must be non-zero unless the
+    /// exact value is truly zero.
+    fn round_exact_to_fp(
+        &mut self,
+        sign: bool,
+        magnitude: &BigUint,
+        exp2: i64,
+        extra_sticky: bool,
+        format: FpFormat,
+    ) -> FpValue {
+        let bits = magnitude.bits();
+        if bits == 0 {
+            return if sign {
+                FpValue::neg_zero(format)
+            } else {
+                FpValue::pos_zero(format)
+            };
+        }
+
+        // Reduce the magnitude to a 128-bit significand with its MSB at bit 127,
+        // collecting any discarded low bits into the sticky flag.
+        let (mut sig128, exp128, sticky) = if bits > 128 {
+            let shift = bits - 128;
+            let low_nonzero = match magnitude.trailing_zeros() {
+                Some(tz) => tz < shift,
+                None => false,
+            };
+            let top = magnitude >> shift;
+            (
+                biguint_low_u128(&top),
+                exp2 + shift as i64,
+                low_nonzero || extra_sticky,
+            )
+        } else {
+            let shift = 128 - bits;
+            (
+                biguint_low_u128(magnitude) << shift,
+                exp2 - shift as i64,
+                extra_sticky,
+            )
+        };
+        if sticky && (sig128 & 1) == 0 {
+            sig128 |= 1;
+        }
+
+        // value = (sig128 / 2^127) * 2^(exp128 + 127); pack expects the
+        // unbiased exponent of that normalized (1.frac) representation.
+        let unbiased = (exp128 + 127).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        let unpacked = UnpackedFloat {
+            sign,
+            exponent: unbiased,
+            significand: sig128,
+            precision: format.significand_bits,
+            class: if sign {
+                FpClass::NegativeNormal
+            } else {
+                FpClass::PositiveNormal
+            },
+        };
+        self.pack(&unpacked, format)
+    }
+
+    /// IEEE 754 remainder: `a - n*b`, where `n` is the exact quotient `a/b`
+    /// rounded to the nearest integer with ties to even.
+    ///
+    /// The result is always exact (`|result| <= |b|/2`), so no rounding error
+    /// is introduced. This differs from a truncating/fmod-style remainder and
+    /// from `a - div(a,b)*b`, which rounds the quotient to the FP format first.
+    /// Reference: Z3's `mpf_manager::rem`.
     pub fn rem(&mut self, a: &FpValue, b: &FpValue) -> FpValue {
         let format = a.format;
         let ua = self.unpack(a);
@@ -1174,23 +1349,60 @@ impl Ieee754Engine {
 
         // Handle special cases
         if ua.is_nan() || ub.is_nan() {
+            self.invalid_flag =
+                ua.class == FpClass::SignalingNaN || ub.class == FpClass::SignalingNaN;
             return self.pack(&UnpackedFloat::quiet_nan(false), format);
         }
 
+        // remainder(inf, y) and remainder(x, 0) are invalid.
         if ua.class.is_infinite() || ub.is_zero() {
             self.invalid_flag = true;
             return self.pack(&UnpackedFloat::quiet_nan(false), format);
         }
 
+        // remainder(x, inf) = x and remainder(0, y) = 0 (sign preserved).
         if ub.class.is_infinite() || ua.is_zero() {
             return *a;
         }
 
-        // Simplified remainder (not IEEE compliant, but placeholder)
-        // Full implementation requires integer quotient calculation
-        let quotient = self.div(a, b);
-        let product = self.mul(&quotient, b);
-        self.sub(a, &product)
+        // Both finite and non-zero. Work with exact integer significands:
+        // value_x = sx * 2^ex, value_y = sy * 2^ey (MSB-aligned significands).
+        let sx = BigUint::from(ua.significand);
+        let sy = BigUint::from(ub.significand);
+        let ex = ua.exponent as i64 - 127;
+        let ey = ub.exponent as i64 - 127;
+
+        // n = round-half-even(|x/y|); |x/y| = (sx << max(ex-ey,0)) / (sy << max(ey-ex,0)).
+        let d = ex - ey;
+        let (num, den) = if d >= 0 {
+            (&sx << (d as u64), sy.clone())
+        } else {
+            (sx.clone(), &sy << ((-d) as u64))
+        };
+        let n_mag = round_half_even_biguint(&num, &den);
+
+        // r = x - n*y computed exactly at the common scale 2^e (e = min(ex,ey)).
+        let e = ex.min(ey);
+        let xv = BigInt::from_biguint(sign_of(ua.sign), &sx << ((ex - e) as u64));
+        let yv = BigInt::from_biguint(sign_of(ub.sign), &sy << ((ey - e) as u64));
+        let sign_q = ua.sign ^ ub.sign;
+        let n_signed = BigInt::from_biguint(sign_of(sign_q), n_mag);
+        let inner = xv - n_signed * yv;
+
+        if inner.sign() == num_bigint::Sign::NoSign {
+            // A zero remainder takes the sign of the dividend.
+            return if ua.sign {
+                FpValue::neg_zero(format)
+            } else {
+                FpValue::pos_zero(format)
+            };
+        }
+
+        let sign_r = inner.sign() == num_bigint::Sign::Minus;
+        let mag = inner.magnitude().clone();
+        // The IEEE remainder is exact, so this rounding step is a no-op in
+        // exact arithmetic; it merely repacks into the target format.
+        self.round_exact_to_fp(sign_r, &mag, e, false, format)
     }
 
     /// Minimum of two values (IEEE 754 semantics)
@@ -1409,6 +1621,44 @@ fn integer_sqrt(n: u128) -> u128 {
     x
 }
 
+/// Extract the low 128 bits of a `BigUint`.
+#[must_use]
+fn biguint_low_u128(x: &BigUint) -> u128 {
+    let mut digits = x.iter_u64_digits();
+    let lo = digits.next().unwrap_or(0);
+    let hi = digits.next().unwrap_or(0);
+    ((hi as u128) << 64) | (lo as u128)
+}
+
+/// Map a sign flag (`true` = negative) to a `num_bigint::Sign`. Callers pair
+/// this with a magnitude; `BigInt::from_biguint` normalizes a zero magnitude to
+/// `NoSign`, so passing `Minus` with a zero magnitude is safe.
+#[must_use]
+fn sign_of(negative: bool) -> num_bigint::Sign {
+    if negative {
+        num_bigint::Sign::Minus
+    } else {
+        num_bigint::Sign::Plus
+    }
+}
+
+/// Divide `num` by `den` (both non-negative, `den > 0`) rounding the exact
+/// quotient to the nearest integer, ties to even.
+#[must_use]
+fn round_half_even_biguint(num: &BigUint, den: &BigUint) -> BigUint {
+    let q = num / den;
+    let r = num % den;
+    let two_r = &r << 1u32;
+    match two_r.cmp(den) {
+        Ordering::Less => q,
+        Ordering::Greater => q + 1u32,
+        Ordering::Equal => {
+            // Exact tie: round to the even quotient.
+            if q.bit(0) { q + 1u32 } else { q }
+        }
+    }
+}
+
 /// Format conversion with rounding
 pub fn convert_format(
     engine: &mut Ieee754Engine,
@@ -1586,349 +1836,4 @@ pub fn uint_to_fp(engine: &mut Ieee754Engine, value: u64, format: FpFormat) -> F
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_unpack_pack_f32() {
-        let engine = Ieee754Engine::new();
-        let val = FpValue::from_f32(1.0);
-        let unpacked = engine.unpack(&val);
-        assert_eq!(unpacked.class, FpClass::PositiveNormal);
-        assert!(!unpacked.sign);
-
-        let mut pack_engine = Ieee754Engine::new();
-        let packed = pack_engine.pack(&unpacked, FpFormat::FLOAT32);
-        assert_eq!(packed.to_f32(), Some(1.0));
-    }
-
-    #[test]
-    fn test_addition_basic() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(1.0);
-        let b = FpValue::from_f32(2.0);
-        let result = engine.add(&a, &b);
-        assert_eq!(result.to_f32(), Some(3.0));
-    }
-
-    #[test]
-    fn test_subtraction_basic() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(5.0);
-        let b = FpValue::from_f32(2.0);
-        let result = engine.sub(&a, &b);
-        assert_eq!(result.to_f32(), Some(3.0));
-    }
-
-    #[test]
-    fn test_multiplication_basic() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(2.0);
-        let b = FpValue::from_f32(3.0);
-        let result = engine.mul(&a, &b);
-        assert_eq!(result.to_f32(), Some(6.0));
-    }
-
-    #[test]
-    fn test_division_basic() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(6.0);
-        let b = FpValue::from_f32(2.0);
-        let result = engine.div(&a, &b);
-        assert_eq!(result.to_f32(), Some(3.0));
-    }
-
-    #[test]
-    fn test_sqrt_basic() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(4.0);
-        let result = engine.sqrt(&a);
-        let res_f32 = result.to_f32();
-        assert!(res_f32.is_some());
-        let val = res_f32.unwrap_or(0.0);
-        println!("sqrt(4.0) = {}, expected 2.0", val);
-        assert!((val - 2.0).abs() < 0.1); // Approximate check
-    }
-
-    #[test]
-    fn test_special_values_nan() {
-        let engine = Ieee754Engine::new();
-        let nan = FpValue::nan(FpFormat::FLOAT32);
-        let unpacked = engine.unpack(&nan);
-        assert!(unpacked.is_nan());
-    }
-
-    #[test]
-    fn test_special_values_infinity() {
-        let engine = Ieee754Engine::new();
-        let inf = FpValue::pos_infinity(FpFormat::FLOAT32);
-        let unpacked = engine.unpack(&inf);
-        assert_eq!(unpacked.class, FpClass::PositiveInfinity);
-    }
-
-    #[test]
-    fn test_special_values_zero() {
-        let engine = Ieee754Engine::new();
-        let zero = FpValue::pos_zero(FpFormat::FLOAT32);
-        let unpacked = engine.unpack(&zero);
-        assert!(unpacked.is_zero());
-    }
-
-    #[test]
-    fn test_inf_plus_inf() {
-        let mut engine = Ieee754Engine::new();
-        let inf1 = FpValue::pos_infinity(FpFormat::FLOAT32);
-        let inf2 = FpValue::pos_infinity(FpFormat::FLOAT32);
-        let result = engine.add(&inf1, &inf2);
-        assert!(result.is_infinite());
-    }
-
-    #[test]
-    fn test_inf_minus_inf() {
-        let mut engine = Ieee754Engine::new();
-        let inf1 = FpValue::pos_infinity(FpFormat::FLOAT32);
-        let inf2 = FpValue::neg_infinity(FpFormat::FLOAT32);
-        let result = engine.add(&inf1, &inf2);
-        assert!(result.is_nan());
-        assert!(engine.invalid());
-    }
-
-    #[test]
-    fn test_zero_times_inf() {
-        let mut engine = Ieee754Engine::new();
-        let zero = FpValue::pos_zero(FpFormat::FLOAT32);
-        let inf = FpValue::pos_infinity(FpFormat::FLOAT32);
-        let result = engine.mul(&zero, &inf);
-        assert!(result.is_nan());
-        assert!(engine.invalid());
-    }
-
-    #[test]
-    fn test_division_by_zero() {
-        let mut engine = Ieee754Engine::new();
-        let one = FpValue::from_f32(1.0);
-        let zero = FpValue::pos_zero(FpFormat::FLOAT32);
-        let result = engine.div(&one, &zero);
-        assert!(result.is_infinite());
-        assert!(engine.divide_by_zero());
-    }
-
-    #[test]
-    fn test_sqrt_negative() {
-        let mut engine = Ieee754Engine::new();
-        let neg = FpValue::from_f32(-1.0);
-        let result = engine.sqrt(&neg);
-        assert!(result.is_nan());
-        assert!(engine.invalid());
-    }
-
-    #[test]
-    fn test_comparison_eq() {
-        let engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(1.0);
-        let b = FpValue::from_f32(1.0);
-        assert!(engine.eq(&a, &b));
-    }
-
-    #[test]
-    fn test_comparison_lt() {
-        let engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(1.0);
-        let b = FpValue::from_f32(2.0);
-        assert!(engine.lt(&a, &b));
-        assert!(!engine.lt(&b, &a));
-    }
-
-    #[test]
-    fn test_comparison_nan() {
-        let engine = Ieee754Engine::new();
-        let nan = FpValue::nan(FpFormat::FLOAT32);
-        let one = FpValue::from_f32(1.0);
-        assert!(!engine.eq(&nan, &nan));
-        assert!(!engine.lt(&nan, &one));
-        assert!(!engine.lt(&one, &nan));
-    }
-
-    #[test]
-    fn test_negation() {
-        let engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(1.0);
-        let neg_a = engine.neg(&a);
-        assert_eq!(neg_a.to_f32(), Some(-1.0));
-    }
-
-    #[test]
-    fn test_absolute_value() {
-        let engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(-2.5);
-        let abs_a = engine.abs(&a);
-        assert_eq!(abs_a.to_f32(), Some(2.5));
-    }
-
-    #[test]
-    fn test_min_max() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(1.0);
-        let b = FpValue::from_f32(2.0);
-
-        let min_val = engine.min(&a, &b);
-        assert_eq!(min_val.to_f32(), Some(1.0));
-
-        let max_val = engine.max(&a, &b);
-        assert_eq!(max_val.to_f32(), Some(2.0));
-    }
-
-    #[test]
-    fn test_classification() {
-        let engine = Ieee754Engine::new();
-
-        let normal = FpValue::from_f32(1.0);
-        assert_eq!(engine.classify(&normal), FpClass::PositiveNormal);
-
-        let zero = FpValue::pos_zero(FpFormat::FLOAT32);
-        assert_eq!(engine.classify(&zero), FpClass::PositiveZero);
-
-        let inf = FpValue::pos_infinity(FpFormat::FLOAT32);
-        assert_eq!(engine.classify(&inf), FpClass::PositiveInfinity);
-
-        let nan = FpValue::nan(FpFormat::FLOAT32);
-        assert!(engine.classify(&nan).is_nan());
-    }
-
-    #[test]
-    fn test_rounding_modes() {
-        let mut engine = Ieee754Engine::new();
-
-        // Test different rounding modes
-        engine.set_rounding_mode(FpRoundingMode::RoundTowardZero);
-        assert_eq!(engine.rounding_mode(), FpRoundingMode::RoundTowardZero);
-
-        engine.set_rounding_mode(FpRoundingMode::RoundTowardPositive);
-        assert_eq!(engine.rounding_mode(), FpRoundingMode::RoundTowardPositive);
-    }
-
-    #[test]
-    fn test_format_conversion_f32_to_f64() {
-        let mut engine = Ieee754Engine::new();
-        let f32_val = FpValue::from_f32(1.5);
-        let f64_val = convert_format(&mut engine, &f32_val, FpFormat::FLOAT64);
-
-        assert_eq!(f64_val.format, FpFormat::FLOAT64);
-        // Value should be preserved
-        let unpacked = engine.unpack(&f64_val);
-        assert_eq!(unpacked.class, FpClass::PositiveNormal);
-    }
-
-    #[test]
-    fn test_sint_conversion() {
-        let mut engine = Ieee754Engine::new();
-        let fp_val = FpValue::from_f32(42.0);
-        let int_val = fp_to_sint(&mut engine, &fp_val, 64);
-        assert_eq!(int_val, Some(42));
-    }
-
-    #[test]
-    fn test_uint_conversion() {
-        let mut engine = Ieee754Engine::new();
-        let fp_val = FpValue::from_f32(42.0);
-        let uint_val = fp_to_uint(&mut engine, &fp_val, 64);
-        assert_eq!(uint_val, Some(42));
-    }
-
-    #[test]
-    fn test_sint_to_fp() {
-        let mut engine = Ieee754Engine::new();
-        let fp_val = sint_to_fp(&mut engine, 42, FpFormat::FLOAT32);
-        let result = fp_val.to_f32();
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_uint_to_fp() {
-        let mut engine = Ieee754Engine::new();
-        let fp_val = uint_to_fp(&mut engine, 42, FpFormat::FLOAT32);
-        let result = fp_val.to_f32();
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_binary16_format() {
-        let format = FpFormat::FLOAT16;
-        assert_eq!(format.width(), 16);
-        assert_eq!(format.exponent_bits, 5);
-        assert_eq!(format.significand_bits, 11);
-    }
-
-    #[test]
-    fn test_binary128_format() {
-        let format = FpFormat::FLOAT128;
-        assert_eq!(format.width(), 128);
-        assert_eq!(format.exponent_bits, 15);
-        assert_eq!(format.significand_bits, 113);
-    }
-
-    #[test]
-    fn test_exception_flags() {
-        let mut engine = Ieee754Engine::new();
-
-        // Test division by zero flag
-        let one = FpValue::from_f32(1.0);
-        let zero = FpValue::pos_zero(FpFormat::FLOAT32);
-        engine.div(&one, &zero);
-        assert!(engine.divide_by_zero());
-
-        engine.clear_flags();
-        assert!(!engine.divide_by_zero());
-
-        // Test invalid flag
-        let nan1 = FpValue::nan(FpFormat::FLOAT32);
-        let nan2 = FpValue::nan(FpFormat::FLOAT32);
-        engine.add(&nan1, &nan2);
-        // Invalid flag should not be set for quiet NaN operations in some cases
-
-        engine.clear_flags();
-
-        // Test 0 * infinity
-        let inf = FpValue::pos_infinity(FpFormat::FLOAT32);
-        engine.mul(&zero, &inf);
-        assert!(engine.invalid());
-    }
-
-    #[test]
-    fn test_denormal_numbers() {
-        let engine = Ieee754Engine::new();
-
-        // Create a subnormal number (exponent = 0, significand != 0)
-        let subnormal = FpValue {
-            sign: false,
-            exponent: 0,
-            significand: 1,
-            format: FpFormat::FLOAT32,
-        };
-
-        let unpacked = engine.unpack(&subnormal);
-        assert_eq!(unpacked.class, FpClass::PositiveSubnormal);
-    }
-
-    #[test]
-    fn test_signed_zero_semantics() {
-        let engine = Ieee754Engine::new();
-        let pos_zero = FpValue::pos_zero(FpFormat::FLOAT32);
-        let neg_zero = FpValue::neg_zero(FpFormat::FLOAT32);
-
-        // +0 == -0 in IEEE 754
-        assert!(engine.eq(&pos_zero, &neg_zero));
-    }
-
-    #[test]
-    fn test_fma_operation() {
-        let mut engine = Ieee754Engine::new();
-        let a = FpValue::from_f32(2.0);
-        let b = FpValue::from_f32(3.0);
-        let c = FpValue::from_f32(4.0);
-
-        let result = engine.fma(&a, &b, &c);
-        // 2 * 3 + 4 = 10
-        assert_eq!(result.to_f32(), Some(10.0));
-    }
-}
+mod tests;

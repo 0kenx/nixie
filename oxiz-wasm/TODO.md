@@ -1,6 +1,6 @@
 # oxiz-wasm TODO
 
-Last Updated: 2026-07-19 (v0.2.4)
+Last Updated: 2026-07-21 (v0.3.0)
 
 ## Progress: ~99% Complete
 
@@ -107,7 +107,7 @@ Last Updated: 2026-07-19 (v0.2.4)
 
 ## Packaging
 
-- [ ] Publish to npm (ready - use ./publish.sh when ready)
+- [ ] Publish to npm (ready - use ./publish.sh when ready) — **(status: blocked — awaiting explicit authorization from the user (KitaSan) per the workspace publish policy; code, packaging (`package.json`, CDN docs, framework wrappers), and the `publish.sh`/`version-bump.sh` automation are all ready. See root `TODO.md` "Remaining (post-0.3.0 hardening)" (a).)**
 - [x] Add CDN distribution (unpkg/jsdelivr) - CDN_USAGE.md created
 - [x] Create package.json configuration
 - [x] Create .npmignore for clean npm packages

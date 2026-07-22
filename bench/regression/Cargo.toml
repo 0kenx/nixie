@@ -1,7 +1,8 @@
 [package]
 name = "bench-regression"
 version.workspace = true
-edition = "2024"
+edition.workspace = true
+license.workspace = true
 publish = false
 description = "Performance regression testing for OxiZ SMT solver"
 
@@ -16,7 +17,7 @@ oxiz-sat = { workspace = true, features = ["std"] }
 oxiz-solver = { workspace = true, features = ["std"] }
 oxiz-theories = { workspace = true, features = ["std"] }
 oxiz-opt.workspace = true
-oxiz-smtcomp = { path = "../../oxiz-smtcomp" }
+oxiz-smtcomp.workspace = true
 
 # Benchmarking
 criterion.workspace = true

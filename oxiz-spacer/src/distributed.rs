@@ -1,37 +1,51 @@
-//! Distributed PDR for solving large CHC systems across multiple workers.
+//! Parallel PDR for solving CHC systems across real worker threads.
 //!
-//! This module provides the message-passing / shared-state *infrastructure*
-//! (coordinator, workers, work queue, frame synchronization) for distributing
-//! a Constrained Horn Clause solve across cooperating workers.
+//! ## What this is: a parallel portfolio with private term arenas
 //!
-//! ## Current status: documented single-process fallback
+//! [`DistributedCoordinator::solve`] runs a **genuine `std::thread` portfolio**:
+//! it spawns N worker threads, each running an independent, sound, sequential
+//! [`Spacer`] engine on its own private copy of the CHC system, configured with
+//! a *different* strategy (resource limits / feature toggles). The workers race;
+//! the first to reach a definite `Safe`/`Unsafe` verdict wins, and the losers
+//! are cancelled through a shared [`AtomicBool`] token that each engine checks
+//! in its main loop. If every worker only reaches `Unknown` (or an overall
+//! [`DistributedConfig::timeout`] elapses) the coordinator returns `Unknown`.
+//! Because every worker runs the same sound engine, whichever worker wins the
+//! race the verdict matches what the sequential engine would produce.
 //!
-//! A genuinely distributed PDR engine needs the CHC system and term manager to
-//! be shared *mutably* across worker threads. The current ownership model —
-//! [`Spacer`] borrows `&mut TermManager`, and [`ChcSystem`] is not `Clone`
-//! (it holds atomic ID counters) — does not support that yet. Rather than
-//! fabricate block/sleep results (which would make the exported API silently
-//! unsound), [`DistributedCoordinator::solve`] and [`Worker::run`] **delegate
-//! to the sound, sequential [`Spacer`] engine** and return its exact result.
-//! The scaffolding below (queue, messages, shared frames) is retained for the
-//! future multi-worker implementation.
+//! ## Why private arenas (and why lemmas are NOT shared)
 //!
-//! ## Architecture (target design)
+//! [`Spacer`] borrows `&mut TermManager` for the whole solve and term interning
+//! is not thread-safe, while [`ChcSystem`] holds atomic id counters and is not
+//! `Clone`. So each worker gets its **own** [`TermManager`] + [`ChcSystem`],
+//! rebuilt from the original by [`crate::translate::translate_system`] (a
+//! fail-closed re-intern of the linear-arithmetic/boolean fragment). A
+//! consequence is that **learned lemmas are NOT shared across workers**: a
+//! `TermId` from one worker's arena is meaningless in another's, so there is no
+//! shared frame/lemma pool. This is a parallel portfolio of independent
+//! sequential engines, **not** a shared-frame distributed PDR. When the system
+//! uses a term fragment `translate_system` cannot faithfully copy (bit-vectors,
+//! arrays, strings, ...), the coordinator transparently falls back to the sound
+//! in-process sequential engine.
 //!
-//! - **Coordinator**: Manages work distribution and result aggregation
-//! - **Workers**: Process proof obligations and learn lemmas independently
-//! - **Shared State**: Frame lemmas are synchronized across workers
-//! - **Communication**: Message passing for work items and learned lemmas
+//! The message/queue/shared-frame types below ([`SharedState`],
+//! [`WorkerMessage`], [`WorkItem`]) are retained as the scaffolding for a
+//! future shared-frame engine with cross-arena lemma translation; they are not
+//! on the portfolio's solve path.
 //!
-//! Reference: Distributed PDR algorithms from literature
+//! Reference: Z3's parallel/portfolio solving; distributed PDR from literature.
 
 use crate::chc::{ChcSystem, PredId};
 use crate::frames::{FrameManager, LemmaId};
 use crate::pdr::{Spacer, SpacerConfig, SpacerError, SpacerResult, SpacerStats};
 use crate::pob::{Pob, PobId};
+use crate::portfolio::Strategy;
 use oxiz_core::{TermId, TermManager};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -317,11 +331,11 @@ impl Worker {
 
     /// Run the worker.
     ///
-    /// Single-process fallback (see the module-level docs): rather than
-    /// fabricate proof-obligation outcomes, the worker runs the sound,
-    /// sequential [`Spacer`] engine on the shared system and publishes the
-    /// **real** result plus its solver statistics. Genuine multi-worker POB
-    /// distribution over the shared queue is future work.
+    /// Standalone single-worker helper (the [`DistributedCoordinator`]
+    /// portfolio spawns its own threads and does not use this): the worker runs
+    /// the sound, sequential [`Spacer`] engine on the shared system and
+    /// publishes the **real** result plus its solver statistics. Genuine
+    /// multi-worker POB distribution over the shared queue is future work.
     pub fn run(
         &mut self,
         terms: &mut TermManager,
@@ -355,19 +369,19 @@ impl Worker {
     }
 }
 
-/// Coordinator for distributed solving
-#[allow(dead_code)]
+/// Coordinator for the parallel PDR portfolio.
 pub struct DistributedCoordinator<'a> {
-    /// Term manager
+    /// Term manager (source arena; workers get independent copies).
     terms: &'a mut TermManager,
-    /// CHC system
+    /// CHC system to solve.
     system: &'a ChcSystem,
-    /// Configuration
+    /// Configuration.
     config: DistributedConfig,
-    /// Shared state
+    /// Shared state (result/stats sink; scaffolding for a future shared-frame
+    /// engine).
     shared: Arc<SharedState>,
-    /// Start time
-    start_time: Instant,
+    /// Number of worker threads actually spawned by the last [`Self::solve`].
+    spawned_threads: usize,
 }
 
 impl<'a> DistributedCoordinator<'a> {
@@ -382,50 +396,218 @@ impl<'a> DistributedCoordinator<'a> {
             system,
             config,
             shared: Arc::new(SharedState::new()),
-            start_time: Instant::now(),
+            spawned_threads: 0,
         }
     }
 
-    /// Solve the CHC system.
-    ///
-    /// **Single-process fallback.** As documented at the module level, a
-    /// genuinely distributed PDR engine is not yet implemented (it needs the
-    /// term manager and CHC system to be shared mutably across threads, which
-    /// the current ownership model forbids). Instead of returning a fabricated
-    /// answer derived from sleep-based "work", this delegates to the sound,
-    /// sequential [`Spacer`] engine and returns its exact result — so the
-    /// exported API is always honest: `Safe`/`Unsafe` when the sequential
-    /// engine decides, `Unknown` when it cannot (including on timeout).
-    pub fn solve(&mut self) -> Result<SpacerResult, DistributedError> {
-        // Honor an explicit distributed timeout by bounding the sequential
-        // engine's work via its resource limits is not directly expressible,
-        // so we run the sound engine and surface its verdict.  The engine
-        // itself returns `Unknown` rather than an unsound answer when it hits
-        // its own limits.
-        let config = self.config.worker_config.clone();
+    /// Number of worker threads spawned by the most recent [`Self::solve`]
+    /// call. Zero when the sequential fallback path was taken (unsupported
+    /// term fragment or a single worker).
+    #[must_use]
+    pub fn spawned_threads(&self) -> usize {
+        self.spawned_threads
+    }
 
+    /// Solve the CHC system with a real `std::thread` parallel portfolio.
+    ///
+    /// Each of the `num_workers` threads runs an independent, sound, sequential
+    /// [`Spacer`] on its own private arena (see the module docs) with a distinct
+    /// strategy. The first definite `Safe`/`Unsafe` verdict wins and cancels the
+    /// rest; all-`Unknown` (or an elapsed [`DistributedConfig::timeout`]) yields
+    /// `Unknown`. If the system cannot be faithfully copied into independent
+    /// arenas, this transparently runs the sound single-arena sequential engine.
+    /// Either way the verdict is honest and matches the sequential engine.
+    pub fn solve(&mut self) -> Result<SpacerResult, DistributedError> {
+        self.spawned_threads = 0;
+        let num_workers = self.config.num_workers.max(1);
+
+        // Build one independent replica per worker up front (single-threaded,
+        // so interning stays safe). If any replica cannot be built the fragment
+        // is unsupported for parallel copying — fall back to the sound
+        // sequential engine rather than risk an unfaithful copy.
+        let mut replicas: Vec<(TermManager, ChcSystem)> = Vec::with_capacity(num_workers);
+        for _ in 0..num_workers {
+            match crate::translate::translate_system(self.terms, self.system) {
+                Some(pair) => replicas.push(pair),
+                None => return self.solve_sequential(),
+            }
+        }
+        if num_workers == 1 {
+            // No parallelism to gain; the sequential engine is simpler and
+            // avoids a needless thread.
+            return self.solve_sequential();
+        }
+
+        let strategies = worker_strategies(num_workers, &self.config.worker_config);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let spawned = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::channel::<(usize, Result<SpacerResult, SpacerError>, SpacerStats)>();
+
+        let mut handles = Vec::with_capacity(num_workers);
+        for (i, (mut worker_terms, worker_system)) in replicas.into_iter().enumerate() {
+            let cancel_worker = Arc::clone(&cancel);
+            let spawned_worker = Arc::clone(&spawned);
+            let tx_worker = tx.clone();
+            let config = strategies[i].clone();
+            let handle = thread::spawn(move || {
+                spawned_worker.fetch_add(1, Ordering::SeqCst);
+                let (result, stats) = {
+                    let mut spacer = Spacer::with_config(&mut worker_terms, &worker_system, config)
+                        .with_cancel(Arc::clone(&cancel_worker));
+                    let result = spacer.solve();
+                    (result, spacer.stats().clone())
+                };
+                // The receiver may have hung up after a winner was found; that
+                // is expected, so ignore the send error.
+                let _ = tx_worker.send((i, result, stats));
+            });
+            handles.push(handle);
+        }
+        // Drop the coordinator's own sender so `rx` disconnects once every
+        // worker has finished.
+        drop(tx);
+
+        let (verdict, first_err) = collect_verdict(&rx, num_workers, self.config.timeout, &cancel);
+
+        // Cancel any stragglers and join every worker so the call is a clean
+        // barrier (no detached threads outliving the solve).
+        cancel.store(true, Ordering::SeqCst);
+        let mut worker_stats: Vec<(usize, SpacerStats)> = Vec::new();
+        // Drain any results the workers produced after we stopped listening so
+        // their stats are still recorded.
+        while let Ok((id, _res, stats)) = rx.recv() {
+            worker_stats.push((id, stats));
+        }
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        self.spawned_threads = spawned.load(Ordering::SeqCst);
+        let spawned_count = self.spawned_threads as u64;
+        self.shared.update_stats(move |s| {
+            s.total_work_items = s.total_work_items.saturating_add(spawned_count);
+            for (id, stats) in worker_stats {
+                s.worker_stats.insert(id, stats);
+            }
+        });
+
+        match verdict {
+            Some(result) => {
+                self.shared.set_result(result.clone());
+                Ok(result)
+            }
+            None => {
+                // No worker reached a definite verdict. Surface a worker error
+                // only if every worker errored (matching the sequential engine,
+                // e.g. `NoQuery`); otherwise this is an honest `Unknown`.
+                if let Some(err) = first_err {
+                    return Err(DistributedError::Spacer(err));
+                }
+                self.shared.set_result(SpacerResult::Unknown);
+                Ok(SpacerResult::Unknown)
+            }
+        }
+    }
+
+    /// Sound single-arena fallback: run the sequential [`Spacer`] on the shared
+    /// term manager and return its exact verdict.
+    fn solve_sequential(&mut self) -> Result<SpacerResult, DistributedError> {
+        let config = self.config.worker_config.clone();
         let result = {
             let mut spacer = Spacer::with_config(self.terms, self.system, config);
             spacer.solve()?
         };
-
         self.shared.set_result(result.clone());
         self.shared.update_stats(|stats| {
             stats.total_work_items = stats.total_work_items.saturating_add(1);
         });
-
         Ok(result)
     }
+}
 
-    /// Check if timeout exceeded
-    #[allow(dead_code)]
-    fn is_timeout(&self) -> bool {
-        if let Some(timeout) = self.config.timeout {
-            self.start_time.elapsed() >= timeout
-        } else {
-            false
+/// Diversified per-worker configurations for the portfolio.
+///
+/// Worker 0 mirrors the caller's `base` configuration so the portfolio's
+/// verdict is at least as strong as the sequential engine's; the remaining
+/// workers cycle through the standard portfolio strategies for diversity.
+fn worker_strategies(n: usize, base: &SpacerConfig) -> Vec<SpacerConfig> {
+    let variants = [
+        Strategy::conservative().config,
+        Strategy::balanced().config,
+        Strategy::bmc_like().config,
+        Strategy::aggressive().config,
+    ];
+    let mut out = Vec::with_capacity(n);
+    out.push(base.clone());
+    for i in 1..n {
+        out.push(variants[(i - 1) % variants.len()].clone());
+    }
+    out
+}
+
+/// Collect worker verdicts from `rx`, returning as soon as a definite
+/// `Safe`/`Unsafe` arrives, when all `n` workers have reported, or when the
+/// optional `timeout` elapses.
+///
+/// Returns `(Some(verdict), _)` on a definite result, or `(None, first_err)`
+/// where `first_err` is the first worker error seen (used only when no worker
+/// reached a verdict and none returned `Unknown`).
+fn collect_verdict(
+    rx: &mpsc::Receiver<(usize, Result<SpacerResult, SpacerError>, SpacerStats)>,
+    n: usize,
+    timeout: Option<Duration>,
+    cancel: &Arc<AtomicBool>,
+) -> (Option<SpacerResult>, Option<SpacerError>) {
+    let deadline = timeout.map(|t| Instant::now() + t);
+    let mut remaining = n;
+    let mut first_err: Option<SpacerError> = None;
+    let mut saw_unknown = false;
+
+    while remaining > 0 {
+        let recv = match deadline {
+            Some(d) => {
+                let now = Instant::now();
+                if now >= d {
+                    break;
+                }
+                rx.recv_timeout(d.saturating_duration_since(now))
+            }
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+
+        match recv {
+            Ok((_id, result, _stats)) => {
+                remaining -= 1;
+                match result {
+                    Ok(SpacerResult::Safe) => {
+                        cancel.store(true, Ordering::SeqCst);
+                        return (Some(SpacerResult::Safe), None);
+                    }
+                    Ok(SpacerResult::Unsafe) => {
+                        cancel.store(true, Ordering::SeqCst);
+                        return (Some(SpacerResult::Unsafe), None);
+                    }
+                    Ok(SpacerResult::Unknown) => {
+                        // A definite "cannot decide"; not fatal, keep waiting
+                        // for a peer that may still decide.
+                        saw_unknown = true;
+                    }
+                    Err(e) => {
+                        if first_err.is_none() {
+                            first_err = Some(e);
+                        }
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => break,
         }
     }
+
+    // Surface a worker error only when *every* reporting worker errored (no
+    // worker reached `Unknown`), matching what the sequential engine would do
+    // for deterministic errors like `NoQuery`.
+    let err = if saw_unknown { None } else { first_err };
+    (None, err)
 }
 
 /// Dummy num_cpus implementation (simplified)

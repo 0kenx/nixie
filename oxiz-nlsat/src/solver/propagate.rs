@@ -242,8 +242,22 @@ impl NlsatSolver {
                         continue;
                     }
 
-                    // Evaluate the polynomial
-                    let eval_result = self.evaluate_atom(atom_id);
+                    // Evaluate the polynomial, consulting the theory-evaluation
+                    // cache first so repeated sweeps over the same arithmetic
+                    // assignment do not recompute polynomial signs from scratch.
+                    let eval_result = match self.eval_cache.get(&atom_id).copied() {
+                        Some(cached) => {
+                            self.stats.eval_cache_hits += 1;
+                            cached
+                        }
+                        None => {
+                            let r = self.evaluate_atom(atom_id);
+                            if !r.is_undef() {
+                                self.eval_cache.insert(atom_id, r);
+                            }
+                            r
+                        }
+                    };
 
                     match (current_val, eval_result) {
                         (Lbool::True, Lbool::False) | (Lbool::False, Lbool::True) => {
@@ -294,8 +308,20 @@ impl NlsatSolver {
                         continue;
                     }
 
-                    // Evaluate the root atom
-                    let eval_result = self.evaluate_root_atom(root);
+                    // Evaluate the root atom (cached; see the inequality arm).
+                    let eval_result = match self.eval_cache.get(&atom_id).copied() {
+                        Some(cached) => {
+                            self.stats.eval_cache_hits += 1;
+                            cached
+                        }
+                        None => {
+                            let r = self.evaluate_root_atom(root);
+                            if !r.is_undef() {
+                                self.eval_cache.insert(atom_id, r);
+                            }
+                            r
+                        }
+                    };
 
                     match (current_val, eval_result) {
                         (Lbool::True, Lbool::False) | (Lbool::False, Lbool::True) => {
@@ -598,9 +624,16 @@ impl NlsatSolver {
             }
         }
 
-        // Only single-variable conflicts can be soundly explained here.
+        // Multivariate conflicts couple several variables, so no single Sturm
+        // region certifies them. Route them through the sound sign-abstraction
+        // single-cell certifier: it returns a valid lemma when the coupled
+        // atoms are provably infeasible over R, or `None` (honest Unknown) when
+        // this abstraction cannot certify the conflict.
         if vars.len() != 1 {
-            return None;
+            for &v in &vars {
+                self.bump_arith_activity(v);
+            }
+            return self.certify_sign_conflict();
         }
         let var = vars[0];
         self.bump_arith_activity(var);

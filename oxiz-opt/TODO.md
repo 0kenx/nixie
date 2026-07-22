@@ -1,6 +1,6 @@
 # oxiz-opt TODO
 
-Last Updated: 2026-07-19 (v0.2.4)
+Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
 
 
 ## Progress: ~100% Complete

@@ -7,6 +7,31 @@ use crate::error::{OxizError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::SortId;
+use std::cell::Cell;
+
+/// Maximum recursive nesting depth accepted by [`Parser::parse_sort`].
+/// Mirrors the identical guard on [`Parser::parse_term`] in `terms.rs`:
+/// adversarial input with pathologically deep nested parametric sorts (e.g.
+/// millions of `(Array (Array (Array ...) ...) ...)`) would otherwise
+/// overflow the native call stack; once this bound is exceeded we surface an
+/// honest [`OxizError::ParseError`] instead of aborting the process.
+const MAX_SORT_PARSE_DEPTH: u32 = 512;
+
+thread_local! {
+    /// Current recursion depth of [`Parser::parse_sort`] on this thread.
+    static SORT_PARSE_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// RAII guard that decrements the [`SORT_PARSE_DEPTH`] counter when it
+/// leaves scope, including on error unwinding, so the depth stays accurate
+/// across every return path of `parse_sort`.
+struct SortDepthGuard;
+
+impl Drop for SortDepthGuard {
+    fn drop(&mut self) {
+        SORT_PARSE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
 
 impl<'a> Parser<'a> {
     /// Expect a closing parenthesis ')'
@@ -192,6 +217,37 @@ impl<'a> Parser<'a> {
             "Int" => Ok(self.manager.sorts.int_sort),
             "Real" => Ok(self.manager.sorts.real_sort),
             "String" => Ok(self.manager.sorts.string_sort()),
+            // `RoundingMode` (Floats) and `RegLan` (Strings) are reserved
+            // SMT-LIB theory sort names. Previously these fell through to
+            // the generic `Uninterpreted` fallback below, which silently
+            // built a fresh free sort indistinguishable from an ordinary
+            // user-chosen name — so `(declare-const m RoundingMode)` looked
+            // like it worked but produced a variable the FP/regex theories
+            // can never actually reason about (rounding modes are only ever
+            // consumed as literal `RNE`/`RNA`/... symbols baked into `fp.*`
+            // operators at parse time, never as a first-class sorted term;
+            // see `Parser::parse_rounding_mode`). A dedicated `SortKind`
+            // variant is the correct long-term representation, but that enum
+            // is matched exhaustively across several other crates
+            // (oxiz-solver, ...), so adding a bare variant here is a
+            // workspace-wide change outside this fix's scope. Until that
+            // lands, reject these two reserved names honestly instead of
+            // silently mistyping them.
+            "RoundingMode" => Err(OxizError::ParseError {
+                position: self.lexer.position(),
+                message: "sort 'RoundingMode' is a reserved SMT-LIB FloatingPoint theory sort; \
+                    declaring constants or functions of this sort is not yet supported (a \
+                    rounding mode is only accepted as a literal RNE/RNA/RTP/RTN/RTZ argument \
+                    directly inside an fp.* operator)"
+                    .to_string(),
+            }),
+            "RegLan" => Err(OxizError::ParseError {
+                position: self.lexer.position(),
+                message: "sort 'RegLan' is a reserved SMT-LIB Strings theory sort; the regular \
+                    language sublanguage (re.*, str.to_re, and RegLan-sorted \
+                    constants/functions) is not yet implemented"
+                    .to_string(),
+            }),
             _ => {
                 // Check for sort alias first
                 if let Some((params, base_sort)) = self.sort_aliases.get(name).cloned() {
@@ -287,8 +343,30 @@ impl<'a> Parser<'a> {
         Ok((name, indices))
     }
 
-    /// Parse a sort expression (simple name, indexed identifier, or parametric sort)
+    /// Parse a sort expression (simple name, indexed identifier, or parametric sort).
+    ///
+    /// This wraps the actual recursive-descent logic in a depth guard so
+    /// that deeply nested sort input cannot overflow the stack; see
+    /// [`MAX_SORT_PARSE_DEPTH`].
     pub(super) fn parse_sort(&mut self) -> Result<SortId> {
+        let depth = SORT_PARSE_DEPTH.with(|d| {
+            let next = d.get().saturating_add(1);
+            d.set(next);
+            next
+        });
+        let _guard = SortDepthGuard;
+        if depth > MAX_SORT_PARSE_DEPTH {
+            return Err(OxizError::ParseError {
+                position: self.lexer.position(),
+                message: "sort nesting too deep".to_string(),
+            });
+        }
+        self.parse_sort_inner()
+    }
+
+    /// Inner sort parser; callers must go through [`Parser::parse_sort`] so
+    /// the recursion-depth guard stays in effect.
+    fn parse_sort_inner(&mut self) -> Result<SortId> {
         if let Some(token) = self.lexer.peek() {
             match &token.kind {
                 TokenKind::Symbol(s) => {

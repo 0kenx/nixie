@@ -11,6 +11,7 @@
 //! Reference: Z3's `muz/spacer/spacer_iuc.h` and `spacer_interpolant.h`
 
 use crate::chc::PredId;
+use crate::generalize::Generalizer;
 use oxiz_core::{TermId, TermManager};
 use smallvec::SmallVec;
 use std::collections::HashSet;
@@ -141,72 +142,80 @@ impl Interpolator {
             .or_insert_with(|| InterpolationContext::new(pred))
     }
 
-    /// Compute an interpolant from an UNSAT proof
+    /// Compute a **validated** Craig interpolant for `A ∧ B` (which the caller
+    /// must have established is UNSAT).
     ///
-    /// Given formulas A and B such that A ∧ B is UNSAT, compute an interpolant I.
+    /// A Craig interpolant `I` must satisfy all three of:
+    /// 1. `A ⇒ I`,
+    /// 2. `I ∧ B` is UNSAT, and
+    /// 3. `I` mentions only symbols common to `A` and `B`.
+    ///
+    /// This restricts to the sound *shared-literal fragment*: the candidate is
+    /// the sub-conjunction of `A`'s literals whose variables are all shared with
+    /// `B`. That construction makes (1) and (3) hold by construction, but *not*
+    /// (2) — a projection can share symbols yet fail to contradict `B`. So we
+    /// **verify** property (2) (and defensively re-verify (1)) with the solver
+    /// before returning, and **fail closed** to an honest
+    /// [`InterpolationError`] otherwise. We never return an unvalidated
+    /// projection as if it were a Craig interpolant.
+    ///
+    /// Reference: Z3's `muz/spacer/spacer_iuc.h` (interpolant validity).
     pub fn interpolate(
         &mut self,
         terms: &mut TermManager,
         a: TermId,
         b: TermId,
     ) -> InterpolationResult {
-        // Enhanced interpolation implementation with proof-based methods
-        // Algorithm:
-        // 1. Extract UNSAT core from the solver (simulated here)
-        // 2. Construct interpolant from the proof via resolution
-        // 3. Minimize the interpolant using subsumption
-        // 4. Ensure it only contains common symbols
-
         use oxiz_core::TermKind;
 
-        // Extract common variables between A and B
+        // Symbols shared between A and B.
         let vars_a = Self::collect_vars(terms, a);
         let vars_b = Self::collect_vars(terms, b);
-        let common_vars: Vec<TermId> = vars_a
+        let common: HashSet<TermId> = vars_a
             .iter()
             .filter(|v| vars_b.contains(v))
             .copied()
             .collect();
 
-        if common_vars.is_empty() {
-            // No common variables: A and B are independent
-            // The interpolant should be true or false depending on which is UNSAT
-            // Conservative: return A
-            return Ok(Interpolant::new(a));
-        }
-
-        // Enhanced proof-based interpolation:
-        // 1. Extract cube from A (decompose into literals)
-        // 2. Project onto common variables
-        // 3. Minimize the result
-        let a_cube = crate::generalize::Generalizer::extract_cube(terms, a);
-        let b_cube = crate::generalize::Generalizer::extract_cube(terms, b);
-
-        // Filter A's literals to only those that involve common variables
-        let relevant_lits: Vec<TermId> = a_cube
+        // Candidate: the sub-conjunction of A whose literals mention only shared
+        // symbols. This guarantees A ⇒ I (I is a weakening of A) and
+        // vars(I) ⊆ vars(A) ∩ vars(B).
+        let a_cube = Generalizer::extract_cube(terms, a);
+        let shared_lits: Vec<TermId> = a_cube
             .into_iter()
             .filter(|&lit| {
                 let lit_vars = Self::collect_vars(terms, lit);
-                lit_vars.iter().any(|v| common_vars.contains(v))
+                !lit_vars.is_empty() && lit_vars.iter().all(|v| common.contains(v))
             })
             .collect();
 
-        // Build interpolant from relevant literals
-        let projected = if relevant_lits.is_empty() {
-            terms.mk_true()
-        } else if relevant_lits.len() == 1 {
-            relevant_lits[0]
-        } else {
-            // Further refinement: use proof-based minimization
-            // Check which literals are actually needed for the UNSAT core
-            self.minimize_interpolant(terms, &relevant_lits, &b_cube)
+        let candidate = match shared_lits.len() {
+            0 => terms.mk_true(),
+            1 => shared_lits[0],
+            _ => terms.mk_and(shared_lits.iter().copied()),
         };
 
-        // Create interpolant with common variables
-        let interp = Interpolant::with_vars(projected, common_vars.clone());
+        // Property (2): I ∧ B must be UNSAT. This is the property the projection
+        // does NOT guarantee, so it is validated against the solver. Fail closed
+        // if the solver cannot prove it (UNSAT-or-nothing).
+        if !Self::is_unsat(terms, &[candidate, b]) {
+            return Err(InterpolationError::Unsupported(
+                "no Craig interpolant derivable in the shared-literal fragment".to_string(),
+            ));
+        }
 
-        // Compute strength metric (number of conjuncts)
-        let strength = match terms.get(projected) {
+        // Property (1): A ⇒ I, i.e. A ∧ ¬I UNSAT. Holds by construction, but
+        // re-verify so a surprising simplification can never yield an
+        // interpolant that A does not actually imply.
+        let not_candidate = terms.mk_not(candidate);
+        if !Self::is_unsat(terms, &[a, not_candidate]) {
+            return Err(InterpolationError::Unsupported(
+                "candidate interpolant is not implied by A".to_string(),
+            ));
+        }
+
+        let common_vars: Vec<TermId> = common.into_iter().collect();
+        let strength = match terms.get(candidate) {
             Some(term) => match &term.kind {
                 TermKind::And(args) => args.len() as u32,
                 _ => 1,
@@ -214,42 +223,36 @@ impl Interpolator {
             None => 0,
         };
 
-        Ok(interp.with_strength(strength))
+        Ok(Interpolant::with_vars(candidate, common_vars).with_strength(strength))
     }
 
-    /// Minimize an interpolant using proof-based techniques
-    /// Remove literals that are not essential for the UNSAT core
-    fn minimize_interpolant(
-        &self,
-        terms: &mut TermManager,
-        literals: &[TermId],
-        b_cube: &[TermId],
-    ) -> TermId {
-        // Heuristic minimization: remove literals that don't share variables with B
-        let mut essential = Vec::new();
+    /// Return `true` iff the conjunction of `formulas` is UNSAT according to the
+    /// solver. Anything other than a definite UNSAT (SAT, or the solver
+    /// returning unknown) yields `false`, so interpolant validation fails
+    /// closed rather than trusting an unproven claim.
+    fn is_unsat(terms: &mut TermManager, formulas: &[TermId]) -> bool {
+        use oxiz_core::ast::TermKind;
+        use oxiz_solver::{Solver, SolverResult};
 
-        for &lit in literals {
-            let lit_vars = Self::collect_vars(terms, lit);
-
-            // Check if this literal shares variables with any literal in B
-            let shares_vars = b_cube.iter().any(|&b_lit| {
-                let b_vars = Self::collect_vars(terms, b_lit);
-                lit_vars.iter().any(|v| b_vars.contains(v))
-            });
-
-            if shares_vars || essential.is_empty() {
-                essential.push(lit);
+        // Assert each top-level `And` conjunct separately (mirrors
+        // `SmtSolver::assert`): a single `And` carrying disequalities can be
+        // mis-answered SAT by the backend, which would unsoundly weaken the
+        // validation guard.
+        fn assert_flat(solver: &mut Solver, terms: &mut TermManager, formula: TermId) {
+            if let Some(TermKind::And(args)) = terms.get(formula).map(|d| d.kind.clone()) {
+                for arg in args {
+                    assert_flat(solver, terms, arg);
+                }
+                return;
             }
+            solver.assert(formula, terms);
         }
 
-        // Build conjunction of essential literals
-        if essential.is_empty() {
-            terms.mk_true()
-        } else if essential.len() == 1 {
-            essential[0]
-        } else {
-            terms.mk_and(essential)
+        let mut solver = Solver::new();
+        for &formula in formulas {
+            assert_flat(&mut solver, terms, formula);
         }
+        matches!(solver.check(terms), SolverResult::Unsat)
     }
 
     /// Collect all variables in a formula
@@ -498,6 +501,31 @@ mod tests {
 
     #[test]
     fn test_basic_interpolation() {
+        // A = (x >= 5), B = (x <= 3): A ∧ B is UNSAT over the shared symbol x.
+        // The validated Craig interpolant is A's shared literal (x >= 5), which
+        // is verified to contradict B before being returned.
+        let mut terms = TermManager::new();
+        let mut interpolator = Interpolator::new();
+
+        let x = terms.mk_var("x", terms.sorts.int_sort);
+        let five = terms.mk_int(5);
+        let three = terms.mk_int(3);
+        let a = terms.mk_ge(x, five);
+        let b = terms.mk_le(x, three);
+
+        let result = interpolator.interpolate(&mut terms, a, b);
+        let interp = result.expect("a valid interpolant exists for x>=5 / x<=3");
+        assert_eq!(
+            interp.formula, a,
+            "the shared literal x>=5 is the interpolant"
+        );
+    }
+
+    #[test]
+    fn test_interpolation_fails_closed_without_contradiction() {
+        // Two independent boolean variables: A ∧ B is satisfiable, so there is
+        // no Craig interpolant. The validated interpolator must fail closed
+        // instead of returning an unvalidated projection.
         let mut terms = TermManager::new();
         let mut interpolator = Interpolator::new();
 
@@ -505,27 +533,31 @@ mod tests {
         let b = terms.mk_var("b", terms.sorts.bool_sort);
 
         let result = interpolator.interpolate(&mut terms, a, b);
-        assert!(result.is_ok());
-
-        let interp = result.expect("test operation should succeed");
-        // Conservative interpolation returns A
-        assert_eq!(interp.formula, a);
+        assert!(
+            result.is_err(),
+            "no interpolant exists when A ∧ B is satisfiable; must not fabricate one"
+        );
     }
 
     #[test]
     fn test_sequence_interpolation() {
+        // An UNSAT trace over the shared symbol x: x>=5, x<=3, x>=0. Every
+        // prefix/suffix split is UNSAT, so each position yields a validated
+        // interpolant.
         let mut terms = TermManager::new();
         let mut interpolator = Interpolator::new();
 
-        let a0 = terms.mk_var("a0", terms.sorts.bool_sort);
-        let a1 = terms.mk_var("a1", terms.sorts.bool_sort);
-        let a2 = terms.mk_var("a2", terms.sorts.bool_sort);
+        let x = terms.mk_var("x", terms.sorts.int_sort);
+        let five = terms.mk_int(5);
+        let three = terms.mk_int(3);
+        let zero = terms.mk_int(0);
+        let a0 = terms.mk_ge(x, five);
+        let a1 = terms.mk_le(x, three);
+        let a2 = terms.mk_ge(x, zero);
 
         let trace = vec![a0, a1, a2];
         let result = interpolator.sequence_interpolate(&mut terms, &trace);
-        assert!(result.is_ok());
-
-        let interpolants = result.expect("test operation should succeed");
+        let interpolants = result.expect("each split of the UNSAT trace interpolates");
         assert_eq!(interpolants.len(), 2);
     }
 

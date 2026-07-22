@@ -7,6 +7,7 @@
 //! - Lazy axiom instantiation
 
 use super::regex::{Regex, RegexAutomaton};
+use super::regex_membership::{VarModel, solve_membership};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
@@ -364,8 +365,12 @@ impl StringSolver {
         }
     }
 
-    /// Get or create a variable for a term
-    fn get_or_create_var(&mut self, term: TermId) -> u32 {
+    /// Get or create the string-theory variable that represents `term`.
+    ///
+    /// This is the entry point a solver uses to register a `String`-sorted
+    /// term (e.g. the first operand of `str.in_re`) before attaching
+    /// constraints such as [`Self::add_regex_membership`].
+    pub fn get_or_create_var(&mut self, term: TermId) -> u32 {
         if let Some(&var) = self.term_to_var.get(&term) {
             return var;
         }
@@ -1072,6 +1077,15 @@ impl Theory for StringSolver {
         if matches!(outcome, SolveOutcome::Unresolved) {
             return Ok(TheoryResult::Unknown);
         }
+        // Actively construct a satisfying string value for variables that carry
+        // only regex-membership (and length) constraints: search the product
+        // automaton for the shortest accepted word. A provably empty language
+        // is a real conflict (unsatisfiable / empty intersection); anything the
+        // search cannot decide is left unassigned and falls through to the
+        // honest `Unknown` gate below.
+        if let Some(conflict) = self.construct_regex_models() {
+            return Ok(TheoryResult::Unsat(conflict));
+        }
         for (var, _regex, _positive, _origin) in &self.regex_constraints {
             if !self.assignments.contains_key(var) {
                 return Ok(TheoryResult::Unknown);
@@ -1194,6 +1208,101 @@ impl Theory for StringSolver {
 }
 
 impl StringSolver {
+    /// Variables in a constraint other than regex membership or length (word
+    /// equations, disequalities, prefix/suffix/contains, str<->int). Such a
+    /// variable must not be assigned an arbitrary regex witness, so it is left
+    /// for the honest-`Unknown` path; length is folded into the word search.
+    fn regex_entangled_vars(&self) -> FxHashSet<u32> {
+        let mut set: FxHashSet<u32> = FxHashSet::default();
+        for eq in &self.equations {
+            for atom in eq.lhs.atoms.iter().chain(eq.rhs.atoms.iter()) {
+                if let StringAtom::Var(v) = atom {
+                    set.insert(*v);
+                }
+            }
+        }
+        for (lhs, rhs, _origin) in self
+            .diseqs
+            .iter()
+            .chain(self.prefixes.iter())
+            .chain(self.suffixes.iter())
+            .chain(self.contains.iter())
+        {
+            for atom in lhs.atoms.iter().chain(rhs.atoms.iter()) {
+                if let StringAtom::Var(v) = atom {
+                    set.insert(*v);
+                }
+            }
+        }
+        for (v, _value, _origin) in &self.str_to_int {
+            set.insert(*v);
+        }
+        for (v, _value, _origin) in &self.int_to_str {
+            set.insert(*v);
+        }
+        set
+    }
+
+    /// Combine the length constraints on `var` into `(lower, upper, origins)`.
+    fn length_bounds(&self, var: u32) -> (usize, Option<usize>, Vec<TermId>) {
+        let mut lo: i64 = 0;
+        let mut hi: Option<i64> = None;
+        let mut origins: Vec<TermId> = Vec::new();
+        for l in &self.lengths {
+            if l.var != var {
+                continue;
+            }
+            origins.push(l.origin);
+            if let Some(e) = l.equal {
+                lo = lo.max(e);
+                hi = Some(hi.map_or(e, |h| h.min(e)));
+            }
+            if let Some(low) = l.lower {
+                lo = lo.max(low);
+            }
+            if let Some(up) = l.upper {
+                hi = Some(hi.map_or(up, |h| h.min(up)));
+            }
+        }
+        let lo = lo.max(0) as usize;
+        let hi = hi.map(|h| if h < 0 { 0 } else { h as usize });
+        (lo, hi, origins)
+    }
+
+    /// Build a satisfying string value for every variable constrained *only* by
+    /// regex membership (and length) via a shortest-accepted-word search over
+    /// the intersection of its positive memberships and complemented negatives.
+    /// Returns `Some(conflict)` when a variable's combined language is provably
+    /// empty (unsatisfiable memberships / empty intersection); undecidable
+    /// variables are left unassigned for the honest-`Unknown` gate.
+    fn construct_regex_models(&mut self) -> Option<Vec<TermId>> {
+        let entangled = self.regex_entangled_vars();
+
+        // Distinct, unassigned, non-entangled variables carrying a membership.
+        let mut targets: Vec<u32> = Vec::new();
+        for (v, _regex, _positive, _origin) in &self.regex_constraints {
+            if !self.assignments.contains_key(v) && !entangled.contains(v) && !targets.contains(v) {
+                targets.push(*v);
+            }
+        }
+
+        for v in targets {
+            let memberships: Vec<_> = self
+                .regex_constraints
+                .iter()
+                .filter(|(var, ..)| *var == v)
+                .map(|(_, regex, positive, origin)| (*positive, regex.clone(), *origin))
+                .collect();
+            let (lo, hi, len_origins) = self.length_bounds(v);
+            match solve_membership(&memberships, lo, hi, &len_origins) {
+                VarModel::Assign(word) => self.substitute_all(v, &word),
+                VarModel::Conflict(conflict) => return Some(conflict),
+                VarModel::Undecided => { /* leave unassigned -> honest Unknown */ }
+            }
+        }
+        None
+    }
+
     /// Get all string variable assignments.
     /// Returns (term, string_value) for variables with known assignments.
     pub fn get_assignments(&self) -> Vec<(TermId, String)> {
@@ -1840,23 +1949,6 @@ mod tests {
         assert!(
             matches!(result, TheoryResult::Unknown),
             "an undecided word equation must yield Unknown, not Sat; got {result:?}"
-        );
-    }
-
-    #[test]
-    fn audit_unassigned_regex_membership_is_unknown() {
-        // A regex membership on a variable with no known value is undecided:
-        // must be Unknown, not a silent Sat.
-        let mut solver = StringSolver::new();
-        let term = TermId(0);
-        let var = solver.get_or_create_var(term);
-        let regex = Regex::plus(Regex::char('a'));
-        solver.add_regex_membership(var, regex, true, term);
-
-        let result = solver.check().expect("check must not error");
-        assert!(
-            matches!(result, TheoryResult::Unknown),
-            "regex membership on an unassigned variable must yield Unknown; got {result:?}"
         );
     }
 

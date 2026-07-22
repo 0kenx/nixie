@@ -1,12 +1,53 @@
 //! Model-Based Interpolation (MBI)
 //!
-//! Provides model-based interpolation for verification and abstraction.
-//! Uses models to guide interpolant construction.
+//! Provides Craig interpolation for the propositional (Boolean) fragment.
+//!
+//! Given an unsatisfiable conjunction `A ∧ B`, an interpolant `I` satisfies
+//!
+//! 1. `A ⇒ I`,
+//! 2. `I ∧ B` is unsatisfiable, and
+//! 3. every variable of `I` is shared between `A` and `B`.
+//!
+//! ## What is (and is not) supported
+//!
+//! Only the **purely propositional** fragment is handled soundly: formulas
+//! built from `true`/`false`, Boolean variables, and the connectives
+//! `not`/`and`/`or`/`implies`/`xor`/`ite`/`=` over Boolean subterms. For that
+//! fragment the interpolant is computed exactly as
+//!
+//! ```text
+//! I = ∃(vars(A) \ shared). A
+//! ```
+//!
+//! which is a genuine Craig interpolant: `A ⇒ I` holds by existential
+//! weakening, `vars(I) ⊆ shared` by construction, and `I ∧ B` is
+//! unsatisfiable whenever `A ∧ B` is (the `A`-local and `B`-local variables
+//! are disjoint, so any shared model of `I ∧ B` lifts to a model of `A ∧ B`).
+//! The existential over the finite set of Boolean `A`-local variables is
+//! computed by exact expansion `∃v. φ ≡ φ[v:=⊤] ∨ φ[v:=⊥]`.
+//!
+//! Every returned interpolant is additionally **validated** against the
+//! interpolant conditions by exhaustive evaluation over the (finite) variable
+//! set before it is handed back — so a fabricated or otherwise incorrect
+//! result can never escape this module. In particular, if `A ∧ B` is actually
+//! satisfiable (no interpolant exists) validation fails and `None` is
+//! returned. Any formula outside the supported fragment, or one with more than
+//! [`MAX_VALIDATION_VARS`] variables (where exhaustive validation is
+//! infeasible), yields an honest `None`.
+//!
+//! Reference: Z3's interpolation (`src/muz/spacer` / `theory_interpolant.cpp`);
+//! McMillan, "Interpolation and SAT-based Model Checking" (2003).
 
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use std::collections::{HashMap, HashSet};
+
+/// Maximum number of distinct variables for which an interpolant candidate is
+/// exhaustively validated (`2^MAX_VALIDATION_VARS` assignments). Beyond this
+/// bound validation is infeasible, so `interpolate` returns `None` rather than
+/// an unvalidated result.
+pub const MAX_VALIDATION_VARS: usize = 20;
 
 /// Configuration for MBI
 #[derive(Debug, Clone)]
@@ -108,12 +149,19 @@ impl MbiSolver {
         }
     }
 
-    /// Compute an interpolant for A ∧ B (where A ∧ B is unsatisfiable)
+    /// Compute a validated Craig interpolant for `A ∧ B` (which must be
+    /// unsatisfiable).
     ///
-    /// Returns I such that:
-    /// 1. A → I
-    /// 2. I ∧ B is unsatisfiable
-    /// 3. I only contains common variables
+    /// Returns `Some(I)` with
+    ///
+    /// 1. `A ⇒ I`,
+    /// 2. `I ∧ B` unsatisfiable, and
+    /// 3. `vars(I) ⊆ vars(A) ∩ vars(B)`,
+    ///
+    /// or `None` when the inputs are outside the supported propositional
+    /// fragment, are too large to validate, or admit no interpolant (e.g.
+    /// `A ∧ B` is satisfiable). The returned interpolant is always validated;
+    /// this method never returns an unchecked or fabricated formula.
     pub fn interpolate(
         &mut self,
         formula_a: TermId,
@@ -122,47 +170,208 @@ impl MbiSolver {
     ) -> Option<MbiInterpolant> {
         self.stats.attempts += 1;
 
-        // Collect variables
+        // Only the purely propositional fragment is handled soundly.
+        if !self.is_boolean_formula(formula_a, manager)
+            || !self.is_boolean_formula(formula_b, manager)
+        {
+            return None;
+        }
+
+        // Collect variables and the shared interface.
         let vars_a = self.collect_variables(formula_a, manager);
         let vars_b = self.collect_variables(formula_b, manager);
         self.common_vars = vars_a.intersection(&vars_b).copied().collect();
 
-        // Start with a trivial interpolant candidate
-        let mut interpolant = manager.mk_true();
-        let mut iterations = 0;
-
-        // Model-guided refinement loop
-        while iterations < self.config.max_iterations as u32 {
-            iterations += 1;
-            self.stats.total_iterations += 1;
-
-            // Check if current interpolant satisfies conditions
-            // In a full implementation, this would use an SMT solver
-
-            // Simulate: assume we found a good interpolant after some iterations
-            if iterations >= 3 {
-                let mut final_vars = HashSet::new();
-                final_vars.extend(self.common_vars.iter().copied());
-
-                let result = MbiInterpolant {
-                    formula: interpolant,
-                    variables: final_vars,
-                    iterations,
-                };
-
-                self.stats.successes += 1;
-                return Some(result);
-            }
-
-            // Refine interpolant based on model
-            interpolant = self.refine_interpolant(interpolant, formula_a, formula_b, manager);
-            self.stats.models_examined += 1;
+        let all_vars: Vec<TermId> = vars_a.union(&vars_b).copied().collect();
+        if all_vars.len() > MAX_VALIDATION_VARS {
+            // Cannot validate exhaustively; refuse rather than guess.
+            return None;
         }
 
-        None
+        // A-local variables: present in A but not shared with B.
+        let a_local: Vec<TermId> = vars_a.difference(&self.common_vars).copied().collect();
+
+        // I = ∃(a_local). A, computed by exact Boolean expansion.
+        let interpolant = self.project_existential(formula_a, &a_local, manager);
+        self.stats.total_iterations += a_local.len() as u64;
+
+        // Validate the three interpolant conditions exhaustively. This also
+        // rejects the case where A ∧ B is satisfiable (no interpolant exists).
+        if !self.validate(formula_a, formula_b, interpolant, &all_vars, manager) {
+            return None;
+        }
+
+        let variables = self.collect_variables(interpolant, manager);
+        self.stats.successes += 1;
+        self.stats.models_examined += 1u64 << all_vars.len().min(MAX_VALIDATION_VARS);
+
+        Some(MbiInterpolant {
+            formula: interpolant,
+            variables,
+            iterations: a_local.len() as u32,
+        })
     }
 
-    /// Collect variables from a formula
+    /// Eliminate a set of Boolean variables existentially by exact expansion:
+    /// `∃v. φ ≡ φ[v:=⊤] ∨ φ[v:=⊥]`.
+    fn project_existential(
+        &self,
+        formula: TermId,
+        vars: &[TermId],
+        manager: &mut TermManager,
+    ) -> TermId {
+        let true_id = manager.mk_true();
+        let false_id = manager.mk_false();
+        let mut current = formula;
+        for &v in vars {
+            let mut map_true = FxHashMap::default();
+            map_true.insert(v, true_id);
+            let mut map_false = FxHashMap::default();
+            map_false.insert(v, false_id);
+            let with_true = manager.substitute(current, &map_true);
+            let with_false = manager.substitute(current, &map_false);
+            current = manager.mk_or([with_true, with_false]);
+        }
+        current
+    }
+
+    /// Exhaustively check the interpolant conditions for the candidate `i`
+    /// over all assignments to `all_vars`.
+    fn validate(
+        &self,
+        formula_a: TermId,
+        formula_b: TermId,
+        interpolant: TermId,
+        all_vars: &[TermId],
+        manager: &TermManager,
+    ) -> bool {
+        // Condition 3: vars(I) ⊆ shared.
+        let ivars = self.collect_variables(interpolant, manager);
+        if !ivars.is_subset(&self.common_vars) {
+            return false;
+        }
+
+        let n = all_vars.len();
+        if n > MAX_VALIDATION_VARS {
+            return false;
+        }
+
+        for mask in 0u64..(1u64 << n) {
+            let mut assign: HashMap<TermId, bool> = HashMap::with_capacity(n);
+            for (bit, &v) in all_vars.iter().enumerate() {
+                assign.insert(v, (mask >> bit) & 1 == 1);
+            }
+
+            let a_val = match self.eval_bool(formula_a, &assign, manager) {
+                Some(b) => b,
+                None => return false,
+            };
+            let i_val = match self.eval_bool(interpolant, &assign, manager) {
+                Some(b) => b,
+                None => return false,
+            };
+            let b_val = match self.eval_bool(formula_b, &assign, manager) {
+                Some(b) => b,
+                None => return false,
+            };
+
+            // Condition 1: A ⇒ I.
+            if a_val && !i_val {
+                return false;
+            }
+            // Condition 2: I ∧ B unsatisfiable.
+            if i_val && b_val {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Evaluate a propositional formula under a total Boolean assignment.
+    ///
+    /// Returns `None` if the formula contains a node outside the supported
+    /// propositional fragment or a variable missing from `assign`.
+    fn eval_bool(
+        &self,
+        term: TermId,
+        assign: &HashMap<TermId, bool>,
+        manager: &TermManager,
+    ) -> Option<bool> {
+        let t = manager.get(term)?;
+        match &t.kind {
+            TermKind::True => Some(true),
+            TermKind::False => Some(false),
+            TermKind::Var(_) => assign.get(&term).copied(),
+            TermKind::Not(a) => Some(!self.eval_bool(*a, assign, manager)?),
+            TermKind::And(args) => {
+                let mut acc = true;
+                for &a in args.iter() {
+                    acc &= self.eval_bool(a, assign, manager)?;
+                }
+                Some(acc)
+            }
+            TermKind::Or(args) => {
+                let mut acc = false;
+                for &a in args.iter() {
+                    acc |= self.eval_bool(a, assign, manager)?;
+                }
+                Some(acc)
+            }
+            TermKind::Implies(a, b) => {
+                let a = self.eval_bool(*a, assign, manager)?;
+                let b = self.eval_bool(*b, assign, manager)?;
+                Some(!a || b)
+            }
+            TermKind::Xor(a, b) => {
+                let a = self.eval_bool(*a, assign, manager)?;
+                let b = self.eval_bool(*b, assign, manager)?;
+                Some(a ^ b)
+            }
+            TermKind::Eq(a, b) => {
+                let a = self.eval_bool(*a, assign, manager)?;
+                let b = self.eval_bool(*b, assign, manager)?;
+                Some(a == b)
+            }
+            TermKind::Ite(c, then_b, else_b) => {
+                if self.eval_bool(*c, assign, manager)? {
+                    self.eval_bool(*then_b, assign, manager)
+                } else {
+                    self.eval_bool(*else_b, assign, manager)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Check whether `term` lies entirely within the supported propositional
+    /// fragment (Boolean variables and Boolean connectives).
+    fn is_boolean_formula(&self, term: TermId, manager: &TermManager) -> bool {
+        let t = match manager.get(term) {
+            Some(t) => t,
+            None => return false,
+        };
+        let bool_sort = manager.sorts.bool_sort;
+        match &t.kind {
+            TermKind::True | TermKind::False => true,
+            TermKind::Var(_) => t.sort == bool_sort,
+            TermKind::Not(a) => self.is_boolean_formula(*a, manager),
+            TermKind::And(args) | TermKind::Or(args) => {
+                args.iter().all(|&a| self.is_boolean_formula(a, manager))
+            }
+            TermKind::Implies(a, b) | TermKind::Xor(a, b) | TermKind::Eq(a, b) => {
+                self.is_boolean_formula(*a, manager) && self.is_boolean_formula(*b, manager)
+            }
+            TermKind::Ite(c, then_b, else_b) => {
+                self.is_boolean_formula(*c, manager)
+                    && self.is_boolean_formula(*then_b, manager)
+                    && self.is_boolean_formula(*else_b, manager)
+            }
+            _ => false,
+        }
+    }
+
+    /// Collect the variables occurring in a formula.
     fn collect_variables(&self, formula: TermId, manager: &TermManager) -> HashSet<TermId> {
         let mut vars = HashSet::new();
         let mut worklist = vec![formula];
@@ -220,29 +429,6 @@ impl MbiSolver {
         vars
     }
 
-    /// Refine the interpolant based on a model
-    fn refine_interpolant(
-        &self,
-        current: TermId,
-        _formula_a: TermId,
-        _formula_b: TermId,
-        manager: &mut TermManager,
-    ) -> TermId {
-        // In a full implementation, this would:
-        // 1. Find a model of A ∧ ¬I
-        // 2. Project the model onto common variables
-        // 3. Add a constraint to block this projection in I
-
-        // Simplified: just strengthen the interpolant
-        // by conjoining with a simple constraint from common vars
-        if let Some(&var) = self.common_vars.iter().next() {
-            let constraint = var; // Just use the variable itself
-            manager.mk_and([current, constraint])
-        } else {
-            current
-        }
-    }
-
     /// Set a model for interpolation
     pub fn set_model(&mut self, model: HashMap<TermId, bool>) {
         self.current_model = model;
@@ -251,6 +437,11 @@ impl MbiSolver {
     /// Get the common variables
     pub fn common_variables(&self) -> &HashSet<TermId> {
         &self.common_vars
+    }
+
+    /// Get the solver configuration.
+    pub fn config(&self) -> &MbiConfig {
+        &self.config
     }
 
     /// Get statistics
@@ -264,13 +455,20 @@ impl MbiSolver {
         self.current_model.clear();
     }
 
-    /// Compute a sequence interpolant for a formula chain
+    /// Compute a validated sequence interpolant for a formula chain.
     ///
-    /// Given formulas A_1, A_2, ..., A_n where A_1 ∧ ... ∧ A_n is unsatisfiable,
-    /// returns interpolants I_1, I_2, ..., I_{n-1} such that:
-    /// - A_1 → I_1
-    /// - I_i ∧ A_{i+1} → I_{i+1}
-    /// - I_{n-1} ∧ A_n is unsatisfiable
+    /// Given formulas `A_1, ..., A_n` whose conjunction is unsatisfiable,
+    /// returns interpolants `I_1, ..., I_{n-1}` satisfying
+    ///
+    /// - `A_1 ⇒ I_1`,
+    /// - `I_i ∧ A_{i+1} ⇒ I_{i+1}` for `1 ≤ i < n-1`, and
+    /// - `I_{n-1} ∧ A_n` is unsatisfiable.
+    ///
+    /// Each `I_i` is the validated pairwise interpolant of the prefix
+    /// `A_1 ∧ ... ∧ A_i` against the suffix `A_{i+1} ∧ ... ∧ A_n`; the
+    /// inductive linkage condition is then verified exhaustively. Returns
+    /// `None` if any step is outside the supported propositional fragment, is
+    /// too large to validate, or fails the sequence conditions.
     pub fn sequence_interpolate(
         &mut self,
         formulas: &[TermId],
@@ -283,7 +481,6 @@ impl MbiSolver {
         let mut interpolants = Vec::new();
 
         for i in 0..formulas.len() - 1 {
-            // Compute interpolant for prefix vs suffix
             let prefix = self.conjoin(&formulas[..=i], manager);
             let suffix = self.conjoin(&formulas[i + 1..], manager);
 
@@ -293,7 +490,64 @@ impl MbiSolver {
             }
         }
 
+        // Verify the inductive linkage I_i ∧ A_{i+1} ⇒ I_{i+1} exhaustively.
+        if !self.validate_sequence(formulas, &interpolants, manager) {
+            return None;
+        }
+
         Some(interpolants)
+    }
+
+    /// Verify the inductive sequence-interpolant conditions over the union of
+    /// all variables (exhaustively). Returns `false` if the union exceeds
+    /// [`MAX_VALIDATION_VARS`] or any condition is violated.
+    fn validate_sequence(
+        &self,
+        formulas: &[TermId],
+        interpolants: &[MbiInterpolant],
+        manager: &TermManager,
+    ) -> bool {
+        if interpolants.len() + 1 != formulas.len() {
+            return false;
+        }
+
+        // Union of all variables across the chain and interpolants.
+        let mut all: HashSet<TermId> = HashSet::new();
+        for &f in formulas {
+            all.extend(self.collect_variables(f, manager));
+        }
+        for interp in interpolants {
+            all.extend(interp.variables.iter().copied());
+        }
+        let all_vars: Vec<TermId> = all.into_iter().collect();
+        let n = all_vars.len();
+        if n > MAX_VALIDATION_VARS {
+            return false;
+        }
+
+        for mask in 0u64..(1u64 << n) {
+            let mut assign: HashMap<TermId, bool> = HashMap::with_capacity(n);
+            for (bit, &v) in all_vars.iter().enumerate() {
+                assign.insert(v, (mask >> bit) & 1 == 1);
+            }
+
+            // I_i ∧ A_{i+1} ⇒ I_{i+1} for interior links.
+            for i in 0..interpolants.len().saturating_sub(1) {
+                let ii = self.eval_bool(interpolants[i].formula, &assign, manager);
+                let a_next = self.eval_bool(formulas[i + 1], &assign, manager);
+                let i_next = self.eval_bool(interpolants[i + 1].formula, &assign, manager);
+                match (ii, a_next, i_next) {
+                    (Some(ii), Some(a_next), Some(i_next)) => {
+                        if ii && a_next && !i_next {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+
+        true
     }
 
     /// Conjoin a sequence of formulas
@@ -307,20 +561,20 @@ impl MbiSolver {
         manager.mk_and(formulas.iter().copied())
     }
 
-    /// Compute a tree interpolant
+    /// Tree interpolation is not supported.
+    ///
+    /// A sound tree interpolant requires the per-node interpolants to satisfy
+    /// the tree linkage conditions; this module only implements binary and
+    /// (validated) sequence interpolation. Rather than return a fabricated
+    /// (e.g. trivially `true`) interpolant, this method honestly returns
+    /// `None`.
     pub fn tree_interpolate(
         &mut self,
         _root: TermId,
         _children: &[TermId],
-        manager: &mut TermManager,
+        _manager: &mut TermManager,
     ) -> Option<MbiInterpolant> {
-        // Tree interpolation - simplified version
-        // In full implementation, would recursively compute interpolants
-        // for subtrees and combine them
-
-        // For now, just return a trivial interpolant
-        let result = MbiInterpolant::new(manager.mk_true(), HashSet::new());
-        Some(result)
+        None
     }
 }
 
@@ -394,5 +648,126 @@ mod tests {
         model.insert(TermId::from(1u32), true);
         solver.set_model(model);
         assert!(!solver.current_model.is_empty());
+    }
+
+    /// Brute-force check that `formula` is unsatisfiable under all Boolean
+    /// assignments to `vars`.
+    fn is_unsat(
+        solver: &MbiSolver,
+        formula: TermId,
+        vars: &[TermId],
+        manager: &TermManager,
+    ) -> bool {
+        for mask in 0u64..(1u64 << vars.len()) {
+            let mut assign = HashMap::new();
+            for (bit, &v) in vars.iter().enumerate() {
+                assign.insert(v, (mask >> bit) & 1 == 1);
+            }
+            if solver.eval_bool(formula, &assign, manager) == Some(true) {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn test_interpolate_basic_shared() {
+        // A: x ∧ y   B: ¬x   (shared: x). A ∧ B unsat.
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let y = m.mk_var("y", bool_sort);
+        let a = m.mk_and([x, y]);
+        let not_x = m.mk_not(x);
+        let b = not_x;
+
+        let mut solver = MbiSolver::new();
+        let interp = solver
+            .interpolate(a, b, &mut m)
+            .expect("interpolant should exist");
+
+        // I must only mention shared variable x.
+        assert!(interp.variables().iter().all(|&v| v == x));
+
+        // Verify A ⇒ I and I ∧ B unsat by brute force.
+        let all = [x, y];
+        let not_i = m.mk_not(interp.formula());
+        let a_and_not_i = m.mk_and([a, not_i]);
+        assert!(is_unsat(&solver, a_and_not_i, &all, &m), "A ⇒ I must hold");
+        let i_and_b = m.mk_and([interp.formula(), b]);
+        assert!(is_unsat(&solver, i_and_b, &all, &m), "I ∧ B must be unsat");
+    }
+
+    #[test]
+    fn test_interpolate_satisfiable_returns_none() {
+        // A: x   B: y   (A ∧ B satisfiable) -> no interpolant.
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let y = m.mk_var("y", bool_sort);
+
+        let mut solver = MbiSolver::new();
+        assert!(solver.interpolate(x, y, &mut m).is_none());
+    }
+
+    #[test]
+    fn test_interpolate_non_boolean_returns_none() {
+        // Arithmetic atom is outside the supported fragment.
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let zero = m.mk_int(0);
+        let a = m.mk_gt(x, zero);
+        let b = m.mk_le(x, zero);
+
+        let mut solver = MbiSolver::new();
+        assert!(solver.interpolate(a, b, &mut m).is_none());
+    }
+
+    #[test]
+    fn test_interpolate_a_local_eliminated() {
+        // A: (x ∧ z)   B: (¬x)   z is A-local, must be eliminated: I ≡ x.
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let z = m.mk_var("z", bool_sort);
+        let a = m.mk_and([x, z]);
+        let b = m.mk_not(x);
+
+        let mut solver = MbiSolver::new();
+        let interp = solver
+            .interpolate(a, b, &mut m)
+            .expect("interpolant should exist");
+        // No A-local variable z may appear.
+        assert!(!interp.variables().contains(&z));
+        assert!(interp.variables().iter().all(|&v| v == x));
+    }
+
+    #[test]
+    fn test_sequence_interpolate() {
+        // A1: x, A2: (¬x ∨ y), A3: ¬y. Conjunction unsat.
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let y = m.mk_var("y", bool_sort);
+        let a1 = x;
+        let nx = m.mk_not(x);
+        let a2 = m.mk_or([nx, y]);
+        let a3 = m.mk_not(y);
+
+        let mut solver = MbiSolver::new();
+        let seq = solver
+            .sequence_interpolate(&[a1, a2, a3], &mut m)
+            .expect("sequence interpolants should exist");
+        assert_eq!(seq.len(), 2);
+    }
+
+    #[test]
+    fn test_tree_interpolate_is_none() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let mut solver = MbiSolver::new();
+        assert!(solver.tree_interpolate(x, &[x], &mut m).is_none());
     }
 }

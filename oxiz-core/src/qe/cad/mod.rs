@@ -18,12 +18,16 @@
 use crate::prelude::*;
 
 pub mod base;
+pub mod cad_solver;
 pub mod cell_decomposition;
 pub mod lifting;
 pub mod projection;
 pub mod sample;
 
 pub use base::{BaseCase, BaseConfig, BaseStats};
+pub use cad_solver::{
+    CadError, CadPolynomial, CadSolver, CadStats, PolynomialConstraint, Relation,
+};
 pub use cell_decomposition::{
     CellDecomposition, CellId, DecomposedCell, DecompositionConfig, DecompositionError,
     DecompositionStats, Level,

@@ -894,57 +894,45 @@ impl CadLifter {
             }
         }
 
-        // Find all roots
-        let mut all_roots: Vec<BigRational> = Vec::new();
+        // Isolate the real roots exactly (rational vs. algebraic), sorted with
+        // disjoint intervals.
+        let roots = crate::cad_algebraic::isolate_root_samples(&univariate_polys, var);
 
-        for poly in &univariate_polys {
-            let sturm = SturmSequence::new(poly, var);
-            let intervals = sturm.isolate_roots();
-
-            for (lo, hi) in intervals {
-                if lo == hi {
-                    all_roots.push(lo);
-                } else {
-                    // Use interval midpoint as approximation
-                    let mid = (&lo + &hi) / BigRational::from_integer(2.into());
-                    all_roots.push(mid);
-                }
-            }
-        }
-
-        // Sort and deduplicate roots
-        all_roots.sort();
-        all_roots.dedup();
-
-        // Create cell points: sample points between roots and the roots themselves
+        // Create cell points: open samples strictly between roots and the exact
+        // root points themselves.
         let mut points = Vec::new();
 
-        if all_roots.is_empty() {
+        if roots.is_empty() {
             // No roots - just one cell, sample at 0
-            points.push(CadPoint::rational(BigRational::zero()));
+            points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                None, None,
+            )));
         } else {
             // Before first root
-            let before = &all_roots[0] - BigRational::one();
-            points.push(CadPoint::rational(before));
+            points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                None,
+                Some(&roots[0]),
+            )));
 
-            for i in 0..all_roots.len() {
-                // The root itself
-                points.push(CadPoint::rational(all_roots[i].clone()));
+            for i in 0..roots.len() {
+                // The exact root itself
+                points.push(roots[i].to_point());
 
                 // Between this root and next
-                if i + 1 < all_roots.len() {
-                    let mid =
-                        (&all_roots[i] + &all_roots[i + 1]) / BigRational::from_integer(2.into());
-                    points.push(CadPoint::rational(mid));
+                if i + 1 < roots.len() {
+                    points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                        Some(&roots[i]),
+                        Some(&roots[i + 1]),
+                    )));
                 }
             }
 
             // After last root
-            let after = all_roots
-                .last()
-                .expect("collection validated to be non-empty")
-                + BigRational::one();
-            points.push(CadPoint::rational(after));
+            let last = roots.last().expect("collection validated to be non-empty");
+            points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                Some(last),
+                None,
+            )));
         }
 
         points
@@ -1097,33 +1085,16 @@ impl CadDecomposer {
             &[]
         };
 
-        // Find all roots
-        let mut all_roots: Vec<BigRational> = Vec::new();
-        for poly in polys {
-            if poly.degree(var) > 0 {
-                let sturm = SturmSequence::new(poly, var);
-                let intervals = sturm.isolate_roots();
+        // Isolate the real roots as exact algebraic samples (rational roots stay
+        // rational; irrational roots keep their defining polynomial + isolating
+        // interval), sorted with pairwise-disjoint intervals.
+        let roots = crate::cad_algebraic::isolate_root_samples(polys, var);
 
-                for (lo, hi) in intervals {
-                    // Use midpoint as root approximation
-                    let root = if lo == hi {
-                        lo
-                    } else {
-                        (&lo + &hi) / BigRational::from_integer(2.into())
-                    };
-                    all_roots.push(root);
-                }
-            }
-        }
-
-        // Sort and deduplicate roots
-        all_roots.sort();
-        all_roots.dedup();
-
-        // Create cells: sample points between roots + roots themselves
+        // Create cells: open cells sampled strictly between roots, plus the
+        // exact root points themselves.
         let mut cells = Vec::new();
 
-        if all_roots.is_empty() {
+        if roots.is_empty() {
             // No roots - single cell covering all of R
             let sample = self.select_sample_point(None, None, var);
             cells.push(CadCell {
@@ -1137,8 +1108,9 @@ impl CadDecomposer {
                 return Err(CadError::TooManyCells);
             }
         } else {
-            // Cell before first root
-            let sample = self.select_sample_point(None, Some(&all_roots[0]), var);
+            // Cell before first root: sample below the first root's isolating
+            // interval lower bound (hence below the true root).
+            let sample = self.select_sample_point(None, Some(&roots[0].lo), var);
             cells.push(CadCell {
                 var_order: vec![var],
                 sample: vec![CadPoint::rational(sample)],
@@ -1150,11 +1122,11 @@ impl CadDecomposer {
                 return Err(CadError::TooManyCells);
             }
 
-            for i in 0..all_roots.len() {
-                // Cell at the root
+            for i in 0..roots.len() {
+                // Cell at the (exact) root
                 cells.push(CadCell {
                     var_order: vec![var],
-                    sample: vec![CadPoint::rational(all_roots[i].clone())],
+                    sample: vec![roots[i].to_point()],
                     signs: Vec::new(),
                 });
                 self.num_cells += 1;
@@ -1163,10 +1135,11 @@ impl CadDecomposer {
                     return Err(CadError::TooManyCells);
                 }
 
-                // Cell between this root and next (if exists)
-                if i + 1 < all_roots.len() {
+                // Cell between this root and next: sampled strictly inside the
+                // gap between the two roots' isolating intervals.
+                if i + 1 < roots.len() {
                     let sample =
-                        self.select_sample_point(Some(&all_roots[i]), Some(&all_roots[i + 1]), var);
+                        self.select_sample_point(Some(&roots[i].hi), Some(&roots[i + 1].lo), var);
                     cells.push(CadCell {
                         var_order: vec![var],
                         sample: vec![CadPoint::rational(sample)],
@@ -1180,11 +1153,9 @@ impl CadDecomposer {
                 }
             }
 
-            // Cell after last root
-            let last = all_roots
-                .last()
-                .expect("collection validated to be non-empty");
-            let sample = self.select_sample_point(Some(last), None, var);
+            // Cell after last root: sample above the last root's interval.
+            let last = roots.last().expect("collection validated to be non-empty");
+            let sample = self.select_sample_point(Some(&last.hi), None, var);
             cells.push(CadCell {
                 var_order: vec![var],
                 sample: vec![CadPoint::rational(sample)],
@@ -1232,23 +1203,9 @@ impl CadDecomposer {
             }
         }
 
-        // Find roots in this cell
-        let mut cell_roots = Vec::new();
-        for poly in &univariate_polys {
-            let sturm = SturmSequence::new(poly, var);
-            let intervals = sturm.isolate_roots();
-            for (lo, hi) in intervals {
-                let root = if lo == hi {
-                    lo
-                } else {
-                    (&lo + &hi) / BigRational::from_integer(2.into())
-                };
-                cell_roots.push(root);
-            }
-        }
-
-        cell_roots.sort();
-        cell_roots.dedup();
+        // Isolate the real roots in this cell exactly (rational vs. algebraic),
+        // sorted with disjoint intervals.
+        let cell_roots = crate::cad_algebraic::isolate_root_samples(&univariate_polys, var);
 
         // Create lifted cells
         if cell_roots.is_empty() {
@@ -1267,7 +1224,7 @@ impl CadDecomposer {
             });
         } else {
             // Before first root
-            let sample = self.select_sample_point(None, Some(&cell_roots[0]), var);
+            let sample = self.select_sample_point(None, Some(&cell_roots[0].lo), var);
             let mut new_sample = cell.sample.clone();
             new_sample.push(CadPoint::rational(sample));
             let mut new_var_order = cell.var_order.clone();
@@ -1279,9 +1236,9 @@ impl CadDecomposer {
             });
 
             for i in 0..cell_roots.len() {
-                // At root
+                // At the exact root
                 let mut new_sample = cell.sample.clone();
-                new_sample.push(CadPoint::rational(cell_roots[i].clone()));
+                new_sample.push(cell_roots[i].to_point());
                 let mut new_var_order = cell.var_order.clone();
                 new_var_order.push(var);
                 result.push(CadCell {
@@ -1290,11 +1247,12 @@ impl CadDecomposer {
                     signs: Vec::new(),
                 });
 
-                // Between roots
+                // Between roots: strictly inside the gap between the two roots'
+                // isolating intervals.
                 if i + 1 < cell_roots.len() {
                     let sample = self.select_sample_point(
-                        Some(&cell_roots[i]),
-                        Some(&cell_roots[i + 1]),
+                        Some(&cell_roots[i].hi),
+                        Some(&cell_roots[i + 1].lo),
                         var,
                     );
                     let mut new_sample = cell.sample.clone();
@@ -1310,15 +1268,10 @@ impl CadDecomposer {
             }
 
             // After last root
-            let sample = self.select_sample_point(
-                Some(
-                    cell_roots
-                        .last()
-                        .expect("collection validated to be non-empty"),
-                ),
-                None,
-                var,
-            );
+            let last = cell_roots
+                .last()
+                .expect("collection validated to be non-empty");
+            let sample = self.select_sample_point(Some(&last.hi), None, var);
             let mut new_sample = cell.sample.clone();
             new_sample.push(CadPoint::rational(sample));
             let mut new_var_order = cell.var_order.clone();

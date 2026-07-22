@@ -483,6 +483,117 @@ impl TermManager {
         self.intern(TermKind::StrInRe(s, re), bool_sort)
     }
 
+    // ==================== Regular-expression (RegLan) terms ====================
+    //
+    // The SMT-LIB Strings theory `RegLan` sort has no dedicated `SortKind`
+    // variant (that enum is matched exhaustively across sibling crates, so it
+    // cannot be extended here). Instead `RegLan` is modelled as a reserved,
+    // interned built-in sort (`Uninterpreted("RegLan")`) obtained through the
+    // regular sort-creation API, and each regex operator is represented as an
+    // `Apply` node whose function symbol is the canonical SMT-LIB operator name
+    // (`re.++`, `re.union`, ...). The reserved name never collides with a
+    // user-declared sort because the parser rejects `RegLan` as a declarable
+    // sort name. The strings theory (`oxiz-theories`) recognises these nodes by
+    // their function symbol and compiles them into a Brzozowski-derivative
+    // regex for membership solving.
+
+    /// Get (interning on first use) the reserved built-in `RegLan` sort used
+    /// as the sort of every regular-expression term.
+    pub fn reglan_sort(&mut self) -> SortId {
+        let spur = self.intern_str("RegLan");
+        self.sorts
+            .intern(crate::sort::SortKind::Uninterpreted(spur))
+    }
+
+    /// Build a regular-expression operator node (`Apply` with the canonical
+    /// SMT-LIB operator name and `RegLan` sort).
+    fn mk_regex_op(&mut self, name: &str, args: impl IntoIterator<Item = TermId>) -> TermId {
+        let sort = self.reglan_sort();
+        self.mk_apply(name, args, sort)
+    }
+
+    /// `re.none` — the empty regular language.
+    pub fn mk_re_none(&mut self) -> TermId {
+        self.mk_regex_op("re.none", core::iter::empty())
+    }
+
+    /// `re.all` — the language of all strings.
+    pub fn mk_re_all(&mut self) -> TermId {
+        self.mk_regex_op("re.all", core::iter::empty())
+    }
+
+    /// `re.allchar` — the language of all single-character strings.
+    pub fn mk_re_all_char(&mut self) -> TermId {
+        self.mk_regex_op("re.allchar", core::iter::empty())
+    }
+
+    /// `str.to_re` — singleton language containing exactly one string.
+    pub fn mk_str_to_re(&mut self, s: TermId) -> TermId {
+        self.mk_regex_op("str.to_re", [s])
+    }
+
+    /// `re.++` — regular-language concatenation.
+    pub fn mk_re_concat(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
+        self.mk_regex_op("re.++", args)
+    }
+
+    /// `re.union` — regular-language union.
+    pub fn mk_re_union(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
+        self.mk_regex_op("re.union", args)
+    }
+
+    /// `re.inter` — regular-language intersection.
+    pub fn mk_re_inter(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
+        self.mk_regex_op("re.inter", args)
+    }
+
+    /// `re.*` — Kleene star.
+    pub fn mk_re_star(&mut self, re: TermId) -> TermId {
+        self.mk_regex_op("re.*", [re])
+    }
+
+    /// `re.+` — Kleene plus (one or more).
+    pub fn mk_re_plus(&mut self, re: TermId) -> TermId {
+        self.mk_regex_op("re.+", [re])
+    }
+
+    /// `re.opt` — optional (zero or one).
+    pub fn mk_re_opt(&mut self, re: TermId) -> TermId {
+        self.mk_regex_op("re.opt", [re])
+    }
+
+    /// `re.comp` — complement.
+    pub fn mk_re_comp(&mut self, re: TermId) -> TermId {
+        self.mk_regex_op("re.comp", [re])
+    }
+
+    /// `re.diff` — difference of two regular languages.
+    pub fn mk_re_diff(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        self.mk_regex_op("re.diff", [lhs, rhs])
+    }
+
+    /// `re.range` — the language of single-character strings between two
+    /// one-character string literals (`lo` and `hi`, passed through as the
+    /// operator's operands).
+    pub fn mk_re_range(&mut self, lo: TermId, hi: TermId) -> TermId {
+        self.mk_regex_op("re.range", [lo, hi])
+    }
+
+    /// `(_ re.^ n) re` — the regex repeated exactly `n` times. The repetition
+    /// count is encoded as a leading `Int` operand.
+    pub fn mk_re_power(&mut self, n: u32, re: TermId) -> TermId {
+        let count = self.mk_int(n);
+        self.mk_regex_op("re.^", [count, re])
+    }
+
+    /// `(_ re.loop lo hi) re` — the regex repeated between `lo` and `hi` times.
+    /// The bounds are encoded as two leading `Int` operands.
+    pub fn mk_re_loop(&mut self, lo: u32, hi: u32, re: TermId) -> TermId {
+        let lo_t = self.mk_int(lo);
+        let hi_t = self.mk_int(hi);
+        self.mk_regex_op("re.loop", [lo_t, hi_t, re])
+    }
+
     // Floating-point operations
 
     /// Create a floating-point literal from components
@@ -937,20 +1048,126 @@ impl TermManager {
 
     // BitVector operations
 
-    /// Create a bit vector concatenation
+    /// Create a bit vector concatenation.
+    ///
+    /// Both operands must have a bit-vector sort — the result width is
+    /// exactly their sum, per SMT-LIB `FixedSizeBitVectors` semantics.
+    /// Callers (in particular the SMT-LIB parser, which only ever applies
+    /// `concat` to already sort-checked bit-vector terms) must guarantee
+    /// this precondition. In debug builds a violation is caught immediately
+    /// via `debug_assert!` rather than being silently absorbed: this
+    /// function previously defaulted an unresolvable operand's width to a
+    /// fabricated `32`, which could hide a genuine type error behind a
+    /// plausible-looking but wrong-width result. `mk_bv_concat` has no
+    /// `Result` return type to propagate a proper error through (and
+    /// changing its signature would ripple across every existing caller),
+    /// so release builds keep the historical `32` fallback as a last
+    /// resort rather than panicking on malformed input.
     pub fn mk_bv_concat(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let lhs_width = self
+            .get(lhs)
+            .and_then(|t| self.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width());
+        let rhs_width = self
+            .get(rhs)
+            .and_then(|t| self.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width());
+        debug_assert!(
+            lhs_width.is_some() && rhs_width.is_some(),
+            "mk_bv_concat: both operands must have a bit-vector sort (lhs_width={lhs_width:?}, rhs_width={rhs_width:?})"
+        );
+        let width = lhs_width.unwrap_or(32) + rhs_width.unwrap_or(32);
+        let sort = self.sorts.bitvec(width);
+        self.intern(TermKind::BvConcat(lhs, rhs), sort)
+    }
+
+    /// Create a bit vector NAND: `bvnand(a, b) = bvnot(bvand(a, b))`.
+    pub fn mk_bv_nand(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let and = self.mk_bv_and(lhs, rhs);
+        self.mk_bv_not(and)
+    }
+
+    /// Create a bit vector NOR: `bvnor(a, b) = bvnot(bvor(a, b))`.
+    pub fn mk_bv_nor(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let or = self.mk_bv_or(lhs, rhs);
+        self.mk_bv_not(or)
+    }
+
+    /// Create a bit vector XNOR: `bvxnor(a, b) = bvnot(bvxor(a, b))`.
+    pub fn mk_bv_xnor(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let xor = self.mk_bv_xor(lhs, rhs);
+        self.mk_bv_not(xor)
+    }
+
+    /// Create a bit vector comparison: a 1-bit result that is `#b1` when
+    /// the two (equal-width) operands are equal and `#b0` otherwise, per
+    /// SMT-LIB `FixedSizeBitVectors` `bvcomp`.
+    pub fn mk_bv_comp(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        let eq = self.mk_eq(lhs, rhs);
+        let one = self.mk_bitvec(1i64, 1);
+        let zero = self.mk_bitvec(0i64, 1);
+        self.mk_ite(eq, one, zero)
+    }
+
+    /// Create a signed bit-vector modulo (`bvsmod`), whose result sign
+    /// follows the *divisor* `rhs` — distinct from `bvsrem`, whose result
+    /// sign follows the dividend. Implements the standard SMT-LIB
+    /// `FixedSizeBitVectors` definition by reducing to the unsigned
+    /// remainder over the operands' absolute values and then reintroducing
+    /// the sign according to the operand-sign combination:
+    ///
+    /// ```text
+    /// u = bvurem(abs(s), abs(t))
+    /// bvsmod(s, t) = u                    if u = 0
+    ///              = u                    if sign(s) = sign(t) = +
+    ///              = -u + t               if sign(s) = -, sign(t) = +
+    ///              = u + t                if sign(s) = +, sign(t) = -
+    ///              = -u                   if sign(s) = sign(t) = -
+    /// ```
+    pub fn mk_bv_smod(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let width = self
             .get(lhs)
             .and_then(|t| self.sorts.get(t.sort))
             .and_then(|s| s.bitvec_width())
-            .unwrap_or(32)
-            + self
-                .get(rhs)
-                .and_then(|t| self.sorts.get(t.sort))
-                .and_then(|s| s.bitvec_width())
-                .unwrap_or(32);
-        let sort = self.sorts.bitvec(width);
-        self.intern(TermKind::BvConcat(lhs, rhs), sort)
+            .unwrap_or(32);
+        if width == 0 {
+            return self.mk_bv_urem(lhs, rhs);
+        }
+        let msb = width - 1;
+        let msb_s = self.mk_bv_extract(msb, msb, lhs);
+        let msb_t = self.mk_bv_extract(msb, msb, rhs);
+        let zero_bit = self.mk_bitvec(0i64, 1);
+        let s_nonneg = self.mk_eq(msb_s, zero_bit);
+        let t_nonneg = self.mk_eq(msb_t, zero_bit);
+        let not_s_nonneg = self.mk_not(s_nonneg);
+        let not_t_nonneg = self.mk_not(t_nonneg);
+
+        let neg_s = self.mk_bv_neg(lhs);
+        let neg_t = self.mk_bv_neg(rhs);
+        let abs_s = self.mk_ite(s_nonneg, lhs, neg_s);
+        let abs_t = self.mk_ite(t_nonneg, rhs, neg_t);
+        let u = self.mk_bv_urem(abs_s, abs_t);
+
+        let zero_w = self.mk_bitvec(0i64, width);
+        let u_is_zero = self.mk_eq(u, zero_w);
+        let neg_u = self.mk_bv_neg(u);
+        let u_plus_t = self.mk_bv_add(u, rhs);
+        let negu_plus_t = self.mk_bv_add(neg_u, rhs);
+
+        let both_nonneg = self.mk_and([s_nonneg, t_nonneg]);
+        let s_neg_t_nonneg = self.mk_and([not_s_nonneg, t_nonneg]);
+        let s_nonneg_t_neg = self.mk_and([s_nonneg, not_t_nonneg]);
+
+        // Innermost: both negative -> -u.
+        let case_both_neg = neg_u;
+        // s non-negative, t negative -> u + t.
+        let case3 = self.mk_ite(s_nonneg_t_neg, u_plus_t, case_both_neg);
+        // s negative, t non-negative -> -u + t.
+        let case2 = self.mk_ite(s_neg_t_nonneg, negu_plus_t, case3);
+        // Both non-negative -> u.
+        let case1 = self.mk_ite(both_nonneg, u, case2);
+        // u = 0 -> u.
+        self.mk_ite(u_is_zero, u, case1)
     }
 
     /// Create a bit vector extraction.

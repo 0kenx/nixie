@@ -470,7 +470,7 @@ impl TheoryCoordinator {
     }
 
     /// Get combined conflict explanation
-    pub fn get_conflict(&self) -> Option<Vec<TermId>> {
+    pub fn get_conflict(&mut self) -> Option<Vec<TermId>> {
         // Collect conflicts from all theories
         let mut combined_conflict = Vec::new();
 
@@ -482,23 +482,97 @@ impl TheoryCoordinator {
 
         if combined_conflict.is_empty() {
             None
+        } else if self.config.minimize_conflicts {
+            Some(self.minimize_conflict(combined_conflict))
         } else {
-            // Minimize if enabled
-            if self.config.minimize_conflicts {
-                Some(self.minimize_conflict(combined_conflict))
-            } else {
-                Some(combined_conflict)
-            }
+            combined_conflict.sort();
+            combined_conflict.dedup();
+            Some(combined_conflict)
         }
     }
 
-    /// Minimize a conflict explanation
-    fn minimize_conflict(&self, mut conflict: Vec<TermId>) -> Vec<TermId> {
-        // Placeholder: would use resolution to minimize
-        // For now, just remove duplicates
-        conflict.sort();
-        conflict.dedup();
-        conflict
+    /// Minimize a conflict explanation to a locally-minimal unsatisfiable core.
+    ///
+    /// Deletion-based minimization: a literal is redundant exactly when the
+    /// remaining conflict is *still* theory-inconsistent, so we drop each literal
+    /// in turn and re-check the combination; a literal whose removal restores
+    /// satisfiability is necessary and kept.  The re-check re-asserts a subset
+    /// through [`Self::reassert_only`] and consults the same Nelson-Oppen
+    /// [`Self::check_sat`] used for the top-level decision, so the result is a
+    /// genuine core rather than a mere deduplication.
+    ///
+    /// When no registered theory can witness inconsistency (e.g. no theories, or
+    /// a conflict none of them re-derives), every removal leaves the subset
+    /// satisfiable, so the deduplicated conflict is returned unchanged — a sound,
+    /// conservative fallback.  The coordinator's full assertion set is restored
+    /// before returning so later queries are unaffected.
+    fn minimize_conflict(&mut self, conflict: Vec<TermId>) -> Vec<TermId> {
+        let mut core = conflict;
+        core.sort();
+        core.dedup();
+
+        let mut index = 0;
+        while index < core.len() {
+            let mut trial = core.clone();
+            trial.remove(index);
+            match self.subset_is_unsat(&trial) {
+                Ok(true) => {
+                    // core[index] is not needed to derive the conflict.
+                    core = trial;
+                    // Keep `index`: the next literal shifted into this slot.
+                }
+                _ => {
+                    // Necessary (or the re-check was inconclusive): keep it.
+                    index += 1;
+                }
+            }
+        }
+
+        // Leave the theories holding their full asserted set again.
+        let _ = self.restore_all_assertions();
+
+        core
+    }
+
+    /// Re-assert exactly the formulas in `keep` and report whether the resulting
+    /// combination is unsatisfiable.
+    fn subset_is_unsat(&mut self, keep: &[TermId]) -> Result<bool, String> {
+        let keep_set: FxHashSet<TermId> = keep.iter().copied().collect();
+        self.reassert_only(&keep_set)?;
+        Ok(self.check_sat()? == SatResult::Unsat)
+    }
+
+    /// Reset every theory to its empty base and re-assert only the formulas in
+    /// `keep`, each to the theories that originally used it (per
+    /// [`Self::formula_theories`]).  `backtrack(0)` is the theory-solver reset
+    /// primitive here: it must return the solver to the state with no user
+    /// assertions.
+    fn reassert_only(&mut self, keep: &FxHashSet<TermId>) -> Result<(), String> {
+        for solver in self.theories.values_mut() {
+            solver.backtrack(0)?;
+        }
+        // Snapshot to avoid borrowing `self.formula_theories` and
+        // `self.theories` simultaneously.
+        let plan: Vec<(TermId, Vec<TheoryId>)> = self
+            .formula_theories
+            .iter()
+            .filter(|(formula, _)| keep.contains(formula))
+            .map(|(&formula, theories)| (formula, theories.iter().copied().collect()))
+            .collect();
+        for (formula, theories) in plan {
+            for theory_id in theories {
+                if let Some(solver) = self.theories.get_mut(&theory_id) {
+                    solver.assert_formula(formula)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Restore every theory's full asserted set (all tracked formulas).
+    fn restore_all_assertions(&mut self) -> Result<(), String> {
+        let all: FxHashSet<TermId> = self.formula_theories.keys().copied().collect();
+        self.reassert_only(&all)
     }
 
     /// Get statistics
@@ -836,8 +910,11 @@ mod tests {
     }
 
     #[test]
-    fn test_conflict_minimization() {
-        let coordinator = TheoryCoordinator::new(CoordinatorConfig {
+    fn test_conflict_minimization_dedup_fallback() {
+        // With no theory able to witness inconsistency, minimization cannot drop
+        // any literal (every removal leaves the subset satisfiable), so the
+        // conservative result is exactly the deduplicated conflict.
+        let mut coordinator = TheoryCoordinator::new(CoordinatorConfig {
             minimize_conflicts: true,
             ..Default::default()
         });
@@ -846,6 +923,121 @@ mod tests {
         let minimized = coordinator.minimize_conflict(conflict);
 
         assert_eq!(minimized, vec![1, 2, 3, 4]);
+    }
+
+    /// Theory whose satisfiability depends on the concrete set of formulas
+    /// currently asserted to it: it is UNSAT exactly when every formula in
+    /// `required` is present.  `backtrack(0)` clears its assertions, matching the
+    /// reset contract the coordinator's re-check relies on.
+    struct CoreMockTheory {
+        id: TheoryId,
+        required: Vec<TermId>,
+        asserted: FxHashSet<TermId>,
+    }
+
+    impl TheorySolver for CoreMockTheory {
+        fn theory_id(&self) -> TheoryId {
+            self.id
+        }
+        fn assert_formula(&mut self, formula: TermId) -> Result<(), String> {
+            self.asserted.insert(formula);
+            Ok(())
+        }
+        fn check_sat(&mut self) -> Result<SatResult, String> {
+            // A theory with no required core imposes no constraint (always SAT);
+            // otherwise it is UNSAT exactly when every required formula is present.
+            if !self.required.is_empty() && self.required.iter().all(|f| self.asserted.contains(f))
+            {
+                Ok(SatResult::Unsat)
+            } else {
+                Ok(SatResult::Sat)
+            }
+        }
+        fn get_model(&self) -> Option<FxHashMap<TermId, TermId>> {
+            Some(FxHashMap::default())
+        }
+        fn get_conflict(&self) -> Option<Vec<TermId>> {
+            None
+        }
+        fn backtrack(&mut self, level: usize) -> Result<(), String> {
+            if level == 0 {
+                self.asserted.clear();
+            }
+            Ok(())
+        }
+        fn get_implied_equalities(&self) -> Vec<(TermId, TermId)> {
+            Vec::new()
+        }
+        fn notify_equality(&mut self, _lhs: TermId, _rhs: TermId) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_conflict_minimization_extracts_minimal_core() {
+        // Three registered theories; the genuine inconsistency needs formulas
+        // {1, 2, 3} (routed to Arithmetic), while 4 (BitVector) and 5 (Array)
+        // are irrelevant padding also reported in the raw conflict.  Genuine
+        // deletion-based re-check must peel off 4 and 5 and keep {1, 2, 3}.
+        let mut coordinator = TheoryCoordinator::new(CoordinatorConfig {
+            minimize_conflicts: true,
+            eager_combination: false,
+            ..Default::default()
+        });
+
+        coordinator.register_theory(Box::new(CoreMockTheory {
+            id: TheoryId::Arithmetic,
+            required: vec![1, 2, 3],
+            asserted: FxHashSet::default(),
+        }));
+        coordinator.register_theory(Box::new(CoreMockTheory {
+            id: TheoryId::BitVector,
+            required: Vec::new(),
+            asserted: FxHashSet::default(),
+        }));
+        coordinator.register_theory(Box::new(CoreMockTheory {
+            id: TheoryId::Array,
+            required: Vec::new(),
+            asserted: FxHashSet::default(),
+        }));
+
+        coordinator
+            .assert_formula(1, TheoryId::Arithmetic)
+            .expect("assert 1");
+        coordinator
+            .assert_formula(2, TheoryId::Arithmetic)
+            .expect("assert 2");
+        coordinator
+            .assert_formula(3, TheoryId::Arithmetic)
+            .expect("assert 3");
+        coordinator
+            .assert_formula(4, TheoryId::BitVector)
+            .expect("assert 4");
+        coordinator
+            .assert_formula(5, TheoryId::Array)
+            .expect("assert 5");
+
+        // The full set is genuinely inconsistent.
+        assert_eq!(
+            coordinator.check_sat().expect("check"),
+            SatResult::Unsat,
+            "the full assertion set must be UNSAT"
+        );
+
+        let minimized = coordinator.minimize_conflict(vec![1, 2, 3, 4, 5]);
+        assert_eq!(
+            minimized,
+            vec![1, 2, 3],
+            "minimization must keep exactly the necessary core {{1,2,3}}"
+        );
+
+        // After minimization the full assertion set is restored, so the
+        // combination is inconsistent again.
+        assert_eq!(
+            coordinator.check_sat().expect("re-check"),
+            SatResult::Unsat,
+            "the full assertion set must remain UNSAT after minimization"
+        );
     }
 
     #[test]

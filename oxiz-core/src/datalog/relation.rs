@@ -437,25 +437,34 @@ impl Relation {
         Some(result)
     }
 
-    /// Natural join with another relation
+    /// Natural join with another relation.
+    ///
+    /// Matches columns by name between the two schemas (the standard
+    /// relational-algebra definition of a natural join) and delegates to
+    /// [`Relation::hash_join`] on that shared-attribute projection, so
+    /// only tuple pairs that agree on every commonly-named column are
+    /// emitted. When the two schemas have no columns in common, a natural
+    /// join degenerates to the cartesian product by definition; passing
+    /// empty column lists to `hash_join` produces exactly that (every
+    /// tuple hashes to the same empty key, so every pair matches).
     pub fn natural_join(&self, other: &Relation) -> Relation {
-        let joined_schema = self.schema.join(other.schema(), "_join");
-        let mut result = Relation::new(
-            RelationId::new(0),
-            format!("{}_join_{}", self.name, other.name),
-            joined_schema,
-            RelationKind::Temp,
-        );
+        let (self_cols, other_cols) = self.shared_columns(other);
+        self.hash_join(other, &self_cols, &other_cols)
+    }
 
-        // Find common columns by name (simplified - real impl would match properly)
-        // For now, do cartesian product
-        for t1 in &self.tuples {
-            for t2 in other.iter() {
-                result.insert(t1.concat(t2));
+    /// Compute the columns shared by name between this relation's schema
+    /// and `other`'s, as parallel `(self_column, other_column)` id lists
+    /// suitable for [`Relation::hash_join`].
+    fn shared_columns(&self, other: &Relation) -> (Vec<ColumnId>, Vec<ColumnId>) {
+        let mut self_cols = Vec::new();
+        let mut other_cols = Vec::new();
+        for col in self.schema.columns() {
+            if let Some(other_col) = other.schema().column_by_name(col.name()) {
+                self_cols.push(col.index());
+                other_cols.push(other_col.index());
             }
         }
-
-        result
+        (self_cols, other_cols)
     }
 
     /// Hash join with another relation on specified columns
@@ -685,6 +694,67 @@ mod tests {
         // Join on first column of each
         let joined = rel1.hash_join(&rel2, &[ColumnId::new(0)], &[ColumnId::new(0)]);
         assert_eq!(joined.len(), 1); // Only (1, 10, 1, 100)
+    }
+
+    // Regression tests for: "Relation::natural_join performs an
+    // unconditional cartesian product" — natural_join must match rows on
+    // shared column names, not emit every pair.
+
+    #[test]
+    fn test_natural_join_matches_on_shared_column_name() {
+        let interner = ThreadedRodeo::default();
+
+        // r1(a, b) and r2(a, c) share column "a" by name.
+        let mut schema1 = Schema::new("r1".to_string());
+        schema1.add_column(interner.get_or_intern("a"), DataType::Int64);
+        schema1.add_column(interner.get_or_intern("b"), DataType::Int64);
+        let mut rel1 = Relation::edb(RelationId::new(1), "r1".to_string(), schema1);
+        rel1.insert(TupleBuilder::new().push_i64(1).push_i64(10).build());
+        rel1.insert(TupleBuilder::new().push_i64(2).push_i64(20).build());
+        rel1.insert(TupleBuilder::new().push_i64(3).push_i64(30).build());
+
+        let mut schema2 = Schema::new("r2".to_string());
+        schema2.add_column(interner.get_or_intern("a"), DataType::Int64);
+        schema2.add_column(interner.get_or_intern("c"), DataType::Int64);
+        let mut rel2 = Relation::edb(RelationId::new(2), "r2".to_string(), schema2);
+        rel2.insert(TupleBuilder::new().push_i64(1).push_i64(100).build());
+        rel2.insert(TupleBuilder::new().push_i64(3).push_i64(300).build());
+        rel2.insert(TupleBuilder::new().push_i64(4).push_i64(400).build());
+
+        let joined = rel1.natural_join(&rel2);
+
+        // Only a=1 and a=3 are present on both sides; a=2 (only in rel1)
+        // and a=4 (only in rel2) must NOT appear. A cartesian product
+        // would have produced 3 * 3 = 9 tuples instead of 2.
+        assert_eq!(
+            joined.len(),
+            2,
+            "natural_join must filter to rows agreeing on the shared column, not cartesian-product every pair"
+        );
+    }
+
+    #[test]
+    fn test_natural_join_no_shared_columns_is_cartesian_product() {
+        // With no columns in common, a natural join degenerates to the
+        // cartesian product by definition (every pair vacuously "agrees"
+        // on the empty set of shared columns).
+        let interner = ThreadedRodeo::default();
+
+        let mut schema1 = Schema::new("r1".to_string());
+        schema1.add_column(interner.get_or_intern("x"), DataType::Int64);
+        let mut rel1 = Relation::edb(RelationId::new(1), "r1".to_string(), schema1);
+        rel1.insert(TupleBuilder::new().push_i64(1).build());
+        rel1.insert(TupleBuilder::new().push_i64(2).build());
+
+        let mut schema2 = Schema::new("r2".to_string());
+        schema2.add_column(interner.get_or_intern("y"), DataType::Int64);
+        let mut rel2 = Relation::edb(RelationId::new(2), "r2".to_string(), schema2);
+        rel2.insert(TupleBuilder::new().push_i64(10).build());
+        rel2.insert(TupleBuilder::new().push_i64(20).build());
+        rel2.insert(TupleBuilder::new().push_i64(30).build());
+
+        let joined = rel1.natural_join(&rel2);
+        assert_eq!(joined.len(), 6); // 2 * 3
     }
 
     #[test]

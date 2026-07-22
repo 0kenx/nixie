@@ -29,20 +29,26 @@
 //! ```
 
 pub mod assertions;
+pub mod cancellation;
 pub mod config;
 pub mod declarations;
 pub mod diagnostics;
 pub mod memory_management;
 pub mod model;
 pub mod optimize;
+pub mod preemptible_worker;
 pub mod promise_wrapper;
 pub mod solver_core;
 pub mod streaming;
 pub mod term_builders;
 pub mod typescript;
+pub mod worker_glue;
 pub mod worker_support;
 
+pub use cancellation::*;
 pub use memory_management::*;
+pub use preemptible_worker::*;
 pub use promise_wrapper::*;
 pub use streaming::*;
+pub use worker_glue::*;
 pub use worker_support::*;

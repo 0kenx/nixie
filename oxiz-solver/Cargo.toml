@@ -27,7 +27,7 @@ rayon = { workspace = true, optional = true }
 oxiz-proof = { workspace = true, optional = true }
 
 [features]
-default = ["std"]
+default = ["std", "property-tests"]
 std = [
     "oxiz-core/std",
     "oxiz-sat/std",

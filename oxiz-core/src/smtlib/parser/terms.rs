@@ -2,7 +2,7 @@
 
 use super::super::lexer::TokenKind;
 use super::{Attribute, Parser, parse_decimal_to_rational};
-use crate::ast::TermId;
+use crate::ast::{TermId, TermKind};
 use crate::error::{OxizError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -119,6 +119,13 @@ impl<'a> Parser<'a> {
         match s {
             "true" => Ok(self.manager.mk_true()),
             "false" => Ok(self.manager.mk_false()),
+            // Nullary regular-expression constants (SMT-LIB Strings theory).
+            // These are leaf symbols (not compound applications), so they must
+            // be recognised here, ahead of the strict "unknown symbol" reject
+            // in the `_` arm below.
+            "re.none" => Ok(self.manager.mk_re_none()),
+            "re.all" => Ok(self.manager.mk_re_all()),
+            "re.allchar" => Ok(self.manager.mk_re_all_char()),
             _ => {
                 // Check bindings first
                 if let Some(&term) = self.bindings.get(s) {
@@ -207,6 +214,51 @@ impl<'a> Parser<'a> {
     fn bv_width(&self, term: TermId) -> Option<u32> {
         let sort = self.manager.get(term)?.sort;
         self.manager.sorts.get(sort)?.bitvec_width()
+    }
+
+    /// Extract `(value, width)` from `term` if it is a bit-vector literal.
+    fn bv_const_parts(&self, term: TermId) -> Option<(BigInt, u32)> {
+        match self.manager.get(term).map(|t| &t.kind) {
+            Some(TermKind::BitVecConst { value, width }) => Some((value.clone(), *width)),
+            _ => None,
+        }
+    }
+
+    /// Build the `(fp sign exponent significand)` bit-triple literal
+    /// constructor. Per the SMT-LIB `FloatingPoint` theory, all three
+    /// operands must be bit-vector *literals*: a 1-bit sign, an `eb`-bit
+    /// biased exponent, and an `(sb-1)`-bit significand (the implicit
+    /// leading bit is not stored). Symbolic (non-literal) operands are
+    /// rejected with an honest parse error rather than silently degrading
+    /// to an uninterpreted application.
+    fn build_fp_lit(&mut self, sign: TermId, exp: TermId, sig: TermId) -> Result<TermId> {
+        let (sign_val, sign_width) =
+            self.bv_const_parts(sign)
+                .ok_or_else(|| OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: "fp: sign operand must be a bit-vector literal".to_string(),
+                })?;
+        let (exp_val, eb) = self
+            .bv_const_parts(exp)
+            .ok_or_else(|| OxizError::ParseError {
+                position: self.lexer.position(),
+                message: "fp: exponent operand must be a bit-vector literal".to_string(),
+            })?;
+        let (sig_val, sig_width) =
+            self.bv_const_parts(sig)
+                .ok_or_else(|| OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: "fp: significand operand must be a bit-vector literal".to_string(),
+                })?;
+        if sign_width != 1 {
+            return Err(OxizError::ParseError {
+                position: self.lexer.position(),
+                message: format!("fp: sign operand must be exactly 1 bit wide, got {sign_width}"),
+            });
+        }
+        let sb = sig_width + 1;
+        let sign_bool = sign_val != BigInt::from(0);
+        Ok(self.manager.mk_fp_lit(sign_bool, exp_val, sig_val, eb, sb))
     }
 
     /// Build the conjunction of the boolean atoms produced by a chainable
@@ -397,8 +449,173 @@ impl<'a> Parser<'a> {
                 let zero = self.manager.mk_int(0);
                 Ok(Some(self.manager.mk_eq(modulo, zero)))
             }
+            // ((_ re.^ n) R): R repeated exactly n times.
+            "re.^" => {
+                let n = single_index(index_parts)?;
+                let re = single_arg(args)?;
+                Ok(Some(self.manager.mk_re_power(n, re)))
+            }
+            // ((_ re.loop lo hi) R): R repeated between lo and hi times.
+            "re.loop" => {
+                if index_parts.len() != 2 {
+                    return Err(OxizError::ParseError {
+                        position: 0,
+                        message: format!(
+                            "(_ re.loop ...) requires exactly 2 indices, got {}",
+                            index_parts.len()
+                        ),
+                    });
+                }
+                let lo = index_parts[0]
+                    .parse::<u32>()
+                    .map_err(|_| OxizError::ParseError {
+                        position: 0,
+                        message: format!("invalid lower bound for re.loop: {}", index_parts[0]),
+                    })?;
+                let hi = index_parts[1]
+                    .parse::<u32>()
+                    .map_err(|_| OxizError::ParseError {
+                        position: 0,
+                        message: format!("invalid upper bound for re.loop: {}", index_parts[1]),
+                    })?;
+                let re = single_arg(args)?;
+                Ok(Some(self.manager.mk_re_loop(lo, hi, re)))
+            }
             _ => Ok(None),
         }
+    }
+
+    /// Attempt to build one of the indexed floating-point conversion
+    /// operators: `((_ to_fp eb sb) RM x)`, `((_ to_fp_unsigned eb sb) RM x)`,
+    /// `((_ fp.to_sbv m) RM x)`, `((_ fp.to_ubv m) RM x)`.
+    ///
+    /// These all take a rounding-mode *symbol* (`RNE`/`RNA`/`RTP`/`RTN`/`RTZ`)
+    /// as their first argument. A bare rounding-mode symbol is not itself a
+    /// term — it is not a declared constant, so it would be rejected by the
+    /// strict unknown-symbol check in [`Parser::parse_symbol`] if fed through
+    /// the generic [`Parser::parse_term_list`] path — so these operators must
+    /// be special-cased *before* that generic path runs, parsing the
+    /// rounding mode with [`Parser::parse_rounding_mode`] instead.
+    ///
+    /// Returns `Ok(Some(term))` when `name` was one of these operators and it
+    /// was built successfully, `Ok(None)` when `name` is not one of them (so
+    /// the caller falls back to the generic indexed-application path), or
+    /// `Err(..)` on a malformed use.
+    ///
+    /// Note: the alternate no-rounding-mode bit-pattern form
+    /// `((_ to_fp eb sb) bv)` (a single bit-vector operand, reinterpreted as
+    /// an IEEE-754 bit pattern rather than rounded) has no builder yet and is
+    /// intentionally left unhandled here; it falls through to the generic
+    /// uninterpreted-application fallback exactly as before this fix.
+    fn build_indexed_fp_conv(
+        &mut self,
+        name: &str,
+        index_parts: &[String],
+    ) -> Result<Option<TermId>> {
+        match name {
+            "to_fp" | "to_fp_unsigned" => {
+                if index_parts.len() != 2 {
+                    return Err(OxizError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!(
+                            "(_ {name} eb sb) requires exactly 2 indices, got {}",
+                            index_parts.len()
+                        ),
+                    });
+                }
+                let eb: u32 = index_parts[0].parse().map_err(|_| OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!("invalid exponent-bits index for {name}: {}", index_parts[0]),
+                })?;
+                let sb: u32 = index_parts[1].parse().map_err(|_| OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "invalid significand-bits index for {name}: {}",
+                        index_parts[1]
+                    ),
+                })?;
+                // Peek: is the next token a rounding-mode symbol? If not,
+                // this is the (not-yet-supported) bit-pattern form; leave it
+                // to the generic fallback rather than misparsing it.
+                if !self.next_token_is_rounding_mode() {
+                    return Ok(None);
+                }
+                let rm = self.parse_rounding_mode()?;
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                if name == "to_fp_unsigned" {
+                    return Ok(Some(self.manager.mk_ubv_to_fp(rm, arg, eb, sb)));
+                }
+                // Plain `to_fp` dispatches on the operand's sort: Real,
+                // another FloatingPoint format, or a signed bit-vector.
+                let arg_kind = self
+                    .manager
+                    .get(arg)
+                    .and_then(|t| self.manager.sorts.get(t.sort))
+                    .map(|s| s.kind.clone());
+                let term = match arg_kind {
+                    Some(SortKind::Real) => self.manager.mk_real_to_fp(rm, arg, eb, sb),
+                    Some(SortKind::FloatingPoint { .. }) => {
+                        self.manager.mk_fp_to_fp(rm, arg, eb, sb)
+                    }
+                    Some(SortKind::BitVec(_)) => self.manager.mk_sbv_to_fp(rm, arg, eb, sb),
+                    _ => {
+                        return Err(OxizError::ParseError {
+                            position: self.lexer.position(),
+                            message: format!(
+                                "(_ to_fp {eb} {sb}): operand must have Real, FloatingPoint, or BitVec sort"
+                            ),
+                        });
+                    }
+                };
+                Ok(Some(term))
+            }
+            "fp.to_sbv" | "fp.to_ubv" => {
+                if index_parts.len() != 1 {
+                    return Err(OxizError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!(
+                            "(_ {name} m) requires exactly 1 index, got {}",
+                            index_parts.len()
+                        ),
+                    });
+                }
+                let width: u32 = index_parts[0].parse().map_err(|_| OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!("invalid width index for {name}: {}", index_parts[0]),
+                })?;
+                let rm = self.parse_rounding_mode()?;
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                let term = if name == "fp.to_sbv" {
+                    self.manager.mk_fp_to_sbv(rm, arg, width)
+                } else {
+                    self.manager.mk_fp_to_ubv(rm, arg, width)
+                };
+                Ok(Some(term))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Peek at the next token and report whether it looks like a rounding
+    /// mode symbol, without consuming it. Used by
+    /// [`Parser::build_indexed_fp_conv`] to distinguish the RM-first
+    /// `to_fp`/`to_fp_unsigned` form from the (unsupported) no-RM
+    /// bit-pattern form.
+    fn next_token_is_rounding_mode(&self) -> bool {
+        matches!(
+            self.lexer.peek().map(|t| t.kind),
+            Some(TokenKind::Symbol(s)) if matches!(
+                s.as_str(),
+                "RNE" | "RNA" | "RTP" | "RTN" | "RTZ"
+                    | "roundNearestTiesToEven"
+                    | "roundNearestTiesToAway"
+                    | "roundTowardPositive"
+                    | "roundTowardNegative"
+                    | "roundTowardZero"
+            )
+        )
     }
 
     pub(super) fn parse_compound_term(&mut self) -> Result<TermId> {
@@ -493,6 +710,14 @@ impl<'a> Parser<'a> {
                 return Ok(self.manager.mk_dt_tester(constructor_name, arg));
             }
 
+            // Indexed FP conversions (to_fp/to_fp_unsigned/fp.to_sbv/fp.to_ubv)
+            // take a leading rounding-mode *symbol*, which is not itself a
+            // term, so they must be special-cased before the generic
+            // `parse_term_list` path below — see `build_indexed_fp_conv`.
+            if let Some(term) = self.build_indexed_fp_conv(&name, &index_parts)? {
+                return Ok(term);
+            }
+
             // Parse arguments first so indexed operators with real handling
             // (BV extend/rotate/repeat, divisible) can be lowered to concrete
             // terms instead of degrading to a Bool-sorted uninterpreted apply.
@@ -561,7 +786,12 @@ impl<'a> Parser<'a> {
                         ),
                     });
                 }
-                let value: i64 = bv_val_str.parse().map_err(|_| OxizError::ParseError {
+                // SMT-LIB places no bound on the literal's magnitude (only
+                // the *width* `M` is capped below), so the value must be
+                // parsed with arbitrary precision rather than truncated to
+                // `i64` — a valid `(_ bvN M)` literal for large `M` easily
+                // exceeds `i64::MAX`.
+                let value: BigInt = bv_val_str.parse().map_err(|_| OxizError::ParseError {
                     position: self.lexer.position(),
                     message: format!("invalid bitvector literal value: {bv_val_str}"),
                 })?;
@@ -575,6 +805,35 @@ impl<'a> Parser<'a> {
                 // Consume the closing rparen of (_ bvN M)
                 self.expect_rparen()?;
                 return Ok(self.manager.mk_bitvec(value, width));
+            }
+
+            // Indexed floating-point special-value constants: (_ +oo eb sb),
+            // (_ -oo eb sb), (_ +zero eb sb), (_ -zero eb sb), (_ NaN eb sb).
+            // These are complete nullary terms — no further application
+            // follows — so, like the `(_ bvN M)` literal above, they must be
+            // recognized here rather than falling through to the generic
+            // indexed-application path below (which always expects trailing
+            // argument terms).
+            if matches!(name.as_str(), "+oo" | "-oo" | "+zero" | "-zero" | "NaN") {
+                if indices.len() != 2 {
+                    return Err(OxizError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!(
+                            "(_ {name} eb sb) requires exactly 2 indices, got {}",
+                            indices.len()
+                        ),
+                    });
+                }
+                let (eb, sb) = (indices[0], indices[1]);
+                self.expect_rparen()?;
+                let term = match name.as_str() {
+                    "+oo" => self.manager.mk_fp_plus_infinity(eb, sb),
+                    "-oo" => self.manager.mk_fp_minus_infinity(eb, sb),
+                    "+zero" => self.manager.mk_fp_plus_zero(eb, sb),
+                    "-zero" => self.manager.mk_fp_minus_zero(eb, sb),
+                    _ => self.manager.mk_fp_nan(eb, sb),
+                };
+                return Ok(term);
             }
 
             match name.as_str() {
@@ -957,6 +1216,11 @@ impl<'a> Parser<'a> {
                 self.expect_rparen()?;
                 self.manager.mk_bv_not(arg)
             }
+            "bvneg" => {
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_bv_neg(arg)
+            }
             "bvand" => {
                 let lhs = self.parse_term()?;
                 let rhs = self.parse_term()?;
@@ -1046,6 +1310,36 @@ impl<'a> Parser<'a> {
                 let rhs = self.parse_term()?;
                 self.expect_rparen()?;
                 self.manager.mk_bv_xor(lhs, rhs)
+            }
+            "bvnand" => {
+                let lhs = self.parse_term()?;
+                let rhs = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_bv_nand(lhs, rhs)
+            }
+            "bvnor" => {
+                let lhs = self.parse_term()?;
+                let rhs = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_bv_nor(lhs, rhs)
+            }
+            "bvxnor" => {
+                let lhs = self.parse_term()?;
+                let rhs = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_bv_xnor(lhs, rhs)
+            }
+            "bvcomp" => {
+                let lhs = self.parse_term()?;
+                let rhs = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_bv_comp(lhs, rhs)
+            }
+            "bvsmod" => {
+                let lhs = self.parse_term()?;
+                let rhs = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_bv_smod(lhs, rhs)
             }
             "bvudiv" => {
                 let lhs = self.parse_term()?;
@@ -1241,6 +1535,20 @@ impl<'a> Parser<'a> {
                 self.expect_rparen()?;
                 self.manager.mk_fp_max(lhs, rhs)
             }
+            // Floating-point to real conversion
+            "fp.to_real" => {
+                let arg = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_fp_to_real(arg)
+            }
+            // Floating-point bit-triple literal constructor: (fp sign exp sig)
+            "fp" => {
+                let sign = self.parse_term()?;
+                let exp = self.parse_term()?;
+                let sig = self.parse_term()?;
+                self.expect_rparen()?;
+                self.build_fp_lit(sign, exp, sig)?
+            }
             // String operations
             "str.++" => {
                 let mut result = self.parse_term()?;
@@ -1328,6 +1636,56 @@ impl<'a> Parser<'a> {
                 let re = self.parse_term()?;
                 self.expect_rparen()?;
                 self.manager.mk_str_in_re(s, re)
+            }
+            // ===== Regular-expression operators (SMT-LIB Strings theory) =====
+            "str.to_re" | "str.to.re" => {
+                let s = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_str_to_re(s)
+            }
+            "re.++" => {
+                let args = self.parse_term_list()?;
+                self.manager.mk_re_concat(args)
+            }
+            "re.union" => {
+                let args = self.parse_term_list()?;
+                self.manager.mk_re_union(args)
+            }
+            "re.inter" => {
+                let args = self.parse_term_list()?;
+                self.manager.mk_re_inter(args)
+            }
+            "re.*" => {
+                let re = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_re_star(re)
+            }
+            "re.+" => {
+                let re = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_re_plus(re)
+            }
+            "re.opt" => {
+                let re = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_re_opt(re)
+            }
+            "re.comp" => {
+                let re = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_re_comp(re)
+            }
+            "re.diff" => {
+                let lhs = self.parse_term()?;
+                let rhs = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_re_diff(lhs, rhs)
+            }
+            "re.range" => {
+                let lo = self.parse_term()?;
+                let hi = self.parse_term()?;
+                self.expect_rparen()?;
+                self.manager.mk_re_range(lo, hi)
             }
             _ => {
                 // Check for defined function

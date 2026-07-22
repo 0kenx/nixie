@@ -324,61 +324,204 @@ fn validate_model_reports_genuine_validation_result() {
 
 // ---------------------------------------------------------------------
 // --minimize-core / --incremental / --checkpoint / --resume / --threads:
-// accepted-but-unimplemented flags now warn instead of silently doing
-// nothing.
+// previously accepted-but-unimplemented flags now drive real, observable
+// behavior (each has its own regression below).
 // ---------------------------------------------------------------------
 
+/// `--minimize-core` runs a real deletion-based minimal-unsat-core search and
+/// reports a strictly smaller core than the full assertion set.
 #[test]
-fn unimplemented_flags_warn_and_quiet_suppresses_them() {
+fn minimize_core_reports_a_minimal_core() {
     let script = write_temp_smt2(
-        "unimplemented_flags",
-        "(declare-const x Bool)\n(assert x)\n(check-sat)\n",
+        "minimize_core",
+        "(declare-const x Int)\n\
+         (declare-const y Int)\n\
+         (assert (> x 10))\n\
+         (assert (> y 0))\n\
+         (assert (< x 5))\n\
+         (assert (< y 100))\n\
+         (check-sat)\n",
+    );
+
+    let output = Command::new(oxiz_bin())
+        .args(["--minimize-core", "--quiet", script.to_str().unwrap()])
+        .output()
+        .expect("failed to execute oxiz");
+    let _ = fs::remove_file(&script);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("unsat"), "expected unsat, got:\n{stdout}");
+    assert!(
+        stdout.contains("minimized unsat core: 2 of 4"),
+        "expected a 2-of-4 minimized core, got:\n{stdout}"
+    );
+}
+
+/// `--incremental` carries a single persistent context across multiple input
+/// files, so a declaration in the first file is still in scope in the second —
+/// something the default (fresh-context-per-file) batch path deliberately does
+/// not do.
+#[test]
+fn incremental_shares_state_across_files() {
+    let file1 = write_temp_smt2("incremental_a", "(declare-const x Int)\n(assert (> x 5))\n");
+    let file2 = write_temp_smt2("incremental_b", "(assert (< x 3))\n(check-sat)\n");
+
+    // Incremental: file2 sees x from file1 -> unsat.
+    let incremental = Command::new(oxiz_bin())
+        .args([
+            "--incremental",
+            "--quiet",
+            file1.to_str().unwrap(),
+            file2.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to execute oxiz");
+    let incremental_stdout = String::from_utf8_lossy(&incremental.stdout);
+    assert!(
+        incremental_stdout.contains("unsat"),
+        "incremental mode should share x across files -> unsat, got:\n{incremental_stdout}"
+    );
+
+    // Batch (default): file2 gets a fresh context and cannot see x -> error.
+    let batch = Command::new(oxiz_bin())
+        .args(["--quiet", file1.to_str().unwrap(), file2.to_str().unwrap()])
+        .output()
+        .expect("failed to execute oxiz");
+    let _ = fs::remove_file(&file1);
+    let _ = fs::remove_file(&file2);
+    let batch_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&batch.stdout),
+        String::from_utf8_lossy(&batch.stderr)
+    );
+    assert!(
+        !batch_combined.contains("unsat"),
+        "batch mode must NOT share state across files, got:\n{batch_combined}"
+    );
+}
+
+/// `--threads N` routes a single problem through the N-worker portfolio and
+/// still returns the correct answer (observable via the verbose banner).
+#[test]
+fn threads_routes_through_portfolio() {
+    let script = write_temp_smt2(
+        "threads_portfolio",
+        "(declare-const p Bool)\n(assert p)\n(check-sat)\n",
     );
 
     let output = Command::new(oxiz_bin())
         .args([
-            "--minimize-core",
-            "--incremental",
-            "--checkpoint",
             "--threads",
-            "7",
+            "3",
+            "--verbosity",
+            "verbose",
             script.to_str().unwrap(),
         ])
         .output()
         .expect("failed to execute oxiz");
     let _ = fs::remove_file(&script);
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("sat"), "expected sat, got:\n{stdout}");
     assert!(
-        stderr.contains("--minimize-core"),
-        "expected a --minimize-core warning, got:\n{stderr}"
+        stdout.contains("Portfolio solver") && stdout.contains("worker strategies"),
+        "expected the portfolio banner from --threads routing, got:\n{stdout}"
     );
-    assert!(
-        stderr.contains("--incremental"),
-        "expected an --incremental warning, got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("checkpoint"),
-        "expected a checkpointing warning, got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("--threads"),
-        "expected a --threads warning, got:\n{stderr}"
+}
+
+/// `--checkpoint` writes a resumable record and `--resume-from` replays it
+/// without re-solving.
+#[test]
+fn checkpoint_and_resume_round_trip() {
+    let checkpoint_dir = env::temp_dir().join(format!(
+        "audit_sweep_ckpt_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos()
+    ));
+    let script = write_temp_smt2(
+        "checkpoint_solve",
+        "(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n",
     );
 
-    let quiet_script = write_temp_smt2(
-        "unimplemented_flags_quiet",
-        "(declare-const x Bool)\n(assert x)\n(check-sat)\n",
-    );
-    let quiet_output = Command::new(oxiz_bin())
-        .args(["--minimize-core", "--quiet", quiet_script.to_str().unwrap()])
+    // Solve once with checkpointing on.
+    let solved = Command::new(oxiz_bin())
+        .args([
+            "--checkpoint",
+            "--checkpoint-dir",
+            checkpoint_dir.to_str().unwrap(),
+            "--quiet",
+            script.to_str().unwrap(),
+        ])
         .output()
         .expect("failed to execute oxiz");
-    let _ = fs::remove_file(&quiet_script);
-    let quiet_stderr = String::from_utf8_lossy(&quiet_output.stderr);
     assert!(
-        !quiet_stderr.contains("--minimize-core"),
-        "--quiet should suppress the unimplemented-flag warning, got:\n{quiet_stderr}"
+        String::from_utf8_lossy(&solved.stdout).contains("sat"),
+        "initial solve should report sat"
+    );
+
+    // A checkpoint file must now exist.
+    let entries: Vec<_> = fs::read_dir(&checkpoint_dir)
+        .expect("checkpoint dir should exist")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    assert_eq!(entries.len(), 1, "exactly one checkpoint should be written");
+
+    // Resume from that checkpoint: it replays the recorded result.
+    let resumed = Command::new(oxiz_bin())
+        .args([
+            "--resume-from",
+            entries[0].to_str().unwrap(),
+            "--quiet",
+            script.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to execute oxiz");
+    let _ = fs::remove_file(&script);
+    let _ = fs::remove_dir_all(&checkpoint_dir);
+
+    let resumed_stdout = String::from_utf8_lossy(&resumed.stdout);
+    assert!(
+        resumed_stdout.contains("sat"),
+        "resume should replay the recorded sat result, got:\n{resumed_stdout}"
+    );
+}
+
+/// `--ml-tactic-selection` extracts features, recommends a tactic, and still
+/// solves correctly — surfacing the recommendation as a comment.
+#[test]
+fn ml_tactic_selection_recommends_and_solves() {
+    let script = write_temp_smt2(
+        "ml_tactic",
+        "(declare-const x Int)\n(assert (> x 0))\n(assert (< x 10))\n(check-sat)\n",
+    );
+
+    // Redirect the persisted ML model to a temp file so the test never writes
+    // to the developer's real config dir.
+    let model_path = env::temp_dir().join(format!(
+        "oxiz_ml_model_{}.json",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos()
+    ));
+
+    let output = Command::new(oxiz_bin())
+        .env("OXIZ_ML_MODEL", &model_path)
+        .args(["--ml-tactic-selection", script.to_str().unwrap()])
+        .output()
+        .expect("failed to execute oxiz");
+    let _ = fs::remove_file(&script);
+    let _ = fs::remove_file(&model_path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("sat"), "expected sat, got:\n{stdout}");
+    assert!(
+        stdout.contains("ml-tactic-selection: recommended"),
+        "expected an ML recommendation comment, got:\n{stdout}"
     );
 }
 

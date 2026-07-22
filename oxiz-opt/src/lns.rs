@@ -158,15 +158,36 @@ impl Default for Assignment {
 pub enum NeighborhoodOp {
     /// Random destruction
     Random,
-    /// Destroy variables involved in violated constraints
+    /// Destroy variables involved in violated constraints, ranked by the
+    /// weights supplied via [`NeighborhoodOperator::set_violation_weights`].
+    /// Falls back to uniform random destruction (explicitly, see
+    /// `NeighborhoodOperator::destroy_violation_based`) if no weights
+    /// have been supplied.
     ViolationBased,
-    /// Destroy variables with high impact on objective
+    /// Destroy variables with high impact on the objective, ranked by the
+    /// weights supplied via [`NeighborhoodOperator::set_objective_weights`].
+    /// Falls back to uniform random destruction (explicitly, see
+    /// `NeighborhoodOperator::destroy_objective_based`) if no weights
+    /// have been supplied.
     ObjectiveBased,
     /// Destroy a contiguous block of variables
     BlockBased,
     /// Adaptive (choose based on recent performance)
     Adaptive,
 }
+
+/// Per-variable destruction-priority weight, keyed by variable id.
+///
+/// Used by [`NeighborhoodOp::ViolationBased`] (e.g. "number of currently
+/// violated soft constraints this variable appears in") and
+/// [`NeighborhoodOp::ObjectiveBased`] (e.g. "magnitude of this variable's
+/// objective coefficient"). A variable absent from the map is treated as
+/// weight `0.0`, i.e. the lowest destruction priority. This module has no
+/// constraint or objective representation of its own -- it is the caller's
+/// responsibility to derive these weights from the actual problem (see
+/// [`NeighborhoodOperator::set_violation_weights`] /
+/// [`NeighborhoodOperator::set_objective_weights`]).
+pub type VariableWeights = HashMap<u32, f64>;
 
 /// Restart strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +208,12 @@ pub struct NeighborhoodOperator {
     op_type: NeighborhoodOp,
     /// Random number generator
     rng: rand::rngs::StdRng,
+    /// Per-variable weights for [`NeighborhoodOp::ViolationBased`]; see
+    /// [`Self::set_violation_weights`].
+    violation_weights: VariableWeights,
+    /// Per-variable weights for [`NeighborhoodOp::ObjectiveBased`]; see
+    /// [`Self::set_objective_weights`].
+    objective_weights: VariableWeights,
 }
 
 impl NeighborhoodOperator {
@@ -196,7 +223,27 @@ impl NeighborhoodOperator {
         Self {
             op_type,
             rng: rand::rngs::StdRng::seed_from_u64(seed),
+            violation_weights: VariableWeights::default(),
+            objective_weights: VariableWeights::default(),
         }
+    }
+
+    /// Supply per-variable violation weights driving
+    /// [`NeighborhoodOp::ViolationBased`] destruction (see
+    /// [`VariableWeights`]'s doc). Typically recomputed by the caller each
+    /// iteration from the current assignment's actually-violated soft
+    /// constraints. Passing an empty map makes violation-based destruction
+    /// fall back to uniform random selection.
+    pub fn set_violation_weights(&mut self, weights: VariableWeights) {
+        self.violation_weights = weights;
+    }
+
+    /// Supply per-variable objective-impact weights driving
+    /// [`NeighborhoodOp::ObjectiveBased`] destruction (see
+    /// [`VariableWeights`]'s doc). Passing an empty map makes
+    /// objective-based destruction fall back to uniform random selection.
+    pub fn set_objective_weights(&mut self, weights: VariableWeights) {
+        self.objective_weights = weights;
     }
 
     /// Destroy part of an assignment
@@ -233,18 +280,68 @@ impl NeighborhoodOperator {
         destroyed
     }
 
-    /// Violation-based destruction (destroy variables in violated constraints)
+    /// Violation-based destruction: preferentially unassigns the variables
+    /// that appear in the most currently-violated constraints, ranked by
+    /// the weights supplied via [`Self::set_violation_weights`].
+    ///
+    /// Falls back to uniform random destruction only when no violation
+    /// weights have been supplied at all (`self.violation_weights` is
+    /// empty) -- an explicit, documented degradation for callers that
+    /// haven't wired up constraint tracking, rather than the previous
+    /// unconditional "always random" stub that made this variant behave
+    /// identically to [`NeighborhoodOp::Random`] no matter what data was
+    /// available.
     fn destroy_violation_based(&mut self, assignment: &mut Assignment, ratio: f64) -> HashSet<u32> {
-        // Simplified implementation: random for now
-        // In a full implementation, this would analyze constraint violations
-        self.destroy_random(assignment, ratio)
+        if self.violation_weights.is_empty() {
+            return self.destroy_random(assignment, ratio);
+        }
+        Self::destroy_weighted(&mut self.rng, assignment, ratio, &self.violation_weights)
     }
 
-    /// Objective-based destruction (destroy high-impact variables)
+    /// Objective-based destruction: preferentially unassigns the
+    /// highest-objective-impact variables, ranked by the weights supplied
+    /// via [`Self::set_objective_weights`].
+    ///
+    /// Same explicit random fallback as [`Self::destroy_violation_based`]
+    /// when no weights have been supplied.
     fn destroy_objective_based(&mut self, assignment: &mut Assignment, ratio: f64) -> HashSet<u32> {
-        // Simplified implementation: random for now
-        // In a full implementation, this would analyze objective impact
-        self.destroy_random(assignment, ratio)
+        if self.objective_weights.is_empty() {
+            return self.destroy_random(assignment, ratio);
+        }
+        Self::destroy_weighted(&mut self.rng, assignment, ratio, &self.objective_weights)
+    }
+
+    /// Shared weighted-destruction routine used by both
+    /// [`Self::destroy_violation_based`] and
+    /// [`Self::destroy_objective_based`]: shuffles the assigned variables
+    /// first (so ties -- including the many variables absent from
+    /// `weights`, which are all weight `0.0` -- are broken in random
+    /// order), then stable-sorts by descending weight, then unassigns the
+    /// top `ratio` fraction.
+    fn destroy_weighted(
+        rng: &mut rand::rngs::StdRng,
+        assignment: &mut Assignment,
+        ratio: f64,
+        weights: &VariableWeights,
+    ) -> HashSet<u32> {
+        let count = (assignment.len() as f64 * ratio).ceil() as usize;
+        let mut destroyed = HashSet::new();
+
+        let mut vars: Vec<u32> = assignment.assigned_vars().into_iter().collect();
+        use rand::prelude::SliceRandom;
+        vars.shuffle(rng);
+        vars.sort_by(|a, b| {
+            let wa = weights.get(a).copied().unwrap_or(0.0);
+            let wb = weights.get(b).copied().unwrap_or(0.0);
+            wb.partial_cmp(&wa).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        for &var in vars.iter().take(count) {
+            assignment.unassign(var);
+            destroyed.insert(var);
+        }
+
+        destroyed
     }
 
     /// Block-based destruction (destroy contiguous block)
@@ -428,6 +525,22 @@ impl LnsSolver {
         self.restart_manager = RestartManager::new(strategy, self.config.restart_threshold);
     }
 
+    /// Supply per-variable violation weights driving
+    /// [`NeighborhoodOp::ViolationBased`] destruction. Callers should
+    /// recompute these from the actually-violated soft constraints of the
+    /// current [`Self::best_assignment`] before each [`Self::iterate`] call
+    /// that uses that operator; see [`NeighborhoodOperator::set_violation_weights`].
+    pub fn set_violation_weights(&mut self, weights: VariableWeights) {
+        self.operator.set_violation_weights(weights);
+    }
+
+    /// Supply per-variable objective-impact weights driving
+    /// [`NeighborhoodOp::ObjectiveBased`] destruction; see
+    /// [`NeighborhoodOperator::set_objective_weights`].
+    pub fn set_objective_weights(&mut self, weights: VariableWeights) {
+        self.operator.set_objective_weights(weights);
+    }
+
     /// Initialize with an assignment
     pub fn initialize(&mut self, initial: Assignment) {
         self.best_assignment = Some(initial);
@@ -560,6 +673,79 @@ mod tests {
         let destroyed = operator.destroy(&mut assignment, 0.3);
         assert_eq!(destroyed.len(), 3); // 30% of 10
         assert_eq!(assignment.len(), 7); // 7 remaining
+    }
+
+    /// `OPT-LNS-DESTROY-STUB` regression: with violation weights supplied,
+    /// `ViolationBased` destruction must actually prefer the
+    /// highest-weighted (most-violated) variables, not fall back to
+    /// uniform random selection like the old stub did.
+    #[test]
+    fn test_destroy_violation_based_prefers_high_weight_vars() {
+        let mut operator = NeighborhoodOperator::new(NeighborhoodOp::ViolationBased, 7);
+        let mut assignment = Assignment::new();
+        for i in 1..=10 {
+            assignment.assign(i, true);
+        }
+
+        // Variables 1..=3 appear in violated constraints (high weight);
+        // the rest do not (default weight 0).
+        let mut weights: VariableWeights = VariableWeights::default();
+        weights.insert(1, 10.0);
+        weights.insert(2, 9.0);
+        weights.insert(3, 8.0);
+        operator.set_violation_weights(weights);
+
+        let destroyed = operator.destroy(&mut assignment, 0.3);
+        assert_eq!(destroyed.len(), 3); // 30% of 10
+        assert_eq!(
+            destroyed,
+            [1u32, 2, 3].into_iter().collect::<HashSet<_>>(),
+            "violation-based destruction must select the highest-weighted \
+             (most-violated) variables, not a random subset"
+        );
+    }
+
+    /// `OPT-LNS-DESTROY-STUB` regression: same guarantee for
+    /// `ObjectiveBased` destruction using objective-impact weights.
+    #[test]
+    fn test_destroy_objective_based_prefers_high_weight_vars() {
+        let mut operator = NeighborhoodOperator::new(NeighborhoodOp::ObjectiveBased, 7);
+        let mut assignment = Assignment::new();
+        for i in 1..=10 {
+            assignment.assign(i, true);
+        }
+
+        // Variables 8..=10 have the highest objective impact.
+        let mut weights: VariableWeights = VariableWeights::default();
+        weights.insert(8, 5.0);
+        weights.insert(9, 6.0);
+        weights.insert(10, 7.0);
+        operator.set_objective_weights(weights);
+
+        let destroyed = operator.destroy(&mut assignment, 0.3);
+        assert_eq!(destroyed.len(), 3);
+        assert_eq!(
+            destroyed,
+            [8u32, 9, 10].into_iter().collect::<HashSet<_>>(),
+            "objective-based destruction must select the highest-impact \
+             variables, not a random subset"
+        );
+    }
+
+    /// Without any weights supplied, violation/objective-based destruction
+    /// must explicitly fall back to (documented) random selection rather
+    /// than panicking or destroying nothing.
+    #[test]
+    fn test_destroy_violation_based_falls_back_to_random_when_no_weights() {
+        let mut operator = NeighborhoodOperator::new(NeighborhoodOp::ViolationBased, 42);
+        let mut assignment = Assignment::new();
+        for i in 1..=10 {
+            assignment.assign(i, true);
+        }
+
+        let destroyed = operator.destroy(&mut assignment, 0.3);
+        assert_eq!(destroyed.len(), 3);
+        assert_eq!(assignment.len(), 7);
     }
 
     #[test]

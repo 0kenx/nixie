@@ -16,6 +16,8 @@
 //! | `OxizSolver`       | Main solver class (mirrors `WasmSolver`)           |
 //! | `solve()`          | Convenience one-shot function                      |
 //! | `version()`        | Returns the package version string                 |
+//! | `CancellationToken`| Cooperative cancellation flag (local or shared)    |
+//! | `PreemptibleSolver`| Runs a solve in a `Worker`; HARD-kills on timeout  |
 
 #![forbid(unsafe_code)]
 
@@ -372,6 +374,114 @@ const DTS_SOLVE_FN: &str = r#"
 export function solve(smtlib2Script: string): SolverResult;
 "#;
 
+/// `CancellationToken` and `PreemptibleSolver` definitions -- the hard vs.
+/// cooperative preemption API surface (see each type's Rust-side doc
+/// comments in `js_api::cancellation` / `js_api::preemptible_worker` for
+/// the full rationale).
+const DTS_PREEMPTIBLE_WORKER: &str = r#"
+/**
+ * A cooperative cancellation flag.
+ *
+ * IMPORTANT -- read before relying on this for a timeout: this is
+ * COOPERATIVE only. The running solve must itself poll
+ * {@link CancellationToken.isCancelled} at a call point (e.g. between
+ * assertions) to notice it; it can NEVER interrupt a single in-flight
+ * `check_sat` call, because `oxiz-solver`'s solve loop has no
+ * cancellation hook to poll. For a HARD guarantee that a stuck solve
+ * stops within a bounded time regardless of what it is doing, use
+ * {@link PreemptibleSolver.solveWithTimeout} instead, which terminates
+ * the underlying `Worker` OS thread outright.
+ *
+ * Two backing modes:
+ * - Local (`new CancellationToken()`): only visible within the same JS
+ *   realm/thread that holds this exact object.
+ * - Shared (`CancellationToken.newShared()`): backed by a
+ *   `SharedArrayBuffer`, so a write from one thread (e.g. the main
+ *   thread) is visible to another (e.g. a `Worker`) without needing the
+ *   worker's event loop to be idle. Requires a cross-origin-isolated page
+ *   (`Cross-Origin-Opener-Policy: same-origin` +
+ *   `Cross-Origin-Embedder-Policy: require-corp`); check
+ *   {@link CancellationToken.sharedArrayBufferSupported} first.
+ */
+export class CancellationToken {
+  constructor();
+  /** Whether the current JS global supports `SharedArrayBuffer`. */
+  static sharedArrayBufferSupported(): boolean;
+  /** Create a token backed by a fresh `SharedArrayBuffer`. */
+  static newShared(): CancellationToken;
+  /** Attach to an existing shared buffer (e.g. received from a Worker init message). */
+  static fromBuffer(buffer: SharedArrayBuffer): CancellationToken;
+  /** The backing buffer, if this token is in shared mode. */
+  buffer(): SharedArrayBuffer | undefined;
+  /** Whether this is a shared (cross-thread-capable) token. */
+  isShared(): boolean;
+  /** Whether cancellation has been requested. */
+  isCancelled(): boolean;
+  /** Request cancellation. */
+  cancel(): void;
+  /** Clear a pending cancellation request. */
+  reset(): void;
+}
+
+/**
+ * Runs the OxiZ solver inside a dedicated `Worker` and can HARD-kill it
+ * (`Worker.terminate()`) from the main thread on timeout.
+ *
+ * ## Timeout semantics -- read before using
+ *
+ * - {@link PreemptibleSolver.solveWithTimeout}'s timeout is HARD: on
+ *   expiry the underlying `Worker`'s OS thread is terminated via
+ *   `Worker.terminate()`, which the browser guarantees stops execution
+ *   immediately, unconditionally, regardless of what the solver is doing
+ *   -- including in the middle of a single `check_sat` call. A fresh
+ *   `Worker` is spawned automatically right after, so the instance
+ *   remains usable for the next call. This is the guarantee a plain
+ *   `Promise.race` against `setTimeout` (as used internally by
+ *   `AsyncSolver.checkSatAsync` + `AsyncOperation.withTimeout`) cannot
+ *   provide, because that races against a callback queued on the SAME
+ *   single JS thread the blocking solve is running on -- it cannot run,
+ *   let alone preempt anything, until the solve already returned.
+ * - {@link PreemptibleSolver.cancellationBuffer} exposes a separate,
+ *   best-effort COOPERATIVE mechanism (see {@link CancellationToken}):
+ *   useful to request a clean stop between operations without paying the
+ *   cost of a full worker respawn, but never a guarantee by itself.
+ *
+ * @example
+ * ```typescript
+ * const solver = new PreemptibleSolver("./oxiz_wasm.js", "./oxiz_wasm_bg.wasm");
+ * try {
+ *   const response = await solver.solveWithTimeout(
+ *     "(set-logic QF_LIA)(declare-const x Int)(assert (> x 0))(check-sat)",
+ *     5000, // hard timeout in ms
+ *   );
+ *   console.log(response.status); // "sat" | "unsat" | "unknown"
+ * } catch (err) {
+ *   // err.message explains whether this was a hard timeout (worker
+ *   // terminated) or a worker-side error.
+ * }
+ * ```
+ */
+export class PreemptibleSolver {
+  /**
+   * @param wasmJsUrl - URL of the `--target no-modules` wasm-bindgen glue.
+   * @param wasmBgUrl - URL of the corresponding `*_bg.wasm` binary.
+   */
+  constructor(wasmJsUrl: string, wasmBgUrl: string);
+  /** Run `script` with a HARD timeout (see class docs). */
+  solveWithTimeout(script: string, timeoutMs: number): Promise<SolverResult>;
+  /** Run `script` with no timeout. */
+  solve(script: string): Promise<SolverResult>;
+  /** Immediately hard-terminate the current worker and spawn a fresh one. */
+  terminate(): void;
+  /** The `SharedArrayBuffer` backing cooperative cancellation, if available. */
+  cancellationBuffer(): SharedArrayBuffer | undefined;
+  /** Request cooperative (non-hard) cancellation. */
+  requestCooperativeCancel(): void;
+  /** Whether a `Worker` is currently spawned and ready. */
+  isReady(): boolean;
+}
+"#;
+
 /// `version()` function definition.
 const DTS_VERSION_FN: &str = r#"
 /**
@@ -406,6 +516,8 @@ export function version(): string;
 /// assert!(dts.contains("ModelValue"));
 /// assert!(dts.contains("solve("));
 /// assert!(dts.contains("version("));
+/// assert!(dts.contains("class CancellationToken"));
+/// assert!(dts.contains("class PreemptibleSolver"));
 /// ```
 pub fn generate_typescript_dts() -> String {
     let mut out = String::with_capacity(8 * 1024);
@@ -416,6 +528,7 @@ pub fn generate_typescript_dts() -> String {
     out.push_str(DTS_SOLVER_CONFIG);
     out.push_str(DTS_OXIZ_SOLVER);
     out.push_str(DTS_SOLVE_FN);
+    out.push_str(DTS_PREEMPTIBLE_WORKER);
     out.push_str(DTS_VERSION_FN);
 
     out
@@ -513,6 +626,54 @@ mod tests {
         assert!(
             dts.starts_with("// OxiZ WASM"),
             "generated .d.ts does not start with expected header"
+        );
+    }
+
+    #[test]
+    fn test_dts_contains_cancellation_token_class() {
+        let dts = generate_typescript_dts();
+        assert!(
+            dts.contains("export class CancellationToken"),
+            "missing CancellationToken class"
+        );
+        assert!(dts.contains("isCancelled(): boolean"));
+        assert!(dts.contains("sharedArrayBufferSupported(): boolean"));
+    }
+
+    #[test]
+    fn test_dts_contains_preemptible_solver_class() {
+        let dts = generate_typescript_dts();
+        assert!(
+            dts.contains("export class PreemptibleSolver"),
+            "missing PreemptibleSolver class"
+        );
+        assert!(dts.contains("solveWithTimeout(script: string, timeoutMs: number)"));
+    }
+
+    /// This is the exact requirement the P2 finding calls out: the
+    /// generated docs must state, in terms a consumer cannot miss, which
+    /// timeout mechanism is HARD (actually preempts) and which is
+    /// COOPERATIVE (best-effort, never preempts mid-`check_sat`) --
+    /// there must be no false "timeout" claim for a path that cannot
+    /// actually preempt.
+    #[test]
+    fn test_dts_states_hard_vs_cooperative_timeout_explicitly() {
+        let dts = generate_typescript_dts();
+        assert!(
+            dts.contains("timeout is HARD"),
+            "must explicitly label PreemptibleSolver's timeout as hard"
+        );
+        assert!(
+            dts.contains("COOPERATIVE mechanism"),
+            "must explicitly label CancellationToken's mechanism as cooperative"
+        );
+        assert!(
+            dts.contains("Worker.terminate()"),
+            "must name the actual hard-preemption mechanism"
+        );
+        assert!(
+            dts.contains("it cannot run,") && dts.contains("let alone preempt anything"),
+            "must explain why the setTimeout-race approach cannot preempt a blocking solve"
         );
     }
 }

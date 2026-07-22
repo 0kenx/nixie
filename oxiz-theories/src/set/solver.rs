@@ -828,13 +828,16 @@ impl SetSolver {
                 self.propagation_queue.push_back(aux);
                 Ok(aux)
             }
-            SetExpr::Comprehension { .. } => {
-                // Comprehension bodies require a full formula evaluator which is
-                // outside the scope of the constraint-propagation layer.  Create
-                // an unconstrained auxiliary variable as a sound over-approximation.
-                let var =
-                    self.new_set_var(&format!("aux_comp_{}", self.vars.len()), SetSort::IntSet);
-                Ok(var)
+            SetExpr::Comprehension { formula, .. } => {
+                // Membership axiom for {x | phi(x)}:  x in {y | phi(y)} <=> phi(x).
+                // In this expression language the predicate `phi` is itself a
+                // set expression `formula`, so the comprehension denotes exactly
+                // that set: the comprehension variable is identified with the
+                // body set. Membership constraints then propagate through the
+                // body instead of hitting a fresh, unconstrained variable --
+                // which previously let an infeasible body be reported `Sat`.
+                let body = (**formula).clone();
+                self.extract_var(&body)
             }
         }
     }
@@ -1427,5 +1430,51 @@ mod tests {
         assert!(vars.contains(&SetVarId(0)));
         assert!(vars.contains(&SetVarId(1)));
         assert!(vars.contains(&SetVarId(2)));
+    }
+
+    #[test]
+    fn test_comprehension_identifies_with_body_set() {
+        // {y | y in S} extracts to exactly S, so its membership is constrained
+        // by the body rather than left free.
+        let mut solver = SetSolver::new();
+        let s = solver.new_set_var("s", SetSort::IntSet);
+        let comp = SetExpr::Comprehension {
+            var: 0,
+            formula: Box::new(SetExpr::Var(s)),
+        };
+        let extracted = solver
+            .extract_var(&comp)
+            .expect("comprehension over a set variable extracts");
+        assert_eq!(extracted, s);
+    }
+
+    #[test]
+    fn test_comprehension_body_constrains_membership_regression() {
+        // 5 in {y | y in S} together with 5 not in S is UNSAT. With the old
+        // unconstrained-aux encoding the body was ignored and this was
+        // fabricated as satisfiable (no conflict).
+        let mut solver = SetSolver::new();
+        let s = solver.new_set_var("s", SetSort::IntSet);
+
+        solver
+            .add_constraint(SetConstraint::Member {
+                element: 5,
+                set: SetExpr::Var(s),
+                sign: false,
+            })
+            .expect("asserting 5 not in S is consistent on its own");
+
+        let result = solver.add_constraint(SetConstraint::Member {
+            element: 5,
+            set: SetExpr::Comprehension {
+                var: 0,
+                formula: Box::new(SetExpr::Var(s)),
+            },
+            sign: true,
+        });
+        assert!(
+            result.is_err(),
+            "5 in {{y | y in S}} while 5 not in S must conflict, got {result:?}"
+        );
     }
 }

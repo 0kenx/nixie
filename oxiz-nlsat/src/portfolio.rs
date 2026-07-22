@@ -585,7 +585,18 @@ impl PortfolioSolver {
         NlsatSolver::with_config(solver_config)
     }
 
-    /// Run a single solver instance with clause sharing.
+    /// Run a single solver instance with clause sharing, returning a real
+    /// [`PortfolioResult`] (model / unsat core extracted from the solver) or
+    /// `None` if this worker cannot decide the problem within its budget.
+    ///
+    /// [`NlsatSolver::solve`] already returns a *definitive* result, so this
+    /// does not spin re-running an identical search. On `Unknown` the only way a
+    /// re-solve can change the outcome is if freshly-imported shared clauses
+    /// (from other workers) tightened this worker's problem, so we exchange
+    /// clauses and retry a bounded number of rounds (`share_interval`), then
+    /// honestly give up with `None` rather than looping forever or fabricating a
+    /// verdict. This replaces the previous stub that returned empty models/cores
+    /// and aborted after a hard-coded 10 conflicts.
     #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn run_single_solver(
@@ -598,52 +609,48 @@ impl PortfolioSolver {
         share_interval: usize,
         max_shared_lbd: u32,
     ) -> Option<PortfolioResult> {
-        let mut conflict_count = 0;
+        // Real (non-fabricated) unsat cores require core extraction to be on.
+        solver.set_unsat_core_extraction(true);
 
-        loop {
-            // Check if terminated by another solver
+        // Bound on clause-exchange rounds; never spin unboundedly.
+        let max_rounds = share_interval.max(1);
+
+        for _ in 0..max_rounds {
+            // Another worker already found a result.
             if terminated.load(Ordering::Relaxed) {
                 return None;
             }
 
-            // Run one step of solving
-            let result = solver.solve();
-
-            match result {
+            match solver.solve() {
                 SolverResult::Sat => {
-                    // Found satisfiable assignment
                     terminated.store(true, Ordering::Relaxed);
                     return Some(PortfolioResult::Sat {
                         solver_id,
-                        model: Vec::new(), // Simplified: would extract actual model
+                        model: Self::extract_sat_model(&solver),
                     });
                 }
                 SolverResult::Unsat => {
-                    // Found unsatisfiable
                     terminated.store(true, Ordering::Relaxed);
                     return Some(PortfolioResult::Unsat {
                         solver_id,
-                        core: Vec::new(), // Simplified: would extract actual core
+                        core: Self::extract_core_literals(&solver),
                     });
                 }
                 SolverResult::Unknown => {
-                    // Continue solving
-                    conflict_count += 1;
-
-                    // Share clauses periodically if enabled
-                    if enable_sharing && conflict_count % share_interval == 0 {
-                        self.share_learned_clauses(solver_id, &solver, &shared_db, max_shared_lbd);
-                        self.import_shared_clauses(solver_id, &mut solver, &shared_db);
+                    // A bare re-solve reproduces the same Unknown; only newly
+                    // imported shared clauses can help. Without sharing there is
+                    // nothing more to try, so report honestly.
+                    if !enable_sharing {
+                        return None;
                     }
+                    self.share_learned_clauses(solver_id, &solver, &shared_db, max_shared_lbd);
+                    self.import_shared_clauses(solver_id, &mut solver, &shared_db);
                 }
             }
-
-            // In a real implementation, we would have better termination conditions
-            // For now, limit iterations to prevent infinite loops in tests
-            if conflict_count > 10 {
-                return None;
-            }
         }
+
+        // Budget exhausted without a definitive answer.
+        None
     }
 
     /// Share learned clauses with good LBD to other solvers.
@@ -740,6 +747,59 @@ mod tests {
 
         assert_eq!(portfolio.stats.num_solvers, 0);
         assert!(portfolio.stats.winning_solver.is_none());
+    }
+
+    // Regression: `run_single_solver` previously returned `model: Vec::new()` on
+    // Sat, `core: Vec::new()` on Unsat, and gave up after a hard-coded 10
+    // conflicts. It must now return a real (non-empty) model / core.
+    #[test]
+    fn test_run_single_solver_returns_real_model() {
+        // Worker problem: x > 0 (SAT).
+        let mut worker = NlsatSolver::new();
+        let atom = worker.new_ineq_atom(Polynomial::from_var(0), AtomKind::Gt);
+        worker.add_clause(vec![worker.atom_literal(atom, true)]);
+
+        let portfolio = PortfolioSolver::new(PortfolioConfig::default(), NlsatSolver::new());
+        let terminated = Arc::new(AtomicBool::new(false));
+        let shared = Arc::new(SharedClauseDB::new());
+
+        match portfolio.run_single_solver(0, worker, shared, terminated, false, 4, 8) {
+            Some(PortfolioResult::Sat { model, .. }) => {
+                assert!(
+                    !model.is_empty(),
+                    "run_single_solver must return a real (non-empty) model, not the empty stub"
+                );
+            }
+            other => panic!("expected Sat with a real model, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_run_single_solver_returns_real_core() {
+        // Worker problem: the classic 2-variable UNSAT core
+        // (a ∨ b) ∧ (¬a ∨ b) ∧ (a ∨ ¬b) ∧ (¬a ∨ ¬b), which is decided by
+        // search (not at clause-add time) so conflict analysis records the core.
+        let mut worker = NlsatSolver::new();
+        let a = worker.new_bool_var();
+        let b = worker.new_bool_var();
+        worker.add_clause(vec![Literal::positive(a), Literal::positive(b)]);
+        worker.add_clause(vec![Literal::negative(a), Literal::positive(b)]);
+        worker.add_clause(vec![Literal::positive(a), Literal::negative(b)]);
+        worker.add_clause(vec![Literal::negative(a), Literal::negative(b)]);
+
+        let portfolio = PortfolioSolver::new(PortfolioConfig::default(), NlsatSolver::new());
+        let terminated = Arc::new(AtomicBool::new(false));
+        let shared = Arc::new(SharedClauseDB::new());
+
+        match portfolio.run_single_solver(0, worker, shared, terminated, false, 4, 8) {
+            Some(PortfolioResult::Unsat { core, .. }) => {
+                assert!(
+                    !core.is_empty(),
+                    "run_single_solver must return a real (non-empty) unsat core"
+                );
+            }
+            other => panic!("expected Unsat with a real core, got {other:?}"),
+        }
     }
 
     /// Regression test for the audit finding: `run_parallel_solvers` used

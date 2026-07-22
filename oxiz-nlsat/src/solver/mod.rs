@@ -8,6 +8,7 @@
 
 mod conflict;
 mod decide;
+mod inprocess;
 mod propagate;
 
 use crate::assignment::{Assignment, Justification};
@@ -104,6 +105,15 @@ pub struct SolverStats {
     pub reorderings: u64,
     /// Number of early terminations.
     pub early_terminations: u64,
+    /// Number of atom evaluations answered from the theory evaluation cache
+    /// instead of recomputing the polynomial sign (see `eval_cache`).
+    pub eval_cache_hits: u64,
+    /// Number of original clauses removed by pre-search subsumption.
+    pub preprocess_subsumed: u64,
+    /// Number of learned-clause literals removed by in-search vivification.
+    pub vivified_literals: u64,
+    /// Number of in-search inprocessing passes (subsumption/strengthening).
+    pub inprocess_passes: u64,
 }
 
 /// Non-linear arithmetic solver using CAD.
@@ -146,8 +156,29 @@ pub struct NlsatSolver {
     pub(super) learnt_clause: Vec<Literal>,
     /// Seen variables during conflict analysis.
     pub(super) seen: HashSet<BoolVar>,
-    /// The polynomial evaluator cache.
-    pub(super) eval_cache: HashMap<(AtomId, Vec<Option<BigRational>>), Lbool>,
+    /// Theory-evaluation cache: memoizes the definite (`True`/`False`) value of
+    /// each atom under the current arithmetic assignment.
+    ///
+    /// Keying by `AtomId` alone is sound because the solver only ever *extends*
+    /// the arithmetic assignment during forward search (a variable is assigned
+    /// at most once between backtracks, never re-assigned in place), and
+    /// [`Self::backtrack`] clears this cache whenever it unsets arithmetic
+    /// variables. Hence an atom that is fully evaluable keeps the same value
+    /// until the next backtrack, so a cached definite result cannot go stale.
+    pub(super) eval_cache: HashMap<AtomId, Lbool>,
+    /// Theory-conflict variable tracker: boosts the decision priority of
+    /// arithmetic variables that recur in theory conflicts.
+    pub(super) theory_conflict_tracker: crate::theory_conflict::TheoryConflictTracker,
+    /// Occurrence-list clause subsumption engine (pre-search preprocessing).
+    pub(super) subsumption_checker: crate::subsumption::SubsumptionChecker,
+    /// Unit-propagation-based learned-clause strengthening (in-search).
+    pub(super) vivifier: crate::vivification::Vivifier,
+    /// Periodic subsumption / self-subsuming strengthening of learned clauses.
+    pub(super) inprocessor: crate::inprocessing::Inprocessor,
+    /// Whether the one-shot pre-search preprocessing pass has run.
+    pub(super) preprocessed: bool,
+    /// Classification of the problem structure (set during preprocessing).
+    pub(super) problem_class: Option<crate::structure_analyzer::ProblemClass>,
     /// Random number generator state.
     pub(super) random_state: u64,
     /// Track clauses used in conflict (for unsat core extraction).
@@ -198,6 +229,14 @@ impl NlsatSolver {
             learnt_clause: Vec::new(),
             seen: HashSet::new(),
             eval_cache: HashMap::new(),
+            theory_conflict_tracker: crate::theory_conflict::TheoryConflictTracker::new(),
+            subsumption_checker: crate::subsumption::SubsumptionChecker::new(
+                crate::subsumption::SubsumptionConfig::default(),
+            ),
+            vivifier: crate::vivification::Vivifier::new(),
+            inprocessor: crate::inprocessing::Inprocessor::new(),
+            preprocessed: false,
+            problem_class: None,
             random_state,
             conflict_clauses: HashSet::new(),
             extract_unsat_core: false,
@@ -463,6 +502,34 @@ impl NlsatSolver {
         id
     }
 
+    /// Install a theory-derived conflict clause (a valid lemma that is currently
+    /// entirely falsified) so the main loop's CDCL conflict analysis can process
+    /// it soundly.
+    ///
+    /// Unlike a Boolean conflict, a theory lemma need not touch the current
+    /// decision level: its literals can all be falsified at *lower* levels (in
+    /// the extreme, entirely by level-0 units, when the arithmetic infeasibility
+    /// is independent of every Boolean decision). First-UIP analysis assumes a
+    /// current-level literal, so we first back-jump to the highest decision
+    /// level present in the lemma. There the lemma is a proper conflict clause
+    /// (it has a literal at the new current level and all its literals remain
+    /// false); if that level is 0 the main loop reports `Unsat`.
+    pub(super) fn install_theory_conflict(&mut self, lemma: Vec<Literal>) {
+        let max_level = lemma
+            .iter()
+            .map(|lit| self.assignment.bool_level(lit.var()))
+            .max()
+            .unwrap_or(0);
+        // Track the arithmetic variables in this theory conflict so recurrently
+        // conflicting variables gain decision priority (heuristic only).
+        self.record_theory_conflict_vars(&lemma);
+        if max_level < self.assignment.level() {
+            self.backtrack(max_level);
+        }
+        let cid = self.add_learned_clause(lemma);
+        self.conflict_clause = Some(cid);
+    }
+
     /// Find the clause that assigned a literal (for unsat core tracking at level 0).
     pub(super) fn find_unit_conflict_reason(&self, lit: Literal) -> Option<ClauseId> {
         let negated = lit.negate();
@@ -472,11 +539,14 @@ impl NlsatSolver {
                 if let Justification::Propagation(cid) = entry.justification {
                     return Some(cid);
                 } else if let Justification::Unit = entry.justification {
-                    // It was assigned by a unit clause, need to find it
-                    // Search through clauses for unit clause containing this literal
-                    for (idx, clause) in self.clauses.clauses().iter().enumerate() {
+                    // It was assigned by a unit clause, need to find it.
+                    // Search through clauses for a unit clause containing this
+                    // literal. Use the clause's stable `id`, never its Vec
+                    // position: `ClauseDatabase::remove` deletes by value
+                    // (shifting positions), so an index is not a valid ClauseId.
+                    for clause in self.clauses.clauses() {
                         if clause.len() == 1 && clause.get(0) == Some(negated) {
-                            return Some(idx as ClauseId);
+                            return Some(clause.id());
                         }
                     }
                 }
@@ -525,14 +595,17 @@ impl NlsatSolver {
         // Re-derive the level-0 unit assignments from every unit clause. Learned
         // clauses are entailed by the originals, so replaying their units is
         // sound. An immediately-falsified unit records a level-0 conflict.
+        // Key each unit by its stable clause `id`, never its Vec position:
+        // `ClauseDatabase::remove` deletes by value and shifts positions, so an
+        // index is not a valid ClauseId (it would misidentify the conflict
+        // clause once any clause has been removed by reduction/subsumption).
         let units: Vec<(ClauseId, Literal)> = self
             .clauses
             .clauses()
             .iter()
-            .enumerate()
-            .filter_map(|(idx, clause)| {
+            .filter_map(|clause| {
                 if clause.len() == 1 {
-                    clause.get(0).map(|lit| (idx as ClauseId, lit))
+                    clause.get(0).map(|lit| (clause.id(), lit))
                 } else {
                     None
                 }
@@ -566,6 +639,13 @@ impl NlsatSolver {
             self.reset_search_state();
         }
         self.searched = true;
+
+        // One-shot pre-search preprocessing (structural classification +
+        // variable ordering + subsumption of original clauses). Runs only on
+        // the first solve and only when no level-0 conflict is already known.
+        if !self.preprocessed && self.conflict_clause.is_none() {
+            self.preprocess();
+        }
 
         // Clear unsat core tracking from previous solve
         // (but only if there's no existing conflict from clause addition)
@@ -656,6 +736,17 @@ impl NlsatSolver {
                 // Check if we should restart
                 self.maybe_restart();
 
+                // Level-0 in-search clause-database simplification. These are
+                // no-ops unless the restart above returned the search to level
+                // 0; both preserve the satisfiability verdict (learned-clause
+                // subsumption/strengthening and entailed-subset vivification).
+                // Whether to run them at all is a strategy choice driven by the
+                // structural classification.
+                if self.assignment.level() == 0 && self.inprocessing_beneficial() {
+                    self.run_inprocessing();
+                    self.vivify_learned();
+                }
+
                 // Check if we should reduce learned clauses
                 if self.clauses.num_learned() as usize > self.config.max_learned {
                     self.reduce_learned();
@@ -682,8 +773,7 @@ impl NlsatSolver {
                 }
                 PropagationResult::TheoryConflict(lits) => {
                     self.stats.theory_conflicts += 1;
-                    let cid = self.add_learned_clause(lits);
-                    self.conflict_clause = Some(cid);
+                    self.install_theory_conflict(lits);
                     continue;
                 }
                 PropagationResult::Ok => {}
@@ -694,8 +784,7 @@ impl NlsatSolver {
                 TheoryPropagation::Ok => {}
                 TheoryPropagation::Conflict(conflict_lits) => {
                     self.stats.theory_conflicts += 1;
-                    let cid = self.add_learned_clause(conflict_lits);
-                    self.conflict_clause = Some(cid);
+                    self.install_theory_conflict(conflict_lits);
                     continue;
                 }
                 TheoryPropagation::Unknown => {
@@ -729,13 +818,17 @@ impl NlsatSolver {
                         continue;
                     }
                     ArithDecision::ProvedEmpty(lemma) => {
-                        // The pure single-variable constraints on `var` are
-                        // jointly infeasible over the reals. Learn the valid
-                        // lemma and let conflict analysis back-jump, so we never
-                        // re-make the identical decision (no infinite loop).
+                        // The constraints on `var` are jointly infeasible over
+                        // the reals (either the pure single-variable Sturm
+                        // regions, or a certified coupled sign conflict). Learn
+                        // the valid lemma and let conflict analysis back-jump,
+                        // so we never re-make the identical decision (no infinite
+                        // loop). `install_theory_conflict` first back-jumps to
+                        // the lemma's highest decision level, since a coupled
+                        // lemma can be falsified entirely below the current
+                        // level (in the extreme, by level-0 units).
                         self.stats.theory_conflicts += 1;
-                        let cid = self.add_learned_clause(lemma);
-                        self.conflict_clause = Some(cid);
+                        self.install_theory_conflict(lemma);
                         continue;
                     }
                     ArithDecision::IrrationalOnly => {

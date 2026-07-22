@@ -224,6 +224,7 @@ impl Solver {
             // constraints like `(> (select a 0) 7)` are tracked by the arithmetic
             // solver and model values are extracted correctly.
             TermKind::Select(_, _) => {
+                self.has_array_ops = true;
                 let is_int = term.sort == manager.sorts.int_sort;
                 let is_real = term.sort == manager.sorts.real_sort;
                 if (is_int || is_real) && !self.arith_terms.contains(&term_id) {
@@ -1239,6 +1240,7 @@ impl Solver {
             }
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => {
                 // Array operations - theory terms
+                self.has_array_ops = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }

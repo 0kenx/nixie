@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), not part of the public API. WIRED: the
+// solver runs `eliminate_subsumed` once before search (`solver::inprocess::preprocess`)
+// to drop subsumed original clauses. `#![allow(dead_code)]` remains for the
+// incremental occurrence-list helpers (is_subsumed_by_existing / find_subsumed_clauses)
+// that the one-shot pass does not use.
 //! Clause Subsumption
 //!
 //! This module implements clause subsumption checking and backward subsumption.

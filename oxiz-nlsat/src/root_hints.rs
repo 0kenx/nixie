@@ -1,5 +1,8 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. A warm-start
+// cache of approximate root brackets whose cross-backtrack reuse is lost because
+// backtrack clears all arithmetic state each conflict; low priority until
+// incremental backtracking (see incremental_cad) lands.
 //! Root approximation hints cache for faster root isolation.
 //!
 //! This module caches approximate root locations to speed up repeated

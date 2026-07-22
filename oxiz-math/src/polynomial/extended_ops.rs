@@ -123,7 +123,10 @@ impl super::Polynomial {
             return vec![];
         }
 
-        let max_var = *vars.iter().max().expect("operation should succeed");
+        // `vars` was just confirmed non-empty above, so `max()` always
+        // yields `Some`; `unwrap_or(0)` avoids an `.expect()` panic path
+        // without changing behavior (the fallback is unreachable).
+        let max_var = *vars.iter().max().unwrap_or(&0);
         let mut grad = Vec::new();
 
         // Compute partial derivative for each variable from 0 to max_var
@@ -170,7 +173,9 @@ impl super::Polynomial {
             return vec![];
         }
 
-        let max_var = *vars.iter().max().expect("operation should succeed");
+        // Same reasoning as `gradient` above: `vars` is confirmed
+        // non-empty by the guard above, so `unwrap_or` never triggers.
+        let max_var = *vars.iter().max().unwrap_or(&0);
         let n = (max_var + 1) as usize;
 
         let mut hessian = vec![vec![Polynomial::zero(); n]; n];
@@ -598,25 +603,50 @@ impl super::Polynomial {
     /// The evaluated value
     ///
     /// # Panics
-    /// Panics if the polynomial is not univariate in the given variable
+    ///
+    /// Panics if the polynomial is genuinely multivariate in `var` — i.e. it
+    /// still contains a variable other than `var` after substituting `value`
+    /// for `var`, so it cannot be reduced to a scalar. Callers that cannot
+    /// guarantee univariate-in-`var` input (e.g. because it comes from
+    /// untrusted or incrementally built terms) should use
+    /// [`Self::try_eval_horner`] instead, which reports the same condition as
+    /// `None` rather than aborting.
     pub fn eval_horner(&self, var: Var, value: &BigRational) -> BigRational {
+        match self.try_eval_horner(var, value) {
+            Some(v) => v,
+            None => panic!(
+                "Polynomial::eval_horner: polynomial is not univariate in variable x{var} \
+                 (use try_eval_horner for a non-panicking check)"
+            ),
+        }
+    }
+
+    /// Evaluate a univariate polynomial using Horner's method, returning `None`
+    /// instead of panicking when the polynomial is genuinely multivariate in
+    /// `var` (i.e. it still contains another variable after substituting
+    /// `value` for `var`, so no scalar result exists).
+    ///
+    /// This is the non-panicking counterpart of [`Self::eval_horner`]; see its
+    /// documentation for the numeric contract.
+    pub fn try_eval_horner(&self, var: Var, value: &BigRational) -> Option<BigRational> {
         if self.is_zero() {
-            return BigRational::zero();
+            return Some(BigRational::zero());
         }
 
-        // For multivariate polynomials, use eval_at instead
+        // For polynomials that are not univariate *in `var`*, fall back to
+        // full substitution: this succeeds only when the substitution leaves a
+        // constant (every other variable, if any, cancelled out).
         if !self.is_univariate() || self.max_var() != var {
             let result = self.eval_at(var, value);
-            // If result is constant, return its value
             if result.is_constant() {
-                return result.constant_value();
+                return Some(result.constant_value());
             }
-            panic!("Polynomial is not univariate in variable x{}", var);
+            return None;
         }
 
         let deg = self.degree(var);
         if deg == 0 {
-            return self.constant_value();
+            return Some(self.constant_value());
         }
 
         // Collect coefficients in descending order of degree
@@ -631,7 +661,7 @@ impl super::Polynomial {
             result = &result * value + &coeffs[k as usize];
         }
 
-        result
+        Some(result)
     }
 
     /// Substitute a polynomial for a variable.
@@ -730,9 +760,15 @@ impl super::Polynomial {
     /// Pseudo-remainder for univariate polynomials.
     /// Returns r such that lc(b)^d * a = q * b + r for some q,
     /// where d = max(deg(a) - deg(b) + 1, 0).
+    ///
+    /// Division by the zero polynomial is mathematically undefined; rather
+    /// than panicking on a crafted degenerate `divisor` (a soundness/DoS
+    /// concern for any caller reachable from untrusted input), this treats
+    /// it as "no reduction possible" and returns `self` unchanged, mirroring
+    /// `Self::exact_remainder_univariate`'s convention for the same case.
     pub fn pseudo_remainder(&self, divisor: &Polynomial, var: Var) -> Polynomial {
         if divisor.is_zero() {
-            panic!("Division by zero polynomial");
+            return self.clone();
         }
 
         if self.is_zero() {
@@ -773,9 +809,14 @@ impl super::Polynomial {
     /// Pseudo-division for univariate polynomials.
     /// Returns (quotient, remainder) such that lc(b)^d * a = q * b + r
     /// where d = deg(a) - deg(b) + 1.
+    ///
+    /// Division by the zero polynomial is mathematically undefined; rather
+    /// than panicking on a crafted degenerate `divisor`, this returns
+    /// `(0, self)` -- "no division performed" -- matching the convention
+    /// used for the `deg(a) < deg(b)` case below.
     pub fn pseudo_div_univariate(&self, divisor: &Polynomial) -> (Polynomial, Polynomial) {
         if divisor.is_zero() {
-            panic!("Division by zero polynomial");
+            return (Polynomial::zero(), self.clone());
         }
 
         if self.is_zero() {
@@ -911,17 +952,26 @@ impl super::Polynomial {
         prs
     }
 
-    /// Resultant of two univariate polynomials with respect to a variable.
+    /// Resultant of two polynomials with respect to a variable.
     ///
-    /// For genuinely univariate inputs (the documented use case — polynomials
-    /// containing only `var`), this computes the *exact* subresultant PRS
-    /// value via rational scalar normalization. If either input contains
-    /// other variables, the leading-coefficient normalization at each step
-    /// can itself be a non-constant polynomial; exact multivariate
-    /// polynomial division is not implemented, so that (undocumented, non
-    /// univariate) case falls back to a `primitive()`-based approximation
-    /// that may not equal the true resultant, though it still detects
-    /// exact-zero resultants correctly.
+    /// The resultant `Res_var(p, q)` eliminates `var` from `{p = 0, q = 0}`,
+    /// returning a polynomial in the remaining variables that vanishes exactly
+    /// when `p` and `q` share a common root (over an algebraic closure) or
+    /// their leading coefficients in `var` both vanish.
+    ///
+    /// * **Univariate inputs** (both operands contain only `var`): computed via
+    ///   the exact subresultant PRS with rational scalar normalization.
+    /// * **Multivariate inputs** (either operand contains another variable):
+    ///   computed *exactly* as the determinant of the `(deg_p + deg_q)`-square
+    ///   Sylvester matrix over the polynomial coefficient ring, evaluated
+    ///   division-free via the Samuelson–Berkowitz algorithm (see
+    ///   `sylvester_resultant`). This replaces the former `primitive()`-based
+    ///   approximation, which could return a mathematically wrong (non-zero)
+    ///   value for genuinely multivariate operands.
+    ///
+    /// The sign/value convention is the classical
+    /// `Res(p, q) = lc(p)^{deg q} · Π_{p(α)=0} q(α)`; in particular
+    /// `Res(x - a, x - b) = a - b`.
     pub fn resultant(&self, other: &Polynomial, var: Var) -> Polynomial {
         if self.is_zero() || other.is_zero() {
             return Polynomial::zero();
@@ -937,79 +987,15 @@ impl super::Polynomial {
             return other.pow(deg_p);
         }
 
-        // Use subresultant PRS for efficiency
-        let mut a = self.clone();
-        let mut b = other.clone();
-        let mut g = Polynomial::one();
-        let mut h = Polynomial::one();
-        let mut sign = if (deg_p & 1 == 1) && (deg_q & 1 == 1) {
-            -1i32
-        } else {
-            1i32
-        };
-
-        // Add iteration limit to prevent infinite loops when exact division is not available
-        let max_iters = (deg_p + deg_q) * 10;
-        let mut iter_count = 0;
-
-        while !b.is_zero() && iter_count < max_iters {
-            iter_count += 1;
-            let delta = a.degree(var) as i32 - b.degree(var) as i32;
-            if delta < 0 {
-                core::mem::swap(&mut a, &mut b);
-                if (a.degree(var) & 1 == 1) && (b.degree(var) & 1 == 1) {
-                    sign = -sign;
-                }
-                continue;
-            }
-
-            let (_, r) = a.pseudo_div_univariate(&b);
-
-            if r.is_zero() {
-                if b.degree(var) > 0 {
-                    return Polynomial::zero();
-                } else {
-                    let d = a.degree(var);
-                    return b.pow(d);
-                }
-            }
-
-            a = b;
-            let g_pow = g.pow((delta + 1) as u32);
-            let h_pow = h.pow(delta as u32);
-            b = r;
-
-            // Normalize b by the subresultant divisor g^(delta+1... ) * h.
-            if delta > 0 {
-                let denom = Polynomial::mul(&g_pow, &h_pow);
-                if denom.is_constant() && !denom.constant_value().is_zero() {
-                    // Univariate case (g, h reduce to plain rationals): exact
-                    // rational scaling, not an approximation.
-                    b = b.scale(&(BigRational::one() / denom.constant_value()));
-                } else {
-                    // Non-constant divisor: exact multivariate polynomial
-                    // division is not implemented. Fall back to stripping
-                    // the coefficient content instead, which keeps the
-                    // sequence's zero/non-zero structure correct but is not
-                    // guaranteed to equal the true (scaled) resultant value.
-                    b = b.primitive();
-                }
-            }
-
-            g = a.leading_coeff_wrt(var);
-            let g_delta = g.pow(delta as u32);
-            let h_new = if delta == 0 {
-                h.clone()
-            } else if delta == 1 {
-                g.clone()
-            } else {
-                g_delta
-            };
-            h = h_new;
-        }
-
-        // The resultant is in b (last non-zero remainder)
-        if sign < 0 { a.neg() } else { a }
+        // Both operands have positive degree in `var`. Compute the resultant
+        // exactly as the Sylvester matrix determinant over the coefficient
+        // ring, evaluated division-free (Berkowitz). This is exact for both
+        // univariate and genuinely multivariate inputs; it replaces the former
+        // subresultant-PRS loop, whose leading-coefficient normalization was
+        // only correct for constant coefficients (a wrong `primitive()`
+        // approximation for multivariate operands) and could return a
+        // non-canonical scalar multiple even in the univariate case.
+        sylvester_resultant(self, other, var, deg_p as usize, deg_q as usize)
     }
 
     /// Discriminant of a polynomial with respect to a variable.
@@ -1081,33 +1067,47 @@ impl super::Polynomial {
         }
     }
 
-    /// Exact univariate polynomial remainder over the rationals.
+    /// Exact univariate polynomial division over the rationals.
     ///
-    /// Returns `r` with `deg(r) < deg(divisor)` such that
-    /// `self = q * divisor + r` for some quotient `q`, using exact rational
-    /// coefficient division (no leading-coefficient scaling factor).
+    /// Returns `(q, r)` with `deg(r) < deg(divisor)` such that
+    /// `self = q * divisor + r`, using exact rational coefficient division
+    /// (no leading-coefficient scaling factor, unlike
+    /// [`pseudo_div_univariate`](Self::pseudo_div_univariate)).
     ///
-    /// Unlike [`pseudo_remainder`](Self::pseudo_remainder), this introduces no
-    /// `lc(divisor)^k` multiplier, so the sign of the result is exactly the
-    /// sign of the true remainder. This sign fidelity is essential for Sturm
-    /// sequences: a spurious negative scale factor (which arises whenever
-    /// `lc(divisor)` is negative and `k` is odd) would corrupt sign-variation
-    /// counts and hence real-root counts.
-    fn exact_remainder_univariate(&self, divisor: &Polynomial, var: Var) -> Polynomial {
+    /// This is exact and correct for polynomials that are univariate in
+    /// `var` (or constant in the other variables); it is used by both
+    /// `Self::exact_remainder_univariate` (Sturm sequences) and by
+    /// [`super::gcd::PolynomialGcd`]'s Euclidean-algorithm GCD/LCM.
+    ///
+    /// # Multivariate limitation
+    ///
+    /// [`Self::univ_coeff`] only recognizes terms with at most one variable,
+    /// so if `self` or `divisor` contains a term mixing `var` with another
+    /// variable, that term is treated as contributing `0` to the relevant
+    /// coefficient rather than being folded into a coefficient polynomial.
+    /// Callers that need an exact result for genuinely multivariate
+    /// polynomials should use [`super::gcd_multivariate`] /
+    /// [`super::gcd_multivariate_advanced`] instead.
+    pub(crate) fn exact_div_rem_univariate(
+        &self,
+        divisor: &Polynomial,
+        var: Var,
+    ) -> (Polynomial, Polynomial) {
         if divisor.is_zero() {
             // Degenerate divisor: nothing to reduce by, remainder is self.
-            return self.clone();
+            return (Polynomial::zero(), self.clone());
         }
         if self.is_zero() {
-            return Polynomial::zero();
+            return (Polynomial::zero(), Polynomial::zero());
         }
 
         let deg_b = divisor.degree(var);
         let lc_b = divisor.univ_coeff(var, deg_b);
         if lc_b.is_zero() {
-            return self.clone();
+            return (Polynomial::zero(), self.clone());
         }
 
+        let mut q = Polynomial::zero();
         let mut r = self.clone();
         // Each iteration strictly lowers deg(r) by at least one; bound the loop
         // by the initial degree gap plus slack for safety.
@@ -1123,13 +1123,33 @@ impl super::Polynomial {
 
             // factor = lc_r / lc_b (exact rational)
             let factor = lc_r / &lc_b;
+            let term = Polynomial::constant(factor.clone())
+                .mul_monomial(&Monomial::from_var_power(var, shift));
+            q = Polynomial::add(&q, &term);
+
             let subtractor = divisor
                 .scale(&factor)
                 .mul_monomial(&Monomial::from_var_power(var, shift));
             r = Polynomial::sub(&r, &subtractor);
         }
 
-        r
+        (q, r)
+    }
+
+    /// Exact univariate polynomial remainder over the rationals.
+    ///
+    /// Returns `r` with `deg(r) < deg(divisor)` such that
+    /// `self = q * divisor + r` for some quotient `q`, using exact rational
+    /// coefficient division (no leading-coefficient scaling factor).
+    ///
+    /// Unlike [`pseudo_remainder`](Self::pseudo_remainder), this introduces no
+    /// `lc(divisor)^k` multiplier, so the sign of the result is exactly the
+    /// sign of the true remainder. This sign fidelity is essential for Sturm
+    /// sequences: a spurious negative scale factor (which arises whenever
+    /// `lc(divisor)` is negative and `k` is odd) would corrupt sign-variation
+    /// counts and hence real-root counts.
+    fn exact_remainder_univariate(&self, divisor: &Polynomial, var: Var) -> Polynomial {
+        self.exact_div_rem_univariate(divisor, var).1
     }
 
     /// Compute the Sturm sequence for a univariate polynomial.
@@ -1154,12 +1174,12 @@ impl super::Polynomial {
         let max_iterations = self.degree(var) as usize + 5;
         let mut iterations = 0;
 
-        while !seq
-            .last()
-            .expect("collection should not be empty")
-            .is_zero()
-            && iterations < max_iterations
-        {
+        // `seq` always has >= 2 elements by construction (two pushes above,
+        // never popped), so `last()` is never `None`; `unwrap_or(false)`
+        // documents that invariant without an `.expect()` panic path, and
+        // degrades gracefully (stops the loop) instead of aborting even if
+        // that invariant were ever violated by a future edit.
+        while seq.last().map(|p| !p.is_zero()).unwrap_or(false) && iterations < max_iterations {
             iterations += 1;
             let n = seq.len();
             let rem = seq[n - 2].exact_remainder_univariate(&seq[n - 1], var);
@@ -1520,4 +1540,151 @@ impl super::Polynomial {
             .collect();
         Polynomial::from_terms(terms, order)
     }
+}
+
+// ── Multivariate resultant via Sylvester matrix + Berkowitz determinant ─────
+
+/// Exact resultant `Res_var(p, q)` for polynomials whose coefficients with
+/// respect to `var` may themselves be polynomials in other variables.
+///
+/// Builds the `(deg_p + deg_q)`-square Sylvester matrix in the classical
+/// high-to-low coefficient layout (so the value/sign matches the standard
+/// resultant `Res(p, q) = lc(p)^{deg q} · Π q(αᵢ)`), then evaluates its
+/// determinant over the polynomial coefficient ring **division-free** via the
+/// Samuelson–Berkowitz algorithm. Because Berkowitz uses only ring `+`, `-`,
+/// `*` (never division), the result is exact for genuinely multivariate
+/// inputs, where exact polynomial division is not generally available.
+///
+/// `deg_p` / `deg_q` are the degrees of `p` / `q` in `var` and must both be
+/// `>= 1` (the constant-in-`var` cases are handled by the caller).
+///
+/// Reference: Z3's `math/polynomial/polynomial.cpp` resultant, computed here
+/// division-free rather than via pseudo-remainder chains.
+fn sylvester_resultant(
+    p: &Polynomial,
+    q: &Polynomial,
+    var: Var,
+    deg_p: usize,
+    deg_q: usize,
+) -> Polynomial {
+    let size = deg_p + deg_q;
+
+    // High-to-low coefficient rows: `p_coeff[i]` is the coefficient of
+    // `var^(deg_p - i)` in `p` (index 0 = leading coefficient).
+    let p_coeff: Vec<Polynomial> = (0..=deg_p)
+        .map(|i| p.coeff(var, (deg_p - i) as u32))
+        .collect();
+    let q_coeff: Vec<Polynomial> = (0..=deg_q)
+        .map(|i| q.coeff(var, (deg_q - i) as u32))
+        .collect();
+
+    let mut mat: Vec<Vec<Polynomial>> = (0..size)
+        .map(|_| (0..size).map(|_| Polynomial::zero()).collect())
+        .collect();
+
+    // First `deg_q` rows: shifted copies of `p`'s coefficients.
+    for (r, row) in mat.iter_mut().take(deg_q).enumerate() {
+        for (i, c) in p_coeff.iter().enumerate() {
+            row[r + i] = c.clone();
+        }
+    }
+    // Last `deg_p` rows: shifted copies of `q`'s coefficients.
+    for (r, row) in mat.iter_mut().skip(deg_q).take(deg_p).enumerate() {
+        for (i, c) in q_coeff.iter().enumerate() {
+            row[r + i] = c.clone();
+        }
+    }
+
+    berkowitz_determinant(&mat)
+}
+
+/// Determinant of a square matrix over the (commutative) polynomial ring,
+/// computed division-free via the Samuelson–Berkowitz algorithm.
+///
+/// Returns the exact determinant using only ring `+`, `-`, `*`; it never
+/// divides, so it is well-defined over the multivariate polynomial ring (an
+/// integral domain but not a field). Singular matrices yield the zero
+/// polynomial. `mat` is read but not mutated.
+///
+/// The algorithm accumulates the characteristic polynomial of each leading
+/// principal submatrix as a product of lower-triangular Toeplitz matrices; the
+/// determinant of the full `n × n` matrix is `(-1)^n` times the constant
+/// coefficient of `det(λI - mat)`.
+///
+/// Reference: Berkowitz, S. J. (1984), "On computing the determinant in small
+/// parallel time using a small number of processors", *Inf. Process. Lett.*
+/// 18(3).
+fn berkowitz_determinant(mat: &[Vec<Polynomial>]) -> Polynomial {
+    let n = mat.len();
+    if n == 0 {
+        return Polynomial::one();
+    }
+
+    // `char_vec` holds coefficients [c_0, c_1, …, c_k] of the characteristic
+    // polynomial of the `k × k` leading principal submatrix:
+    // `det(λI - M_k) = c_0 λ^k + c_1 λ^{k-1} + … + c_k`, with `c_0 = 1`.
+    // Base case `k = 0`: the empty matrix's characteristic polynomial is `1`.
+    let mut char_vec: Vec<Polynomial> = vec![Polynomial::one()];
+
+    for r in 1..=n {
+        let a = mat[r - 1][r - 1].clone();
+
+        // Toeplitz first-column vector `t` (length `r + 1`):
+        //   t[0] = 1
+        //   t[1] = -a
+        //   t[k] = -(row · M_{r-1}^{k-2} · col)   for k = 2..=r
+        // where the leading `(r-1)`-square submatrix `M_{r-1}` is `mat[0..r-1]
+        // [0..r-1]`, `col` its column `r-1`, and `row` its row `r-1`.
+        let mut t: Vec<Polynomial> = Vec::with_capacity(r + 1);
+        t.push(Polynomial::one());
+        t.push(a.neg());
+
+        if r >= 2 {
+            let dim = r - 1;
+            let col: Vec<Polynomial> = (0..dim).map(|i| mat[i][r - 1].clone()).collect();
+            let row: Vec<Polynomial> = (0..dim).map(|j| mat[r - 1][j].clone()).collect();
+
+            // `w` starts as `M^0 · col = col`, then `w ← M_{r-1} · w`.
+            let mut w = col;
+            for k in 0..dim {
+                let mut dot = Polynomial::zero();
+                for (rj, wj) in row.iter().zip(w.iter()) {
+                    dot = Polynomial::add(&dot, &Polynomial::mul(rj, wj));
+                }
+                t.push(dot.neg());
+
+                if k + 1 < dim {
+                    let mut w_next: Vec<Polynomial> = Vec::with_capacity(dim);
+                    for mat_row in mat.iter().take(dim) {
+                        let mut acc = Polynomial::zero();
+                        for (j, wj) in w.iter().enumerate() {
+                            acc = Polynomial::add(&acc, &Polynomial::mul(&mat_row[j], wj));
+                        }
+                        w_next.push(acc);
+                    }
+                    w = w_next;
+                }
+            }
+        }
+
+        // `new_char = C · char_vec`, where `C` is the `(r+1) × r` lower-
+        // triangular Toeplitz matrix with first column `t`:
+        // `C[i][j] = t[i-j]` for `i >= j`, else `0`.
+        let mut new_char: Vec<Polynomial> = Vec::with_capacity(r + 1);
+        for i in 0..=r {
+            let mut acc = Polynomial::zero();
+            for (j, cv) in char_vec.iter().enumerate() {
+                if i >= j && (i - j) < t.len() {
+                    acc = Polynomial::add(&acc, &Polynomial::mul(&t[i - j], cv));
+                }
+            }
+            new_char.push(acc);
+        }
+        char_vec = new_char;
+    }
+
+    // det(M) = (-1)^n · c_n, where c_n is the trailing coefficient of
+    // `det(λI - M)`.
+    let c_n = char_vec[n].clone();
+    if n.is_multiple_of(2) { c_n } else { c_n.neg() }
 }

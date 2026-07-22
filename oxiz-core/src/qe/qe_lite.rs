@@ -1,11 +1,27 @@
 //! QE Lite - Fast Approximate Quantifier Elimination
 //!
-//! Provides fast approximate quantifier elimination for common patterns.
-//! Falls back to full QE when approximation is not possible.
+//! Provides fast, always-equivalence-preserving quantifier elimination for the
+//! cheap patterns that dominate real inputs, falling back to an honest
+//! "unchanged" (or partially simplified) result when no cheap rule applies.
+//!
+//! The rules implemented are the standard QE-lite ones:
+//!
+//! * **Unused-variable dropping** — `∃x.φ ≡ φ` and `∀x.φ ≡ φ` when `x` does not
+//!   occur free in `φ`.
+//! * **Definitional-equality substitution** (destructive equality resolution) —
+//!   `∃x.(x = t ∧ φ) ≡ φ[x := t]` when `x ∉ t`, and dually
+//!   `∀x.(x = t → φ) ≡ φ[x := t]`.
+//! * **Distribution** — `∃x.(A ∧ B) ≡ A ∧ ∃x.B` and `∀x.(A ∨ B) ≡ A ∨ ∀x.B`
+//!   when `x ∉ A`, applied to pull `x`-free operands out of the quantifier and
+//!   recurse on the `x`-dependent remainder.
+//!
+//! Every rule is a logically equivalent transformation; a quantifier is only
+//! reported as `Eliminated` once the eliminated variable is provably absent
+//! from the result.
 
 use crate::ast::{TermId, TermKind, TermManager};
 use crate::interner::Spur;
-use crate::prelude::HashMap;
+use crate::prelude::FxHashMap;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::SortId;
@@ -84,8 +100,6 @@ pub struct QeLiteSolver {
     config: QeLiteConfig,
     /// Statistics
     stats: QeLiteStats,
-    /// Variable substitutions
-    substitutions: HashMap<TermId, TermId>,
 }
 
 impl QeLiteSolver {
@@ -94,7 +108,6 @@ impl QeLiteSolver {
         Self {
             config: QeLiteConfig::default(),
             stats: QeLiteStats::default(),
-            substitutions: HashMap::new(),
         }
     }
 
@@ -103,427 +116,225 @@ impl QeLiteSolver {
         Self {
             config,
             stats: QeLiteStats::default(),
-            substitutions: HashMap::new(),
         }
     }
 
     /// Try to eliminate a quantifier from a formula
     pub fn eliminate(&mut self, formula: TermId, manager: &mut TermManager) -> QeLiteResult {
         self.stats.attempts += 1;
-        self.substitutions.clear();
 
         // Check if the formula is a quantifier
-        let t = match manager.get(formula) {
-            Some(t) => t.clone(),
+        let kind = match manager.get(formula) {
+            Some(t) => t.kind.clone(),
             None => return QeLiteResult::Error("Unknown formula".to_string()),
         };
 
-        match &t.kind {
+        match kind {
             TermKind::Forall { vars, body, .. } => {
-                self.eliminate_forall_qvar(vars.as_slice(), *body, manager)
+                self.eliminate_forall_qvar(vars.as_slice(), body, manager)
             }
             TermKind::Exists { vars, body, .. } => {
-                self.eliminate_exists_qvar(vars.as_slice(), *body, manager)
+                self.eliminate_exists_qvar(vars.as_slice(), body, manager)
             }
             _ => QeLiteResult::Unchanged,
         }
     }
 
-    /// Try to eliminate an existential quantifier (with quantifier variables)
+    /// Eliminate an existential quantifier `∃vars. body`, one variable at a time.
     fn eliminate_exists_qvar(
         &mut self,
         vars: &[(Spur, SortId)],
         body: TermId,
         manager: &mut TermManager,
     ) -> QeLiteResult {
-        // For now, we can't easily do substitution without TermIds for variables
-        // This is a simplified version that returns the body as simplified
-
-        if vars.len() == 1 {
-            // Try simple cases
-            if self.is_trivially_satisfiable(body, manager) {
-                self.stats.successes += 1;
-                return QeLiteResult::Eliminated(manager.mk_true());
+        let mut current = body;
+        let mut remaining: Vec<(Spur, SortId)> = Vec::new();
+        for &(spur, sort) in vars {
+            let name = manager.resolve_str(spur).to_string();
+            let var_id = manager.mk_var(&name, sort);
+            match self.try_eliminate_one_exists(var_id, current, manager) {
+                Some(new_body) => current = new_body,
+                None => remaining.push((spur, sort)),
             }
         }
 
-        // Cannot eliminate, return unchanged
-        QeLiteResult::Unchanged
+        if remaining.is_empty() {
+            self.stats.successes += 1;
+            QeLiteResult::Eliminated(current)
+        } else if remaining.len() < vars.len() {
+            self.stats.simplifications = self.stats.simplifications.saturating_add(1);
+            let rebuilt = self.rebuild_exists(&remaining, current, manager);
+            QeLiteResult::Simplified(rebuilt)
+        } else {
+            QeLiteResult::Unchanged
+        }
     }
 
-    /// Try to eliminate a universal quantifier (with quantifier variables)
+    /// Eliminate a universal quantifier `∀vars. body`, one variable at a time.
     fn eliminate_forall_qvar(
         &mut self,
         vars: &[(Spur, SortId)],
         body: TermId,
         manager: &mut TermManager,
     ) -> QeLiteResult {
-        if vars.len() == 1 {
-            // Try simple cases
-            if self.is_trivially_valid(body, manager) {
-                self.stats.successes += 1;
-                return QeLiteResult::Eliminated(manager.mk_true());
+        let mut current = body;
+        let mut remaining: Vec<(Spur, SortId)> = Vec::new();
+        for &(spur, sort) in vars {
+            let name = manager.resolve_str(spur).to_string();
+            let var_id = manager.mk_var(&name, sort);
+            match self.try_eliminate_one_forall(var_id, current, manager) {
+                Some(new_body) => current = new_body,
+                None => remaining.push((spur, sort)),
             }
         }
 
-        // Cannot eliminate, return unchanged
-        QeLiteResult::Unchanged
-    }
-
-    /// Check if a formula is trivially satisfiable
-    fn is_trivially_satisfiable(&self, body: TermId, manager: &TermManager) -> bool {
-        let t = match manager.get(body) {
-            Some(t) => t,
-            None => return false,
-        };
-        matches!(t.kind, TermKind::True)
-    }
-
-    /// Check if a formula is trivially valid
-    fn is_trivially_valid(&self, body: TermId, manager: &TermManager) -> bool {
-        let t = match manager.get(body) {
-            Some(t) => t,
-            None => return false,
-        };
-        matches!(t.kind, TermKind::True)
-    }
-
-    /// Try to eliminate an existential quantifier with TermId vars
-    #[allow(dead_code)]
-    fn eliminate_exists(
-        &mut self,
-        vars: &[TermId],
-        body: TermId,
-        manager: &mut TermManager,
-    ) -> QeLiteResult {
-        // Try equality substitution first
-        if self.config.equality_substitution {
-            for &var in vars {
-                if let Some(subst) = self.find_equality_substitution(var, body, manager) {
-                    // Apply substitution
-                    let new_body = self.apply_substitution(body, var, subst, manager);
-                    self.stats.equality_subs += 1;
-
-                    // If only one variable, we're done
-                    if vars.len() == 1 {
-                        self.stats.successes += 1;
-                        return QeLiteResult::Eliminated(new_body);
-                    }
-
-                    // Otherwise, continue with remaining variables
-                    let remaining: Vec<_> = vars.iter().filter(|&&v| v != var).copied().collect();
-                    return self.wrap_exists(&remaining, new_body, manager);
-                }
-            }
-        }
-
-        // Try bound elimination
-        if self.config.bound_elimination {
-            for &var in vars {
-                if let Some(result) = self.try_bound_elimination(var, body, manager) {
-                    self.stats.bound_elims += 1;
-
-                    if vars.len() == 1 {
-                        self.stats.successes += 1;
-                        return QeLiteResult::Eliminated(result);
-                    }
-
-                    let remaining: Vec<_> = vars.iter().filter(|&&v| v != var).copied().collect();
-                    return self.wrap_exists(&remaining, result, manager);
-                }
-            }
-        }
-
-        QeLiteResult::Unchanged
-    }
-
-    /// Try to eliminate a universal quantifier with TermId vars
-    #[allow(dead_code)]
-    fn eliminate_forall(
-        &mut self,
-        vars: &[TermId],
-        body: TermId,
-        manager: &mut TermManager,
-    ) -> QeLiteResult {
-        // ∀x.φ(x) is equivalent to ¬∃x.¬φ(x)
-        // So we can use similar techniques
-
-        // Try equality substitution
-        if self.config.equality_substitution {
-            for &var in vars {
-                // For forall, we need an equality that holds for all values
-                if let Some(subst) = self.find_forall_equality(var, body, manager) {
-                    let new_body = self.apply_substitution(body, var, subst, manager);
-                    self.stats.equality_subs += 1;
-
-                    if vars.len() == 1 {
-                        self.stats.successes += 1;
-                        return QeLiteResult::Eliminated(new_body);
-                    }
-
-                    let remaining: Vec<_> = vars.iter().filter(|&&v| v != var).copied().collect();
-                    return self.wrap_forall(&remaining, new_body, manager);
-                }
-            }
-        }
-
-        QeLiteResult::Unchanged
-    }
-
-    /// Find an equality that can be used for substitution
-    fn find_equality_substitution(
-        &self,
-        var: TermId,
-        body: TermId,
-        manager: &TermManager,
-    ) -> Option<TermId> {
-        let t = manager.get(body)?;
-
-        match &t.kind {
-            // x = t (where x doesn't appear in t)
-            TermKind::Eq(a, b) => {
-                if *a == var && !self.contains_var(*b, var, manager) {
-                    return Some(*b);
-                }
-                if *b == var && !self.contains_var(*a, var, manager) {
-                    return Some(*a);
-                }
-                None
-            }
-            // φ ∧ (x = t) or (x = t) ∧ φ
-            TermKind::And(args) => {
-                for arg in args.iter() {
-                    if let Some(t) = manager.get(*arg)
-                        && let TermKind::Eq(a, b) = &t.kind
-                    {
-                        if *a == var && !self.contains_var(*b, var, manager) {
-                            return Some(*b);
-                        }
-                        if *b == var && !self.contains_var(*a, var, manager) {
-                            return Some(*a);
-                        }
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// Find an equality for forall elimination
-    fn find_forall_equality(
-        &self,
-        var: TermId,
-        body: TermId,
-        manager: &TermManager,
-    ) -> Option<TermId> {
-        let t = manager.get(body)?;
-
-        // For ∀x. (x = t → φ), we can substitute t for x in φ
-        if let TermKind::Implies(antecedent, _consequent) = &t.kind
-            && let Some(ant_t) = manager.get(*antecedent)
-            && let TermKind::Eq(a, b) = &ant_t.kind
-        {
-            if *a == var && !self.contains_var(*b, var, manager) {
-                return Some(*b);
-            }
-            if *b == var && !self.contains_var(*a, var, manager) {
-                return Some(*a);
-            }
-        }
-
-        None
-    }
-
-    /// Check if a term contains a variable
-    #[allow(clippy::only_used_in_recursion)]
-    fn contains_var(&self, term: TermId, var: TermId, manager: &TermManager) -> bool {
-        if term == var {
-            return true;
-        }
-
-        let t = match manager.get(term) {
-            Some(t) => t,
-            None => return false,
-        };
-
-        match &t.kind {
-            TermKind::Not(a) | TermKind::Neg(a) => self.contains_var(*a, var, manager),
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => args.iter().any(|&arg| self.contains_var(arg, var, manager)),
-            TermKind::Xor(a, b)
-            | TermKind::Implies(a, b)
-            | TermKind::Eq(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b) => {
-                self.contains_var(*a, var, manager) || self.contains_var(*b, var, manager)
-            }
-            TermKind::Ite(a, b, c) => {
-                self.contains_var(*a, var, manager)
-                    || self.contains_var(*b, var, manager)
-                    || self.contains_var(*c, var, manager)
-            }
-            _ => false,
-        }
-    }
-
-    /// Apply a substitution to a term
-    #[allow(clippy::only_used_in_recursion)]
-    fn apply_substitution(
-        &self,
-        term: TermId,
-        var: TermId,
-        subst: TermId,
-        manager: &mut TermManager,
-    ) -> TermId {
-        if term == var {
-            return subst;
-        }
-
-        let t = match manager.get(term) {
-            Some(t) => t.clone(),
-            None => return term,
-        };
-
-        match &t.kind {
-            TermKind::Not(a) => {
-                let new_a = self.apply_substitution(*a, var, subst, manager);
-                manager.mk_not(new_a)
-            }
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| self.apply_substitution(arg, var, subst, manager))
-                    .collect();
-                manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| self.apply_substitution(arg, var, subst, manager))
-                    .collect();
-                manager.mk_or(new_args)
-            }
-            TermKind::Eq(a, b) => {
-                let new_a = self.apply_substitution(*a, var, subst, manager);
-                let new_b = self.apply_substitution(*b, var, subst, manager);
-                manager.mk_eq(new_a, new_b)
-            }
-            TermKind::Lt(a, b) => {
-                let new_a = self.apply_substitution(*a, var, subst, manager);
-                let new_b = self.apply_substitution(*b, var, subst, manager);
-                manager.mk_lt(new_a, new_b)
-            }
-            TermKind::Le(a, b) => {
-                let new_a = self.apply_substitution(*a, var, subst, manager);
-                let new_b = self.apply_substitution(*b, var, subst, manager);
-                manager.mk_le(new_a, new_b)
-            }
-            _ => term, // No substitution needed for other cases
-        }
-    }
-
-    /// Try bound elimination for a variable
-    fn try_bound_elimination(
-        &mut self,
-        var: TermId,
-        body: TermId,
-        manager: &mut TermManager,
-    ) -> Option<TermId> {
-        // Collect bounds for the variable
-        let bounds = self.collect_bounds(var, body, manager);
-
-        if bounds.lower.is_empty() && bounds.upper.is_empty() {
-            return None;
-        }
-
-        // If we have both lower and upper bounds, check if they're trivially satisfied
-        if !bounds.lower.is_empty() && !bounds.upper.is_empty() {
-            // Generate: ∨_{l ∈ lower, u ∈ upper} (l < u ∧ φ[x/l] ∧ φ[x/u])
-            // Simplified: just check if any bound pair works
-            // For now, return the body without the quantifier if we found bounds
+        if remaining.is_empty() {
+            self.stats.successes += 1;
+            QeLiteResult::Eliminated(current)
+        } else if remaining.len() < vars.len() {
             self.stats.simplifications = self.stats.simplifications.saturating_add(1);
+            let rebuilt = self.rebuild_forall(&remaining, current, manager);
+            QeLiteResult::Simplified(rebuilt)
+        } else {
+            QeLiteResult::Unchanged
+        }
+    }
+
+    /// Attempt to eliminate a single existentially-quantified variable, returning
+    /// the equivalent `var`-free body on success.
+    fn try_eliminate_one_exists(
+        &mut self,
+        var: TermId,
+        body: TermId,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        // Rule 1: `x` does not occur — ∃x.φ ≡ φ.
+        if !contains_var(body, var, manager) {
             return Some(body);
         }
 
-        None
+        // Rule 2: definitional equality — ∃x.(x = t ∧ φ) ≡ φ[x := t]  (DER).
+        if self.config.equality_substitution
+            && let Some(t) = find_equality_substitution(var, body, manager)
+        {
+            let mut subst = FxHashMap::default();
+            subst.insert(var, t);
+            let new_body = manager.substitute(body, &subst);
+            // Only accept when the variable is genuinely gone.
+            if !contains_var(new_body, var, manager) {
+                self.stats.equality_subs += 1;
+                return Some(new_body);
+            }
+        }
+
+        // Rule 3: distribute over conjunction — ∃x.(A ∧ B) ≡ A ∧ ∃x.B, x ∉ A.
+        self.distribute_exists_and(var, body, manager)
     }
 
-    /// Collect bounds for a variable
-    fn collect_bounds(&self, var: TermId, body: TermId, manager: &TermManager) -> VarBounds {
-        let mut bounds = VarBounds::default();
+    /// Attempt to eliminate a single universally-quantified variable.
+    fn try_eliminate_one_forall(
+        &mut self,
+        var: TermId,
+        body: TermId,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        // Rule 1: `x` does not occur — ∀x.φ ≡ φ.
+        if !contains_var(body, var, manager) {
+            return Some(body);
+        }
 
-        let t = match manager.get(body) {
-            Some(t) => t,
-            None => return bounds,
+        // Rule 2: definitional equality — ∀x.(x = t → φ) ≡ φ[x := t].
+        if self.config.equality_substitution
+            && let Some(t) = find_forall_equality(var, body, manager)
+        {
+            let mut subst = FxHashMap::default();
+            subst.insert(var, t);
+            let new_body = manager.substitute(body, &subst);
+            if !contains_var(new_body, var, manager) {
+                self.stats.equality_subs += 1;
+                return Some(new_body);
+            }
+        }
+
+        // Rule 3: distribute over disjunction — ∀x.(A ∨ B) ≡ A ∨ ∀x.B, x ∉ A.
+        self.distribute_forall_or(var, body, manager)
+    }
+
+    /// `∃x.(⋀free ∧ ⋀dep) ≡ ⋀free ∧ ∃x.⋀dep`; recurse on the `x`-dependent part.
+    fn distribute_exists_and(
+        &mut self,
+        var: TermId,
+        body: TermId,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        let args = match &manager.get(body)?.kind {
+            TermKind::And(args) => args.clone(),
+            _ => return None,
         };
 
-        match &t.kind {
-            // x < t or x <= t
-            TermKind::Lt(a, b) | TermKind::Le(a, b) => {
-                if *a == var && !self.contains_var(*b, var, manager) {
-                    bounds.upper.push(*b);
-                } else if *b == var && !self.contains_var(*a, var, manager) {
-                    bounds.lower.push(*a);
-                }
-            }
-            // x > t or x >= t
-            TermKind::Gt(a, b) | TermKind::Ge(a, b) => {
-                if *a == var && !self.contains_var(*b, var, manager) {
-                    bounds.lower.push(*b);
-                } else if *b == var && !self.contains_var(*a, var, manager) {
-                    bounds.upper.push(*a);
-                }
-            }
-            TermKind::And(args) => {
-                for &arg in args.iter() {
-                    let arg_bounds = self.collect_bounds(var, arg, manager);
-                    bounds.lower.extend(arg_bounds.lower);
-                    bounds.upper.extend(arg_bounds.upper);
-                }
-            }
-            _ => {}
+        let (free, dep) = split_by_var(&args, var, manager);
+        if free.is_empty() || dep.is_empty() {
+            // No `x`-free operand to pull out — no progress.
+            return None;
         }
 
-        bounds
+        let dep_body = manager.mk_and(dep);
+        let eliminated = self.try_eliminate_one_exists(var, dep_body, manager)?;
+        let mut parts = free;
+        parts.push(eliminated);
+        Some(manager.mk_and(parts))
     }
 
-    /// Wrap a body with an existential quantifier
-    fn wrap_exists(
+    /// `∀x.(⋁free ∨ ⋁dep) ≡ ⋁free ∨ ∀x.⋁dep`; recurse on the `x`-dependent part.
+    fn distribute_forall_or(
         &mut self,
-        vars: &[TermId],
+        var: TermId,
         body: TermId,
-        _manager: &mut TermManager,
-    ) -> QeLiteResult {
-        if vars.is_empty() {
-            QeLiteResult::Eliminated(body)
-        } else {
-            // Cannot fully eliminate, but we simplified
-            // The body still contains quantified variables
-            self.stats.simplifications = self.stats.simplifications.saturating_add(1);
-            QeLiteResult::Simplified(body)
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        let args = match &manager.get(body)?.kind {
+            TermKind::Or(args) => args.clone(),
+            _ => return None,
+        };
+
+        let (free, dep) = split_by_var(&args, var, manager);
+        if free.is_empty() || dep.is_empty() {
+            return None;
         }
+
+        let dep_body = manager.mk_or(dep);
+        let eliminated = self.try_eliminate_one_forall(var, dep_body, manager)?;
+        let mut parts = free;
+        parts.push(eliminated);
+        Some(manager.mk_or(parts))
     }
 
-    /// Wrap a body with a universal quantifier
-    fn wrap_forall(
-        &mut self,
-        vars: &[TermId],
+    /// Rebuild `∃remaining. body` for the variables that could not be eliminated.
+    fn rebuild_exists(
+        &self,
+        vars: &[(Spur, SortId)],
         body: TermId,
-        _manager: &mut TermManager,
-    ) -> QeLiteResult {
-        if vars.is_empty() {
-            QeLiteResult::Eliminated(body)
-        } else {
-            // Cannot fully eliminate, simplified only
-            self.stats.simplifications = self.stats.simplifications.saturating_add(1);
-            QeLiteResult::Simplified(body)
-        }
+        manager: &mut TermManager,
+    ) -> TermId {
+        let names: Vec<(String, SortId)> = vars
+            .iter()
+            .map(|&(s, sort)| (manager.resolve_str(s).to_string(), sort))
+            .collect();
+        manager.mk_exists(names.iter().map(|(n, s)| (n.as_str(), *s)), body)
+    }
+
+    /// Rebuild `∀remaining. body` for the variables that could not be eliminated.
+    fn rebuild_forall(
+        &self,
+        vars: &[(Spur, SortId)],
+        body: TermId,
+        manager: &mut TermManager,
+    ) -> TermId {
+        let names: Vec<(String, SortId)> = vars
+            .iter()
+            .map(|&(s, sort)| (manager.resolve_str(s).to_string(), sort))
+            .collect();
+        manager.mk_forall(names.iter().map(|(n, s)| (n.as_str(), *s)), body)
     }
 
     /// Get statistics
@@ -537,11 +348,84 @@ impl QeLiteSolver {
     }
 }
 
-/// Variable bounds
-#[derive(Debug, Default)]
-struct VarBounds {
-    lower: Vec<TermId>,
-    upper: Vec<TermId>,
+/// Partition `args` into the operands that are `x`-free and those that mention
+/// `x`, preserving order.
+fn split_by_var(args: &[TermId], var: TermId, manager: &TermManager) -> (Vec<TermId>, Vec<TermId>) {
+    let mut free = Vec::new();
+    let mut dep = Vec::new();
+    for &arg in args {
+        if contains_var(arg, var, manager) {
+            dep.push(arg);
+        } else {
+            free.push(arg);
+        }
+    }
+    (free, dep)
+}
+
+/// Find `t` such that `body` conjunctively entails `var = t` with `var ∉ t`,
+/// suitable for destructive equality resolution under `∃`.
+fn find_equality_substitution(var: TermId, body: TermId, manager: &TermManager) -> Option<TermId> {
+    let t = manager.get(body)?;
+    match &t.kind {
+        // x = t (where x doesn't appear in t)
+        TermKind::Eq(a, b) => equality_side(*a, *b, var, manager),
+        // (x = t) as a top-level conjunct.
+        TermKind::And(args) => {
+            for arg in args.iter() {
+                if let Some(inner) = manager.get(*arg)
+                    && let TermKind::Eq(a, b) = &inner.kind
+                    && let Some(sol) = equality_side(*a, *b, var, manager)
+                {
+                    return Some(sol);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Find `t` for `∀x.(x = t → φ)`: an equality antecedent solving for `var`.
+fn find_forall_equality(var: TermId, body: TermId, manager: &TermManager) -> Option<TermId> {
+    let t = manager.get(body)?;
+    if let TermKind::Implies(antecedent, _consequent) = &t.kind
+        && let Some(ant_t) = manager.get(*antecedent)
+        && let TermKind::Eq(a, b) = &ant_t.kind
+    {
+        return equality_side(*a, *b, var, manager);
+    }
+    None
+}
+
+/// If one side of `a = b` is exactly `var` and the other is `var`-free, return
+/// the other side.
+fn equality_side(a: TermId, b: TermId, var: TermId, manager: &TermManager) -> Option<TermId> {
+    if a == var && !contains_var(b, var, manager) {
+        return Some(b);
+    }
+    if b == var && !contains_var(a, var, manager) {
+        return Some(a);
+    }
+    None
+}
+
+/// Whether `term` syntactically contains `var`.
+///
+/// Complete over every `TermKind` (it recurses through
+/// [`crate::ast::traversal::get_children`]), so a "does not occur" answer is
+/// trustworthy — an unsound "eliminated" result can never be produced from a
+/// missed occurrence.
+fn contains_var(term: TermId, var: TermId, manager: &TermManager) -> bool {
+    if term == var {
+        return true;
+    }
+    let Some(t) = manager.get(term) else {
+        return false;
+    };
+    crate::ast::traversal::get_children(&t.kind)
+        .iter()
+        .any(|&c| contains_var(c, var, manager))
 }
 
 impl Default for QeLiteSolver {
@@ -606,5 +490,149 @@ mod tests {
         solver.stats.attempts = 10;
         solver.reset_stats();
         assert_eq!(solver.stats().attempts, 0);
+    }
+
+    fn int_var(tm: &mut TermManager, name: &str) -> TermId {
+        let int_sort = tm.sorts.int_sort;
+        tm.mk_var(name, int_sort)
+    }
+
+    #[test]
+    fn exists_unused_variable_is_dropped() {
+        // ∃x. (y > 0) ≡ (y > 0).
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let y = int_var(&mut tm, "y");
+        let zero = tm.mk_int(0);
+        let body = tm.mk_gt(y, zero);
+        let quant = tm.mk_exists([("x", int_sort)], body);
+
+        let mut solver = QeLiteSolver::new();
+        let result = solver.eliminate(quant, &mut tm);
+        assert_eq!(result, QeLiteResult::Eliminated(body));
+    }
+
+    #[test]
+    fn exists_equality_substitution() {
+        // ∃x. (x = y ∧ z > x) ≡ (z > y), with x eliminated by DER.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let x = int_var(&mut tm, "x");
+        let y = int_var(&mut tm, "y");
+        let z = int_var(&mut tm, "z");
+        let eq = tm.mk_eq(x, y);
+        let gt = tm.mk_gt(z, x);
+        let body = tm.mk_and(vec![eq, gt]);
+        let quant = tm.mk_exists([("x", int_sort)], body);
+
+        let mut solver = QeLiteSolver::new();
+        let result = solver.eliminate(quant, &mut tm);
+        assert!(result.is_eliminated());
+        let term = result.result_term().expect("has term");
+        let x_spur = tm.intern_str("x");
+        assert!(!mentions(term, x_spur, &tm), "x still present");
+        // The eliminated body must still constrain z relative to y (z > y).
+        let z = int_var(&mut tm, "z");
+        let y = int_var(&mut tm, "y");
+        let expected = tm.mk_gt(z, y);
+        let expected_s = tm.simplify(expected);
+        let simplified = tm.simplify(term);
+        assert_eq!(simplified, expected_s);
+    }
+
+    #[test]
+    fn exists_distribution_over_conjunction() {
+        // ∃x. (y > 0 ∧ x = z ∧ w < x) — x-free conjunct pulled out, DER on rest.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let x = int_var(&mut tm, "x");
+        let y = int_var(&mut tm, "y");
+        let z = int_var(&mut tm, "z");
+        let w = int_var(&mut tm, "w");
+        let zero = tm.mk_int(0);
+        let a = tm.mk_gt(y, zero);
+        let b = tm.mk_eq(x, z);
+        let c = tm.mk_lt(w, x);
+        let body = tm.mk_and(vec![a, b, c]);
+        let quant = tm.mk_exists([("x", int_sort)], body);
+
+        let mut solver = QeLiteSolver::new();
+        let result = solver.eliminate(quant, &mut tm);
+        assert!(result.is_eliminated());
+        let term = result.result_term().expect("has term");
+        let x_spur = tm.intern_str("x");
+        assert!(!mentions(term, x_spur, &tm), "x still present");
+    }
+
+    #[test]
+    fn exists_without_cheap_rule_is_unchanged() {
+        // ∃x. (x > 0 ∧ x < y) has no cheap rule → honest Unchanged.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let x = int_var(&mut tm, "x");
+        let y = int_var(&mut tm, "y");
+        let zero = tm.mk_int(0);
+        let a = tm.mk_gt(x, zero);
+        let b = tm.mk_lt(x, y);
+        let body = tm.mk_and(vec![a, b]);
+        let quant = tm.mk_exists([("x", int_sort)], body);
+
+        let mut solver = QeLiteSolver::new();
+        let result = solver.eliminate(quant, &mut tm);
+        assert_eq!(result, QeLiteResult::Unchanged);
+    }
+
+    #[test]
+    fn forall_unused_variable_is_dropped() {
+        // ∀x. (y > 0) ≡ (y > 0).
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let y = int_var(&mut tm, "y");
+        let zero = tm.mk_int(0);
+        let body = tm.mk_gt(y, zero);
+        let quant = tm.mk_forall([("x", int_sort)], body);
+
+        let mut solver = QeLiteSolver::new();
+        let result = solver.eliminate(quant, &mut tm);
+        assert_eq!(result, QeLiteResult::Eliminated(body));
+    }
+
+    #[test]
+    fn forall_equality_substitution() {
+        // ∀x. (x = 5 → x > 3) ≡ (5 > 3) ≡ true.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let x = int_var(&mut tm, "x");
+        let five = tm.mk_int(5);
+        let three = tm.mk_int(3);
+        let eq = tm.mk_eq(x, five);
+        let gt = tm.mk_gt(x, three);
+        let body = tm.mk_implies(eq, gt);
+        let quant = tm.mk_forall([("x", int_sort)], body);
+
+        let mut solver = QeLiteSolver::new();
+        let result = solver.eliminate(quant, &mut tm);
+        assert!(result.is_eliminated());
+        let term = result.result_term().expect("has term");
+        let x_spur = tm.intern_str("x");
+        assert!(!mentions(term, x_spur, &tm), "x still present");
+        let simplified = tm.simplify(term);
+        assert!(matches!(
+            tm.get(simplified).map(|t| &t.kind),
+            Some(TermKind::True)
+        ));
+    }
+
+    /// Local occurrence check mirroring the module's internal one.
+    fn mentions(id: TermId, name: Spur, tm: &TermManager) -> bool {
+        let Some(term) = tm.get(id) else {
+            return false;
+        };
+        if let TermKind::Var(s) = term.kind {
+            return s == name;
+        }
+        crate::ast::traversal::get_children(&term.kind)
+            .iter()
+            .any(|&c| mentions(c, name, tm))
     }
 }

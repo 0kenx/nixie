@@ -182,6 +182,24 @@ impl<'a> Lexer<'a> {
             }
             '0'..='9' => {
                 let num = self.read_numeral();
+                // SMT-LIB `<numeral>` grammar: `0 | a non-empty sequence of
+                // digits not starting with 0`. A leading zero followed by
+                // more digits (e.g. `007`) is not a valid numeral — record
+                // it as a lexical error rather than silently accepting a
+                // token some scripts may rely on rejecting (and to avoid a
+                // C-style octal misreading). This check applies only to the
+                // integer part: a decimal's fractional part is grammatically
+                // `0*<numeral>` and *does* permit leading zeros (e.g. the
+                // `001` in `0.001`), so it is deliberately left unchecked.
+                if num.len() > 1 && num.starts_with('0') {
+                    self.errors.push(LexError {
+                        message: format!(
+                            "numeral '{num}' has a leading zero (SMT-LIB numerals must be \
+                             '0' or a digit sequence not starting with '0')"
+                        ),
+                        pos: start,
+                    });
+                }
                 if self.pos < self.input.len() && self.input[self.pos..].starts_with('.') {
                     self.pos += 1;
                     let frac = self.read_numeral();

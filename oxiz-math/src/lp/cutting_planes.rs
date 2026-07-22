@@ -281,13 +281,10 @@ impl CuttingPlaneGenerator {
         value - &floor_val
     }
 
-    /// Floor function for rationals.
+    /// Floor function for rationals (true mathematical floor, correct for
+    /// negative values: e.g. floor(-7/3) == -3, not -2).
     fn floor(&self, value: &BigRational) -> BigRational {
-        let numer = value.numer();
-        let denom = value.denom();
-
-        let quotient = numer / denom;
-        BigRational::from_integer(quotient)
+        BigRational::from_integer(crate::rational::floor(value))
     }
 
     /// Get statistics.
@@ -333,5 +330,63 @@ mod tests {
 
         // Should be 1/3
         assert_eq!(frac, BigRational::new(BigInt::from(1), BigInt::from(3)));
+    }
+
+    #[test]
+    fn test_floor_negative_fraction() {
+        // Regression test for MATH-1: floor must round toward negative
+        // infinity, not truncate toward zero.
+        let integer_vars = FxHashSet::default();
+        let generator = CuttingPlaneGenerator::new(integer_vars);
+
+        let val = BigRational::new(BigInt::from(-7), BigInt::from(3)); // -7/3 = -2.333...
+        let floor_val = generator.floor(&val);
+        assert_eq!(floor_val, BigRational::from_integer(BigInt::from(-3)));
+    }
+
+    #[test]
+    fn test_fractional_part_negative() {
+        // Regression test for MATH-1: fractional_part(-7/3) must be in
+        // [0, 1), i.e. 2/3, not the negative value -1/3 produced by a
+        // truncating floor.
+        let integer_vars = FxHashSet::default();
+        let generator = CuttingPlaneGenerator::new(integer_vars);
+
+        let val = BigRational::new(BigInt::from(-7), BigInt::from(3));
+        let frac = generator.fractional_part(&val);
+
+        assert!(frac >= BigRational::zero());
+        assert!(frac < BigRational::one());
+        assert_eq!(frac, BigRational::new(BigInt::from(2), BigInt::from(3)));
+    }
+
+    #[test]
+    fn test_fractional_part_negative_integer_is_zero() {
+        let integer_vars = FxHashSet::default();
+        let generator = CuttingPlaneGenerator::new(integer_vars);
+
+        let val = BigRational::from_integer(BigInt::from(-5));
+        let frac = generator.fractional_part(&val);
+        assert!(frac.is_zero());
+    }
+
+    #[test]
+    fn test_gomory_cut_negative_rhs_produces_valid_fraction() {
+        // Ensure generate_gomory_cut, which relies on fractional_part being
+        // in [0, 1), behaves correctly for negative RHS/coefficients.
+        let mut integer_vars = FxHashSet::default();
+        integer_vars.insert(0);
+        let mut generator = CuttingPlaneGenerator::new(integer_vars);
+
+        let row = vec![(0usize, BigRational::new(BigInt::from(-7), BigInt::from(3)))];
+        let rhs = BigRational::new(BigInt::from(-7), BigInt::from(3));
+
+        let cut = generator
+            .generate_gomory_cut(1, &row, &rhs)
+            .expect("expected a cut for a fractional RHS");
+
+        // rhs of the cut is -frac_rhs, which must lie in (-1, 0].
+        assert!(cut.rhs <= BigRational::zero());
+        assert!(cut.rhs > -BigRational::one());
     }
 }

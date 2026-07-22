@@ -83,8 +83,19 @@ impl ParallelProcessor {
 
     /// Check a proof in parallel.
     ///
-    /// This validates each proof node in parallel, checking that all
-    /// inferences are valid according to the proof rules.
+    /// This structurally validates every proof node in parallel: each node
+    /// must exist, and every premise referenced by an `Inference` step must
+    /// itself be an *earlier*, already-existing node. `Proof` allocates node
+    /// IDs monotonically as nodes are added, so a premise ID that is
+    /// missing, equal to the node's own ID, or greater than it can only
+    /// arise from a corrupted or hand-crafted proof (self-reference or a
+    /// forward/dangling reference) -- such proofs are rejected here.
+    ///
+    /// This is a structural check, not a semantic one: it does not re-derive
+    /// whether a rule's conclusion actually follows from its premises. For
+    /// full rule-level (theory/Alethe) semantic checking, use
+    /// [`crate::checker::ProofChecker`] on the corresponding
+    /// [`crate::theory::TheoryProof`] / [`crate::alethe::AletheProof`].
     pub fn check_proof_parallel(&self, proof: &Proof) -> ParallelCheckResult<()> {
         // Create a thread-safe reference to the proof
         let proof_arc = Arc::new(proof);
@@ -161,16 +172,30 @@ impl ParallelProcessor {
             .collect()
     }
 
-    // Helper: Check node validity
+    // Helper: Check node validity (structural: existence + premise well-formedness).
     fn check_node_validity(&self, proof: &Proof, node_id: ProofNodeId) -> Result<(), CheckError> {
-        // Simplified validation - in a full implementation, this would check
-        // the inference rules and premises are valid
-        if let Some(_node) = proof.get_node(node_id) {
-            // Basic check passed - node exists
-            Ok(())
-        } else {
-            Err(CheckError::Custom(format!("Node {} not found", node_id)))
+        let node = proof
+            .get_node(node_id)
+            .ok_or_else(|| CheckError::Custom(format!("Node {} not found", node_id)))?;
+
+        if let crate::proof::ProofStep::Inference { premises, .. } = &node.step {
+            for &premise_id in premises.iter() {
+                // Node IDs are allocated monotonically by `Proof`, so a
+                // legitimately-derived inference can only reference premises
+                // that were added strictly before it. A premise ID equal to
+                // or greater than the node's own ID is either a
+                // self-reference or a forward reference into the future --
+                // both indicate a corrupted proof.
+                if premise_id.0 >= node_id.0 {
+                    return Err(CheckError::CyclicDependency);
+                }
+                if proof.get_node(premise_id).is_none() {
+                    return Err(CheckError::MissingPremise(premise_id.0));
+                }
+            }
         }
+
+        Ok(())
     }
 
     // Helper: Check node dependencies
@@ -301,6 +326,64 @@ mod tests {
         let processor = ParallelProcessor::new();
         let proof = Proof::new();
         assert!(processor.check_proof_parallel(&proof).is_ok());
+    }
+
+    #[test]
+    fn test_check_proof_parallel_valid_proof() {
+        let processor = ParallelProcessor::new();
+        let mut proof = Proof::new();
+        let ax1 = proof.add_axiom("x = x");
+        let ax2 = proof.add_axiom("y = y");
+        proof.add_inference("and", vec![ax1, ax2], "x = x and y = y");
+
+        assert!(processor.check_proof_parallel(&proof).is_ok());
+    }
+
+    #[test]
+    fn test_check_proof_parallel_rejects_dangling_premise() {
+        // PF-02 regression: a proof step that references a premise ID
+        // which was never added to the proof is corrupted and must be
+        // rejected, not rubber-stamped as valid. Since `Proof` allocates
+        // node IDs monotonically without gaps, any premise ID that does not
+        // exist is necessarily >= the referencing node's own ID, which is
+        // detected as a forward/dangling reference (`CyclicDependency`).
+        let processor = ParallelProcessor::new();
+        let mut proof = Proof::new();
+        let ax1 = proof.add_axiom("x = x");
+        // Fabricate a bogus premise ID that does not exist in the proof.
+        let bogus_premise = ProofNodeId(ax1.0 + 999);
+        proof.add_inference("bogus_rule", vec![bogus_premise], "garbage conclusion");
+
+        let result = processor.check_proof_parallel(&proof);
+        assert!(result.is_err());
+        let errors = result.expect_err("corrupted proof must fail parallel check");
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            CheckError::MissingPremise(_) | CheckError::CyclicDependency
+        )));
+    }
+
+    #[test]
+    fn test_check_proof_parallel_rejects_self_referential_premise() {
+        // A node cannot legitimately reference itself (or a later node) as
+        // a premise; node IDs are allocated monotonically, so this can only
+        // happen in a corrupted proof.
+        let processor = ParallelProcessor::new();
+        let mut proof = Proof::new();
+        let ax1 = proof.add_axiom("x = x");
+        // Self-referential premise: the new node references its own future ID.
+        let self_id = ProofNodeId(ax1.0 + 1);
+        proof.add_inference("self_rule", vec![self_id], "self-referential");
+
+        let result = processor.check_proof_parallel(&proof);
+        assert!(result.is_err());
+        let errors = result.expect_err("corrupted proof must fail parallel check");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, CheckError::CyclicDependency))
+        );
     }
 
     #[test]

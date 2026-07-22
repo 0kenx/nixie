@@ -3,7 +3,7 @@
 //! This module provides data structures and algorithms for resolution-based
 //! SAT proofs, including binary resolution, unit propagation, and clause learning.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 
 /// A literal in a SAT clause (positive or negative variable).
@@ -237,33 +237,31 @@ impl ResolutionProof {
             ));
         }
 
-        // Compute resolvent: (c1 \ {pivot}) ∪ (c2 \ {~pivot})
-        let mut resolvent_lits: HashSet<Literal> = HashSet::new();
+        // Compute resolvent: (c1 \ {pivot}) ∪ (c2 \ {~pivot}).
+        //
+        // Only the pivot pair (pivot / ~pivot) is removed here. If the
+        // resulting clause happens to contain some *other* complementary
+        // pair (e.g. resolving on `a` between {a, b} and {~a, ~b}), the
+        // resolvent {b, ~b} is a tautology, not the empty clause: it must
+        // be kept as-is. Silently deleting non-pivot complementary
+        // literals would fabricate a stronger (spuriously empty) clause
+        // than the premises actually justify — see PF-03. Non-pivot
+        // literals are still deduplicated when they are exact repeats.
+        let mut resolvent_lits: Vec<Literal> = Vec::new();
 
         for &lit in &clause1.literals {
-            if lit != pivot {
-                resolvent_lits.insert(lit);
+            if lit != pivot && !resolvent_lits.contains(&lit) {
+                resolvent_lits.push(lit);
             }
         }
 
         for &lit in &clause2.literals {
-            if lit != pivot.negate() {
-                resolvent_lits.insert(lit);
+            if lit != pivot.negate() && !resolvent_lits.contains(&lit) {
+                resolvent_lits.push(lit);
             }
         }
 
-        // Remove tautological literals (x and ~x)
-        let mut final_lits = Vec::new();
-        for &lit in &resolvent_lits {
-            if !resolvent_lits.contains(&lit.negate()) {
-                final_lits.push(lit);
-            } else if lit.is_positive() {
-                // Keep only positive to avoid duplicates
-                continue;
-            }
-        }
-
-        let resolvent = Clause::new(final_lits);
+        let resolvent = Clause::new(resolvent_lits);
 
         // Check if we already have this clause
         if let Some(&id) = self.clause_map.get(&resolvent) {
@@ -462,6 +460,56 @@ mod tests {
         // Should derive y
         assert!(derived_clause.is_unit());
         assert_eq!(derived_clause.unit_literal(), Some(Literal::pos(2)));
+    }
+
+    #[test]
+    fn test_resolution_ab_notac_yields_b_or_c() {
+        let mut proof = ResolutionProof::new();
+
+        // (a ∨ b)
+        let c1 = proof.add_input(Clause::new(vec![Literal::pos(1), Literal::pos(2)]));
+        // (~a ∨ c)
+        let c2 = proof.add_input(Clause::new(vec![Literal::neg(1), Literal::pos(3)]));
+
+        let resolvent_id = proof
+            .resolve(c1, c2, Literal::pos(1))
+            .expect("resolution on pivot a should succeed");
+        let resolvent = proof
+            .get_clause(resolvent_id)
+            .expect("resolvent clause should exist");
+
+        // Should be exactly (b ∨ c), nothing more, nothing less.
+        assert_eq!(resolvent.literals.len(), 2);
+        assert!(resolvent.contains(Literal::pos(2)));
+        assert!(resolvent.contains(Literal::pos(3)));
+        assert!(!resolvent.is_empty());
+    }
+
+    #[test]
+    fn test_resolution_keeps_non_pivot_tautology() {
+        // PF-03 regression: resolving {a, b} with {~a, ~b} on pivot `a`
+        // must NOT drop the non-pivot complementary pair (b, ~b). The
+        // premises (a ∨ b) ∧ (~a ∨ ~b) are satisfiable (e.g. a=true,
+        // b=false), so the resolvent must not be the empty clause.
+        let mut proof = ResolutionProof::new();
+
+        let c1 = proof.add_input(Clause::new(vec![Literal::pos(1), Literal::pos(2)]));
+        let c2 = proof.add_input(Clause::new(vec![Literal::neg(1), Literal::neg(2)]));
+
+        let resolvent_id = proof
+            .resolve(c1, c2, Literal::pos(1))
+            .expect("resolution on pivot a should succeed");
+        let resolvent = proof
+            .get_clause(resolvent_id)
+            .expect("resolvent clause should exist");
+
+        // The resolvent must be the tautology (b ∨ ~b), not the empty
+        // clause; a solver must never report UNSAT here.
+        assert!(!resolvent.is_empty());
+        assert_eq!(resolvent.literals.len(), 2);
+        assert!(resolvent.contains(Literal::pos(2)));
+        assert!(resolvent.contains(Literal::neg(2)));
+        assert!(!proof.derives_empty_clause());
     }
 
     #[test]

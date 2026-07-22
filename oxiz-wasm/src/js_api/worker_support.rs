@@ -43,9 +43,11 @@
 #![forbid(unsafe_code)]
 
 use crate::async_utils;
+use crate::js_api::cancellation::CancellationToken;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 /// Current time in milliseconds, or `0.0` outside a browser `window`
@@ -543,6 +545,21 @@ impl WorkerPool {
 }
 
 /// Worker handler for use inside worker threads
+///
+/// # Two entry points, two different threading contracts
+///
+/// - [`WorkerHandler::handle_task`] takes a [`WorkerTask`] -- a
+///   `wasm_bindgen` class instance. Instances like that cannot cross a
+///   real `Worker` boundary (`postMessage` structured-clones plain data
+///   only; it cannot clone a pointer into another realm's WASM memory),
+///   so this entry point only works when `WorkerHandler` runs
+///   cooperatively on the SAME thread as its caller -- exactly what
+///   [`WorkerPool`] does.
+/// - [`WorkerHandler::handle_message`] takes a plain, structured-clone-
+///   safe `JsValue` (a JS object) and is the entry point meant for a real
+///   `Worker`'s `onmessage` handler -- see
+///   [`crate::js_api::worker_glue::generate_worker_bootstrap_js`] and
+///   [`crate::js_api::preemptible_worker::PreemptibleSolver`].
 #[wasm_bindgen]
 pub struct WorkerHandler {
     /// Solver context
@@ -551,6 +568,10 @@ pub struct WorkerHandler {
     current_task: Option<String>,
     /// Statistics
     tasks_processed: usize,
+    /// Cooperative cancellation flag checked between operations inside
+    /// [`WorkerHandler::handle_solve`] -- see [`CancellationToken`]'s
+    /// docs for exactly what this can and cannot preempt.
+    cancellation: CancellationToken,
 }
 
 #[wasm_bindgen]
@@ -562,7 +583,118 @@ impl WorkerHandler {
             ctx: oxiz_solver::Context::new(),
             current_task: None,
             tasks_processed: 0,
+            cancellation: CancellationToken::new(),
         }
+    }
+
+    /// Attach a shared cancellation buffer received from the main thread
+    /// (typically via `data.cancellationBuffer` in an `"init"` message --
+    /// see [`WorkerHandler::handle_message`]), replacing whatever
+    /// cancellation token this handler was using before.
+    #[wasm_bindgen(js_name = attachCancellationBuffer)]
+    pub fn attach_cancellation_buffer(&mut self, buffer: js_sys::SharedArrayBuffer) {
+        self.cancellation = CancellationToken::from_buffer(buffer);
+    }
+
+    /// Request cooperative cancellation of the in-progress (or next)
+    /// `WorkerHandler::handle_solve` call. See [`CancellationToken`]'s
+    /// docs: this is observed only between operations, not inside a
+    /// single `check_sat` call.
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
+    /// Whether cooperative cancellation has been requested.
+    #[wasm_bindgen(js_name = isCancelled)]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    /// Clear a pending cooperative cancellation request.
+    #[wasm_bindgen(js_name = resetCancellation)]
+    pub fn reset_cancellation(&self) {
+        self.cancellation.reset();
+    }
+
+    /// Message-passing entry point for use as a real `Worker`'s
+    /// `onmessage` handler (see the type-level docs for why this differs
+    /// from [`WorkerHandler::handle_task`]).
+    ///
+    /// Accepts a plain JS object shaped as
+    /// `{ id, type: "init" | "solve" | "cancel" | "shutdown", data?: {...} }`
+    /// and returns a plain result object shaped as
+    /// `{ id, type: "result" | "error", status?, ... }`, always echoing
+    /// back the request `id` so the caller can match responses to
+    /// in-flight requests.
+    ///
+    /// * `"init"` -- optionally attaches `data.cancellationBuffer` (a
+    ///   `SharedArrayBuffer`) via [`WorkerHandler::attach_cancellation_buffer`].
+    /// * `"solve"` -- resets cancellation, then behaves like
+    ///   `WorkerHandler::handle_solve` with `data` as the payload
+    ///   (`{ logic?, declarations?, assertions? }`), checking
+    ///   cancellation between each declaration/assertion and again
+    ///   immediately before `check_sat`.
+    /// * `"cancel"` -- cooperative only (see module docs): this message
+    ///   is only dequeued once the worker's current synchronous JS turn
+    ///   finishes, so it cannot interrupt an in-progress `solve`. Prefer
+    ///   `data.cancellationBuffer` (checked without needing a message
+    ///   dispatch) or `Worker.terminate()` from the main thread.
+    /// * `"shutdown"` -- acknowledged only; the caller is responsible for
+    ///   actually terminating the worker.
+    #[wasm_bindgen(js_name = handleMessage)]
+    pub fn handle_message(&mut self, msg: JsValue) -> JsValue {
+        let id = js_sys::Reflect::get(&msg, &"id".into()).unwrap_or(JsValue::UNDEFINED);
+        let msg_type = js_sys::Reflect::get(&msg, &"type".into())
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default();
+        let data = js_sys::Reflect::get(&msg, &"data".into()).unwrap_or(JsValue::UNDEFINED);
+
+        let response = match msg_type.as_str() {
+            "init" => {
+                if let Ok(buf) = js_sys::Reflect::get(&data, &"cancellationBuffer".into())
+                    && let Some(buf) = buf.dyn_ref::<js_sys::SharedArrayBuffer>()
+                {
+                    self.attach_cancellation_buffer(buf.clone());
+                }
+                let result = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&result, &"type".into(), &"result".into());
+                let _ = js_sys::Reflect::set(&result, &"status".into(), &"ready".into());
+                result.into()
+            }
+            "cancel" => {
+                self.cancellation.cancel();
+                let result = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&result, &"type".into(), &"result".into());
+                let _ = js_sys::Reflect::set(&result, &"status".into(), &"cancel_requested".into());
+                result.into()
+            }
+            "shutdown" => {
+                let result = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&result, &"type".into(), &"result".into());
+                let _ = js_sys::Reflect::set(&result, &"status".into(), &"shutdown".into());
+                result.into()
+            }
+            "solve" => {
+                self.cancellation.reset();
+                let solve_result = self.handle_solve(data);
+                let _ = js_sys::Reflect::set(&solve_result, &"type".into(), &"result".into());
+                solve_result
+            }
+            other => {
+                let result = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&result, &"type".into(), &"error".into());
+                let _ = js_sys::Reflect::set(
+                    &result,
+                    &"error".into(),
+                    &format!("Unknown message type: {other}").into(),
+                );
+                result.into()
+            }
+        };
+
+        let _ = js_sys::Reflect::set(&response, &"id".into(), &id);
+        response
     }
 
     /// Handle a task
@@ -610,8 +742,24 @@ impl WorkerHandler {
 
     // Helper methods
 
+    ///
+    /// # Cooperative cancellation
+    ///
+    /// [`WorkerHandler::cancellation`] is checked before each declaration,
+    /// before each assertion, and immediately before `check_sat` is
+    /// called -- so a cancellation requested before (or between) those
+    /// steps stops the batch promptly with `{ status: "cancelled" }`
+    /// instead of running to completion. It is deliberately **not**
+    /// checked inside `check_sat` itself: `oxiz_solver::Context::
+    /// check_sat` has no cancellation hook to poll (adding one is out of
+    /// scope for `oxiz-wasm`), so once a `check_sat` call starts it always
+    /// runs to completion. See [`CancellationToken`]'s docs.
     fn handle_solve(&mut self, data: JsValue) -> JsValue {
         let result = js_sys::Object::new();
+
+        if self.cancellation.is_cancelled() {
+            return Self::solve_cancelled(&result);
+        }
 
         // Extract logic from data
         if let Ok(logic) = js_sys::Reflect::get(&data, &"logic".into())
@@ -627,6 +775,9 @@ impl WorkerHandler {
             && let Some(arr) = declarations.dyn_ref::<js_sys::Array>()
         {
             for decl in arr.iter() {
+                if self.cancellation.is_cancelled() {
+                    return Self::solve_cancelled(&result);
+                }
                 let name = js_sys::Reflect::get(&decl, &"name".into())
                     .ok()
                     .and_then(|v| v.as_string());
@@ -662,6 +813,9 @@ impl WorkerHandler {
             && let Some(arr) = assertions.dyn_ref::<js_sys::Array>()
         {
             for assertion in arr.iter() {
+                if self.cancellation.is_cancelled() {
+                    return Self::solve_cancelled(&result);
+                }
                 match assertion.as_string() {
                     Some(formula) => {
                         let script = format!("(assert {})", formula);
@@ -682,7 +836,13 @@ impl WorkerHandler {
             }
         }
 
-        // Check satisfiability
+        if self.cancellation.is_cancelled() {
+            return Self::solve_cancelled(&result);
+        }
+
+        // Check satisfiability. NOTE: once this call starts, cancellation
+        // can no longer stop it early -- see the cooperative-cancellation
+        // doc comment above.
         let sat_result = self.ctx.check_sat();
         let status = match sat_result {
             oxiz_solver::SolverResult::Sat => "sat",
@@ -699,6 +859,14 @@ impl WorkerHandler {
     fn solve_error(result: &js_sys::Object, message: String) -> JsValue {
         let _ = js_sys::Reflect::set(result, &"status".into(), &"error".into());
         let _ = js_sys::Reflect::set(result, &"error".into(), &message.into());
+        result.clone().into()
+    }
+
+    /// Build a `{ status: "cancelled" }` result object -- distinct from
+    /// [`WorkerHandler::solve_error`] so callers can tell "the caller
+    /// asked us to stop" apart from "the input was rejected".
+    fn solve_cancelled(result: &js_sys::Object) -> JsValue {
+        let _ = js_sys::Reflect::set(result, &"status".into(), &"cancelled".into());
         result.clone().into()
     }
 
@@ -784,5 +952,137 @@ mod tests {
     fn test_worker_handler() {
         let handler = WorkerHandler::new();
         assert_eq!(handler.tasks_processed(), 0);
+    }
+
+    // `WorkerHandler`'s cancellation plumbing delegates to a local-mode
+    // `CancellationToken` (pure `Rc<Cell<bool>>`, no JS calls) unless/until
+    // `attach_cancellation_buffer` is used, so this can run natively --
+    // unlike `handle_message`/`handle_solve` below, which build
+    // `js_sys::Object`/`JsValue` and therefore require a wasm32 JS host
+    // (see the empirical note in `async_utils`'s tests).
+    #[test]
+    fn test_worker_handler_cancellation_plumbing() {
+        let handler = WorkerHandler::new();
+        assert!(!handler.is_cancelled());
+
+        handler.cancel();
+        assert!(handler.is_cancelled());
+
+        handler.reset_cancellation();
+        assert!(!handler.is_cancelled());
+    }
+
+    #[test]
+    #[cfg(target_arch = "wasm32")]
+    fn test_handle_message_init_ready() {
+        let mut handler = WorkerHandler::new();
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &"id".into(), &1.into());
+        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"init".into());
+
+        let response = handler.handle_message(msg.into());
+        let ty = js_sys::Reflect::get(&response, &"type".into())
+            .ok()
+            .and_then(|v| v.as_string());
+        let status = js_sys::Reflect::get(&response, &"status".into())
+            .ok()
+            .and_then(|v| v.as_string());
+        let id = js_sys::Reflect::get(&response, &"id".into())
+            .ok()
+            .and_then(|v| v.as_f64());
+        assert_eq!(ty.as_deref(), Some("result"));
+        assert_eq!(status.as_deref(), Some("ready"));
+        assert_eq!(id, Some(1.0));
+    }
+
+    #[test]
+    #[cfg(target_arch = "wasm32")]
+    fn test_handle_message_unknown_type_is_error() {
+        let mut handler = WorkerHandler::new();
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &"id".into(), &7.into());
+        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"bogus".into());
+
+        let response = handler.handle_message(msg.into());
+        let ty = js_sys::Reflect::get(&response, &"type".into())
+            .ok()
+            .and_then(|v| v.as_string());
+        assert_eq!(ty.as_deref(), Some("error"));
+    }
+
+    #[test]
+    #[cfg(target_arch = "wasm32")]
+    fn test_handle_message_solve_end_to_end() {
+        let mut handler = WorkerHandler::new();
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &"id".into(), &2.into());
+        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"solve".into());
+
+        let data = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&data, &"logic".into(), &"QF_LIA".into());
+        let decls = js_sys::Array::new();
+        let decl = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&decl, &"name".into(), &"x".into());
+        let _ = js_sys::Reflect::set(&decl, &"sort".into(), &"Int".into());
+        decls.push(&decl);
+        let _ = js_sys::Reflect::set(&data, &"declarations".into(), &decls);
+        let assertions = js_sys::Array::new();
+        assertions.push(&"(> x 0)".into());
+        let _ = js_sys::Reflect::set(&data, &"assertions".into(), &assertions);
+        let _ = js_sys::Reflect::set(&msg, &"data".into(), &data);
+
+        let response = handler.handle_message(msg.into());
+        let status = js_sys::Reflect::get(&response, &"status".into())
+            .ok()
+            .and_then(|v| v.as_string());
+        assert_eq!(status.as_deref(), Some("sat"));
+    }
+
+    #[test]
+    #[cfg(target_arch = "wasm32")]
+    fn test_handle_solve_returns_cancelled_when_pre_cancelled() {
+        // `handle_solve`'s very first check must short-circuit with
+        // `status: "cancelled"` (not run any declarations/assertions/
+        // check_sat) when the cooperative token is already cancelled.
+        // Called directly (bypassing `handle_message`, which resets
+        // cancellation at the start of its "solve" arm) to isolate this
+        // specific guarantee.
+        let mut handler = WorkerHandler::new();
+        handler.cancel();
+
+        let data = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&data, &"logic".into(), &"QF_LIA".into());
+
+        let result = handler.handle_solve(data.into());
+        let status = js_sys::Reflect::get(&result, &"status".into())
+            .ok()
+            .and_then(|v| v.as_string());
+        assert_eq!(status.as_deref(), Some("cancelled"));
+    }
+
+    #[test]
+    #[cfg(target_arch = "wasm32")]
+    fn test_handle_message_solve_resets_stale_cancellation() {
+        // A cancellation left over from a *previous* solve must not leak
+        // into the next one dispatched via `handle_message` -- otherwise
+        // every solve after the first cancelled one would spuriously
+        // report "cancelled" forever.
+        let mut handler = WorkerHandler::new();
+        handler.cancel();
+        assert!(handler.is_cancelled());
+
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &"id".into(), &4.into());
+        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"solve".into());
+        let data = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&data, &"logic".into(), &"QF_LIA".into());
+        let _ = js_sys::Reflect::set(&msg, &"data".into(), &data);
+
+        let response = handler.handle_message(msg.into());
+        let status = js_sys::Reflect::get(&response, &"status".into())
+            .ok()
+            .and_then(|v| v.as_string());
+        assert_ne!(status.as_deref(), Some("cancelled"));
+        assert!(!handler.is_cancelled());
     }
 }

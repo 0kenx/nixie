@@ -9,7 +9,7 @@ use oxiz_proof::ProofRecorder;
 use oxiz_sat::{Lit, Solver as SatSolver};
 use oxiz_solver::combination::coordinator::{SatResult, TheoryCoordinator, TheoryId, TheorySolver};
 use oxiz_theories::Theory;
-use oxiz_theories::arithmetic::{LinExpr, Simplex};
+use oxiz_theories::arithmetic::{LinExpr, Simplex, VarId};
 use oxiz_theories::array::ArraySolver;
 use oxiz_theories::bv::{Constraint as BvConstraint, Interval, WordLevelPropagator};
 use oxiz_theories::euf::{EufSolver, FunctionProperties};
@@ -45,22 +45,103 @@ fn bench_sat_propagation(c: &mut Criterion) {
     print_snapshot(ProfilingCategory::SatPropagation);
 }
 
-struct MockTheory;
+/// Adapts a real [`Simplex`] linear-arithmetic solver to the
+/// `TheorySolver` interface, so `bench_theory_check` measures genuine
+/// theory reasoning end to end through `TheoryCoordinator` instead of only
+/// coordinator dispatch bookkeeping -- all the previous `MockTheory` (whose
+/// `check_sat` unconditionally returned `Sat` without ever touching a
+/// solver, and whose `assert_formula` did nothing at all) actually
+/// exercised.
+///
+/// `TheoryCoordinator`'s `TermId` is a dispatch-only placeholder (`pub type
+/// TermId = usize`, see `combination::coordinator`) carrying no term
+/// content of its own, so `assert_formula` resolves the id against a small,
+/// fixed, representative constraint set built in `new`: five variables
+/// bounded in `[0, 20]`, chained by four pairwise upper bounds plus one
+/// constraint tying all five together. The system is jointly satisfiable
+/// but not decidable from any single bound in isolation, so `check_sat`
+/// must actually run the simplex tableau (see `Simplex::check`) to confirm
+/// it -- mirroring how a real theory (e.g. `LinearArithmeticTheory` in
+/// `oxiz-solver`) is driven by the coordinator in production.
+struct SimplexTheory {
+    simplex: Simplex,
+    vars: [VarId; 5],
+}
 
-impl TheorySolver for MockTheory {
+impl SimplexTheory {
+    fn new() -> Self {
+        let mut simplex = Simplex::new();
+        let vars = [
+            simplex.new_var(),
+            simplex.new_var(),
+            simplex.new_var(),
+            simplex.new_var(),
+            simplex.new_var(),
+        ];
+        for (i, &v) in vars.iter().enumerate() {
+            simplex.set_lower(v, Rational64::new(0, 1), i as u32);
+            simplex.set_upper(v, Rational64::new(20, 1), 10 + i as u32);
+        }
+        Self { simplex, vars }
+    }
+
+    /// The `n`-th representative constraint: `x_n + x_{n+1} <= 10` for `n`
+    /// in `0..4` (four overlapping pairwise bounds), and at `n == 4` the
+    /// cross-cutting `x0 + x1 + x2 + x3 + x4 >= 5` that ties every variable
+    /// together. Returns the built expression and whether it is a `>=`
+    /// constraint (`false` means `<=`).
+    fn build(&self, n: usize) -> (LinExpr, bool) {
+        let v = &self.vars;
+        if n < 4 {
+            let mut expr = LinExpr::new();
+            expr.add_term(v[n], Rational64::new(1, 1));
+            expr.add_term(v[n + 1], Rational64::new(1, 1));
+            expr.add_constant(Rational64::new(-10, 1));
+            (expr, false)
+        } else {
+            let mut expr = LinExpr::new();
+            for &var in v {
+                expr.add_term(var, Rational64::new(1, 1));
+            }
+            expr.add_constant(Rational64::new(-5, 1));
+            (expr, true)
+        }
+    }
+
+    /// Number of distinct representative constraints `assert_formula` can
+    /// resolve an id to (see [`Self::build`]).
+    const NUM_CONSTRAINTS: usize = 5;
+}
+
+impl TheorySolver for SimplexTheory {
     fn theory_id(&self) -> TheoryId {
         TheoryId::Arithmetic
     }
 
-    fn assert_formula(&mut self, _formula: usize) -> Result<(), String> {
+    fn assert_formula(&mut self, formula: usize) -> Result<(), String> {
+        let (expr, is_ge) = self.build(formula % Self::NUM_CONSTRAINTS);
+        if is_ge {
+            self.simplex.add_ge(expr, formula as u32);
+        } else {
+            self.simplex.add_le(expr, formula as u32);
+        }
         Ok(())
     }
 
     fn check_sat(&mut self) -> Result<SatResult, String> {
-        Ok(SatResult::Sat)
+        match self.simplex.check() {
+            Ok(()) => Ok(SatResult::Sat),
+            Err(_conflict) => Ok(SatResult::Unsat),
+        }
     }
 
     fn get_model(&self) -> Option<rustc_hash::FxHashMap<usize, usize>> {
+        // The theory-combination model interface here is keyed on the same
+        // placeholder `usize` ids `assert_formula` receives, which carry no
+        // correspondence to `Simplex`'s real `VarId`/`Rational64` values
+        // (those are exercised directly by `bench_simplex_pivot`), so there
+        // is nothing meaningful to report through this particular
+        // interface without fabricating one.
         Some(rustc_hash::FxHashMap::default())
     }
 
@@ -86,7 +167,12 @@ fn bench_theory_check(c: &mut Criterion) {
     group.bench_function("coordinator", |b| {
         b.iter(|| {
             let mut coordinator = TheoryCoordinator::new(Default::default());
-            coordinator.register_theory(Box::new(MockTheory));
+            coordinator.register_theory(Box::new(SimplexTheory::new()));
+            for formula in 0..SimplexTheory::NUM_CONSTRAINTS {
+                coordinator
+                    .assert_formula(formula, TheoryId::Arithmetic)
+                    .expect("registered theory accepts a formula it was built to resolve");
+            }
             black_box(coordinator.check_sat())
         });
     });

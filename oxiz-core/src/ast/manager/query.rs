@@ -1368,29 +1368,60 @@ impl TermManager {
         }
     }
 
-    /// Collect all free variables in a term
+    /// Collect all free variables in a term.
+    ///
+    /// A `Var(name)` occurrence at sort `s` that lies inside the body of a
+    /// `Forall`/`Exists`/`Let` binding `(name, s)` is *bound*, not free —
+    /// per standard first-order-logic scoping it must not be reported.
+    /// See `TermManager::collect_free_vars` for how the bound-name
+    /// environment is threaded through the traversal.
     pub fn free_vars(&self, id: TermId) -> Vec<TermId> {
         let mut vars = Vec::new();
         let mut visited = FxHashMap::default();
-        self.collect_free_vars(id, &mut vars, &mut visited);
+        let mut bound: FxHashMap<(Spur, SortId), u32> = FxHashMap::default();
+        self.collect_free_vars(id, &mut vars, &mut visited, &mut bound);
         vars
     }
 
+    /// Recursive worker for [`TermManager::free_vars`].
+    ///
+    /// `bound` is a reference-counted multiset of `(name, sort)` pairs
+    /// currently in scope from an enclosing `Forall`/`Exists`/`Let`; a
+    /// `Var(name)` whose `(name, sort)` is present in `bound` is shadowed
+    /// and excluded from the free-variable result.
+    ///
+    /// `visited` memoizes traversal by `TermId` to avoid re-walking
+    /// shared DAG subterms, but that memoization is only sound while no
+    /// binder is active: the *same* `TermId` subterm can be reachable
+    /// both inside and outside a binder's scope (structural sharing), and
+    /// whether a `Var` inside it counts as free depends on which binders
+    /// are active at the point of reference. So the memo is
+    /// consulted/updated only while `bound` is empty; traversal under any
+    /// active binder always re-walks.
     fn collect_free_vars(
         &self,
         id: TermId,
         vars: &mut Vec<TermId>,
         visited: &mut FxHashMap<TermId, ()>,
+        bound: &mut FxHashMap<(Spur, SortId), u32>,
     ) {
-        if visited.contains_key(&id) {
-            return;
+        let memo_active = bound.is_empty();
+        if memo_active {
+            if visited.contains_key(&id) {
+                return;
+            }
+            visited.insert(id, ());
         }
-        visited.insert(id, ());
 
         match self.get(id).map(|t| &t.kind) {
             None => {}
-            Some(TermKind::Var(_)) if !vars.contains(&id) => {
-                vars.push(id);
+            Some(TermKind::Var(name)) => {
+                let is_bound = self
+                    .get(id)
+                    .is_some_and(|t| bound.get(&(*name, t.sort)).is_some_and(|&n| n > 0));
+                if !is_bound && !vars.contains(&id) {
+                    vars.push(id);
+                }
             }
             Some(
                 TermKind::True
@@ -1408,10 +1439,10 @@ impl TermManager {
                 | TermKind::StrToInt(arg)
                 | TermKind::IntToStr(arg),
             ) => {
-                self.collect_free_vars(*arg, vars, visited);
+                self.collect_free_vars(*arg, vars, visited, bound);
             }
             Some(TermKind::BvExtract { arg, .. }) => {
-                self.collect_free_vars(*arg, vars, visited);
+                self.collect_free_vars(*arg, vars, visited, bound);
             }
             Some(
                 TermKind::And(args)
@@ -1421,7 +1452,7 @@ impl TermManager {
                 | TermKind::Distinct(args),
             ) => {
                 for &arg in args {
-                    self.collect_free_vars(arg, vars, visited);
+                    self.collect_free_vars(arg, vars, visited, bound);
                 }
             }
             Some(
@@ -1461,8 +1492,8 @@ impl TermManager {
                 | TermKind::BvSlt(a, b)
                 | TermKind::BvSle(a, b),
             ) => {
-                self.collect_free_vars(*a, vars, visited);
-                self.collect_free_vars(*b, vars, visited);
+                self.collect_free_vars(*a, vars, visited, bound);
+                self.collect_free_vars(*b, vars, visited, bound);
             }
             Some(
                 TermKind::Ite(c, t, e)
@@ -1472,30 +1503,68 @@ impl TermManager {
                 | TermKind::StrReplace(c, t, e)
                 | TermKind::StrReplaceAll(c, t, e),
             ) => {
-                self.collect_free_vars(*c, vars, visited);
-                self.collect_free_vars(*t, vars, visited);
-                self.collect_free_vars(*e, vars, visited);
+                self.collect_free_vars(*c, vars, visited, bound);
+                self.collect_free_vars(*t, vars, visited, bound);
+                self.collect_free_vars(*e, vars, visited, bound);
             }
             Some(TermKind::Apply { args, .. }) => {
                 for &arg in args {
-                    self.collect_free_vars(arg, vars, visited);
+                    self.collect_free_vars(arg, vars, visited, bound);
                 }
             }
-            Some(TermKind::Forall { body, .. } | TermKind::Exists { body, .. }) => {
-                // Note: This is simplified - we should track bound vars
-                self.collect_free_vars(*body, vars, visited);
+            Some(TermKind::Forall {
+                vars: bound_vars,
+                body,
+                ..
+            })
+            | Some(TermKind::Exists {
+                vars: bound_vars,
+                body,
+                ..
+            }) => {
+                for (name, sort) in bound_vars {
+                    *bound.entry((*name, *sort)).or_insert(0) += 1;
+                }
+                self.collect_free_vars(*body, vars, visited, bound);
+                for (name, sort) in bound_vars {
+                    if let Some(count) = bound.get_mut(&(*name, *sort)) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            bound.remove(&(*name, *sort));
+                        }
+                    }
+                }
             }
             Some(TermKind::Let { bindings, body }) => {
+                // The bound value of `(let ((x t)) body)` is evaluated in
+                // the *outer* scope, so its free vars are collected before
+                // `x` enters `bound`; `x`'s effective sort is the sort of
+                // its value term `t`.
                 for (_, term) in bindings {
-                    self.collect_free_vars(*term, vars, visited);
+                    self.collect_free_vars(*term, vars, visited, bound);
                 }
-                self.collect_free_vars(*body, vars, visited);
+                let mut entered: SmallVec<[(Spur, SortId); 2]> = SmallVec::new();
+                for (name, term) in bindings {
+                    if let Some(sort) = self.get(*term).map(|t| t.sort) {
+                        *bound.entry((*name, sort)).or_insert(0) += 1;
+                        entered.push((*name, sort));
+                    }
+                }
+                self.collect_free_vars(*body, vars, visited, bound);
+                for (name, sort) in entered {
+                    if let Some(count) = bound.get_mut(&(name, sort)) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            bound.remove(&(name, sort));
+                        }
+                    }
+                }
             }
             // Floating-point operations - collect vars from children
             Some(_) => {
                 if let Some(term) = self.get(id) {
                     for &child in &get_children(&term.kind) {
-                        self.collect_free_vars(child, vars, visited);
+                        self.collect_free_vars(child, vars, visited, bound);
                     }
                 }
             }
@@ -1581,5 +1650,133 @@ mod lint_regression_tests {
             .expect("y is unshadowed, so a non-empty substitution is expected");
         assert_eq!(effective.get(&y), Some(&forty_two));
         assert!(new_bound.is_empty(), "no capture, so no fresh binders");
+    }
+}
+
+#[cfg(test)]
+mod free_vars_binder_tests {
+    //! Regression tests for: "free_vars counts quantifier-bound variables
+    //! as free" — `Forall`/`Exists`/`Let` binders must shadow their bound
+    //! names from the free-variable result.
+    use super::*;
+
+    #[test]
+    fn forall_bound_variable_is_not_free() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let zero = m.mk_int(0);
+        let body = m.mk_gt(x, zero); // x > 0
+        let forall = m.mk_forall([("x", int_sort)], body);
+
+        assert!(
+            m.free_vars(forall).is_empty(),
+            "the quantifier-bound x must not be reported as free"
+        );
+    }
+
+    #[test]
+    fn exists_bound_variable_is_not_free() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let zero = m.mk_int(0);
+        let body = m.mk_gt(x, zero); // x > 0
+        let exists = m.mk_exists([("x", int_sort)], body);
+
+        assert!(
+            m.free_vars(exists).is_empty(),
+            "the quantifier-bound x must not be reported as free"
+        );
+    }
+
+    #[test]
+    fn forall_leaves_a_genuinely_free_sibling_variable_free() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let y = m.mk_var("y", int_sort);
+        let body = m.mk_gt(x, y); // x > y
+        let forall = m.mk_forall([("x", int_sort)], body); // forall x. x > y
+
+        let free = m.free_vars(forall);
+        assert_eq!(free, vec![y], "x is bound, but y must remain free");
+    }
+
+    #[test]
+    fn let_bound_variable_is_not_free_in_body() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let five = m.mk_int(5);
+        let x = m.mk_var("x", int_sort);
+        let zero = m.mk_int(0);
+        let body = m.mk_gt(x, zero); // x > 0
+        let let_term = m.mk_let([("x", five)], body); // let ((x 5)) (x > 0)
+
+        assert!(
+            m.free_vars(let_term).is_empty(),
+            "the let-bound x must not be reported as free"
+        );
+    }
+
+    #[test]
+    fn let_binding_value_is_evaluated_in_outer_scope() {
+        // `let ((x y)) (x > 0)`: the bound *value* `y` is evaluated in the
+        // outer scope (before `x` shadows anything), so it must still be
+        // reported free even though the body's `x` is bound.
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let y = m.mk_var("y", int_sort);
+        let zero = m.mk_int(0);
+        let body = m.mk_gt(x, zero); // x > 0
+        let let_term = m.mk_let([("x", y)], body);
+
+        assert_eq!(m.free_vars(let_term), vec![y]);
+    }
+
+    #[test]
+    fn shared_subterm_free_outside_a_shadowing_binder_is_still_reported() {
+        // Regression test for the `visited` memo: the *same* hash-consed
+        // `x` term is referenced both (a) bound, inside a nested
+        // `forall x. x > 0`, and (b) unbound, as a sibling conjunct. If
+        // the TermId-keyed traversal memo were consulted while under the
+        // binder, visiting `x > 0` there would mark the shared `x > 0`
+        // subterm (and its `x` leaf) as already-visited, and the second,
+        // truly-free occurrence would be wrongly skipped.
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let zero = m.mk_int(0);
+        let x_gt_0 = m.mk_gt(x, zero); // x > 0, reused below
+        let inner = m.mk_forall([("x", int_sort)], x_gt_0); // forall x. x > 0
+        let combined = m.mk_and([inner, x_gt_0]); // (forall x. x>0) & (x>0)
+
+        assert_eq!(
+            m.free_vars(combined),
+            vec![x],
+            "the second, unbound occurrence of x must be reported free \
+             despite the shared subterm also appearing bound inside the \
+             forall"
+        );
+    }
+
+    #[test]
+    fn nested_quantifiers_with_distinct_names_collect_only_free_vars() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let y = m.mk_var("y", int_sort);
+        let z = m.mk_var("z", int_sort);
+
+        let inner_body = m.mk_gt(x, y); // x > y
+        let inner = m.mk_exists([("y", int_sort)], inner_body); // exists y. x > y
+        let x_gt_z = m.mk_gt(x, z); // x > z
+        let conjunction = m.mk_and([inner, x_gt_z]);
+        let outer = m.mk_forall([("x", int_sort)], conjunction); // forall x. (exists y. x>y) & (x>z)
+
+        // `x` is bound by the outer forall, `y` is bound by the inner
+        // exists; only `z` is free.
+        assert_eq!(m.free_vars(outer), vec![z]);
     }
 }

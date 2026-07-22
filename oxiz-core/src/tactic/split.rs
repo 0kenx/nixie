@@ -102,12 +102,16 @@ impl Tactic for StatelessSplitTactic {
         "split"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        // Without a term manager, we can only return the goal unchanged
-        Ok(TacticResult::SubGoals(vec![goal.clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Case splitting must build the negated split literal (`¬split_var`),
+        // which needs a `&mut TermManager`. The manager-free path honestly
+        // reports NotApplicable rather than returning the goal unchanged. Use
+        // `SplitTactic::apply_mut` (or `create_managed`) for the real split.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Performs case splitting on boolean subterms"
+        "Performs case splitting on boolean subterms \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }

@@ -2,8 +2,11 @@
 //!
 //! Comprehensive testing of CDCL(T) solver invariants
 //!
-//! Note: These tests are disabled by default due to API incompatibilities.
-//! Enable with `--features property-tests` when the API is stabilized.
+//! `property-tests` is a default feature (see `Cargo.toml`), so this suite
+//! (48 properties across backtracking, conflict analysis, models, and
+//! propagation) runs under plain `cargo test`/`cargo nextest run -p
+//! oxiz-solver`. Disable it explicitly (`--no-default-features --features
+//! std`) to skip it, e.g. for a fast iterative build.
 
 #![cfg(feature = "property-tests")]
 

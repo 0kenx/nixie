@@ -107,6 +107,32 @@ impl Literal {
     }
 }
 
+/// Whether a clause is a propositional tautology: it contains some literal and
+/// its negation.
+///
+/// A conflict clause with a complementary pair is T-valid in every theory (the
+/// conjunction of its negated literals is propositionally unsatisfiable), so
+/// this is a sound theory-independent certificate. The converse does not hold:
+/// most genuine theory conflicts are *not* tautologies and cannot be certified
+/// from literal identities alone — those must be reported as `Unknown`.
+pub(crate) fn clause_has_complementary_pair(clause: &[Literal]) -> bool {
+    for (i, li) in clause.iter().enumerate() {
+        for lj in &clause[i + 1..] {
+            if li.term == lj.term && li.positive != lj.positive {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether `explanation` structurally entails `literal`: either it already
+/// contains the literal, or it is itself propositionally contradictory (and so
+/// entails anything). This is a sound but incomplete entailment check.
+pub(crate) fn explanation_entails(literal: Literal, explanation: &[Literal]) -> bool {
+    explanation.contains(&literal) || clause_has_complementary_pair(explanation)
+}
+
 /// Trait for theory-specific checkers
 pub trait TheoryChecker: Send + Sync {
     /// Name of the theory
@@ -254,7 +280,19 @@ impl CombinedChecker {
             Some(TheoryKind::Array) => self.array.check_conflict(clause),
             Some(TheoryKind::Bv) => self.bv.check_conflict(clause),
             Some(TheoryKind::Quant) => self.quant.check_conflict(clause),
-            _ => CheckResult::Valid, // Bool/UF - assume valid
+            _ => {
+                // Bool/UF: certify only the sound propositional cases; never
+                // rubber-stamp an arbitrary clause as valid.
+                if clause.is_empty() {
+                    CheckResult::Invalid("Empty conflict clause".to_string())
+                } else if clause_has_complementary_pair(clause) {
+                    CheckResult::Valid
+                } else {
+                    CheckResult::Unknown(
+                        "Bool/UF conflict not certifiable without term semantics".to_string(),
+                    )
+                }
+            }
         }
     }
 

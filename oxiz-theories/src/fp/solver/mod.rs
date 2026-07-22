@@ -996,12 +996,19 @@ impl Theory for FpSolver {
     fn check(&mut self) -> Result<TheoryResult> {
         let committed_trail = self.sat.trail_size();
         let learned_before = self.sat.learned_clause_count();
-        let mut solve_result = self.sat.solve();
-        if matches!(solve_result, SolverResult::Unsat) {
-            self.sat.restore_to_trail_size(committed_trail);
-            self.sat.forget_learned_since(learned_before);
-            solve_result = self.sat.solve();
-        }
+        // NOTE: unlike `BvSolver::check`, we do NOT retry on `Unsat` by
+        // discarding this probe's learned clauses and re-solving. That retry is
+        // unsound here: `restore_to_trail_size` leaves the committed level-0
+        // unit assignments (installed by `assert_const`/`assert_is_normal` via
+        // the SAT solver's clause-less unit fast path) on the trail, so the
+        // re-solve sees a fully-assigned trail with nothing to decide and
+        // reports `Sat` WITHOUT re-validating the multi-literal definitional
+        // clauses those units falsify. That converts a genuine `Unsat` (e.g. a
+        // subnormal constant asserted `fp.isNormal`) into a spurious `Sat`. The
+        // first solve already returns the sound verdict for a self-contained
+        // probe; the end-of-probe cleanup below keeps successive probes
+        // isolated, which is what the incremental contract actually requires.
+        let solve_result = self.sat.solve();
         let result = match solve_result {
             SolverResult::Sat => {
                 self.last_sat_model = self.sat.model().to_vec();

@@ -6,7 +6,7 @@ Next-Generation SMT Solver in Pure Rust
 [![Documentation](https://docs.rs/oxiz/badge.svg)](https://docs.rs/oxiz)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/cool-japan/oxiz/blob/main/LICENSE)
 
-> **Version**: 0.2.4 | **Status**: Meta-crate | **Tests**: 1
+> **Version**: 0.3.0 | **Status**: Meta-crate | **Tests**: 1
 
 ## About
 
@@ -14,7 +14,7 @@ Next-Generation SMT Solver in Pure Rust
 designed to achieve feature parity with [Z3](https://github.com/Z3Prover/z3) while leveraging Rust's safety,
 performance, and concurrency features.
 
-**🎉 Major Milestone**: OxiZ has achieved **100% correctness parity with Z3** across the benchmark suite spanning core SMT-LIB logics tracked by the project. See the [CHANGELOG](../CHANGELOG.md) for current status and known limitations before relying on it for production workloads.
+OxiZ tracks honest, non-fabricated parity against a real Z3 binary via `bench/z3_parity`: **154/168 Correct, 0 Wrong** on the extended 19-logic suite as of this writing (16 of 19 logic families are at 100%, including all 8 quickstart-core logics — QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, QF_FP — now 88/88; three quantified logics, `UFLIA`/`UFLRA`/`AUFLIA`, are not). See the [README](../README.md#z3-parity-quickstart-suite-results-honest-comparator-️) and [CHANGELOG](../CHANGELOG.md) for current status and known limitations before relying on it for production workloads.
 
 ## Features
 
@@ -33,21 +33,21 @@ Add OxiZ to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-oxiz = "0.2.4"  # Default: std + core solver
+oxiz = "0.3.0"  # Default: std + core solver
 ```
 
 With specific features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.2.4", features = ["nlsat", "optimization"] }
+oxiz = { version = "0.3.0", features = ["nlsat", "optimization"] }
 ```
 
 All features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.2.4", features = ["full"] }
+oxiz = { version = "0.3.0", features = ["full"] }
 ```
 
 ### Basic Usage

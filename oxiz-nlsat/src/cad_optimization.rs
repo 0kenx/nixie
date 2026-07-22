@@ -1,5 +1,10 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. These partial-CAD
+// / conflict-driven-projection / Hong-projection optimizations need a persistent
+// projection+lifting engine in the search path, which does not exist yet
+// (solver::decide rebuilds regions per variable via Sturm on each call). Sequence
+// this AFTER a sound single-cell explain engine; its early-termination shortcuts
+// must be validated against the exact region computation before wiring.
 //! Advanced CAD Optimization Techniques.
 //!
 //! This module implements state-of-the-art optimizations for Cylindrical Algebraic

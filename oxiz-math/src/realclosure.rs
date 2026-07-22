@@ -11,8 +11,9 @@ use crate::polynomial::{Polynomial, Var};
 use crate::prelude::*;
 use core::cmp::Ordering;
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use num_traits::{One, Signed, Zero};
 
 /// An algebraic number represented by a polynomial and an isolating interval.
 ///
@@ -425,17 +426,26 @@ impl AlgebraicNumber {
         Some(result)
     }
 
-    /// Add two algebraic numbers using resultant-based computation.
+    /// Add two algebraic numbers exactly, using a resultant-based construction.
     ///
-    /// Given α (root of p(x)) and β (root of q(y)), computes α + β.
-    /// For now, this uses interval arithmetic for robustness.
-    /// A full resultant-based implementation requires careful handling of
-    /// multivariate polynomials and root isolation, which is complex.
+    /// Given α (a root of `p`) and β (a root of `q`), the sum `α + β` is a root
+    /// of `R(z) = Res_y(p(y), q(z − y))`, whose real roots are exactly the sums
+    /// `αᵢ + βⱼ` over all roots `αᵢ` of `p` and `βⱼ` of `q`. We compute `R`
+    /// exactly via [`Polynomial::resultant`] (a genuine bivariate resultant),
+    /// make it square-free, then isolate the single root that matches the sum
+    /// of the operand intervals — refining both operand brackets as needed to
+    /// disambiguate. If that root is rational (a *degeneration* such as
+    /// `(1+√2) + (1−√2) = 2`) the result collapses to an exact rational.
     ///
-    /// Reference: Standard symbolic computation textbooks (e.g., "Algorithms in Real Algebraic Geometry")
-    #[allow(dead_code)]
+    /// Unlike the former implementation, the returned number is a *true*
+    /// algebraic number (exact defining polynomial + isolating interval), not a
+    /// finite rational approximation of an irrational value.
+    ///
+    /// Reference: "Algorithms in Real Algebraic Geometry" (Basu, Pollack,
+    /// Roy) — resultant of `p(y)` and `q(z − y)` for the sum of algebraic
+    /// numbers.
     pub fn add_algebraic(&mut self, other: &mut AlgebraicNumber) -> AlgebraicNumber {
-        // Special case: if either is rational, use the simpler method
+        // If either operand is rational, the exact `*_rational` shift applies.
         if self.is_rational() {
             return other.add_rational(&self.approximate());
         }
@@ -443,67 +453,255 @@ impl AlgebraicNumber {
             return self.add_rational(&other.approximate());
         }
 
-        // Refine both numbers to get good approximations
-        for _ in 0..20 {
-            self.refine();
-            other.refine();
-        }
+        // p(y): self's minimal polynomial rewritten in the elimination
+        // variable Y_VAR; q(z − y): other's polynomial with its variable
+        // replaced by (z − y) in the result/elimination variables.
+        let p_y = self
+            .polynomial
+            .substitute(self.var, &Polynomial::from_var(Y_VAR));
+        let z_minus_y = Polynomial::from_var(Z_VAR).sub(&Polynomial::from_var(Y_VAR));
+        let q_shift = other.polynomial.substitute(other.var, &z_minus_y);
 
-        // Get approximate sum
-        let approx_sum = self.approximate() + other.approximate();
+        // R(z) = Res_y(p(y), q(z − y)); roots are the pairwise sums αᵢ + βⱼ.
+        let r = p_y.resultant(&q_shift, Y_VAR).square_free();
 
-        // For a production implementation, we would:
-        // 1. Compute the resultant to get the minimal polynomial of α + β
-        // 2. Isolate roots to find the one corresponding to α + β
-        // For now, return the approximation as a rational number
-        // This is a simplification but avoids complex resultant computation issues
-        Self::from_rational(approx_sum)
+        combine_via_resultant(self, other, r, Z_VAR, false)
     }
 
-    /// Multiply two algebraic numbers using resultant-based computation.
+    /// Multiply two algebraic numbers exactly, using a resultant-based
+    /// construction.
     ///
-    /// Given α (root of p(x)) and β (root of q(y)), computes α * β.
-    /// For now, this uses interval arithmetic for robustness.
-    /// A full resultant-based implementation requires careful handling of
-    /// multivariate polynomials and root isolation, which is complex.
+    /// Given α (a root of `p`) and β (a root of `q` with `deg q = m`), the
+    /// product `α · β` is a root of `R(z) = Res_y(p(y), yᵐ · q(z / y))`, whose
+    /// real roots are exactly the pairwise products `αᵢ · βⱼ` (with `βⱼ ≠ 0`).
+    /// As in [`Self::add_algebraic`], `R` is computed exactly, made square-free,
+    /// and the single root matching the product of the operand intervals is
+    /// isolated (refining as needed); a rational product (e.g. `√2 · √2 = 2`)
+    /// collapses to an exact rational.
     ///
-    /// Reference: Standard symbolic computation textbooks (e.g., "Algorithms in Real Algebraic Geometry")
-    #[allow(dead_code)]
+    /// Reference: "Algorithms in Real Algebraic Geometry" (Basu, Pollack,
+    /// Roy) — resultant of `p(y)` and `yᵐ q(z/y)` for the product of algebraic
+    /// numbers.
     pub fn mul_algebraic(&mut self, other: &mut AlgebraicNumber) -> AlgebraicNumber {
-        // Special cases
         if self.is_rational() {
             return other.mul_rational(&self.approximate());
         }
         if other.is_rational() {
             return self.mul_rational(&other.approximate());
         }
-
-        // Handle zero explicitly
-        let approx_self = self.approximate();
-        let approx_other = other.approximate();
-        if approx_self.is_zero() {
-            return Self::from_rational(BigRational::zero());
-        }
-        if approx_other.is_zero() {
+        // A zero factor makes the product zero. Neither operand is rational
+        // here (0 is rational), so this is a defensive guard only.
+        if self.is_zero() || other.is_zero() {
             return Self::from_rational(BigRational::zero());
         }
 
-        // Refine both numbers to get good approximations
-        for _ in 0..20 {
-            self.refine();
-            other.refine();
-        }
+        let p_y = self
+            .polynomial
+            .substitute(self.var, &Polynomial::from_var(Y_VAR));
+        // q*(y, z) = yᵐ · q(z / y): the reversed/homogenized form of `other`
+        // (see [`scale_for_product`]), living in vars {Y_VAR, Z_VAR}.
+        let q_star = scale_for_product(&other.polynomial, other.var, Z_VAR);
 
-        // Get approximate product
-        let approx_product = approx_self * approx_other;
+        // R(z) = Res_y(p(y), q*(y, z)); roots are the pairwise products αᵢ · βⱼ.
+        let r = p_y.resultant(&q_star, Y_VAR).square_free();
 
-        // For a production implementation, we would:
-        // 1. Compute the resultant to get the minimal polynomial of α * β
-        // 2. Isolate roots to find the one corresponding to α * β
-        // For now, return the approximation as a rational number
-        // This is a simplification but avoids complex resultant computation issues
-        Self::from_rational(approx_product)
+        combine_via_resultant(self, other, r, Z_VAR, true)
     }
+}
+
+/// Result variable (`z`) for resultant-based algebraic arithmetic — matches the
+/// `var = 0` convention used by [`AlgebraicNumber::from_rational`] and
+/// [`AlgebraicNumber::sqrt`].
+const Z_VAR: Var = 0;
+/// Elimination variable (`y`) for resultant-based algebraic arithmetic.
+const Y_VAR: Var = 1;
+
+/// Isolate the root of `r_poly` (square-free, univariate in `z_var`) that
+/// corresponds to combining `a` and `b` (sum if `!is_product`, product
+/// otherwise).
+///
+/// The combined value `α ∘ β` lies **strictly** inside the interval-arithmetic
+/// combination `[lo, hi]` of the operand brackets (because the operands are
+/// irrational here, so each strictly brackets its value). We refine both
+/// operand brackets until `[lo, hi]` is a genuine isolating interval for
+/// `r_poly` — exactly one root inside, and neither endpoint itself a root — and
+/// then build the algebraic number directly from that bracket. This deliberately
+/// avoids `isolate_roots`' independently-computed brackets, whose endpoints can
+/// coincide with a *different* root of `r_poly` (e.g. the root `0` of `z³ − 8z`
+/// for `√2 + √2`), which would corrupt later sign-based refinement.
+///
+/// Convergence: once `[lo, hi]` is narrower than the distance from the true
+/// root to the nearest other root of `r_poly`, the count is 1 and the endpoints
+/// (within that distance of the true root) cannot equal another root — so the
+/// loop terminates in a small number of steps.
+fn combine_via_resultant(
+    a: &mut AlgebraicNumber,
+    b: &mut AlgebraicNumber,
+    r_poly: Polynomial,
+    z_var: Var,
+    is_product: bool,
+) -> AlgebraicNumber {
+    for _ in 0..300 {
+        let (lo, hi) = combined_interval(a, b, is_product);
+
+        // The bracket only isolates a root cleanly when neither endpoint is
+        // itself a root of `r_poly`.
+        let lo_is_root = r_poly.eval_at(z_var, &lo).constant_term().is_zero();
+        let hi_is_root = r_poly.eval_at(z_var, &hi).constant_term().is_zero();
+
+        if !lo_is_root && !hi_is_root && r_poly.count_roots_in_interval(z_var, &lo, &hi) == 1 {
+            // Rational degeneration (e.g. (1+√2)+(1−√2) = 2): collapse to an
+            // exact rational when the isolated root is rational.
+            if let Some(root) = rational_root_in(&r_poly, z_var, &lo, &hi) {
+                return AlgebraicNumber::from_rational(root);
+            }
+            return AlgebraicNumber::new(r_poly, z_var, lo, hi);
+        }
+
+        a.refine();
+        b.refine();
+    }
+
+    // Unreachable for well-formed operands (the loop converges long before the
+    // cap). Fall back to the exact rational of the numeric estimate only if the
+    // isolation genuinely never converged, rather than fabricating an interval.
+    AlgebraicNumber::from_rational(combined_point(a, b, is_product))
+}
+
+/// Combined interval [lo, hi] of `a` and `b`: the interval-arithmetic sum
+/// (`is_product == false`) or product (`is_product == true`) of their brackets.
+fn combined_interval(
+    a: &AlgebraicNumber,
+    b: &AlgebraicNumber,
+    is_product: bool,
+) -> (BigRational, BigRational) {
+    if is_product {
+        product_bounds(&a.lower, &a.upper, &b.lower, &b.upper)
+    } else {
+        (&a.lower + &b.lower, &a.upper + &b.upper)
+    }
+}
+
+/// Numeric midpoint estimate of the combined value (for the non-convergent
+/// fallback only).
+fn combined_point(a: &AlgebraicNumber, b: &AlgebraicNumber, is_product: bool) -> BigRational {
+    if is_product {
+        a.approximate() * b.approximate()
+    } else {
+        a.approximate() + b.approximate()
+    }
+}
+
+/// Interval-arithmetic product of `[a_lo, a_hi] · [b_lo, b_hi]`: the min and
+/// max over the four endpoint products.
+fn product_bounds(
+    a_lo: &BigRational,
+    a_hi: &BigRational,
+    b_lo: &BigRational,
+    b_hi: &BigRational,
+) -> (BigRational, BigRational) {
+    let corners = [a_lo * b_lo, a_lo * b_hi, a_hi * b_lo, a_hi * b_hi];
+    let mut lo = corners[0].clone();
+    let mut hi = corners[0].clone();
+    for c in &corners[1..] {
+        if *c < lo {
+            lo = c.clone();
+        }
+        if *c > hi {
+            hi = c.clone();
+        }
+    }
+    (lo, hi)
+}
+
+/// Detect a rational root of `poly` (univariate in `var`) lying **strictly
+/// inside** the open interval `(lo, hi)`, via the rational-root theorem.
+///
+/// Returns `Some(r)` when a rational `r ∈ (lo, hi)` satisfies `poly(r) = 0`.
+/// Strict interior matters: `(lo, hi)` is the *open* isolating interval whose
+/// single interior root we are naming; a root sitting exactly on an endpoint
+/// (e.g. the root `0` of `z³ − 8z` at the boundary `lo = 0`) is a *different*
+/// root and must not be returned.
+///
+/// The divisor enumeration is bounded: when the (integer-cleared) leading and
+/// constant coefficients are large or zero, detection is skipped and `None` is
+/// returned — the caller then keeps the exact algebraic-number representation,
+/// which is still correct, just not simplified to a rational literal.
+fn rational_root_in(
+    poly: &Polynomial,
+    var: Var,
+    lo: &BigRational,
+    hi: &BigRational,
+) -> Option<BigRational> {
+    let deg = poly.degree(var);
+    if deg == 0 {
+        return None;
+    }
+
+    // Integer-cleared coefficients a_0 .. a_deg.
+    let coeffs: Vec<BigRational> = (0..=deg).map(|k| poly.univ_coeff(var, k)).collect();
+    let mut den_lcm = BigInt::one();
+    for c in &coeffs {
+        den_lcm = den_lcm.lcm(c.denom());
+    }
+    let int_coeffs: Vec<BigInt> = coeffs
+        .iter()
+        .map(|c| c.numer() * (&den_lcm / c.denom()))
+        .collect();
+
+    let a0 = &int_coeffs[0];
+    let an = &int_coeffs[deg as usize];
+
+    // A zero constant term means `0` is a root; only report it when it lies
+    // strictly inside the bracket. (Nonzero rational roots of `poly / z` are
+    // not enumerated in this degenerate case — the exact algebraic form is
+    // kept instead.)
+    if a0.is_zero() {
+        let zero = BigRational::zero();
+        if lo < &zero && &zero < hi {
+            return Some(zero);
+        }
+        return None;
+    }
+
+    // Only enumerate divisors when |a0| and |an| are small enough to bound work.
+    let a0_i64 = i64::try_from(a0.abs()).ok().filter(|&x| x <= 1_000_000)?;
+    let an_i64 = i64::try_from(an.abs()).ok().filter(|&x| x <= 1_000_000)?;
+
+    let num_divs = divisors_i64(a0_i64);
+    let den_divs = divisors_i64(an_i64);
+
+    for &p in &num_divs {
+        for &q in &den_divs {
+            for sign in [1i64, -1i64] {
+                let cand = BigRational::new(BigInt::from(sign * p), BigInt::from(q));
+                if &cand <= lo || &cand >= hi {
+                    continue;
+                }
+                if poly.eval_at(var, &cand).constant_term().is_zero() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Positive divisors of `|n|` (with `n != 0`).
+fn divisors_i64(n: i64) -> Vec<i64> {
+    let n = n.abs();
+    let mut divs = Vec::new();
+    let mut d = 1i64;
+    while d.saturating_mul(d) <= n {
+        if n % d == 0 {
+            divs.push(d);
+            if d != n / d {
+                divs.push(n / d);
+            }
+        }
+        d += 1;
+    }
+    divs
 }
 
 /// Negate a polynomial by replacing x with -x.
@@ -631,49 +829,13 @@ fn shift_var(p: &Polynomial, old_var: Var, new_var: Var) -> Polynomial {
     Polynomial::from_terms(terms, crate::polynomial::MonomialOrder::default())
 }
 
-/// Find the root interval closest to a target value.
+/// Scale a polynomial for multiplication: `q(w) -> y^deg(q) * q(z/y)`.
 ///
-/// Given a list of root intervals and a target value, returns the interval
-/// whose midpoint is closest to the target.
-#[allow(dead_code)]
-fn find_closest_root(
-    roots: &[(BigRational, BigRational)],
-    target: &BigRational,
-) -> Option<(BigRational, BigRational)> {
-    if roots.is_empty() {
-        return None;
-    }
-
-    let mut best_root = None;
-    let mut best_distance: Option<BigRational> = None;
-
-    for (lo, hi) in roots {
-        // Compute midpoint of interval
-        let mid = (lo + hi) / BigRational::from_integer(BigInt::from(2));
-        let distance = (mid - target).abs();
-
-        match &best_distance {
-            None => {
-                best_distance = Some(distance);
-                best_root = Some((lo.clone(), hi.clone()));
-            }
-            Some(d) => {
-                if distance < *d {
-                    best_distance = Some(distance);
-                    best_root = Some((lo.clone(), hi.clone()));
-                }
-            }
-        }
-    }
-
-    best_root
-}
-
-/// Scale a polynomial for multiplication: p(x) -> y^deg(p) * p(z/y)
-///
-/// This is used for computing the resultant for algebraic number multiplication.
-/// If α is a root of p(x), then we want to find a polynomial whose root is α*β.
-#[allow(dead_code)]
+/// Used to compute the resultant for algebraic-number multiplication: if β is a
+/// root of `q(w)`, then the roots of `Res_y(p(y), y^deg(q) q(z/y))` are the
+/// products `αᵢ · βⱼ`. The elimination variable `y` is [`Y_VAR`]; `z_var` is
+/// the result variable. A term `c · w^d` becomes `c · y^(m−d) · z^d` where
+/// `m = deg(q)`.
 fn scale_for_product(p: &Polynomial, x_var: Var, z_var: Var) -> Polynomial {
     // Find the maximum degree of x_var in the polynomial
     let max_degree = p
@@ -683,8 +845,8 @@ fn scale_for_product(p: &Polynomial, x_var: Var, z_var: Var) -> Polynomial {
         .max()
         .unwrap_or(0);
 
-    // Introduce a new variable for y (use var 1)
-    let y_var = 1;
+    // The homogenizing variable `y` is the shared elimination variable.
+    let y_var = Y_VAR;
 
     let terms: Vec<_> = p
         .terms()
@@ -979,34 +1141,62 @@ mod tests {
 
     #[test]
     fn test_algebraic_add_irrational() {
-        // Test √2 + √2 using algebraic operations
-        // Note: Full irrational-to-irrational operations require resultant-based
-        // computation which is complex. For now, test the basic functionality.
+        // √2 + √2 = 2√2 = √8 (root of x² - 8). The sum is a genuine algebraic
+        // number whose defining polynomial vanishes at 2√2, not a rational
+        // approximation.
         let mut sqrt2_a = AlgebraicNumber::sqrt(&rat(2)).expect("test operation should succeed");
         let mut sqrt2_b = AlgebraicNumber::sqrt(&rat(2)).expect("test operation should succeed");
 
-        // add_algebraic returns a result (currently an approximation for irrational+irrational)
-        let sum = sqrt2_a.add_algebraic(&mut sqrt2_b);
+        let mut sum = sqrt2_a.add_algebraic(&mut sqrt2_b);
 
-        // Just verify it doesn't crash and returns some value
-        // A full implementation would preserve the exact algebraic structure
-        let _ = sum.approximate();
+        // The result must be irrational (2√2), i.e. not a rational collapse.
+        assert!(!sum.is_rational(), "√2 + √2 = 2√2 is irrational");
+
+        // Its defining polynomial shares the factor x² - 8 (roots ±2√2).
+        let x2_minus_8 = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-8, &[])]);
+        let g = sum.polynomial().gcd_univariate(&x2_minus_8);
+        assert!(
+            g.degree(sum.var()) >= 1,
+            "sum's polynomial must share the root 2√2 (root of x²-8)"
+        );
+
+        // And its interval brackets 2√2 ≈ 2.8284 after refinement.
+        for _ in 0..40 {
+            sum.refine();
+        }
+        let approx = sum.approximate();
+        assert!(
+            approx > rat(2) && approx < rat(3),
+            "2√2 ≈ 2.83, got {approx}"
+        );
     }
 
     #[test]
     fn test_algebraic_mul_irrational() {
-        // Test √2 * √3 using algebraic operations
-        // Note: Full irrational-to-irrational operations require resultant-based
-        // computation which is complex. For now, test the basic functionality.
+        // √2 · √3 = √6 (root of x² - 6): an exact algebraic number, not an
+        // approximation.
         let mut sqrt2 = AlgebraicNumber::sqrt(&rat(2)).expect("test operation should succeed");
         let mut sqrt3 = AlgebraicNumber::sqrt(&rat(3)).expect("test operation should succeed");
 
-        // mul_algebraic returns a result (currently an approximation for irrational*irrational)
-        let product = sqrt2.mul_algebraic(&mut sqrt3);
+        let mut product = sqrt2.mul_algebraic(&mut sqrt3);
 
-        // Just verify it doesn't crash and returns some value
-        // A full implementation would preserve the exact algebraic structure
-        let _ = product.approximate();
+        assert!(!product.is_rational(), "√2 · √3 = √6 is irrational");
+
+        let x2_minus_6 = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-6, &[])]);
+        let g = product.polynomial().gcd_univariate(&x2_minus_6);
+        assert!(
+            g.degree(product.var()) >= 1,
+            "product's polynomial must share the root √6 (root of x²-6)"
+        );
+
+        for _ in 0..40 {
+            product.refine();
+        }
+        let approx = product.approximate();
+        assert!(
+            approx > rat(2) && approx < rat(3),
+            "√6 ≈ 2.45, got {approx}"
+        );
     }
 
     #[test]

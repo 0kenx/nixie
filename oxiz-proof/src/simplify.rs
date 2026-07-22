@@ -6,7 +6,8 @@
 //! transforms proof steps to equivalent but simpler forms.
 
 use crate::metadata::Strategy;
-use crate::proof::{Proof, ProofNodeId};
+use crate::proof::{Proof, ProofNodeId, ProofStep};
+use rustc_hash::FxHashMap;
 
 /// Configuration for proof simplification.
 #[derive(Debug, Clone)]
@@ -280,18 +281,219 @@ impl ProofSimplifier {
 
     /// Combine consecutive inference chains when possible.
     ///
-    /// Genuinely combining two chained `Inference` nodes (e.g. collapsing
-    /// `A -> B` into a single step) requires removing a node and rewiring
-    /// whoever referenced it as a premise -- [`Proof`] (`oxiz-proof/src/
-    /// proof.rs`) exposes no API for either operation (only node
-    /// *addition* and conclusion-text rewriting), so this cannot be
-    /// implemented soundly from this module alone. Rather than fabricate
-    /// a fake reduction (e.g. by cosmetically rewriting text without
-    /// actually shrinking the proof), this honestly reports zero
-    /// combinations until `Proof` grows the necessary node-removal/
-    /// premise-rewiring API.
-    fn combine_inference_chains(&self, _proof: &mut Proof) -> usize {
-        0
+    /// Folds a linear two-step derivation `A -> B` into a single synthetic
+    /// node whenever it is safe to do so: `B` is an `Inference` step whose
+    /// *only* premise is `A`, `A` is itself an `Inference` step (not an
+    /// axiom, which is a foundational fact and never folded away), and `A`
+    /// has exactly one dependent in the whole proof (`B` itself, so no
+    /// other node relies on `A`'s conclusion existing as its own step).
+    ///
+    /// The combined node goes directly from `A`'s original premises to
+    /// `B`'s (unchanged) conclusion. No provenance is discarded: the new
+    /// node's rule is named `combine(A_rule;B_rule)`, its args are `A`'s
+    /// args followed by `B`'s args, and `A`'s own (intermediate)
+    /// conclusion plus original rule name are preserved as metadata
+    /// attributes (`combined_intermediate_conclusion`,
+    /// `combined_intermediate_rule`) so a checker or auditor can still
+    /// replay the two original steps.
+    ///
+    /// Because folding removes a node, [`Proof`] must renumber every
+    /// node's [`ProofNodeId`] to keep IDs contiguous with node storage --
+    /// the same tradeoff [`crate::compress::ProofCompressor`] already
+    /// makes elsewhere in this crate. Any `ProofNodeId` a caller captured
+    /// before calling [`Self::simplify`] must be treated as invalidated
+    /// once this pass reports `inferences_combined > 0`.
+    fn combine_inference_chains(&self, proof: &mut Proof) -> usize {
+        // How many other nodes reference each node as a premise.
+        let mut dependent_count: FxHashMap<ProofNodeId, usize> = FxHashMap::default();
+        for node in proof.nodes() {
+            if let ProofStep::Inference { premises, .. } = &node.step {
+                for &premise_id in premises.iter() {
+                    *dependent_count.entry(premise_id).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Map each foldable premise `a_id` to the sole consumer `b_id`
+        // that will absorb it.
+        let mut raw_fold: FxHashMap<ProofNodeId, ProofNodeId> = FxHashMap::default();
+        for node in proof.nodes() {
+            let ProofStep::Inference { premises, .. } = &node.step else {
+                continue;
+            };
+            let [a_id] = premises.as_slice() else {
+                continue;
+            };
+            let a_is_foldable = proof
+                .get_node(*a_id)
+                .map(|a_node| matches!(a_node.step, ProofStep::Inference { .. }))
+                .unwrap_or(false)
+                && dependent_count.get(a_id).copied().unwrap_or(0) == 1;
+            if a_is_foldable {
+                raw_fold.insert(*a_id, node.id);
+            }
+        }
+
+        // A chain of three or more nodes (X -> A -> B) can produce two
+        // candidate pairs in the same pass: (X, A) and (A, B). Combining
+        // both in one rebuild would drop X entirely -- A would be skipped
+        // as "folded into B" before X ever gets spliced into it, orphaning
+        // X's premise link. Instead, only ever fold a node whose target is
+        // *not itself* about to be folded away this pass; the remaining
+        // hop (A, B) is then a fresh single-hop candidate on the next call
+        // to `simplify`'s pass loop, once A has already absorbed X.
+        let folded_away_targets: std::collections::HashSet<ProofNodeId> =
+            raw_fold.values().copied().collect();
+        let fold_target: FxHashMap<ProofNodeId, ProofNodeId> = raw_fold
+            .into_iter()
+            .filter(|(a_id, _b_id)| !folded_away_targets.contains(a_id))
+            .collect();
+
+        if fold_target.is_empty() {
+            return 0;
+        }
+
+        // Rebuild the proof, splicing out folded nodes and rewiring
+        // premises, mirroring the ID-remap pattern used by
+        // `crate::compress::ProofCompressor::inline_trivial_steps`.
+        let mut new_proof = Proof::new();
+        let mut id_map: FxHashMap<ProofNodeId, ProofNodeId> = FxHashMap::default();
+        let mut combined_targets: Vec<(ProofNodeId, String, String)> = Vec::new();
+
+        for node in proof.nodes() {
+            if fold_target.contains_key(&node.id) {
+                // Folded away: its content is absorbed into its sole
+                // consumer below instead of being emitted on its own.
+                continue;
+            }
+
+            let folded_premise = match &node.step {
+                ProofStep::Inference { premises, .. } => match premises.as_slice() {
+                    [a_id] if fold_target.get(a_id) == Some(&node.id) => Some(*a_id),
+                    _ => None,
+                },
+                ProofStep::Axiom { .. } => None,
+            };
+
+            let (new_id, combined_from) = match folded_premise {
+                Some(a_id) => {
+                    match Self::emit_combined_node(proof, &node.step, a_id, &id_map, &mut new_proof)
+                    {
+                        Some(id) => (id, Some(a_id)),
+                        None => (
+                            Self::emit_plain_node(&node.step, &id_map, &mut new_proof),
+                            None,
+                        ),
+                    }
+                }
+                None => (
+                    Self::emit_plain_node(&node.step, &id_map, &mut new_proof),
+                    None,
+                ),
+            };
+
+            id_map.insert(node.id, new_id);
+
+            if let Some(a_id) = combined_from
+                && let Some(a_node) = proof.get_node(a_id)
+                && let ProofStep::Inference { rule: a_rule, .. } = &a_node.step
+            {
+                combined_targets.push((new_id, a_node.conclusion().to_string(), a_rule.clone()));
+            }
+
+            if let Some(metadata) = proof.get_metadata(node.id) {
+                new_proof.set_metadata(new_id, metadata.clone());
+            }
+        }
+
+        let combined_count = combined_targets.len();
+        for (new_id, intermediate_conclusion, intermediate_rule) in combined_targets {
+            let metadata = new_proof.get_or_create_metadata(new_id);
+            metadata.add_strategy(Strategy::Simplify);
+            metadata.set_attribute("combined_intermediate_conclusion", intermediate_conclusion);
+            metadata.set_attribute("combined_intermediate_rule", intermediate_rule);
+        }
+
+        *proof = new_proof;
+        combined_count
+    }
+
+    /// Emit a node that absorbs a folded-away single premise `a_id` into
+    /// `node_step` (which must be an `ProofStep::Inference` whose sole
+    /// premise is `a_id`). Returns `None` (leaving `new_proof` untouched)
+    /// if `a_id` does not resolve to an `Inference` node in `proof`, in
+    /// which case the caller falls back to a plain (non-combined) copy.
+    fn emit_combined_node(
+        proof: &Proof,
+        node_step: &ProofStep,
+        a_id: ProofNodeId,
+        id_map: &FxHashMap<ProofNodeId, ProofNodeId>,
+        new_proof: &mut Proof,
+    ) -> Option<ProofNodeId> {
+        let ProofStep::Inference {
+            rule: b_rule,
+            conclusion: b_conclusion,
+            args: b_args,
+            ..
+        } = node_step
+        else {
+            return None;
+        };
+
+        let a_node = proof.get_node(a_id)?;
+        let ProofStep::Inference {
+            rule: a_rule,
+            premises: a_premises,
+            args: a_args,
+            ..
+        } = &a_node.step
+        else {
+            return None;
+        };
+
+        let new_premises: Vec<ProofNodeId> = a_premises
+            .iter()
+            .filter_map(|p| id_map.get(p).copied())
+            .collect();
+        let combined_rule = format!("combine({};{})", a_rule, b_rule);
+        let mut combined_args: Vec<String> = a_args.to_vec();
+        combined_args.extend(b_args.iter().cloned());
+
+        Some(new_proof.add_inference_with_args(
+            combined_rule,
+            new_premises,
+            combined_args,
+            b_conclusion.clone(),
+        ))
+    }
+
+    /// Copy a node verbatim into `new_proof`, remapping its premises
+    /// through `id_map`.
+    fn emit_plain_node(
+        node_step: &ProofStep,
+        id_map: &FxHashMap<ProofNodeId, ProofNodeId>,
+        new_proof: &mut Proof,
+    ) -> ProofNodeId {
+        match node_step {
+            ProofStep::Axiom { conclusion } => new_proof.add_axiom(conclusion.clone()),
+            ProofStep::Inference {
+                rule,
+                premises,
+                conclusion,
+                args,
+            } => {
+                let new_premises: Vec<ProofNodeId> = premises
+                    .iter()
+                    .filter_map(|p| id_map.get(p).copied())
+                    .collect();
+                new_proof.add_inference_with_args(
+                    rule.clone(),
+                    new_premises,
+                    args.to_vec(),
+                    conclusion.clone(),
+                )
+            }
+        }
     }
 
     // Helper methods for conclusion simplification
@@ -627,5 +829,153 @@ mod tests {
         let stats = simplifier.simplify(&mut proof);
         // De Morgan should not be applied
         assert_eq!(stats.demorgan_applications, 0);
+    }
+
+    // -- todo-1147: combine_inference_chains regression tests --
+
+    #[test]
+    fn test_combine_inference_chains_basic() {
+        let simplifier = ProofSimplifier::new();
+        let mut proof = Proof::new();
+        let ax = proof.add_axiom("p");
+        let a = proof.add_inference("rule_a", vec![ax], "q");
+        proof.add_inference("rule_b", vec![a], "r");
+
+        assert_eq!(proof.node_count(), 3);
+
+        let combined = simplifier.combine_inference_chains(&mut proof);
+        assert_eq!(combined, 1);
+        assert_eq!(proof.node_count(), 2);
+
+        let combined_node = proof
+            .nodes()
+            .iter()
+            .find(|n| n.conclusion() == "r")
+            .expect("combined node with conclusion r should exist");
+
+        match &combined_node.step {
+            ProofStep::Inference {
+                rule,
+                premises,
+                conclusion,
+                ..
+            } => {
+                assert_eq!(rule, "combine(rule_a;rule_b)");
+                assert_eq!(conclusion, "r");
+                assert_eq!(premises.len(), 1);
+                let premise_node = proof
+                    .get_node(premises[0])
+                    .expect("premise node should exist");
+                assert_eq!(premise_node.conclusion(), "p");
+            }
+            ProofStep::Axiom { .. } => panic!("expected combined node to be an Inference"),
+        }
+
+        // Provenance of the folded intermediate step must be preserved.
+        let metadata = proof
+            .get_metadata(combined_node.id)
+            .expect("combined node should carry metadata");
+        assert_eq!(
+            metadata.get_attribute("combined_intermediate_conclusion"),
+            Some("q")
+        );
+        assert_eq!(
+            metadata.get_attribute("combined_intermediate_rule"),
+            Some("rule_a")
+        );
+    }
+
+    #[test]
+    fn test_combine_inference_chains_skips_shared_premise() {
+        // A node used by two different consumers must never be folded
+        // away: doing so would silently discard whichever consumer isn't
+        // chosen, or duplicate the derivation.
+        let simplifier = ProofSimplifier::new();
+        let mut proof = Proof::new();
+        let ax = proof.add_axiom("p");
+        let a = proof.add_inference("rule_a", vec![ax], "q");
+        proof.add_inference("rule_b1", vec![a], "r1");
+        proof.add_inference("rule_b2", vec![a], "r2");
+
+        let before = proof.node_count();
+        let combined = simplifier.combine_inference_chains(&mut proof);
+        assert_eq!(combined, 0);
+        assert_eq!(proof.node_count(), before);
+    }
+
+    #[test]
+    fn test_combine_inference_chains_no_candidates() {
+        let simplifier = ProofSimplifier::new();
+        let mut proof = Proof::new();
+        let ax1 = proof.add_axiom("p");
+        let ax2 = proof.add_axiom("q");
+        // Two premises: never eligible to absorb a folded predecessor.
+        proof.add_inference("and_intro", vec![ax1, ax2], "p and q");
+
+        let before = proof.node_count();
+        let combined = simplifier.combine_inference_chains(&mut proof);
+        assert_eq!(combined, 0);
+        assert_eq!(proof.node_count(), before);
+    }
+
+    #[test]
+    fn test_combine_inference_chains_multi_hop_needs_multiple_passes() {
+        // PF-related soundness check: a three-hop chain must never lose
+        // its root premise across the rebuild, even though only one
+        // adjacent pair can safely combine per pass.
+        let simplifier = ProofSimplifier::new();
+        let mut proof = Proof::new();
+        let ax = proof.add_axiom("p0");
+        let n1 = proof.add_inference("r1", vec![ax], "p1");
+        let n2 = proof.add_inference("r2", vec![n1], "p2");
+        proof.add_inference("r3", vec![n2], "p3");
+
+        assert_eq!(proof.node_count(), 4);
+
+        let first = simplifier.combine_inference_chains(&mut proof);
+        assert_eq!(first, 1);
+        assert_eq!(proof.node_count(), 3);
+
+        let second = simplifier.combine_inference_chains(&mut proof);
+        assert_eq!(second, 1);
+        assert_eq!(proof.node_count(), 2);
+
+        let final_node = proof
+            .nodes()
+            .iter()
+            .find(|n| n.conclusion() == "p3")
+            .expect("final combined node should exist");
+        if let ProofStep::Inference { premises, .. } = &final_node.step {
+            assert_eq!(premises.len(), 1);
+            let root_premise = proof
+                .get_node(premises[0])
+                .expect("root premise should still exist");
+            assert_eq!(root_premise.conclusion(), "p0");
+        } else {
+            panic!("expected the final surviving node to be an Inference");
+        }
+    }
+
+    #[test]
+    fn test_simplify_proof_combines_inference_chain() {
+        // End-to-end: `combine_inferences` (on by default) must no longer
+        // be an inert no-op when driven through the public `simplify_proof`.
+        let mut proof = Proof::new();
+        let ax = proof.add_axiom("base");
+        let mid = proof.add_inference("step1", vec![ax], "mid");
+        proof.add_inference("step2", vec![mid], "final");
+
+        let stats = simplify_proof(&mut proof);
+        assert!(stats.inferences_combined > 0);
+        assert_eq!(proof.node_count(), 2);
+
+        let final_node = proof
+            .nodes()
+            .iter()
+            .find(|n| n.conclusion() == "final")
+            .expect("final combined node should exist");
+        assert!(
+            matches!(&final_node.step, ProofStep::Inference { rule, .. } if rule.starts_with("combine("))
+        );
     }
 }

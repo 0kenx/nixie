@@ -188,8 +188,14 @@ pub struct SpecialRelationSolver {
     closures: HashMap<Spur, HashSet<RelationEdge>>,
     /// Statistics
     stats: SpecialRelationStats,
-    /// Context stack for push/pop
+    /// Context stack for push/pop: each entry is the `edge_trail` length
+    /// recorded at the matching `push()` call.
     context_stack: Vec<usize>,
+    /// Trail of (relation, edge) insertions in chronological order, used to
+    /// undo exactly the edges added since the most recent `push()` when
+    /// `pop()` is called. Without this trail, edges asserted inside a scope
+    /// would leak past `pop()`.
+    edge_trail: Vec<(Spur, RelationEdge)>,
 }
 
 impl SpecialRelationSolver {
@@ -201,6 +207,7 @@ impl SpecialRelationSolver {
             closures: HashMap::new(),
             stats: SpecialRelationStats::default(),
             context_stack: Vec::new(),
+            edge_trail: Vec::new(),
         }
     }
 
@@ -229,6 +236,8 @@ impl SpecialRelationSolver {
         if let Some(edge_set) = self.edges.get_mut(&relation) {
             if edge_set.insert(edge) {
                 self.stats.num_edges = self.stats.num_edges.saturating_add(1);
+                // Record on the trail so pop() can undo exactly this insertion.
+                self.edge_trail.push((relation, edge));
                 // Invalidate closure cache
                 if let Some(c) = self.closures.get_mut(&relation) {
                     c.clear();
@@ -405,15 +414,27 @@ impl SpecialRelationSolver {
 
     /// Push a new context level
     pub fn push(&mut self) {
-        self.context_stack.push(self.edges.len());
+        self.context_stack.push(self.edge_trail.len());
     }
 
     /// Pop context levels
+    ///
+    /// Undoes exactly the edges added (via `add_edge`) since the matching
+    /// `push()`, by replaying the edge trail backwards down to the recorded
+    /// mark. This guarantees incremental backtracking does not retain
+    /// stale constraints asserted inside a popped scope.
     pub fn pop(&mut self, levels: usize) {
         for _ in 0..levels {
-            if self.context_stack.pop().is_some() {
-                // Simplified pop - in production would track exact edge additions
-                // For now, just clear closures to force recomputation
+            if let Some(mark) = self.context_stack.pop() {
+                while self.edge_trail.len() > mark {
+                    if let Some((relation, edge)) = self.edge_trail.pop()
+                        && let Some(edge_set) = self.edges.get_mut(&relation)
+                    {
+                        edge_set.remove(&edge);
+                    }
+                }
+                // Edges changed - closures are now stale, clear to force
+                // recomputation.
                 for closure in self.closures.values_mut() {
                     closure.clear();
                 }
@@ -426,6 +447,7 @@ impl SpecialRelationSolver {
         self.edges.clear();
         self.closures.clear();
         self.context_stack.clear();
+        self.edge_trail.clear();
         self.stats.reset();
     }
 
@@ -619,5 +641,78 @@ mod tests {
 
         solver.pop(1);
         // After pop, closures should be cleared
+    }
+
+    /// Regression test for the pop-edge-leak bug: `pop()` used to only pop
+    /// the context marker and clear closures, never rolling back the edges
+    /// that `add_edge` inserted since the matching `push()`. This asserts
+    /// the edge asserted inside a scope is actually gone after `pop()`.
+    #[test]
+    fn test_pop_removes_edges_added_since_push() {
+        let mut solver = SpecialRelationSolver::new();
+        let name = Spur::try_from_usize(0).expect("valid spur");
+        let domain = SortId::new(0);
+
+        solver.define_relation(name, domain, RelationKind::PartialOrder);
+
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let z = TermId::new(3);
+
+        // Edge added before the push must survive the pop.
+        solver.add_edge(name, x, y);
+        assert!(solver.has_edge(name, x, y));
+
+        solver.push();
+        solver.add_edge(name, y, z);
+        assert!(solver.has_edge(name, y, z));
+        assert_eq!(solver.stats().num_edges, 2);
+
+        solver.pop(1);
+
+        // Edge asserted inside the popped scope must be gone.
+        assert!(!solver.has_edge(name, y, z));
+        // Edge asserted before the push must remain.
+        assert!(solver.has_edge(name, x, y));
+
+        // The relation must also accept the same edge being re-added
+        // (proving it was truly removed, not merely hidden).
+        assert!(solver.add_edge(name, y, z));
+    }
+
+    /// Regression test: nested push/pop scopes each undo only their own
+    /// edges, mirroring standard incremental-solver trail semantics.
+    #[test]
+    fn test_pop_nested_scopes() {
+        let mut solver = SpecialRelationSolver::new();
+        let name = Spur::try_from_usize(0).expect("valid spur");
+        let domain = SortId::new(0);
+
+        solver.define_relation(name, domain, RelationKind::PartialOrder);
+
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+        let c = TermId::new(3);
+        let d = TermId::new(4);
+
+        solver.add_edge(name, a, b); // base scope
+
+        solver.push(); // scope 1
+        solver.add_edge(name, b, c);
+
+        solver.push(); // scope 2
+        solver.add_edge(name, c, d);
+        assert!(solver.has_edge(name, c, d));
+
+        // Pop only the innermost scope.
+        solver.pop(1);
+        assert!(!solver.has_edge(name, c, d));
+        assert!(solver.has_edge(name, b, c));
+        assert!(solver.has_edge(name, a, b));
+
+        // Pop the remaining scope.
+        solver.pop(1);
+        assert!(!solver.has_edge(name, b, c));
+        assert!(solver.has_edge(name, a, b));
     }
 }

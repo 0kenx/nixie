@@ -40,7 +40,14 @@ pub struct ResultantConfig {
 impl Default for ResultantConfig {
     fn default() -> Self {
         Self {
-            method: ResultantMethod::Subresultant,
+            // `Sylvester` is the exact, fully-verified method (see
+            // `resultant_sylvester` and its tests). `Subresultant` is kept
+            // available as an opt-in, faster-but-approximate alternative
+            // (see `resultant_subresultant`'s docs for why its magnitude
+            // isn't guaranteed exact) -- it used to be the default despite
+            // returning outright wrong (non-zero, var-containing) results
+            // whenever the two polynomials shared a common root (MATH-3).
+            method: ResultantMethod::Sylvester,
             use_modular: false,
             max_dense_degree: 100,
         }
@@ -217,6 +224,33 @@ impl ResultantComputer {
     /// Compute resultant via subresultant PRS.
     ///
     /// More efficient than Sylvester for sparse polynomials.
+    ///
+    /// # Zero-detection is exact; magnitude is not
+    ///
+    /// This runs the pseudo-remainder sequence (the same GCD-like reduction
+    /// [`PolynomialGcd`](super::gcd::PolynomialGcd) uses) down to its last
+    /// non-zero term `a`. If `a` still has positive degree in `var`, `p`
+    /// and `q` share a common factor of that degree in `var`, so they have
+    /// a common root and the true resultant -- which by definition
+    /// vanishes exactly when `p`, `q` have a common root -- is `0`. The old
+    /// implementation returned `a` itself in that case: a non-zero
+    /// polynomial that still *contains* `var`, which cannot be a resultant
+    /// at all (a resultant is, by construction, free of the elimination
+    /// variable). Concretely, `Res(x^2-1, x-1, x)` must be `0` (shared root
+    /// `x=1`) but the old code returned `x-1`.
+    ///
+    /// When the sequence terminates in a non-zero *constant* (`p`, `q`
+    /// coprime in `var`), this returns a non-zero rational multiple of the
+    /// true resultant: the plain pseudo-remainder recurrence does not
+    /// divide out the leading-coefficient scaling factors a full
+    /// subresultant chain (tracking the `beta`/`psi` reduction factors of
+    /// Collins/Brown-Traub) would, so the exact magnitude (and possibly
+    /// sign) can differ from [`Self::resultant_sylvester`]. It is still
+    /// exact for the zero/non-zero question, which is what
+    /// [`Self::have_common_root`] relies on. Callers that need the precise
+    /// resultant *value* should use the default
+    /// [`ResultantMethod::Sylvester`] (or [`Polynomial::resultant`])
+    /// instead.
     fn resultant_subresultant(&mut self, p: &Polynomial, q: &Polynomial, var: Var) -> Polynomial {
         self.stats.subresultant_prs += 1;
 
@@ -226,7 +260,15 @@ impl ResultantComputer {
 
         let mut sign_correction = BigRational::one();
 
-        while !b.is_zero() {
+        // Bound iterations defensively: each step strictly reduces
+        // deg(b), so this is never the limiting factor for well-formed
+        // univariate-in-`var` input, but guarantees termination rather
+        // than trusting that invariant unconditionally.
+        let max_iters = p.degree(var) as usize + q.degree(var) as usize + 16;
+        let mut iters = 0;
+
+        while !b.is_zero() && iters < max_iters {
+            iters += 1;
             let deg_a = a.degree(var);
             let deg_b = b.degree(var);
 
@@ -247,7 +289,12 @@ impl ResultantComputer {
             b = r;
         }
 
-        // The last non-zero remainder is the resultant (up to a factor)
+        // `a` still contains `var` (positive degree) => `p`, `q` share a
+        // common factor => the resultant is exactly 0.
+        if a.degree(var) > 0 {
+            return Polynomial::zero();
+        }
+
         if sign_correction.is_negative() { -a } else { a }
     }
 
@@ -594,5 +641,138 @@ mod tests {
             BigRational::from_integer(9.into()),
             "Res(x^2-5, x^2-2) should be 9, got {val}"
         );
+    }
+
+    // -- Regression tests for MATH-3 --
+
+    #[test]
+    fn test_default_resultant_method_is_sylvester() {
+        // Regression test for MATH-3: the default method used to be
+        // `Subresultant`, which returned outright wrong (non-zero,
+        // var-containing) results for polynomials sharing a root. The
+        // default must be the proven-exact `Sylvester` method.
+        assert_eq!(
+            ResultantConfig::default().method,
+            ResultantMethod::Sylvester
+        );
+    }
+
+    /// `Res(x^2 - 1, x - 1, x)` must be exactly 0: the two polynomials
+    /// share the root `x = 1`. This is the concrete counterexample from
+    /// MATH-3 -- the old `resultant_subresultant` returned `x - 1` (a
+    /// non-zero polynomial that still contains the elimination variable,
+    /// which cannot be a valid resultant at all).
+    #[test]
+    fn test_resultant_shared_root_is_zero_default_method() {
+        let mut computer = ResultantComputer::default_config();
+        let var: Var = 0;
+
+        // p = x^2 - 1
+        let p = Polynomial::univariate(
+            var,
+            &[-BigRational::one(), BigRational::zero(), BigRational::one()],
+        );
+        // q = x - 1
+        let q = Polynomial::linear(&[(BigRational::one(), var)], -BigRational::one());
+
+        let res = computer.resultant(&p, &q, var);
+        assert!(res.is_zero(), "Res(x^2-1, x-1) must be 0, got {res:?}");
+    }
+
+    #[test]
+    fn test_resultant_subresultant_shared_root_is_zero() {
+        // Same as above but forcing the (now-fixed) Subresultant method
+        // explicitly, since it is the one MATH-3 flagged as broken.
+        let cfg = ResultantConfig {
+            method: ResultantMethod::Subresultant,
+            ..Default::default()
+        };
+        let mut computer = ResultantComputer::new(cfg);
+        let var: Var = 0;
+
+        let p = Polynomial::univariate(
+            var,
+            &[-BigRational::one(), BigRational::zero(), BigRational::one()],
+        ); // x^2 - 1
+        let q = Polynomial::linear(&[(BigRational::one(), var)], -BigRational::one()); // x - 1
+
+        let res = computer.resultant(&p, &q, var);
+        assert!(
+            res.is_zero(),
+            "Subresultant method: Res(x^2-1, x-1) must be 0, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn test_resultant_subresultant_coprime_is_nonzero_constant() {
+        // p, q coprime (no shared root): the subresultant path must still
+        // report a non-zero constant (exact magnitude/sign is not
+        // guaranteed to match Sylvester -- see the method's docs -- but it
+        // must correctly detect "no common root").
+        let cfg = ResultantConfig {
+            method: ResultantMethod::Subresultant,
+            ..Default::default()
+        };
+        let mut computer = ResultantComputer::new(cfg);
+        let var: Var = 0;
+
+        // p = x - 2, q = x - 3 (roots 2 and 3, coprime).
+        let p = Polynomial::linear(
+            &[(BigRational::one(), var)],
+            -BigRational::from_integer(2.into()),
+        );
+        let q = Polynomial::linear(
+            &[(BigRational::one(), var)],
+            -BigRational::from_integer(3.into()),
+        );
+
+        let res = computer.resultant(&p, &q, var);
+        assert!(res.is_constant());
+        assert!(
+            !res.is_zero(),
+            "coprime linears must have non-zero resultant"
+        );
+    }
+
+    #[test]
+    fn test_have_common_root_detects_shared_root_via_resultant() {
+        // Regression test for MATH-3: `have_common_root` delegates to
+        // `resultant()`, whose default method used to silently return a
+        // wrong non-zero value for polynomials sharing a root, so this
+        // reported `false` for `(x^2-1, x-1)` even though `x=1` is a
+        // shared root. Uses two *distinct* (non-identical) polynomials so
+        // the `p == q` fast path in `have_common_root` is not what makes
+        // this pass.
+        let mut computer = ResultantComputer::default_config();
+        let var: Var = 0;
+
+        let p = Polynomial::univariate(
+            var,
+            &[-BigRational::one(), BigRational::zero(), BigRational::one()],
+        ); // x^2 - 1
+        let q = Polynomial::linear(&[(BigRational::one(), var)], -BigRational::one()); // x - 1
+        assert_ne!(p, q);
+
+        assert!(
+            computer.have_common_root(&p, &q, var),
+            "x^2-1 and x-1 share the root x=1"
+        );
+    }
+
+    #[test]
+    fn test_have_common_root_false_for_coprime_polynomials() {
+        let mut computer = ResultantComputer::default_config();
+        let var: Var = 0;
+
+        let p = Polynomial::linear(
+            &[(BigRational::one(), var)],
+            -BigRational::from_integer(2.into()),
+        ); // x - 2
+        let q = Polynomial::linear(
+            &[(BigRational::one(), var)],
+            -BigRational::from_integer(3.into()),
+        ); // x - 3
+
+        assert!(!computer.have_common_root(&p, &q, var));
     }
 }

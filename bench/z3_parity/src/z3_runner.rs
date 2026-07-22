@@ -26,9 +26,16 @@ fn find_z3() -> Option<&'static str> {
         .copied()
 }
 
+/// Public probe for callers outside this module (e.g. the differential
+/// testing entry points under `tests/`) that need to self-skip when no Z3
+/// binary is reachable, mirroring the `skip_if_no_z3!` behavior used by the
+/// tests in this file.
+pub fn is_z3_available() -> bool {
+    find_z3().is_some()
+}
+
 pub fn run_z3(smt2_file: &Path) -> Result<SolverResult> {
-    let z3_path =
-        find_z3().context("Z3 not found. Please install Z3 and ensure it's in PATH")?;
+    let z3_path = find_z3().context("Z3 not found. Please install Z3 and ensure it's in PATH")?;
 
     let output = Command::new(z3_path)
         .arg("-smt2")

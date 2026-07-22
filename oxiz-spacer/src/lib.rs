@@ -83,6 +83,7 @@ pub mod recursive;
 pub mod smt;
 pub mod tactics;
 pub mod theory;
+pub mod translate;
 
 // Re-exports for convenience
 pub use abduction::{
@@ -131,3 +132,4 @@ pub use recursive::{RecursionKind, RecursiveAnalyzer, RecursiveError, RecursiveI
 pub use smt::{MbpResult, Model, SmtError, SmtSolver, SmtStats};
 pub use tactics::{BmcEngine, BmcUnrollTactic};
 pub use theory::TheoryIntegration;
+pub use translate::translate_system;

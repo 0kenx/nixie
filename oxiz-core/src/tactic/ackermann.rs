@@ -26,15 +26,40 @@ impl<'a> AckermannizeTactic<'a> {
         Self { manager }
     }
 
-    /// Collect all function applications from a term
+    /// Collect all function applications from a term.
+    ///
+    /// # Soundness: quantifier-bound arguments
+    ///
+    /// Ackermannization replaces every application `f(a)` by a *ground* fresh
+    /// variable and adds ground functional-consistency constraints
+    /// `a = b => v_a = v_b`. That is only sound when the arguments `a` are
+    /// themselves ground: an application `f(x)` whose argument `x` is bound by
+    /// an enclosing `forall`/`exists` denotes a *different* value for each
+    /// binding of `x`, so collapsing it into one ground variable (and adding
+    /// ground congruence constraints) is unsound.
+    ///
+    /// We therefore track the set of binder names in scope (`bound`) while
+    /// descending. An application whose arguments reference any in-scope bound
+    /// variable is **not** collected; instead its function symbol is recorded
+    /// in `tainted`. The caller then drops *every* application of a tainted
+    /// symbol — even its ground occurrences — because Ackermannizing only some
+    /// occurrences of `f` while leaving quantified ones as real `f` would
+    /// decouple the fresh variables from `f` (the linking constraint
+    /// `v_a = f(a)` is absent), again unsoundly. If nothing survives, the
+    /// tactic is `NotApplicable`.
+    ///
+    /// Reference: Z3's `ackermannize_bv_tactic` / `ackr_helper` only collect
+    /// ground applications.
     fn collect_func_apps(
         &self,
         term_id: TermId,
+        bound: &mut Vec<crate::interner::Spur>,
         apps: &mut Vec<(
             crate::interner::Spur,
             smallvec::SmallVec<[TermId; 4]>,
             TermId,
         )>,
+        tainted: &mut crate::prelude::FxHashSet<crate::interner::Spur>,
         visited: &mut crate::prelude::FxHashSet<TermId>,
     ) {
         use crate::ast::TermKind;
@@ -47,16 +72,23 @@ impl<'a> AckermannizeTactic<'a> {
         if let Some(term) = self.manager.get(term_id) {
             match &term.kind {
                 TermKind::Apply { func, args } => {
-                    apps.push((*func, args.clone(), term_id));
+                    let refs_bound = !bound.is_empty()
+                        && args.iter().any(|&a| self.references_bound_var(a, bound));
+                    if refs_bound {
+                        // Quantified occurrence: exclude this symbol entirely.
+                        tainted.insert(*func);
+                    } else {
+                        apps.push((*func, args.clone(), term_id));
+                    }
                     for &arg in args {
-                        self.collect_func_apps(arg, apps, visited);
+                        self.collect_func_apps(arg, bound, apps, tainted, visited);
                     }
                 }
                 TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => {
-                    self.collect_func_apps(*a, apps, visited);
+                    self.collect_func_apps(*a, bound, apps, tainted, visited);
                 }
                 TermKind::BvExtract { arg, .. } => {
-                    self.collect_func_apps(*arg, apps, visited);
+                    self.collect_func_apps(*arg, bound, apps, tainted, visited);
                 }
                 TermKind::And(args)
                 | TermKind::Or(args)
@@ -64,7 +96,7 @@ impl<'a> AckermannizeTactic<'a> {
                 | TermKind::Mul(args)
                 | TermKind::Distinct(args) => {
                     for &arg in args {
-                        self.collect_func_apps(arg, apps, visited);
+                        self.collect_func_apps(arg, bound, apps, tainted, visited);
                     }
                 }
                 TermKind::Implies(a, b)
@@ -96,22 +128,30 @@ impl<'a> AckermannizeTactic<'a> {
                 | TermKind::BvUle(a, b)
                 | TermKind::BvSlt(a, b)
                 | TermKind::BvSle(a, b) => {
-                    self.collect_func_apps(*a, apps, visited);
-                    self.collect_func_apps(*b, apps, visited);
+                    self.collect_func_apps(*a, bound, apps, tainted, visited);
+                    self.collect_func_apps(*b, bound, apps, tainted, visited);
                 }
                 TermKind::Ite(c, t, e) | TermKind::Store(c, t, e) => {
-                    self.collect_func_apps(*c, apps, visited);
-                    self.collect_func_apps(*t, apps, visited);
-                    self.collect_func_apps(*e, apps, visited);
+                    self.collect_func_apps(*c, bound, apps, tainted, visited);
+                    self.collect_func_apps(*t, bound, apps, tainted, visited);
+                    self.collect_func_apps(*e, bound, apps, tainted, visited);
                 }
-                TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => {
-                    self.collect_func_apps(*body, apps, visited);
+                TermKind::Forall { vars, body, .. } | TermKind::Exists { vars, body, .. } => {
+                    let pushed = vars.len();
+                    for (name, _) in vars.iter() {
+                        bound.push(*name);
+                    }
+                    let body = *body;
+                    self.collect_func_apps(body, bound, apps, tainted, visited);
+                    bound.truncate(bound.len() - pushed);
                 }
                 TermKind::Let { bindings, body } => {
-                    for (_, t) in bindings {
-                        self.collect_func_apps(*t, apps, visited);
+                    let bindings = bindings.clone();
+                    let body = *body;
+                    for (_, t) in &bindings {
+                        self.collect_func_apps(*t, bound, apps, tainted, visited);
                     }
-                    self.collect_func_apps(*body, apps, visited);
+                    self.collect_func_apps(body, bound, apps, tainted, visited);
                 }
                 // Constants and variables don't contain function applications
                 _ => {}
@@ -119,30 +159,83 @@ impl<'a> AckermannizeTactic<'a> {
         }
     }
 
-    /// Apply ackermannization to a goal
+    /// Whether `term` references any variable name in `bound` (the set of
+    /// quantifier-bound names currently in scope). Used to detect
+    /// applications that depend on bound variables — see
+    /// [`Self::collect_func_apps`].
+    fn references_bound_var(&self, term: TermId, bound: &[crate::interner::Spur]) -> bool {
+        use crate::ast::TermKind;
+        use crate::ast::traversal::collect_subterms;
+
+        // `collect_subterms` walks the whole (hash-consed) subterm DAG once;
+        // we then check whether any `Var` node's name is bound.
+        for sub in collect_subterms(term, self.manager) {
+            if let Some(t) = self.manager.get(sub)
+                && let TermKind::Var(name) = &t.kind
+                && bound.contains(name)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Apply ackermannization to a goal.
     pub fn apply_mut(&mut self, goal: &Goal) -> Result<TacticResult> {
+        Ok(self.apply_mut_with_converter(goal)?.0)
+    }
+
+    /// Apply ackermannization to a goal, additionally returning a
+    /// [`ModelConverter`] that lifts a model of the transformed sub-goal back
+    /// to a model over the original goal's variables (dropping the fresh
+    /// Ackermann variables that are not part of the original signature).
+    ///
+    /// Returns `(TacticResult, None)` when the result is not a `SubGoals`
+    /// transformation (nothing was eliminated), and `(SubGoals, Some(conv))`
+    /// otherwise.
+    pub fn apply_mut_with_converter(
+        &mut self,
+        goal: &Goal,
+    ) -> Result<(TacticResult, Option<Box<dyn ModelConverter>>)> {
         use crate::prelude::{FxHashMap, FxHashSet};
 
-        // Collect all function applications
+        // Collect ground function applications, tracking symbols with any
+        // quantifier-bound-argument occurrence (see `collect_func_apps`).
         let mut all_apps: Vec<(
             crate::interner::Spur,
             smallvec::SmallVec<[TermId; 4]>,
             TermId,
         )> = Vec::new();
+        let mut tainted: FxHashSet<crate::interner::Spur> = FxHashSet::default();
+        let mut bound: Vec<crate::interner::Spur> = Vec::new();
         let mut visited = FxHashSet::default();
 
         for &assertion in &goal.assertions {
-            self.collect_func_apps(assertion, &mut all_apps, &mut visited);
+            self.collect_func_apps(
+                assertion,
+                &mut bound,
+                &mut all_apps,
+                &mut tainted,
+                &mut visited,
+            );
         }
 
-        // No function applications found
+        // Drop every application of a symbol that had a quantified
+        // (bound-variable-dependent) occurrence — Ackermannizing it would be
+        // unsound.
+        if !tainted.is_empty() {
+            all_apps.retain(|(func, _, _)| !tainted.contains(func));
+        }
+
+        // No (ground) function applications left to eliminate.
         if all_apps.is_empty() {
-            return Ok(TacticResult::NotApplicable);
+            return Ok((TacticResult::NotApplicable, None));
         }
 
         // Group applications by function symbol
         let mut func_groups: FxHashMap<crate::interner::Spur, Vec<FuncApp>> = FxHashMap::default();
         let mut term_to_var: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let mut fresh_vars: FxHashSet<TermId> = FxHashSet::default();
 
         for (var_counter, (func, args, term_id)) in all_apps.into_iter().enumerate() {
             // Create a fresh variable for this application
@@ -154,6 +247,7 @@ impl<'a> AckermannizeTactic<'a> {
             let fresh_var = self.manager.mk_var(&var_name, sort);
 
             term_to_var.insert(term_id, fresh_var);
+            fresh_vars.insert(fresh_var);
 
             func_groups
                 .entry(func)
@@ -208,10 +302,43 @@ impl<'a> AckermannizeTactic<'a> {
         // Add the functional consistency constraints
         new_assertions.extend(constraints);
 
-        Ok(TacticResult::SubGoals(vec![Goal {
-            assertions: new_assertions,
-            precision: goal.precision,
-        }]))
+        let converter: Box<dyn ModelConverter> = Box::new(AckermannModelConverter { fresh_vars });
+
+        Ok((
+            TacticResult::SubGoals(vec![Goal {
+                assertions: new_assertions,
+                precision: goal.precision,
+            }]),
+            Some(converter),
+        ))
+    }
+}
+
+/// Model converter for [`AckermannizeTactic`].
+///
+/// Ackermannization introduces fresh `!ack_k` variables that replace ground
+/// function applications; these are *not* part of the original goal's
+/// signature. Given a model of the transformed sub-goal, this converter
+/// projects those fresh variables out, returning a model over the original
+/// variables. (The eliminated function symbols' interpretations are
+/// recoverable from the projected-out fresh-variable values — each fresh
+/// variable is exactly the value of its application — but a function table is
+/// not representable in the variable-only [`TacticModel`], so it is not
+/// reconstructed here.)
+#[derive(Debug, Clone)]
+struct AckermannModelConverter {
+    fresh_vars: crate::prelude::FxHashSet<TermId>,
+}
+
+impl ModelConverter for AckermannModelConverter {
+    fn convert(&self, model: &TacticModel, _manager: &mut TermManager) -> TacticModel {
+        let mut out = TacticModel::new();
+        for (&var, &value) in &model.values {
+            if !self.fresh_vars.contains(&var) {
+                out.set(var, value);
+            }
+        }
+        out
     }
 }
 
@@ -224,12 +351,20 @@ impl Tactic for StatelessAckermannizeTactic {
         "ackermannize"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        // Without a term manager, we can only return the goal unchanged
-        Ok(TacticResult::SubGoals(vec![goal.clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Ackermannization must allocate fresh variables and congruence
+        // constraints, which requires `&mut TermManager` access that the
+        // manager-free `Tactic::apply` signature does not provide. Rather
+        // than silently return the goal unchanged (which would dishonestly
+        // claim a successful transformation), report that this path does not
+        // apply. Callers holding a `&mut TermManager` should use
+        // `AckermannizeTactic::apply_mut` (or the registry's `create_managed`
+        // path) for the real transformation.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Eliminates uninterpreted functions by adding functional consistency constraints"
+        "Eliminates uninterpreted functions by adding functional consistency constraints \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }

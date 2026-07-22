@@ -1,5 +1,11 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), retained-unwired. The solver's theory
+// evaluation is now memoized directly by the (previously dead) atom-keyed
+// `NlsatSolver::eval_cache` field, wired into `theory_propagate` (see
+// `solver::propagate` and the `eval_cache_hits` statistic); that atom-level
+// cache is sufficient and cheaper than fingerprinting. This more elaborate
+// LRU/sign-pattern engine is kept as a superseded alternative for a future
+// pattern-caching path and is not currently instantiated by the solver.
 //! Advanced polynomial evaluation cache and sign pattern memoization.
 //!
 //! This module provides high-performance caching for polynomial evaluations
@@ -168,12 +174,61 @@ impl Default for EvalCacheConfig {
     }
 }
 
+/// One stored polynomial-value entry. The polynomial and the relevant
+/// assignment are retained so a lookup can *verify* an exact match, keeping the
+/// cache sound even under a (astronomically unlikely) fingerprint collision.
+#[derive(Clone)]
+struct ValueEntry {
+    poly: Polynomial,
+    assignment: Vec<(Var, BigRational)>,
+    value: BigRational,
+}
+
+impl ValueEntry {
+    /// Build an entry, retaining only the assignment entries for variables that
+    /// actually occur in the polynomial (the only ones that affect its value).
+    fn new(
+        poly: &Polynomial,
+        assignment: &FxHashMap<Var, BigRational>,
+        value: BigRational,
+    ) -> Self {
+        let mut vars = poly.vars();
+        vars.sort();
+        let mut relevant = Vec::with_capacity(vars.len());
+        for var in vars {
+            if let Some(v) = assignment.get(&var) {
+                relevant.push((var, v.clone()));
+            }
+        }
+        Self {
+            poly: poly.clone(),
+            assignment: relevant,
+            value,
+        }
+    }
+
+    /// Confirm this stored entry is an exact match for the given polynomial and
+    /// the sub-assignment restricted to the polynomial's variables.
+    fn matches(&self, poly: &Polynomial, assignment: &FxHashMap<Var, BigRational>) -> bool {
+        if &self.poly != poly {
+            return false;
+        }
+        for (var, expected) in &self.assignment {
+            match assignment.get(var) {
+                Some(actual) if actual == expected => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
 /// Advanced polynomial evaluation cache.
 pub struct EvalCache {
     /// Configuration.
     config: EvalCacheConfig,
-    /// Cache for polynomial values.
-    value_cache: FxHashMap<EvalFingerprint, BigRational>,
+    /// Cache for polynomial values, verified exactly on hit.
+    value_cache: FxHashMap<EvalFingerprint, ValueEntry>,
     /// LRU queue for value cache eviction.
     value_lru: VecDeque<EvalFingerprint>,
     /// Cache for sign patterns.
@@ -214,16 +269,21 @@ impl EvalCache {
 
         let fingerprint = EvalFingerprint::new(poly, assignment);
 
-        if let Some(value) = self.value_cache.get(&fingerprint) {
-            self.stats.value_hits += 1;
-            // Move to front of LRU
-            self.value_lru.retain(|&f| f != fingerprint);
-            self.value_lru.push_front(fingerprint);
-            Some(value.clone())
-        } else {
-            self.stats.value_misses += 1;
-            None
+        if let Some(entry) = self.value_cache.get(&fingerprint) {
+            // Verify the stored entry matches exactly on the polynomial and the
+            // relevant sub-assignment before trusting a fingerprint hit; this
+            // keeps the cache sound even under a fingerprint collision.
+            if entry.matches(poly, assignment) {
+                self.stats.value_hits += 1;
+                let value = entry.value.clone();
+                // Move to front of LRU
+                self.value_lru.retain(|&f| f != fingerprint);
+                self.value_lru.push_front(fingerprint);
+                return Some(value);
+            }
         }
+        self.stats.value_misses += 1;
+        None
     }
 
     /// Insert a polynomial value into the cache.
@@ -247,7 +307,8 @@ impl EvalCache {
             self.stats.evictions += 1;
         }
 
-        self.value_cache.insert(fingerprint, value);
+        let entry = ValueEntry::new(poly, assignment, value);
+        self.value_cache.insert(fingerprint, entry);
         self.value_lru.push_front(fingerprint);
     }
 

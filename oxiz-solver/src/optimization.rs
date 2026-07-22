@@ -12,7 +12,7 @@ use crate::solver::Model;
 use crate::solver::{Solver, SolverResult};
 use num_bigint::BigInt;
 use num_rational::Rational64;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::ToPrimitive;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 
 /// Outcome of a bounded feasibility probe for an integer objective.
@@ -46,6 +46,20 @@ enum InitInt {
     /// The solver could not decide.
     Unknown,
 }
+
+/// Exponential-probe magnitude cap, as a power of two.
+///
+/// `2^62` is safely inside the range the `i64`-backed LIA/LRA simplex
+/// (`Rational64` numerator/denominator, see `oxiz-theories`'s
+/// `arithmetic::simplex`) can represent without overflow: `i64::MAX` is just
+/// under `2^63`, so this leaves a factor of two of headroom for the checked
+/// intermediate arithmetic the simplex performs during pivoting. Overflow
+/// there is itself guarded (it yields a probe `Unknown`, never a silently
+/// wrong answer), so this bound is a throughput/completeness trade-off, not a
+/// soundness one: an objective whose true optimum lies beyond `2^62` in
+/// magnitude is still (honestly documented) misreported `Unbounded`, but that
+/// is astronomically higher than the fixed `2^40` cap this replaces.
+const MAX_MAGNITUDE_EXP: u32 = 62;
 
 /// Floor of `x / 2` (correct for negative operands, unlike truncating division).
 fn floor_half(x: BigInt) -> BigInt {
@@ -261,14 +275,31 @@ impl Optimizer {
     /// always reflects exactly the accumulated assertions.
     pub fn optimize(&mut self, term_manager: &mut TermManager) -> OptimizationResult {
         if self.objectives.is_empty() {
-            // No objectives - just check satisfiability on a fresh solver.
+            // No objectives were registered: this degenerates to a plain
+            // satisfiability check. There is no objective to report an
+            // optimum for, so `Optimal::value` cannot carry a real answer.
+            // Fabricating a numeric constant here (the previous behavior used
+            // `IntConst(0)`) would be indistinguishable from a genuine
+            // optimum of `0` -- exactly the silent-incompleteness pattern
+            // this crate refuses to produce elsewhere.
+            //
+            // `OptimizationResult` is a public enum matched exhaustively by
+            // several downstream crates (`oxiz-py`, `oxiz-wasm`,
+            // `z3_compat_ext`), so adding a dedicated "no objective" variant
+            // (or changing `value`'s type) is an API migration out of scope
+            // for this fix. Until that broader migration happens, use a
+            // `Bool` term as the sentinel `value`: no real objective ever
+            // produces a `Bool`, so it can never be confused with an actual
+            // numeric optimum, and every current caller only inspects
+            // `value`'s *presence* (to stringify/print it) or matches on the
+            // `OptimizationResult` variant, never on the sentinel's sort.
             let mut solver = self.build_solver(&[], term_manager);
             return match solver.check(term_manager) {
                 SolverResult::Sat => match solver.model() {
                     Some(model) => {
-                        let zero = term_manager.mk_int(BigInt::zero());
+                        let sentinel = term_manager.mk_bool(true);
                         OptimizationResult::Optimal {
-                            value: zero,
+                            value: sentinel,
                             model: model.clone(),
                         }
                     }
@@ -303,6 +334,12 @@ impl Optimizer {
             }
         }
 
+        // Unreachable in practice: the loop above always returns once
+        // `idx == last`, and `sorted_objectives` is non-empty in this branch
+        // (the empty case returns earlier), so `last` is always visited. Kept
+        // as an honest `Unknown` fallback rather than `unreachable!()` so a
+        // future refactor that breaks that invariant fails soft, not by
+        // panicking.
         OptimizationResult::Unknown
     }
 
@@ -413,29 +450,35 @@ impl Optimizer {
         }
     }
 
-    /// Optimize an integer objective by bounded binary search.
+    /// Optimize an integer objective by exponential (galloping) probing
+    /// followed by binary search.
     ///
     /// 1. **Feasibility** — establish an initial feasible objective value.
-    /// 2. **Unbounded probe** — test whether the objective can reach the extreme
-    ///    magnitude `±UNBOUNDED_INT_THRESHOLD`. If so, the objective is reported
-    ///    [`OptimizationResult::Unbounded`].
-    /// 3. **Binary search** — bisect `[-threshold+1, best]` (minimize) or
-    ///    `[best, threshold-1]` (maximize) to the exact optimum.
+    /// 2. **Exponential probe** — starting from a modest magnitude, repeatedly
+    ///    double the probed bound in the unbounded direction while the
+    ///    objective remains reachable there. This is the standard
+    ///    unbounded/galloping-search technique: it finds a bracket
+    ///    `(known-infeasible bound, known-feasible value]` for *any* finite
+    ///    optimum instead of testing a single fixed magnitude, so a
+    ///    genuinely finite optimum is no longer misreported `Unbounded` just
+    ///    for exceeding an arbitrary cap.
+    /// 3. **Binary search** — bisect the bracket found in step 2 to the exact
+    ///    optimum.
     ///
-    /// The threshold is kept well within the range the `i64`-based LIA theory can
-    /// represent so that probing never overflows the theory solver. A genuinely
-    /// finite optimum with magnitude beyond the threshold is reported `Unbounded`
-    /// (documented practical trade-off); nothing is ever fabricated. Any `Unknown`
-    /// from a probe propagates as [`OptimizationResult::Unknown`].
+    /// Doubling is capped at [`MAX_MAGNITUDE_EXP`] (see its doc comment for
+    /// why that bound is safe against theory-solver overflow). If the
+    /// objective is still reachable at every doubled magnitude up to the cap,
+    /// no finite bracket exists to bisect and the objective is reported
+    /// [`OptimizationResult::Unbounded`] — a documented, honest trade-off
+    /// (nothing is ever fabricated), just one pushed astronomically higher
+    /// than a naive fixed threshold. Any `Unknown` from a probe propagates as
+    /// [`OptimizationResult::Unknown`].
     fn optimize_int(
         &mut self,
         objective: &Objective,
         extra: &[TermId],
         term_manager: &mut TermManager,
     ) -> OptimizationResult {
-        // 2^40 is far larger than any realistic finite optimum yet small enough
-        // that the i64-based simplex never overflows while probing near it.
-        let threshold = BigInt::from(1u64 << 40);
         let one = BigInt::from(1);
 
         let minimize = matches!(objective.kind, ObjectiveKind::Minimize);
@@ -453,31 +496,59 @@ impl Optimizer {
                 InitInt::Sat { value, model } => (value, model),
             };
 
-        // Phase 2: unbounded-direction probe at the extreme representable bound.
-        let extreme = if minimize {
-            -threshold.clone()
-        } else {
-            threshold.clone()
+        // Phase 2: exponential (doubling) probe to find a finite bracket.
+        // Starts at 2^10 = 1024: small enough to be cheap when the optimum is
+        // nearby, large enough that trivially-bounded problems (the common
+        // case) settle in a handful of probes.
+        let mut exponent = 10u32;
+        let mut magnitude = BigInt::from(1u64) << exponent;
+        let infeasible_bound = loop {
+            let probe_bound = if minimize {
+                -&magnitude
+            } else {
+                magnitude.clone()
+            };
+            match self.probe_int(objective.term, &probe_bound, minimize, extra, term_manager) {
+                IntProbe::Unknown => return OptimizationResult::Unknown,
+                IntProbe::Sat(val, model) => {
+                    // Reachable at this magnitude: the true optimum (if
+                    // finite) is at least this far out. Record the attained
+                    // value as the new known-feasible anchor and double.
+                    best_value = val;
+                    best_model = model;
+                    if exponent >= MAX_MAGNITUDE_EXP {
+                        // Exhausted the safe probing range without ever
+                        // hitting infeasibility: documented trade-off (see
+                        // this function's doc comment).
+                        return OptimizationResult::Unbounded;
+                    }
+                    exponent += 1;
+                    magnitude = BigInt::from(1u64) << exponent;
+                }
+                IntProbe::Unsat => break probe_bound,
+            }
         };
-        match self.probe_int(objective.term, &extreme, minimize, extra, term_manager) {
-            IntProbe::Unknown => return OptimizationResult::Unknown,
-            IntProbe::Sat(_, _) => return OptimizationResult::Unbounded,
-            IntProbe::Unsat => {}
-        }
 
-        // Phase 3: binary search in the bracket, which is now finite and bounded.
-        // minimize: optimum in [-threshold + 1, best_value]
-        // maximize: optimum in [best_value, threshold - 1]
+        // Phase 3: binary search in the bracket established above, which is
+        // now finite and bounded.
+        // minimize: optimum in [infeasible_bound + 1, best_value]
+        // maximize: optimum in [best_value, infeasible_bound - 1]
         let (mut lo, mut hi) = if minimize {
-            ((-&threshold) + &one, best_value.clone())
+            (infeasible_bound + &one, best_value.clone())
         } else {
-            (best_value.clone(), &threshold - &one)
+            (best_value.clone(), infeasible_bound - &one)
         };
 
         let mut guard = 0u32;
         while lo < hi {
             guard += 1;
             if guard > 4096 {
+                // Iteration budget exhausted without proving optimality: be
+                // honest rather than returning an unverified value. The
+                // bracket width is at most `2^MAX_MAGNITUDE_EXP`, so a sound
+                // binary search never needs more than ~`MAX_MAGNITUDE_EXP`
+                // iterations; this guard only fires on a logic bug, but it
+                // must fail honest (`Unknown`) rather than loop forever.
                 return OptimizationResult::Unknown;
             }
             let mid = if minimize {
@@ -547,7 +618,7 @@ impl Optimizer {
     ///
     /// Reals cannot be bisected to an exact optimum in general (an infimum may be
     /// open, e.g. `x > 0`), so this uses:
-    /// 1. an extreme-bound probe to detect unboundedness, and
+    /// 1. an exponential (doubling) probe to detect unboundedness, and
     /// 2. strict-improvement search: repeatedly demand `objective < best`
     ///    (minimize) / `objective > best` (maximize) on a fresh solver.
     ///
@@ -594,21 +665,39 @@ impl Optimizer {
             }
         };
 
-        // Phase 2: unbounded detection. 2^40 fits the i64 numerator of Rational64
-        // with room to spare and keeps the theory solver well clear of overflow.
-        let huge = Rational64::from_integer(1i64 << 40);
-        let extreme = if minimize { -huge } else { huge };
-        match self.probe_real(
-            objective.term,
-            extreme,
-            minimize,
-            false,
-            extra,
-            term_manager,
-        ) {
-            RealProbe::Sat(_, _) => return OptimizationResult::Unbounded,
-            RealProbe::Unknown => return OptimizationResult::Unknown,
-            RealProbe::Unsat => {}
+        // Phase 2: exponential (doubling) unbounded detection, mirroring
+        // `optimize_int`'s Phase 2 (see its doc comment for the rationale and
+        // for why doubling up to [`MAX_MAGNITUDE_EXP`] is i64-safe). Probing a
+        // single fixed magnitude (the previous behavior) misreports any
+        // finite optimum beyond that magnitude as `Unbounded`; doubling until
+        // infeasibility is hit (or the safe cap is exhausted) instead
+        // correctly proceeds to Phase 3 for any finite optimum, however
+        // large, while still terminating for genuinely unbounded objectives.
+        let mut exponent = 10u32;
+        loop {
+            let magnitude = Rational64::from_integer(1i64 << exponent);
+            let extreme = if minimize { -magnitude } else { magnitude };
+            match self.probe_real(
+                objective.term,
+                extreme,
+                minimize,
+                false,
+                extra,
+                term_manager,
+            ) {
+                RealProbe::Sat(v, model) => {
+                    // Reachable at this magnitude: record the attained value
+                    // as the new pivot for Phase 3 and double.
+                    best_value = v;
+                    best_model = model;
+                    if exponent >= MAX_MAGNITUDE_EXP {
+                        return OptimizationResult::Unbounded;
+                    }
+                    exponent += 1;
+                }
+                RealProbe::Unknown => return OptimizationResult::Unknown,
+                RealProbe::Unsat => break,
+            }
         }
 
         // Phase 3: strict-improvement search for the exact attained optimum.
@@ -722,6 +811,19 @@ impl Optimizer {
     /// Blocking clauses accumulate in a plain vector and are threaded into a fresh
     /// solver each iteration, so no `push`/`pop` is used and the optimizer stays
     /// reusable. Note: this can be expensive for problems with many Pareto points.
+    ///
+    /// # Honesty note: the returned front is not always exhaustive
+    ///
+    /// The search stops after `UNSAT` (the front is then genuinely
+    /// exhaustive), after `max_points` solutions (a hard iteration cap), or
+    /// after `Unknown`/a missing model (the theory solver could not decide).
+    /// The return type carries no per-call "exhaustive vs. truncated" flag, so
+    /// in the latter two cases the caller receives a valid, non-dominated
+    /// front that may nonetheless be *incomplete* — further Pareto points may
+    /// exist beyond what was found. This mirrors [`Optimizer::optimize`]'s
+    /// documented `Unknown` semantics but, unlike a single-objective query,
+    /// cannot itself signal `Unknown` without changing this method's public
+    /// return type; nothing about the returned points is ever fabricated.
     pub fn pareto_optimize(&mut self, term_manager: &mut TermManager) -> Vec<ParetoPoint> {
         let mut pareto_front: Vec<ParetoPoint> = Vec::new();
 
@@ -744,6 +846,10 @@ impl Optimizer {
             match solver.check(term_manager) {
                 SolverResult::Sat => {
                     let Some(model) = solver.model() else {
+                        // Sat with no model is a solver internal-consistency
+                        // gap, not evidence the front is complete: stop
+                        // honestly rather than loop or fabricate a point (see
+                        // this method's "honesty note" doc comment above).
                         break;
                     };
                     let model = model.clone();
@@ -782,7 +888,13 @@ impl Optimizer {
                     }
                     blocking.push(term_manager.mk_or(improvement_disjuncts));
                 }
+                // UNSAT after blocking every weakly-dominated solution proves
+                // the front is exhaustive: no further Pareto point exists.
                 SolverResult::Unsat => break,
+                // The theory solver could not decide: stop honestly with
+                // whatever front has been established so far rather than
+                // guess (see this method's "honesty note" doc comment above)
+                // -- the returned front may be incomplete in this case.
                 SolverResult::Unknown => break,
             }
         }
@@ -795,6 +907,7 @@ impl Optimizer {
 mod tests {
     use super::*;
     use num_bigint::BigInt;
+    use num_traits::Zero;
 
     #[test]
     fn test_solver_direct() {

@@ -384,8 +384,15 @@ impl Simplex {
     pub fn pivoting_rule(&self) -> PivotingRule {
         self.pivoting_rule
     }
-    /// Add a new variable
-    pub fn new_var(&mut self) -> VarId {
+    /// Grow every per-variable parallel array by exactly one slot, in
+    /// lockstep, and return the new (non-basic) variable's id.
+    ///
+    /// This is the *single* choke point through which `assignment`, `lower`,
+    /// `upper` and `basic` gain a slot for an ordinary variable, so the four
+    /// arrays can never drift out of length relative to one another. A
+    /// matching `NewVar` undo record is pushed so that [`Self::pop`] shrinks
+    /// all four together.
+    fn register_var(&mut self) -> VarId {
         let id = self.assignment.len() as VarId;
         self.num_vars += 1;
         self.assignment.push(DeltaRational::zero());
@@ -394,6 +401,25 @@ impl Simplex {
         self.basic.push(false);
         self.trail.push(BoundUndo::NewVar);
         id
+    }
+    /// Ensure every per-variable array covers index `idx`, materializing any
+    /// missing slots (contiguously, including gaps) as fresh unconstrained,
+    /// non-basic variables via [`Self::register_var`].
+    ///
+    /// Every code path that can hand a variable index to the tableau or the
+    /// bounds arrays routes through this, so a variable index the caller
+    /// cached and replayed across a backtrack (which shrank the arrays) — or
+    /// any other stale/out-of-range index — can never index past the parallel
+    /// arrays and panic. The replayed index is simply reinstated as a fresh
+    /// variable, and the `NewVar` undo records pushed here keep `pop` correct.
+    fn ensure_var(&mut self, idx: usize) {
+        while self.assignment.len() <= idx {
+            let _ = self.register_var();
+        }
+    }
+    /// Add a new variable
+    pub fn new_var(&mut self) -> VarId {
+        self.register_var()
     }
     /// Add a slack variable for a constraint
     fn new_slack(&mut self) -> VarId {
@@ -427,21 +453,20 @@ impl Simplex {
     /// Set a lower bound (x >= value)
     pub fn set_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
-        if idx < self.lower.len() {
-            match &self.lower[idx] {
-                None => self.trail.push(BoundUndo::LowerWasNone(var)),
-                Some(old) => {
-                    let old = old.clone();
-                    self.trail.push(BoundUndo::LowerWasSome(var, old));
-                }
+        self.ensure_var(idx);
+        match &self.lower[idx] {
+            None => self.trail.push(BoundUndo::LowerWasNone(var)),
+            Some(old) => {
+                let old = old.clone();
+                self.trail.push(BoundUndo::LowerWasSome(var, old));
             }
-            self.lower[idx] = Some(Bound {
-                kind: BoundType::Lower,
-                value: DeltaRational::from_rational(value),
-                reason,
-                aux_reasons: SmallVec::new(),
-            });
         }
+        self.lower[idx] = Some(Bound {
+            kind: BoundType::Lower,
+            value: DeltaRational::from_rational(value),
+            reason,
+            aux_reasons: SmallVec::new(),
+        });
     }
     /// Set a lower bound directly from a `DeltaRational` (supports strict
     /// bounds carrying an infinitesimal `δ` component), pushing an undo
@@ -455,104 +480,99 @@ impl Simplex {
     /// explanation (see [`Bound::aux_reasons`]).
     fn set_lower_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
-        if idx < self.lower.len() {
-            let Some((reason, aux_reasons)) = split_reasons(reasons) else {
-                return;
-            };
-            match &self.lower[idx] {
-                None => self.trail.push(BoundUndo::LowerWasNone(var)),
-                Some(old) => {
-                    let old = old.clone();
-                    self.trail.push(BoundUndo::LowerWasSome(var, old));
-                }
+        let Some((reason, aux_reasons)) = split_reasons(reasons) else {
+            return;
+        };
+        self.ensure_var(idx);
+        match &self.lower[idx] {
+            None => self.trail.push(BoundUndo::LowerWasNone(var)),
+            Some(old) => {
+                let old = old.clone();
+                self.trail.push(BoundUndo::LowerWasSome(var, old));
             }
-            self.lower[idx] = Some(Bound {
-                kind: BoundType::Lower,
-                value,
-                reason,
-                aux_reasons,
-            });
         }
+        self.lower[idx] = Some(Bound {
+            kind: BoundType::Lower,
+            value,
+            reason,
+            aux_reasons,
+        });
     }
     /// Set an upper bound directly from a `DeltaRational`; see
     /// [`Self::set_lower_delta`].
     fn set_upper_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
-        if idx < self.upper.len() {
-            let Some((reason, aux_reasons)) = split_reasons(reasons) else {
-                return;
-            };
-            match &self.upper[idx] {
-                None => self.trail.push(BoundUndo::UpperWasNone(var)),
-                Some(old) => {
-                    let old = old.clone();
-                    self.trail.push(BoundUndo::UpperWasSome(var, old));
-                }
+        let Some((reason, aux_reasons)) = split_reasons(reasons) else {
+            return;
+        };
+        self.ensure_var(idx);
+        match &self.upper[idx] {
+            None => self.trail.push(BoundUndo::UpperWasNone(var)),
+            Some(old) => {
+                let old = old.clone();
+                self.trail.push(BoundUndo::UpperWasSome(var, old));
             }
-            self.upper[idx] = Some(Bound {
-                kind: BoundType::Upper,
-                value,
-                reason,
-                aux_reasons,
-            });
         }
+        self.upper[idx] = Some(Bound {
+            kind: BoundType::Upper,
+            value,
+            reason,
+            aux_reasons,
+        });
     }
     /// Set a strict lower bound (x > value), represented as x >= value + δ
     pub fn set_strict_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
-        if idx < self.lower.len() {
-            match &self.lower[idx] {
-                None => self.trail.push(BoundUndo::LowerWasNone(var)),
-                Some(old) => {
-                    let old = old.clone();
-                    self.trail.push(BoundUndo::LowerWasSome(var, old));
-                }
+        self.ensure_var(idx);
+        match &self.lower[idx] {
+            None => self.trail.push(BoundUndo::LowerWasNone(var)),
+            Some(old) => {
+                let old = old.clone();
+                self.trail.push(BoundUndo::LowerWasSome(var, old));
             }
-            self.lower[idx] = Some(Bound {
-                kind: BoundType::Lower,
-                value: DeltaRational::new(value, Rational64::one()),
-                reason,
-                aux_reasons: SmallVec::new(),
-            });
         }
+        self.lower[idx] = Some(Bound {
+            kind: BoundType::Lower,
+            value: DeltaRational::new(value, Rational64::one()),
+            reason,
+            aux_reasons: SmallVec::new(),
+        });
     }
     /// Set an upper bound (x <= value)
     pub fn set_upper(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
-        if idx < self.upper.len() {
-            match &self.upper[idx] {
-                None => self.trail.push(BoundUndo::UpperWasNone(var)),
-                Some(old) => {
-                    let old = old.clone();
-                    self.trail.push(BoundUndo::UpperWasSome(var, old));
-                }
+        self.ensure_var(idx);
+        match &self.upper[idx] {
+            None => self.trail.push(BoundUndo::UpperWasNone(var)),
+            Some(old) => {
+                let old = old.clone();
+                self.trail.push(BoundUndo::UpperWasSome(var, old));
             }
-            self.upper[idx] = Some(Bound {
-                kind: BoundType::Upper,
-                value: DeltaRational::from_rational(value),
-                reason,
-                aux_reasons: SmallVec::new(),
-            });
         }
+        self.upper[idx] = Some(Bound {
+            kind: BoundType::Upper,
+            value: DeltaRational::from_rational(value),
+            reason,
+            aux_reasons: SmallVec::new(),
+        });
     }
     /// Set a strict upper bound (x < value), represented as x <= value - δ
     pub fn set_strict_upper(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;
-        if idx < self.upper.len() {
-            match &self.upper[idx] {
-                None => self.trail.push(BoundUndo::UpperWasNone(var)),
-                Some(old) => {
-                    let old = old.clone();
-                    self.trail.push(BoundUndo::UpperWasSome(var, old));
-                }
+        self.ensure_var(idx);
+        match &self.upper[idx] {
+            None => self.trail.push(BoundUndo::UpperWasNone(var)),
+            Some(old) => {
+                let old = old.clone();
+                self.trail.push(BoundUndo::UpperWasSome(var, old));
             }
-            self.upper[idx] = Some(Bound {
-                kind: BoundType::Upper,
-                value: DeltaRational::new(value, -Rational64::one()),
-                reason,
-                aux_reasons: SmallVec::new(),
-            });
         }
+        self.upper[idx] = Some(Bound {
+            kind: BoundType::Upper,
+            value: DeltaRational::new(value, -Rational64::one()),
+            reason,
+            aux_reasons: SmallVec::new(),
+        });
     }
     /// Add a constraint: expr <= 0
     pub fn add_le(&mut self, mut expr: LinExpr, reason: u32) {
@@ -568,6 +588,13 @@ impl Simplex {
             }
         }
         expr = substituted_expr;
+        // Register every variable the (substituted) expression references
+        // BEFORE allocating the slack, so (a) no tableau row can reference an
+        // index past the bounds arrays and (b) the slack's id is guaranteed
+        // fresh rather than colliding with an as-yet-unregistered variable.
+        if let Some(max_var) = expr.terms.iter().map(|(v, _)| *v).max() {
+            self.ensure_var(max_var as usize);
+        }
         let slack = self.new_slack();
         expr.add_term(slack, Rational64::one());
         let mut slack_expr = LinExpr::constant(-expr.constant);
@@ -608,6 +635,12 @@ impl Simplex {
             }
         }
         expr = substituted_expr;
+        // See `add_le`: register the expression's variables before allocating
+        // the slack so no tableau row can reference an index past the bounds
+        // arrays and the slack id cannot collide with an unregistered variable.
+        if let Some(max_var) = expr.terms.iter().map(|(v, _)| *v).max() {
+            self.ensure_var(max_var as usize);
+        }
         let slack = self.new_slack();
         expr.add_term(slack, Rational64::one());
         let mut slack_expr = LinExpr::constant(-expr.constant);

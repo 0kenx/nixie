@@ -3,9 +3,10 @@
 //! Validates proof steps and integrates with DRAT/Alethe proof generation.
 
 use super::{CheckResult, CheckerStats, Literal};
+use crate::prelude::FxHashMap;
 #[allow(unused_imports)]
 use crate::prelude::*;
-use oxiz_core::ast::TermId;
+use oxiz_core::ast::{TermId, TermKind, TermManager};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -144,8 +145,12 @@ impl ProofChecker {
         self.steps.insert(step.id, step);
     }
 
-    /// Validate a proof step
-    pub fn validate_step(&mut self, step_id: usize) -> CheckResult {
+    /// Validate a proof step against the term manager that owns its terms.
+    ///
+    /// The manager is required to decode the structure of the terms referenced
+    /// by equality/quantifier rules; without it those rules could only be
+    /// rubber-stamped. Antecedent steps are validated first (recursively).
+    pub fn validate_step(&mut self, step_id: usize, manager: &mut TermManager) -> CheckResult {
         let start = Instant::now();
 
         if self.validated.contains(&step_id) {
@@ -160,7 +165,7 @@ impl ProofChecker {
         // First validate antecedents
         for &ant_id in &step.antecedents {
             if !self.validated.contains(&ant_id) {
-                let result = self.validate_step(ant_id);
+                let result = self.validate_step(ant_id, manager);
                 if !result.is_valid() {
                     return result;
                 }
@@ -168,7 +173,7 @@ impl ProofChecker {
         }
 
         // Now validate this step
-        let result = self.check_step(&step);
+        let result = self.check_step(&step, manager);
 
         if result.is_valid() {
             self.validated.insert(step_id);
@@ -181,7 +186,7 @@ impl ProofChecker {
     }
 
     /// Check a single proof step
-    fn check_step(&self, step: &ProofStep) -> CheckResult {
+    fn check_step(&self, step: &ProofStep, manager: &mut TermManager) -> CheckResult {
         match &step.kind {
             ProofStepKind::Axiom => {
                 // Axioms are always valid (they're input)
@@ -221,27 +226,65 @@ impl ProofChecker {
                 }
             }
 
-            ProofStepKind::Symmetry(a, b) => self.check_symmetry(*a, *b, &step.clause),
+            ProofStepKind::Symmetry(a, b) => self.check_symmetry(*a, *b, step, manager),
 
             ProofStepKind::Transitivity(a, b, c) => {
-                self.check_transitivity(*a, *b, *c, &step.clause)
+                self.check_transitivity(*a, *b, *c, step, manager)
             }
 
-            ProofStepKind::Congruence { .. } => {
-                // Congruence closure - simplified check
-                CheckResult::Valid
-            }
+            ProofStepKind::Congruence {
+                function,
+                args1,
+                args2,
+            } => self.check_congruence(*function, args1, args2, step, manager),
 
-            ProofStepKind::Instantiation { .. } => {
-                // Quantifier instantiation - simplified check
-                CheckResult::Valid
-            }
+            ProofStepKind::Instantiation {
+                quantifier,
+                substitution,
+            } => self.check_instantiation(*quantifier, substitution, step, manager),
 
-            ProofStepKind::Skolemization { .. } => {
-                // Skolemization - simplified check
-                CheckResult::Valid
-            }
+            ProofStepKind::Skolemization {
+                original,
+                skolemized,
+            } => self.check_skolemization(*original, *skolemized, manager),
         }
+    }
+
+    /// Decode a positive equality literal into its two sides, if it is one.
+    fn as_equality(manager: &TermManager, lit: &Literal) -> Option<(TermId, TermId)> {
+        if !lit.positive {
+            return None;
+        }
+        match manager.get(lit.term).map(|t| t.kind.clone()) {
+            Some(TermKind::Eq(l, r)) => Some((l, r)),
+            _ => None,
+        }
+    }
+
+    /// Decode a clause that is a single positive equality literal.
+    fn single_equality(manager: &TermManager, clause: &[Literal]) -> Option<(TermId, TermId)> {
+        if clause.len() != 1 {
+            return None;
+        }
+        Self::as_equality(manager, &clause[0])
+    }
+
+    /// Test whether an equality `(x, y)` equates the unordered pair `{a, b}`.
+    fn equates(pair: (TermId, TermId), a: TermId, b: TermId) -> bool {
+        (pair.0 == a && pair.1 == b) || (pair.0 == b && pair.1 == a)
+    }
+
+    /// Collect the equalities established by a step's antecedent clauses.
+    fn antecedent_equalities(
+        &self,
+        manager: &TermManager,
+        step: &ProofStep,
+    ) -> Vec<(TermId, TermId)> {
+        step.antecedents
+            .iter()
+            .filter_map(|id| self.steps.get(id))
+            .filter_map(|s| Self::single_equality(manager, &s.clause))
+            .collect()
     }
 
     /// Check resolution step
@@ -288,41 +331,250 @@ impl ProofChecker {
         CheckResult::Valid
     }
 
-    /// Check unit propagation
+    /// Check unit propagation.
+    ///
+    /// Structurally verifies that the derived clause is exactly the propagated
+    /// unit and that the unit occurs in the antecedent clause. The semantic
+    /// side-condition (every other antecedent literal is falsified by the
+    /// current trail) cannot be certified without a trail model, so a
+    /// well-formed step is reported as `Unknown` rather than silently accepted.
     fn check_unit_propagation(
         &self,
-        _unit: Literal,
-        _antecedent: usize,
-        _result: &[Literal],
+        unit: Literal,
+        antecedent: usize,
+        result: &[Literal],
     ) -> CheckResult {
-        // Simplified: trust unit propagation
-        CheckResult::Valid
+        let ante = match self.steps.get(&antecedent) {
+            Some(s) => s,
+            None => {
+                return CheckResult::Invalid(format!(
+                    "Unit propagation references missing antecedent {}",
+                    antecedent
+                ));
+            }
+        };
+        if !ante.clause.contains(&unit) {
+            return CheckResult::Invalid(
+                "Propagated unit does not occur in the antecedent clause".to_string(),
+            );
+        }
+        if result.len() != 1 || result[0] != unit {
+            return CheckResult::Invalid(
+                "Unit propagation result clause is not the propagated unit".to_string(),
+            );
+        }
+        CheckResult::Unknown(
+            "Unit propagation is well-formed but the trail condition is unchecked".to_string(),
+        )
     }
 
-    /// Check symmetry: a = b => b = a
-    fn check_symmetry(&self, _a: TermId, _b: TermId, _result: &[Literal]) -> CheckResult {
-        // Simplified: trust symmetry
-        CheckResult::Valid
+    /// Check symmetry: from `a = b` conclude the equality of `a` and `b`.
+    ///
+    /// Because `mk_eq` canonicalizes operand order, `a = b` and `b = a` intern
+    /// to the same term, so the verifiable content is that the conclusion is an
+    /// equality over exactly the pair `{a, b}` (and, when the premise is
+    /// supplied as an antecedent, that it too equates `{a, b}`).
+    fn check_symmetry(
+        &self,
+        a: TermId,
+        b: TermId,
+        step: &ProofStep,
+        manager: &TermManager,
+    ) -> CheckResult {
+        let concl = match Self::single_equality(manager, &step.clause) {
+            Some(eq) => eq,
+            None => {
+                return CheckResult::Invalid(
+                    "Symmetry conclusion is not a single equality literal".to_string(),
+                );
+            }
+        };
+        if !Self::equates(concl, a, b) {
+            return CheckResult::Invalid(
+                "Symmetry conclusion does not equate the stated operands".to_string(),
+            );
+        }
+        let premises = self.antecedent_equalities(manager, step);
+        if premises.is_empty() {
+            // Sound inference shape, but the premise a=b was not attached.
+            return CheckResult::Unknown(
+                "Symmetry conclusion well-formed but premise a=b not supplied".to_string(),
+            );
+        }
+        if premises.iter().any(|p| Self::equates(*p, a, b)) {
+            CheckResult::Valid
+        } else {
+            CheckResult::Invalid("Symmetry premise does not establish a=b".to_string())
+        }
     }
 
-    /// Check transitivity: a = b, b = c => a = c
+    /// Check transitivity: from `a = b` and `b = c` conclude `a = c`.
     fn check_transitivity(
         &self,
-        _a: TermId,
-        _b: TermId,
-        _c: TermId,
-        _result: &[Literal],
+        a: TermId,
+        b: TermId,
+        c: TermId,
+        step: &ProofStep,
+        manager: &TermManager,
     ) -> CheckResult {
-        // Simplified: trust transitivity
+        let concl = match Self::single_equality(manager, &step.clause) {
+            Some(eq) => eq,
+            None => {
+                return CheckResult::Invalid(
+                    "Transitivity conclusion is not a single equality literal".to_string(),
+                );
+            }
+        };
+        if !Self::equates(concl, a, c) {
+            return CheckResult::Invalid(
+                "Transitivity conclusion does not equate the chain endpoints a and c".to_string(),
+            );
+        }
+        let premises = self.antecedent_equalities(manager, step);
+        if premises.is_empty() {
+            return CheckResult::Unknown(
+                "Transitivity endpoints well-formed but premises a=b, b=c not supplied".to_string(),
+            );
+        }
+        let has_ab = premises.iter().any(|p| Self::equates(*p, a, b));
+        let has_bc = premises.iter().any(|p| Self::equates(*p, b, c));
+        if has_ab && has_bc {
+            CheckResult::Valid
+        } else {
+            CheckResult::Invalid(
+                "Transitivity premises do not chain a=b and b=c through the middle term"
+                    .to_string(),
+            )
+        }
+    }
+
+    /// Check congruence: from `args1[i] = args2[i]` conclude
+    /// `f(args1) = f(args2)`.
+    fn check_congruence(
+        &self,
+        _function: TermId,
+        args1: &[TermId],
+        args2: &[TermId],
+        step: &ProofStep,
+        manager: &TermManager,
+    ) -> CheckResult {
+        if args1.len() != args2.len() {
+            return CheckResult::Invalid("Congruence argument lists differ in length".to_string());
+        }
+        let concl = match Self::single_equality(manager, &step.clause) {
+            Some(eq) => eq,
+            None => {
+                return CheckResult::Invalid(
+                    "Congruence conclusion is not a single equality literal".to_string(),
+                );
+            }
+        };
+        // Both sides must be applications of the same function symbol, one over
+        // args1 and the other over args2 (either operand order, since equality
+        // is canonicalized).
+        if !(Self::is_application_of(manager, concl.0, args1, concl.1, args2)
+            || Self::is_application_of(manager, concl.1, args1, concl.0, args2))
+        {
+            return CheckResult::Invalid(
+                "Congruence conclusion is not f(args1) = f(args2)".to_string(),
+            );
+        }
+        // Every argument position that actually differs must be justified by a
+        // premise equality; positions that are syntactically identical need no
+        // premise.
+        let premises = self.antecedent_equalities(manager, step);
+        for (l, r) in args1.iter().zip(args2.iter()) {
+            if l == r {
+                continue;
+            }
+            if !premises.iter().any(|p| Self::equates(*p, *l, *r)) {
+                return CheckResult::Unknown(format!(
+                    "Congruence lacks a premise for differing argument {:?} = {:?}",
+                    l, r
+                ));
+            }
+        }
         CheckResult::Valid
+    }
+
+    /// Check that `side_x` is `f(exp_x)` and `side_y` is `f(exp_y)` for a
+    /// common function symbol `f`.
+    fn is_application_of(
+        manager: &TermManager,
+        side_x: TermId,
+        exp_x: &[TermId],
+        side_y: TermId,
+        exp_y: &[TermId],
+    ) -> bool {
+        let kx = manager.get(side_x).map(|t| t.kind.clone());
+        let ky = manager.get(side_y).map(|t| t.kind.clone());
+        match (kx, ky) {
+            (
+                Some(TermKind::Apply { func: fx, args: ax }),
+                Some(TermKind::Apply { func: fy, args: ay }),
+            ) => fx == fy && ax.as_slice() == exp_x && ay.as_slice() == exp_y,
+            _ => false,
+        }
+    }
+
+    /// Check quantifier instantiation: `result` should contain `body[subst]`.
+    fn check_instantiation(
+        &self,
+        quantifier: TermId,
+        substitution: &[(TermId, TermId)],
+        step: &ProofStep,
+        manager: &mut TermManager,
+    ) -> CheckResult {
+        let body = match manager.get(quantifier).map(|t| t.kind.clone()) {
+            Some(TermKind::Forall { body, .. }) | Some(TermKind::Exists { body, .. }) => body,
+            _ => {
+                return CheckResult::Invalid(
+                    "Instantiation target is not a quantified formula".to_string(),
+                );
+            }
+        };
+        let mut map: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for (var, replacement) in substitution {
+            map.insert(*var, *replacement);
+        }
+        let instance = manager.substitute(body, &map);
+        if step.clause.iter().any(|l| l.term == instance) {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Instantiation instance not found verbatim in the result clause".to_string(),
+            )
+        }
+    }
+
+    /// Check Skolemization.
+    ///
+    /// Confirms the original is a quantified formula; verifying that the
+    /// Skolemized form introduces genuinely fresh Skolem symbols requires
+    /// context this checker does not track, so a well-formed step stays
+    /// `Unknown` rather than being accepted.
+    fn check_skolemization(
+        &self,
+        original: TermId,
+        _skolemized: TermId,
+        manager: &TermManager,
+    ) -> CheckResult {
+        match manager.get(original).map(|t| t.kind.clone()) {
+            Some(TermKind::Exists { .. }) | Some(TermKind::Forall { .. }) => CheckResult::Unknown(
+                "Skolemization target is a quantifier but freshness is unchecked".to_string(),
+            ),
+            _ => {
+                CheckResult::Invalid("Skolemization target is not a quantified formula".to_string())
+            }
+        }
     }
 
     /// Check if proof derives empty clause
-    pub fn check_proof(&mut self) -> CheckResult {
+    pub fn check_proof(&mut self, manager: &mut TermManager) -> CheckResult {
         // Find contradiction step
         for (&id, step) in &self.steps.clone() {
             if matches!(step.kind, ProofStepKind::Contradiction) {
-                return self.validate_step(id);
+                return self.validate_step(id, manager);
             }
         }
 
@@ -362,6 +614,17 @@ impl Default for ProofChecker {
 mod tests {
     use super::*;
 
+    /// Three distinct uninterpreted integer constants a, b, c for equality
+    /// reasoning, returned alongside the manager that owns them.
+    fn abc() -> (TermManager, TermId, TermId, TermId) {
+        let mut m = TermManager::new();
+        let int = m.sorts.int_sort;
+        let a = m.mk_var("a", int);
+        let b = m.mk_var("b", int);
+        let c = m.mk_var("c", int);
+        (m, a, b, c)
+    }
+
     #[test]
     fn test_proof_step_creation() {
         let t1 = TermId::from(1u32);
@@ -400,47 +663,52 @@ mod tests {
 
     #[test]
     fn test_add_and_validate_axiom() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let t1 = TermId::from(1u32);
 
         let step = ProofStep::new(0, ProofStepKind::Axiom, vec![Literal::pos(t1)]);
         checker.add_step(step);
 
-        let result = checker.validate_step(0);
+        let result = checker.validate_step(0, &mut m);
         assert!(result.is_valid());
         assert_eq!(checker.num_validated(), 1);
     }
 
     #[test]
     fn test_validate_unknown_step() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
-        let result = checker.validate_step(999);
+        let result = checker.validate_step(999, &mut m);
         assert!(result.is_invalid());
     }
 
     #[test]
     fn test_contradiction_step() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let step = ProofStep::new(0, ProofStepKind::Contradiction, vec![]);
         checker.add_step(step);
 
-        let result = checker.validate_step(0);
+        let result = checker.validate_step(0, &mut m);
         assert!(result.is_valid());
     }
 
     #[test]
     fn test_invalid_contradiction() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let t1 = TermId::from(1u32);
         let step = ProofStep::new(0, ProofStepKind::Contradiction, vec![Literal::pos(t1)]);
         checker.add_step(step);
 
-        let result = checker.validate_step(0);
+        let result = checker.validate_step(0, &mut m);
         assert!(result.is_invalid());
     }
 
     #[test]
     fn test_resolution() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let t1 = TermId::from(1u32);
         let t2 = TermId::from(2u32);
@@ -476,12 +744,13 @@ mod tests {
         checker.add_step(step2);
         checker.add_step(step3);
 
-        let result = checker.validate_step(2);
+        let result = checker.validate_step(2, &mut m);
         assert!(result.is_valid());
     }
 
     #[test]
     fn test_check_proof() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let t1 = TermId::from(1u32);
 
@@ -491,30 +760,32 @@ mod tests {
         checker.add_step(step1);
         checker.add_step(step2);
 
-        let result = checker.check_proof();
+        let result = checker.check_proof(&mut m);
         assert!(result.is_valid());
     }
 
     #[test]
     fn test_no_contradiction() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let t1 = TermId::from(1u32);
 
         let step = ProofStep::new(0, ProofStepKind::Axiom, vec![Literal::pos(t1)]);
         checker.add_step(step);
 
-        let result = checker.check_proof();
+        let result = checker.check_proof(&mut m);
         assert!(!result.is_valid());
     }
 
     #[test]
     fn test_reset() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::new();
         let t1 = TermId::from(1u32);
 
         let step = ProofStep::new(0, ProofStepKind::Axiom, vec![Literal::pos(t1)]);
         checker.add_step(step);
-        let _ = checker.validate_step(0);
+        let _ = checker.validate_step(0, &mut m);
 
         assert_eq!(checker.num_steps(), 1);
         assert_eq!(checker.num_validated(), 1);
@@ -526,6 +797,7 @@ mod tests {
 
     #[test]
     fn test_theory_lemma() {
+        let mut m = TermManager::new();
         let mut checker = ProofChecker::quick();
         let t1 = TermId::from(1u32);
 
@@ -536,7 +808,277 @@ mod tests {
         );
         checker.add_step(step);
 
-        let result = checker.validate_step(0);
+        let result = checker.validate_step(0, &mut m);
         assert!(result.is_valid());
+    }
+
+    // -----------------------------------------------------------------------
+    // Real per-rule verification (equality congruence-closure rules).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_symmetry_valid_and_rejects_bogus_conclusion() {
+        let (mut m, a, b, c) = abc();
+        let eq_ab = m.mk_eq(a, b);
+        let eq_ac = m.mk_eq(a, c);
+
+        // Premise a=b (step 0), symmetric conclusion b=a === a=b (step 1).
+        let mut checker = ProofChecker::new();
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_ab)],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Symmetry(a, b),
+            vec![Literal::pos(eq_ab)],
+            vec![0],
+        ));
+        assert!(checker.validate_step(1, &mut m).is_valid());
+
+        // A symmetry step whose conclusion equates the wrong terms is rejected.
+        let mut bad = ProofChecker::new();
+        bad.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_ab)],
+        ));
+        bad.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Symmetry(a, b),
+            vec![Literal::pos(eq_ac)],
+            vec![0],
+        ));
+        assert!(bad.validate_step(1, &mut m).is_invalid());
+    }
+
+    #[test]
+    fn test_transitivity_chain_valid_and_rejects_broken_chain() {
+        let (mut m, a, b, c) = abc();
+        let eq_ab = m.mk_eq(a, b);
+        let eq_bc = m.mk_eq(b, c);
+        let eq_ac = m.mk_eq(a, c);
+
+        let mut checker = ProofChecker::new();
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_ab)],
+        ));
+        checker.add_step(ProofStep::new(
+            1,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_bc)],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            2,
+            ProofStepKind::Transitivity(a, b, c),
+            vec![Literal::pos(eq_ac)],
+            vec![0, 1],
+        ));
+        assert!(checker.validate_step(2, &mut m).is_valid());
+
+        // Conclusion a=c but premises only give a=b (b=c missing) -> invalid.
+        let mut broken = ProofChecker::new();
+        broken.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_ab)],
+        ));
+        broken.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Transitivity(a, b, c),
+            vec![Literal::pos(eq_ac)],
+            vec![0],
+        ));
+        assert!(broken.validate_step(1, &mut m).is_invalid());
+
+        // Conclusion does not equate the endpoints a and c -> invalid.
+        let mut wrong = ProofChecker::new();
+        wrong.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_ab)],
+        ));
+        wrong.add_step(ProofStep::new(
+            1,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_bc)],
+        ));
+        wrong.add_step(ProofStep::with_antecedents(
+            2,
+            ProofStepKind::Transitivity(a, b, c),
+            vec![Literal::pos(eq_ab)],
+            vec![0, 1],
+        ));
+        assert!(wrong.validate_step(2, &mut m).is_invalid());
+    }
+
+    #[test]
+    fn test_congruence_valid_and_rejects_missing_premise() {
+        let mut m = TermManager::new();
+        let int = m.sorts.int_sort;
+        let a1 = m.mk_var("a1", int);
+        let a2 = m.mk_var("a2", int);
+        let fa1 = m.mk_apply("f", [a1], int);
+        let fa2 = m.mk_apply("f", [a2], int);
+        let eq_args = m.mk_eq(a1, a2);
+        let eq_apps = m.mk_eq(fa1, fa2);
+
+        // With premise a1=a2, congruence f(a1)=f(a2) is valid.
+        let mut checker = ProofChecker::new();
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_args)],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Congruence {
+                function: fa1,
+                args1: vec![a1],
+                args2: vec![a2],
+            },
+            vec![Literal::pos(eq_apps)],
+            vec![0],
+        ));
+        assert!(checker.validate_step(1, &mut m).is_valid());
+
+        // Without the premise, the differing argument is unjustified -> Unknown.
+        let mut checker2 = ProofChecker::new();
+        checker2.add_step(ProofStep::new(
+            5,
+            ProofStepKind::Congruence {
+                function: fa1,
+                args1: vec![a1],
+                args2: vec![a2],
+            },
+            vec![Literal::pos(eq_apps)],
+        ));
+        let r = checker2.validate_step(5, &mut m);
+        assert!(
+            !r.is_valid() && !r.is_invalid(),
+            "expected Unknown, got {r:?}"
+        );
+
+        // A congruence whose conclusion is not f(_)=f(_) is invalid.
+        let mut checker3 = ProofChecker::new();
+        checker3.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(eq_args)],
+        ));
+        checker3.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Congruence {
+                function: fa1,
+                args1: vec![a1],
+                args2: vec![a2],
+            },
+            vec![Literal::pos(eq_args)],
+            vec![0],
+        ));
+        assert!(checker3.validate_step(1, &mut m).is_invalid());
+    }
+
+    #[test]
+    fn test_unit_propagation_structural_checks() {
+        let mut m = TermManager::new();
+        let t1 = TermId::from(1u32);
+        let t2 = TermId::from(2u32);
+
+        // antecedent (t1 OR t2); propagate t1 -> well-formed but Unknown.
+        let mut checker = ProofChecker::new();
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1), Literal::pos(t2)],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::UnitPropagation {
+                unit: Literal::pos(t1),
+                antecedent: 0,
+            },
+            vec![Literal::pos(t1)],
+            vec![0],
+        ));
+        let r = checker.validate_step(1, &mut m);
+        assert!(
+            !r.is_valid() && !r.is_invalid(),
+            "expected Unknown, got {r:?}"
+        );
+
+        // Propagated unit absent from the antecedent -> invalid.
+        let mut bad = ProofChecker::new();
+        bad.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t2)],
+        ));
+        bad.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::UnitPropagation {
+                unit: Literal::pos(t1),
+                antecedent: 0,
+            },
+            vec![Literal::pos(t1)],
+            vec![0],
+        ));
+        assert!(bad.validate_step(1, &mut m).is_invalid());
+    }
+
+    #[test]
+    fn test_instantiation_and_skolemization_targets() {
+        let mut m = TermManager::new();
+        let int = m.sorts.int_sort;
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", int);
+        // body: p(x)
+        let body = m.mk_apply("p", [x], bool_sort);
+        let quant = m.mk_forall([("x", int)], body);
+        let t = m.mk_var("t", int);
+        // instance = body[x := t] = p(t).
+        let instance = {
+            let mut map: FxHashMap<TermId, TermId> = FxHashMap::default();
+            map.insert(x, t);
+            m.substitute(body, &map)
+        };
+
+        let mut checker = ProofChecker::new();
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Instantiation {
+                quantifier: quant,
+                substitution: vec![(x, t)],
+            },
+            vec![Literal::pos(instance)],
+        ));
+        assert!(checker.validate_step(0, &mut m).is_valid());
+
+        // Instantiation of a non-quantifier target is invalid.
+        let mut bad = ProofChecker::new();
+        bad.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Instantiation {
+                quantifier: x,
+                substitution: vec![(x, t)],
+            },
+            vec![Literal::pos(instance)],
+        ));
+        assert!(bad.validate_step(0, &mut m).is_invalid());
+
+        // Skolemization of a non-quantifier target is invalid.
+        let mut sk = ProofChecker::new();
+        sk.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Skolemization {
+                original: x,
+                skolemized: t,
+            },
+            vec![Literal::pos(t)],
+        ));
+        assert!(sk.validate_step(0, &mut m).is_invalid());
     }
 }

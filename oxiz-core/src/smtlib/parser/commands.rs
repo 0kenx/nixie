@@ -1,7 +1,7 @@
 //! SMT-LIB2 command parsing
 
 use super::super::lexer::TokenKind;
-use super::{Command, Parser};
+use super::{AttributeValue, Command, Parser};
 use crate::ast::{RoundingMode, TermId};
 use crate::error::{OxizError, Result};
 #[allow(unused_imports)]
@@ -241,6 +241,25 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Return the `:named` annotation attached to `term`, if any.
+    ///
+    /// Looks the term up in `self.annotations` (populated by the `(! ... )`
+    /// annotation form) and extracts the string value of a `:named` attribute.
+    /// Used by the `assert` command to promote `(assert (! phi :named foo))`
+    /// into a name-carrying [`Command::AssertNamed`].
+    fn named_annotation(&self, term: TermId) -> Option<String> {
+        self.annotations.get(&term).and_then(|attrs| {
+            attrs.iter().find(|a| a.key == "named").and_then(|a| {
+                match &a.value {
+                    Some(AttributeValue::Symbol(s)) => Some(s.clone()),
+                    // A `:named` with any other value shape (or none) is
+                    // malformed; treat it as unnamed rather than guessing.
+                    _ => None,
+                }
+            })
+        })
+    }
+
     /// Parse a single SMT-LIB2 top-level command.
     /// Returns `None` on EOF.
     pub fn parse_command(&mut self) -> Result<Option<Command>> {
@@ -340,7 +359,19 @@ impl<'a> Parser<'a> {
             "assert" => {
                 let term = self.parse_term()?;
                 self.expect_rparen()?;
-                Command::Assert(term)
+                // Thread a top-level `:named` annotation into the command so
+                // the solver can register the assertion by name (required for
+                // `(get-unsat-core)`).  When the asserted expression is
+                // `(! phi :named foo)`, `parse_term` returns `phi` and records
+                // the attributes against it in `self.annotations`, so the
+                // returned term id is exactly the key to look up.  A `:named`
+                // buried on a *sub*-expression (e.g. `(=> (! a :named x) b)`)
+                // is correctly ignored here: its annotation key is the inner
+                // term, not the returned top-level term.
+                match self.named_annotation(term) {
+                    Some(name) => Command::AssertNamed(term, name),
+                    None => Command::Assert(term),
+                }
             }
             "check-sat" => {
                 self.expect_rparen()?;
@@ -418,6 +449,37 @@ impl<'a> Parser<'a> {
                 }
                 self.expect_rparen()?;
                 Command::CheckSatAssuming(assumptions)
+            }
+            "get-consequences" => {
+                // (get-consequences (assumptions...) (variables...))
+                // Two parenthesized term-lists, parsed exactly like the inner
+                // list of `check-sat-assuming`.  Undeclared symbols are already
+                // rejected by `parse_term` in script mode, so no extra symbol
+                // validation is needed here.
+                self.expect_lparen()?;
+                let mut assumptions = Vec::new();
+                loop {
+                    if let Some(t) = self.lexer.peek()
+                        && matches!(t.kind, TokenKind::RParen)
+                    {
+                        self.lexer.next_token();
+                        break;
+                    }
+                    assumptions.push(self.parse_term()?);
+                }
+                self.expect_lparen()?;
+                let mut variables = Vec::new();
+                loop {
+                    if let Some(t) = self.lexer.peek()
+                        && matches!(t.kind, TokenKind::RParen)
+                    {
+                        self.lexer.next_token();
+                        break;
+                    }
+                    variables.push(self.parse_term()?);
+                }
+                self.expect_rparen()?;
+                Command::GetConsequences(assumptions, variables)
             }
             "simplify" => {
                 let term = self.parse_term()?;

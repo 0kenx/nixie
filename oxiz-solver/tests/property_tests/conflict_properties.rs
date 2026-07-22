@@ -28,8 +28,11 @@ mod conflict_detection_properties {
             solver.assert(tm.mk_eq(x, zero), &mut tm);
             solver.assert(tm.mk_eq(x, one), &mut tm);
 
+            // x=0 ∧ x=1 is a decidable QF_LIA contradiction at level 0 (no
+            // push/pop before this check), so Unknown would be a wrong
+            // answer, not an honest one -- the solver must decide it.
             let result = solver.check(&mut tm);
-            prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+            prop_assert_eq!(result, SolverResult::Unsat);
         }
 
         #[test]
@@ -46,8 +49,10 @@ mod conflict_detection_properties {
                 solver.assert(tm.mk_ge(x, ta), &mut tm);
                 solver.assert(tm.mk_le(x, tb), &mut tm);
 
+                // Decidable QF_LIA contradiction at level 0 -- must be
+                // Unsat, not Unknown.
                 let result = solver.check(&mut tm);
-                prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+                prop_assert_eq!(result, SolverResult::Unsat);
             }
         }
 
@@ -92,6 +97,11 @@ mod conflict_detection_properties {
             let not_eq4 = tm.mk_not(eq4);
             solver.assert(not_eq4, &mut tm);
 
+            // This final check happens after a pop, and the solver's
+            // incremental LIA layer (simplex push/pop in oxiz-theories) is
+            // sound but not guaranteed complete across a scope pop. The
+            // ideal answer is Unsat; Unknown is an accepted honest
+            // fallback, but a spurious Sat is not.
             let result = solver.check(&mut tm);
             prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
         }
@@ -132,8 +142,12 @@ mod conflict_clause_properties {
                 solver.assert(tm.mk_not(eq_b), &mut tm);
                 solver.assert(tm.mk_not(eq_c), &mut tm);
 
+                // No pop happens before this check, so the scope-pop
+                // incremental-completeness caveat does not apply here:
+                // (x=a ∨ x=b ∨ x=c) ∧ x≠a ∧ x≠b ∧ x≠c is a decidable QF_LIA
+                // contradiction -- must be Unsat.
                 let result = solver.check(&mut tm);
-                prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+                prop_assert_eq!(result, SolverResult::Unsat);
             }
         }
 
@@ -218,8 +232,11 @@ mod uip_properties {
             let and_p_not_r = tm.mk_and(vec![p, not_r]);
             solver.assert(and_p_not_r, &mut tm);
 
+            // Pure Boolean implication chain (p→q, q→r, p, ¬r) at level 0 --
+            // decidable propositional logic with no arithmetic theory
+            // involved, so Unknown would be a wrong answer.
             let result = solver.check(&mut tm);
-            prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+            prop_assert_eq!(result, SolverResult::Unsat);
         }
     }
 }
@@ -247,8 +264,10 @@ mod clause_minimization_properties {
             let neq_yc = tm.mk_not(eq_yc);
             solver.assert(neq_yc, &mut tm);
 
+            // x=y ∧ x=c ∧ y≠c is a decidable QF_LIA/EUF contradiction at
+            // level 0 -- must be Unsat, not Unknown.
             let result = solver.check(&mut tm);
-            prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+            prop_assert_eq!(result, SolverResult::Unsat);
         }
 
         #[test]
@@ -267,8 +286,10 @@ mod clause_minimization_properties {
                 solver.assert(tm.mk_eq(x, ta), &mut tm);
                 solver.assert(tm.mk_eq(x, tb), &mut tm);
 
+                // x=a ∧ x=b with a≠b is a decidable QF_LIA contradiction at
+                // level 0 -- must be Unsat, not Unknown.
                 let result = solver.check(&mut tm);
-                prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
+                prop_assert_eq!(result, SolverResult::Unsat);
             }
         }
     }
@@ -335,6 +356,10 @@ mod lemma_quality_properties {
             let neq_xc2 = tm.mk_not(eq_xc4);
             solver.assert(neq_xc2, &mut tm);
 
+            // This final check happens after a pop, so the incremental LIA
+            // layer's push/pop completeness caveat applies (see
+            // `learns_from_conflict` above): the ideal answer is Unsat, and
+            // an honest Unknown is tolerated, but a spurious Sat is not.
             let result = solver.check(&mut tm);
             prop_assert!(matches!(result, SolverResult::Unsat | SolverResult::Unknown));
         }

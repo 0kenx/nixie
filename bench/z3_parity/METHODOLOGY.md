@@ -114,6 +114,81 @@ For **v0.1.3 release**, the following accuracy is required:
 ❌ **Quantifiers** - Limited to quantifier-free logics
 ❌ **Performance limits** - All benchmarks finish in < 60s
 
+## Differential Testing
+
+In addition to the curated `.smt2` corpus above, this crate ships a
+**generator-based differential-testing harness** that produces small,
+random, well-typed SMT-LIB2 scripts and checks that OxiZ's sat/unsat
+verdict agrees with Z3's. Unlike the curated corpus, this harness is not
+limited to a fixed, hand-written set of benchmarks: every run explores a
+fresh (but fully reproducible) slice of each logic's formula space.
+
+### Components
+
+- **Generator** (`src/generator.rs`): a dependency-free, seeded PRNG
+  (SplitMix64) drives recursive term/formula builders for `QF_LIA`,
+  `QF_LRA`, `QF_BV`, and `QF_UF`. `generate_script(logic, seed)` is a pure
+  function of its two arguments — no wall-clock time or OS entropy is ever
+  consulted, so any failing case is trivially reproducible from its
+  `(logic, seed)` pair alone. Arithmetic terms are kept linear (constant
+  \* subterm only, never variable \* variable) so `QF_LIA`/`QF_LRA` scripts
+  never drift into `QF_NIA`/`QF_NRA`.
+- **Runner** (`src/difftest.rs`): `run_case`/`run_cases` generate a script,
+  write it to a scratch file, execute it through both `oxiz_runner::run_oxiz`
+  (library call, in-process with a timeout) and `z3_runner::run_z3` (the
+  `z3` binary discovered on `PATH`), and reuse `comparator::compare_results`
+  — the same comparison logic the curated benchmark suite uses — to
+  classify the outcome. `Unknown` on either side is `Inconclusive` (skipped,
+  no parity claim), a definite `Sat`/`Unsat` disagreement is `Wrong` (a real
+  bug), and `summarize()` buckets a batch of outcomes accordingly.
+- **Repro capture**: any `Wrong` outcome has its exact reproducing script
+  written under `std::env::temp_dir()/oxiz_difftest_repro/<logic>_<seed>_<ts>.smt2`
+  via `difftest::save_repro`, and the path is included in the panic
+  message.
+
+### Running it
+
+Two `cargo test` entry points under `tests/`:
+
+1. **Always-on smoke test** (`tests/difftest_smoke.rs`) — a fixed seed,
+   ~25 generated cases per logic (100 total). Runs as part of a plain
+   `cargo test` in this crate with **no extra flags**. Like the existing
+   `z3_runner` tests, it self-skips (prints a message, does not fail) when
+   no `z3` binary is found on `PATH`, so CI without Z3 is never affected.
+   Whenever Z3 *is* present, this is a real regression check: an OxiZ
+   change that flips a sat/unsat verdict on any of the 100 fixed cases
+   fails the test.
+2. **Full sweep, opt-in** (`tests/difftest_full.rs`) — gated behind an
+   environment variable so it never runs by accident:
+
+   ```bash
+   OXIZ_DIFFTEST=1 cargo test --test difftest_full -- --nocapture
+   ```
+
+   Tunable via:
+   - `OXIZ_DIFFTEST_CASES` (default `200`) — cases generated per logic.
+   - `OXIZ_DIFFTEST_SEED` (default `42`) — base PRNG seed (each logic
+     derives its own seed from this so the four sweeps don't replay
+     correlated streams).
+
+   Also self-skips when no `z3` binary is present, or when
+   `OXIZ_DIFFTEST` is unset/not `1`.
+
+### Scope and honesty notes
+
+- This harness targets **sat/unsat verdict parity only** (same contract as
+  the curated benchmark suite above) — it does not validate model values or
+  proofs.
+- A `Wrong` verdict is the only thing that fails a differential test;
+  `Unknown`/`Timeout`/solver `Error` on either side is reported but treated
+  as inconclusive, never as a pass *or* a hard failure, so the harness can
+  never be gamed by a solver that just gives up.
+- There is intentionally no new CI workflow wired to this harness (Z3 is an
+  external binary dependency this project does not control, and the
+  project's CI-workflow policy restricts which `.github/workflows/*.yml`
+  files may be added). Run it manually, or in any environment that happens
+  to already have `z3` on `PATH`.
+
 ## Adding New Benchmarks
 
 To add a new benchmark:

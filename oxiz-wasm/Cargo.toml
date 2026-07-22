@@ -8,6 +8,9 @@ repository.workspace = true
 description = "WebAssembly bindings for OxiZ SMT Solver"
 keywords = ["smt", "wasm", "webassembly"]
 categories = ["wasm"]
+# Distributed via npm (see oxiz-wasm/publish.sh), not crates.io. Keep out of
+# any workspace-wide `cargo publish` sweep; npm publishing is unaffected.
+publish = false
 
 [package.metadata.wasm-pack]
 namespace = "cooljapan"
@@ -46,7 +49,19 @@ js-sys = { workspace = true }
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
-web-sys = { version = "0.3", features = ["console", "Window", "Performance", "Response"] }
+web-sys = { version = "0.3", features = [
+  "console",
+  "Window",
+  "Performance",
+  "Response",
+  # Web Worker hard-preemption support (see js_api::preemptible_worker)
+  "Worker",
+  "Blob",
+  "BlobPropertyBag",
+  "Url",
+  "MessageEvent",
+  "ErrorEvent",
+] }
 oxiarc-deflate = { workspace = true }
 oxiarc-brotli = { workspace = true }
 

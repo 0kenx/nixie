@@ -41,18 +41,6 @@ struct TrailAtom {
     level: u32,
 }
 
-/// Theory decision hint
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-pub struct TheoryDecision {
-    /// The variable to branch on
-    pub var: Var,
-    /// Suggested value (true = positive, false = negative)
-    pub value: bool,
-    /// Priority (higher = more important)
-    pub priority: i32,
-}
-
 /// Theory manager that bridges the SAT solver with theory solvers
 pub(crate) struct TheoryManager<'a> {
     /// Reference to the term manager
@@ -81,9 +69,6 @@ pub(crate) struct TheoryManager<'a> {
     theory_mode: TheoryMode,
     /// Pending assignments for lazy theory checking
     pending_assignments: Vec<(Lit, bool)>,
-    /// Theory decision hints for branching
-    #[allow(dead_code)]
-    decision_hints: Vec<TheoryDecision>,
     /// Pending equality notifications for Nelson-Oppen
     pending_equalities: Vec<EqualityNotification>,
     /// Processed equalities (to avoid duplicates)
@@ -210,7 +195,6 @@ impl<'a> TheoryManager<'a> {
             processed_count: 0,
             theory_mode,
             pending_assignments: Vec::new(),
-            decision_hints: Vec::new(),
             pending_equalities: Vec::new(),
             processed_equalities: FxHashMap::default(),
             statistics,
@@ -484,26 +468,6 @@ impl<'a> TheoryManager<'a> {
     fn add_shared_equality(&mut self, lhs: TermId, rhs: TermId, reason: Option<TermId>) {
         self.pending_equalities
             .push(EqualityNotification { lhs, rhs, reason });
-    }
-
-    /// Get theory decision hints for branching
-    /// Returns suggested variables to branch on, ordered by priority
-    #[allow(dead_code)]
-    fn get_decision_hints(&mut self) -> &[TheoryDecision] {
-        // Clear old hints
-        self.decision_hints.clear();
-
-        // Collect hints from theory solvers
-        // For now, we can suggest branching on variables that appear in
-        // unsatisfied constraints or pending equalities
-
-        // EUF hints: suggest branching on disequalities that might conflict
-        // Arithmetic hints: suggest branching on bounds that are close to being violated
-
-        // This is a placeholder - full implementation would query theory solvers
-        // for their preferred branching decisions
-
-        &self.decision_hints
     }
 
     /// Sentinel function ID used for array `select(array, index)` in EUF.

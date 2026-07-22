@@ -1,5 +1,12 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), not part of the public API. WIRED: the
+// solver classifies the problem once during preprocessing
+// (`solver::inprocess::classify_problem`) and uses the classification for
+// strategy selection (`inprocessing_beneficial`). Note: the classification is
+// deliberately NOT used to reorder arithmetic variables — this solver assigns
+// arithmetic variables without per-variable backtracking, so the variable order
+// is completeness-critical and a naive reorder can make SAT instances
+// unsolvable. The connectivity/independent-group helpers remain unused.
 //! Problem structure analyzer for NLSAT.
 //!
 //! This module analyzes the structure of polynomial constraint problems to

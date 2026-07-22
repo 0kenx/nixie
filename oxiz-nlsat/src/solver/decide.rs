@@ -11,7 +11,7 @@ use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 use oxiz_math::interval::Interval;
 use oxiz_math::polynomial::{Polynomial, Var};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Outcome of trying to pick a value for an arithmetic variable.
 ///
@@ -168,8 +168,193 @@ impl NlsatSolver {
             return ArithDecision::IrrationalOnly;
         }
 
-        // Emptiness is conditional on earlier greedy variable choices.
+        // Emptiness is conditional on earlier greedy variable choices (the
+        // constraints on `var` couple it with already-assigned variables), so
+        // it cannot be certified as a variable-local Sturm lemma. Before giving
+        // up, attempt a sound *sign-abstraction* certification of GLOBAL
+        // infeasibility over the coupled atoms (see `certify_sign_conflict`):
+        // when it succeeds the negated-atom clause it returns is a genuine
+        // theory lemma we can learn and back-jump over, recovering completeness
+        // on multivariate coupled conflicts instead of reporting Unknown.
+        if let Some(lemma) = self.certify_sign_conflict() {
+            return ArithDecision::ProvedEmpty(lemma);
+        }
+
         ArithDecision::GreedyEmpty
+    }
+
+    /// Attempt to certify that the currently-assigned polynomial atoms are
+    /// jointly infeasible over the reals using a sound *sign abstraction*, and
+    /// if so return a valid theory lemma (the disjunction of the negations of
+    /// the participating atoms' current literals).
+    ///
+    /// This is the sound, model-based single-cell explanation recommended by
+    /// the architecture audit for multivariate coupled conflicts: rather than
+    /// the (unsound) "negate every atom sharing a variable" assembly retained
+    /// in `explain.rs`, we abstract each assigned single-factor `monomial +
+    /// constant` atom into a constraint on the *sign* of its variables, then
+    /// run a monotone fixpoint that propagates forced signs across the coupling
+    /// (product) atoms. If some variable is forced to have no consistent sign,
+    /// the conjunction of the contributing atoms is genuinely unsatisfiable
+    /// over R, so the clause negating their current literals is a valid lemma.
+    ///
+    /// Every step is a sound entailment (interval/sign reasoning is an
+    /// over-approximation: a derived contradiction is a real one), so this
+    /// never fabricates an UNSAT. When no contradiction can be derived it
+    /// returns `None` (honest: the caller keeps searching or reports Unknown).
+    ///
+    /// It deliberately handles only the `single non-constant monomial +
+    /// constant` atom shape with odd-power variable coupling (which covers the
+    /// classic `x>1 ∧ x·y>1 ∧ y<0`-style conflicts); richer couplings that this
+    /// abstraction cannot certify fall through to `None`.
+    pub(super) fn certify_sign_conflict(&self) -> Option<Vec<Literal>> {
+        // Abstracted view of one currently-assigned atom.
+        struct SignAtom {
+            /// The atom's current literal (negated into the lemma).
+            lit: Literal,
+            /// Sign of the (single) monomial's coefficient (never zero).
+            coeff_sign: i8,
+            /// Variable powers of the monomial.
+            vars: Vec<(Var, u32)>,
+            /// The set of signs the monomial value is constrained to.
+            target: u8,
+        }
+
+        let mut sign_atoms: Vec<SignAtom> = Vec::new();
+        for atom in &self.atoms {
+            let Atom::Ineq(ineq) = atom else {
+                continue;
+            };
+            if ineq.factors.len() != 1 {
+                continue;
+            }
+            let val = self.assignment.bool_value(ineq.bool_var);
+            if val.is_undef() {
+                continue;
+            }
+            let is_true = val.is_true();
+            let Some((coeff, vars, constant)) = parse_monomial_plus_const(&ineq.factors[0].poly)
+            else {
+                continue;
+            };
+            if vars.is_empty() {
+                continue; // a bare constant constrains no variable's sign
+            }
+            // Atom is `monomial + constant OP 0`, i.e. `monomial OP -constant`.
+            let threshold = -constant;
+            let target = monomial_target_signset(ineq.kind, is_true, &threshold);
+            if target == SIGN_FULL {
+                continue; // no usable sign information
+            }
+            let lit = if is_true {
+                Literal::positive(ineq.bool_var)
+            } else {
+                Literal::negative(ineq.bool_var)
+            };
+            sign_atoms.push(SignAtom {
+                lit,
+                coeff_sign: rational_sign(&coeff),
+                vars,
+                target,
+            });
+        }
+
+        if sign_atoms.len() < 2 {
+            return None;
+        }
+
+        // Monotone fixpoint: each variable's sign-set starts full and only ever
+        // shrinks (intersection), so this terminates.
+        let mut signs: FxHashMap<Var, u8> = FxHashMap::default();
+        let mut blame: FxHashMap<Var, FxHashSet<usize>> = FxHashMap::default();
+        for sa in &sign_atoms {
+            for (v, _) in &sa.vars {
+                signs.entry(*v).or_insert(SIGN_FULL);
+            }
+        }
+
+        let max_iter = (signs.len() + 1) * (sign_atoms.len() + 1) * 3 + 8;
+        let mut changed = true;
+        let mut guard = 0usize;
+        while changed && guard < max_iter {
+            changed = false;
+            guard += 1;
+
+            for (ai, sa) in sign_atoms.iter().enumerate() {
+                // The monomial value's sign is forced strictly only when the
+                // target is a nonzero singleton.
+                let forced_m = match sa.target {
+                    SIGN_POS => 1i8,
+                    SIGN_NEG => -1i8,
+                    _ => continue,
+                };
+
+                for &(v, p) in &sa.vars {
+                    // Only odd powers transmit a sign to the variable.
+                    if p.is_multiple_of(2) {
+                        continue;
+                    }
+
+                    // Sign of the cofactor = coeff · ∏_{other vars} sign^power.
+                    // Requires every other variable to have a strict singleton
+                    // sign (an even power of a strict-signed var is positive).
+                    let mut cof = sa.coeff_sign;
+                    let mut provenance: FxHashSet<usize> = FxHashSet::default();
+                    provenance.insert(ai);
+                    let mut resolvable = true;
+                    for &(u, up) in &sa.vars {
+                        if u == v {
+                            continue;
+                        }
+                        let us = *signs.get(&u).unwrap_or(&SIGN_FULL);
+                        let usign = match signset_pow(us, up) {
+                            SIGN_POS => 1i8,
+                            SIGN_NEG => -1i8,
+                            _ => {
+                                resolvable = false;
+                                break;
+                            }
+                        };
+                        cof *= usign;
+                        if let Some(b) = blame.get(&u) {
+                            provenance.extend(b.iter().copied());
+                        }
+                    }
+                    if !resolvable {
+                        continue;
+                    }
+
+                    // forced_m = cof · sign(v)  ⇒  sign(v) = forced_m · cof.
+                    let vbit = sign_to_bit(forced_m * cof);
+                    let cur = signs.entry(v).or_insert(SIGN_FULL);
+                    let refined = *cur & vbit;
+                    if refined == *cur {
+                        continue;
+                    }
+                    *cur = refined;
+                    let bl = blame.entry(v).or_default();
+                    bl.extend(provenance.iter().copied());
+                    changed = true;
+
+                    if refined == 0 {
+                        // `v` has no consistent sign: the contributing atoms are
+                        // jointly unsatisfiable over R.
+                        let mut lemma: Vec<Literal> = Vec::new();
+                        for &idx in bl.iter() {
+                            let neg = sign_atoms[idx].lit.negate();
+                            if !lemma.contains(&neg) {
+                                lemma.push(neg);
+                            }
+                        }
+                        if lemma.len() >= 2 {
+                            return Some(lemma);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Accumulate feasible-region information for `var` across every assigned
@@ -938,6 +1123,143 @@ fn rational_sign(value: &BigRational) -> i8 {
     } else {
         -1
     }
+}
+
+// ─── Sign-abstraction lattice for coupled-conflict certification ─────────────
+//
+// A sign-set is a subset of {negative, zero, positive} encoded as a bitmask.
+// This backs `NlsatSolver::certify_sign_conflict`; every operation is a sound
+// over-approximation, so a derived empty set is a genuine infeasibility.
+
+/// Bit for a strictly negative value.
+const SIGN_NEG: u8 = 1;
+/// Bit for a zero value.
+const SIGN_ZERO: u8 = 2;
+/// Bit for a strictly positive value.
+const SIGN_POS: u8 = 4;
+/// The full lattice top ({-, 0, +}).
+const SIGN_FULL: u8 = SIGN_NEG | SIGN_ZERO | SIGN_POS;
+
+/// Map a concrete sign (`-1`, `0`, `1`) to its singleton bit.
+fn sign_to_bit(s: i8) -> u8 {
+    match s.cmp(&0) {
+        std::cmp::Ordering::Less => SIGN_NEG,
+        std::cmp::Ordering::Equal => SIGN_ZERO,
+        std::cmp::Ordering::Greater => SIGN_POS,
+    }
+}
+
+/// Sign-set of `base^power` given the sign-set of `base`.
+fn signset_pow(base: u8, power: u32) -> u8 {
+    if power == 0 {
+        return SIGN_POS; // x^0 = 1 > 0
+    }
+    if power.is_multiple_of(2) {
+        // Even power: negatives and positives both map to positive; zero to zero.
+        let mut out = 0;
+        if base & (SIGN_NEG | SIGN_POS) != 0 {
+            out |= SIGN_POS;
+        }
+        if base & SIGN_ZERO != 0 {
+            out |= SIGN_ZERO;
+        }
+        out
+    } else {
+        base // odd power preserves sign
+    }
+}
+
+/// Sign-set the monomial value is constrained to by the atom `kind`/polarity,
+/// given the effective threshold `t = -constant` (the atom is `monomial + k OP
+/// 0`, i.e. `monomial OP -k = t`). Returns [`SIGN_FULL`] when no strict sign is
+/// entailed.
+fn monomial_target_signset(kind: AtomKind, is_true: bool, threshold: &BigRational) -> u8 {
+    let ts = rational_sign(threshold);
+    // Effective comparison of the monomial value `m` against `t`.
+    #[derive(Clone, Copy)]
+    enum Rel {
+        Gt,
+        Ge,
+        Lt,
+        Le,
+        Eq,
+        Ne,
+    }
+    let rel = match (kind, is_true) {
+        (AtomKind::Gt, true) => Rel::Gt,
+        (AtomKind::Gt, false) => Rel::Le,
+        (AtomKind::Lt, true) => Rel::Lt,
+        (AtomKind::Lt, false) => Rel::Ge,
+        (AtomKind::Eq, true) => Rel::Eq,
+        (AtomKind::Eq, false) => Rel::Ne,
+        _ => return SIGN_FULL, // root kinds handled elsewhere
+    };
+    match rel {
+        // m > t: if t ≥ 0 then m > 0.
+        Rel::Gt => match ts {
+            0 | 1 => SIGN_POS,
+            _ => SIGN_FULL,
+        },
+        // m ≥ t: t > 0 ⇒ m > 0; t = 0 ⇒ m ≥ 0.
+        Rel::Ge => match ts {
+            1 => SIGN_POS,
+            0 => SIGN_POS | SIGN_ZERO,
+            _ => SIGN_FULL,
+        },
+        // m < t: if t ≤ 0 then m < 0.
+        Rel::Lt => match ts {
+            0 | -1 => SIGN_NEG,
+            _ => SIGN_FULL,
+        },
+        // m ≤ t: t < 0 ⇒ m < 0; t = 0 ⇒ m ≤ 0.
+        Rel::Le => match ts {
+            -1 => SIGN_NEG,
+            0 => SIGN_NEG | SIGN_ZERO,
+            _ => SIGN_FULL,
+        },
+        // m = t: sign(m) = sign(t).
+        Rel::Eq => match ts {
+            1 => SIGN_POS,
+            0 => SIGN_ZERO,
+            _ => SIGN_NEG,
+        },
+        // m ≠ t: only informative when t = 0 (m ≠ 0).
+        Rel::Ne => match ts {
+            0 => SIGN_NEG | SIGN_POS,
+            _ => SIGN_FULL,
+        },
+    }
+}
+
+/// Parsed shape of a `coeff·(single monomial) + constant` polynomial:
+/// `(leading coefficient, variable powers of the monomial, constant term)`.
+type MonomialPlusConst = (BigRational, Vec<(Var, u32)>, BigRational);
+
+/// Parse a polynomial of the shape `coeff·(single non-constant monomial) +
+/// constant` into `(coeff, variable powers, constant)`. Returns `None` for any
+/// polynomial that is not exactly one non-constant monomial plus an optional
+/// constant term.
+fn parse_monomial_plus_const(poly: &Polynomial) -> Option<MonomialPlusConst> {
+    let mut constant = BigRational::zero();
+    let mut monomial: Option<(BigRational, Vec<(Var, u32)>)> = None;
+    for term in poly.terms() {
+        if term.monomial.is_unit() {
+            constant += &term.coeff;
+        } else {
+            if monomial.is_some() {
+                return None; // more than one non-constant monomial
+            }
+            let vars: Vec<(Var, u32)> = term
+                .monomial
+                .vars()
+                .iter()
+                .map(|vp| (vp.var, vp.power))
+                .collect();
+            monomial = Some((term.coeff.clone(), vars));
+        }
+    }
+    let (coeff, vars) = monomial?;
+    Some((coeff, vars, constant))
 }
 
 /// Whether a polynomial of the given `sign` at a point satisfies the atom

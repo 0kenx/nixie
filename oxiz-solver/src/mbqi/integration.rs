@@ -24,6 +24,7 @@ use super::instantiation::InstantiationEngine;
 use super::lazy_instantiation::LazyInstantiator;
 use super::model_completion::CompletedModel;
 use super::model_completion::ModelCompleter;
+use super::sat_certify;
 use super::{Instantiation, MBQIResult, MBQIStats, QuantifiedFormula, QuantifierId};
 
 /// Upper bound on the number of candidate values the counterexample generator
@@ -54,6 +55,16 @@ const FINITE_ENUM_LIMIT: usize = 10;
 /// sizes does not exceed this cap -- otherwise some tuples were never tried and
 /// `Satisfied` (sat) would be unsound.
 const COMBINATION_ENUM_CAP: usize = 100;
+
+/// Upper bound on the number of instantiation tuples the SAT-certification pass
+/// ([`super::sat_certify`]) enumerates per quantifier.
+///
+/// Certification enumerates the *complete* relevant / bounded domain (never a
+/// truncated sample), so this cap bounds work without affecting soundness: a
+/// quantifier whose relevant domain exceeds the cap is simply reported
+/// ineligible and handled by the normal path.  It comfortably covers the target
+/// benchmarks (e.g. two Int variables bounded to `[0, 10]` give 121 tuples).
+const SAT_CERTIFY_CAP: usize = 4096;
 
 /// Callback trait for solver communication
 pub trait SolverCallback: fmt::Debug {
@@ -263,6 +274,89 @@ impl MBQIIntegration {
             callback.on_round_end(self.current_round, &result);
             self.update_final_stats();
             return result;
+        }
+
+        // Sound SAT certification for the (almost-)uninterpreted / bounded
+        // fragment via complete instantiation (Ge & de Moura 2009).
+        //
+        // The certifier returns the *complete* set of relevant/bounded
+        // instantiation lemmas for every eligible quantifier.  We deduplicate
+        // against instances emitted in earlier rounds:
+        //
+        //   * some lemma is fresh  -> add it and re-solve (refine);
+        //   * every lemma is a duplicate (the set is *saturated*) -> the ground
+        //     solver already produced a model of every relevant instance, so by
+        //     the completeness theorem the whole quantified formula is `Sat`.
+        //
+        // The `Sat` conclusion rests on the ground solver's own model over the
+        // real assertions, never on the (possibly incomplete) completed model:
+        // a universal instance is always a sound consequence, so this can turn
+        // an unsatisfiable goal into a detected conflict but never fabricate
+        // `Sat`.  Goals outside the fragment yield `NotEligible` and fall
+        // through to the normal counterexample path (and ultimately `Unknown`).
+        match sat_certify::collect_fragment_instances(
+            &quantifiers,
+            &completed_model,
+            manager,
+            SAT_CERTIFY_CAP,
+            self.current_round as u32,
+        ) {
+            sat_certify::CertifyResult::Instances(insts) => {
+                let mut fresh = Vec::new();
+                for mut inst in insts {
+                    if self.is_duplicate(&inst) {
+                        continue;
+                    }
+                    // Record against the (quantifier, binding) key *before* the
+                    // tautology filter below.  Saturation is detected purely by
+                    // this key (never by the result term), so recording every
+                    // relevant tuple — even those whose body collapses to `true`
+                    // — is what lets a later round observe "nothing fresh" and
+                    // conclude `Satisfied` soundly.
+                    self.record_instantiation(&inst);
+
+                    // Simplify so that the concrete guards of a bounded-box
+                    // instance collapse: e.g.
+                    //   (and (>= 1 0) (<= 1 10) (= (f 1) (f 2))) => (= 1 2)
+                    // reduces to the clean disequality (not (= (f 1) (f 2))).
+                    // Emitting the raw guarded implication instead feeds the
+                    // downstream pigeonhole / integer-domain clause heuristics a
+                    // spurious "bounded integer variable" shape (the substituted
+                    // constants still parse as `(>= c 0) (<= c 10)` conjuncts),
+                    // which over-constrains the ground problem and can flip a
+                    // satisfiable goal to a spurious `unsat`.  This mirrors the
+                    // enumerative path, which simplifies for the same reason.
+                    inst.result = self.deep_simplify(inst.result, manager);
+
+                    // A tautology instance (body ≡ ⊤) constrains nothing.  It is
+                    // already recorded above (so the set can still saturate), so
+                    // just skip emitting it as a lemma.
+                    if manager
+                        .get(inst.result)
+                        .is_some_and(|t| matches!(t.kind, TermKind::True))
+                    {
+                        continue;
+                    }
+
+                    callback.on_instantiation(&inst);
+                    fresh.push(inst);
+                }
+                let result = if fresh.is_empty() {
+                    // Saturated: every relevant instance was either emitted in an
+                    // earlier round or is a tautology, and the ground solver still
+                    // found a model — so by the completeness theorem for this
+                    // fragment the whole quantified formula is `Sat`.
+                    MBQIResult::Satisfied
+                } else {
+                    MBQIResult::NewInstantiations(fresh)
+                };
+                callback.on_round_end(self.current_round, &result);
+                self.update_final_stats();
+                return result;
+            }
+            sat_certify::CertifyResult::NotEligible => {
+                // Not in the certifiable fragment: keep the normal behaviour.
+            }
         }
 
         for quantifier in &quantifiers {

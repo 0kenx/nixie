@@ -147,6 +147,27 @@ impl Default for TreeConfig {
 }
 
 /// Decision tree for classification/regression
+///
+/// # Training model
+///
+/// A decision tree is inherently a *batch* learner: [`DecisionTree::fit`]
+/// rebuilds the whole tree from a full dataset in one shot. It has no true
+/// per-sample incremental update rule (unlike a linear model or a neural
+/// network, which nudge weights along a gradient).
+///
+/// To still support the [`Model::train`]/[`Model::train_batch`] online
+/// interface honestly, this tree keeps an internal **accumulating training
+/// buffer** (`DecisionTree::train_buffer`). Every `train`/`train_batch`
+/// call appends its sample(s) to that buffer and then *refits the entire
+/// tree from the accumulated buffer* (an incremental-refit policy: the model
+/// genuinely reflects every sample seen so far, at O(n) rebuild cost per
+/// call). This is correct but grows more expensive as the buffer grows, so
+/// for a one-shot large dataset prefer calling [`DecisionTree::fit`] directly;
+/// use [`DecisionTree::clear_training_buffer`] to forget accumulated online
+/// samples. The buffer is intentionally **not serialized** — only the fitted
+/// tree structure is (see the `#[serde(skip)]` below) — so a saved/loaded
+/// model reproduces identical predictions without carrying its raw training
+/// history around.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionTree {
     /// Root node of the tree
@@ -157,6 +178,13 @@ pub struct DecisionTree {
     input_dim: usize,
     /// Output dimension (always 1 for decision trees)
     output_dim: usize,
+    /// Accumulating buffer of `(features, target)` samples fed through the
+    /// online [`Model::train`]/[`Model::train_batch`] interface. Refitting
+    /// the tree from this buffer is what makes incremental training real (see
+    /// the type-level docs). Not serialized: a persisted model only needs its
+    /// fitted structure.
+    #[serde(skip, default)]
+    train_buffer: Vec<(Vec<f64>, f64)>,
 }
 
 impl DecisionTree {
@@ -167,6 +195,7 @@ impl DecisionTree {
             config,
             input_dim,
             output_dim: 1,
+            train_buffer: Vec::new(),
         }
     }
 
@@ -401,6 +430,63 @@ impl DecisionTree {
             DecisionNode::Leaf { .. } => 1,
         }
     }
+
+    /// Number of samples currently held in the online training buffer.
+    ///
+    /// These are the samples accumulated through [`Model::train`] /
+    /// [`Model::train_batch`] since the last [`DecisionTree::clear_training_buffer`]
+    /// (or construction). The buffer is what the tree refits from on each
+    /// online update; see the type-level documentation.
+    pub fn training_buffer_len(&self) -> usize {
+        self.train_buffer.len()
+    }
+
+    /// Discard every sample accumulated through the online training interface.
+    ///
+    /// The already-fitted tree is left untouched — this only forgets the raw
+    /// history that future online [`Model::train`] calls would otherwise keep
+    /// refitting from, so it is the way to bound the incremental-refit cost
+    /// once a model has stabilised.
+    pub fn clear_training_buffer(&mut self) {
+        self.train_buffer.clear();
+    }
+
+    /// Refit the tree from the whole accumulated online training buffer and
+    /// return the resulting mean-squared training loss.
+    ///
+    /// This is the shared core of the online [`Model::train`] /
+    /// [`Model::train_batch`] path: every sample seen so far participates, so
+    /// the refitted tree is not clobbered by the most recent sample (the bug
+    /// the previous single-sample `fit` had) but genuinely reflects the full
+    /// history.
+    fn refit_from_buffer(&mut self) -> ModelResult<f64> {
+        if self.train_buffer.is_empty() {
+            return Err(ModelError::EmptyInput);
+        }
+
+        let features: Vec<Vec<f64>> = self.train_buffer.iter().map(|(f, _)| f.clone()).collect();
+        let targets: Vec<f64> = self.train_buffer.iter().map(|(_, t)| *t).collect();
+
+        self.fit(&features, &targets)?;
+        Ok(self.mean_squared_loss(&features, &targets))
+    }
+
+    /// Mean squared error of the current tree over `(features, targets)`.
+    ///
+    /// A real, non-fabricated training metric (the previous `train` always
+    /// returned a hardcoded `0.0`).
+    fn mean_squared_loss(&self, features: &[Vec<f64>], targets: &[f64]) -> f64 {
+        if features.is_empty() {
+            return 0.0;
+        }
+        let mut sum_sq = 0.0;
+        for (feature, &target) in features.iter().zip(targets.iter()) {
+            let predicted = self.predict(feature).first().copied().unwrap_or(0.0);
+            let diff = predicted - target;
+            sum_sq += diff * diff;
+        }
+        sum_sq / features.len() as f64
+    }
 }
 
 /// Tree information
@@ -432,10 +518,54 @@ impl Model for DecisionTree {
     }
 
     fn train(&mut self, input: &[f64], target: &[f64]) -> ModelResult<f64> {
-        // For online learning, we'd need to rebuild the tree or use incremental methods
-        // For now, just return 0 (decision trees are typically trained in batch)
-        self.fit(&[input.to_vec()], target)?;
-        Ok(0.0)
+        // A decision tree has no per-sample incremental update rule, so
+        // "online" training here means: remember this sample and refit the
+        // whole tree from every sample accumulated so far (see the
+        // type-level docs on the incremental-refit policy). This fixes the
+        // previous behaviour, which refit the tree on *only* the current
+        // sample — discarding all prior structure — and always reported a
+        // hardcoded loss of 0.0.
+        if target.is_empty() {
+            return Err(ModelError::EmptyInput);
+        }
+        if input.len() != self.input_dim {
+            return Err(ModelError::DimensionMismatch {
+                expected: self.input_dim,
+                got: input.len(),
+            });
+        }
+        self.train_buffer.push((input.to_vec(), target[0]));
+        self.refit_from_buffer()
+    }
+
+    fn train_batch(&mut self, inputs: &[Vec<f64>], targets: &[Vec<f64>]) -> ModelResult<f64> {
+        // Batch training is the decision tree's native mode: accumulate every
+        // sample and refit the whole tree once, rather than looping the
+        // single-sample `train` (which would pointlessly rebuild the tree
+        // once per sample). The returned loss is the real mean-squared error
+        // over the accumulated buffer.
+        if inputs.len() != targets.len() {
+            return Err(ModelError::DimensionMismatch {
+                expected: inputs.len(),
+                got: targets.len(),
+            });
+        }
+        if inputs.is_empty() {
+            return Err(ModelError::EmptyInput);
+        }
+        for (input, target) in inputs.iter().zip(targets.iter()) {
+            if target.is_empty() {
+                return Err(ModelError::EmptyInput);
+            }
+            if input.len() != self.input_dim {
+                return Err(ModelError::DimensionMismatch {
+                    expected: self.input_dim,
+                    got: input.len(),
+                });
+            }
+            self.train_buffer.push((input.clone(), target[0]));
+        }
+        self.refit_from_buffer()
     }
 
     fn num_parameters(&self) -> usize {
@@ -550,6 +680,99 @@ mod tests {
         let info = tree.info();
         assert!(info.num_nodes > 0);
         assert!(info.num_leaves > 0);
+    }
+
+    /// A decision tree must reach high *training* accuracy on a cleanly
+    /// separable synthetic dataset when driven through the online
+    /// `train_batch` interface — the previous `train` impl refit on only the
+    /// last sample, so it could never learn a multi-sample rule.
+    #[test]
+    fn test_decision_tree_batch_train_reaches_high_accuracy() {
+        let tree_config = TreeConfig {
+            max_depth: 6,
+            min_samples_split: 2,
+            min_samples_leaf: 1,
+            criterion: SplitCriterion::Gini,
+            max_features: 0,
+        };
+        let mut tree = DecisionTree::new(2, tree_config);
+
+        // 20-sample linearly separable set: label 1.0 iff x0 + x1 > 10.
+        let mut inputs: Vec<Vec<f64>> = Vec::new();
+        let mut targets: Vec<Vec<f64>> = Vec::new();
+        for i in 0..20 {
+            let x0 = (i % 5) as f64 * 2.0; // 0,2,4,6,8
+            let x1 = (i / 5) as f64 * 3.0; // 0,3,6,9
+            let label = if x0 + x1 > 10.0 { 1.0 } else { 0.0 };
+            inputs.push(vec![x0, x1]);
+            targets.push(vec![label]);
+        }
+
+        let loss = tree
+            .train_batch(&inputs, &targets)
+            .expect("batch training should succeed");
+        assert!(loss.is_finite(), "loss must be a real number, got {loss}");
+
+        let mut correct = 0usize;
+        for (input, target) in inputs.iter().zip(targets.iter()) {
+            let predicted = tree.predict(input)[0];
+            // Threshold the regression output at 0.5 to recover the class.
+            let predicted_label = if predicted >= 0.5 { 1.0 } else { 0.0 };
+            if (predicted_label - target[0]).abs() < 1e-9 {
+                correct += 1;
+            }
+        }
+        let accuracy = correct as f64 / inputs.len() as f64;
+        assert!(
+            accuracy > 0.9,
+            "expected >90% train accuracy on separable data, got {accuracy}"
+        );
+        assert_eq!(tree.training_buffer_len(), 20);
+    }
+
+    /// Online `train` must *accumulate* samples and refit from all of them,
+    /// not clobber the tree with only the most recent sample.
+    #[test]
+    fn test_decision_tree_online_train_accumulates_samples() {
+        let mut tree = DecisionTree::default_config(1);
+
+        // Two clearly different (x -> y) samples. If `train` kept only the
+        // last one (the old bug), the tree would be a single leaf predicting
+        // the last target for every input.
+        tree.train(&[0.0], &[0.0]).expect("train sample 1");
+        tree.train(&[10.0], &[100.0]).expect("train sample 2");
+        tree.train(&[0.0], &[0.0]).expect("train sample 3");
+        tree.train(&[10.0], &[100.0]).expect("train sample 4");
+
+        assert_eq!(tree.training_buffer_len(), 4);
+
+        // A tree that only remembered the last sample would predict ~100 here.
+        let low = tree.predict(&[0.0])[0];
+        let high = tree.predict(&[10.0])[0];
+        assert!(
+            low < 50.0 && high > 50.0,
+            "tree should separate the two accumulated classes: low={low}, high={high}"
+        );
+
+        tree.clear_training_buffer();
+        assert_eq!(tree.training_buffer_len(), 0);
+    }
+
+    /// The reported training loss must be a genuine metric, not a hardcoded
+    /// `0.0`: a dataset with two contradictory targets for the same input
+    /// cannot be fit exactly, so the loss is strictly positive.
+    #[test]
+    fn test_decision_tree_train_loss_is_real() {
+        let mut tree = DecisionTree::default_config(1);
+        let inputs = vec![vec![1.0], vec![1.0]];
+        let targets = vec![vec![0.0], vec![10.0]];
+        let loss = tree
+            .train_batch(&inputs, &targets)
+            .expect("training should succeed");
+        assert!(
+            loss > 0.0,
+            "contradictory targets must yield a positive loss, got {loss}"
+        );
     }
 
     #[test]

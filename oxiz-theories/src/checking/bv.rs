@@ -34,35 +34,45 @@ impl BvChecker {
         }
     }
 
-    /// Check bitvector conflict validity
+    /// Check bitvector conflict validity.
+    ///
+    /// Certifies the sound theory-independent cases (empty clause is not a
+    /// conflict, a propositional tautology is) from literal identities. A
+    /// genuine bit-vector conflict must be certified by evaluating the
+    /// bit-level semantics of the ground atoms, which needs the term structure
+    /// this checker lacks, so it is reported as `Unknown` rather than `Valid`.
     fn check_bv_conflict(&self, clause: &[Literal]) -> CheckResult {
         if clause.is_empty() {
             return CheckResult::Invalid("Empty conflict clause".to_string());
         }
-
-        // Bitvector conflicts can arise from:
-        // - Bit-blasting contradictions
-        // - Arithmetic overflow/underflow
-        // - Equality/disequality propagation
-
-        // For small bitvectors, we could enumerate all values
-        // For larger ones, we trust the bit-blasting
-
-        CheckResult::Valid
+        if super::clause_has_complementary_pair(clause) {
+            return CheckResult::Valid;
+        }
+        CheckResult::Unknown(
+            "Bit-vector conflict requires bit-level evaluation of the atoms".to_string(),
+        )
     }
 
-    /// Check bitvector propagation
-    fn check_bv_propagation(&self, _literal: Literal, _explanation: &[Literal]) -> CheckResult {
-        // BV propagations include:
-        // - Bit equality: a[i] = b[i] for equal bitvectors
-        // - Sign extension properties
-        // - Arithmetic implications
-        CheckResult::Valid
+    /// Check bitvector propagation.
+    fn check_bv_propagation(&self, literal: Literal, explanation: &[Literal]) -> CheckResult {
+        if super::explanation_entails(literal, explanation) {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Bit-vector propagation not certifiable from literal identities".to_string(),
+            )
+        }
     }
 
-    /// Check model for bitvector consistency
-    fn check_bv_model(&self, _assignments: &[(TermId, bool)]) -> CheckResult {
-        CheckResult::Valid
+    /// Check model for bitvector consistency.
+    fn check_bv_model(&self, assignments: &[(TermId, bool)]) -> CheckResult {
+        if assignments.is_empty() {
+            CheckResult::Valid
+        } else {
+            CheckResult::Unknown(
+                "Bit-vector model consistency requires term evaluation".to_string(),
+            )
+        }
     }
 
     /// Evaluate a bitvector expression
@@ -145,12 +155,16 @@ mod tests {
     }
 
     #[test]
-    fn test_bv_conflict_valid() {
+    fn test_bv_conflict_tautology_valid_but_plain_unknown() {
         let checker = BvChecker::new();
         let t1 = TermId::from(1u32);
-        let clause = vec![Literal::pos(t1)];
-        let result = checker.check_conflict(&clause);
-        assert!(result.is_valid());
+        assert!(
+            checker
+                .check_conflict(&[Literal::pos(t1), Literal::neg(t1)])
+                .is_valid()
+        );
+        let result = checker.check_conflict(&[Literal::pos(t1)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
@@ -159,19 +173,22 @@ mod tests {
         let t1 = TermId::from(1u32);
         let t2 = TermId::from(2u32);
 
-        let literal = Literal::pos(t1);
-        let explanation = vec![Literal::pos(t2)];
-        let result = checker.check_propagation(literal, &explanation);
-        assert!(result.is_valid());
+        assert!(
+            checker
+                .check_propagation(Literal::pos(t1), &[Literal::pos(t1)])
+                .is_valid()
+        );
+        let result = checker.check_propagation(Literal::pos(t1), &[Literal::pos(t2)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]
     fn test_bv_model_check() {
         let checker = BvChecker::new();
         let t1 = TermId::from(1u32);
-        let assignments = vec![(t1, true)];
-        let result = checker.check_model(&assignments);
-        assert!(result.is_valid());
+        assert!(checker.check_model(&[]).is_valid());
+        let result = checker.check_model(&[(t1, true)]);
+        assert!(!result.is_valid() && !result.is_invalid());
     }
 
     #[test]

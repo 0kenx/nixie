@@ -15,7 +15,8 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use core::fmt;
-use oxiz_core::ast::TermId;
+use oxiz_core::ast::traversal::contains_term;
+use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::error::{OxizError, Result};
 
 /// Quantifier type in array context
@@ -282,59 +283,40 @@ impl ArrayQuantifierEliminator {
         None
     }
 
-    /// Solve select equations: select(A, i) = t
+    /// Solve select equations: select(A, i) = t.
     ///
-    /// Replace A with store(B, i, t) where B is fresh
+    /// This index-only (`u32`) layer has no access to the term manager and so
+    /// cannot rewrite `A` into `store(B, i, t)` at the term level. Rather than
+    /// fabricate a placeholder result, it honestly reports "no elimination"
+    /// (`Ok(None)`). The real read-over-write reduction is implemented by
+    /// [`ArrayQuantifierEliminator::eliminate_existential_over_terms`], which
+    /// operates on genuine [`TermId`]s via a [`TermManager`].
     fn solve_select_equation(
         &mut self,
-        array_var: u32,
+        _array_var: u32,
         _formula: TermId,
     ) -> Result<Option<EliminationResult>> {
-        // Simplified implementation
-        let fresh_array = self.context.fresh_var("arr");
-
-        Ok(Some(EliminationResult {
-            eliminated_var: array_var,
-            result_formula: TermId::new(0), // Placeholder
-            substitution: Some(TermId::new(fresh_array)),
-            auxiliary_vars: vec![fresh_array],
-            auxiliary_constraints: Vec::new(),
-        }))
+        Ok(None)
     }
 
-    /// Model-based projection for array quantifier elimination
+    /// Model-based projection for array quantifier elimination.
+    ///
+    /// Honest residual: without a term manager this layer cannot synthesize a
+    /// projection term, so it returns the formula unchanged with no
+    /// substitution (the quantifier is *not* eliminated) instead of a
+    /// fabricated fresh-array substitution that a caller could mistake for a
+    /// sound projection.
     fn model_based_projection(
         &mut self,
         array_var: u32,
         formula: TermId,
     ) -> Result<EliminationResult> {
-        // Check cache first
-        if let Some(cached) = self.mbp_cache.get(&array_var) {
-            return Ok(EliminationResult {
-                eliminated_var: array_var,
-                result_formula: formula,
-                substitution: Some(cached.substitution),
-                auxiliary_vars: Vec::new(),
-                auxiliary_constraints: cached.constraints.clone(),
-            });
-        }
-
-        // Perform model-based projection
-        let fresh_array = self.context.fresh_var("mbp_arr");
-        let projection = ModelProjection {
-            var: array_var,
-            substitution: TermId::new(fresh_array),
-            constraints: Vec::new(),
-        };
-
-        self.mbp_cache.insert(array_var, projection.clone());
-
         Ok(EliminationResult {
             eliminated_var: array_var,
             result_formula: formula,
-            substitution: Some(projection.substitution),
-            auxiliary_vars: vec![fresh_array],
-            auxiliary_constraints: projection.constraints,
+            substitution: None,
+            auxiliary_vars: Vec::new(),
+            auxiliary_constraints: Vec::new(),
         })
     }
 
@@ -365,31 +347,156 @@ impl ArrayQuantifierEliminator {
         Vec::new()
     }
 
-    /// Instantiate a formula with a specific term
-    fn instantiate_formula(&self, _var: u32, _term: TermId) -> TermId {
-        // Would perform substitution
-        TermId::new(0)
+    /// Instantiate a formula with a specific term.
+    ///
+    /// The index-only layer cannot perform a term-level substitution (it has no
+    /// term manager), so it honestly returns the formula unchanged rather than
+    /// the fabricated `TermId::new(0)`. Real instantiation happens through the
+    /// term manager (`TermManager::substitute`).
+    fn instantiate_formula(&self, _var: u32, formula: TermId) -> TermId {
+        formula
     }
 
-    /// Handle extensionality quantifiers
+    /// Register an extensionality obligation `(∀i. select(A,i)=select(B,i)) → A=B`.
     ///
-    /// For (∀i. select(A, i) = select(B, i)) → A = B
+    /// This records the extensionality pattern for later term-level handling.
+    /// Without a term manager it cannot build the conclusion term `A = B`, so it
+    /// returns `None` (obligation registered, conclusion not synthesized) rather
+    /// than a fabricated `TermId::new(0)`. Use
+    /// [`ArrayQuantifierEliminator::extensionality_conclusion`] to build the real
+    /// `A = B` term when a manager and the array terms are available.
     pub fn eliminate_extensionality(
         &mut self,
         index_var: u32,
         array1: u32,
         array2: u32,
-    ) -> Result<TermId> {
-        // Add extensionality axiom
+    ) -> Result<Option<TermId>> {
         self.context
             .add_pattern(ArrayQuantifierPattern::ExtensionalityPattern {
                 array1,
                 array2,
                 index_var,
             });
+        Ok(None)
+    }
 
-        // Return the conclusion A = B
-        Ok(TermId::new(0)) // Placeholder
+    /// Build the extensionality conclusion `array1 = array2` over real terms.
+    ///
+    /// This is the term-level counterpart of [`Self::eliminate_extensionality`]:
+    /// given a term manager and the two array terms, it constructs the genuine
+    /// equality term (the sound conclusion of the extensionality rule).
+    pub fn extensionality_conclusion(
+        &self,
+        manager: &mut TermManager,
+        array1: TermId,
+        array2: TermId,
+    ) -> TermId {
+        manager.mk_eq(array1, array2)
+    }
+
+    /// Eliminate an existentially quantified array `array` from `formula` by
+    /// read-over-write case analysis over the actual terms.
+    ///
+    /// Two decidable patterns are handled:
+    /// * a defining equality `array = t` (with `t` free of `array`): substitute
+    ///   `array := t`;
+    /// * a select equation `select(array, i) = t` (with `i`, `t` free of
+    ///   `array`): introduce a fresh array `B` and substitute
+    ///   `array := store(B, i, t)` — the standard Ackermann-style reduction,
+    ///   since `select(store(B,i,t), i) = t` holds by the read-over-write axiom.
+    ///
+    /// When neither applies the quantifier is returned as an honest residual;
+    /// no placeholder term is ever fabricated.
+    ///
+    /// Reference: Z3's qe_array_plugin.cpp (`store`/`select` projection).
+    pub fn eliminate_existential_over_terms(
+        &mut self,
+        manager: &mut TermManager,
+        array: TermId,
+        formula: TermId,
+    ) -> ArrayQeOutcome {
+        // Pattern 1: a defining equality `array = t`.
+        if let Some(defn) = Self::find_defining_equality(manager, array, formula) {
+            let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+            subst.insert(array, defn);
+            let result = manager.substitute(formula, &subst);
+            return ArrayQeOutcome::Eliminated {
+                formula: result,
+                aux_arrays: Vec::new(),
+            };
+        }
+
+        // Pattern 2: a select equation `select(array, i) = t`.
+        if let Some((index, value)) = Self::find_select_equation(manager, array, formula)
+            && let Some(sort) = manager.get(array).map(|t| t.sort)
+        {
+            let fresh_id = self.context.fresh_var("qe_arr");
+            let fresh_name = format!("qe_arr_{}", fresh_id);
+            let fresh = manager.mk_var(&fresh_name, sort);
+            let store = manager.mk_store(fresh, index, value);
+            let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+            subst.insert(array, store);
+            let result = manager.substitute(formula, &subst);
+            return ArrayQeOutcome::Eliminated {
+                formula: result,
+                aux_arrays: vec![fresh],
+            };
+        }
+
+        // No supported pattern: retain the quantifier honestly.
+        ArrayQeOutcome::Residual { array, formula }
+    }
+
+    /// Find a top-level conjunct `array = t` (or `t = array`) whose right-hand
+    /// side `t` does not itself mention `array`.
+    fn find_defining_equality(
+        manager: &TermManager,
+        array: TermId,
+        formula: TermId,
+    ) -> Option<TermId> {
+        for conj in Self::conjuncts(manager, formula) {
+            if let Some(TermKind::Eq(l, r)) = manager.get(conj).map(|t| t.kind.clone()) {
+                if l == array && !contains_term(r, array, manager) {
+                    return Some(r);
+                }
+                if r == array && !contains_term(l, array, manager) {
+                    return Some(l);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a top-level conjunct `select(array, i) = t` (either operand order)
+    /// with `i` and `t` free of `array`. Returns `(i, t)`.
+    fn find_select_equation(
+        manager: &TermManager,
+        array: TermId,
+        formula: TermId,
+    ) -> Option<(TermId, TermId)> {
+        for conj in Self::conjuncts(manager, formula) {
+            if let Some(TermKind::Eq(l, r)) = manager.get(conj).map(|t| t.kind.clone()) {
+                for (sel, other) in [(l, r), (r, l)] {
+                    if let Some(TermKind::Select(a, i)) = manager.get(sel).map(|t| t.kind.clone())
+                        && a == array
+                        && !contains_term(i, array, manager)
+                        && !contains_term(other, array, manager)
+                    {
+                        return Some((i, other));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Split a formula into its top-level conjuncts (a non-`And` formula is a
+    /// single conjunct).
+    fn conjuncts(manager: &TermManager, formula: TermId) -> Vec<TermId> {
+        match manager.get(formula).map(|t| t.kind.clone()) {
+            Some(TermKind::And(args)) => args.to_vec(),
+            _ => vec![formula],
+        }
     }
 
     /// Get elimination context
@@ -407,6 +514,38 @@ impl ArrayQuantifierEliminator {
         self.context.clear();
         self.eliminated_formulas.clear();
         self.mbp_cache.clear();
+    }
+}
+
+/// Outcome of term-level array quantifier elimination.
+///
+/// Unlike [`EliminationResult`] (an index-only structural record), this carries
+/// genuine [`TermId`]s produced through a [`TermManager`]. It is either a real
+/// eliminated formula or an honest residual — never a fabricated placeholder.
+#[derive(Debug, Clone)]
+pub enum ArrayQeOutcome {
+    /// The existential array was eliminated; `formula` no longer mentions it.
+    /// Any freshly introduced auxiliary array variables are listed.
+    Eliminated {
+        /// The quantifier-free equivalent formula.
+        formula: TermId,
+        /// Fresh auxiliary array variables introduced by the reduction.
+        aux_arrays: Vec<TermId>,
+    },
+    /// No supported read-over-write pattern applied; the quantifier is retained.
+    Residual {
+        /// The array that could not be eliminated.
+        array: TermId,
+        /// The formula, unchanged.
+        formula: TermId,
+    },
+}
+
+impl ArrayQeOutcome {
+    /// Whether the array was actually eliminated.
+    #[must_use]
+    pub fn is_eliminated(&self) -> bool {
+        matches!(self, ArrayQeOutcome::Eliminated { .. })
     }
 }
 
@@ -971,5 +1110,100 @@ mod tests {
 
         let fresh = ctx.fresh_var("after_clear");
         assert_eq!(fresh, 0); // Counter should be reset
+    }
+
+    // -----------------------------------------------------------------------
+    // Real term-level read-over-write elimination.
+    // -----------------------------------------------------------------------
+
+    fn array_env() -> (TermManager, TermId, TermId, TermId, TermId) {
+        let mut m = TermManager::new();
+        let int = m.sorts.int_sort;
+        let arr = m.sorts.array(int, int);
+        let a = m.mk_var("A", arr);
+        let b = m.mk_var("B", arr);
+        let i = m.mk_var("i", int);
+        let v = m.mk_var("v", int);
+        (m, a, b, i, v)
+    }
+
+    #[test]
+    fn test_qe_defining_equality_substitutes() {
+        let (mut m, a, b, i, v) = array_env();
+        let store_biv = m.mk_store(b, i, v);
+        let eq_def = m.mk_eq(a, store_biv);
+        let j = m.mk_var("j", m.sorts.int_sort);
+        let w = m.mk_var("w", m.sorts.int_sort);
+        let sel = m.mk_select(a, j);
+        let eq_other = m.mk_eq(sel, w);
+        let formula = m.mk_and([eq_def, eq_other]);
+
+        let mut elim = ArrayQuantifierEliminator::new();
+        let outcome = elim.eliminate_existential_over_terms(&mut m, a, formula);
+        match outcome {
+            ArrayQeOutcome::Eliminated {
+                formula: result, ..
+            } => {
+                assert!(
+                    !contains_term(result, a, &m),
+                    "eliminated formula must not mention A"
+                );
+            }
+            ArrayQeOutcome::Residual { .. } => panic!("expected elimination via A = store(B,i,v)"),
+        }
+    }
+
+    #[test]
+    fn test_qe_select_equation_reduces_via_store() {
+        let (mut m, a, _b, i, v) = array_env();
+        // select(A, i) = v, with i and v free of A.
+        let sel = m.mk_select(a, i);
+        let formula = m.mk_eq(sel, v);
+
+        let mut elim = ArrayQuantifierEliminator::new();
+        let outcome = elim.eliminate_existential_over_terms(&mut m, a, formula);
+        match outcome {
+            ArrayQeOutcome::Eliminated {
+                formula: result,
+                aux_arrays,
+            } => {
+                assert!(
+                    !contains_term(result, a, &m),
+                    "reduced formula must not mention A"
+                );
+                assert_eq!(aux_arrays.len(), 1, "one fresh array is introduced");
+            }
+            ArrayQeOutcome::Residual { .. } => panic!("expected select-equation reduction"),
+        }
+    }
+
+    #[test]
+    fn test_qe_residual_when_no_pattern() {
+        let (mut m, a, _b, i, _v) = array_env();
+        let j = m.mk_var("j", m.sorts.int_sort);
+        // select(A, i) = select(A, j): both sides mention A, no defining eq.
+        let sel_i = m.mk_select(a, i);
+        let sel_j = m.mk_select(a, j);
+        let formula = m.mk_eq(sel_i, sel_j);
+
+        let mut elim = ArrayQuantifierEliminator::new();
+        let outcome = elim.eliminate_existential_over_terms(&mut m, a, formula);
+        assert!(
+            !outcome.is_eliminated(),
+            "unsupported pattern must be an honest residual, not a fabricated result"
+        );
+    }
+
+    #[test]
+    fn test_extensionality_conclusion_builds_real_equality() {
+        let (mut m, a, b, _i, _v) = array_env();
+        let elim = ArrayQuantifierEliminator::new();
+        let concl = elim.extensionality_conclusion(&mut m, a, b);
+        match m.get(concl).map(|t| t.kind.clone()) {
+            Some(TermKind::Eq(l, r)) => {
+                assert!((l == a && r == b) || (l == b && r == a));
+            }
+            other => panic!("extensionality conclusion must be an equality, got {other:?}"),
+        }
     }
 }

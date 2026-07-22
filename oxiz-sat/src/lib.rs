@@ -147,8 +147,6 @@ mod cube_solver;
 #[cfg(feature = "std")]
 mod dimacs;
 #[cfg(feature = "std")]
-mod gpu;
-#[cfg(feature = "std")]
 pub mod parallel;
 #[cfg(feature = "std")]
 mod portfolio;
@@ -254,12 +252,6 @@ pub use cube_solver::{
 };
 #[cfg(feature = "std")]
 pub use dimacs::{DimacsError, DimacsParser, DimacsWriter};
-#[cfg(feature = "std")]
-pub use gpu::{
-    BatchPropagationResult, ClauseManagementResult, ConflictAnalysisResult,
-    CpuReferenceAccelerator, GpuBackend, GpuBenchmark, GpuBenchmarkResult, GpuBenefitAnalysis,
-    GpuConfig, GpuError, GpuRecommendation, GpuSolverAccelerator, GpuStats,
-};
 #[cfg(feature = "std")]
 pub use parallel::{
     ParallelClauseSimplifier, ParallelProofChecker, PortfolioConfig as ParallelPortfolioConfig,

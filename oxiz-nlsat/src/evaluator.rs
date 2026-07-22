@@ -491,25 +491,120 @@ impl Evaluator {
         region
     }
 
-    /// Compute the constraint on a variable from an inequality atom.
+    /// Compute the feasible region on `var` imposed by an inequality atom under
+    /// the (partial) `assignment`, given whether the atom is asserted `satisfied`.
+    ///
+    /// The atom's polynomial is specialised by substituting every assigned
+    /// variable other than `var`; the univariate specialisation's real roots
+    /// partition the line into sign-invariant cells, and the feasible region is
+    /// the union of the cells whose sign satisfies the atom kind and polarity.
+    ///
+    /// Soundness: exact rational root isolation only captures rational roots. To
+    /// avoid ever excluding a genuinely feasible point (which would be unsound
+    /// when the region is used to detect infeasibility), the exact sign-cell
+    /// construction is used *only* when the number of exact rational roots
+    /// equals the true number of distinct real roots (from the Sturm sequence);
+    /// otherwise the sound over-approximation `IntervalSet::reals()` is returned.
     fn atom_constraint(
         &mut self,
         ineq: &IneqAtom,
         var: Var,
-        _satisfied: bool,
-        _assignment: &FxHashMap<Var, BigRational>,
+        satisfied: bool,
+        assignment: &FxHashMap<Var, BigRational>,
     ) -> IntervalSet {
-        // Check if this atom involves the variable
-        let involves_var = ineq.factors.iter().any(|f| f.poly.vars().contains(&var));
+        use crate::cad::SturmSequence;
 
-        if !involves_var {
-            // Atom doesn't involve this variable
+        // Only single-factor atoms are handled precisely; leave the rest
+        // unconstrained (a sound over-approximation).
+        if ineq.factors.len() != 1 {
+            return IntervalSet::reals();
+        }
+        let factor = &ineq.factors[0];
+        if !factor.poly.vars().contains(&var) {
             return IntervalSet::reals();
         }
 
-        // For each factor, compute its sign constraint
-        // This is simplified - full implementation would compute exact feasible regions
-        IntervalSet::reals()
+        // Substitute every assigned variable other than `var`.
+        let mut sub = factor.poly.clone();
+        for v in factor.poly.vars() {
+            if v != var {
+                match assignment.get(&v) {
+                    Some(val) => sub = sub.eval_at(v, val),
+                    None => return IntervalSet::reals(), // another variable unassigned
+                }
+            }
+        }
+
+        // Constant after substitution: the atom is decided outright.
+        if sub.is_constant() {
+            let value = sub.eval(&FxHashMap::default());
+            let holds = match ineq.kind {
+                AtomKind::Eq => value.is_zero(),
+                AtomKind::Lt => value.is_negative(),
+                AtomKind::Gt => value.is_positive(),
+                _ => return IntervalSet::reals(),
+            };
+            let ok = if satisfied { holds } else { !holds };
+            return if ok {
+                IntervalSet::reals()
+            } else {
+                IntervalSet::empty()
+            };
+        }
+
+        if !sub.is_univariate() || sub.degree(var) == 0 {
+            return IntervalSet::reals();
+        }
+
+        // Exact sign cells require every real root to be rational.
+        let sturm = SturmSequence::new(&sub, var);
+        let total_roots = sturm.count_roots() as usize;
+        let roots = self.find_roots(&sub, var);
+        if roots.len() != total_roots {
+            // At least one irrational real root: no exact rational boundary is
+            // available, so fall back to the sound over-approximation.
+            return IntervalSet::reals();
+        }
+
+        let signs = self.signs_between_roots(&sub, var, &roots);
+        sign_constraint_set(ineq.kind, satisfied, &roots, &signs)
+    }
+
+    /// Sign (`-1`, `0`, `1`) of a univariate polynomial evaluated at `val`.
+    fn sign_at(&self, poly: &Polynomial, var: Var, val: &BigRational) -> i8 {
+        let mut eval_map = FxHashMap::default();
+        eval_map.insert(var, val.clone());
+        let value = poly.eval(&eval_map);
+        if value.is_zero() {
+            0
+        } else if value.is_positive() {
+            1
+        } else {
+            -1
+        }
+    }
+
+    /// Signs of `poly` on the cells `(-∞, r_0), (r_0, r_1), …, (r_{n-1}, +∞)`
+    /// delimited by the (sorted, distinct) rational `roots`.
+    fn signs_between_roots(&self, poly: &Polynomial, var: Var, roots: &[BigRational]) -> Vec<i8> {
+        if roots.is_empty() {
+            return vec![self.sign_at(poly, var, &BigRational::zero())];
+        }
+
+        let mut signs = Vec::with_capacity(roots.len() + 1);
+        let before = &roots[0] - BigRational::one();
+        signs.push(self.sign_at(poly, var, &before));
+
+        for window in roots.windows(2) {
+            let mid = (&window[0] + &window[1]) / BigRational::from_integer(BigInt::from(2));
+            signs.push(self.sign_at(poly, var, &mid));
+        }
+
+        let last = &roots[roots.len() - 1];
+        let after = last + BigRational::one();
+        signs.push(self.sign_at(poly, var, &after));
+
+        signs
     }
 
     /// Compute the constraint from a root atom.
@@ -571,6 +666,35 @@ impl Evaluator {
 impl Default for Evaluator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Build the feasible interval set for a univariate atom from the sign of its
+/// polynomial on each cell delimited by `roots`.
+///
+/// `signs[i]` is the sign on the `i`-th cell (there are `roots.len() + 1` cells).
+/// The result is the union of cells whose sign satisfies `kind` under polarity
+/// `satisfied`.
+fn sign_constraint_set(
+    kind: AtomKind,
+    satisfied: bool,
+    roots: &[BigRational],
+    signs: &[i8],
+) -> IntervalSet {
+    match (kind, satisfied) {
+        (AtomKind::Eq, true) => IntervalSet::sign_set(roots, signs, 0),
+        (AtomKind::Eq, false) => IntervalSet::sign_set(roots, signs, 0).complement(),
+        (AtomKind::Lt, true) => IntervalSet::sign_set(roots, signs, -1),
+        (AtomKind::Lt, false) => {
+            // ¬(p < 0) ⇔ p ≥ 0 ⇔ p > 0 ∨ p = 0.
+            IntervalSet::sign_set(roots, signs, 1).union(&IntervalSet::sign_set(roots, signs, 0))
+        }
+        (AtomKind::Gt, true) => IntervalSet::sign_set(roots, signs, 1),
+        (AtomKind::Gt, false) => {
+            // ¬(p > 0) ⇔ p ≤ 0 ⇔ p < 0 ∨ p = 0.
+            IntervalSet::sign_set(roots, signs, -1).union(&IntervalSet::sign_set(roots, signs, 0))
+        }
+        _ => IntervalSet::reals(),
     }
 }
 
@@ -822,6 +946,95 @@ mod tests {
 
         let roots = eval.find_roots(&poly, 0);
         assert_eq!(roots.len(), 0);
+    }
+
+    // ─── atom_constraint / feasible_region (previously an all-reals stub) ────
+
+    fn ineq_atom(poly: Polynomial, kind: AtomKind) -> Atom {
+        let max_var = poly.vars().into_iter().max().unwrap_or(0);
+        Atom::Ineq(IneqAtom {
+            kind,
+            factors: vec![crate::types::PolyFactor {
+                poly,
+                is_even: false,
+            }],
+            max_var,
+            bool_var: 0,
+        })
+    }
+
+    #[test]
+    fn test_atom_constraint_linear_gt_is_open_ray() {
+        let mut eval = Evaluator::new();
+        // x - 2 > 0  ⇔  x > 2.
+        let atom = ineq_atom(
+            Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-2, &[])]),
+            AtomKind::Gt,
+        );
+        let assignment = FxHashMap::default();
+        let region = eval.feasible_region(0, &[&atom], &[true], &assignment);
+
+        // Previously this returned all reals (unconstrained); it must now be
+        // the open ray (2, ∞).
+        assert!(!region.is_reals(), "x > 2 must actually constrain x");
+        assert!(region.contains(&rat(3)), "3 satisfies x > 2");
+        assert!(
+            !region.contains(&rat(2)),
+            "2 does not satisfy x > 2 (strict)"
+        );
+        assert!(!region.contains(&rat(1)), "1 does not satisfy x > 2");
+    }
+
+    #[test]
+    fn test_atom_constraint_intersection_bounds_variable() {
+        let mut eval = Evaluator::new();
+        // x > 0  and  x - 4 < 0  ⇒  0 < x < 4.
+        let gt = ineq_atom(Polynomial::from_coeffs_int(&[(1, &[(0, 1)])]), AtomKind::Gt);
+        let lt = ineq_atom(
+            Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-4, &[])]),
+            AtomKind::Lt,
+        );
+        let assignment = FxHashMap::default();
+        let region = eval.feasible_region(0, &[&gt, &lt], &[true, true], &assignment);
+
+        assert!(region.contains(&rat(2)), "2 ∈ (0, 4)");
+        assert!(!region.contains(&rat(0)), "0 ∉ (0, 4)");
+        assert!(!region.contains(&rat(4)), "4 ∉ (0, 4)");
+        assert!(!region.contains(&rat(5)), "5 ∉ (0, 4)");
+    }
+
+    #[test]
+    fn test_atom_constraint_negated_polarity() {
+        let mut eval = Evaluator::new();
+        // ¬(x - 2 > 0)  ⇔  x ≤ 2.
+        let atom = ineq_atom(
+            Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-2, &[])]),
+            AtomKind::Gt,
+        );
+        let assignment = FxHashMap::default();
+        let region = eval.feasible_region(0, &[&atom], &[false], &assignment);
+
+        assert!(region.contains(&rat(2)), "2 satisfies x ≤ 2");
+        assert!(region.contains(&rat(1)), "1 satisfies x ≤ 2");
+        assert!(!region.contains(&rat(3)), "3 does not satisfy x ≤ 2");
+    }
+
+    #[test]
+    fn test_atom_constraint_irrational_root_is_sound_overapprox() {
+        let mut eval = Evaluator::new();
+        // x^2 - 2 > 0 has irrational roots ±√2; the exact rational-root path
+        // cannot place the boundaries, so the region must stay a sound
+        // over-approximation (all reals) rather than wrongly excluding, say, 2.
+        let atom = ineq_atom(
+            Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-2, &[])]),
+            AtomKind::Gt,
+        );
+        let assignment = FxHashMap::default();
+        let region = eval.feasible_region(0, &[&atom], &[true], &assignment);
+        assert!(
+            region.contains(&rat(2)),
+            "x = 2 satisfies x^2 > 2 and must remain feasible"
+        );
     }
 
     #[test]

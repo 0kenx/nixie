@@ -28,6 +28,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::async_utils;
 use crate::{WasmError, WasmErrorKind};
 use js_sys::Promise;
 use std::cell::RefCell;
@@ -312,7 +313,30 @@ impl Default for PromiseBatch {
     }
 }
 
-/// Async operation with timeout support
+/// Async operation with timeout support.
+///
+/// # This timeout is COOPERATIVE ONLY -- it cannot preempt a synchronous solve
+///
+/// [`AsyncOperation::execute`]'s `withTimeout` races the wrapped `promise`
+/// against a `setTimeout` promise via `Promise.race`. That only works if
+/// the JS event loop gets a chance to run the timer callback *before* the
+/// wrapped operation finishes -- but [`AsyncSolver::check_sat_async`] (the
+/// primary intended use of this type) calls `Context::check_sat()` to
+/// completion inside a single synchronous poll of its future, with no
+/// interior `.await`. On a single JS thread, that means the timer
+/// callback armed here cannot run -- and therefore cannot preempt
+/// anything -- until the solve has already returned on its own. In other
+/// words: `execute()`'s timeout can only "beat" operations that yield to
+/// the event loop on their own (e.g. anything built on
+/// `crate::async_utils::yield_now`); it does **not** bound the wall-clock
+/// time of a blocking `check_sat()` call.
+///
+/// For a HARD guarantee that a stuck solve stops within `timeout_ms`
+/// regardless of what it is doing, use
+/// [`crate::js_api::preemptible_worker::PreemptibleSolver::solve_with_timeout`],
+/// which runs the solve in a dedicated `Worker` and calls
+/// `Worker.terminate()` on expiry -- a real cross-thread preemption this
+/// type cannot provide.
 #[wasm_bindgen]
 pub struct AsyncOperation {
     /// The promise for the operation
@@ -332,36 +356,45 @@ impl AsyncOperation {
         }
     }
 
-    /// Set a timeout
+    /// Set a (cooperative-only -- see type-level docs) timeout
     #[wasm_bindgen(js_name = withTimeout)]
     pub fn with_timeout(mut self, timeout_ms: u32) -> Self {
         self.timeout_ms = Some(timeout_ms);
         self
     }
 
-    /// Execute the operation
+    /// Execute the operation, racing it against the configured timeout if
+    /// any (see type-level docs for exactly what that can and cannot
+    /// preempt).
     #[wasm_bindgen(js_name = execute)]
     pub fn execute(&self) -> Promise {
         let promise = self.promise.clone();
 
         if let Some(timeout_ms) = self.timeout_ms {
-            // Create a timeout promise
-            let timeout_promise = js_sys::Promise::new(&mut |resolve, _reject| {
-                let window = web_sys::window().expect("no global window");
+            // Create a timeout promise. Scheduled via the generic global
+            // `setTimeout` (not `web_sys::window()`, which is `None`
+            // inside a Worker) so this also works when `execute()` is
+            // called from worker-side code.
+            let timeout_promise = js_sys::Promise::new(&mut |resolve, reject| {
                 let callback = Closure::once(move || {
                     let error = WasmError::new(
                         WasmErrorKind::InvalidState,
                         format!("Operation timed out after {}ms", timeout_ms),
                     );
-                    resolve.call1(&JsValue::NULL, &error.into()).ok();
+                    let _ = resolve.call1(&JsValue::NULL, &error.into());
                 });
 
-                window
-                    .set_timeout_with_callback_and_timeout_and_arguments_0(
-                        callback.as_ref().unchecked_ref(),
-                        timeout_ms as i32,
-                    )
-                    .ok();
+                if async_utils::set_timeout_global(&callback, timeout_ms as i32).is_err() {
+                    // No usable global `setTimeout` (e.g. a bare non-browser,
+                    // non-Node JS host): fail honestly via `reject` instead
+                    // of silently never timing out.
+                    let error = WasmError::new(
+                        WasmErrorKind::NotSupported,
+                        "no global setTimeout available to schedule a timeout",
+                    );
+                    let _ = reject.call1(&JsValue::NULL, &error.into());
+                    return;
+                }
                 callback.forget();
             });
 

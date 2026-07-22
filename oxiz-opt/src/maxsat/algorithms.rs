@@ -458,218 +458,55 @@ impl MaxSatSolver {
         (result, solver)
     }
 
-    /// Fu-Malik core-guided algorithm
-    pub(super) fn solve_fu_malik(&mut self) -> Result<MaxSatResult, MaxSatError> {
-        let all_ids: Vec<SoftId> = self.soft_clauses.iter().map(|c| c.id).collect();
-        self.solve_fu_malik_subset(&all_ids)
-    }
-
-    /// Fu-Malik algorithm on a subset of soft clauses
+    /// Fu-Malik core-guided algorithm.
     ///
-    /// This is the proper core-guided Fu-Malik algorithm using assumption-based solving.
-    /// The algorithm iteratively:
-    /// 1. Solve under assumptions that all soft clauses are satisfied
-    /// 2. If UNSAT, extract the core of unsatisfied soft clauses
-    /// 3. Add a relaxation variable to each soft clause in the core
-    /// 4. Add an at-most-one constraint on the relaxation variables
-    /// 5. Repeat until SAT
-    pub(super) fn solve_fu_malik_subset(
-        &mut self,
-        soft_ids: &[SoftId],
-    ) -> Result<MaxSatResult, MaxSatError> {
-        let mut solver = SatSolver::new();
-        let mut next_var = 0u32;
-
-        // Helper function to ensure variable exists
-        fn ensure_var(solver: &mut SatSolver, var_idx: u32) {
-            while solver.num_vars() <= var_idx as usize {
-                solver.new_var();
-            }
-        }
-
-        // Add hard clauses
-        for clause in &self.hard_clauses {
-            for &lit in clause.iter() {
-                ensure_var(&mut solver, lit.var().0);
-                next_var = next_var.max(lit.var().0 + 1);
-            }
-            solver.add_clause(clause.iter().copied());
-        }
-
-        // NOTE: must scan every soft clause's own literals too, not just the
-        // hard clauses -- when there are few (or zero) hard clauses, soft
-        // clause literals can reference variable indices past whatever the
-        // hard clauses touched. Missing this let the freshly allocated
-        // blocking variables below alias real problem variables (e.g. with
-        // no hard clauses at all, the very first blocking variable would be
-        // `Var(0)`, colliding with a soft clause literal on variable 0),
-        // silently corrupting the encoding and producing wrong costs.
-        for &id in soft_ids {
-            if let Some(clause) = self.soft_clauses.get(id.0 as usize) {
-                for &lit in clause.lits.iter() {
-                    next_var = next_var.max(lit.var().0 + 1);
-                }
-            }
-        }
-
-        // Create blocking variables for soft clauses (b_i = true means soft clause i is blocked/relaxed)
-        let mut blocking_vars: FxHashMap<SoftId, Var> = FxHashMap::default();
-        let mut var_to_soft: FxHashMap<Var, SoftId> = FxHashMap::default();
-
-        for &id in soft_ids {
-            if let Some(clause) = self.soft_clauses.get(id.0 as usize) {
-                let block_var = Var(next_var);
-                next_var += 1;
-                ensure_var(&mut solver, block_var.0);
-
-                blocking_vars.insert(id, block_var);
-                var_to_soft.insert(block_var, id);
-                self.relax_to_soft.insert(Lit::pos(block_var), id);
-
-                // Add soft clause with blocking literal: lits \/ b_i
-                // If b_i is true, the clause is trivially satisfied (blocked)
-                let mut lits: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
-                lits.push(Lit::pos(block_var));
-                solver.add_clause(lits.iter().copied());
-
-                self.stats.relax_vars_added += 1;
-            }
-        }
-
-        // Track which soft clauses have been relaxed (their blocking var can be true)
-        let mut relaxed: FxHashMap<SoftId, bool> = FxHashMap::default();
-        for &id in soft_ids {
-            relaxed.insert(id, false);
-        }
-
-        // Main Fu-Malik loop
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > self.config.max_iterations {
-                return Ok(MaxSatResult::Unknown);
-            }
-
-            // Build assumptions: assume ~b_i for all non-relaxed soft clauses
-            // This means "all soft clauses must be satisfied"
-            let assumptions: Vec<Lit> = soft_ids
-                .iter()
-                .filter(|id| !relaxed.get(id).copied().unwrap_or(false))
-                .filter_map(|id| blocking_vars.get(id).map(|&v| Lit::neg(v)))
-                .collect();
-
-            if assumptions.is_empty() {
-                // All soft clauses relaxed - check if hard constraints are SAT
-                return self.check_hard_satisfiable();
-            }
-
-            self.stats.sat_calls += 1;
-            let (result, core) = solver.solve_with_assumptions(&assumptions);
-
-            match result {
-                SolverResult::Sat => {
-                    // Found a satisfying assignment
-                    self.best_model = Some(solver.model().to_vec());
-                    self.update_soft_values();
-                    return Ok(MaxSatResult::Optimal);
-                }
-                SolverResult::Unsat => {
-                    // Extract core - these are the soft clauses that conflict
-                    let core_lits = core.unwrap_or_default();
-                    self.stats.cores_extracted += 1;
-
-                    if core_lits.is_empty() {
-                        // Empty core means hard clauses alone are UNSAT
-                        return Err(MaxSatError::Unsatisfiable);
-                    }
-
-                    // Find which soft clauses are in the core
-                    let mut core_soft_ids: SmallVec<[SoftId; 8]> = SmallVec::new();
-                    let mut min_weight = Weight::Infinite;
-
-                    for lit in &core_lits {
-                        // Core contains ~b_i, so the var is the blocking var
-                        let var = lit.var();
-                        if let Some(&soft_id) = var_to_soft.get(&var) {
-                            core_soft_ids.push(soft_id);
-                            if let Some(clause) = self.soft_clauses.get(soft_id.0 as usize) {
-                                min_weight = min_weight.min(clause.weight.clone());
-                            }
-                        }
-                    }
-
-                    self.stats.total_core_size += core_soft_ids.len() as u32;
-
-                    if core_soft_ids.is_empty() {
-                        // No soft clauses in core - hard constraints UNSAT
-                        return Err(MaxSatError::Unsatisfiable);
-                    }
-
-                    // Relax all soft clauses in the core
-                    for &soft_id in &core_soft_ids {
-                        relaxed.insert(soft_id, true);
-                    }
-
-                    // Update lower bound
-                    self.lower_bound = self.lower_bound.add(&min_weight);
-
-                    // Add at-most-one constraint on core blocking variables:
-                    // At most one of the blocking variables can be true.
-                    // This is encoded as: for all pairs (b_i, b_j) in core: ~b_i \/ ~b_j
-                    // This ensures we find a minimal relaxation.
-                    if core_soft_ids.len() > 1 {
-                        // Pairwise encoding for small cores
-                        if core_soft_ids.len() <= 5 {
-                            for i in 0..core_soft_ids.len() {
-                                for j in (i + 1)..core_soft_ids.len() {
-                                    if let (Some(&vi), Some(&vj)) = (
-                                        blocking_vars.get(&core_soft_ids[i]),
-                                        blocking_vars.get(&core_soft_ids[j]),
-                                    ) {
-                                        solver.add_clause([Lit::neg(vi), Lit::neg(vj)]);
-                                    }
-                                }
-                            }
-                        } else {
-                            // For larger cores, use sequential counter encoding
-                            // Simpler: just add that at least one must be false
-                            // (weaker but still sound)
-                            let clause: SmallVec<[Lit; 8]> = core_soft_ids
-                                .iter()
-                                .filter_map(|id| blocking_vars.get(id).map(|&v| Lit::neg(v)))
-                                .collect();
-                            if !clause.is_empty() {
-                                solver.add_clause(clause);
-                            }
-                        }
-                    }
-
-                    // Add fresh relaxation variables for the next iteration
-                    // Each soft clause in the core gets a new blocking variable
-                    for &soft_id in &core_soft_ids {
-                        if let Some(clause) = self.soft_clauses.get(soft_id.0 as usize) {
-                            let new_block_var = Var(next_var);
-                            next_var += 1;
-                            ensure_var(&mut solver, new_block_var.0);
-
-                            // Update mappings
-                            blocking_vars.insert(soft_id, new_block_var);
-                            var_to_soft.insert(new_block_var, soft_id);
-
-                            // Add new clause: lits \/ b_new
-                            let mut lits: SmallVec<[Lit; 8]> =
-                                clause.lits.iter().copied().collect();
-                            lits.push(Lit::pos(new_block_var));
-                            solver.add_clause(lits.iter().copied());
-
-                            // Mark as relaxed (can be blocked)
-                            relaxed.insert(soft_id, true);
-                        }
-                    }
-                }
-                SolverResult::Unknown => return Ok(MaxSatResult::Unknown),
-            }
-        }
+    /// # Delegated to the exact cardinality-search solver (`OPT-FUMALIK-HARDONLY`)
+    ///
+    /// This used to run a hand-rolled incremental core-guided loop against a
+    /// single [`SatSolver`] instance: solve under assumptions, on UNSAT
+    /// extract a core and relax it with a fresh blocking variable plus a
+    /// pairwise at-most-one constraint on the *current* round's blocking
+    /// variables, then repeat -- interleaving `SatSolver::add_clause` calls
+    /// with `SatSolver::solve_with_assumptions` calls on that same instance.
+    ///
+    /// Two soundness problems were found in that loop:
+    ///
+    /// 1. Once every soft clause had been relaxed at least once (no
+    ///    assumptions left to add), it short-circuited to
+    ///    [`Self::check_hard_satisfiable`], which builds a brand-new
+    ///    `SatSolver` from `self.hard_clauses` *alone* -- silently
+    ///    discarding every blocking clause and every accumulated
+    ///    at-most-one constraint the loop had spent iterations building --
+    ///    and reported `self.lower_bound` (the sum of one `min_weight` per
+    ///    core found) as the exact optimum regardless of whether that sum
+    ///    actually matched the true minimum violation count.
+    /// 2. Removing that shortcut alone was not sufficient: re-solving the
+    ///    same incrementally-built `solver` under an empty assumption list
+    ///    instead still under-reported the optimum on a concrete
+    ///    regression case (five variables, hard constraint "at least 3 of
+    ///    5 true", one unit soft clause per variable preferring it false;
+    ///    true optimum 3). The `Sat` model returned in that case violated
+    ///    one of the loop's own previously-added at-most-one clauses --
+    ///    i.e. a model that does not actually satisfy every clause that
+    ///    had been added to `solver` -- and reported an optimum of 2. That
+    ///    points at a correctness gap in how clauses added *mid-search*
+    ///    (interleaved with repeated assumption-based UNSAT-core solves)
+    ///    end up enforced by incremental CDCL search, not just the
+    ///    shortcut itself.
+    ///
+    /// [`Self::solve_weighted_core_guided`] sidesteps this whole class of
+    /// risk: every candidate bound is checked against a **freshly
+    /// rebuilt** [`SatSolver`] (see [`Self::solve_cardinality_check`]), so
+    /// there is no incrementally-accumulated clause state whose
+    /// enforcement could go stale between calls -- every verdict is a
+    /// from-scratch Sat/Unsat check against the complete clause set. It
+    /// already handles the unweighted case exactly (uniform weight-1 soft
+    /// clauses reduce to a plain at-most-K search via binary search over a
+    /// totalizer), so Fu-Malik -- and, transitively, MSU3/PMRES/
+    /// WMax-with-equal-weights, which all delegate to this method -- is
+    /// routed through it instead of the unsound hand-rolled loop.
+    pub(super) fn solve_fu_malik(&mut self) -> Result<MaxSatResult, MaxSatError> {
+        self.solve_weighted_core_guided()
     }
 
     /// OLL (Opportunistic Literal Learning) algorithm
@@ -711,10 +548,9 @@ impl MaxSatSolver {
         let mut var_to_soft: FxHashMap<Var, SoftId> = FxHashMap::default();
 
         // NOTE: must scan every soft clause's own literals too, not just the
-        // hard clauses -- see the identical note in `solve_fu_malik_subset`.
-        // With few (or zero) hard clauses, skipping this let the freshly
-        // allocated blocking variables alias real problem variables,
-        // silently corrupting the encoding.
+        // hard clauses. With few (or zero) hard clauses, skipping this let
+        // the freshly allocated blocking variables alias real problem
+        // variables, silently corrupting the encoding.
         for &id in &soft_ids {
             if let Some(clause) = self.soft_clauses.get(id.0 as usize) {
                 for &lit in clause.lits.iter() {
@@ -1062,14 +898,17 @@ impl MaxSatSolver {
     /// implemented for `solve_oll` above) -- fully re-deriving that
     /// machinery a second time here, with PMRES's differently-signed
     /// literal roles, would duplicate a large, delicate amount of new
-    /// logic for a distinct code path. [`Self::solve_fu_malik`] already
-    /// implements a proof-correct core-guided relaxation (proper at-most-
-    /// one groups, no self-contradictory assumptions) using the exact
-    /// same core-extraction primitives PMRES relies on, so `Pmres` is
-    /// routed through it: this keeps the algorithm knob honestly
-    /// functional (same soundness and the same `MaxSatResult::Optimal`
-    /// guarantee) rather than silently returning inflated costs or
-    /// hanging until `max_iterations`.
+    /// logic for a distinct code path. [`Self::solve_fu_malik`] itself now
+    /// delegates to [`Self::solve_weighted_core_guided`] (see its own doc
+    /// comment for why -- the hand-rolled incremental core-guided loop it
+    /// used to run turned out to have soundness gaps of its own,
+    /// `OPT-FUMALIK-HARDONLY`), which proves every candidate bound against
+    /// a freshly rebuilt `SatSolver` rather than incrementally-accumulated
+    /// state, so `Pmres` is routed through the same exact solver: this
+    /// keeps the algorithm knob honestly functional (same soundness and
+    /// the same `MaxSatResult::Optimal` guarantee) rather than silently
+    /// returning inflated *or* deflated costs or hanging until
+    /// `max_iterations`.
     pub(super) fn solve_pmres(&mut self) -> Result<MaxSatResult, MaxSatError> {
         self.solve_fu_malik()
     }

@@ -8,8 +8,8 @@ pub struct HistoryEntry {
     pub benchmark: String,
     pub logic: String,
     pub oxiz_ms: f64,
-    pub z3_ms: Option<f64>,  // None if z3_time is zero (z3 was unavailable)
-    pub ratio: Option<f64>,  // oxiz_ms / z3_ms; None if z3_ms is None or 0
+    pub z3_ms: Option<f64>, // None if z3_time is zero (z3 was unavailable)
+    pub ratio: Option<f64>, // oxiz_ms / z3_ms; None if z3_ms is None or 0
 }
 
 /// Geomean/p50/p95 summary over a set of ratios
@@ -24,10 +24,10 @@ pub struct RatioSummary {
 /// A versioned snapshot of parity results for a single run
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HistorySnapshot {
-    pub schema_version: u32,    // always 1
-    pub oxiz_version: String,   // env!("CARGO_PKG_VERSION")
-    pub git_sha: String,        // "git rev-parse --short HEAD" or "unknown"
-    pub utc_date: String,       // "YYYY-MM-DD" from SystemTime or "unknown"
+    pub schema_version: u32,             // always 1
+    pub oxiz_version: String,            // env!("CARGO_PKG_VERSION")
+    pub git_sha: String,                 // "git rev-parse --short HEAD" or "unknown"
+    pub utc_date: String,                // "YYYY-MM-DD" from SystemTime or "unknown"
     pub host_z3_version: Option<String>, // "z3 --version" output or None
     pub entries: Vec<HistoryEntry>,
     pub summary: RatioSummary,
@@ -164,10 +164,7 @@ pub fn build_snapshot(results: &[super::ParityResult]) -> HistorySnapshot {
 
 /// Export a HistorySnapshot to `<dir>/<date>_<git_sha>.json`
 /// Creates the directory if it does not exist.
-pub fn export_to_history(
-    results: &[super::ParityResult],
-    dir: &Path,
-) -> anyhow::Result<PathBuf> {
+pub fn export_to_history(results: &[super::ParityResult], dir: &Path) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let snapshot = build_snapshot(results);
     let filename = format!("{}_{}.json", snapshot.utc_date, snapshot.git_sha);

@@ -33,6 +33,20 @@ pub struct AsymmetricBranching {
     stats: AsymmetricBranchingStats,
 }
 
+/// Status of a clause under the temporary assignment, used by
+/// [`AsymmetricBranching::propagate_all`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClauseStatus {
+    /// At least one literal is true
+    Satisfied,
+    /// Every literal is false
+    Conflict,
+    /// Exactly one literal is undefined and the rest are false
+    Unit(Lit),
+    /// More than one literal is undefined (or none, but not all false)
+    Unresolved,
+}
+
 /// Statistics for Asymmetric Branching
 #[derive(Debug, Default, Clone)]
 pub struct AsymmetricBranchingStats {
@@ -72,7 +86,6 @@ impl AsymmetricBranching {
 
     /// Check if a literal is false under temporary assignment
     #[inline]
-    #[allow(dead_code)]
     fn is_false(&self, lit: Lit) -> bool {
         let val = self.temp_assignment[lit.var().index()];
         (lit.is_pos() && val == LBool::False) || (!lit.is_pos() && val == LBool::True)
@@ -80,7 +93,6 @@ impl AsymmetricBranching {
 
     /// Check if a literal is undefined
     #[inline]
-    #[allow(dead_code)]
     fn is_undef(&self, lit: Lit) -> bool {
         self.temp_assignment[lit.var().index()] == LBool::Undef
     }
@@ -106,47 +118,91 @@ impl AsymmetricBranching {
         self.prop_queue.clear();
     }
 
-    /// Perform unit propagation on a single clause
+    /// Classify a clause under the temporary assignment
     ///
-    /// Returns true if the clause becomes unit and we can propagate
-    #[allow(dead_code)]
-    fn propagate_clause(&mut self, clause: &[Lit]) -> Option<Lit> {
-        let mut undef_lit = None;
-        let mut undef_count = 0;
+    /// This distinguishes "satisfied" from "conflict" (both leave zero
+    /// undefined literals under a naive scan), which the previous
+    /// `propagate_clause` collapsed into a single `None`, making conflict
+    /// detection impossible.
+    fn clause_status(&self, lits: &[Lit]) -> ClauseStatus {
+        let mut undef_lit: Option<Lit> = None;
 
-        for &lit in clause {
+        for &lit in lits {
             if self.is_true(lit) {
-                // Clause is satisfied
-                return None;
+                return ClauseStatus::Satisfied;
             } else if self.is_undef(lit) {
-                undef_lit = Some(lit);
-                undef_count += 1;
-                if undef_count > 1 {
-                    return None;
+                if undef_lit.is_some() {
+                    return ClauseStatus::Unresolved;
                 }
+                undef_lit = Some(lit);
             }
         }
 
-        // If exactly one literal is undefined and all others are false, it's unit
-        if undef_count == 1 {
-            undef_lit
-        } else if undef_count == 0 {
-            // All literals are false - conflict
-            // We use a sentinel value to indicate conflict
-            None
-        } else {
-            None
+        match undef_lit {
+            Some(lit) => ClauseStatus::Unit(lit),
+            None => ClauseStatus::Conflict,
         }
+    }
+
+    /// Run unit propagation to a fixpoint over every live clause in `clauses`,
+    /// starting from whatever literals are already assigned in the temporary
+    /// assignment (the negated "other" literals of the clause under test).
+    ///
+    /// Returns `true` as soon as some clause is fully falsified.
+    ///
+    /// `AsymmetricBranching` has no access to the solver's watch lists or
+    /// trail (it is a standalone off-line strengthening pass, not wired into
+    /// CDCL search), so this is a brute-force, non-watched BCP that re-scans
+    /// every clause each round. That is acceptable because it only runs via
+    /// the explicit `strengthen_clause` / `strengthen_all` API, never on the
+    /// solver's hot path.
+    fn propagate_all(&mut self, clauses: &ClauseDatabase) -> bool {
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for id in clauses.iter_ids() {
+                let Some(clause) = clauses.get(id) else {
+                    continue;
+                };
+                match self.clause_status(&clause.lits) {
+                    ClauseStatus::Conflict => return true,
+                    ClauseStatus::Unit(lit) => {
+                        self.assign(lit);
+                        changed = true;
+                    }
+                    ClauseStatus::Satisfied | ClauseStatus::Unresolved => {}
+                }
+            }
+        }
+        false
     }
 
     /// Try to strengthen a clause using asymmetric branching
     ///
+    /// For clause `C = l_0 ∨ l_1 ∨ ... ∨ l_{n-1}`, literal `l_k` is redundant
+    /// (droppable) if the rest of the database already entails `C \ {l_k}`.
+    /// To certify that, we assume `¬(C \ {l_k})` — i.e. the negation of every
+    /// *other* literal — and run unit propagation over `clauses`. A conflict
+    /// means `clauses ∧ ¬(C \ {l_k}) ⊨ ⊥`, i.e. `clauses ⊨ (C \ {l_k})`, so
+    /// `l_k` can be dropped while the clause stays entailed (self-subsuming
+    /// resolution / asymmetric literal elimination). This mirrors the
+    /// technique `Solver::strengthen_clauses_inprocessing` and
+    /// `Solver::vivify_clauses` use against the live trail, except here the
+    /// propagation is a self-contained brute-force BCP over `clauses` (see
+    /// `Self::propagate_all`) since this module has no access to the
+    /// solver's watch lists or trail.
+    ///
+    /// Removed literals are re-derived greedily: after a literal is dropped,
+    /// later iterations test redundancy against the already-shrunk clause,
+    /// which stays sound because each successful test only ever certifies
+    /// entailment of a clause that is itself already known to be entailed.
+    ///
     /// Returns the strengthened clause (with redundant literals removed)
-    /// or None if the clause couldn't be strengthened
+    /// or `None` if the clause couldn't be strengthened.
     pub fn strengthen_clause(
         &mut self,
         clause_lits: &[Lit],
-        _clauses: &ClauseDatabase,
+        clauses: &ClauseDatabase,
     ) -> Option<SmallVec<[Lit; 8]>> {
         self.stats.attempts += 1;
 
@@ -155,32 +211,51 @@ impl AsymmetricBranching {
             return None;
         }
 
-        let strengthened = false;
-        let new_lits: SmallVec<[Lit; 8]> = clause_lits.iter().copied().collect();
+        let mut new_lits: SmallVec<[Lit; 8]> = clause_lits.iter().copied().collect();
+        let mut strengthened = false;
 
-        // Try to remove each literal
+        // Try to remove each literal, re-scanning the (possibly shrunk)
+        // clause until no more literals can be removed or only two remain.
         let mut i = 0;
-        while i < new_lits.len() {
-            let lit = new_lits[i];
-
-            // Try assigning ~lit and see if we can derive the rest of the clause
+        while i < new_lits.len() && new_lits.len() > 2 {
             self.backtrack();
-            self.assign(lit.negate());
 
-            // Simplified AB: In a full implementation, we would do full unit propagation here
-            // For now, we use a simplified heuristic - this is a placeholder for full AB
-            // A full implementation would require integration with the solver's propagation engine
+            // Assume the negation of every *other* literal and propagate.
+            let mut conflict = false;
+            for (j, &other) in new_lits.iter().enumerate() {
+                if j == i {
+                    continue;
+                }
+                let neg = other.negate();
+                if self.is_true(neg) {
+                    // Already implied by an earlier assumption in this pass.
+                    continue;
+                }
+                if self.is_false(neg) {
+                    // Assuming ~other directly contradicts a value already
+                    // forced by propagation from an earlier assumption in
+                    // this pass — an immediate conflict.
+                    conflict = true;
+                    break;
+                }
+                self.assign(neg);
+                if self.propagate_all(clauses) {
+                    conflict = true;
+                    break;
+                }
+            }
 
-            // In this simplified version, we don't actually perform strengthening
-            // Just move to the next literal
-            i += 1;
+            self.backtrack();
 
-            if new_lits.len() <= 2 {
-                break;
+            if conflict {
+                new_lits.remove(i);
+                strengthened = true;
+                self.stats.literals_removed += 1;
+                // Don't advance `i`: the next literal has shifted into it.
+            } else {
+                i += 1;
             }
         }
-
-        self.backtrack();
 
         if strengthened {
             self.stats.strengthened += 1;

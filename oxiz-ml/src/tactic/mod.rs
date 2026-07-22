@@ -2,11 +2,16 @@
 //!
 //! Select best solving tactics based on formula features.
 
+mod engine;
 mod formula_features;
 mod portfolio;
 mod selector;
 
-pub use formula_features::{FeatureExtractor, FormulaFeatures};
+pub use engine::{MlTacticEngine, TacticRecommendation, tactic_name};
+pub use formula_features::{
+    FeatureExtractor, FormulaFeatures, FormulaStats, extract_formula_features,
+    extract_formula_stats,
+};
 pub use portfolio::{Portfolio, PortfolioConfig, TacticResult};
 pub use selector::{TacticConfig, TacticId, TacticSelector};
 

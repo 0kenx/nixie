@@ -4,6 +4,7 @@
 use crate::prelude::*;
 use num_traits::ToPrimitive;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_theories::string::{GroundStringOutcome, solve_ground_string};
 
 use super::Solver;
 
@@ -504,6 +505,21 @@ impl Solver {
                 | TermKind::StrToInt(_)
                 | TermKind::IntToStr(_)
                 | TermKind::StrInRe(_, _)
+        )
+    }
+
+    /// Attempt to decide the ground string fragment by constructing and
+    /// *verifying* a concrete model with the string theory's ground solver
+    /// ([`oxiz_theories::string::solve_ground_string`]).
+    ///
+    /// Returns `true` only when a concrete assignment to every string variable
+    /// makes the whole assertion set evaluate to `true` — a sound `Sat`
+    /// certificate. When no such witness is found within the search bounds it
+    /// returns `false`, and the caller keeps the honest `Unknown` verdict.
+    pub(super) fn ground_string_model_sat(&self, manager: &TermManager) -> bool {
+        matches!(
+            solve_ground_string(manager, &self.assertions),
+            GroundStringOutcome::Sat
         )
     }
 

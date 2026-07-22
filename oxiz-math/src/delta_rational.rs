@@ -181,10 +181,17 @@ impl DeltaRational {
             return Some(Self::new(new_rational, 0));
         }
 
-        // (a + δ*k) / r = a/r + δ*(k/r); exact only when `k/r` is an i64.
+        // (a + δ*k) / r = a/r + δ*(k/r); exact only when `k/r` is itself an
+        // i64, i.e. `r_int` evenly divides `delta_coeff`. Integer division
+        // truncates toward zero, so e.g. delta_coeff=1, r_int=2 would
+        // silently round `1/2` down to `0`, erasing the infinitesimal and
+        // its sign entirely -- the same unsoundness `mul_rational` guards
+        // against. Only take this exact branch on an exact division; fall
+        // through to the sign-preserving fallback otherwise.
         if r.is_integer()
             && let Some(r_int) = r.numer().to_i64()
             && r_int != 0
+            && self.delta_coeff % r_int == 0
         {
             return Some(Self::new(new_rational, self.delta_coeff / r_int));
         }
@@ -435,5 +442,67 @@ mod tests {
 
         assert_eq!(b.rational, rat(-5));
         assert_eq!(b.delta_coeff, -2);
+    }
+
+    #[test]
+    fn test_delta_div_rational_exact() {
+        // 6 + 6δ divided by 2 is exactly 3 + 3δ.
+        let a = DeltaRational::new(rat(6), 6);
+        let b = a.div_rational(&rat(2)).expect("nonzero divisor");
+
+        assert_eq!(b.rational, rat(3));
+        assert_eq!(b.delta_coeff, 3);
+    }
+
+    #[test]
+    fn test_delta_div_rational_inexact_integer_preserves_sign() {
+        // Regression test for MATH-5: (a + δ) / 2 must NOT truncate the
+        // infinitesimal coefficient to 0 via i64 integer division; it must
+        // preserve the sign of the infinitesimal part instead.
+        let a = DeltaRational::new(rat(4), 1); // 4 + δ
+        let b = a.div_rational(&rat(2)).expect("nonzero divisor");
+
+        assert_eq!(b.rational, rat(2));
+        // Must remain strictly positive infinitesimal (not truncated to 0).
+        assert!(b.delta_coeff > 0, "infinitesimal sign must be preserved");
+    }
+
+    #[test]
+    fn test_delta_div_rational_negative_inexact_integer_preserves_sign() {
+        // (a - δ) / 3 must preserve the negative sign, not truncate to 0.
+        let a = DeltaRational::new(rat(9), -1); // 9 - δ
+        let b = a.div_rational(&rat(3)).expect("nonzero divisor");
+
+        assert_eq!(b.rational, rat(3));
+        assert!(b.delta_coeff < 0, "infinitesimal sign must be preserved");
+    }
+
+    #[test]
+    fn test_delta_div_rational_by_negative_integer_flips_sign() {
+        // (a + δ) / -2: same_sign is false since delta_coeff > 0 but r is
+        // negative, so the result's infinitesimal must be negative.
+        let a = DeltaRational::new(rat(4), 1); // 4 + δ
+        let b = a.div_rational(&rat(-2)).expect("nonzero divisor");
+
+        assert_eq!(b.rational, rat(-2));
+        assert!(b.delta_coeff < 0);
+    }
+
+    #[test]
+    fn test_delta_div_rational_zero_delta_is_exact() {
+        let a = DeltaRational::new(rat(10), 0);
+        let b = a.div_rational(&rat(4)).expect("nonzero divisor");
+
+        assert_eq!(
+            b.rational,
+            BigRational::new(BigInt::from(10), BigInt::from(4))
+        );
+        assert_eq!(b.delta_coeff, 0);
+    }
+
+    #[test]
+    fn test_delta_div_rational_by_zero_is_none() {
+        let a = DeltaRational::new(rat(5), 1);
+        assert!(a.div_rational(&rat(0)).is_none());
     }
 }

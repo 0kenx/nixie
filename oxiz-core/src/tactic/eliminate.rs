@@ -156,11 +156,18 @@ impl Tactic for StatelessEliminateUnconstrainedTactic {
         "elim-uncnstr"
     }
 
-    fn apply(&self, goal: &Goal) -> Result<TacticResult> {
-        Ok(TacticResult::SubGoals(vec![goal.clone()]))
+    fn apply(&self, _goal: &Goal) -> Result<TacticResult> {
+        // Eliminating unconstrained variables rewrites the formula (replacing
+        // eliminated occurrences), which needs a `&mut TermManager`. The
+        // manager-free path honestly reports NotApplicable rather than
+        // returning the goal unchanged. Use
+        // `EliminateUnconstrainedTactic::apply_mut` (or `create_managed`) for
+        // the real transformation.
+        Ok(TacticResult::NotApplicable)
     }
 
     fn description(&self) -> &str {
-        "Eliminates unconstrained variables from the formula"
+        "Eliminates unconstrained variables from the formula \
+         (requires a TermManager; the manager-free path is NotApplicable)"
     }
 }

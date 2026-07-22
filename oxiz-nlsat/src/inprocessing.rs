@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), not part of the public API. WIRED: the
+// solver runs periodic level-0 learned-clause subsumption and self-subsuming
+// strengthening on the `Inprocessor` schedule (`solver::inprocess::run_inprocessing`).
+// Only learned, non-reason clauses are removed/strengthened, so the pass is
+// model-preserving.
 //! Inprocessing techniques for clause database optimization.
 //!
 //! This module implements various inprocessing techniques that can be

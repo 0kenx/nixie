@@ -1,5 +1,10 @@
 #![allow(dead_code)]
-// NLSAT architecture triage (0.2.4): demoted to pub(crate), removed from the public API; correct implementation not yet wired into the solver, retained for future wiring.
+// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired because it is
+// unsound for this solver: eliminating a boolean variable that backs a theory
+// atom destroys the atom<->literal correspondence every theory_propagate /
+// evaluate_atom step relies on. In QF_NRA/NIA essentially every boolean
+// variable backs an atom, so BVE would be silently unsound. Only viable behind
+// an explicit "atom-free variables only" guard, which is near-empty here.
 //! Bounded Variable Elimination (BVE)
 //!
 //! This module implements bounded variable elimination, a preprocessing technique that

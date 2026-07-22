@@ -19,6 +19,7 @@ oxiz-core = { workspace = true, features = ["std"] }
 oxiz-solver = { workspace = true, features = ["std"] }
 oxiz-proof = { workspace = true }
 oxiz-smtcomp = { workspace = true }
+oxiz-ml = { workspace = true }
 num-rational = { workspace = true, default-features = false, features = ["std"] }
 clap = { workspace = true }
 clap_complete = { workspace = true }

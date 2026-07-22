@@ -1,41 +1,34 @@
-mod comparator;
-mod history;
-mod oxiz_runner;
-mod z3_runner;
+//! OxiZ vs Z3 differential-testing (parity) harness.
+//!
+//! Discovers SMT-LIB2 benchmarks under `benchmarks/<logic>/*.smt2` (relative
+//! to this crate's manifest directory), runs each one through both the OxiZ
+//! solver and a real `z3` binary, and compares the results to measure
+//! correctness parity per logic. A summary table is printed to stdout and
+//! full results are written to `results.json`.
+//!
+//! # Usage
+//!
+//! ```text
+//! oxiz-z3-parity [--export-history <DIR>]
+//! ```
+//!
+//! `--export-history <DIR>` additionally exports a history snapshot of the
+//! run to the given directory.
 
 use anyhow::{Context, Result};
 use colored::Colorize;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tabled::{Table, Tabled};
 
-use comparator::{MatchStatus, compare_results};
-use oxiz_runner::run_oxiz;
-use z3_runner::run_z3;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SolverResult {
-    Sat,
-    Unsat,
-    Unknown,
-    Error(String),
-    Timeout,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParityResult {
-    pub benchmark: String,
-    pub logic: String,
-    pub oxiz_result: SolverResult,
-    pub z3_result: SolverResult,
-    pub oxiz_time: Duration,
-    pub z3_time: Duration,
-    pub match_status: MatchStatus,
-}
+use oxiz_z3_parity::ParityResult;
+use oxiz_z3_parity::comparator::{MatchStatus, compare_results};
+use oxiz_z3_parity::history;
+use oxiz_z3_parity::oxiz_runner::run_oxiz;
+use oxiz_z3_parity::z3_runner::run_z3;
 
 #[derive(Debug, Tabled)]
 struct ResultRow {
@@ -247,7 +240,12 @@ fn generate_report(results: &[ParityResult]) {
         .collect();
 
     if !wrong.is_empty() {
-        println!("\n{}", "SOUNDNESS FAILURES (Sat vs Unsat disagreement):".bright_red().bold());
+        println!(
+            "\n{}",
+            "SOUNDNESS FAILURES (Sat vs Unsat disagreement):"
+                .bright_red()
+                .bold()
+        );
         for failure in &wrong {
             println!(
                 "\n  {} [{}]",
@@ -289,11 +287,7 @@ fn generate_report(results: &[ParityResult]) {
                 .bold()
         );
         for entry in unresolved {
-            println!(
-                "\n  {} [{}]",
-                entry.benchmark.bright_yellow(),
-                entry.logic
-            );
+            println!("\n  {} [{}]", entry.benchmark.bright_yellow(), entry.logic);
             println!(
                 "    OxiZ:  {:?} ({:.3}s)",
                 entry.oxiz_result,

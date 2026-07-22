@@ -5,7 +5,7 @@
 
 use crate::benchmark::{BenchmarkStatus, SingleResult};
 use crate::loader::Benchmark;
-use oxiz_core::ast::TermManager;
+use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::smtlib::{Command, parse_script};
 use oxiz_solver::Solver;
 use serde::{Deserialize, Serialize};
@@ -261,7 +261,11 @@ impl ModelVerifier {
         };
 
         let mut solver = Solver::new();
-        let mut variables: Vec<(String, String)> = Vec::new(); // (name, sort)
+        // (name, declared term, sort) -- the term is kept (not discarded) so
+        // `extract_model` can evaluate the actual variable under the model
+        // instead of fabricating a placeholder value.
+        let mut variables: Vec<(String, TermId, String)> = Vec::new();
+        let mut assertions: Vec<TermId> = Vec::new();
 
         // Execute commands to collect constraints and variables
         for cmd in &commands {
@@ -270,18 +274,24 @@ impl ModelVerifier {
                     solver.set_logic(logic);
                 }
                 Command::DeclareConst(name, sort) => {
-                    variables.push((name.clone(), sort.clone()));
                     let sort_id = parse_sort(sort, &tm);
-                    let _var = tm.mk_var(name, sort_id);
+                    let var = tm.mk_var(name, sort_id);
+                    variables.push((name.clone(), var, sort.clone()));
                 }
                 Command::DeclareFun(name, arg_sorts, ret_sort) if arg_sorts.is_empty() => {
-                    variables.push((name.clone(), ret_sort.clone()));
                     let sort_id = parse_sort(ret_sort, &tm);
-                    let _var = tm.mk_var(name, sort_id);
+                    let var = tm.mk_var(name, sort_id);
+                    variables.push((name.clone(), var, ret_sort.clone()));
                 }
                 Command::DeclareFun(..) => {}
-                Command::Assert(term) => {
+                // `:named` assertions must be asserted too -- skipping them
+                // (as the previous version of this loop did) would silently
+                // re-solve a *weaker* formula than the benchmark actually
+                // states, which is exactly the kind of "verification that
+                // doesn't verify" this module exists to avoid.
+                Command::Assert(term) | Command::AssertNamed(term, _) => {
                     solver.assert(*term, &mut tm);
+                    assertions.push(*term);
                 }
                 _ => {}
             }
@@ -296,13 +306,55 @@ impl ModelVerifier {
             );
         }
 
-        // Extract model from solver
-        let model = self.extract_model(&solver, &variables, &tm);
+        let Some(solver_model) = solver.model() else {
+            return VerificationResult::error(
+                &benchmark_name,
+                "solver reported sat but produced no model".to_string(),
+            );
+        };
 
-        // For now, we trust that if the solver says SAT and we can extract a model,
-        // the model is valid. Full verification would require evaluating all assertions
-        // under the model, which is more complex.
-        VerificationResult::success(&benchmark_name, model, start.elapsed())
+        // Real verification: evaluate every top-level assertion under the
+        // model the solver actually produced (via `Model::eval`, the same
+        // evaluator `Context::eval_in_model`/`--validate-model` use) and
+        // record which ones fail to reduce to `true`, instead of trusting
+        // "solver said sat" as a proxy for "model is valid".
+        let true_id = tm.mk_true();
+        let total = assertions.len();
+        let mut failing: Vec<usize> = Vec::new();
+        for (idx, &assertion) in assertions.iter().enumerate() {
+            let evaluated = solver_model.eval(assertion, &mut tm);
+            if evaluated != true_id {
+                failing.push(idx);
+            }
+        }
+
+        // Extract the reported model *after* evaluation so both operations
+        // read the same solver-produced assignments.
+        let model = self.extract_model(&solver, &variables, &mut tm);
+        let elapsed = start.elapsed();
+
+        if failing.is_empty() {
+            VerificationResult::success(&benchmark_name, model, elapsed)
+        } else {
+            let preview: Vec<String> = failing
+                .iter()
+                .take(5)
+                .map(|idx| format!("#{}", idx + 1))
+                .collect();
+            let message = format!(
+                "{} of {} assertion(s) do not evaluate to true under the extracted model \
+                 (failing assertion index(es): {}{})",
+                failing.len(),
+                total,
+                preview.join(", "),
+                if failing.len() > preview.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
+            );
+            VerificationResult::failure(&benchmark_name, Some(model), message, elapsed)
+        }
     }
 
     /// Verify multiple results
@@ -318,28 +370,57 @@ impl ModelVerifier {
             .collect()
     }
 
-    /// Extract model from solver
+    /// Extract the model the solver actually produced.
+    ///
+    /// For each declared variable, evaluates its term under
+    /// [`oxiz_solver::solver::Model::eval`] (the solver's real assignment,
+    /// not a fabricated default) and records the resulting constant. A
+    /// variable that has no assignment in the model (e.g. it is genuinely
+    /// unconstrained, or its sort has no built-in constant representation
+    /// here, such as an uninterpreted sort) is honestly omitted rather than
+    /// filled in with a placeholder value.
     fn extract_model(
         &self,
-        _solver: &Solver,
-        variables: &[(String, String)],
-        _tm: &TermManager,
+        solver: &Solver,
+        variables: &[(String, TermId, String)],
+        tm: &mut TermManager,
     ) -> Model {
         let mut model = Model::new();
 
-        // For now, create a placeholder model
-        // Full implementation would query the solver for model values
-        for (name, sort) in variables {
-            match sort.as_str() {
-                "Bool" => {
-                    model.add_bool(name, true); // Placeholder
+        let Some(solver_model) = solver.model() else {
+            return model;
+        };
+
+        for (name, term, _sort) in variables {
+            let value_id = solver_model.eval(*term, tm);
+            let Some(value_term) = tm.get(value_id) else {
+                continue;
+            };
+            match &value_term.kind {
+                TermKind::True => model.add_bool(name, true),
+                TermKind::False => model.add_bool(name, false),
+                TermKind::IntConst(n) => {
+                    // `Model.ints` is `i64`-keyed; a value outside that
+                    // range is reported as a `Real` string instead of
+                    // silently truncating or dropping it.
+                    match n.to_string().parse::<i64>() {
+                        Ok(v) => model.add_int(name, v),
+                        Err(_) => model.add_real(name, n.to_string()),
+                    }
                 }
-                "Int" => {
-                    model.add_int(name, 0); // Placeholder
+                TermKind::RealConst(r) => model.add_real(name, r.to_string()),
+                TermKind::BitVecConst { value, .. } => {
+                    // `Model.bitvectors` is `u64`-keyed; a wider value is
+                    // reported as `Real` (decimal string) instead, for the
+                    // same reason as the `IntConst` fallback above.
+                    match value.to_string().parse::<u64>() {
+                        Ok(v) => model.add_bitvector(name, v),
+                        Err(_) => model.add_real(name, value.to_string()),
+                    }
                 }
-                "Real" => {
-                    model.add_real(name, "0.0"); // Placeholder
-                }
+                // Unassigned variable, or a value this reporting `Model`
+                // has no field for (e.g. an uninterpreted-sort witness):
+                // omit rather than fabricate.
                 _ => {}
             }
         }
@@ -500,5 +581,119 @@ mod tests {
 
         // Should attempt verification since result was SAT
         assert!(verification.verified || verification.error.is_some());
+    }
+
+    /// `extract_model` used to always report `x -> 0` (a hardcoded
+    /// placeholder) regardless of the actual constraint. `(assert (= x 5))`
+    /// has exactly one satisfying value for `x`; the extracted model must
+    /// report that real value, not the old placeholder.
+    #[test]
+    fn test_extracted_model_reports_real_solver_values_not_placeholders() {
+        let benchmark = make_test_benchmark(
+            "(set-logic QF_LIA)\n(declare-const x Int)\n(assert (= x 5))\n(check-sat)",
+        );
+        let result = SingleResult::new(
+            &benchmark.meta,
+            BenchmarkStatus::Sat,
+            Duration::from_millis(100),
+        );
+
+        let verification = ModelVerifier::new().verify(&benchmark, &result);
+
+        assert!(
+            verification.verified,
+            "expected verification to run: {verification:?}"
+        );
+        assert_eq!(
+            verification.model_valid,
+            Some(true),
+            "x = 5 genuinely satisfies (= x 5): {verification:?}"
+        );
+        let model = verification
+            .model
+            .as_ref()
+            .expect("a model must be reported for a verified sat result");
+        assert_eq!(
+            model.ints.get("x"),
+            Some(&5),
+            "extracted model must report the real solved value (5), not a fabricated \
+             placeholder: {model:?}"
+        );
+    }
+
+    /// Every top-level assertion must be checked, not just the first one.
+    /// Two assertions pin `x` and `y` to distinct, non-default values;
+    /// the old placeholder extractor (`Bool -> true`, `Int -> 0`,
+    /// `Real -> 0.0`) would have reported wrong values for both.
+    #[test]
+    fn test_extracted_model_checks_every_assertion() {
+        let benchmark = make_test_benchmark(
+            "(set-logic QF_LIA)\n(declare-const x Int)\n(declare-const y Int)\n\
+             (assert (= x 7))\n(assert (= y (+ x 3)))\n(check-sat)",
+        );
+        let result = SingleResult::new(
+            &benchmark.meta,
+            BenchmarkStatus::Sat,
+            Duration::from_millis(100),
+        );
+
+        let verification = ModelVerifier::new().verify(&benchmark, &result);
+
+        assert_eq!(verification.model_valid, Some(true), "{verification:?}");
+        let model = verification.model.as_ref().expect("model must be present");
+        assert_eq!(model.ints.get("x"), Some(&7), "{model:?}");
+        assert_eq!(model.ints.get("y"), Some(&10), "{model:?}");
+    }
+
+    /// `:named` assertions used to be silently skipped by the re-solve loop
+    /// (only plain `Assert` was handled), so a benchmark relying on one
+    /// would be verified against a strictly weaker formula than it actually
+    /// states. `(! (= x 9) :named x-is-nine)` must be asserted and checked
+    /// like any other top-level assertion.
+    #[test]
+    fn test_named_assertions_are_asserted_and_checked() {
+        let benchmark = make_test_benchmark(
+            "(set-logic QF_LIA)\n(declare-const x Int)\n\
+             (assert (! (= x 9) :named x-is-nine))\n(check-sat)",
+        );
+        let result = SingleResult::new(
+            &benchmark.meta,
+            BenchmarkStatus::Sat,
+            Duration::from_millis(100),
+        );
+
+        let verification = ModelVerifier::new().verify(&benchmark, &result);
+
+        assert_eq!(verification.model_valid, Some(true), "{verification:?}");
+        let model = verification.model.as_ref().expect("model must be present");
+        assert_eq!(
+            model.ints.get("x"),
+            Some(&9),
+            "the :named assertion must actually constrain x: {model:?}"
+        );
+    }
+
+    /// A Boolean constant forced to `false` must be reported as `false`,
+    /// not the old placeholder that always reported `true` regardless of
+    /// the actual constraint.
+    #[test]
+    fn test_extracted_bool_value_is_not_always_true() {
+        let benchmark =
+            make_test_benchmark("(declare-const b Bool)\n(assert (not b))\n(check-sat)");
+        let result = SingleResult::new(
+            &benchmark.meta,
+            BenchmarkStatus::Sat,
+            Duration::from_millis(100),
+        );
+
+        let verification = ModelVerifier::new().verify(&benchmark, &result);
+
+        assert_eq!(verification.model_valid, Some(true), "{verification:?}");
+        let model = verification.model.as_ref().expect("model must be present");
+        assert_eq!(
+            model.bools.get("b"),
+            Some(&false),
+            "(assert (not b)) forces b = false: {model:?}"
+        );
     }
 }

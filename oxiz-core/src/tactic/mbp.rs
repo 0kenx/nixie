@@ -144,6 +144,12 @@ pub enum ProjectorKind {
     Array,
     /// Datatype projector
     Datatype,
+    /// Nonlinear arithmetic: no complete linear projector applies. Performs a
+    /// *sound partial* projection (eliminate target variables only from
+    /// genuinely linear literals; keep nonlinear literals opaque and leave the
+    /// variables they constrain uneliminated) rather than silently applying
+    /// the LRA/LIA projector to nonlinear input. See [`MbpEngine::project`].
+    Nonlinear,
 }
 
 /// Model-Based Projection engine
@@ -184,8 +190,21 @@ impl<'a> MbpEngine<'a> {
         // Extract literals from the formula
         let literals = self.extract_literals(formula);
 
-        // Determine which projector to use
-        let projector = self.detect_projector(formula, &vars_set);
+        // Determine which projector to use.
+        let detected = self.detect_projector(formula, &vars_set);
+
+        // Defense in depth: even when a caller bypasses `detect_projector` by
+        // explicitly requesting a linear projector (`config.projector` =
+        // Lra/Lia), never run the linear projector's completeness assumptions
+        // over nonlinear input — route it to the honest partial handler
+        // instead (TODO-940: "never silently linear-project nonlinear terms").
+        let projector = if matches!(detected, ProjectorKind::Lra | ProjectorKind::Lia)
+            && self.contains_nonlinear_arith(formula)
+        {
+            ProjectorKind::Nonlinear
+        } else {
+            detected
+        };
 
         // Project based on theory
         match projector {
@@ -193,6 +212,7 @@ impl<'a> MbpEngine<'a> {
             ProjectorKind::Lia => self.project_lia(&literals, &vars_set, model),
             ProjectorKind::Array => self.project_array(&literals, &vars_set, model),
             ProjectorKind::Datatype => self.project_datatype(&literals, &vars_set, model),
+            ProjectorKind::Nonlinear => self.project_nonlinear(&literals, &vars_set, model),
             ProjectorKind::Auto => {
                 // Try LRA first, then LIA
                 let lra_result = self.project_lra(&literals, &vars_set, model)?;
@@ -243,6 +263,15 @@ impl<'a> MbpEngine<'a> {
         // Check for datatypes
         if self.contains_datatype_ops(formula) {
             return ProjectorKind::Datatype;
+        }
+
+        // Nonlinear arithmetic (e.g. `x * y`, `x div y`) has no complete
+        // Fourier-Motzkin / Loos-Weispfenning linear projector. Route it to
+        // the explicit nonlinear handler instead of falling through to the
+        // LRA default, which would misrepresent a complete linear elimination
+        // over input it cannot soundly eliminate (TODO-940).
+        if self.contains_nonlinear_arith(formula) {
+            return ProjectorKind::Nonlinear;
         }
 
         // Check if all arithmetic is linear and over reals or integers
@@ -648,6 +677,34 @@ impl<'a> MbpEngine<'a> {
         self.project_lra(literals, vars, model)
     }
 
+    /// Nonlinear projector: sound *partial* projection for formulas containing
+    /// nonlinear arithmetic.
+    ///
+    /// `oxiz-core`'s MBP has no NLSAT/CAD-based projector, so nonlinear input
+    /// cannot be given a complete quantifier elimination here. Rather than
+    /// silently applying the LRA projector's completeness assumptions to
+    /// nonlinear literals (TODO-940), this handler eliminates each target
+    /// variable **only** through literals that are genuinely linear bounds on
+    /// it, keeps every nonlinear literal opaque and unchanged, and leaves any
+    /// variable occurring in a nonlinear literal in [`MbpResult::remaining`]
+    /// (so [`MbpResult::is_complete`] honestly reports `false`).
+    ///
+    /// The bound-classification / `unprojectable` logic in [`Self::project_lra`]
+    /// already implements exactly this per-variable discipline — a literal
+    /// that does not decompose into a recognized linear bound on the variable
+    /// (which includes every nonlinear literal) is preserved verbatim and the
+    /// variable is not reported as eliminated — so this method delegates to it.
+    /// The distinct routing exists so nonlinear input is never *labelled* as a
+    /// complete LRA/LIA elimination.
+    fn project_nonlinear(
+        &mut self,
+        literals: &[TermId],
+        vars: &FxHashSet<Spur>,
+        model: &Model,
+    ) -> Result<MbpResult> {
+        self.project_lra(literals, vars, model)
+    }
+
     /// Array projector
     fn project_array(
         &mut self,
@@ -858,5 +915,91 @@ mod tests {
 
         // No quantifier, should return unchanged
         assert_eq!(result, x);
+    }
+
+    // ── TODO-940: nonlinear input must not be linear-projected ────────────
+
+    #[test]
+    fn test_detect_projector_routes_nonlinear() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let three = manager.mk_int(3);
+        let xy = manager.mk_mul([x, y]); // nonlinear x*y
+        let nl = manager.mk_ge(xy, three); // x*y >= 3
+        let x_name = manager.intern_str("x");
+
+        let vars: FxHashSet<Spur> = [x_name].into_iter().collect();
+        let engine = MbpEngine::new(&mut manager);
+        assert_eq!(
+            engine.detect_projector(nl, &vars),
+            ProjectorKind::Nonlinear,
+            "a formula containing x*y must route to the Nonlinear projector"
+        );
+    }
+
+    #[test]
+    fn test_project_nonlinear_leaves_variable_uneliminated() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let three = manager.mk_int(3);
+        let five = manager.mk_int(5);
+        let xy = manager.mk_mul([x, y]); // nonlinear x*y
+        let nl = manager.mk_ge(xy, three); // x*y >= 3
+        let lin = manager.mk_le(x, five); // x <= 5
+        let conj = manager.mk_and([nl, lin]);
+        let x_name = manager.intern_str("x");
+
+        let mut engine = MbpEngine::new(&mut manager);
+        let model = Model::new();
+        let result = engine
+            .project(conj, &[x_name], &model)
+            .expect("project must not error");
+
+        // x occurs in the nonlinear literal x*y >= 3, so it must NOT be
+        // reported as eliminated, and the projection cannot be complete.
+        assert!(
+            result.remaining.contains(&x_name),
+            "x must remain (constrained by a nonlinear literal)"
+        );
+        assert!(!result.eliminated.contains(&x_name));
+        assert!(!result.is_complete());
+
+        // The nonlinear literal must be preserved verbatim (x still occurs).
+        let out = result.formulas[0];
+        assert!(
+            engine.mentions_var(out, x_name),
+            "the nonlinear literal mentioning x must be preserved, not dropped"
+        );
+    }
+
+    #[test]
+    fn test_project_linear_still_eliminates() {
+        // Guard against over-restriction: a genuinely linear variable must
+        // still be eliminated.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let one = manager.mk_int(1);
+        let five = manager.mk_int(5);
+        let lower = manager.mk_ge(x, one); // x >= 1
+        let upper = manager.mk_le(x, five); // x <= 5
+        let conj = manager.mk_and([lower, upper]);
+        let x_name = manager.intern_str("x");
+
+        let mut engine = MbpEngine::new(&mut manager);
+        let model = Model::new();
+        let result = engine
+            .project(conj, &[x_name], &model)
+            .expect("project must not error");
+
+        assert!(
+            result.eliminated.contains(&x_name),
+            "a linear variable with lower/upper bounds must be eliminated"
+        );
+        assert!(result.is_complete());
     }
 }
