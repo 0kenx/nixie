@@ -1156,9 +1156,16 @@ impl TermManager {
             }
             Some(TermKind::Ite(cond, then_br, else_br)) => {
                 let new_cond = self.simplify_cached(cond, cache);
-                let new_then = self.simplify_cached(then_br, cache);
-                let new_else = self.simplify_cached(else_br, cache);
-                self.mk_ite(new_cond, new_then, new_else)
+                // Constant-condition fold: critical for NIA after Boolean case-split.
+                match self.get(new_cond).map(|t| &t.kind) {
+                    Some(TermKind::True) => self.simplify_cached(then_br, cache),
+                    Some(TermKind::False) => self.simplify_cached(else_br, cache),
+                    _ => {
+                        let new_then = self.simplify_cached(then_br, cache);
+                        let new_else = self.simplify_cached(else_br, cache);
+                        self.mk_ite(new_cond, new_then, new_else)
+                    }
+                }
             }
             Some(TermKind::Add(args)) => {
                 let new_args: SmallVec<[TermId; 4]> = args

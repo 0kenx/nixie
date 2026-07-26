@@ -76,6 +76,21 @@ impl Solver {
             };
             match &node.kind {
                 TermKind::Div(_, _) | TermKind::Mod(_, _) => return true,
+                // Walk into `ite` so nonlinear products nested under ite are
+                // visible (previously CDCL returned spurious sat on QF_NIA).
+                // Do not unconditionally flag ite itself — constant table ites
+                // are handled by NIA case-split / expansion.
+                TermKind::Ite(c, t, e) => {
+                    stack.push(*c);
+                    stack.push(*t);
+                    stack.push(*e);
+                }
+                TermKind::Let { bindings, body } => {
+                    for &(_, v) in bindings.iter() {
+                        stack.push(v);
+                    }
+                    stack.push(*body);
+                }
                 TermKind::IntConst(n) if n.to_i64().is_none() => return true,
                 TermKind::BitVecConst { value, .. } if value.to_i64().is_none() => return true,
                 TermKind::Mul(args) => {
@@ -95,11 +110,21 @@ impl Solver {
                         stack.push(a);
                     }
                 }
-                TermKind::Sub(a, b) => {
+                TermKind::Sub(a, b)
+                | TermKind::Eq(a, b)
+                | TermKind::Lt(a, b)
+                | TermKind::Le(a, b)
+                | TermKind::Gt(a, b)
+                | TermKind::Ge(a, b) => {
                     stack.push(*a);
                     stack.push(*b);
                 }
-                TermKind::Neg(a) => stack.push(*a),
+                TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &a in args {
+                        stack.push(a);
+                    }
+                }
                 _ => {}
             }
         }
@@ -126,6 +151,11 @@ impl Solver {
                 | TermKind::Select(_, _)
                 | TermKind::Div(_, _)
                 | TermKind::Mod(_, _) => return true,
+                TermKind::Ite(c, t, e) => {
+                    stack.push(*c);
+                    stack.push(*t);
+                    stack.push(*e);
+                }
                 TermKind::Add(args) | TermKind::Mul(args) => {
                     for &a in args {
                         stack.push(a);

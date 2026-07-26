@@ -305,7 +305,7 @@ pub fn term_is_nonlinear(term_id: TermId, manager: &TermManager) -> bool {
             }
             args.iter().any(|&a| term_is_nonlinear(a, manager))
         }
-        TermKind::Add(args) | TermKind::And(args) => {
+        TermKind::Add(args) | TermKind::And(args) | TermKind::Or(args) => {
             args.iter().any(|&a| term_is_nonlinear(a, manager))
         }
         TermKind::Sub(lhs, rhs)
@@ -313,10 +313,27 @@ pub fn term_is_nonlinear(term_id: TermId, manager: &TermManager) -> bool {
         | TermKind::Gt(lhs, rhs)
         | TermKind::Ge(lhs, rhs)
         | TermKind::Lt(lhs, rhs)
-        | TermKind::Le(lhs, rhs) => {
+        | TermKind::Le(lhs, rhs)
+        | TermKind::Div(lhs, rhs)
+        | TermKind::Mod(lhs, rhs)
+        | TermKind::Implies(lhs, rhs)
+        | TermKind::Xor(lhs, rhs) => {
             term_is_nonlinear(*lhs, manager) || term_is_nonlinear(*rhs, manager)
         }
-        TermKind::Neg(inner) => term_is_nonlinear(*inner, manager),
+        TermKind::Neg(inner) | TermKind::Not(inner) => term_is_nonlinear(*inner, manager),
+        // Industrial QF_NIA nests products under `let`/`ite` (calypto VCs).
+        // Missing these arms skipped NIA dispatch entirely → CDCL sat (soundness).
+        TermKind::Ite(c, t, e) => {
+            term_is_nonlinear(*c, manager)
+                || term_is_nonlinear(*t, manager)
+                || term_is_nonlinear(*e, manager)
+        }
+        TermKind::Let { bindings, body } => {
+            bindings
+                .iter()
+                .any(|&(_, v)| term_is_nonlinear(v, manager))
+                || term_is_nonlinear(*body, manager)
+        }
         _ => false,
     }
 }
@@ -344,6 +361,12 @@ fn term_contains_divmod(term_id: TermId, manager: &TermManager) -> bool {
             term_contains_divmod(*c, manager)
                 || term_contains_divmod(*t, manager)
                 || term_contains_divmod(*e, manager)
+        }
+        TermKind::Let { bindings, body } => {
+            bindings
+                .iter()
+                .any(|&(_, v)| term_contains_divmod(v, manager))
+                || term_contains_divmod(*body, manager)
         }
         TermKind::Xor(a, b)
         | TermKind::Implies(a, b)
@@ -397,10 +420,15 @@ fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
                 || contains_non_polynomial_ops(*i, manager)
                 || contains_non_polynomial_ops(*v, manager)
         }
-        TermKind::Forall { .. }
-        | TermKind::Exists { .. }
-        | TermKind::Let { .. }
-        | TermKind::Match { .. } => true,
+        TermKind::Forall { .. } | TermKind::Exists { .. } | TermKind::Match { .. } => true,
+        // `let` is binding sugar; walk the body (parser already inlines binding
+        // TermIds into the body DAG).
+        TermKind::Let { bindings, body } => {
+            bindings
+                .iter()
+                .any(|&(_, v)| contains_non_polynomial_ops(v, manager))
+                || contains_non_polynomial_ops(*body, manager)
+        }
         TermKind::Neg(inner) | TermKind::Not(inner) => contains_non_polynomial_ops(*inner, manager),
         TermKind::Add(args)
         | TermKind::Mul(args)
@@ -595,6 +623,90 @@ fn extract_poly_atoms(
                 extract_poly_atoms(arg, manager, translator, out, incomplete);
             }
         }
+        // Negated comparisons from ite-condition case-split: ¬(a < b) ≡ a ≥ b, etc.
+        TermKind::Not(inner) => {
+            let Some(inner_t) = manager.get(*inner) else {
+                *incomplete = true;
+                return;
+            };
+            match &inner_t.kind.clone() {
+                TermKind::Lt(lhs, rhs) => {
+                    // ¬(lhs < rhs) ≡ lhs ≥ rhs ≡ ¬(lhs - rhs < 0)
+                    if let (Some(lp), Some(rp)) =
+                        (translator.translate(*lhs), translator.translate(*rhs))
+                    {
+                        out.push(PolyAtom {
+                            poly: Polynomial::sub(&lp, &rp),
+                            kind: AtomKind::Lt,
+                            positive: false,
+                        });
+                    } else {
+                        *incomplete = true;
+                    }
+                }
+                TermKind::Le(lhs, rhs) => {
+                    // ¬(lhs ≤ rhs) ≡ lhs > rhs
+                    if let (Some(lp), Some(rp)) =
+                        (translator.translate(*lhs), translator.translate(*rhs))
+                    {
+                        out.push(PolyAtom {
+                            poly: Polynomial::sub(&lp, &rp),
+                            kind: AtomKind::Gt,
+                            positive: true,
+                        });
+                    } else {
+                        *incomplete = true;
+                    }
+                }
+                TermKind::Gt(lhs, rhs) => {
+                    // ¬(lhs > rhs) ≡ lhs ≤ rhs ≡ ¬(lhs - rhs < 0) wait: lhs ≤ rhs ≡ ¬(lhs - rhs > 0)
+                    // use ¬(lhs - rhs > 0) as NOT Gt → Le: poly lhs-rhs, Lt positive false? 
+                    // lhs ≤ rhs → rhs - lhs ≥ 0 → NOT(rhs - lhs < 0)
+                    if let (Some(lp), Some(rp)) =
+                        (translator.translate(*lhs), translator.translate(*rhs))
+                    {
+                        out.push(PolyAtom {
+                            poly: Polynomial::sub(&rp, &lp),
+                            kind: AtomKind::Lt,
+                            positive: false,
+                        });
+                    } else {
+                        *incomplete = true;
+                    }
+                }
+                TermKind::Ge(lhs, rhs) => {
+                    // ¬(lhs ≥ rhs) ≡ lhs < rhs → rhs - lhs > 0
+                    if let (Some(lp), Some(rp)) =
+                        (translator.translate(*lhs), translator.translate(*rhs))
+                    {
+                        out.push(PolyAtom {
+                            poly: Polynomial::sub(&rp, &lp),
+                            kind: AtomKind::Gt,
+                            positive: true,
+                        });
+                    } else {
+                        *incomplete = true;
+                    }
+                }
+                TermKind::Eq(lhs, rhs) => {
+                    // ¬(a = b) is a disequality — incomplete for pure conjunction.
+                    let _ = (lhs, rhs);
+                    *incomplete = true;
+                }
+                TermKind::Not(inner2) => {
+                    // ¬¬φ ≡ φ
+                    extract_poly_atoms(*inner2, manager, translator, out, incomplete);
+                }
+                _ => {
+                    *incomplete = true;
+                }
+            }
+        }
+        // Parser builds Let with body already referencing binding TermIds;
+        // still walk the body (bindings are shared structure inside body).
+        TermKind::Let { body, .. } => {
+            extract_poly_atoms(*body, manager, translator, out, incomplete);
+        }
         // Interface equalities that collapsed to reflexivity after purification
         // (`c = c`) are no-ops for the arithmetic fragment.
         TermKind::True => {}
@@ -621,6 +733,10 @@ fn extract_poly_atoms(
 // NIA dispatch: public entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Max free Boolean variables for exhaustive case-split before NIA.
+/// 6 → 64 cases; enough for calypto-style VCs with a handful of flags.
+const NIA_MAX_BOOL_CASESPLIT: usize = 6;
+
 /// Dispatch nonlinear integer arithmetic assertions to the `NiaSolver`.
 ///
 /// Returns:
@@ -629,9 +745,13 @@ fn extract_poly_atoms(
 /// - `None` if translation yields no atoms or the solver returns Unknown.
 ///
 /// Both linear and nonlinear assertions are passed so the solver has full context.
+///
+/// When free Boolean variables appear (common in industrial QF_NIA with `ite`),
+/// exhaustively case-splits them (up to [`NIA_MAX_BOOL_CASESPLIT`]) and
+/// simplifies each branch so nested `ite`s collapse before polynomial extract.
 pub fn dispatch_nia_constraints(
     assertions: &[TermId],
-    manager: &TermManager,
+    manager: &mut TermManager,
     integer_mode: bool,
 ) -> Option<NlDispatchResult> {
     let has_nl = assertions.iter().any(|&a| term_is_nonlinear(a, manager));
@@ -641,6 +761,7 @@ pub fn dispatch_nia_constraints(
     if !has_nl && !has_divmod {
         return None;
     }
+    let bools = free_bool_vars(assertions, manager);
 
     // Ground store-chains + finite index boxes: decide by evaluating selects
     // (sound for QF_ANIA). Runs before the pure-arith relaxation so we never
@@ -651,9 +772,323 @@ pub fn dispatch_nia_constraints(
         return Some(r);
     }
 
-    // Unsupported ops only count on the *arithmetic* fragment. Array
-    // `store` trees that only appear in array-sorted equalities are not
-    // part of that fragment (see `is_array_structural_eq`).
+    if !bools.is_empty() && bools.len() <= NIA_MAX_BOOL_CASESPLIT {
+        return dispatch_nia_bool_cases(assertions, manager, integer_mode, &bools);
+    }
+
+    dispatch_nia_core(assertions, manager, integer_mode)
+}
+
+/// Free Boolean-sorted variables appearing in `assertions`.
+fn free_bool_vars(assertions: &[TermId], manager: &TermManager) -> Vec<TermId> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack: Vec<TermId> = assertions.to_vec();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(t) = manager.get(id) else {
+            continue;
+        };
+        if matches!(t.kind, TermKind::Var(_)) && t.sort == manager.sorts.bool_sort {
+            out.push(id);
+            continue;
+        }
+        // Structural children
+        match &t.kind {
+            TermKind::Not(a) | TermKind::Neg(a) => stack.push(*a),
+            TermKind::And(xs) | TermKind::Or(xs) | TermKind::Add(xs) | TermKind::Mul(xs) => {
+                stack.extend(xs.iter().copied());
+            }
+            TermKind::Ite(c, a, b) => {
+                stack.push(*c);
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Eq(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Sub(a, b)
+            | TermKind::Div(a, b)
+            | TermKind::Mod(a, b)
+            | TermKind::Implies(a, b)
+            | TermKind::Xor(a, b) => {
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Let { bindings, body } => {
+                for &(_, v) in bindings.iter() {
+                    stack.push(v);
+                }
+                stack.push(*body);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Exhaustive Boolean case-split then core NIA on each simplified branch.
+fn dispatch_nia_bool_cases(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+    integer_mode: bool,
+    bools: &[TermId],
+) -> Option<NlDispatchResult> {
+    let n = bools.len();
+    let cases = 1u32 << n;
+    let mut all_unsat = true;
+    let mut saw_decisive = false;
+    let mut sat_result: Option<NlDispatchResult> = None;
+
+    for mask in 0..cases {
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for (i, &b) in bools.iter().enumerate() {
+            let val = if (mask >> i) & 1 == 1 {
+                manager.mk_true()
+            } else {
+                manager.mk_false()
+            };
+            subst.insert(b, val);
+        }
+        let simplified: Vec<TermId> = assertions
+            .iter()
+            .map(|&a| {
+                let s = manager.substitute(a, &subst);
+                manager.simplify(s)
+            })
+            .collect();
+        // Drop trivial true asserts; false assert → this case unsat.
+        if simplified.iter().any(|&a| {
+            manager
+                .get(a)
+                .is_some_and(|t| matches!(t.kind, TermKind::False))
+        }) {
+            saw_decisive = true;
+            continue;
+        }
+        let filtered: Vec<TermId> = simplified
+            .into_iter()
+            .filter(|&a| {
+                !manager
+                    .get(a)
+                    .is_some_and(|t| matches!(t.kind, TermKind::True))
+            })
+            .collect();
+
+        match dispatch_nia_core(&filtered, manager, integer_mode) {
+            Some(r @ NlDispatchResult::Sat(_)) => {
+                sat_result = Some(r);
+                break;
+            }
+            Some(NlDispatchResult::Unsat) => {
+                saw_decisive = true;
+            }
+            None => {
+                all_unsat = false;
+            }
+        }
+    }
+
+    if let Some(r) = sat_result {
+        return Some(r);
+    }
+    if all_unsat && saw_decisive {
+        return Some(NlDispatchResult::Unsat);
+    }
+    None
+}
+
+/// Core NIA path without Boolean case-split.
+///
+/// When assertions still contain numeric `ite`, expands them by case-splitting
+/// on each `ite` condition (up to a budget) so the polynomial layer sees
+/// ite-free conjunctions.  Unsat on every expansion branch ⇒ Unsat.
+fn dispatch_nia_core(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+    integer_mode: bool,
+) -> Option<NlDispatchResult> {
+    // Expand numeric ite by branching on conditions.
+    let branches = expand_ite_branches(assertions, manager, 16);
+    if branches.is_empty() {
+        return None;
+    }
+    let mut all_unsat = true;
+    let mut saw_unsat = false;
+    let mut sat_result = None;
+    for branch in &branches {
+        match dispatch_nia_poly_only(branch, manager, integer_mode) {
+            Some(r @ NlDispatchResult::Sat(_)) => {
+                if false {
+                }
+                sat_result = Some(r);
+                break;
+            }
+            Some(NlDispatchResult::Unsat) => {
+                saw_unsat = true;
+            }
+            None => {
+                if false {
+                }
+                all_unsat = false;
+            }
+        }
+    }
+    if let Some(r) = sat_result {
+        return Some(r);
+    }
+    if all_unsat && saw_unsat {
+        return Some(NlDispatchResult::Unsat);
+    }
+    None
+}
+
+/// Expand assertions into ite-free branches by splitting on `ite` conditions.
+///
+/// Each branch is a list of assertions: the original formulas with ites
+/// substituted to a chosen arm, plus the condition (or its negation) that
+/// justified the choice.  Budget limits total branches.
+fn expand_ite_branches(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+    max_depth: u32,
+) -> Vec<Vec<TermId>> {
+    // Start with one branch = input assertions.
+    let mut frontier: Vec<Vec<TermId>> = vec![assertions.to_vec()];
+    for _ in 0..max_depth {
+        let mut next = Vec::new();
+        let mut progressed = false;
+        for branch in frontier {
+            // Find first ite in any assertion.
+            let mut ite_term: Option<TermId> = None;
+            'find: for &a in &branch {
+                let mut st = vec![a];
+                let mut seen = HashSet::new();
+                while let Some(id) = st.pop() {
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    let Some(t) = manager.get(id) else {
+                        continue;
+                    };
+                    match &t.kind {
+                        TermKind::Ite(_, _, _) => {
+                            // Only split numeric or bool ites that appear in arith context.
+                            ite_term = Some(id);
+                            break 'find;
+                        }
+                        TermKind::Not(x) | TermKind::Neg(x) => st.push(*x),
+                        TermKind::And(xs) | TermKind::Or(xs) | TermKind::Add(xs) | TermKind::Mul(xs) => {
+                            st.extend(xs.iter().copied());
+                        }
+                        TermKind::Eq(a, b)
+                        | TermKind::Lt(a, b)
+                        | TermKind::Le(a, b)
+                        | TermKind::Gt(a, b)
+                        | TermKind::Ge(a, b)
+                        | TermKind::Sub(a, b)
+                        | TermKind::Div(a, b)
+                        | TermKind::Mod(a, b)
+                        | TermKind::Implies(a, b)
+                        | TermKind::Xor(a, b) => {
+                            st.push(*a);
+                            st.push(*b);
+                        }
+                        TermKind::Let { body, bindings } => {
+                            st.push(*body);
+                            for &(_, v) in bindings.iter() {
+                                st.push(v);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let Some(ite_id) = ite_term else {
+                next.push(branch);
+                continue;
+            };
+            progressed = true;
+            let (c, t_arm, e_arm) = match manager.get(ite_id).map(|n| n.kind.clone()) {
+                Some(TermKind::Ite(c, t, e)) => (c, t, e),
+                _ => {
+                    next.push(branch);
+                    continue;
+                }
+            };
+            // Branch then: assume c, replace ite with t_arm
+            {
+                let mut subst = FxHashMap::default();
+                subst.insert(ite_id, t_arm);
+                let mut b1: Vec<TermId> = branch
+                    .iter()
+                    .map(|&a| {
+                        let s = manager.substitute(a, &subst);
+                        manager.simplify(s)
+                    })
+                    .collect();
+                b1.push(c); // condition holds
+                next.push(b1);
+            }
+            // Branch else: assume ¬c, replace ite with e_arm
+            {
+                let mut subst = FxHashMap::default();
+                subst.insert(ite_id, e_arm);
+                let not_c = manager.mk_not(c);
+                let mut b2: Vec<TermId> = branch
+                    .iter()
+                    .map(|&a| {
+                        let s = manager.substitute(a, &subst);
+                        manager.simplify(s)
+                    })
+                    .collect();
+                b2.push(not_c);
+                next.push(b2);
+            }
+            // Cap explosion
+            if next.len() > 4096 {
+                return Vec::new(); // give up → Unknown
+            }
+        }
+        frontier = next;
+        if !progressed {
+            break;
+        }
+    }
+    // Filter trivial
+    frontier
+        .into_iter()
+        .filter_map(|branch| {
+            if branch.iter().any(|&a| {
+                manager
+                    .get(a)
+                    .is_some_and(|t| matches!(t.kind, TermKind::False))
+            }) {
+                return None; // inconsistent branch
+            }
+            let b: Vec<_> = branch
+                .into_iter()
+                .filter(|&a| {
+                    !manager
+                        .get(a)
+                        .is_some_and(|t| matches!(t.kind, TermKind::True))
+                })
+                .collect();
+            Some(b)
+        })
+        .collect()
+}
+
+/// Pure polynomial NIA on ite-free (or residual) assertions.
+fn dispatch_nia_poly_only(
+    assertions: &[TermId],
+    manager: &TermManager,
+    integer_mode: bool,
+) -> Option<NlDispatchResult> {
     let has_unsupported_ops = assertions.iter().any(|&a| {
         !assertion_is_array_only(a, manager) && contains_non_polynomial_ops(a, manager)
     });
@@ -662,6 +1097,9 @@ pub fn dispatch_nia_constraints(
 
     let config = NiaConfig {
         enable_cutting_planes: true,
+        // Industrial QF_NIA (calypto) needs a deeper B&B than the nlsat default.
+        max_nodes: 100_000,
+        max_depth: 256,
         ..NiaConfig::default()
     };
     let mut nia = NiaSolver::with_config(config);
@@ -673,6 +1111,7 @@ pub fn dispatch_nia_constraints(
         if assertion_is_array_only(assertion, manager) {
             continue;
         }
+        // Push Boolean conditions that are arithmetic comparisons as atoms.
         extract_poly_atoms(
             assertion,
             manager,
@@ -681,20 +1120,19 @@ pub fn dispatch_nia_constraints(
             &mut incomplete,
         );
     }
-    // Euclidean div/mod side constraints collected during translation.
     poly_atoms.extend(translator.pending_atoms.iter().cloned());
     if translator.divmod_incomplete {
         incomplete = true;
     }
 
     if poly_atoms.is_empty() {
+        // Empty branch after filtering = vacuously sat (no arith constraints).
+        if !incomplete && !has_unsupported_ops {
+            return Some(NlDispatchResult::sat_empty());
+        }
         return None;
     }
 
-    // Unsat of the pure arith *relaxation* is always sound (extra array
-    // constraints can only remove models). Sat is sound only when we did not
-    // drop anything and there are no store-definitions that further constrain
-    // purified select constants — otherwise free select-vars over-approx.
     let unsat_is_trustworthy = true;
     let sat_is_trustworthy = !incomplete && !has_unsupported_ops && !has_array_stores;
 
@@ -710,7 +1148,8 @@ pub fn dispatch_nia_constraints(
         translator.nlsat.nlsat_mut().add_clause(vec![lit]);
     }
 
-    match translator.nlsat.solve() {
+    let solved = translator.nlsat.solve();
+    match solved {
         SolverResult::Sat if sat_is_trustworthy => {
             let model = extract_nia_model(&translator);
             Some(NlDispatchResult::sat_with(model))
@@ -1346,7 +1785,7 @@ mod tests {
         let square = manager.mk_mul(vec![x, x]);
         let four = manager.mk_int(4);
         let eq = manager.mk_eq(square, four);
-        let result = dispatch_nia_constraints(&[eq], &manager, true);
+        let result = dispatch_nia_constraints(&[eq], &mut manager, true);
         // SAT or Unknown (unknown means solver fell through)
         assert!(
             matches!(result, Some(NlDispatchResult::Sat(_)) | None),
@@ -1364,7 +1803,7 @@ mod tests {
         let square = manager.mk_mul(vec![x, x]);
         let neg_one = manager.mk_int(-1);
         let eq = manager.mk_eq(square, neg_one);
-        let result = dispatch_nia_constraints(&[eq], &manager, true);
+        let result = dispatch_nia_constraints(&[eq], &mut manager, true);
         assert!(
             matches!(result, Some(NlDispatchResult::Unsat) | None),
             "x*x=-1 should be UNSAT or unknown, got {:?}",
