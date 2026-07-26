@@ -18,12 +18,23 @@ use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{One, ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_core::sort::SortKind;
 use oxiz_theories::nlsat::{
     NlDispatchResult, NlSatModel, dispatch_nia_constraints, dispatch_nra_constraints,
+    term_is_nonlinear,
 };
 
 use super::Solver;
 use super::types::{Model, SolverResult};
+
+/// Which nonlinear backend `dispatch_nl_solver` should invoke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NlBackend {
+    /// Integer / mixed (NIA, NIRA, ANIA) — `NiaSolver` with per-sort integrality.
+    Nia,
+    /// Pure real nonlinear — `NlsatSolver`.
+    Nra,
+}
 
 /// A polynomial atom extracted from an assertion.
 /// Represents: `coeff * square_term OP constant`
@@ -68,22 +79,24 @@ impl Solver {
     /// On `Sat`, installs a concrete model from the NL solver so subsequent
     /// `(get-model)` / `(get-value …)` queries succeed.
     ///
+    /// Backend selection:
+    /// - Explicit `*NIA*` / `*NIRA*` / `*NRA*` logics as before.
+    /// - Open logics (`ALL`, or no `set-logic`) **auto-detect** from formula
+    ///   shape: nonlinear products (or array+nonlinear = ANIA) engage NIA;
+    ///   pure-real nonlinear engages NRA. This closes the gap where users
+    ///   write `(set-logic ALL)` for array+nonlinear mixes and otherwise
+    ///   fell through to an honest `unknown`.
+    ///
     /// Handles:
     /// - `x * y`, `x * y * z` (products of distinct variables)
     /// - `x * x` (squares / higher powers via repeated multiplication)
     /// - `(x + 1) * (y - 2)` (products of linear expressions)
     pub(super) fn dispatch_nl_solver(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
-        let logic = self.logic.as_deref()?;
+        let backend = self.nl_backend(manager)?;
 
-        let is_nia = logic.contains("NIA") || (logic.contains("NIRA") && !logic.contains("NRA"));
-        let is_nra = logic.contains("NRA") && !is_nia;
-
-        let result = if is_nia {
-            dispatch_nia_constraints(&self.assertions, manager, true)
-        } else if is_nra {
-            dispatch_nra_constraints(&self.assertions, manager)
-        } else {
-            None
+        let result = match backend {
+            NlBackend::Nia => dispatch_nia_constraints(&self.assertions, manager, true),
+            NlBackend::Nra => dispatch_nra_constraints(&self.assertions, manager),
         }?;
 
         match result {
@@ -92,6 +105,48 @@ impl Solver {
                 Some(SolverResult::Sat)
             }
             NlDispatchResult::Unsat => Some(SolverResult::Unsat),
+        }
+    }
+
+    /// Resolve which NL backend to run, including formula-shape auto-detect
+    /// under open logics (`ALL` / unset).
+    fn nl_backend(&self, manager: &TermManager) -> Option<NlBackend> {
+        // Unset logic behaves like SMT-LIB `ALL` (no theory restriction).
+        let logic = self.logic.as_deref().unwrap_or("ALL");
+
+        // Explicit nonlinear logics win over shape detection.
+        // Note: `NIRA` contains both `NIA` and `NRA` as substrings — the NIA
+        // branch therefore also covers NIRA (per-sort integrality in the
+        // translator keeps Real vars real).
+        if logic.contains("NIA") {
+            return Some(NlBackend::Nia);
+        }
+        if logic.contains("NRA") {
+            return Some(NlBackend::Nra);
+        }
+
+        // Open logics only: do not override QF_LIA / QF_UF / … declarations.
+        if !is_open_logic(logic) {
+            return None;
+        }
+
+        let has_nl = self
+            .assertions
+            .iter()
+            .any(|&a| term_is_nonlinear(a, manager));
+        if !has_nl {
+            return None;
+        }
+
+        // Arrays + nonlinear → ANIA (NIA backend with purification + ground).
+        // Any Int-sorted arithmetic in a nonlinear formula → NIA.
+        // Otherwise pure-real nonlinear → NRA.
+        if assertions_have_array(manager, &self.assertions)
+            || assertions_have_int_arith(manager, &self.assertions)
+        {
+            Some(NlBackend::Nia)
+        } else {
+            Some(NlBackend::Nra)
         }
     }
 
@@ -117,14 +172,17 @@ impl Solver {
     ///
     /// Returns `true` if the constraint set is detected as UNSAT.
     pub(super) fn check_nonlinear_constraints(&self, manager: &TermManager) -> bool {
-        // Only run for NIA/NRA logics
-        let is_nl = self
-            .logic
-            .as_deref()
-            .map(|l| l.contains("NIA") || l.contains("NRA") || l.contains("NIRA"))
-            .unwrap_or(false);
-
-        if !is_nl {
+        // Run for explicit NL logics, and for open logics that actually contain
+        // nonlinear products (same auto-detect policy as `dispatch_nl_solver`).
+        let logic = self.logic.as_deref().unwrap_or("ALL");
+        let explicit_nl =
+            logic.contains("NIA") || logic.contains("NRA") || logic.contains("NIRA");
+        let open_nl = is_open_logic(logic)
+            && self
+                .assertions
+                .iter()
+                .any(|&a| term_is_nonlinear(a, manager));
+        if !explicit_nl && !open_nl {
             return false;
         }
 
@@ -636,6 +694,69 @@ impl Solver {
             _ => None,
         }
     }
+}
+
+/// SMT-LIB open / unrestricted logics where formula-shape auto-detect is safe.
+fn is_open_logic(logic: &str) -> bool {
+    logic.is_empty() || logic.eq_ignore_ascii_case("ALL")
+}
+
+/// Whether any assertion mentions an array sort, `select`, or `store`.
+fn assertions_have_array(manager: &TermManager, assertions: &[TermId]) -> bool {
+    let mut stack: Vec<TermId> = assertions.to_vec();
+    let mut seen = FxHashSet::default();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(term) = manager.get(id) else {
+            continue;
+        };
+        if matches!(term.kind, TermKind::Select(_, _) | TermKind::Store(_, _, _)) {
+            return true;
+        }
+        if let Some(sort) = manager.sorts.get(term.sort)
+            && matches!(sort.kind, SortKind::Array { .. })
+        {
+            return true;
+        }
+        super::term_walk::collect_structural_children(&term.kind, &mut stack);
+    }
+    false
+}
+
+/// Whether any assertion involves Int-sorted arithmetic (vars, selects, consts
+/// under arith ops). Used to prefer the NIA backend over pure NRA under `ALL`.
+fn assertions_have_int_arith(manager: &TermManager, assertions: &[TermId]) -> bool {
+    let int_sort = manager.sorts.int_sort;
+    let mut stack: Vec<TermId> = assertions.to_vec();
+    let mut seen = FxHashSet::default();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(term) = manager.get(id) else {
+            continue;
+        };
+        if term.sort == int_sort
+            && matches!(
+                term.kind,
+                TermKind::Var(_)
+                    | TermKind::Select(_, _)
+                    | TermKind::IntConst(_)
+                    | TermKind::Add(_)
+                    | TermKind::Mul(_)
+                    | TermKind::Sub(_, _)
+                    | TermKind::Neg(_)
+                    | TermKind::Div(_, _)
+                    | TermKind::Mod(_, _)
+            )
+        {
+            return true;
+        }
+        super::term_walk::collect_structural_children(&term.kind, &mut stack);
+    }
+    false
 }
 
 /// Convert a `BigRational` into a Real-sorted constant term.

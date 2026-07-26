@@ -84,6 +84,77 @@ fn test_nia_sat_provides_get_model() {
     assert_eq!(y_val, expected_y, "y must equal 2*x");
 }
 
+/// Under `(set-logic ALL)`, nonlinear integer formulas must still engage the
+/// NIA dispatch (formula-shape auto-detect) rather than falling through to
+/// an honest `unknown`.
+#[test]
+fn test_all_logic_nia_auto_detect_sat() {
+    let mut ctx = Context::new();
+    ctx.set_logic("ALL");
+
+    let int_sort = ctx.terms.sorts.int_sort;
+    let x = ctx.declare_const("x", int_sort);
+    let square = ctx.terms.mk_mul(vec![x, x]);
+    let four = ctx.terms.mk_int(4);
+    let eq = ctx.terms.mk_eq(square, four);
+    ctx.assert(eq);
+
+    assert_eq!(
+        ctx.check_sat(),
+        SolverResult::Sat,
+        "ALL + x*x=4 must auto-detect NIA and return sat"
+    );
+    let model = ctx.get_model().expect("model after sat under ALL");
+    let x_val = model
+        .iter()
+        .find(|(n, _, _)| n == "x")
+        .map(|(_, _, v)| v.as_str())
+        .expect("x in model");
+    assert!(x_val == "2" || x_val == "-2", "x must be ±2, got {x_val}");
+}
+
+/// Array + nonlinear product under `ALL` is QF_ANIA by shape: must decide
+/// sat just like an explicit `(set-logic QF_ANIA)`.
+#[test]
+fn test_all_logic_ania_auto_detect_sat() {
+    let source = r#"
+        (set-logic ALL)
+        (declare-const A (Array Int Int))
+        (declare-const i Int)
+        (declare-const j Int)
+        (assert (= (select A i) 3))
+        (assert (= (select A j) 4))
+        (assert (= (* (select A i) (select A j)) 12))
+        (check-sat)
+    "#;
+    let mut ctx = Context::new();
+    let outputs = ctx.execute_script(source).expect("script");
+    assert!(
+        outputs.iter().any(|l| l.trim() == "sat"),
+        "ALL + array×select product must auto-detect ANIA, got {outputs:?}"
+    );
+}
+
+/// Pure-real nonlinear under `ALL` should engage NRA, not be stuck on unknown.
+#[test]
+fn test_all_logic_nra_auto_detect_sat() {
+    let mut ctx = Context::new();
+    ctx.set_logic("ALL");
+
+    let real_sort = ctx.terms.sorts.real_sort;
+    let x = ctx.declare_const("x", real_sort);
+    let square = ctx.terms.mk_mul(vec![x, x]);
+    let four = ctx.terms.mk_real(num_rational::Rational64::from_integer(4));
+    let eq = ctx.terms.mk_eq(square, four);
+    ctx.assert(eq);
+
+    assert_eq!(
+        ctx.check_sat(),
+        SolverResult::Sat,
+        "ALL + real x*x=4 must auto-detect NRA and return sat"
+    );
+}
+
 #[test]
 fn test_nia_x_squared_eq_3_unsat() {
     // x * x = 3 → UNSAT (3 is not a perfect square)
