@@ -617,12 +617,24 @@ pub fn dispatch_nia_constraints(
     if !has_nl && !has_divmod {
         return None;
     }
+
+    // Ground store-chains + finite index boxes: decide by evaluating selects
+    // (sound for QF_ANIA). Runs before the pure-arith relaxation so we never
+    // report Sat from free select-vars when stores constrain them.
+    if crate::ania_ground::assertions_contain_store(assertions, manager)
+        && let Some(r) = crate::ania_ground::try_decide_ground_ania(assertions, manager)
+    {
+        return Some(r);
+    }
+
     // Unsupported ops only count on the *arithmetic* fragment. Array
     // `store` trees that only appear in array-sorted equalities are not
     // part of that fragment (see `is_array_structural_eq`).
     let has_unsupported_ops = assertions.iter().any(|&a| {
         !assertion_is_array_only(a, manager) && contains_non_polynomial_ops(a, manager)
     });
+    let has_array_stores =
+        crate::ania_ground::assertions_contain_store(assertions, manager);
 
     let config = NiaConfig {
         enable_cutting_planes: true,
@@ -655,11 +667,12 @@ pub fn dispatch_nia_constraints(
         return None;
     }
 
-    // Unsat of the pure arith fragment is always sound for the full problem
-    // (more constraints can only shrink the model set). Sat is sound when
-    // extraction did not drop any non-array constraint.
+    // Unsat of the pure arith *relaxation* is always sound (extra array
+    // constraints can only remove models). Sat is sound only when we did not
+    // drop anything and there are no store-definitions that further constrain
+    // purified select constants — otherwise free select-vars over-approx.
     let unsat_is_trustworthy = true;
-    let sat_is_trustworthy = !incomplete && !has_unsupported_ops;
+    let sat_is_trustworthy = !incomplete && !has_unsupported_ops && !has_array_stores;
 
     for atom in &poly_atoms {
         let atom_id = translator

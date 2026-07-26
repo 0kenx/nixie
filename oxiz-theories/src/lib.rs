@@ -100,6 +100,7 @@ pub mod wmaxsat;
 #[cfg(feature = "std")]
 pub mod checking;
 #[cfg(feature = "std")]
+pub mod ania_ground;
 pub mod nlsat;
 #[cfg(feature = "std")]
 pub mod sls;
