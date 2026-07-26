@@ -1689,37 +1689,30 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 // Check for defined function
-                if let Some((params, body)) = self.function_defs.get(&op).cloned() {
+                if let Some(def) = self.function_defs.get(&op).cloned() {
                     // Parse arguments
                     let args = self.parse_term_list()?;
 
-                    if args.len() != params.len() {
+                    if args.len() != def.param_vars.len() {
                         return Err(OxizError::ParseError {
                             position: 0,
                             message: format!(
                                 "wrong number of arguments for {}: expected {}, got {}",
                                 op,
-                                params.len(),
+                                def.param_vars.len(),
                                 args.len()
                             ),
                         });
                     }
 
-                    // Substitute arguments into the body
+                    // Substitute call-site arguments for the exact parameter
+                    // variables that appear in the body.
                     let mut substitution = FxHashMap::default();
-                    for ((param_name, _param_sort), &arg) in params.iter().zip(args.iter()) {
-                        // Find the parameter variable in the body
-                        let param_sort = self
-                            .constants
-                            .get(param_name)
-                            .copied()
-                            .unwrap_or(self.manager.sorts.bool_sort);
-                        let param_var = self.manager.mk_var(param_name, param_sort);
+                    for (&param_var, &arg) in def.param_vars.iter().zip(args.iter()) {
                         substitution.insert(param_var, arg);
                     }
 
-                    // Apply substitution to get the result
-                    self.manager.substitute(body, &substitution)
+                    self.manager.substitute(def.body, &substitution)
                 } else {
                     // Regular function application.
                     //
