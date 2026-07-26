@@ -14,13 +14,16 @@
 
 #[allow(unused_imports)]
 use crate::prelude::*;
-use num_rational::Rational64;
+use num_bigint::BigInt;
+use num_rational::{BigRational, Rational64};
 use num_traits::{One, ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
-use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints, dispatch_nra_constraints};
+use oxiz_theories::nlsat::{
+    NlDispatchResult, NlSatModel, dispatch_nia_constraints, dispatch_nra_constraints,
+};
 
 use super::Solver;
-use super::types::SolverResult;
+use super::types::{Model, SolverResult};
 
 /// A polynomial atom extracted from an assertion.
 /// Represents: `coeff * square_term OP constant`
@@ -62,29 +65,52 @@ impl Solver {
     /// `SolverResult` when the solver is conclusive, or `None` to fall
     /// through to CDCL(T).
     ///
+    /// On `Sat`, installs a concrete model from the NL solver so subsequent
+    /// `(get-model)` / `(get-value …)` queries succeed.
+    ///
     /// Handles:
     /// - `x * y`, `x * y * z` (products of distinct variables)
     /// - `x * x` (squares / higher powers via repeated multiplication)
     /// - `(x + 1) * (y - 2)` (products of linear expressions)
-    pub(super) fn dispatch_nl_solver(&self, manager: &TermManager) -> Option<SolverResult> {
+    pub(super) fn dispatch_nl_solver(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
         let logic = self.logic.as_deref()?;
 
         let is_nia = logic.contains("NIA") || (logic.contains("NIRA") && !logic.contains("NRA"));
         let is_nra = logic.contains("NRA") && !is_nia;
 
-        if is_nia {
-            dispatch_nia_constraints(&self.assertions, manager, true).map(|r| match r {
-                NlDispatchResult::Sat => SolverResult::Sat,
-                NlDispatchResult::Unsat => SolverResult::Unsat,
-            })
+        let result = if is_nia {
+            dispatch_nia_constraints(&self.assertions, manager, true)
         } else if is_nra {
-            dispatch_nra_constraints(&self.assertions, manager).map(|r| match r {
-                NlDispatchResult::Sat => SolverResult::Sat,
-                NlDispatchResult::Unsat => SolverResult::Unsat,
-            })
+            dispatch_nra_constraints(&self.assertions, manager)
         } else {
             None
+        }?;
+
+        match result {
+            NlDispatchResult::Sat(nl_model) => {
+                self.install_nl_model(nl_model, manager);
+                Some(SolverResult::Sat)
+            }
+            NlDispatchResult::Unsat => Some(SolverResult::Unsat),
         }
+    }
+
+    /// Install an NL-dispatch model into `self.model` for `(get-model)`.
+    fn install_nl_model(&mut self, nl_model: NlSatModel, manager: &mut TermManager) {
+        let mut model = Model::new();
+        for (term, value) in nl_model.assignments {
+            let is_int = manager
+                .get(term)
+                .map(|t| t.sort == manager.sorts.int_sort)
+                .unwrap_or(true);
+            let value_term = if is_int {
+                manager.mk_int(value.to_integer())
+            } else {
+                big_rational_to_real_term(manager, &value)
+            };
+            model.set(term, value_term);
+        }
+        self.model = Some(model);
     }
 
     /// Check nonlinear arithmetic constraints for early UNSAT detection.
@@ -609,6 +635,28 @@ impl Solver {
             }
             _ => None,
         }
+    }
+}
+
+/// Convert a `BigRational` into a Real-sorted constant term.
+///
+/// Prefers an exact `Rational64` when both numerator and denominator fit in
+/// `i64`; otherwise falls back to an integer approximation of the floor
+/// (still a valid Real constant, just less precise for huge values).
+fn big_rational_to_real_term(manager: &mut TermManager, value: &BigRational) -> TermId {
+    let n = value.numer();
+    let d = value.denom();
+    if let (Some(ni), Some(di)) = (n.to_i64(), d.to_i64()) {
+        if di != 0 {
+            return manager.mk_real(Rational64::new(ni, di));
+        }
+    }
+    // Fallback: integer part only.
+    let approx: BigInt = value.to_integer();
+    if let Some(v) = approx.to_i64() {
+        manager.mk_real(Rational64::from_integer(v))
+    } else {
+        manager.mk_real(Rational64::from_integer(0))
     }
 }
 

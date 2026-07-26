@@ -35,5 +35,5 @@ fn nested_ite_select_product_range() {
         })
         .collect();
     let r = try_decide_ground_ania(&asserts, &tm);
-    assert_eq!(r, Some(NlDispatchResult::Sat));
+    assert!(matches!(r, Some(NlDispatchResult::Sat(_))));
 }

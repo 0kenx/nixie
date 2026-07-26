@@ -558,6 +558,9 @@ impl Solver {
         }
 
         if self.assertions.is_empty() {
+            // Empty assertion set is vacuously SAT — install an empty model so
+            // `(get-model)` returns `(model)` rather than "No model available".
+            self.model = Some(Model::new());
             return SolverResult::Sat;
         }
 

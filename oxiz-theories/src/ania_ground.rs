@@ -11,6 +11,7 @@
 
 use crate::nlsat::NlDispatchResult;
 use num_bigint::BigInt;
+use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::sort::SortKind;
@@ -109,7 +110,13 @@ pub fn try_decide_ground_ania(
         &mut env,
         &mut leaves,
     ) {
-        Some(true) => Some(NlDispatchResult::Sat),
+        Some(true) => {
+            let mut assignments = HashMap::new();
+            for (term, val) in env {
+                assignments.insert(term, BigRational::from_integer(val));
+            }
+            Some(NlDispatchResult::sat_with(assignments))
+        }
         Some(false) => Some(NlDispatchResult::Unsat),
         None => None, // exhausted leaf budget
     }

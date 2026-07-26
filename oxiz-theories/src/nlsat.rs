@@ -36,16 +36,40 @@ use std::collections::HashMap;
 // Public result type for dispatch functions
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Concrete arithmetic assignment produced by a nonlinear decision procedure.
+///
+/// Keys are free arithmetic terms (`Var`, purified `select` constants, …);
+/// values are the rational witnesses found by NIA/NRA/ANIA ground search.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NlSatModel {
+    /// TermId → rational value for every free arithmetic variable assigned.
+    pub assignments: HashMap<TermId, BigRational>,
+}
+
 /// The definitive result from a nonlinear dispatch call.
 ///
 /// `Unknown` is not included: `dispatch_*` functions return `None` to signal
 /// "fall through to CDCL(T)" instead of wrapping Unknown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NlDispatchResult {
-    /// The constraint set is satisfiable.
-    Sat,
+    /// The constraint set is satisfiable, with a concrete model witness.
+    Sat(NlSatModel),
     /// The constraint set is unsatisfiable.
     Unsat,
+}
+
+impl NlDispatchResult {
+    /// Satisfiable with an empty assignment map (defaults fill gaps).
+    #[must_use]
+    pub fn sat_empty() -> Self {
+        Self::Sat(NlSatModel::default())
+    }
+
+    /// Satisfiable with the given term→value map.
+    #[must_use]
+    pub fn sat_with(assignments: HashMap<TermId, BigRational>) -> Self {
+        Self::Sat(NlSatModel { assignments })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -601,7 +625,7 @@ fn extract_poly_atoms(
 ///
 /// Returns:
 /// - `Some(NlDispatchResult::Unsat)` if the system is provably UNSAT,
-/// - `Some(NlDispatchResult::Sat)` if NiaSolver finds an integer model,
+/// - `Some(NlDispatchResult::Sat(_))` if NiaSolver finds an integer model,
 /// - `None` if translation yields no atoms or the solver returns Unknown.
 ///
 /// Both linear and nonlinear assertions are passed so the solver has full context.
@@ -687,10 +711,27 @@ pub fn dispatch_nia_constraints(
     }
 
     match translator.nlsat.solve() {
-        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::Sat),
+        SolverResult::Sat if sat_is_trustworthy => {
+            let model = extract_nia_model(&translator);
+            Some(NlDispatchResult::sat_with(model))
+        }
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
         SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,
     }
+}
+
+/// Map NIA poly-var indices back to TermIds via the translator cache.
+fn extract_nia_model(translator: &TermPolyTranslator<'_>) -> HashMap<TermId, BigRational> {
+    let mut out = HashMap::new();
+    let Some(nlsat_model) = translator.nlsat.nlsat().get_model() else {
+        return out;
+    };
+    for (&term, &poly_var) in translator.var_cache() {
+        if let Some(val) = nlsat_model.arith_value(poly_var) {
+            out.insert(term, val.clone());
+        }
+    }
+    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -776,6 +817,24 @@ impl<'a> RealPolyTranslator<'a> {
         self.var_cache.insert(term_id, v);
         v
     }
+
+    fn var_cache(&self) -> &HashMap<TermId, u32> {
+        &self.var_cache
+    }
+}
+
+/// Map NRA poly-var indices back to TermIds via the translator cache.
+fn extract_nra_model(translator: &RealPolyTranslator<'_>) -> HashMap<TermId, BigRational> {
+    let mut out = HashMap::new();
+    let Some(nlsat_model) = translator.nlsat.get_model() else {
+        return out;
+    };
+    for (&term, &poly_var) in translator.var_cache() {
+        if let Some(val) = nlsat_model.arith_value(poly_var) {
+            out.insert(term, val.clone());
+        }
+    }
+    out
 }
 
 /// Real-arithmetic analogue of [`extract_poly_atoms`]. See its documentation
@@ -899,7 +958,10 @@ pub fn dispatch_nra_constraints(
     }
 
     match translator.nlsat.solve() {
-        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::Sat),
+        SolverResult::Sat if sat_is_trustworthy => {
+            let model = extract_nra_model(&translator);
+            Some(NlDispatchResult::sat_with(model))
+        }
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
         SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,
     }
@@ -1287,7 +1349,7 @@ mod tests {
         let result = dispatch_nia_constraints(&[eq], &manager, true);
         // SAT or Unknown (unknown means solver fell through)
         assert!(
-            matches!(result, Some(NlDispatchResult::Sat) | None),
+            matches!(result, Some(NlDispatchResult::Sat(_)) | None),
             "x*x=4 should be SAT or unknown, got {:?}",
             result
         );
