@@ -18,7 +18,7 @@ OxiZ is under active development with core theories at production quality on its
 
 - **Pure Rust Implementation**: 384,047 lines of production Rust code (481,652 total including comments/blank lines, per `tokei .`)
 - **Unit Tests**: 8,119 passing, 8 skipped (`cargo nextest run --workspace --all-features`, confirmed at release time), plus 106 doc-tests (`cargo test --doc --workspace --all-features`)
-- **Z3 Parity**: honest, non-fabricated comparison against a real `z3` 4.15.4 binary (`bench/z3_parity`) across 168 benchmarks spanning 19 logics: **154 Correct**, 12 Inconclusive (OxiZ honestly answered `Unknown`), 2 Timeout, 0 Error, 0 Wrong — zero soundness disagreements on all 154 decisive comparisons, not an overall "100% parity" claim (16 of 19 logic families are individually at 100%; three quantified logics — `UFLIA`, `UFLRA`, `AUFLIA` — are not). The original 8-logic/88-benchmark quickstart core (QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, QF_FP) is now 88/88 Correct — see "Z3 Parity" below and [`TODO.md`](TODO.md)
+- **Z3 Parity**: honest, non-fabricated comparison against a real `z3` 4.15.4 binary (`bench/z3_parity`) across 175 benchmarks spanning 19 logics: **161 Correct**, 12 Inconclusive (OxiZ honestly answered `Unknown`), 2 Timeout, 0 Error, 0 Wrong — zero soundness disagreements on all 161 decisive comparisons, not an overall "100% parity" claim (16 of 19 logic families are individually at 100%; three quantified logics — `UFLIA`, `UFLRA`, `AUFLIA` — are not). The 8-logic quickstart core (QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, QF_FP) is 95/95 Correct — see "Z3 Parity" below and [`TODO.md`](TODO.md)
 - **Audit + hardening (multiple waves)**: a 2026-07-16 production-readiness audit (19 scoped agents + adversarial verification) plus this release's follow-on implementation waves found and fixed soundness and honesty gaps across every crate — SMT-LIB parser coverage, quantifier elimination (Ferrante-Rackoff, virtual substitution, MBI/Craig interpolants), MBQI SAT certification, Spacer MIC generalization and multi-threaded parallel PDR, IEEE-754 `fp.rem`/fused-multiply-add, proof-rule/checker validation, and two process-crash fixes. Re-verified status (which items are fixed vs. still open) is tracked per-item in [`TODO.md`](TODO.md); a small number of NLSAT/quantifier items (irrational-root isolation; two ex-crash benchmarks that now honestly answer `Unknown`/`Timeout` instead of crashing) remain open and are called out there and in the [CHANGELOG](CHANGELOG.md#030---2026-07-22)
 
 ## What's New in 0.3.0 (2026-07-22)
@@ -35,7 +35,7 @@ Exact `BigRational` floor/ceil and real polynomial GCD/resultant in `oxiz-math`;
 Two process-crash panics fixed (a SAT theory-conflict-with-unassigned-literal panic; a simplex out-of-bounds panic); both SMT-LIB parser regressions surfaced by 0.2.4's stricter undeclared-symbol check (`to_fp` rounding-mode arguments, `re.allchar`) are closed; roughly a dozen previously-dead-but-tested `oxiz-nlsat` modules (subsumption, inprocessing, vivification, structure analysis, …) are now wired into the real solve loop; confirmed-dead GPU-flag scaffolding (zero references anywhere in the workspace) was deleted rather than left as a misleading placeholder.
 
 ### Z3 Parity gains
-Re-measured against `bench/z3_parity/results.json` at release time: **154/168 Correct** (was 122/168 at the 0.2.4 baseline), **0 Wrong**, **0 process crashes** (down from 3, now `Inconclusive`/`Timeout`), 12 Inconclusive, 2 Timeout — 100% agreement with z3 on every decisive comparison, but not an overall "100% parity" claim. `qf_fp` 1/10→10/10, `qf_s` 3/10→10/10 (both via new decision procedures, see "New capabilities"), `AUFLIA` 2/10→7/10, `UFLIA` 7/20→14/20, `UFLRA` 2/10→5/10. 16 of 19 logic families now hold at 100% Correct; the original 8-logic/88-benchmark quickstart core is 88/88. See "Z3 Parity" below for the full breakdown.
+Re-measured against `bench/z3_parity` at release time: **161/175 Correct** (QF_NIA expanded 1→8 this pass), **0 Wrong**, **0 process crashes**, 12 Inconclusive, 2 Timeout — 100% agreement with z3 on every decisive comparison, but not an overall "100% parity" claim. `qf_fp` 1/10→10/10, `qf_s` 3/10→10/10, `AUFLIA` 2/10→7/10, `UFLIA` 7/20→14/20, `UFLRA` 2/10→5/10. 16 of 19 logic families now hold at 100% Correct; the 8-logic quickstart core is 95/95. See "Z3 Parity" below for the full breakdown.
 
 For the 0.2.4 production-readiness audit and the 0.2.3 feature set (generic `DratWriter`/`LratWriter` proof writers, NLSAT root-isolation completions, the full `oxiz-opt` optimization pipeline, real BMC/k-induction in `oxiz-spacer`), see the [0.2.4](CHANGELOG.md#024---2026-07-19) and [0.2.3](CHANGELOG.md#023---2026-06-09) CHANGELOG entries.
 
@@ -54,7 +54,7 @@ Numbers below are re-measured at release time against the current `bench/z3_pari
   - Tableau-based simplex solver
   - Efficient pivot selection
   - Incremental constraint management
-- **QF_NIA** (Nonlinear Integer Arithmetic) - **100.0%** (1/1 test)
+- **QF_NIA** (Nonlinear Integer Arithmetic) - **100.0%** (8/8 tests)
   - NLSAT solver with CAD
   - Branch-and-bound for integers
   - Complete theory integration
@@ -91,7 +91,7 @@ Numbers below are re-measured at release time against the current `bench/z3_pari
 
 ### Additional Logics (Extended Suite, 19 Logics / 168 Benchmarks Total)
 
-`bench/z3_parity/benchmarks/` also covers `AUFLIA`, `AUFLIRA`, `QF_ABV`, `QF_ALIA`, `QF_AUFBV`, `QF_AUFLIA`, `QF_NIRA`, `QF_UFLIA`, `QF_UFLRA`, and `UFLIA`/`UFLRA` (quantified logics). Aggregate result across all 168 benchmarks: **154 Correct, 12 Inconclusive, 2 Timeout, 0 Error, 0 Wrong** — zero soundness disagreements this run (100% match on the 154 decisive comparisons, not an overall "100% parity" claim). A new MBQI SAT certifier substantially reduced how often the quantified logics fall back to `Unknown`: `AUFLIA` improved 2/10 → 7/10 Correct, `UFLIA` 7/20 → 14/20, `UFLRA` 2/10 → 5/10. These three remain the only logic families below 100% — the rest are honest `Unknown`/`Timeout`, never a wrong verdict (`UFLIA`: 5 `Unknown` + 1 `Timeout`; `UFLRA`: 4 `Unknown` + 1 `Timeout`; `AUFLIA`: 3 `Unknown`). `QF_NIRA` (5/5, its previous confirmed-wrong case is now fixed) and the other 16 logic categories (including `qf_s`/`qf_fp`, now fixed) remain at 100% Correct with no regressions.
+`bench/z3_parity/benchmarks/` also covers `AUFLIA`, `AUFLIRA`, `QF_ABV`, `QF_ALIA`, `QF_AUFBV`, `QF_AUFLIA`, `QF_NIRA`, `QF_UFLIA`, `QF_UFLRA`, and `UFLIA`/`UFLRA` (quantified logics). Aggregate result across all 175 benchmarks: **161 Correct, 12 Inconclusive, 2 Timeout, 0 Error, 0 Wrong** — zero soundness disagreements this run (100% match on the 161 decisive comparisons, not an overall "100% parity" claim). A new MBQI SAT certifier substantially reduced how often the quantified logics fall back to `Unknown`: `AUFLIA` improved 2/10 → 7/10 Correct, `UFLIA` 7/20 → 14/20, `UFLRA` 2/10 → 5/10. These three remain the only logic families below 100% — the rest are honest `Unknown`/`Timeout`, never a wrong verdict (`UFLIA`: 5 `Unknown` + 1 `Timeout`; `UFLRA`: 4 `Unknown` + 1 `Timeout`; `AUFLIA`: 3 `Unknown`). `QF_NIA` (8/8), `QF_NIRA` (5/5) and the other 16 logic categories (including `qf_s`/`qf_fp`) remain at 100% Correct with no regressions.
 
 - **QF_UF** (Uninterpreted Functions) - E-graphs with congruence closure (not separately benchmarked; exercised indirectly by every other logic above)
 - **QF_NRA** (Nonlinear Real) - CAD-based NLSAT solver (Alpha: irrational-root isolation still open; not part of this benchmark suite, see `TODO.md`)
@@ -123,21 +123,21 @@ Numbers below are re-measured at release time against the current `bench/z3_pari
 |-------|-------|--------|-----------|
 | QF_LIA | 16/16 | ✅ 100% Correct | Simplex, branch-and-bound, cutting planes |
 | QF_LRA | 16/16 | ✅ 100% Correct | Tableau-based simplex, pivot selection |
-| QF_NIA | 1/1 | ✅ 100% Correct | NLSAT with CAD |
+| QF_NIA | 8/8 | ✅ 100% Correct | NLSAT with CAD + integer B&B |
 | QF_S | 10/10 | ✅ 100% Correct | Ground string decision procedure (verified models); up from 3/10 |
 | QF_BV | 15/15 | ✅ 100% Correct | Constraint propagation, div/rem, logical ops |
 | QF_FP | 10/10 | ✅ 100% Correct | Concrete FP model finder + `div128` bugfix; up from 4/10 |
 | QF_DT | 10/10 | ✅ 100% Correct | Constructor exclusivity, cross-variable propagation |
 | QF_A | 10/10 | ✅ 100% Correct | Read-over-write, extensionality |
-| **TOTAL** | **88/88 Correct** | **✅ 100%** | All 8 quickstart-core logics now at 100% — see caveats below |
+| **TOTAL** | **95/95 Correct** | **✅ 100%** | All 8 quickstart-core logics now at 100% — see caveats below |
 
-This 88-benchmark quickstart core is a narrower subset of the full 168-benchmark, 19-logic extended suite (including quantified `AUFLIA`/`UFLIA`/`UFLRA` and combined theories), which totals **154 Correct / 12 Inconclusive / 2 Timeout / 0 Error / 0 Wrong** — **not** 100% overall; see "Theory Support Status" above for the full breakdown and the caveats below before generalizing this table's result.
+This 95-benchmark quickstart core is a narrower subset of the full 175-benchmark, 19-logic extended suite (including quantified `AUFLIA`/`UFLIA`/`UFLRA` and combined theories), which totals **161 Correct / 12 Inconclusive / 2 Timeout / 0 Error / 0 Wrong** — **not** 100% overall; see "Theory Support Status" above for the full breakdown and the caveats below before generalizing this table's result.
 
 ### What This Means
 
-- ✅ **Correctness Validated on All 8 Quickstart-Core Logics**: QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, and QF_FP now match Z3 on every quickstart benchmark (88/88); `QF_S`/`QF_FP` reached 100% this release via new ground-decision-procedure / concrete-model-finder implementations (see "What's New in 0.3.0" above) that only ever return `Sat` after concretely verifying a witness against every assertion — never a guess.
-- ⚠️ **Not 100% on the Extended Suite**: the broader 168-benchmark, 19-logic suite is **154/168 Correct**, not 100% — three quantified logics (`UFLIA` 14/20, `UFLRA` 5/10, `AUFLIA` 7/10) still honestly return `Unknown`/`Timeout` on cases needing existential-witness (Skolemization) construction the MBQI certifier doesn't yet build. Do not read this table's 88/88 as a claim about the whole solver. Tracked in [`TODO.md`](TODO.md).
-- ⚠️ **Not a General Production-Readiness Claim**: the 2026-07-16 audit and this release's follow-on hardening waves found and fixed soundness gaps across the parser, quantifier elimination, MBQI, SAT conflict analysis, NLSAT, math, MaxSAT/QE, Spacer, and proof checking — this run recorded 0 Wrong and 0 process crashes across all 168 benchmarks — but a handful of NLSAT/quantifier items (irrational-root isolation; ex-crash benchmarks that now honestly answer `Unknown`/`Timeout` instead of crashing) remain open; see [`TODO.md`](TODO.md) for the itemized gaps and fix status before relying on OxiZ outside this suite's scope
+- ✅ **Correctness Validated on All 8 Quickstart-Core Logics**: QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, and QF_FP now match Z3 on every quickstart benchmark (95/95); `QF_NIA` expanded to multivariate products, Pythagorean triples, and integer div/mod this pass.
+- ⚠️ **Not 100% on the Extended Suite**: the broader 175-benchmark, 19-logic suite is **161/175 Correct**, not 100% — three quantified logics (`UFLIA` 14/20, `UFLRA` 5/10, `AUFLIA` 7/10) still honestly return `Unknown`/`Timeout` on cases needing existential-witness (Skolemization) construction the MBQI certifier doesn't yet build. Do not read this table's 95/95 as a claim about the whole solver. Tracked in [`TODO.md`](TODO.md).
+- ⚠️ **Not a General Production-Readiness Claim**: the 2026-07-16 audit and this release's follow-on hardening waves found and fixed soundness gaps across the parser, quantifier elimination, MBQI, SAT conflict analysis, NLSAT, math, MaxSAT/QE, Spacer, and proof checking — this run recorded 0 Wrong and 0 process crashes across the parity suite — but a handful of NLSAT/quantifier items (algebraic-number model witnesses; ex-crash benchmarks that now honestly answer `Unknown`/`Timeout` instead of crashing) remain open; see [`TODO.md`](TODO.md) for the itemized gaps and fix status before relying on OxiZ outside this suite's scope
 - ✅ **Pure Rust**: Achieved without any C/C++ dependencies
 
 This snapshot validates OxiZ's core arithmetic/BV/datatype/array/string/FP reasoning against Z3 on the quickstart suite, while being explicit that the extended suite's quantified logics still have honest `Unknown`/`Timeout` gaps and that non-core logics are ongoing work.
@@ -149,8 +149,8 @@ This snapshot validates OxiZ's core arithmetic/BV/datatype/array/string/FP reaso
 | Rust Lines of Code (code) | 384,047 |
 | Total Rust Lines (with comments/blanks) | 481,652 |
 | Total Tests | 8,119 passing, 8 skipped (`--all-features`) at the last full nextest run, plus 106 doc-tests |
-| Z3 Parity (quickstart core, 88 benchmarks) | **88/88 (100%) Correct**, 8/8 logics at 100% |
-| Z3 Parity (extended suite, 168 benchmarks / 19 logics) | **154 Correct / 12 Inconclusive / 2 Timeout / 0 Error / 0 Wrong** (not 100% overall — see caveats above) |
+| Z3 Parity (quickstart core, 95 benchmarks) | **95/95 (100%) Correct**, 8/8 logics at 100% |
+| Z3 Parity (extended suite, 175 benchmarks / 19 logics) | **161 Correct / 12 Inconclusive / 2 Timeout / 0 Error / 0 Wrong** (not 100% overall — see caveats above) |
 | Crates | 17 |
 
 ### Codebase Breakdown by Module
@@ -307,7 +307,7 @@ Status reflects results on the `bench/z3_parity` suite against a real `z3` binar
 | QF_BV | Fixed-size BitVectors | ✅ Complete (15/15) |
 | QF_DT | Datatypes (ADT) | ✅ Complete (10/10) |
 | QF_A | Arrays | ✅ Complete (10/10) |
-| QF_NIA | Nonlinear Integer Arithmetic | ✅ Complete (1/1 quickstart test; broader NIA branch-and-bound has known scoping gaps, see `TODO.md`) |
+| QF_NIA | Nonlinear Integer Arithmetic | ✅ Complete (8/8 parity; multivariate products, div/mod, Pythagorean) |
 | QF_S | Strings | ✅ Complete (10/10 Correct via a new ground string decision procedure; up from 3/10) |
 | QF_FP | Floating Point | ✅ Complete (10/10 Correct via a new concrete FP model finder + `div128` bugfix; up from 4/10) |
 | QF_NRA | Nonlinear Real Arithmetic | 🔶 Alpha (irrational-root isolation still open) |

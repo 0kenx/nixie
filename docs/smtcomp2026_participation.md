@@ -10,7 +10,7 @@ OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Sat
 
 **Key facts about OxiZ (v0.3.0):**
 
-- Honest, non-fabricated parity against a real `z3` binary across **19 SMT-LIB logic families** (168 benchmark instances, `bench/z3_parity`): **154 Correct, 0 Wrong, 12 Inconclusive (`Unknown`), 2 Timeout, 0 Error** — zero soundness disagreements on all 154 decisive comparisons, but not "100% parity" overall (16 of 19 logic families are individually at 100%; `UFLIA`/`UFLRA`/`AUFLIA` are not); see [`README.md`](../README.md#z3-parity-quickstart-suite-results-honest-comparator-️) for the full per-logic breakdown and known gaps
+- Honest, non-fabricated parity against a real `z3` binary across **19 SMT-LIB logic families** (175 benchmark instances, `bench/z3_parity`): **161 Correct, 0 Wrong, 12 Inconclusive (`Unknown`), 2 Timeout, 0 Error** — zero soundness disagreements on all 161 decisive comparisons, but not "100% parity" overall (16 of 19 logic families are individually at 100%; `UFLIA`/`UFLRA`/`AUFLIA` are not); see [`README.md`](../README.md) for the full per-logic breakdown and known gaps
 - **8,119 unit tests** passing, 8 skipped (`cargo nextest run --workspace --all-features`) across all crates
 - Zero unsafe C/C++ dependencies — pure Rust from end to end
 - Proof-producing: generates DRAT, Alethe, LFSC, Coq, Lean, and Isabelle certificates
@@ -36,7 +36,7 @@ OxiZ has implementations across the following SMT-LIB logic families. Status ref
 | QF_FP    | ✅ Ready (10/10 Correct — new concrete FP model finder + `div128` bugfix this release, up from 4/10) |
 | QF_DT    | ✅ Ready (10/10 Correct) |
 | QF_A     | ✅ Ready (10/10 Correct) |
-| QF_NIA   | ✅ Ready (1/1 Correct on the parity suite; broader NIA branch-and-bound has known scoping gaps, see `TODO.md`) |
+| QF_NIA   | ✅ Ready (8/8 Correct on the parity suite) |
 | QF_NRA   | 🔶 Alpha (irrational-root isolation still open; not yet part of the parity suite) |
 | UFLIA    | 🔶 Partial (14/20 decisively Correct via a new MBQI SAT certifier; remainder honest `Unknown`/`Timeout`) |
 | UFLRA    | 🔶 Partial (5/10 decisively Correct via the same certifier) |
@@ -49,7 +49,7 @@ OxiZ has implementations across the following SMT-LIB logic families. Status ref
 | QF_IDL   | ⬜ Not yet part of `bench/z3_parity` — no measured data to report |
 | QF_RDL   | ⬜ Not yet part of `bench/z3_parity` — no measured data to report |
 
-Aggregate result across the 168 benchmarks that make up the measured divisions above: **154 Correct, 0 Wrong, 12 Inconclusive, 2 Timeout, 0 Error** — 16 of 19 divisions are individually at 100% (not an overall "100% parity" claim; `UFLIA`/`UFLRA`/`AUFLIA` remain below 100%) — see [`README.md`](../README.md#z3-parity-quickstart-suite-results-honest-comparator-️) and `bench/z3_parity/results.json` for the authoritative, per-benchmark breakdown.
+Aggregate result across the 175 benchmarks that make up the measured divisions above: **161 Correct, 0 Wrong, 12 Inconclusive, 2 Timeout, 0 Error** — 16 of 19 divisions are individually at 100% (not an overall "100% parity" claim; `UFLIA`/`UFLRA`/`AUFLIA` remain below 100%) — see [`README.md`](../README.md) and `bench/z3_parity/results.json` for the authoritative, per-benchmark breakdown.
 
 ### 2. Pure Rust: safety, reproducibility, and auditability
 

@@ -1,0 +1,8 @@
+; Test: modular arithmetic with constant modulus
+; Expected: sat
+(set-logic QF_NIA)
+(declare-const x Int)
+(assert (= (mod x 3) 1))
+(assert (>= x 0))
+(assert (<= x 10))
+(check-sat)

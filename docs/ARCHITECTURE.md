@@ -12,7 +12,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 - 381,842 lines of production Rust code (479,121 total including comments/blank lines)
 - 8,119 tests passing, 8 skipped (`cargo nextest run --workspace --all-features`), plus 106 doc-tests
 - 17 workspace crates (`cargo metadata`)
-- Z3 parity is honestly measured per-logic, not a single percentage — 154/168 Correct on the extended `bench/z3_parity` suite (19 logics), 0 Wrong (not a "100% parity" claim — three quantified logics remain below 100%); the original 8-logic/88-benchmark quickstart core is 88/88 Correct; see `README.md`'s "Z3 Parity" section for the full breakdown before relying on any summary number
+- Z3 parity is honestly measured per-logic, not a single percentage — 161/175 Correct on the extended `bench/z3_parity` suite (19 logics), 0 Wrong (not a "100% parity" claim — three quantified logics remain below 100%); the 8-logic quickstart core is 95/95 Correct; see `README.md`'s "Z3 Parity" section for the full breakdown before relying on any summary number
 
 ### Key Differentiators vs Z3
 
