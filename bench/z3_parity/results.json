@@ -6,11 +6,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2775292
+      "nanos": 636439
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 31108750
+      "nanos": 23123466
     },
     "match_status": "Correct"
   },
@@ -21,11 +21,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 403334
+      "nanos": 469729
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 16937166
+      "nanos": 54699958
     },
     "match_status": "Correct"
   },
@@ -36,11 +36,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 6397041
+      "nanos": 7333908
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 18312167
+      "nanos": 32444478
     },
     "match_status": "Inconclusive"
   },
@@ -51,11 +51,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 792958
+      "nanos": 2866554
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13726667
+      "nanos": 36715913
     },
     "match_status": "Correct"
   },
@@ -66,11 +66,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 4619875
+      "nanos": 2531612
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14346291
+      "nanos": 29575271
     },
     "match_status": "Inconclusive"
   },
@@ -81,11 +81,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1548125
+      "nanos": 1961811
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11058209
+      "nanos": 35557184
     },
     "match_status": "Inconclusive"
   },
@@ -96,11 +96,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3015542
+      "nanos": 1175548
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 17383542
+      "nanos": 54276826
     },
     "match_status": "Correct"
   },
@@ -108,16 +108,16 @@
     "benchmark": "array_unique.smt2",
     "logic": "AUFLIA",
     "oxiz_result": "Unsat",
-    "z3_result": "Unsat",
+    "z3_result": "Unknown",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 483000
+      "nanos": 3141801
     },
     "z3_time": {
-      "secs": 0,
-      "nanos": 442481375
+      "secs": 1,
+      "nanos": 531460491
     },
-    "match_status": "Correct"
+    "match_status": "Inconclusive"
   },
   {
     "benchmark": "array_unsat.smt2",
@@ -126,11 +126,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1091792
+      "nanos": 312032
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19035625
+      "nanos": 29130558
     },
     "match_status": "Correct"
   },
@@ -141,11 +141,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3850125
+      "nanos": 509056
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19198625
+      "nanos": 54344734
     },
     "match_status": "Correct"
   },
@@ -156,11 +156,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 288375
+      "nanos": 807488
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12966542
+      "nanos": 36587277
     },
     "match_status": "Correct"
   },
@@ -171,11 +171,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 324125
+      "nanos": 144678
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14232333
+      "nanos": 38219086
     },
     "match_status": "Correct"
   },
@@ -186,11 +186,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 493959
+      "nanos": 86242
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12837834
+      "nanos": 30760077
     },
     "match_status": "Correct"
   },
@@ -201,11 +201,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 349291
+      "nanos": 1629470
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14524417
+      "nanos": 30548701
     },
     "match_status": "Correct"
   },
@@ -216,11 +216,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 351792
+      "nanos": 279487
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 18735208
+      "nanos": 30822030
     },
     "match_status": "Correct"
   },
@@ -231,11 +231,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3028750
+      "nanos": 2292437
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19999542
+      "nanos": 32359694
     },
     "match_status": "Correct"
   },
@@ -246,11 +246,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 635833
+      "nanos": 88265
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19075500
+      "nanos": 39887257
     },
     "match_status": "Correct"
   },
@@ -261,11 +261,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 690375
+      "nanos": 848760
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 18994416
+      "nanos": 21650561
     },
     "match_status": "Correct"
   },
@@ -276,11 +276,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3781708
+      "nanos": 469436
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 26006750
+      "nanos": 31551530
     },
     "match_status": "Correct"
   },
@@ -291,11 +291,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1084208
+      "nanos": 215805
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 28775208
+      "nanos": 21622134
     },
     "match_status": "Correct"
   },
@@ -306,11 +306,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1157792
+      "nanos": 119309
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 24071458
+      "nanos": 67595469
     },
     "match_status": "Correct"
   },
@@ -321,11 +321,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 990667
+      "nanos": 1910177
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15463916
+      "nanos": 20200631
     },
     "match_status": "Correct"
   },
@@ -336,11 +336,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2421541
+      "nanos": 426561
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14981166
+      "nanos": 53821517
     },
     "match_status": "Correct"
   },
@@ -351,11 +351,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1101834
+      "nanos": 1258286
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12200875
+      "nanos": 27761961
     },
     "match_status": "Correct"
   },
@@ -366,11 +366,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 257083
+      "nanos": 202626
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9456958
+      "nanos": 29552352
     },
     "match_status": "Correct"
   },
@@ -381,11 +381,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 201583
+      "nanos": 89444
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11952625
+      "nanos": 27382945
     },
     "match_status": "Correct"
   },
@@ -396,11 +396,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 288375
+      "nanos": 1543423
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11931291
+      "nanos": 21434323
     },
     "match_status": "Correct"
   },
@@ -411,11 +411,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 5501208
+      "nanos": 3908095
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9462417
+      "nanos": 43066082
     },
     "match_status": "Correct"
   },
@@ -426,11 +426,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 672417
+      "nanos": 196521
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12598042
+      "nanos": 17196974
     },
     "match_status": "Correct"
   },
@@ -441,11 +441,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 268417
+      "nanos": 132210
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9586958
+      "nanos": 31685877
     },
     "match_status": "Correct"
   },
@@ -456,11 +456,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 391584
+      "nanos": 874934
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10471125
+      "nanos": 53493809
     },
     "match_status": "Correct"
   },
@@ -471,11 +471,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 306125
+      "nanos": 1014475
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9554042
+      "nanos": 43250892
     },
     "match_status": "Correct"
   },
@@ -486,11 +486,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 812958
+      "nanos": 2706591
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10220833
+      "nanos": 21874371
     },
     "match_status": "Correct"
   },
@@ -501,11 +501,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 656250
+      "nanos": 364371
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11659458
+      "nanos": 40116507
     },
     "match_status": "Correct"
   },
@@ -516,11 +516,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 496708
+      "nanos": 258399
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11845917
+      "nanos": 35989098
     },
     "match_status": "Correct"
   },
@@ -531,11 +531,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1257500
+      "nanos": 2915273
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11744125
+      "nanos": 39260277
     },
     "match_status": "Correct"
   },
@@ -546,11 +546,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 297042
+      "nanos": 6623474
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11382959
+      "nanos": 29516810
     },
     "match_status": "Correct"
   },
@@ -561,11 +561,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 415583
+      "nanos": 221301
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14839625
+      "nanos": 45762350
     },
     "match_status": "Correct"
   },
@@ -576,11 +576,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 708875
+      "nanos": 243230
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14649875
+      "nanos": 33815443
     },
     "match_status": "Correct"
   },
@@ -591,11 +591,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 327417
+      "nanos": 807092
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14169166
+      "nanos": 38450272
     },
     "match_status": "Correct"
   },
@@ -606,11 +606,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 473416
+      "nanos": 189808
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9875250
+      "nanos": 67193736
     },
     "match_status": "Correct"
   },
@@ -621,11 +621,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 318500
+      "nanos": 200510
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14154291
+      "nanos": 15785728
     },
     "match_status": "Correct"
   },
@@ -636,11 +636,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2673125
+      "nanos": 313319
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 31028959
+      "nanos": 18474152
     },
     "match_status": "Correct"
   },
@@ -651,11 +651,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 502792
+      "nanos": 1298997
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19163083
+      "nanos": 38996664
     },
     "match_status": "Correct"
   },
@@ -666,11 +666,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 740084
+      "nanos": 144398
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12729209
+      "nanos": 30617040
     },
     "match_status": "Correct"
   },
@@ -681,11 +681,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2926667
+      "nanos": 319189
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11302792
+      "nanos": 31563162
     },
     "match_status": "Correct"
   },
@@ -696,11 +696,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 237666
+      "nanos": 1114193
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10693417
+      "nanos": 36604274
     },
     "match_status": "Correct"
   },
@@ -711,11 +711,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 391250
+      "nanos": 1796898
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10711958
+      "nanos": 31823743
     },
     "match_status": "Correct"
   },
@@ -726,11 +726,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 330292
+      "nanos": 2057993
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11304125
+      "nanos": 55599493
     },
     "match_status": "Correct"
   },
@@ -741,11 +741,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 458291
+      "nanos": 1444425
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10466834
+      "nanos": 31370219
     },
     "match_status": "Correct"
   },
@@ -756,11 +756,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1895791
+      "nanos": 1654414
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13915208
+      "nanos": 30262792
     },
     "match_status": "Correct"
   },
@@ -771,11 +771,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 243375
+      "nanos": 1076184
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12659458
+      "nanos": 32821663
     },
     "match_status": "Correct"
   },
@@ -786,11 +786,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2770334
+      "nanos": 326830
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 30450959
+      "nanos": 28628910
     },
     "match_status": "Correct"
   },
@@ -801,11 +801,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1015083
+      "nanos": 516046
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 20006375
+      "nanos": 36333388
     },
     "match_status": "Correct"
   },
@@ -815,12 +815,12 @@
     "oxiz_result": "Unknown",
     "z3_result": "Sat",
     "oxiz_time": {
-      "secs": 48,
-      "nanos": 442933750
+      "secs": 20,
+      "nanos": 568216962
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 228194167
+      "nanos": 24383039
     },
     "match_status": "Inconclusive"
   },
@@ -831,11 +831,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1604042
+      "nanos": 2622985
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11641500
+      "nanos": 39979840
     },
     "match_status": "Correct"
   },
@@ -845,12 +845,12 @@
     "oxiz_result": "Unknown",
     "z3_result": "Sat",
     "oxiz_time": {
-      "secs": 0,
-      "nanos": 974450292
+      "secs": 1,
+      "nanos": 692676230
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12674459
+      "nanos": 24972808
     },
     "match_status": "Inconclusive"
   },
@@ -861,11 +861,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 37742834
+      "nanos": 32807120
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 130399416
+      "nanos": 35829974
     },
     "match_status": "Correct"
   },
@@ -876,11 +876,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 137919000
+      "nanos": 81230684
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11177875
+      "nanos": 21637735
     },
     "match_status": "Inconclusive"
   },
@@ -891,11 +891,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1041500
+      "nanos": 4523862
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 22906292
+      "nanos": 43853613
     },
     "match_status": "Correct"
   },
@@ -906,11 +906,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 551875
+      "nanos": 216430
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13232417
+      "nanos": 22054994
     },
     "match_status": "Correct"
   },
@@ -921,11 +921,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 421833
+      "nanos": 357093
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13349000
+      "nanos": 24697896
     },
     "match_status": "Correct"
   },
@@ -936,11 +936,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 671130250
+      "nanos": 438260893
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15062958
+      "nanos": 18175652
     },
     "match_status": "Inconclusive"
   },
@@ -951,11 +951,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3426625
+      "nanos": 4866714
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 30368250
+      "nanos": 23262876
     },
     "match_status": "Correct"
   },
@@ -966,11 +966,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 338916
+      "nanos": 169212
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13726750
+      "nanos": 48727769
     },
     "match_status": "Correct"
   },
@@ -981,11 +981,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 60,
-      "nanos": 2129917
+      "nanos": 18949819
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 61740458
+      "nanos": 187695630
     },
     "match_status": "Timeout"
   },
@@ -996,11 +996,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3501000
+      "nanos": 302769
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 25128583
+      "nanos": 24010625
     },
     "match_status": "Correct"
   },
@@ -1011,11 +1011,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 150410417
+      "nanos": 106226978
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14408958
+      "nanos": 21348803
     },
     "match_status": "Inconclusive"
   },
@@ -1026,11 +1026,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3076583
+      "nanos": 4051433
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 23423125
+      "nanos": 26472816
     },
     "match_status": "Correct"
   },
@@ -1041,11 +1041,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 814625
+      "nanos": 335282
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12768916
+      "nanos": 17264652
     },
     "match_status": "Correct"
   },
@@ -1056,11 +1056,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1522666
+      "nanos": 4413264
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12427875
+      "nanos": 84456465
     },
     "match_status": "Inconclusive"
   },
@@ -1071,11 +1071,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 503833
+      "nanos": 788711
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10643667
+      "nanos": 40373135
     },
     "match_status": "Correct"
   },
@@ -1086,11 +1086,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 60,
-      "nanos": 7890417
+      "nanos": 1728153
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15017791
+      "nanos": 48629378
     },
     "match_status": "Timeout"
   },
@@ -1101,11 +1101,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2711167
+      "nanos": 2679088
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 30850167
+      "nanos": 34114513
     },
     "match_status": "Correct"
   },
@@ -1116,11 +1116,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1354875
+      "nanos": 1628779
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 17735916
+      "nanos": 20189956
     },
     "match_status": "Inconclusive"
   },
@@ -1131,11 +1131,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1443042
+      "nanos": 4982317
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11794375
+      "nanos": 20398597
     },
     "match_status": "Inconclusive"
   },
@@ -1146,11 +1146,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 4747250
+      "nanos": 2376475
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 21520292
+      "nanos": 34656558
     },
     "match_status": "Inconclusive"
   },
@@ -1161,11 +1161,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1722209
+      "nanos": 3721409
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 16535959
+      "nanos": 40430235
     },
     "match_status": "Correct"
   },
@@ -1176,11 +1176,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3802000
+      "nanos": 2039127
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14024500
+      "nanos": 34662775
     },
     "match_status": "Correct"
   },
@@ -1191,11 +1191,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 258458
+      "nanos": 275431
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12428666
+      "nanos": 21464045
     },
     "match_status": "Correct"
   },
@@ -1206,11 +1206,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 746083
+      "nanos": 542886
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9615667
+      "nanos": 21017588
     },
     "match_status": "Correct"
   },
@@ -1221,11 +1221,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 415333
+      "nanos": 3043857
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11170625
+      "nanos": 26746969
     },
     "match_status": "Correct"
   },
@@ -1236,11 +1236,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 396084
+      "nanos": 172131
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11151459
+      "nanos": 21731640
     },
     "match_status": "Correct"
   },
@@ -1251,11 +1251,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 175541
+      "nanos": 166556
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9588833
+      "nanos": 61824280
     },
     "match_status": "Correct"
   },
@@ -1266,11 +1266,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2728208
+      "nanos": 2086050
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 30884917
+      "nanos": 29075394
     },
     "match_status": "Correct"
   },
@@ -1281,11 +1281,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 324667
+      "nanos": 142127
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14334917
+      "nanos": 23815449
     },
     "match_status": "Correct"
   },
@@ -1296,11 +1296,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1159375
+      "nanos": 297494
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 18624917
+      "nanos": 26822407
     },
     "match_status": "Correct"
   },
@@ -1311,11 +1311,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1915708
+      "nanos": 1677339
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10809958
+      "nanos": 30435323
     },
     "match_status": "Correct"
   },
@@ -1326,11 +1326,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 417083
+      "nanos": 142570
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10430250
+      "nanos": 28336618
     },
     "match_status": "Correct"
   },
@@ -1341,11 +1341,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 757625
+      "nanos": 704594
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10801125
+      "nanos": 35897587
     },
     "match_status": "Correct"
   },
@@ -1356,11 +1356,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 354125
+      "nanos": 238031
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11684875
+      "nanos": 31308617
     },
     "match_status": "Correct"
   },
@@ -1371,11 +1371,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 276417
+      "nanos": 191711
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10212041
+      "nanos": 25744087
     },
     "match_status": "Correct"
   },
@@ -1386,11 +1386,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 759000
+      "nanos": 849847
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13962500
+      "nanos": 46970528
     },
     "match_status": "Correct"
   },
@@ -1401,11 +1401,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 751209
+      "nanos": 255103
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10199666
+      "nanos": 17979158
     },
     "match_status": "Correct"
   },
@@ -1416,11 +1416,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 703334
+      "nanos": 987535
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13248459
+      "nanos": 48569508
     },
     "match_status": "Correct"
   },
@@ -1431,11 +1431,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 329084
+      "nanos": 118024
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9334291
+      "nanos": 24084100
     },
     "match_status": "Correct"
   },
@@ -1446,11 +1446,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 245625
+      "nanos": 220955
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9100750
+      "nanos": 34606851
     },
     "match_status": "Correct"
   },
@@ -1461,11 +1461,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 203333
+      "nanos": 103261
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10355208
+      "nanos": 30922298
     },
     "match_status": "Correct"
   },
@@ -1476,11 +1476,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 161541
+      "nanos": 861552
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10111000
+      "nanos": 28830782
     },
     "match_status": "Correct"
   },
@@ -1491,11 +1491,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2917417
+      "nanos": 1753369
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13682167
+      "nanos": 60967799
     },
     "match_status": "Correct"
   },
@@ -1506,11 +1506,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 368708
+      "nanos": 153727
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 8358000
+      "nanos": 22644319
     },
     "match_status": "Correct"
   },
@@ -1521,11 +1521,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 451583
+      "nanos": 226192
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10695208
+      "nanos": 34002784
     },
     "match_status": "Correct"
   },
@@ -1536,11 +1536,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 750333
+      "nanos": 160844
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9767333
+      "nanos": 25488461
     },
     "match_status": "Correct"
   },
@@ -1551,11 +1551,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 337000
+      "nanos": 1442205
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11488459
+      "nanos": 29246373
     },
     "match_status": "Correct"
   },
@@ -1566,11 +1566,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 470167
+      "nanos": 138239
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13406291
+      "nanos": 43187086
     },
     "match_status": "Correct"
   },
@@ -1581,11 +1581,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 248458
+      "nanos": 162013
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10030250
+      "nanos": 34020984
     },
     "match_status": "Correct"
   },
@@ -1596,11 +1596,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 772500
+      "nanos": 2336344
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 8693042
+      "nanos": 30053484
     },
     "match_status": "Correct"
   },
@@ -1611,11 +1611,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 511208
+      "nanos": 1684653
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13450250
+      "nanos": 20840155
     },
     "match_status": "Correct"
   },
@@ -1626,11 +1626,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 262291
+      "nanos": 594414
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14136334
+      "nanos": 44550494
     },
     "match_status": "Correct"
   },
@@ -1641,11 +1641,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 390208
+      "nanos": 2548028
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14810417
+      "nanos": 28481932
     },
     "match_status": "Correct"
   },
@@ -1656,11 +1656,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 339875
+      "nanos": 102808
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10742625
+      "nanos": 17940140
     },
     "match_status": "Correct"
   },
@@ -1671,11 +1671,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1425708
+      "nanos": 130953
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15621208
+      "nanos": 19970372
     },
     "match_status": "Correct"
   },
@@ -1686,11 +1686,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1870750
+      "nanos": 144536
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 16280834
+      "nanos": 26889289
     },
     "match_status": "Correct"
   },
@@ -1701,11 +1701,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 3404208
+      "nanos": 120979
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13276542
+      "nanos": 24439332
     },
     "match_status": "Correct"
   },
@@ -1716,11 +1716,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2748292
+      "nanos": 3033369
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 20532708
+      "nanos": 26795380
     },
     "match_status": "Correct"
   },
@@ -1731,11 +1731,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 483709
+      "nanos": 6368244
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 17950375
+      "nanos": 61025855
     },
     "match_status": "Correct"
   },
@@ -1746,11 +1746,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 260125
+      "nanos": 118126
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 17007709
+      "nanos": 52517068
     },
     "match_status": "Correct"
   },
@@ -1761,11 +1761,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 291500
+      "nanos": 120798
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 17739292
+      "nanos": 20062052
     },
     "match_status": "Correct"
   },
@@ -1776,11 +1776,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1017125
+      "nanos": 335242
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 16745166
+      "nanos": 60451310
     },
     "match_status": "Correct"
   },
@@ -1791,11 +1791,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1933209
+      "nanos": 2356422
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 29988208
+      "nanos": 63118441
     },
     "match_status": "Correct"
   },
@@ -1806,11 +1806,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 207375
+      "nanos": 2024116
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13018583
+      "nanos": 38924996
     },
     "match_status": "Correct"
   },
@@ -1821,11 +1821,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 502041
+      "nanos": 168997
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11805375
+      "nanos": 47580347
     },
     "match_status": "Correct"
   },
@@ -1836,11 +1836,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 590292
+      "nanos": 1749715
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10031959
+      "nanos": 43585148
     },
     "match_status": "Correct"
   },
@@ -1851,11 +1851,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 738042
+      "nanos": 171389
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13589708
+      "nanos": 67562834
     },
     "match_status": "Correct"
   },
@@ -1866,11 +1866,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 374875
+      "nanos": 572238
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12660875
+      "nanos": 19669442
     },
     "match_status": "Correct"
   },
@@ -1881,11 +1881,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 383708
+      "nanos": 1051921
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11239375
+      "nanos": 27935395
     },
     "match_status": "Correct"
   },
@@ -1896,11 +1896,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 784666
+      "nanos": 131568
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15356084
+      "nanos": 18054822
     },
     "match_status": "Correct"
   },
@@ -1911,11 +1911,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 592791
+      "nanos": 189082
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12040875
+      "nanos": 36912409
     },
     "match_status": "Correct"
   },
@@ -1926,11 +1926,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1667750
+      "nanos": 145304
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 21513875
+      "nanos": 46010724
     },
     "match_status": "Correct"
   },
@@ -1941,11 +1941,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 644208
+      "nanos": 158909
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 18655834
+      "nanos": 19541537
     },
     "match_status": "Correct"
   },
@@ -1956,11 +1956,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 301917
+      "nanos": 183885
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19093333
+      "nanos": 31203611
     },
     "match_status": "Correct"
   },
@@ -1971,11 +1971,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2376500
+      "nanos": 2195834
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 25839375
+      "nanos": 33558635
     },
     "match_status": "Correct"
   },
@@ -1986,11 +1986,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 537458
+      "nanos": 202862
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12709458
+      "nanos": 23129811
     },
     "match_status": "Correct"
   },
@@ -2001,11 +2001,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 518000
+      "nanos": 158461
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12311458
+      "nanos": 34549376
     },
     "match_status": "Correct"
   },
@@ -2016,11 +2016,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 281292
+      "nanos": 269139
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11641000
+      "nanos": 39640251
     },
     "match_status": "Correct"
   },
@@ -2031,11 +2031,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 192833
+      "nanos": 213900
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14904750
+      "nanos": 33536264
     },
     "match_status": "Correct"
   },
@@ -2046,11 +2046,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 666958
+      "nanos": 333225
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12850167
+      "nanos": 28266551
     },
     "match_status": "Correct"
   },
@@ -2061,11 +2061,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 392000
+      "nanos": 252926
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13746917
+      "nanos": 69100038
     },
     "match_status": "Correct"
   },
@@ -2076,11 +2076,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 555583
+      "nanos": 177513
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14087292
+      "nanos": 30108542
     },
     "match_status": "Correct"
   },
@@ -2091,11 +2091,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 419333
+      "nanos": 126618
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 13008625
+      "nanos": 39882040
     },
     "match_status": "Correct"
   },
@@ -2106,11 +2106,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 395917
+      "nanos": 1059386
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15589584
+      "nanos": 47142636
     },
     "match_status": "Correct"
   },
@@ -2121,11 +2121,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 392542
+      "nanos": 162154
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 21830750
+      "nanos": 48558130
     },
     "match_status": "Correct"
   },
@@ -2136,11 +2136,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2267333
+      "nanos": 7348517
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 22491583
+      "nanos": 22757171
     },
     "match_status": "Correct"
   },
@@ -2151,11 +2151,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2291167
+      "nanos": 158007
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 20975459
+      "nanos": 22994892
     },
     "match_status": "Correct"
   },
@@ -2166,11 +2166,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1489875
+      "nanos": 161002
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 27808416
+      "nanos": 38169367
     },
     "match_status": "Correct"
   },
@@ -2181,11 +2181,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2693875
+      "nanos": 3669819
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 32009666
+      "nanos": 23075035
     },
     "match_status": "Correct"
   },
@@ -2196,11 +2196,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 993417
+      "nanos": 132983
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15135959
+      "nanos": 32716040
     },
     "match_status": "Correct"
   },
@@ -2211,11 +2211,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 719375
+      "nanos": 178582
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 20073541
+      "nanos": 46158169
     },
     "match_status": "Correct"
   },
@@ -2226,11 +2226,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2500791
+      "nanos": 186419
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19476125
+      "nanos": 43783691
     },
     "match_status": "Correct"
   },
@@ -2241,11 +2241,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 917291
+      "nanos": 228941
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11877917
+      "nanos": 21875092
     },
     "match_status": "Correct"
   },
@@ -2256,11 +2256,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1645667
+      "nanos": 1326412
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12917042
+      "nanos": 35674685
     },
     "match_status": "Correct"
   },
@@ -2271,11 +2271,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 399917
+      "nanos": 1296366
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11541792
+      "nanos": 24655903
     },
     "match_status": "Correct"
   },
@@ -2286,11 +2286,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 438917
+      "nanos": 3090317
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11863833
+      "nanos": 44915749
     },
     "match_status": "Correct"
   },
@@ -2301,11 +2301,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1121583
+      "nanos": 1461617
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10859167
+      "nanos": 40178075
     },
     "match_status": "Correct"
   },
@@ -2316,11 +2316,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2108500
+      "nanos": 135853
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12584042
+      "nanos": 20496478
     },
     "match_status": "Correct"
   },
@@ -2331,11 +2331,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 883625
+      "nanos": 82876
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 8970792
+      "nanos": 23817073
     },
     "match_status": "Correct"
   },
@@ -2346,11 +2346,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 720792
+      "nanos": 118645
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10641625
+      "nanos": 31446761
     },
     "match_status": "Correct"
   },
@@ -2361,11 +2361,116 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2021708
+      "nanos": 1977109
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 17517917
+      "nanos": 82249769
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_02_product_unsat.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Unsat",
+    "z3_result": "Unsat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 283675
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 35249090
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_03_sum_of_squares.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Sat",
+    "z3_result": "Sat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 2586547
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 67302643
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_04_negative_square.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Unsat",
+    "z3_result": "Unsat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 265171
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 35044633
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_05_pythagorean.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Sat",
+    "z3_result": "Sat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 4562633
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 183059112
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_06_mod_const.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Sat",
+    "z3_result": "Sat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 4877697
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 35774758
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_07_div_const.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Sat",
+    "z3_result": "Sat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 962906
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 37565977
+    },
+    "match_status": "Correct"
+  },
+  {
+    "benchmark": "nia_08_xy_zero_pos.smt2",
+    "logic": "qf_nia",
+    "oxiz_result": "Unsat",
+    "z3_result": "Unsat",
+    "oxiz_time": {
+      "secs": 0,
+      "nanos": 640907
+    },
+    "z3_time": {
+      "secs": 0,
+      "nanos": 53907332
     },
     "match_status": "Correct"
   },
@@ -2376,11 +2481,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1955458
+      "nanos": 2318269
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14699583
+      "nanos": 62530710
     },
     "match_status": "Correct"
   },
@@ -2391,11 +2496,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1211166
+      "nanos": 144538
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 10810708
+      "nanos": 36110652
     },
     "match_status": "Correct"
   },
@@ -2406,11 +2511,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 254875
+      "nanos": 279445
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 15509333
+      "nanos": 26875156
     },
     "match_status": "Correct"
   },
@@ -2421,11 +2526,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 315500
+      "nanos": 12630079
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9234917
+      "nanos": 30524237
     },
     "match_status": "Correct"
   },
@@ -2436,11 +2541,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 371625
+      "nanos": 212264
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 12977584
+      "nanos": 70004427
     },
     "match_status": "Correct"
   },
@@ -2451,11 +2556,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 2199750
+      "nanos": 1610584
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 14587500
+      "nanos": 64898744
     },
     "match_status": "Correct"
   },
@@ -2466,11 +2571,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 450667
+      "nanos": 1229126
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 11807250
+      "nanos": 26403585
     },
     "match_status": "Correct"
   },
@@ -2481,11 +2586,11 @@
     "z3_result": "Unsat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 338708
+      "nanos": 1339234
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 9627750
+      "nanos": 24258727
     },
     "match_status": "Correct"
   },
@@ -2496,11 +2601,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 1293542
+      "nanos": 1520609
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 19536417
+      "nanos": 51394882
     },
     "match_status": "Correct"
   },
@@ -2511,11 +2616,11 @@
     "z3_result": "Sat",
     "oxiz_time": {
       "secs": 0,
-      "nanos": 543000
+      "nanos": 304405
     },
     "z3_time": {
       "secs": 0,
-      "nanos": 18890625
+      "nanos": 55826124
     },
     "match_status": "Correct"
   }

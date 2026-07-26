@@ -143,6 +143,19 @@ impl<'a> TermPolyTranslator<'a> {
                     _ => Some(Polynomial::from_var(r)),
                 }
             }
+            // After assert-time purification, foreign numeric leaves are
+            // already fresh Vars. Keep a defensive opaque mapping only for
+            // residual Select/Apply that somehow bypassed purification.
+            TermKind::Select(_, _) | TermKind::Apply { .. } => {
+                let term = self.manager.get(term_id)?;
+                if term.sort != self.manager.sorts.int_sort
+                    && term.sort != self.manager.sorts.real_sort
+                {
+                    return None;
+                }
+                let v = self.get_or_create_var(term_id);
+                Some(Polynomial::from_var(v))
+            }
             _ => None,
         }
     }
@@ -322,6 +335,10 @@ fn term_contains_divmod(term_id: TermId, manager: &TermManager) -> bool {
     }
 }
 
+fn is_numeric_sort(manager: &TermManager, sort: oxiz_core::sort::SortId) -> bool {
+    sort == manager.sorts.int_sort || sort == manager.sorts.real_sort
+}
+
 fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
     let Some(term) = manager.get(term_id) else {
         return false;
@@ -333,8 +350,30 @@ fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
         TermKind::Div(lhs, rhs) | TermKind::Mod(lhs, rhs) => {
             contains_non_polynomial_ops(*lhs, manager) || contains_non_polynomial_ops(*rhs, manager)
         }
-        TermKind::Apply { .. }
-        | TermKind::Forall { .. }
+        // Numeric `select` / uninterpreted apply are opaque poly variables.
+        // Non-numeric applies and array `store` are out of the pure poly layer.
+        TermKind::Select(arr, idx) => {
+            if !is_numeric_sort(manager, term.sort) {
+                return true;
+            }
+            contains_non_polynomial_ops(*arr, manager) || contains_non_polynomial_ops(*idx, manager)
+        }
+        TermKind::Apply { args, .. } => {
+            if !is_numeric_sort(manager, term.sort) {
+                return true;
+            }
+            args.iter()
+                .any(|&a| contains_non_polynomial_ops(a, manager))
+        }
+        // `store` only matters for array theory; it is not an arith op. When
+        // it appears solely inside array-sorted equalities the NIA dispatcher
+        // skips those assertions entirely.
+        TermKind::Store(a, i, v) => {
+            contains_non_polynomial_ops(*a, manager)
+                || contains_non_polynomial_ops(*i, manager)
+                || contains_non_polynomial_ops(*v, manager)
+        }
+        TermKind::Forall { .. }
         | TermKind::Exists { .. }
         | TermKind::Let { .. }
         | TermKind::Match { .. } => true,
@@ -382,16 +421,71 @@ struct PolyAtom {
 // Assertion-level translation (integer mode)
 // ─────────────────────────────────────────────────────────────────────────────
 
+fn is_array_sort_id(manager: &TermManager, sort: oxiz_core::sort::SortId) -> bool {
+    manager
+        .sorts
+        .get(sort)
+        .is_some_and(|s| matches!(s.kind, oxiz_core::sort::SortKind::Array { .. }))
+}
+
+/// Array-equality assertions (e.g. `A = store(...)`) belong to the array
+/// theory, not the polynomial layer. Skipping them is not a relaxation of the
+/// arithmetic fragment.
+fn is_array_structural_eq(manager: &TermManager, lhs: TermId, rhs: TermId) -> bool {
+    let ls = manager.get(lhs).map(|t| t.sort);
+    let rs = manager.get(rhs).map(|t| t.sort);
+    ls.is_some_and(|s| is_array_sort_id(manager, s))
+        || rs.is_some_and(|s| is_array_sort_id(manager, s))
+}
+
+/// Assertion contributes nothing to the pure arithmetic fragment.
+fn assertion_is_array_only(term_id: TermId, manager: &TermManager) -> bool {
+    let Some(term) = manager.get(term_id) else {
+        return false;
+    };
+    match &term.kind {
+        TermKind::Eq(a, b) => {
+            is_array_structural_eq(manager, *a, *b) || is_arith_interface_eq(manager, *a, *b)
+        }
+        TermKind::And(args) => args.iter().all(|&a| assertion_is_array_only(a, manager)),
+        TermKind::True => true,
+        _ => false,
+    }
+}
+
+fn is_arith_interface_eq(manager: &TermManager, lhs: TermId, rhs: TermId) -> bool {
+    fn is_var(manager: &TermManager, t: TermId) -> bool {
+        manager
+            .get(t)
+            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+    }
+    fn is_foreign_numeric(manager: &TermManager, t: TermId) -> bool {
+        let Some(n) = manager.get(t) else {
+            return false;
+        };
+        if n.sort != manager.sorts.int_sort && n.sort != manager.sorts.real_sort {
+            return false;
+        }
+        matches!(
+            n.kind,
+            TermKind::Select(_, _)
+                | TermKind::Apply { .. }
+                | TermKind::Store(_, _, _)
+                | TermKind::Ite(_, _, _)
+        )
+    }
+    (is_var(manager, lhs) && is_foreign_numeric(manager, rhs))
+        || (is_var(manager, rhs) && is_foreign_numeric(manager, lhs))
+}
+
 /// Extract polynomial atoms from a top-level assertion.
 ///
 /// `incomplete` is set to `true` whenever some part of the assertion could
 /// **not** be captured as a pure conjunction of polynomial atoms — an
 /// unrecognized top-level connective (`Or`/`Not`/`Distinct`/`Ite`/…) or a
-/// comparison whose operand does not translate to a polynomial (e.g. it
-/// contains `Div`/`Mod`/an uninterpreted apply). The dispatcher must treat a
-/// `Sat` verdict as untrustworthy once `incomplete` is set, because the solver
-/// then only sees a strictly weaker (relaxed) subproblem. Reference: Z3's
-/// nlsat/nlsat_solver.cpp only trusts a model for the full atom set.
+/// comparison whose operand does not translate to a polynomial. Array
+/// structural equalities are skipped (not incomplete): after assert-time
+/// purification they are separate from the pure arith fragment.
 fn extract_poly_atoms(
     term_id: TermId,
     manager: &TermManager,
@@ -405,6 +499,15 @@ fn extract_poly_atoms(
     };
     match &term.kind.clone() {
         TermKind::Eq(lhs, rhs) => {
+            if is_array_structural_eq(manager, *lhs, *rhs) {
+                return;
+            }
+            // Interface naming from purification: `c = select(...)` / `c = f(...)`.
+            // The pure arith fragment already uses `c`; encoding the foreign side
+            // as a second poly var would leave it unbounded and break B&B/enum.
+            if is_arith_interface_eq(manager, *lhs, *rhs) {
+                return;
+            }
             if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
                 out.push(PolyAtom {
                     poly: Polynomial::sub(&lp, &rp),
@@ -468,6 +571,18 @@ fn extract_poly_atoms(
                 extract_poly_atoms(arg, manager, translator, out, incomplete);
             }
         }
+        // Interface equalities that collapsed to reflexivity after purification
+        // (`c = c`) are no-ops for the arithmetic fragment.
+        TermKind::True => {}
+        TermKind::False => {
+            // Explicit false in the conjunction → arith fragment is unsat.
+            // Encode as 0 = 1.
+            out.push(PolyAtom {
+                poly: Polynomial::constant(BigRational::from_integer(1.into())),
+                kind: AtomKind::Eq,
+                positive: true,
+            });
+        }
         _ => {
             // Any other top-level shape (Or/Not/Distinct/Ite/…) belongs to the
             // boolean abstraction layer, not to this pure-conjunction fast
@@ -502,9 +617,12 @@ pub fn dispatch_nia_constraints(
     if !has_nl && !has_divmod {
         return None;
     }
-    let has_unsupported_ops = assertions
-        .iter()
-        .any(|&a| contains_non_polynomial_ops(a, manager));
+    // Unsupported ops only count on the *arithmetic* fragment. Array
+    // `store` trees that only appear in array-sorted equalities are not
+    // part of that fragment (see `is_array_structural_eq`).
+    let has_unsupported_ops = assertions.iter().any(|&a| {
+        !assertion_is_array_only(a, manager) && contains_non_polynomial_ops(a, manager)
+    });
 
     let config = NiaConfig {
         enable_cutting_planes: true,
@@ -516,6 +634,9 @@ pub fn dispatch_nia_constraints(
     let mut poly_atoms: Vec<PolyAtom> = Vec::new();
     let mut incomplete = false;
     for &assertion in assertions {
+        if assertion_is_array_only(assertion, manager) {
+            continue;
+        }
         extract_poly_atoms(
             assertion,
             manager,
@@ -534,18 +655,11 @@ pub fn dispatch_nia_constraints(
         return None;
     }
 
-    // Unsat from NiaSolver is sound whenever extraction saw the full assertion
-    // set as polynomial atoms (no dropped disjunctions / incomplete div-mod).
-    // Multivariate CAD/B&B unsat is trustworthy under that completeness
-    // condition: a false unsat from greedy cell failure was fixed by arithmetic
-    // re-sampling in `oxiz-nlsat` (bare `x*y=c` no longer collapses to Unsat).
-    let unsat_is_trustworthy = !has_unsupported_ops && !incomplete;
-    // A `Sat` verdict is only sound when the solver saw the *entire* assertion
-    // set as a conjunction of translatable atoms. If any top-level term was
-    // dropped (a disjunction, an untranslatable operand, …) the solver worked
-    // on a strictly weaker problem, so its model may violate the dropped
-    // constraint — fall through to CDCL(T) instead of trusting Sat.
-    let sat_is_trustworthy = !incomplete;
+    // Unsat of the pure arith fragment is always sound for the full problem
+    // (more constraints can only shrink the model set). Sat is sound when
+    // extraction did not drop any non-array constraint.
+    let unsat_is_trustworthy = true;
+    let sat_is_trustworthy = !incomplete && !has_unsupported_ops;
 
     for atom in &poly_atoms {
         let atom_id = translator
@@ -626,6 +740,16 @@ impl<'a> RealPolyTranslator<'a> {
                     acc = Polynomial::mul(&acc, &p);
                 }
                 Some(acc)
+            }
+            TermKind::Select(_, _) | TermKind::Apply { .. } => {
+                let term = self.manager.get(term_id)?;
+                let int_s = self.manager.sorts.int_sort;
+                let real_s = self.manager.sorts.real_sort;
+                if term.sort != int_s && term.sort != real_s {
+                    return None;
+                }
+                let v = self.get_or_create_var(term_id);
+                Some(Polynomial::from_var(v))
             }
             _ => None,
         }

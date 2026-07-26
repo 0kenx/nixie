@@ -14,6 +14,7 @@ pub(super) mod encode;
 pub(super) mod encode_guards;
 pub(super) mod model_builder;
 pub(super) mod pigeonhole;
+pub(super) mod purify_arith;
 pub(super) mod term_walk;
 pub(super) mod theory_bv_encode;
 pub(super) mod theory_manager;
@@ -148,6 +149,9 @@ pub struct Solver {
     /// most once, which makes the in-loop refinement in `check` terminate: every
     /// refinement round either adds a strictly new instance or reports `Sat`.
     pub(super) array_axiom_instances: FxHashSet<TermId>,
+    /// Arithmetic purification state (fresh interface constants for foreign
+    /// numeric subterms under arith contexts).
+    pub(super) arith_purify: purify_arith::PurifyState,
 }
 
 /// Maximum term-nesting depth the recursive Tseitin encoder will descend
@@ -250,6 +254,7 @@ impl Solver {
             encode_depth_exceeded: false,
             has_array_ops: false,
             array_axiom_instances: FxHashSet::default(),
+            arith_purify: purify_arith::PurifyState::new(),
         }
     }
 

@@ -497,6 +497,14 @@ impl Solver {
 
     /// Assert a term
     pub fn assert(&mut self, term: TermId, manager: &mut TermManager) {
+        // Grammar-driven arithmetic purification: under `+,-,*,div,mod` and
+        // arith comparisons, replace non-arith numeric subterms (select, UF
+        // apps, …) with fresh constants and conjoin interface equalities.
+        // NIA/LIA then see only pure polynomials; array/EUF own the foreign
+        // structure via `c = select(...)`.
+        let purified = super::purify_arith::purify_assertion(term, manager, &mut self.arith_purify);
+        let term = purified.term;
+
         let index = self.assertions.len();
         self.assertions.push(term);
         self.trail.push(TrailOp::AssertionAdded { index });
