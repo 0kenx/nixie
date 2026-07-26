@@ -1,12 +1,13 @@
-//! Ground QF_ANIA decision for constant store-chains + finite index boxes.
+//! Ground QF_ANIA decision procedure.
 //!
-//! Works on **purified** assertions:
-//! - `A = store(... (as const) d ...)` array definitions
-//! - `c = select(A, i)` interface equalities from arithmetic purification
-//! - pure arithmetic on `c` and index vars
+//! Handles formulas whose arrays are defined by constant `store` towers and
+//! whose free integer variables (indices and similar) lie in finite boxes.
+//! Under each concrete assignment we evaluate the full term DAG — including
+//! nested `select`, `ite`, `abs`-as-ite, and multi-factor products — via
+//! read-over-write on the store maps.
 //!
-//! Free selects (no store def) are out of scope here — pure NIA on interface
-//! constants remains sound for those.
+//! Works on purified assertions (`c = select(A,i)` interfaces + pure arith)
+//! and on residual `ite`/`select` still present under arith after purification.
 
 use crate::nlsat::NlDispatchResult;
 use num_bigint::BigInt;
@@ -15,17 +16,23 @@ use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::sort::SortKind;
 use std::collections::{HashMap, HashSet};
 
-const MAX_INDEX_PRODUCT: u64 = 50_000;
+/// Soft cap on visited leaves (full assignments tried). Pruning usually keeps
+/// real work far below this for constrained formulas.
+const MAX_LEAVES: u64 = 5_000_000;
 
-/// Try to decide ground store + bounded-index ANIA (post-purification shape).
+/// Try to decide ground-store + finite-box ANIA.
 pub fn try_decide_ground_ania(
     assertions: &[TermId],
     manager: &TermManager,
 ) -> Option<NlDispatchResult> {
     let mut arrays: HashMap<TermId, ArrayInterp> = HashMap::new();
-    let mut interfaces: Vec<Interface> = Vec::new(); // c = select(A, idx)
+    let mut interfaces: Vec<Interface> = Vec::new();
+    // `v = t` where `t` is evaluable once indices are bound (nullary define-fun).
+    let mut definitions: Vec<(TermId, TermId)> = Vec::new();
     let mut bounds: HashMap<TermId, (Option<i64>, Option<i64>)> = HashMap::new();
-    let mut arith_atoms: Vec<ArithAtom> = Vec::new();
+    let mut atoms: Vec<Atom> = Vec::new();
+    let mut bool_atoms: Vec<TermId> = Vec::new(); // must eval to true
+    let mut free_ints: HashSet<TermId> = HashSet::new();
 
     for &a in assertions {
         collect_assertion(
@@ -33,109 +40,261 @@ pub fn try_decide_ground_ania(
             manager,
             &mut arrays,
             &mut interfaces,
+            &mut definitions,
             &mut bounds,
-            &mut arith_atoms,
+            &mut atoms,
+            &mut bool_atoms,
+            &mut free_ints,
         )?;
     }
 
-    if arrays.is_empty() || interfaces.is_empty() || arith_atoms.is_empty() {
+    if arrays.is_empty() || (atoms.is_empty() && bool_atoms.is_empty()) {
         return None;
     }
 
-    // Every interface select must read a defined array; index must be var or numeral.
-    let mut index_vars: Vec<TermId> = Vec::new();
+    // Every select (in atoms or interfaces) must read a defined array.
+    for atom in &atoms {
+        ensure_selects_defined(atom.lhs, manager, &arrays)?;
+        ensure_selects_defined(atom.rhs, manager, &arrays)?;
+    }
+    for &b in &bool_atoms {
+        ensure_selects_defined(b, manager, &arrays)?;
+    }
     for iface in &interfaces {
         if !arrays.contains_key(&iface.array) {
             return None;
         }
-        if let Some(v) = as_var(manager, iface.index) {
-            if !index_vars.contains(&v) {
-                index_vars.push(v);
-            }
-        } else if eval_ground_int(iface.index, manager).is_none() {
-            return None;
-        }
+        collect_int_vars(iface.index, manager, &mut free_ints);
+    }
+    for &(_, rhs) in &definitions {
+        ensure_selects_defined(rhs, manager, &arrays)?;
+        collect_int_vars(rhs, manager, &mut free_ints);
     }
 
+    // Index / free int vars need finite boxes.
     let mut domains: Vec<(TermId, i64, i64)> = Vec::new();
-    let mut product: u64 = 1;
-    for &v in &index_vars {
+    for &v in &free_ints {
+        // Skip vars determined by interface selects or definitional eqs.
+        if interfaces.iter().any(|i| i.const_var == v) {
+            continue;
+        }
+        if definitions.iter().any(|(lhs, _)| *lhs == v) {
+            continue;
+        }
         let (lo, hi) = bounds.get(&v).copied().unwrap_or((None, None));
         let lo = lo?;
         let hi = hi?;
         if hi < lo {
             return Some(NlDispatchResult::Unsat);
         }
-        let w = (hi - lo + 1) as u64;
-        product = product.saturating_mul(w);
-        if product > MAX_INDEX_PRODUCT {
-            return None;
-        }
         domains.push((v, lo, hi));
     }
+    // Prefer smaller domains first for stronger early pruning.
+    domains.sort_by_key(|(_, lo, hi)| hi - lo);
 
-    let mut idxs: Vec<i64> = domains.iter().map(|(_, lo, _)| *lo).collect();
-    loop {
-        let mut env: HashMap<TermId, BigInt> = HashMap::new();
-        for (i, &(v, _, _)) in domains.iter().enumerate() {
-            env.insert(v, BigInt::from(idxs[i]));
-        }
-        // Realize each interface const via store evaluation.
-        let mut ok = true;
-        for iface in &interfaces {
-            let idx_val = if let Some(v) = as_var(manager, iface.index) {
-                env.get(&v).cloned().ok_or(())
-            } else {
-                eval_ground_int(iface.index, manager)
-                    .map(BigInt::from)
-                    .ok_or(())
-            };
-            let Ok(idx_val) = idx_val else {
-                ok = false;
-                break;
-            };
-            let Some(i64v) = idx_val.to_i64() else {
-                ok = false;
-                break;
-            };
-            let interp = &arrays[&iface.array];
-            let sel = interp
-                .entries
-                .get(&i64v)
-                .cloned()
-                .unwrap_or_else(|| interp.default.clone());
-            env.insert(iface.const_var, sel);
-        }
-        if ok {
-            let mut cache = HashMap::new();
-            let mut all_hold = true;
-            for atom in &arith_atoms {
-                if !eval_atom(atom, manager, &env, &mut cache) {
-                    all_hold = false;
-                    break;
-                }
-            }
-            if all_hold {
-                return Some(NlDispatchResult::Sat);
-            }
-        }
+    // Recursive search with early pruning: once enough vars are bound to
+    // evaluate an atom, reject partial assignments immediately (critical when
+    // e.g. `(select A i) = c` with sparse table values kills most of 1..N).
+    let mut env = HashMap::new();
+    let mut leaves = 0u64;
+    match search_rec(
+        0,
+        &domains,
+        &interfaces,
+        &definitions,
+        &atoms,
+        &bool_atoms,
+        &arrays,
+        manager,
+        &mut env,
+        &mut leaves,
+    ) {
+        Some(true) => Some(NlDispatchResult::Sat),
+        Some(false) => Some(NlDispatchResult::Unsat),
+        None => None, // exhausted leaf budget
+    }
+}
 
-        if domains.is_empty() {
-            return Some(NlDispatchResult::Unsat);
+fn realize_interfaces(
+    interfaces: &[Interface],
+    definitions: &[(TermId, TermId)],
+    arrays: &HashMap<TermId, ArrayInterp>,
+    manager: &TermManager,
+    env: &mut HashMap<TermId, BigInt>,
+) -> bool {
+    for iface in interfaces {
+        let Some(idx_val) = eval_int(iface.index, manager, arrays, env) else {
+            continue; // index not yet bound — skip for now
+        };
+        let Some(i64v) = idx_val.to_i64() else {
+            return false;
+        };
+        let Some(interp) = arrays.get(&iface.array) else {
+            return false;
+        };
+        let sel = interp
+            .entries
+            .get(&i64v)
+            .cloned()
+            .unwrap_or_else(|| interp.default.clone());
+        env.insert(iface.const_var, sel);
+    }
+    // Definitional eqs from nullary define-fun: `P = (* (select A i) …)`.
+    // Evaluate rhs once its free vars are bound; bind lhs.
+    for &(lhs, rhs) in definitions {
+        if env.contains_key(&lhs) {
+            continue;
         }
-        let mut pos = 0;
-        loop {
-            if pos >= domains.len() {
-                return Some(NlDispatchResult::Unsat);
-            }
-            idxs[pos] += 1;
-            if idxs[pos] <= domains[pos].2 {
-                break;
-            }
-            idxs[pos] = domains[pos].1;
-            pos += 1;
+        if !term_fully_bound(rhs, manager, env, arrays) {
+            continue;
+        }
+        let Some(v) = eval_int(rhs, manager, arrays, env) else {
+            return false;
+        };
+        env.insert(lhs, v);
+    }
+    true
+}
+
+fn partial_atoms_ok(
+    atoms: &[Atom],
+    bool_atoms: &[TermId],
+    arrays: &HashMap<TermId, ArrayInterp>,
+    manager: &TermManager,
+    env: &HashMap<TermId, BigInt>,
+) -> bool {
+    for atom in atoms {
+        // Only check atoms whose free vars are all bound.
+        if !term_fully_bound(atom.lhs, manager, env, arrays) {
+            continue;
+        }
+        if !term_fully_bound(atom.rhs, manager, env, arrays) {
+            continue;
+        }
+        if !eval_atom(atom, manager, arrays, env) {
+            return false;
         }
     }
+    for &b in bool_atoms {
+        if !term_fully_bound(b, manager, env, arrays) {
+            continue;
+        }
+        match eval_bool(b, manager, arrays, env) {
+            Some(true) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn term_fully_bound(
+    term: TermId,
+    manager: &TermManager,
+    env: &HashMap<TermId, BigInt>,
+    arrays: &HashMap<TermId, ArrayInterp>,
+) -> bool {
+    let mut stack = vec![term];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        if env.contains_key(&id) {
+            continue;
+        }
+        let Some(n) = manager.get(id) else {
+            return false;
+        };
+        match &n.kind {
+            TermKind::IntConst(_) | TermKind::True | TermKind::False => {}
+            TermKind::Var(_) => return false,
+            TermKind::Select(arr, idx) => {
+                if !arrays.contains_key(arr) {
+                    return false;
+                }
+                stack.push(*idx);
+            }
+            TermKind::Add(xs) | TermKind::Mul(xs) | TermKind::And(xs) | TermKind::Or(xs) => {
+                stack.extend(xs.iter().copied())
+            }
+            TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+            TermKind::Sub(a, b)
+            | TermKind::Div(a, b)
+            | TermKind::Mod(a, b)
+            | TermKind::Eq(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Gt(a, b) => {
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Ite(c, a, b) => {
+                stack.push(*c);
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Let { bindings, body } => {
+                for &(_, v) in bindings.iter() {
+                    stack.push(v);
+                }
+                stack.push(*body);
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// `Some(true)` sat, `Some(false)` unsat (subtree exhausted), `None` budget.
+fn search_rec(
+    pos: usize,
+    domains: &[(TermId, i64, i64)],
+    interfaces: &[Interface],
+    definitions: &[(TermId, TermId)],
+    atoms: &[Atom],
+    bool_atoms: &[TermId],
+    arrays: &HashMap<TermId, ArrayInterp>,
+    manager: &TermManager,
+    env: &mut HashMap<TermId, BigInt>,
+    leaves: &mut u64,
+) -> Option<bool> {
+    if !realize_interfaces(interfaces, definitions, arrays, manager, env) {
+        return Some(false);
+    }
+    if !partial_atoms_ok(atoms, bool_atoms, arrays, manager, env) {
+        return Some(false);
+    }
+    if pos == domains.len() {
+        *leaves += 1;
+        if *leaves > MAX_LEAVES {
+            return None;
+        }
+        // Full assignment — atoms already checked when fully bound.
+        return Some(true);
+    }
+    let (var, lo, hi) = domains[pos];
+    for v in lo..=hi {
+        env.insert(var, BigInt::from(v));
+        match search_rec(
+            pos + 1,
+            domains,
+            interfaces,
+            definitions,
+            atoms,
+            bool_atoms,
+            arrays,
+            manager,
+            env,
+            leaves,
+        ) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => return None,
+        }
+        env.remove(&var);
+    }
+    Some(false)
 }
 
 #[derive(Clone, Debug)]
@@ -152,7 +311,7 @@ struct Interface {
 }
 
 #[derive(Clone, Debug)]
-struct ArithAtom {
+struct Atom {
     kind: CmpKind,
     lhs: TermId,
     rhs: TermId,
@@ -172,18 +331,37 @@ fn collect_assertion(
     manager: &TermManager,
     arrays: &mut HashMap<TermId, ArrayInterp>,
     interfaces: &mut Vec<Interface>,
+    definitions: &mut Vec<(TermId, TermId)>,
     bounds: &mut HashMap<TermId, (Option<i64>, Option<i64>)>,
-    atoms: &mut Vec<ArithAtom>,
+    atoms: &mut Vec<Atom>,
+    bool_atoms: &mut Vec<TermId>,
+    free_ints: &mut HashSet<TermId>,
 ) -> Option<()> {
     let t = manager.get(term)?;
     match &t.kind {
         TermKind::And(args) => {
             for &a in args {
-                collect_assertion(a, manager, arrays, interfaces, bounds, atoms)?;
+                collect_assertion(
+                    a,
+                    manager,
+                    arrays,
+                    interfaces,
+                    definitions,
+                    bounds,
+                    atoms,
+                    bool_atoms,
+                    free_ints,
+                )?;
             }
             Some(())
         }
         TermKind::True => Some(()),
+        TermKind::Not(_) | TermKind::Or(_) => {
+            // Boolean constraint that must hold (e.g. negated predicates).
+            collect_int_vars(term, manager, free_ints);
+            bool_atoms.push(term);
+            Some(())
+        }
         TermKind::Eq(lhs, rhs) => {
             if is_array_sorted(manager, *lhs) || is_array_sorted(manager, *rhs) {
                 let (var, def) = if is_array_var(manager, *lhs) {
@@ -193,39 +371,38 @@ fn collect_assertion(
                 } else {
                     return None;
                 };
-                let interp = eval_array_def(def, manager)?;
-                arrays.insert(var, interp);
+                arrays.insert(var, eval_array_def(def, manager)?);
                 return Some(());
             }
             if let Some(iface) = parse_interface(manager, *lhs, *rhs) {
                 interfaces.push(iface);
                 return Some(());
             }
+            // Definitional equality from nullary define-fun:
+            //   P = (* (select A i) (select B i))
+            // Bind P when the rhs is evaluable; do not search over P.
+            if let Some((v, body)) = parse_definition(manager, *lhs, *rhs) {
+                definitions.push((v, body));
+                collect_int_vars(body, manager, free_ints);
+                return Some(());
+            }
             if let Some((v, lo, hi)) = parse_bound_eq(manager, *lhs, *rhs) {
                 tighten(bounds, v, lo, hi);
-                return Some(());
+                free_ints.insert(v);
             }
-            // Pure arith equality (may mention purified consts / mul).
-            if is_pure_arith_term(*lhs, manager) && is_pure_arith_term(*rhs, manager) {
-                atoms.push(ArithAtom {
-                    kind: CmpKind::Eq,
-                    lhs: *lhs,
-                    rhs: *rhs,
-                });
-                return Some(());
-            }
-            None
+            collect_int_vars(*lhs, manager, free_ints);
+            collect_int_vars(*rhs, manager, free_ints);
+            atoms.push(Atom {
+                kind: CmpKind::Eq,
+                lhs: *lhs,
+                rhs: *rhs,
+            });
+            Some(())
         }
         TermKind::Le(a, b) | TermKind::Lt(a, b) | TermKind::Ge(a, b) | TermKind::Gt(a, b) => {
             if let Some((v, lo, hi)) = parse_bound_cmp(manager, term) {
                 tighten(bounds, v, lo, hi);
-                // Bounds on purified select-consts are also arith atoms.
-                if !as_var(manager, *a).is_some_and(|v| {
-                    // index var bounds only — already recorded
-                    interfaces.iter().all(|i| i.const_var != v)
-                }) {
-                    // if lhs is interface const, keep as atom
-                }
+                free_ints.insert(v);
             }
             let kind = match &t.kind {
                 TermKind::Le(_, _) => CmpKind::Le,
@@ -233,62 +410,262 @@ fn collect_assertion(
                 TermKind::Ge(_, _) => CmpKind::Ge,
                 _ => CmpKind::Gt,
             };
-            // Always keep numeric comparisons as atoms when both sides pure arith
-            // (includes bounds on select-consts like (>= c 1)).
-            if is_pure_arith_term(*a, manager) && is_pure_arith_term(*b, manager) {
-                // Skip pure index-var bounds already in `bounds` map (optional).
-                // Keeping them as atoms is fine and simpler.
-                atoms.push(ArithAtom {
-                    kind,
-                    lhs: *a,
-                    rhs: *b,
-                });
-                return Some(());
-            }
-            None
+            collect_int_vars(*a, manager, free_ints);
+            collect_int_vars(*b, manager, free_ints);
+            atoms.push(Atom {
+                kind,
+                lhs: *a,
+                rhs: *b,
+            });
+            Some(())
         }
         _ => None,
     }
 }
 
-fn tighten(
-    bounds: &mut HashMap<TermId, (Option<i64>, Option<i64>)>,
-    v: TermId,
-    lo: Option<i64>,
-    hi: Option<i64>,
-) {
-    let e = bounds.entry(v).or_insert((None, None));
-    if let Some(l) = lo {
-        e.0 = Some(e.0.map_or(l, |x| x.max(l)));
-    }
-    if let Some(h) = hi {
-        e.1 = Some(e.1.map_or(h, |x| x.min(h)));
-    }
-}
-
-fn is_pure_arith_term(term: TermId, manager: &TermManager) -> bool {
+fn collect_int_vars(term: TermId, manager: &TermManager, out: &mut HashSet<TermId>) {
     let mut stack = vec![term];
     let mut seen = HashSet::new();
     while let Some(id) = stack.pop() {
         if !seen.insert(id) {
             continue;
         }
-        let Some(n) = manager.get(id) else {
-            return false;
-        };
+        let Some(n) = manager.get(id) else { continue };
         match &n.kind {
-            TermKind::IntConst(_) | TermKind::Var(_) => {}
-            TermKind::Neg(a) => stack.push(*a),
-            TermKind::Add(xs) | TermKind::Mul(xs) => stack.extend(xs.iter().copied()),
-            TermKind::Sub(a, b) | TermKind::Div(a, b) | TermKind::Mod(a, b) => {
+            TermKind::Var(_) if n.sort == manager.sorts.int_sort => {
+                out.insert(id);
+            }
+            TermKind::Add(xs) | TermKind::Mul(xs) | TermKind::And(xs) | TermKind::Or(xs) => {
+                stack.extend(xs.iter().copied())
+            }
+            TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+            TermKind::Sub(a, b)
+            | TermKind::Div(a, b)
+            | TermKind::Mod(a, b)
+            | TermKind::Eq(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Select(a, b) => {
                 stack.push(*a);
                 stack.push(*b);
             }
-            // No select/apply/store/ite in pure arith after purification.
-            _ => return false,
+            TermKind::Ite(c, a, b) | TermKind::Store(c, a, b) => {
+                stack.push(*c);
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Let { bindings, body } => {
+                for &(_, v) in bindings.iter() {
+                    stack.push(v);
+                }
+                stack.push(*body);
+            }
+            TermKind::Apply { args, .. } => stack.extend(args.iter().copied()),
+            _ => {}
         }
     }
-    true
+}
+
+fn ensure_selects_defined(
+    term: TermId,
+    manager: &TermManager,
+    arrays: &HashMap<TermId, ArrayInterp>,
+) -> Option<()> {
+    let mut stack = vec![term];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let n = manager.get(id)?;
+        match &n.kind {
+            TermKind::Select(arr, idx) => {
+                if !arrays.contains_key(arr) {
+                    return None;
+                }
+                stack.push(*idx);
+            }
+            TermKind::Add(xs) | TermKind::Mul(xs) => stack.extend(xs.iter().copied()),
+            TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+            TermKind::Sub(a, b)
+            | TermKind::Div(a, b)
+            | TermKind::Mod(a, b)
+            | TermKind::Eq(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Gt(a, b) => {
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Ite(c, a, b) => {
+                stack.push(*c);
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Let { bindings, body } => {
+                for &(_, v) in bindings.iter() {
+                    stack.push(v);
+                }
+                stack.push(*body);
+            }
+            TermKind::And(xs) | TermKind::Or(xs) => stack.extend(xs.iter().copied()),
+            TermKind::Var(_) | TermKind::IntConst(_) | TermKind::True | TermKind::False => {}
+            _ => return None,
+        }
+    }
+    Some(())
+}
+
+/// Evaluate integer or boolean term under env + arrays.
+fn eval_int(
+    term: TermId,
+    manager: &TermManager,
+    arrays: &HashMap<TermId, ArrayInterp>,
+    env: &HashMap<TermId, BigInt>,
+) -> Option<BigInt> {
+    if let Some(v) = env.get(&term) {
+        return Some(v.clone());
+    }
+    let n = manager.get(term)?;
+    match &n.kind {
+        TermKind::IntConst(k) => Some(k.clone()),
+        TermKind::Var(_) => None, // unbound
+        TermKind::Neg(a) => Some(-eval_int(*a, manager, arrays, env)?),
+        TermKind::Add(xs) => {
+            let mut s = BigInt::zero();
+            for &x in xs {
+                s += eval_int(x, manager, arrays, env)?;
+            }
+            Some(s)
+        }
+        TermKind::Mul(xs) => {
+            let mut p = BigInt::from(1);
+            for &x in xs {
+                p *= eval_int(x, manager, arrays, env)?;
+            }
+            Some(p)
+        }
+        TermKind::Sub(a, b) => {
+            Some(eval_int(*a, manager, arrays, env)? - eval_int(*b, manager, arrays, env)?)
+        }
+        TermKind::Select(arr, idx) => {
+            let i = eval_int(*idx, manager, arrays, env)?;
+            let i64v = i.to_i64()?;
+            let interp = arrays.get(arr)?;
+            Some(
+                interp
+                    .entries
+                    .get(&i64v)
+                    .cloned()
+                    .unwrap_or_else(|| interp.default.clone()),
+            )
+        }
+        TermKind::Ite(c, a, b) => {
+            if eval_bool(*c, manager, arrays, env)? {
+                eval_int(*a, manager, arrays, env)
+            } else {
+                eval_int(*b, manager, arrays, env)
+            }
+        }
+        TermKind::Let { bindings, body } => {
+            // Parser inlines let-names into the body via the binding table while
+            // parsing, so `body` already contains the bound values as subterms.
+            // Still evaluate binding values first (in case substitute left name
+            // vars), then body. Bindings are `(name_spur, value_term)`.
+            let local = env.clone();
+            for &(_name, val_term) in bindings {
+                // Force evaluation of binding values (side-effect free).
+                let _ = eval_int(val_term, manager, arrays, &local)?;
+            }
+            eval_int(*body, manager, arrays, &local)
+        }
+        _ => None,
+    }
+}
+
+fn eval_bool(
+    term: TermId,
+    manager: &TermManager,
+    arrays: &HashMap<TermId, ArrayInterp>,
+    env: &HashMap<TermId, BigInt>,
+) -> Option<bool> {
+    let n = manager.get(term)?;
+    match &n.kind {
+        TermKind::True => Some(true),
+        TermKind::False => Some(false),
+        TermKind::Not(a) => Some(!eval_bool(*a, manager, arrays, env)?),
+        TermKind::And(xs) => {
+            for &x in xs {
+                if !eval_bool(x, manager, arrays, env)? {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
+        TermKind::Or(xs) => {
+            for &x in xs {
+                if eval_bool(x, manager, arrays, env)? {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        }
+        TermKind::Eq(a, b) => {
+            // Could be int or bool eq
+            if manager.get(*a).is_some_and(|t| t.sort == manager.sorts.bool_sort) {
+                Some(
+                    eval_bool(*a, manager, arrays, env)?
+                        == eval_bool(*b, manager, arrays, env)?,
+                )
+            } else {
+                Some(eval_int(*a, manager, arrays, env)? == eval_int(*b, manager, arrays, env)?)
+            }
+        }
+        TermKind::Le(a, b) => {
+            Some(eval_int(*a, manager, arrays, env)? <= eval_int(*b, manager, arrays, env)?)
+        }
+        TermKind::Lt(a, b) => {
+            Some(eval_int(*a, manager, arrays, env)? < eval_int(*b, manager, arrays, env)?)
+        }
+        TermKind::Ge(a, b) => {
+            Some(eval_int(*a, manager, arrays, env)? >= eval_int(*b, manager, arrays, env)?)
+        }
+        TermKind::Gt(a, b) => {
+            Some(eval_int(*a, manager, arrays, env)? > eval_int(*b, manager, arrays, env)?)
+        }
+        TermKind::Ite(c, a, b) => {
+            if eval_bool(*c, manager, arrays, env)? {
+                eval_bool(*a, manager, arrays, env)
+            } else {
+                eval_bool(*b, manager, arrays, env)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn eval_atom(
+    atom: &Atom,
+    manager: &TermManager,
+    arrays: &HashMap<TermId, ArrayInterp>,
+    env: &HashMap<TermId, BigInt>,
+) -> bool {
+    let Some(l) = eval_int(atom.lhs, manager, arrays, env) else {
+        return false;
+    };
+    let Some(r) = eval_int(atom.rhs, manager, arrays, env) else {
+        return false;
+    };
+    match atom.kind {
+        CmpKind::Eq => l == r,
+        CmpKind::Le => l <= r,
+        CmpKind::Lt => l < r,
+        CmpKind::Ge => l >= r,
+        CmpKind::Gt => l > r,
+    }
 }
 
 fn parse_interface(manager: &TermManager, a: TermId, b: TermId) -> Option<Interface> {
@@ -308,6 +685,76 @@ fn parse_interface(manager: &TermManager, a: TermId, b: TermId) -> Option<Interf
         })
     };
     one(a, b).or_else(|| one(b, a))
+}
+
+/// `v = t` where `v` is a variable and `t` is a non-variable evaluable term
+/// (nullary define-fun body: product of selects, ite, …).
+fn parse_definition(
+    manager: &TermManager,
+    a: TermId,
+    b: TermId,
+) -> Option<(TermId, TermId)> {
+    let one = |v, body| {
+        if as_var(manager, v).is_none() {
+            return None;
+        }
+        // Body must not itself be a bare variable or numeral-only (those are
+        // ordinary eqs / bounds).
+        if as_var(manager, body).is_some() || eval_ground_int(body, manager).is_some() {
+            return None;
+        }
+        // Must be evaluable under a concrete index env (select/ite/mul/…).
+        if !is_evaluable_arith(body, manager) {
+            return None;
+        }
+        Some((v, body))
+    };
+    one(a, b).or_else(|| one(b, a))
+}
+
+fn is_evaluable_arith(term: TermId, manager: &TermManager) -> bool {
+    let mut stack = vec![term];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(n) = manager.get(id) else {
+            return false;
+        };
+        match &n.kind {
+            TermKind::IntConst(_) | TermKind::Var(_) => {}
+            TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+            TermKind::Add(xs) | TermKind::Mul(xs) | TermKind::And(xs) | TermKind::Or(xs) => {
+                stack.extend(xs.iter().copied())
+            }
+            TermKind::Sub(a, b)
+            | TermKind::Div(a, b)
+            | TermKind::Mod(a, b)
+            | TermKind::Eq(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Select(a, b) => {
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Ite(c, a, b) => {
+                stack.push(*c);
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Let { bindings, body } => {
+                for &(_, v) in bindings.iter() {
+                    stack.push(v);
+                }
+                stack.push(*body);
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn is_array_sorted(manager: &TermManager, t: TermId) -> bool {
@@ -417,64 +864,18 @@ fn as_var(manager: &TermManager, t: TermId) -> Option<TermId> {
         .and_then(|n| matches!(n.kind, TermKind::Var(_)).then_some(t))
 }
 
-fn eval_term(
-    term: TermId,
-    manager: &TermManager,
-    env: &HashMap<TermId, BigInt>,
-    cache: &mut HashMap<TermId, BigInt>,
-) -> Option<BigInt> {
-    if let Some(v) = cache.get(&term) {
-        return Some(v.clone());
+fn tighten(
+    bounds: &mut HashMap<TermId, (Option<i64>, Option<i64>)>,
+    v: TermId,
+    lo: Option<i64>,
+    hi: Option<i64>,
+) {
+    let e = bounds.entry(v).or_insert((None, None));
+    if let Some(l) = lo {
+        e.0 = Some(e.0.map_or(l, |x| x.max(l)));
     }
-    if let Some(v) = env.get(&term) {
-        return Some(v.clone());
-    }
-    let n = manager.get(term)?;
-    let val = match &n.kind {
-        TermKind::IntConst(k) => k.clone(),
-        TermKind::Neg(a) => -eval_term(*a, manager, env, cache)?,
-        TermKind::Add(xs) => {
-            let mut s = BigInt::zero();
-            for &x in xs {
-                s += eval_term(x, manager, env, cache)?;
-            }
-            s
-        }
-        TermKind::Mul(xs) => {
-            let mut p = BigInt::from(1);
-            for &x in xs {
-                p *= eval_term(x, manager, env, cache)?;
-            }
-            p
-        }
-        TermKind::Sub(a, b) => {
-            eval_term(*a, manager, env, cache)? - eval_term(*b, manager, env, cache)?
-        }
-        TermKind::Var(_) => return None,
-        _ => return None,
-    };
-    cache.insert(term, val.clone());
-    Some(val)
-}
-
-fn eval_atom(
-    atom: &ArithAtom,
-    manager: &TermManager,
-    env: &HashMap<TermId, BigInt>,
-    cache: &mut HashMap<TermId, BigInt>,
-) -> bool {
-    let Some(l) = eval_term(atom.lhs, manager, env, cache) else {
-        return false;
-    };
-    let Some(r) = eval_term(atom.rhs, manager, env, cache) else {
-        return false;
-    };
-    match atom.kind {
-        CmpKind::Eq => l == r,
-        CmpKind::Le => l <= r,
-        CmpKind::Lt => l < r,
-        CmpKind::Ge => l >= r,
-        CmpKind::Gt => l > r,
+    if let Some(h) = hi {
+        e.1 = Some(e.1.map_or(h, |x| x.min(h)));
     }
 }
 

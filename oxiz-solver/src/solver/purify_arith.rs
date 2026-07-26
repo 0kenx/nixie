@@ -75,6 +75,7 @@ fn is_arith_constructor(kind: &TermKind) -> bool {
             | TermKind::Div(_, _)
             | TermKind::Mod(_, _)
             | TermKind::Ite(_, _, _)
+            | TermKind::Let { .. }
     )
 }
 
@@ -169,12 +170,23 @@ fn purify_rec(
         }
         TermKind::Ite(c, t, e) => {
             // Outside arith: keep ite, purify children in their contexts.
-            // (Under arith, ite is handled as a foreign leaf above.)
+            // (Under arith with non-constructor path already handled above —
+            // ite *is* a constructor so we keep structure.)
             let c = purify_rec(c, manager, state, interface, false);
             let branch_arith = under_arith || is_numeric_sort(manager, sort);
             let t = purify_rec(t, manager, state, interface, branch_arith);
             let e = purify_rec(e, manager, state, interface, branch_arith);
             manager.mk_ite(c, t, e)
+        }
+        TermKind::Let { bindings, body } => {
+            // `let` is transparent naming. The SMT-LIB parser usually inlines
+            // names into `body` already; still purify binding values and body
+            // so selects under a let inside `*` become interface constants
+            // rather than collapsing the whole let to one unbound fresh var.
+            for &(_, val) in bindings.iter() {
+                let _ = purify_rec(val, manager, state, interface, under_arith);
+            }
+            purify_rec(body, manager, state, interface, under_arith)
         }
 
         // --- comparisons: operands enter arith ---
