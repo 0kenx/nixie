@@ -1,0 +1,31 @@
+;; expected: sat
+; Nested ite coefficient tables over small integer indices; product/sum
+; range constraints. Stresses define-fun + ite + nonlinear integer products.
+(set-logic QF_NIA)
+(declare-const a0 Int)
+(declare-const a1 Int)
+(declare-const a2 Int)
+(declare-const t Int)
+
+(define-fun e ((i Int)) Int (ite (= i 1) 1 (ite (= i 2) 1 (ite (= i 3) 4 (ite (= i 4) 1 (ite (= i 5) 1 (ite (= i 6) 1 (ite (= i 7) 1 (ite (= i 8) 3 (ite (= i 9) 2 (ite (= i 10) 4 -1)))))))))))
+(define-fun p ((i Int)) Int (ite (= i 1) 30 (ite (= i 2) 32 (ite (= i 3) 32 (ite (= i 4) 30 (ite (= i 5) 32 (ite (= i 6) 32 (ite (= i 7) 68 (ite (= i 8) 140 (ite (= i 9) 15 (ite (= i 10) 30 0)))))))))))
+(define-fun u ((i Int)) Int (ite (= i 1) 6 (ite (= i 2) 7 (ite (= i 3) 12 (ite (= i 4) 6 (ite (= i 5) 6 (ite (= i 6) 7 (ite (= i 7) 13 (ite (= i 8) 26 (ite (= i 9) 5 (ite (= i 10) 6 0)))))))))))
+(define-fun t0 ((i Int)) Int (ite (= i 1) 5 (ite (= i 2) 5 (ite (= i 3) 5 (ite (= i 4) 5 (ite (= i 5) 5 (ite (= i 6) 5 (ite (= i 7) 5 (ite (= i 8) 8 (ite (= i 9) 3 (ite (= i 10) 5 5)))))))))))
+(define-fun tol ((i Int)) Int (ite (= i 1) 3 (ite (= i 2) 3 (ite (= i 3) 3 (ite (= i 4) 3 (ite (= i 5) 3 (ite (= i 6) 3 (ite (= i 7) 3 (ite (= i 8) 2 (ite (= i 9) 3 (ite (= i 10) 3 3)))))))))))
+(define-fun q ((i Int)) Int (ite (= i 1) 76 (ite (= i 2) 74 (ite (= i 3) 72 (ite (= i 4) 76 (ite (= i 5) 76 (ite (= i 6) 74 (ite (= i 7) 72 (ite (= i 8) 68 (ite (= i 9) 76 (ite (= i 10) 76 0)))))))))))
+(define-fun g ((i Int)) Int (ite (= i 1) 0 (ite (= i 2) 1 (ite (= i 3) 1 (ite (= i 4) 0 (ite (= i 5) 0 (ite (= i 6) 1 (ite (= i 7) 1 (ite (= i 8) 4 (ite (= i 9) 3 (ite (= i 10) 0 0)))))))))))
+(define-fun succ ((e Int)) Int (ite (= e 0) 2 (ite (= e 1) 3 (ite (= e 2) 1 (ite (= e 3) 4 (ite (= e 4) 0 -1))))))
+(define-fun opp ((e Int)) Int (ite (= e 0) 1 (ite (= e 1) 4 (ite (= e 2) 3 (ite (= e 3) 0 (ite (= e 4) 2 -1))))))
+(define-fun absi ((x Int)) Int (ite (< x 0) (- x) x))
+(define-fun w ((i Int) (s Int)) Int (let ((d (absi (- s (t0 i))))) (ite (<= d (tol i)) 10 (ite (<= d (* 2 (tol i))) 6 0))))
+(define-fun C ((k Int) (h Int)) Int (ite (= (e h) (e k)) 15 (ite (= (succ (e h)) (e k)) 12 (ite (or (= (opp (e h)) (e k)) (= (opp (e k)) (e h))) 5 10))))
+(define-fun Bad ((a Int) (b Int)) Bool (and (or (and (= (g a) 3) (= (g b) 4)) (and (= (g a) 4) (= (g b) 3))) (or (= (opp (e a)) (e b)) (= (opp (e b)) (e a)))))
+(define-fun S () Int (+ (* (p a0) (q a0) (w a0 t) 10) (* (p a1) (q a1) (w a1 t) (C a0 a1)) (* (p a2) (q a2) (w a2 t) (C a0 a2))))
+(define-fun T () Int (+ (* (u a0) (q a0) (w a0 t)) (* (u a1) (q a1) (w a1 t)) (* (u a2) (q a2) (w a2 t))))
+
+(assert (and (>= a0 1)(<= a0 10)(>= a1 1)(<= a1 10)(>= a2 1)(<= a2 10)(>= t 1)(<= t 9)
+             (= (e a0) 1) (= (w a0 t) 10)
+             (not (or (= (w a0 t) 0)(= (w a1 t) 0)(= (w a2 t) 0)(Bad a0 a1)(Bad a0 a2)(Bad a1 a2)))
+             (>= S 600000)(<= S 1000000)(<= T 19000)))
+(check-sat)
+(get-value (a0 a1 a2 t))
