@@ -289,7 +289,7 @@ impl Default for SolverConfig {
             chrono_backtrack_threshold: 100,
             luby_cap: 64,
             enable_stabilize: true,
-            stabilize_base: 10000,
+            stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
             rephase_interval: 0,
