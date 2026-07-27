@@ -125,6 +125,7 @@ mod recursive_minimization;
 mod reluctant;
 mod rephasing;
 mod resolution_graph;
+mod restart_model;
 mod smoothed_lbd;
 mod solver;
 mod stabilization;

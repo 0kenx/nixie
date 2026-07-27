@@ -215,28 +215,53 @@ impl Solver {
         reuse
     }
 
-    /// cadical-style stable/focused mode switch (opt-in via `enable_stabilize`):
-    /// alternate focused mode (frequent restarts) and stable mode (rare
-    /// restarts + rephase) on a quadratically-growing conflict schedule, so
-    /// each instance type hits its preferred restart aggressiveness. Called
-    /// once per conflict from the solve loop.
+    /// cadical `stabilizing()`: switch focused/stable modes when the current
+    /// mode's tick (propagation) count reaches `lim_stabilize`, swapping the
+    /// per-mode glue averages and growing the interval quadratically
+    /// (`stabilize_base × phase²`). On entering stable mode the reluctant
+    /// (Luby) restart trigger is enabled; on entering focused it is disabled
+    /// (focused mode uses the Glucose EMA condition instead).
     pub(super) fn check_stabilize(&mut self) {
-        if !self.config.enable_stabilize || self.stats.conflicts < self.next_stabilize {
+        if !self.config.enable_stabilize {
             return;
         }
+        let current_ticks = if self.stable {
+            self.ticks_stable
+        } else {
+            self.ticks_focused
+        };
+        // First switch is conflict-based (ticks have barely accumulated);
+        // thereafter tick-based, like cadical.
+        let ready = if self.stabphases == 0 {
+            self.stats.conflicts >= self.config.stabilize_base
+        } else {
+            current_ticks >= self.lim_stabilize
+        };
+        if !ready {
+            return;
+        }
+        // Swap per-mode averages and switch mode.
+        core::mem::swap(&mut self.glue_current, &mut self.glue_saved);
         self.stable = !self.stable;
         self.stabphases = self.stabphases.saturating_add(1);
-        const MAX_PHASE: u64 = 200_000;
-        let interval = (self
+        // Quadratic growth of the next phase length (cadical `next_delta =
+        // inc × stabphases²`), measured in the new mode's ticks.
+        let next_delta = self
             .config
             .stabilize_base
             .saturating_mul(self.stabphases)
-            .saturating_mul(self.stabphases))
-        .min(MAX_PHASE);
-        self.next_stabilize = self.stats.conflicts.saturating_add(interval);
-        // Rephase on entering stable mode.
+            .saturating_mul(self.stabphases);
+        let new_mode_ticks = if self.stable {
+            self.ticks_stable
+        } else {
+            self.ticks_focused
+        };
+        self.lim_stabilize = new_mode_ticks.saturating_add(next_delta);
+        // Enable/disable the reluctant (Luby) restart trigger for stable mode.
         if self.stable {
-            self.phase_inverted = !self.phase_inverted;
+            self.reluctant.enable(1024, 1 << 20);
+        } else {
+            self.reluctant.disable();
         }
     }
 

@@ -14,6 +14,13 @@ impl Solver {
         let _timer = ScopedTimer::new(ProfilingCategory::SatPropagation);
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
+            // Per-mode tick accumulator (cadical `stats.ticks.search[stable]`):
+            // a work-based time proxy for the stable/focused schedule.
+            if self.stable {
+                self.ticks_stable = self.ticks_stable.saturating_add(1);
+            } else {
+                self.ticks_focused = self.ticks_focused.saturating_add(1);
+            }
 
             // Bounded propagation for preprocessing: bail (as "no conflict, but
             // incomplete") once the step budget is exhausted, so a single doomed

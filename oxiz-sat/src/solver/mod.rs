@@ -18,6 +18,7 @@ use crate::lrb::LRB;
 use crate::memory_opt::{MemoryAction, MemoryOptimizer};
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::restart_model::{GlueAverages, Reluctant};
 use crate::trail::{Reason, Trail};
 use crate::vsids::VSIDS;
 use crate::watched::{WatchLists, Watcher};
@@ -483,6 +484,20 @@ pub struct Solver {
     pub(super) stabphases: u64,
     /// Conflict count at which to next switch stable/focused mode.
     pub(super) next_stabilize: u64,
+    /// Per-mode glue averages (current/saved), swapped on stable/focused
+    /// transitions (cadical `swap_averages`).
+    pub(super) glue_current: GlueAverages,
+    pub(super) glue_saved: GlueAverages,
+    /// Knuth reluctant-doubling (Luby) restart trigger for stable mode.
+    pub(super) reluctant: Reluctant,
+    /// Per-mode tick (propagation) accumulators (cadical `stats.ticks.search`).
+    pub(super) ticks_focused: u64,
+    pub(super) ticks_stable: u64,
+    /// cadical `lim.restart`: next conflict count at which to check the
+    /// focused-mode Glucose restart condition.
+    pub(super) lim_restart: u64,
+    /// cadical `lim.stabilize` expressed in ticks of the upcoming mode.
+    pub(super) lim_stabilize: u64,
     /// Level marks for LBD computation
     pub(super) level_marks: Vec<u32>,
     /// Current mark counter for LBD computation
@@ -593,6 +608,13 @@ impl Solver {
             stable: false,
             stabphases: 0,
             next_stabilize: stabilize_base,
+            glue_current: GlueAverages::new(),
+            glue_saved: GlueAverages::new(),
+            reluctant: Reluctant::default(),
+            ticks_focused: 0,
+            ticks_stable: 0,
+            lim_restart: 0,
+            lim_stabilize: 0,
             level_marks: Vec::new(),
             lbd_mark: 0,
             learned_clause_ids: Vec::new(),
@@ -1228,23 +1250,18 @@ impl Solver {
                     // Compute LBD for the learned clause
                     let lbd = self.compute_lbd(&learnt_clause);
 
-                    // Track recent LBD for Glucose-style and local restarts
+                    // Track recent LBD for the local-restart strategy.
                     self.recent_lbd_sum += u64::from(lbd);
                     self.recent_lbd_count += 1;
                     self.global_lbd_sum += u64::from(lbd);
                     self.global_lbd_count += 1;
 
-                    // Glucose restart EMAs: restart when the fast (short-window)
-                    // LBD EMA exceeds the slow (long-window) one, i.e. clause
-                    // quality is degrading. Initialized lazily on the first conflict.
+                    // cadical glue EMA update (per-mode `current` averages) +
+                    // reluctant-doubling tick for stable-mode restarts.
                     let l = f64::from(lbd);
-                    if self.lbd_ema_slow <= 0.0 {
-                        self.lbd_ema_fast = l;
-                        self.lbd_ema_slow = l;
-                    } else {
-                        self.lbd_ema_fast = 0.1 * l + 0.9 * self.lbd_ema_fast;
-                        self.lbd_ema_slow = 0.001 * l + 0.999 * self.lbd_ema_slow;
-                    }
+                    self.glue_current.fast.update(l);
+                    self.glue_current.slow.update(l);
+                    self.reluctant.tick();
 
                     // Reset recent LBD tracking periodically
                     if self.recent_lbd_count >= 5000 {
@@ -1312,14 +1329,33 @@ impl Solver {
                 // so the mode affects this restart's interval.
                 self.check_stabilize();
 
-                // Check for restart. Glucose fires only when clause quality is
-                // degrading beyond a margin (fast LBD EMA >= (1+margin)*slow,
-                // cadical-style — a bare `fast > slow` fires far too eagerly);
-                // other strategies restart purely on the conflict threshold.
-                let past_threshold = self.stats.conflicts >= self.restart_threshold;
-                let is_glucose = matches!(self.config.restart_strategy, RestartStrategy::Glucose);
-                let do_restart =
-                    past_threshold && (!is_glucose || self.lbd_ema_fast >= 1.1 * self.lbd_ema_slow);
+                // cadical restart: focused mode uses the Glucose EMA condition
+                // (fast glue >= (1+margin)*slow, checked every `restartint=2`
+                // conflicts); stable mode uses the reluctant (Luby) trigger.
+                // The legacy strategies (Luby-cap etc.) apply only when the
+                // stable/focused schedule is disabled.
+                let do_restart = if self.config.enable_stabilize {
+                    if self.stable {
+                        self.reluctant.activated()
+                    } else {
+                        // Focused Glucose: check every 2 conflicts.
+                        if self.stats.conflicts < self.lim_restart {
+                            false
+                        } else {
+                            self.lim_restart = self.stats.conflicts.saturating_add(2);
+                            let slow = self.glue_current.slow.value();
+                            let fast = self.glue_current.fast.value();
+                            // 10% margin (cadical restartmarginfocused); guard
+                            // against the all-zero initial state.
+                            slow > 0.0 && fast >= 1.10 * slow
+                        }
+                    }
+                } else {
+                    let past_threshold = self.stats.conflicts >= self.restart_threshold;
+                    let is_glucose =
+                        matches!(self.config.restart_strategy, RestartStrategy::Glucose);
+                    past_threshold && (!is_glucose || self.lbd_ema_fast >= 1.1 * self.lbd_ema_slow)
+                };
                 if do_restart {
                     self.restart();
                     self.debug_check_restart_consistency();
