@@ -1112,6 +1112,9 @@ impl Solver {
             if !self.trivially_unsat {
                 self.inprocess();
             }
+            if !self.trivially_unsat {
+                self.vivify_clauses();
+            }
             if self.trivially_unsat {
                 self.drat_emit_empty();
                 return SolverResult::Unsat;

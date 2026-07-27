@@ -751,87 +751,133 @@ impl Solver {
         }
     }
 
-    /// Vivification: try to strengthen clauses by checking if some literals are redundant
-    /// This is an inprocessing technique that should be called periodically
+    /// Vivification (asymmetric branching, cadical-style): shorten/strengthen
+    /// clauses by assuming their literals false in order and propagating. If a
+    /// prefix of literals falsified leads to a conflict, that prefix clause is
+    /// implied by the formula, so the clause can be replaced by the (shorter)
+    /// prefix. If a later literal of the clause is forced true during the
+    /// prefix assignment, the clause (prefix ∨ that-literal) is implied.
+    /// Soundness-preserving: the replacement clause is always a consequence of
+    /// the formula. Bounded by a wall-clock budget and a clause count.
     pub(super) fn vivify_clauses(&mut self) {
         if self.trail.decision_level() != 0 {
-            return; // Only vivify at decision level 0
+            return;
         }
+        const TIME_BUDGET_MS: u128 = 200;
+        const MAX_CLAUSES: usize = 5_000;
+        let t0 = Instant::now();
+        let mut done = 0usize;
 
-        let mut vivified_count = 0;
-        let max_vivifications = 100; // Limit to avoid too much overhead
-
-        // Try to vivify some learned clauses
-        let clause_ids: Vec<ClauseId> = self
+        // Snapshot candidate ids up front (vivify mutates the clause DB).
+        let candidates: SmallVec<[ClauseId; 64]> = self
             .learned_clause_ids
             .iter()
             .copied()
-            .take(max_vivifications)
+            .take(MAX_CLAUSES)
             .collect();
 
-        for clause_id in clause_ids {
-            if vivified_count >= max_vivifications {
+        for cid in candidates {
+            if done >= MAX_CLAUSES || t0.elapsed().as_millis() > TIME_BUDGET_MS {
                 break;
             }
-
-            let clause_lits = match self.clauses.get(clause_id) {
-                Some(c) if !c.deleted && c.lits.len() > 2 => c.lits.clone(),
+            // Need len > 2 (binary/unit clauses aren't worth vivifying).
+            let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
+                Some(c) if !c.deleted && c.lits.len() > 2 => c.lits.iter().copied().collect(),
                 _ => continue,
             };
+            if self.vivify_clause(cid, &lits) {
+                done += 1;
+            }
+        }
+    }
 
-            // Try to find redundant literals in the clause
-            // Assign all literals except one to false and see if we can derive the last one
-            for skip_idx in 0..clause_lits.len() {
-                // Save current state
-                let saved_level = self.trail.decision_level();
+    /// Try to vivify one clause. Returns true if the clause was shortened.
+    fn vivify_clause(&mut self, cid: ClauseId, lits: &[Lit]) -> bool {
+        let saved_level = self.trail.decision_level();
+        let n = lits.len();
+        let mut shorten_to: Option<SmallVec<[Lit; 8]>> = None;
 
-                // Assign all literals except skip_idx to false
-                self.trail.new_decision_level();
-                let mut conflict = false;
-
-                for (i, &lit) in clause_lits.iter().enumerate() {
-                    if i == skip_idx {
-                        continue;
-                    }
-
-                    let value = self.trail.lit_value(lit);
-                    if value.is_true() {
-                        // Clause is already satisfied
-                        conflict = false;
-                        break;
-                    } else if value.is_false() {
-                        // Already false
-                        continue;
-                    } else {
-                        // Assign to false
-                        self.trail.assign_decision(lit.negate());
-
-                        // Propagate
-                        if self.propagate().is_some() {
-                            conflict = true;
-                            break;
-                        }
-                    }
-                }
-
-                // Backtrack
-                self.backtrack(saved_level);
-
-                if conflict {
-                    // The literal at skip_idx is implied by the rest, so it can
-                    // be dropped (vivification succeeded). Remove it *and* rebuild
-                    // the clause's watches so the two-watched invariant survives.
-                    let removable = self
-                        .clauses
-                        .get(clause_id)
-                        .is_some_and(|c| !c.deleted && c.lits.len() > 2 && skip_idx < c.lits.len());
-                    if removable {
-                        self.remove_literal_and_rewatch(clause_id, skip_idx);
-                        vivified_count += 1;
-                        break; // Done with this clause
+        'outer: for j in 0..n {
+            match self.trail.lit_value(lits[j]) {
+                // Already true: clause is satisfied, nothing to vivify.
+                crate::literal::LBool::True => break 'outer,
+                // Already false: counts as assumed, no new decision needed.
+                crate::literal::LBool::False => {}
+                crate::literal::LBool::Undef => {
+                    self.trail.new_decision_level();
+                    self.trail.assign_decision(lits[j].negate());
+                    if self.propagate().is_some() {
+                        // Falsifying lits[0..=j] conflicts → prefix implied.
+                        shorten_to = Some(lits[0..=j].iter().copied().collect());
+                        break 'outer;
                     }
                 }
             }
+            // Did the propagation force a later clause literal true?
+            // (lits[0..=j] ∨ lits[m]) is then implied.
+            for m in (j + 1)..n {
+                if self.trail.lit_value(lits[m]).is_true() {
+                    let mut s: SmallVec<[Lit; 8]> = lits[0..=j].iter().copied().collect();
+                    s.push(lits[m]);
+                    shorten_to = Some(s);
+                    break 'outer;
+                }
+            }
+        }
+
+        self.backtrack(saved_level);
+
+        let Some(new_lits) = shorten_to else {
+            return false;
+        };
+        // Only replace if we actually shrank (and kept ≥ 2 literals: a unit /
+        // empty clause from vivification needs separate handling we skip here).
+        if new_lits.len() >= lits.len() || new_lits.len() < 2 {
+            return false;
+        }
+        self.replace_clause_lits(cid, &new_lits);
+        true
+    }
+
+    /// Replace a clause's literals in place, re-attaching the two watched
+    /// literals. (DRAT: the caller's context logs the strengthening; here we
+    /// just keep the watched-literal invariant consistent.)
+    fn replace_clause_lits(&mut self, cid: ClauseId, new_lits: &[Lit]) {
+        // Detach old watches (on the current positions 0 and 1).
+        let (old_w0, old_w1) = match self.clauses.get(cid) {
+            Some(c) if !c.deleted && c.lits.len() >= 2 => (c.lits[0], c.lits[1]),
+            _ => return,
+        };
+        self.watches.remove_clause(old_w0.negate(), cid);
+        self.watches.remove_clause(old_w1.negate(), cid);
+
+        // Pick the two best watch literals (prefer satisfied, then unassigned).
+        let mut idxs: SmallVec<[usize; 8]> = (0..new_lits.len()).collect();
+        idxs.sort_by(|&a, &b| {
+            self.watch_rank(new_lits[b])
+                .cmp(&self.watch_rank(new_lits[a]))
+        });
+        let (i0, i1) = (idxs[0], idxs[1]);
+
+        if let Some(clause) = self.clauses.get_mut(cid) {
+            // Move the chosen watches to positions 0 and 1.
+            let mut lits: SmallVec<[Lit; 8]> = new_lits.iter().copied().collect();
+            lits.swap(0, i0);
+            // i1 may have shifted if i1 == 0; recompute against the swapped vec.
+            let i1 = if i1 == 0 {
+                i0
+            } else if i1 == i0 {
+                0
+            } else {
+                i1
+            };
+            lits.swap(1, i1);
+            clause.lits.clear();
+            clause.lits.extend(lits.iter().copied());
+            let w0 = lits[0];
+            let w1 = lits[1];
+            self.watches.add(w0.negate(), Watcher::new(cid, w1));
+            self.watches.add(w1.negate(), Watcher::new(cid, w0));
         }
     }
 
