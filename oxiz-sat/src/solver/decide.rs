@@ -188,6 +188,9 @@ impl Solver {
         if self.config.use_chb_branching || self.config.use_lrb_branching {
             return 0;
         }
+        if !self.config.reuse_trail {
+            return 0;
+        }
         let level = self.trail.decision_level();
         if level <= 1 {
             return 0;
