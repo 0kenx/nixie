@@ -73,6 +73,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: true,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: true, // LRB for structured problems
             enable_inprocessing: true,
@@ -109,6 +110,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.10, // Higher randomness
             restart_strategy: RestartStrategy::Geometric,
             enable_lazy_hyper_binary: false,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: false,   // VSIDS for random
             enable_inprocessing: false, // Less helpful for random
@@ -145,6 +147,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.01,
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: true,
+            use_vmtf: false,
             use_chb_branching: true, // CHB good for crypto
             use_lrb_branching: false,
             enable_inprocessing: true,
@@ -181,6 +184,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: true,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: true,
             enable_inprocessing: true,
@@ -217,6 +221,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.15,
             restart_strategy: RestartStrategy::Geometric,
             enable_lazy_hyper_binary: false,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: false,
             enable_inprocessing: false,
@@ -253,6 +258,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.01,
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: true,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: true,
             enable_inprocessing: true,
@@ -285,6 +291,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: true,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: false, // VSIDS like Glucose
             enable_inprocessing: false,
@@ -317,6 +324,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.0,
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: false, // Classic VSIDS
             enable_inprocessing: false,
@@ -349,6 +357,7 @@ impl ConfigPreset {
             random_polarity_prob: 0.01,
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: true,
+            use_vmtf: false,
             use_chb_branching: false,
             use_lrb_branching: false, // VMTF in real CaDiCaL
             enable_inprocessing: true,

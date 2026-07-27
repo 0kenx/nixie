@@ -20,6 +20,7 @@ use crate::memory_opt::{MemoryAction, MemoryOptimizer};
 use crate::prelude::*;
 use crate::restart_model::{GlueAverages, Reluctant};
 use crate::trail::{Reason, Trail};
+use crate::vmtf::VMTF;
 use crate::vsids::VSIDS;
 use crate::watched::{WatchLists, Watcher};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -179,6 +180,13 @@ pub struct SolverConfig {
     /// Luby restart cap used in *focused* mode (frequent restarts). Stable
     /// mode restarts uncapped (rare). 0 = uncapped.
     pub focused_luby_cap: u64,
+    /// Use VMTF (variable move-to-front) as the decision heuristic instead
+    /// of VSIDS — cadical's default focused-mode branching.
+    pub use_vmtf: bool,
+    /// Use VMTF (variable move-to-front) as the decision heuristic instead of
+    /// VSIDS — cadical's default focused-mode branching. Conflict-involved
+    /// variables are moved to the tail of a list; the next decision is the
+    /// most-recently-bumped unassigned variable.
     /// Restarts between phase inversions (rephasing). 0 disables rephase.
     /// Periodically flipping the saved polarity lets a restart explore the
     /// complementary phase region instead of re-deriving the previous trail —
@@ -283,6 +291,7 @@ impl Default for SolverConfig {
             enable_stabilize: false,
             stabilize_base: 1000,
             focused_luby_cap: 16,
+            use_vmtf: false,
             rephase_interval: 0,
             reuse_trail: true,
             enable_failed_literal_probing: true,
@@ -428,6 +437,8 @@ pub struct Solver {
     pub(super) watches: WatchLists,
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
+    /// VMTF move-to-front decision queue (cadical focused-mode branching).
+    pub(super) vmtf: VMTF,
     /// CHB branching heuristic
     pub(super) chb: CHB,
     /// LRB branching heuristic
@@ -588,6 +599,7 @@ impl Solver {
             trail: Trail::new(0),
             watches: WatchLists::new(0),
             vsids: VSIDS::new(0),
+            vmtf: VMTF::new(0),
             chb: CHB::new(0),
             lrb: LRB::new(0),
             stats: SolverStats::default(),
@@ -772,6 +784,7 @@ impl Solver {
         self.binary_graph.resize(self.num_vars);
         self.vsids.insert(var);
         self.chb.insert(var);
+        self.vmtf.resize(self.num_vars);
         self.lrb.resize(self.num_vars);
         self.seen.resize(self.num_vars, false);
         self.model.resize(self.num_vars, LBool::Undef);

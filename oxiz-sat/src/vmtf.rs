@@ -198,8 +198,10 @@ impl VMTF {
             self.tail = Some(var);
         }
 
-        // Reset queue head when we bump
-        self.queue_head = self.head;
+        // Do NOT reset the search pointer here: cadical keeps a persistent
+        // `unassigned` pointer and only updates it for the bumped variable (if
+        // unassigned). Resetting on every bump forced a full re-scan from the
+        // head per conflict — a 300x slowdown on uuf200.
     }
 
     /// Select the next unassigned variable from the front of the list

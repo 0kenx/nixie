@@ -229,6 +229,14 @@ impl Solver {
         self.vsids.bump_batch(&vars_to_bump);
         self.chb.bump_batch(&vars_to_bump);
         self.lrb.on_reason_batch(&vars_to_bump);
+        // VMTF move-to-front: bump conflict-involved variables (cadical sorts
+        // them by bump-order first to preserve relative order; the bump is
+        // idempotent for vars already at the tail).
+        if self.config.use_vmtf {
+            for &v in &vars_to_bump {
+                self.vmtf.bump(v);
+            }
+        }
 
         // Set asserting literal (p is guaranteed to be Some at this point)
         if let Some(lit) = p {

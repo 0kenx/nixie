@@ -40,7 +40,16 @@ impl Solver {
                 }
             }
         } else {
-            // Use VSIDS branching
+            // Use VSIDS branching (or VMTF move-to-front if enabled).
+            if self.config.use_vmtf {
+                while let Some(var) = self.vmtf.select() {
+                    if !self.trail.is_assigned(var) {
+                        return Some(var);
+                    }
+                    self.vmtf.advance();
+                }
+                self.vmtf.reset_queue();
+            }
             while let Some(var) = self.vsids.pop_max() {
                 if !self.trail.is_assigned(var) {
                     return Some(var);
