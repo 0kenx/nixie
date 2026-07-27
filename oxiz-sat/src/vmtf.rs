@@ -156,6 +156,27 @@ impl VMTF {
         Some(Var::new(res))
     }
 
+    /// Called when a variable is unassigned (backtrack): if this variable's
+    /// bump timestamp is more recent than the search pointer's, move the
+    /// pointer here (cadical `unassign` → `update_queue_unassigned`). This is
+    /// what keeps the pointer at the most-recently-bumped unassigned variable
+    /// — without it the pointer stalls and every decision re-scans.
+    pub fn notify_unassigned(&mut self, var: Var) {
+        let v = match u32::try_from(var.index()) {
+            Ok(v) if (v as usize) < self.btab.len() => v,
+            _ => return,
+        };
+        let var_bumped = self.btab[v as usize];
+        let search_bumped = if self.search != NULL {
+            self.btab[self.search as usize]
+        } else {
+            0
+        };
+        if var_bumped > search_bumped {
+            self.search = v;
+        }
+    }
+
     /// Bump timestamp of a variable (no list move) — kept for API compatibility.
     pub fn activity(&self, var: Var) -> u64 {
         self.btab.get(var.index()).copied().unwrap_or(0)

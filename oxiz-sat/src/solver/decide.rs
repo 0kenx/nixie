@@ -40,8 +40,14 @@ impl Solver {
                 }
             }
         } else {
-            // Use VSIDS branching (or VMTF move-to-front if enabled).
-            if self.config.use_vmtf {
+            // Mode-dependent branching (cadical use_scores = score && stable):
+            // focused → VMTF, stable → VSIDS/EVSIDS.
+            let use_vmtf_now = if self.config.enable_stabilize {
+                !self.stable
+            } else {
+                self.config.use_vmtf
+            };
+            if use_vmtf_now {
                 if let Some(var) = self.vmtf.next_decision(|v| self.trail.is_assigned(v)) {
                     return Some(var);
                 }
@@ -100,13 +106,19 @@ impl Solver {
             unassigned_vars.push(var);
         });
 
-        // Re-insert unassigned variables into VSIDS and CHB heaps
+        // Re-insert unassigned variables into VSIDS and CHB heaps, and update
+        // the VMTF search pointer (cadical's `unassign` →
+        // `update_queue_unassigned`): the pointer moves to the most-recently-
+        // bumped unassigned variable, keeping decisions O(1) amortized.
         for var in unassigned_vars {
             if !self.vsids.contains(var) {
                 self.vsids.insert(var);
             }
             if !self.chb.contains(var) {
                 self.chb.insert(var);
+            }
+            if self.config.use_vmtf {
+                self.vmtf.notify_unassigned(var);
             }
         }
 
@@ -238,7 +250,7 @@ impl Solver {
         // First switch is conflict-based (ticks have barely accumulated);
         // thereafter tick-based, like cadical.
         let ready = if self.stabphases == 0 {
-            self.stats.conflicts >= self.config.stabilize_base
+            self.ticks_focused >= self.config.stabilize_base
         } else {
             current_ticks >= self.lim_stabilize
         };
