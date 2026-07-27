@@ -4,6 +4,7 @@ use crate::clause::ClauseId;
 use crate::literal::Lit;
 #[allow(unused_imports)]
 use crate::prelude::*;
+#[allow(unused_imports)]
 use smallvec::SmallVec;
 
 /// A watcher entry
@@ -24,10 +25,17 @@ impl Watcher {
 }
 
 /// Watch lists for the two-watched literal scheme
+///
+/// Each literal's list is a `Vec<Watcher>` rather than a `SmallVec`. Propagation
+/// takes ownership of the list for the literal being propagated (`mem::take`),
+/// walks it with a read/write index, and moves it back. With `Vec` that take/put
+/// is just a (ptr,len,cap) move; with `SmallVec` it copied the inline buffer
+/// (up to 128 bytes) on every propagated literal and paid a heap spill once a
+/// list exceeded the inline capacity — a measurable propagation hot spot.
 #[derive(Debug)]
 pub struct WatchLists {
     /// Watch list for each literal
-    watches: Vec<SmallVec<[Watcher; 8]>>,
+    watches: Vec<Vec<Watcher>>,
 }
 
 impl WatchLists {
@@ -35,7 +43,7 @@ impl WatchLists {
     #[must_use]
     pub fn new(num_vars: usize) -> Self {
         Self {
-            watches: vec![SmallVec::new(); num_vars * 2],
+            watches: vec![Vec::new(); num_vars * 2],
         }
     }
 
@@ -43,7 +51,7 @@ impl WatchLists {
     pub fn add(&mut self, lit: Lit, watcher: Watcher) {
         let idx = lit.index();
         if idx >= self.watches.len() {
-            self.watches.resize(idx + 1, SmallVec::new());
+            self.watches.resize(idx + 1, Vec::new());
         }
         self.watches[idx].push(watcher);
     }
@@ -56,10 +64,10 @@ impl WatchLists {
     }
 
     /// Get mutable access to the watch list for a literal
-    pub fn get_mut(&mut self, lit: Lit) -> &mut SmallVec<[Watcher; 8]> {
+    pub fn get_mut(&mut self, lit: Lit) -> &mut Vec<Watcher> {
         let idx = lit.index();
         if idx >= self.watches.len() {
-            self.watches.resize(idx + 1, SmallVec::new());
+            self.watches.resize(idx + 1, Vec::new());
         }
         &mut self.watches[idx]
     }
@@ -77,7 +85,7 @@ impl WatchLists {
     pub fn resize(&mut self, num_vars: usize) {
         let new_size = num_vars * 2;
         if new_size > self.watches.len() {
-            self.watches.resize(new_size, SmallVec::new());
+            self.watches.resize(new_size, Vec::new());
         }
     }
 

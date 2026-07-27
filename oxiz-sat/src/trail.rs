@@ -46,7 +46,11 @@ impl Default for VarInfo {
 pub struct Trail {
     /// Sequence of assigned literals
     assignments: Vec<Lit>,
-    /// Information for each variable
+    /// Dense current value of each variable (1 byte/entry) — the hottest BCP
+    /// lookup. Kept separate from `var_info` so value reads don't pay the
+    /// wider `VarInfo` stride or its `Option`-based access.
+    values: Vec<LBool>,
+    /// Information for each variable (level / reason — the cold path)
     var_info: Vec<VarInfo>,
     /// Indices marking the start of each decision level
     level_starts: Vec<usize>,
@@ -67,6 +71,7 @@ impl Trail {
     pub fn new(num_vars: usize) -> Self {
         Self {
             assignments: Vec::with_capacity(num_vars),
+            values: vec![LBool::Undef; num_vars],
             var_info: vec![VarInfo::default(); num_vars],
             level_starts: vec![0],
             current_level: 0,
@@ -84,9 +89,10 @@ impl Trail {
     /// Get the value of a variable
     #[must_use]
     pub fn value(&self, var: Var) -> LBool {
-        self.var_info
+        self.values
             .get(var.index())
-            .map_or(LBool::Undef, |v| v.value)
+            .copied()
+            .unwrap_or(LBool::Undef)
     }
 
     /// Get the value of a literal
@@ -184,6 +190,7 @@ impl Trail {
         // Resize if needed
         if idx >= self.var_info.len() {
             self.var_info.resize(idx + 1, VarInfo::default());
+            self.values.resize(idx + 1, LBool::Undef);
         }
 
         let value = if lit.is_pos() {
@@ -192,6 +199,7 @@ impl Trail {
             LBool::False
         };
 
+        self.values[idx] = value;
         self.var_info[idx] = VarInfo {
             value,
             level,
@@ -306,6 +314,7 @@ impl Trail {
                 .pop()
                 .expect("assignments non-empty in loop condition");
             let var = lit.var();
+            self.values[var.index()] = LBool::Undef;
             self.var_info[var.index()].value = LBool::Undef;
         }
         // Reset decision level tracking
@@ -368,6 +377,9 @@ impl Trail {
             if self.var_info[var_idx].level <= level {
                 replay.push(lit);
             } else {
+                // Keep the dense `values[]` mirror in sync with `var_info`
+                // (ported from main's dense-trail perf change).
+                self.values[var_idx] = LBool::Undef;
                 self.var_info[var_idx].value = LBool::Undef;
                 callback(lit);
             }
@@ -415,12 +427,14 @@ impl Trail {
     pub fn resize(&mut self, num_vars: usize) {
         if num_vars > self.var_info.len() {
             self.var_info.resize(num_vars, VarInfo::default());
+            self.values.resize(num_vars, LBool::Undef);
         }
     }
 
     /// Clear the trail completely
     pub fn clear(&mut self) {
         for lit in &self.assignments {
+            self.values[lit.var().index()] = LBool::Undef;
             self.var_info[lit.var().index()].value = LBool::Undef;
         }
         self.assignments.clear();

@@ -543,6 +543,24 @@ impl ClauseDatabase {
             }
         }
     }
+
+    /// Rescale every live clause's activity by `factor`.
+    ///
+    /// Used as a rare overflow guard for the MiniSat-style growing-increment
+    /// decay (see `Solver::decay_clause_activity`): the bump increment grows
+    /// geometrically, so once it approaches the f64 range limit we shrink every
+    /// activity — and the increment — by a constant factor. This is O(n) but
+    /// fires roughly every ~230k conflicts (for the default 0.999 clause decay)
+    /// instead of every conflict, replacing a per-conflict O(n) pass with an
+    /// amortized O(1) one. Relative ordering (all that `reduce_clause_database`
+    /// relies on) is preserved.
+    pub fn rescale_activity(&mut self, factor: f64) {
+        for clause in &mut self.clauses {
+            if !clause.deleted {
+                clause.activity *= factor;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

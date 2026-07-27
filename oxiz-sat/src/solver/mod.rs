@@ -1010,6 +1010,23 @@ impl Solver {
         self.add_clause(lits.iter().map(|&l| Lit::from_dimacs(l)))
     }
 
+    /// Decay clause activity the MiniSat way: grow the per-conflict bump
+    /// increment (so recently-useful clauses dominate) instead of multiplying
+    /// every clause's activity on every conflict. Rescale only when the
+    /// increment approaches the f64 range limit — a rare O(n) pass that
+    /// replaces what was an O(n) pass *every* conflict (a top flamegraph
+    /// hotspot). The only active consumer of clause activity is
+    /// `reduce_clause_database`, which ranks clauses relatively, so the
+    /// implicit decay preserves correctness.
+    pub(super) fn decay_clause_activity(&mut self) {
+        self.clause_bump_increment /= self.config.clause_decay;
+        if self.clause_bump_increment > 1e100 {
+            const FACTOR: f64 = 1e-100;
+            self.clauses.rescale_activity(FACTOR);
+            self.clause_bump_increment *= FACTOR;
+        }
+    }
+
     /// Solve the SAT problem
     pub fn solve(&mut self) -> SolverResult {
         // Check if trivially unsatisfiable
@@ -1133,9 +1150,7 @@ impl Solver {
                 self.chb.decay();
                 self.lrb.decay();
                 self.lrb.on_conflict();
-                self.clauses.decay_activity(self.config.clause_decay);
-                // Increase clause bump increment (inverse of decay)
-                self.clause_bump_increment /= self.config.clause_decay;
+                self.decay_clause_activity();
 
                 // Track conflicts for clause deletion
                 self.conflicts_since_deletion += 1;
@@ -1320,7 +1335,7 @@ impl Solver {
                 self.learn_clause(learnt_clause);
 
                 self.vsids.decay();
-                self.clauses.decay_activity(self.config.clause_decay);
+                self.decay_clause_activity();
                 self.handle_clause_deletion_and_restart_limited(assumption_level_start);
             } else {
                 // No conflict - try to decide. `propagate()` just returned `None`,

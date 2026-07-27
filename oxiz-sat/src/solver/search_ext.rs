@@ -86,7 +86,7 @@ impl Solver {
                 self.learn_clause(learnt_clause);
 
                 self.vsids.decay();
-                self.clauses.decay_activity(self.config.clause_decay);
+                self.decay_clause_activity();
                 self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                 continue;
             }
@@ -139,7 +139,7 @@ impl Solver {
                     self.learn_clause(learnt_clause);
 
                     self.vsids.decay();
-                    self.clauses.decay_activity(self.config.clause_decay);
+                    self.decay_clause_activity();
                     self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     // Rejoin the outer loop, NOT this one: the clause just learned
                     // put its asserting literal on the trail unpropagated, and only
@@ -183,7 +183,7 @@ impl Solver {
                         self.learn_clause(learnt_clause);
 
                         self.vsids.decay();
-                        self.clauses.decay_activity(self.config.clause_decay);
+                        self.decay_clause_activity();
                         self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                         // Same reason as the theory-conflict branch above: the
                         // learned clause left an unpropagated asserting literal.
@@ -259,7 +259,7 @@ impl Solver {
                         self.learn_clause(learnt_clause);
 
                         self.vsids.decay();
-                        self.clauses.decay_activity(self.config.clause_decay);
+                        self.decay_clause_activity();
                         self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     }
                     TheoryCheckResult::Propagated(props) => {
