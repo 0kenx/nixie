@@ -234,7 +234,7 @@ impl Solver {
         // idempotent for vars already at the tail).
         if self.config.use_vmtf {
             for &v in &vars_to_bump {
-                self.vmtf.bump(v);
+                self.vmtf.bump(v, |v| self.trail.is_assigned(v));
             }
         }
 

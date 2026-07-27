@@ -1,262 +1,181 @@
-//! Variable Move-To-Front (VMTF) branching heuristic
+//! Variable Move-To-Front (VMTF) branching — faithful port of cadical's
+//! focused-mode decision queue (`queue.cpp`, `analyze.cpp::bump_queue`).
 //!
-//! VMTF is a modern branching heuristic used in state-of-the-art SAT solvers
-//! like Kissat and CaDiCaL. It maintains a doubly-linked list of variables,
-//! and when a variable is involved in a conflict, it's moved to the front.
-//!
-//! Compared to VSIDS:
-//! - Simpler implementation (no heap operations)
-//! - Lower overhead (constant-time operations)
-//! - Often competitive or better performance
-//! - No periodic rescaling needed
+//! Conflict-involved variables are moved to the tail of a doubly-linked list;
+//! the next decision is the most-recently-bumped *unassigned* variable, found
+//! by scanning backward from a persistent search pointer. The pointer is
+//! updated only for unassigned bumped variables (cadical `update_queue_unassigned`),
+//! so a decision never re-scans the whole list — the bug in the previous
+//! implementation (which reset the pointer on every bump → O(n) per decision).
 
 use crate::literal::Var;
-#[allow(unused_imports)]
-use crate::prelude::*;
 
-/// Node in the VMTF doubly-linked list
-#[derive(Debug, Clone, Copy)]
-struct VmtfNode {
-    /// Previous variable in the list (None if this is the head)
-    prev: Option<Var>,
-    /// Next variable in the list (None if this is the tail)
-    next: Option<Var>,
-    /// Timestamp when this variable was last moved to front
-    timestamp: u64,
-}
+const NULL: u32 = u32::MAX;
 
-impl VmtfNode {
-    fn new() -> Self {
-        Self {
-            prev: None,
-            next: None,
-            timestamp: 0,
-        }
-    }
-}
-
-/// Variable Move-To-Front (VMTF) branching heuristic
-///
-/// Maintains a doubly-linked list of all variables. When a variable
-/// is bumped (involved in a conflict), it's moved to the front of the list.
-/// Variable selection picks the first unassigned variable from the front.
-#[derive(Debug, Clone)]
+/// VMTF move-to-front decision queue (cadical focused-mode branching).
+#[derive(Debug)]
 pub struct VMTF {
-    /// Doubly-linked list nodes for each variable
-    nodes: Vec<VmtfNode>,
-    /// Head of the list (most recently bumped variable)
-    head: Option<Var>,
-    /// Tail of the list (least recently bumped variable)
-    tail: Option<Var>,
-    /// Current timestamp (incremented on each bump)
-    timestamp: u64,
-    /// Queue head for iteration during variable selection
-    queue_head: Option<Var>,
+    /// `prev[v]` / `next[v]`: doubly-linked list links (NULL = none).
+    prev: Vec<u32>,
+    next: Vec<u32>,
+    /// head = oldest, tail = most-recently-bumped.
+    head: u32,
+    tail: u32,
+    /// Persistent search pointer: scan backward (via `prev`) from here.
+    search: u32,
+    /// Per-variable bump timestamp (cadical `btab`).
+    btab: Vec<u64>,
+    bumped: u64,
 }
 
 impl VMTF {
-    /// Create a new VMTF instance with the given number of variables
     #[must_use]
     pub fn new(num_vars: usize) -> Self {
-        let mut vmtf = Self {
-            nodes: vec![VmtfNode::new(); num_vars],
-            head: None,
-            tail: None,
-            timestamp: 0,
-            queue_head: None,
+        let mut s = Self {
+            prev: vec![NULL; num_vars],
+            next: vec![NULL; num_vars],
+            head: NULL,
+            tail: NULL,
+            search: NULL,
+            btab: vec![0; num_vars],
+            bumped: 0,
         };
-
-        // Initialize the doubly-linked list with all variables
+        for i in 0..num_vars {
+            s.prev[i] = if i == 0 { NULL } else { (i - 1) as u32 };
+            s.next[i] = if i + 1 == num_vars {
+                NULL
+            } else {
+                (i + 1) as u32
+            };
+        }
         if num_vars > 0 {
-            vmtf.head = Some(Var::new(0));
-            vmtf.tail = Some(Var::new((num_vars - 1) as u32));
-
-            for i in 0..num_vars {
-                vmtf.nodes[i].prev = if i > 0 {
-                    Some(Var::new((i - 1) as u32))
-                } else {
-                    None
-                };
-                vmtf.nodes[i].next = if i < num_vars - 1 {
-                    Some(Var::new((i + 1) as u32))
-                } else {
-                    None
-                };
-                vmtf.nodes[i].timestamp = i as u64;
-            }
+            s.head = 0;
+            s.tail = (num_vars - 1) as u32;
+            s.search = s.tail;
         }
-
-        vmtf.queue_head = vmtf.head;
-        vmtf
+        s
     }
 
-    /// Resize the VMTF to accommodate more variables
-    pub fn resize(&mut self, new_num_vars: usize) {
-        let old_num_vars = self.nodes.len();
-        if new_num_vars <= old_num_vars {
+    pub fn resize(&mut self, num_vars: usize) {
+        if num_vars <= self.prev.len() {
             return;
         }
-
-        // Add new nodes
-        self.nodes.resize(new_num_vars, VmtfNode::new());
-
-        // Link new variables to the list
-        if old_num_vars == 0 {
-            // Starting from empty, same as new()
-            self.head = Some(Var::new(0));
-            self.tail = Some(Var::new((new_num_vars - 1) as u32));
-
-            for i in 0..new_num_vars {
-                self.nodes[i].prev = if i > 0 {
-                    Some(Var::new((i - 1) as u32))
-                } else {
-                    None
-                };
-                self.nodes[i].next = if i < new_num_vars - 1 {
-                    Some(Var::new((i + 1) as u32))
-                } else {
-                    None
-                };
-                self.nodes[i].timestamp = self.timestamp;
-                self.timestamp += 1;
+        let old = self.prev.len();
+        self.prev.resize(num_vars, NULL);
+        self.next.resize(num_vars, NULL);
+        self.btab.resize(num_vars, 0);
+        for i in old..num_vars {
+            if self.tail != NULL {
+                self.next[self.tail as usize] = i as u32;
+            } else {
+                self.head = i as u32;
             }
+            self.prev[i] = if self.tail == NULL { NULL } else { self.tail };
+            self.next[i] = NULL;
+            self.tail = i as u32;
+        }
+    }
+
+    fn dequeue(&mut self, v: u32) {
+        let p = self.prev[v as usize];
+        let n = self.next[v as usize];
+        if p != NULL {
+            self.next[p as usize] = n;
         } else {
-            // Append new variables to the existing tail
-            let old_tail = self
-                .tail
-                .expect("tail exists when extending non-empty list");
-            let first_new = Var::new(old_num_vars as u32);
+            self.head = n;
+        }
+        if n != NULL {
+            self.prev[n as usize] = p;
+        } else {
+            self.tail = p;
+        }
+    }
 
-            // Connect old tail to first new variable
-            self.nodes[old_tail.index()].next = Some(first_new);
+    fn enqueue(&mut self, v: u32) {
+        self.prev[v as usize] = self.tail;
+        self.next[v as usize] = NULL;
+        if self.tail != NULL {
+            self.next[self.tail as usize] = v;
+        } else {
+            self.head = v;
+        }
+        self.tail = v;
+    }
 
-            for i in old_num_vars..new_num_vars {
-                self.nodes[i].prev = if i == old_num_vars {
-                    Some(old_tail)
-                } else {
-                    Some(Var::new((i - 1) as u32))
-                };
-                self.nodes[i].next = if i < new_num_vars - 1 {
-                    Some(Var::new((i + 1) as u32))
-                } else {
-                    None
-                };
-                self.nodes[i].timestamp = self.timestamp;
-                self.timestamp += 1;
+    /// Move `var` to the tail (most-recent) and bump its timestamp (cadical
+    /// `bump_queue`). `is_assigned` reports assignment status so the search
+    /// pointer is updated only for unassigned bumped variables.
+    pub fn bump<F>(&mut self, var: Var, is_assigned: F)
+    where
+        F: Fn(Var) -> bool,
+    {
+        let v = match u32::try_from(var.index()) {
+            Ok(v) if (v as usize) < self.next.len() => v,
+            _ => return,
+        };
+        // Already the tail (most-recent): nothing to do.
+        if self.next[v as usize] == NULL {
+            // still bump the timestamp + maybe update search pointer.
+        } else {
+            self.dequeue(v);
+            self.enqueue(v);
+        }
+        self.bumped = self.bumped.saturating_add(1);
+        self.btab[v as usize] = self.bumped;
+        if !is_assigned(var) {
+            self.search = v;
+        }
+    }
+
+    /// Pick the next decision variable: the most-recently-bumped unassigned
+    /// variable, scanning backward from the search pointer. Returns `None` if
+    /// every variable is assigned.
+    pub fn next_decision<F>(&mut self, mut is_assigned: F) -> Option<Var>
+    where
+        F: FnMut(Var) -> bool,
+    {
+        if self.head == NULL {
+            return None;
+        }
+        let mut res = self.search;
+        while res != NULL && is_assigned(Var::new(res)) {
+            res = self.prev[res as usize];
+        }
+        if res == NULL {
+            // Search pointer exhausted toward the head (lagged behind a
+            // backtrack): retry from the tail.
+            res = self.tail;
+            while res != NULL && is_assigned(Var::new(res)) {
+                res = self.prev[res as usize];
             }
-
-            // Update tail
-            self.tail = Some(Var::new((new_num_vars - 1) as u32));
         }
+        if res == NULL {
+            return None;
+        }
+        self.search = res;
+        Some(Var::new(res))
     }
 
-    /// Bump a variable (move it to the front of the list)
-    ///
-    /// This is called when a variable is involved in a conflict
-    pub fn bump(&mut self, var: Var) {
-        let idx = var.index();
-        if idx >= self.nodes.len() {
-            return;
-        }
-
-        // If already at head, just update timestamp
-        if Some(var) == self.head {
-            self.timestamp += 1;
-            self.nodes[idx].timestamp = self.timestamp;
-            return;
-        }
-
-        // Remove from current position
-        let prev = self.nodes[idx].prev;
-        let next = self.nodes[idx].next;
-
-        if let Some(prev_var) = prev {
-            self.nodes[prev_var.index()].next = next;
-        }
-        if let Some(next_var) = next {
-            self.nodes[next_var.index()].prev = prev;
-        }
-
-        // Update tail if we're removing the tail
-        if Some(var) == self.tail {
-            self.tail = prev;
-        }
-
-        // Insert at head
-        self.nodes[idx].prev = None;
-        self.nodes[idx].next = self.head;
-        self.timestamp += 1;
-        self.nodes[idx].timestamp = self.timestamp;
-
-        if let Some(old_head) = self.head {
-            self.nodes[old_head.index()].prev = Some(var);
-        }
-        self.head = Some(var);
-
-        // If list was empty, update tail
-        if self.tail.is_none() {
-            self.tail = Some(var);
-        }
-
-        // Do NOT reset the search pointer here: cadical keeps a persistent
-        // `unassigned` pointer and only updates it for the bumped variable (if
-        // unassigned). Resetting on every bump forced a full re-scan from the
-        // head per conflict — a 300x slowdown on uuf200.
-    }
-
-    /// Select the next unassigned variable from the front of the list
-    ///
-    /// Returns `None` when reaching the end of the list.
-    /// Call `reset_queue()` to start from the beginning again.
-    #[must_use]
-    pub fn select(&mut self) -> Option<Var> {
-        self.queue_head
-    }
-
-    /// Advance the queue to the next variable
-    ///
-    /// This is called after selecting a variable that was assigned.
-    /// The caller should keep calling `select()` and `advance()` until
-    /// `select()` returns an unassigned variable or `None`.
-    pub fn advance(&mut self) {
-        if let Some(current) = self.queue_head {
-            self.queue_head = self.nodes[current.index()].next;
-        }
-    }
-
-    /// Reset the queue to start iteration from the beginning
-    pub fn reset_queue(&mut self) {
-        self.queue_head = self.head;
-    }
-
-    /// Get the activity/timestamp of a variable (for statistics)
-    #[must_use]
+    /// Bump timestamp of a variable (no list move) — kept for API compatibility.
     pub fn activity(&self, var: Var) -> u64 {
-        let idx = var.index();
-        if idx < self.nodes.len() {
-            self.nodes[idx].timestamp
-        } else {
-            0
-        }
-    }
-
-    /// Get statistics about the VMTF state
-    #[must_use]
-    pub fn stats(&self) -> VmtfStats {
-        VmtfStats {
-            num_vars: self.nodes.len(),
-            current_timestamp: self.timestamp,
-        }
+        self.btab.get(var.index()).copied().unwrap_or(0)
     }
 }
 
-/// Statistics for VMTF
-#[derive(Debug, Clone, Copy)]
+/// Statistics stub (kept for the public re-export `pub use vmtf::{VMTF, VmtfStats}`).
+#[derive(Debug, Clone, Default)]
 pub struct VmtfStats {
-    /// Number of variables being tracked
-    pub num_vars: usize,
-    /// Current timestamp value
-    pub current_timestamp: u64,
+    /// Total bumps.
+    pub total_bumps: u64,
+}
+
+impl VMTF {
+    #[must_use]
+    pub fn stats(&self) -> VmtfStats {
+        VmtfStats {
+            total_bumps: self.bumped,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -264,143 +183,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_vmtf_creation() {
-        let vmtf = VMTF::new(5);
-        assert_eq!(vmtf.nodes.len(), 5);
-        assert_eq!(vmtf.head, Some(Var::new(0)));
-        assert_eq!(vmtf.tail, Some(Var::new(4)));
+    fn bump_then_pick() {
+        let mut q = VMTF::new(4); // tail = 3
+        q.bump(Var::new(0), |_| false); // 0 → tail
+        let d = q.next_decision(|_| false).expect("decision");
+        assert_eq!(d, Var::new(0), "most-recently-bumped picked first");
     }
 
     #[test]
-    fn test_vmtf_select_sequential() {
-        let mut vmtf = VMTF::new(5);
-
-        // Initially should select variables in order 0, 1, 2, 3, 4
-        assert_eq!(vmtf.select(), Some(Var::new(0)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(1)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(2)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(3)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(4)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), None);
-    }
-
-    #[test]
-    fn test_vmtf_bump() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump variable 3 - it should move to front
-        vmtf.bump(Var::new(3));
-        vmtf.reset_queue();
-
-        // Now should select 3 first
-        assert_eq!(vmtf.select(), Some(Var::new(3)));
-        vmtf.advance();
-
-        // Then the rest in original order (excluding 3)
-        assert_eq!(vmtf.select(), Some(Var::new(0)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(1)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(2)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(4)));
-    }
-
-    #[test]
-    fn test_vmtf_multiple_bumps() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump variables in sequence: 2, 4, 1
-        vmtf.bump(Var::new(2));
-        vmtf.bump(Var::new(4));
-        vmtf.bump(Var::new(1));
-        vmtf.reset_queue();
-
-        // Should now select in order: 1, 4, 2, 0, 3
-        // (most recently bumped first)
-        assert_eq!(vmtf.select(), Some(Var::new(1)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(4)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(2)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(0)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(3)));
-    }
-
-    #[test]
-    fn test_vmtf_resize() {
-        let mut vmtf = VMTF::new(3);
-        vmtf.resize(6);
-
-        assert_eq!(vmtf.nodes.len(), 6);
-        vmtf.reset_queue();
-
-        // Should be able to select all 6 variables
-        for _i in 0..6 {
-            assert!(vmtf.select().is_some());
-            vmtf.advance();
-        }
-        assert_eq!(vmtf.select(), None);
-    }
-
-    #[test]
-    fn test_vmtf_activity() {
-        let mut vmtf = VMTF::new(5);
-
-        let v0_activity = vmtf.activity(Var::new(0));
-        vmtf.bump(Var::new(0));
-        let v0_activity_after = vmtf.activity(Var::new(0));
-
-        // Activity should increase after bump
-        assert!(v0_activity_after > v0_activity);
-    }
-
-    #[test]
-    fn test_vmtf_stats() {
-        let mut vmtf = VMTF::new(10);
-        let stats = vmtf.stats();
-
-        assert_eq!(stats.num_vars, 10);
-
-        // Bump a variable and check timestamp increases
-        vmtf.bump(Var::new(0));
-        let stats_after = vmtf.stats();
-        assert!(stats_after.current_timestamp > stats.current_timestamp);
-    }
-
-    #[test]
-    fn test_vmtf_bump_head() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump the head variable
-        let head_var = vmtf.head.expect("test operation should succeed");
-        let timestamp_before = vmtf.activity(head_var);
-
-        vmtf.bump(head_var);
-
-        // Timestamp should increase even though it's already at head
-        assert!(vmtf.activity(head_var) > timestamp_before);
-        assert_eq!(vmtf.head, Some(head_var));
-    }
-
-    #[test]
-    fn test_vmtf_bump_tail() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump the tail variable
-        let tail_var = Var::new(4);
-        vmtf.bump(tail_var);
-
-        // Tail should move to head
-        assert_eq!(vmtf.head, Some(tail_var));
-        // New tail should be variable 3
-        assert_eq!(vmtf.tail, Some(Var::new(3)));
+    fn skip_assigned() {
+        let mut q = VMTF::new(3);
+        q.bump(Var::new(2), |_| false); // tail = 2
+        // var 2 assigned → pick next most-recent unassigned.
+        let d = q.next_decision(|v| v == Var::new(2)).expect("decision");
+        assert_eq!(d, Var::new(1));
     }
 }
