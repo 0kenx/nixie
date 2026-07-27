@@ -199,31 +199,11 @@ impl Solver {
                 self.restart_threshold = self.stats.conflicts + next_interval;
             }
             RestartStrategy::Glucose => {
-                // Glucose-style dynamic restarts based on LBD
-                // Restart when recent average LBD is higher than global average
-                // For now, use geometric with dynamic adjustment
-                let current_interval = if self.restart_threshold > self.stats.conflicts {
-                    self.restart_threshold - self.stats.conflicts
-                } else {
-                    self.config.restart_interval
-                };
-
-                // Adjust based on recent LBD trend
-                let next_interval = if self.recent_lbd_count > 50 {
-                    let recent_avg = self.recent_lbd_sum / self.recent_lbd_count.max(1);
-                    // If recent LBD is low (good), increase interval; if high, decrease
-                    if recent_avg < 5 {
-                        // Good quality clauses - increase interval
-                        ((current_interval as f64) * 1.1) as u64
-                    } else {
-                        // Poor quality clauses - decrease interval
-                        ((current_interval as f64) * 0.9) as u64
-                    }
-                } else {
-                    current_interval
-                };
-
-                self.restart_threshold = self.stats.conflicts + next_interval.max(100);
+                // LBD-driven restart: the restart *decision* is made in the solve
+                // loop (fire only when the fast LBD EMA exceeds the slow one).
+                // Here we just enforce a short minimum gap between restarts so the
+                // solver does not thrash, then wait for the next degradation.
+                self.restart_threshold = self.stats.conflicts + 100;
             }
             RestartStrategy::LocalLbd => {
                 // Local restarts based on LBD

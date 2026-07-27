@@ -426,6 +426,11 @@ pub struct Solver {
     pub(super) recent_lbd_sum: u64,
     /// Number of conflicts contributing to recent_lbd_sum
     pub(super) recent_lbd_count: u64,
+    /// Fast EMA of learned-clause LBD (short window) for Glucose restarts.
+    /// Restart when this exceeds the slow EMA — clause quality is degrading.
+    pub(super) lbd_ema_fast: f64,
+    /// Slow EMA of learned-clause LBD (long window) for Glucose restarts.
+    pub(super) lbd_ema_slow: f64,
     /// Binary implication graph for fast binary clause propagation
     pub(super) binary_graph: BinaryImplicationGraph,
     /// Global average LBD for local restarts
@@ -517,6 +522,8 @@ impl Solver {
             rng_state: 0x853c_49e6_748f_ea9b, // Random seed
             recent_lbd_sum: 0,
             recent_lbd_count: 0,
+            lbd_ema_fast: 0.0,
+            lbd_ema_slow: 0.0,
             binary_graph: BinaryImplicationGraph::new(0),
             global_lbd_sum: 0,
             global_lbd_count: 0,
@@ -1109,6 +1116,18 @@ impl Solver {
                     self.global_lbd_sum += u64::from(lbd);
                     self.global_lbd_count += 1;
 
+                    // Glucose restart EMAs: restart when the fast (short-window)
+                    // LBD EMA exceeds the slow (long-window) one, i.e. clause
+                    // quality is degrading. Initialized lazily on the first conflict.
+                    let l = f64::from(lbd);
+                    if self.lbd_ema_slow <= 0.0 {
+                        self.lbd_ema_fast = l;
+                        self.lbd_ema_slow = l;
+                    } else {
+                        self.lbd_ema_fast = 0.1 * l + 0.9 * self.lbd_ema_fast;
+                        self.lbd_ema_slow = 0.001 * l + 0.999 * self.lbd_ema_slow;
+                    }
+
                     // Reset recent LBD tracking periodically
                     if self.recent_lbd_count >= 5000 {
                         self.recent_lbd_sum /= 2;
@@ -1170,8 +1189,14 @@ impl Solver {
                     }
                 }
 
-                // Check for restart
-                if self.stats.conflicts >= self.restart_threshold {
+                // Check for restart. Glucose fires only when clause quality is
+                // degrading (fast LBD EMA > slow EMA); other strategies restart
+                // purely on the conflict threshold.
+                let past_threshold = self.stats.conflicts >= self.restart_threshold;
+                let is_glucose = matches!(self.config.restart_strategy, RestartStrategy::Glucose);
+                let do_restart =
+                    past_threshold && (!is_glucose || self.lbd_ema_fast > self.lbd_ema_slow);
+                if do_restart {
                     self.restart();
                     self.debug_check_restart_consistency();
                 }
