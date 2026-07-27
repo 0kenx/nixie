@@ -223,7 +223,15 @@ impl Default for SolverConfig {
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Luby,
-            enable_lazy_hyper_binary: true,
+            // Off by default: the lazy hyper-binary derivation in
+            // `check_hyper_binary_resolution` is not currently sound.  Its learned
+            // binaries go straight into the binary implication graph, where they
+            // both propagate and act as conflict reasons, so an unimplied one
+            // produces a wrong top-level UNSAT on satisfiable input (QF_UF
+            // quasigroup `iso_brn*`: enabling it flips `sat` to `unsat`, and a
+            // wrong UNSAT can only come from a clause the formula does not
+            // entail).  Re-enable once the derivation is proven and tested.
+            enable_lazy_hyper_binary: false,
             use_chb_branching: false,
             use_lrb_branching: false,
             enable_inprocessing: false,
@@ -386,6 +394,12 @@ pub struct Solver {
     pub(super) restart_threshold: u64,
     /// Assertions stack for incremental solving (number of original clauses)
     pub(super) assertion_levels: Vec<usize>,
+    /// Set once `push()` is called.  Retracted clauses stay live in the database
+    /// after `pop()` (watch lists are cleaned lazily), so the fully-falsified
+    /// scan in `trail_falsifies_live_clause` cannot distinguish a genuinely
+    /// broken trail from ordinary incremental bookkeeping; the check is disabled
+    /// for the rest of this solver's life once incremental mode is entered.
+    pub(super) ever_pushed: bool,
     /// Trail sizes at each assertion level (for proper pop backtracking)
     pub(super) assertion_trail_sizes: Vec<usize>,
     /// Clause IDs added at each assertion level (for proper pop)
@@ -489,6 +503,7 @@ impl Solver {
             seen: Vec::new(),
             analyze_stack: Vec::new(),
             assertion_levels: vec![0],
+            ever_pushed: false,
             assertion_trail_sizes: vec![0],
             assertion_clause_ids: vec![Vec::new()],
             model: Vec::new(),
@@ -979,7 +994,7 @@ impl Solver {
     /// is preferred. Watching the two highest-ranked literals mirrors MiniSat's
     /// attachClause invariant so a watch always fires when a watched literal is
     /// (re)falsified.
-    fn watch_rank(&self, l: Lit) -> (u8, u32) {
+    pub(super) fn watch_rank(&self, l: Lit) -> (u8, u32) {
         let v = self.trail.lit_value(l);
         if v.is_true() {
             (2, u32::MAX)
@@ -1369,6 +1384,37 @@ impl Solver {
     }
 
     /// Get number of clauses
+    /// Soundness gate: does the current trail falsify a live clause?
+    ///
+    /// With a correct BCP this is never true — a clause whose every literal is
+    /// false is a conflict, and `propagate` must have reported it before the
+    /// search could run out of variables to assign.  It is checked anyway at the
+    /// one place a wrong answer would escape (the `Sat` exit of the CDCL(T)
+    /// loop), because a stale watch means `propagate` silently stops enforcing a
+    /// clause: the search then assigns every variable, sees no conflict, and
+    /// reports a "model" that violates the formula.
+    ///
+    /// Answering `Unknown` on such a trail is a backstop, not a repair; the
+    /// underlying propagation defect still needs fixing.  Cost is one linear
+    /// scan of the clause database, paid once per `Sat` verdict.
+    ///
+    /// Disabled once `push()` has been used: `pop()` leaves retracted clauses
+    /// live in the database (watch lists are cleaned lazily), so the scan would
+    /// flag them and turn a correct `Sat` into `Unknown`.
+    #[must_use]
+    pub fn trail_falsifies_live_clause(&self) -> bool {
+        if self.ever_pushed {
+            return false;
+        }
+        self.clauses.iter_ids().any(|id| {
+            self.clauses.get(id).is_some_and(|c| {
+                !c.deleted
+                    && !c.lits.is_empty()
+                    && c.lits.iter().all(|l| self.trail.lit_value(*l).is_false())
+            })
+        })
+    }
+
     #[must_use]
     pub fn num_clauses(&self) -> usize {
         self.clauses.len()
@@ -1404,6 +1450,7 @@ impl Solver {
     /// can be removed with pop(). Automatically backtracks to decision level 0
     /// to ensure a clean state for adding new constraints.
     pub fn push(&mut self) {
+        self.ever_pushed = true;
         // Backtrack to level 0 to ensure clean state
         // This is necessary because solve() may leave assignments on the trail
         // Use phase-saving backtrack to properly re-insert variables into decision heaps

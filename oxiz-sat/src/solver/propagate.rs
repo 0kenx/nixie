@@ -177,6 +177,23 @@ impl Solver {
 
         for &reason_lit in &reason_clause {
             if reason_lit != implied {
+                // Only a literal that is *assigned false* may be resolved away:
+                // the derivation below drops every other literal on the grounds
+                // that the clause already forces `implied` once they are false.
+                //
+                // Checking the level alone is not enough, because `Trail` leaves
+                // `VarInfo.level` stale when a variable is unassigned (the same
+                // trap documented in `analyze_theory_conflict`).  An unassigned
+                // literal whose stale level happens to be 0 was silently read as
+                // "false at level 0" and resolved away, so the learned binary
+                // dropped a literal that was not false at all.  That clause is
+                // not implied by the formula, and since it goes straight into the
+                // binary implication graph — where it both propagates and serves
+                // as a conflict reason — it yields a wrong top-level UNSAT on
+                // satisfiable input (QF_UF quasigroup `iso_brn*`).
+                if !self.trail.lit_value(reason_lit).is_false() {
+                    return;
+                }
                 let var = reason_lit.var();
                 let level = self.trail.level(var);
                 if level == current_level {

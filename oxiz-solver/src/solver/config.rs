@@ -246,9 +246,41 @@ impl Solver {
                     stack.push((*rhs, Polarity::Both));
                     stack.push((*lhs, Polarity::Both));
                 }
-                _ => {
-                    // For other terms (constants, variables, theory atoms),
-                    // stop the walk
+                TermKind::Let { bindings, body } => {
+                    // The parser inlines let-bound values into the body, so the
+                    // body carries the real structure and inherits this
+                    // occurrence's polarity.  Binding values are visited with
+                    // `Both` because an unused binding is still part of the term
+                    // DAG.  (Ported from main's hyper-binary-resolution
+                    // soundness fix: upstream's refactor to an iterative walk
+                    // dropped this descent, so everything under the parser's
+                    // wrapping `Let` contributed no polarity, under-constraining
+                    // shared Plaisted-Greenbaum gates.)
+                    stack.push((*body, polarity));
+                    for (_name, value) in bindings.iter().rev() {
+                        stack.push((*value, Polarity::Both));
+                    }
+                }
+                other => {
+                    // Soundness: any *Boolean* sub-formula we do not descend
+                    // into structurally must still be marked `Both`.  `encode`
+                    // reads this map to decide whether a shared And/Or gate may
+                    // be given a one-sided (Plaisted-Greenbaum) encoding, and
+                    // gates are hash-consed across assertions.  Silently skipping
+                    // an occurrence therefore does not mean "no information" — it
+                    // means the gate keeps whatever one-sided polarity some other
+                    // assertion recorded, so the implication direction this
+                    // occurrence needed may never be emitted and the gate is
+                    // under-constrained.  Marking `Both` only costs the PG
+                    // optimisation, never soundness.
+                    let mut children = Vec::new();
+                    super::term_walk::collect_structural_children(other, &mut children);
+                    let bool_sort = manager.sorts.bool_sort;
+                    for child in children.iter().rev() {
+                        if manager.get(*child).is_some_and(|t| t.sort == bool_sort) {
+                            stack.push((*child, Polarity::Both));
+                        }
+                    }
                 }
             }
         }

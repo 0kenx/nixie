@@ -155,8 +155,34 @@ impl Solver {
 
             self.learned_clause_ids.push(clause_id);
 
+            // Second watch: the literal that stays "watchable" longest, i.e. the
+            // false one at the highest decision level (`watch_rank`), not blindly
+            // `learnt_clause[1]`.
+            //
+            // Soundness, not tuning.  `learnt_clause[0]` is the asserting literal
+            // and is fine as the first watch, but index 1 is only the correct
+            // second watch when `analyze` happens to leave the highest-level
+            // literal there.  `analyze_theory_conflict` builds its clause from a
+            // theory explanation whose literals arrive in the theory's order, so
+            // index 1 can be a literal that backtracking leaves false *below* the
+            // level we return to.  Both watches then sit on literals that are
+            // already false and never change again, the watch events never fire,
+            // and the clause stops being enforced: `propagate` reports no conflict
+            // while the clause is falsified.
+            //
+            // This restores for learned clauses the same invariant `add_clause`
+            // already maintains for original ones (see `watch_rank`).  It is a
+            // latent-hole fix found while chasing the QF_UF quasigroup wrong
+            // answers, not the cause of those — they were traced to
+            // `check_hyper_binary_resolution`.
             let lit0 = learnt_clause[0];
-            let lit1 = learnt_clause[1];
+            let mut best = 1;
+            for i in 2..learnt_clause.len() {
+                if self.watch_rank(learnt_clause[i]) > self.watch_rank(learnt_clause[best]) {
+                    best = i;
+                }
+            }
+            let lit1 = learnt_clause[best];
             self.watches
                 .add(lit0.negate(), Watcher::new(clause_id, lit1));
             self.watches

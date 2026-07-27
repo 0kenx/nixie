@@ -227,6 +227,11 @@ impl Solver {
                 // All variables assigned - do final theory check
                 match theory.final_check() {
                     TheoryCheckResult::Sat => {
+                        // Never hand back a "model" that violates a clause we
+                        // ourselves asserted (see `trail_falsifies_live_clause`).
+                        if self.trail_falsifies_live_clause() {
+                            return SolverResult::Unknown;
+                        }
                         self.save_model();
                         self.debug_verify_model_input();
                         return SolverResult::Sat;
