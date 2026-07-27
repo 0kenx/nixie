@@ -14,13 +14,6 @@ impl Solver {
         let _timer = ScopedTimer::new(ProfilingCategory::SatPropagation);
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
-            // Per-mode tick accumulator (cadical `stats.ticks.search[stable]`):
-            // a work-based time proxy for the stable/focused schedule.
-            if self.stable {
-                self.ticks_stable = self.ticks_stable.saturating_add(1);
-            } else {
-                self.ticks_focused = self.ticks_focused.saturating_add(1);
-            }
 
             // Bounded propagation for preprocessing: bail (as "no conflict, but
             // incomplete") once the step budget is exhausted, so a single doomed
@@ -82,6 +75,14 @@ impl Solver {
             // Take the current watch list, mutate it in place, then move it
             // back once propagation for this literal is finished.
             let mut watches = core::mem::take(self.watches.get_mut(lit));
+            // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
+            // sizeof(Watcher) = 8; cache_lines(n, 8) = (n*8 + 127) / 128.
+            let ticks = 1u64 + (watches.len() as u64 * 8 + 127) / 128;
+            if self.stable {
+                self.ticks_stable = self.ticks_stable.saturating_add(ticks);
+            } else {
+                self.ticks_focused = self.ticks_focused.saturating_add(ticks);
+            }
             let mut conflict_found: Option<ClauseId> = None;
             let mut watch_idx = 0;
 

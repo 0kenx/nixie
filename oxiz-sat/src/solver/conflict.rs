@@ -233,7 +233,11 @@ impl Solver {
         // them by bump-order first to preserve relative order; the bump is
         // idempotent for vars already at the tail).
         if self.config.use_vmtf {
-            for &v in &vars_to_bump {
+            // Sort by bump timestamp (cadical MSORT on `analyzed_bumped_rank`)
+            // to preserve relative queue order of bumped variables.
+            let mut order: SmallVec<[Var; 32]> = vars_to_bump.clone();
+            order.sort_by_key(|&v| self.vmtf.activity(v));
+            for &v in &order {
                 self.vmtf.bump(v, |v| self.trail.is_assigned(v));
             }
         }
