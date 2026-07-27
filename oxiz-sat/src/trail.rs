@@ -80,6 +80,26 @@ impl Trail {
         }
     }
 
+    /// Get the decision variable chosen at decision `level` (1-indexed), or
+    /// `None` for level 0 or an out-of-range level. Used by reuse-trail restarts.
+    #[must_use]
+    pub fn decision_var_at_level(&self, level: u32) -> Option<Var> {
+        if level == 0 {
+            return None;
+        }
+        let idx = *self.level_starts.get(level as usize)?;
+        let lit = self.assignments.get(idx)?;
+        // The first assignment at a level is its decision literal.
+        if matches!(
+            self.var_info.get(lit.var().index())?.reason,
+            Reason::Decision
+        ) {
+            Some(lit.var())
+        } else {
+            None
+        }
+    }
+
     /// Get the current decision level
     #[must_use]
     pub fn decision_level(&self) -> u32 {

@@ -215,7 +215,7 @@ impl Solver {
                 let polarity = if self.rand_bool(self.config.random_polarity_prob) {
                     self.rand_bool(0.5)
                 } else {
-                    self.phase[var.index()]
+                    self.phase[var.index()] ^ self.phase_inverted
                 };
                 let lit = if polarity {
                     Lit::pos(var)

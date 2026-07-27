@@ -79,6 +79,7 @@ impl ConfigPreset {
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -106,6 +107,7 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -133,6 +135,7 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 50,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -160,6 +163,7 @@ impl ConfigPreset {
             inprocessing_interval: 3000, // More frequent
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -187,6 +191,7 @@ impl ConfigPreset {
             inprocessing_interval: 20000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -214,6 +219,7 @@ impl ConfigPreset {
             inprocessing_interval: 2000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 200,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -237,6 +243,7 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -260,6 +267,7 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }
@@ -283,6 +291,7 @@ impl ConfigPreset {
             inprocessing_interval: 4000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 50,
             external_branching: None,
         }
     }

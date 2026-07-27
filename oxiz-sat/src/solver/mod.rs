@@ -160,6 +160,12 @@ pub struct SolverConfig {
     pub enable_chronological_backtrack: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
     pub chrono_backtrack_threshold: u32,
+    /// Restarts between phase inversions (rephasing). 0 disables rephase.
+    /// Periodically flipping the saved polarity lets a restart explore the
+    /// complementary phase region instead of re-deriving the previous trail —
+    /// essential for frequent (LBD) restarts to be productive rather than
+    /// counterproductive.
+    pub rephase_interval: u32,
     /// Optional external branching heuristic. When `Some`, called before built-in
     /// VSIDS/LRB/CHB; returning `None` from the heuristic falls back to built-in.
     /// Default: `None` (pure built-in strategy).
@@ -238,6 +244,7 @@ impl Default for SolverConfig {
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            rephase_interval: 0,
             external_branching: None,
         }
     }
@@ -410,6 +417,11 @@ pub struct Solver {
     pub(super) trivially_unsat: bool,
     /// Phase saving: last polarity assigned to each variable
     pub(super) phase: Vec<bool>,
+    /// Global polarity flip applied on top of saved phases (rephasing). Toggled
+    /// periodically on restart so a restart explores the complementary phase
+    /// region instead of re-deriving the same trail — without it, frequent
+    /// (Glucose) restarts just redo work and inflate the conflict count.
+    pub(super) phase_inverted: bool,
     /// Luby sequence index for restarts
     pub(super) luby_index: u64,
     /// Level marks for LBD computation
@@ -514,6 +526,7 @@ impl Solver {
             model: Vec::new(),
             trivially_unsat: false,
             phase: Vec::new(),
+            phase_inverted: false,
             luby_index: 0,
             level_marks: Vec::new(),
             lbd_mark: 0,
@@ -1190,12 +1203,13 @@ impl Solver {
                 }
 
                 // Check for restart. Glucose fires only when clause quality is
-                // degrading (fast LBD EMA > slow EMA); other strategies restart
-                // purely on the conflict threshold.
+                // degrading beyond a margin (fast LBD EMA >= (1+margin)*slow,
+                // cadical-style — a bare `fast > slow` fires far too eagerly);
+                // other strategies restart purely on the conflict threshold.
                 let past_threshold = self.stats.conflicts >= self.restart_threshold;
                 let is_glucose = matches!(self.config.restart_strategy, RestartStrategy::Glucose);
                 let do_restart =
-                    past_threshold && (!is_glucose || self.lbd_ema_fast > self.lbd_ema_slow);
+                    past_threshold && (!is_glucose || self.lbd_ema_fast >= 1.1 * self.lbd_ema_slow);
                 if do_restart {
                     self.restart();
                     self.debug_check_restart_consistency();
@@ -1217,13 +1231,15 @@ impl Solver {
                     self.stats.decisions += 1;
                     self.trail.new_decision_level();
 
-                    // Use phase saving with random polarity
+                    // Use phase saving with random polarity, XORed with the
+                    // global rephase flip so a restart can explore the complementary
+                    // phase region instead of re-deriving the same trail.
                     let polarity = if self.rand_bool(self.config.random_polarity_prob) {
                         // Random polarity
                         self.rand_bool(0.5)
                     } else {
-                        // Saved phase
-                        self.phase[var.index()]
+                        // Saved phase, optionally inverted by rephasing
+                        self.phase[var.index()] ^ self.phase_inverted
                     };
                     let lit = if polarity {
                         Lit::pos(var)

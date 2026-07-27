@@ -176,10 +176,56 @@ impl Solver {
         }
     }
 
+    /// Reuse-trail restart (Marijn Heule / cadical): instead of backtracking to
+    /// the root on every restart, backtrack only as far as the highest level
+    /// whose decision variable would be re-decided anyway (activity >= the
+    /// next variable to decide). This preserves the optimal decision prefix so
+    /// the restart does not throw away and re-derive the whole trail — the main
+    /// reason frequent restarts were counterproductive here.
+    pub(super) fn reuse_trail(&self) -> u32 {
+        // Only meaningful under VSIDS scoring (the default); under CHB/LRB the
+        // VSIDS heap does not reflect the active branching order.
+        if self.config.use_chb_branching || self.config.use_lrb_branching {
+            return 0;
+        }
+        let level = self.trail.decision_level();
+        if level <= 1 {
+            return 0;
+        }
+        // Next variable to decide = top of the VSIDS heap; its activity is the
+        // reuse threshold (decisions with at least that activity are kept).
+        let Some(next_var) = self.vsids.peek_max() else {
+            return 0;
+        };
+        let threshold = self.vsids.activity(next_var);
+        let mut reuse = 0u32;
+        for l in 1..=level {
+            let Some(dec_var) = self.trail.decision_var_at_level(l) else {
+                break;
+            };
+            if self.vsids.activity(dec_var) >= threshold {
+                reuse = l;
+            } else {
+                break;
+            }
+        }
+        reuse
+    }
+
     /// Restart
     pub(super) fn restart(&mut self) {
         self.stats.restarts += 1;
-        self.backtrack_with_phase_saving(0);
+        self.backtrack_with_phase_saving(self.reuse_trail());
+
+        // Rephase: periodically flip the global polarity so the next descent
+        // explores the complementary phase region instead of re-deriving the
+        // previous trail. Without this, frequent (LBD) restarts just redo work
+        // and inflate the conflict count.
+        if self.config.rephase_interval > 0
+            && self.stats.restarts % u64::from(self.config.rephase_interval) == 0
+        {
+            self.phase_inverted = !self.phase_inverted;
+        }
 
         // Calculate next restart threshold based on strategy
         match self.config.restart_strategy {
@@ -201,9 +247,10 @@ impl Solver {
             RestartStrategy::Glucose => {
                 // LBD-driven restart: the restart *decision* is made in the solve
                 // loop (fire only when the fast LBD EMA exceeds the slow one).
-                // Here we just enforce a short minimum gap between restarts so the
-                // solver does not thrash, then wait for the next degradation.
-                self.restart_threshold = self.stats.conflicts + 100;
+                // Here we just enforce a minimum gap between restarts
+                // (`restart_interval`) so the solver does not thrash, then wait
+                // for the next degradation.
+                self.restart_threshold = self.stats.conflicts + self.config.restart_interval as u64;
             }
             RestartStrategy::LocalLbd => {
                 // Local restarts based on LBD

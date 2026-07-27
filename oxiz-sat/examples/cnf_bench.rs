@@ -6,7 +6,7 @@
 //! cargo run --release --example cnf_bench -- /path/to/cnf/dir
 //! ```
 
-use oxiz_sat::{DimacsParser, Solver, SolverResult};
+use oxiz_sat::{DimacsParser, RestartStrategy, Solver, SolverConfig, SolverResult};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -34,6 +34,38 @@ fn main() {
     walk(Path::new(&root), &mut files);
     files.sort();
 
+    // Optional restart-strategy override (RESTART=luby|glucose|geometric|locallbd)
+    // and rephase-interval override (REPHASE=N, 0 disables) for A/B comparisons.
+    let mut base_config = match std::env::var("RESTART").ok().as_deref() {
+        Some("glucose") => SolverConfig {
+            restart_strategy: RestartStrategy::Glucose,
+            ..SolverConfig::default()
+        },
+        Some("geometric") => SolverConfig {
+            restart_strategy: RestartStrategy::Geometric,
+            ..SolverConfig::default()
+        },
+        Some("locallbd") => SolverConfig {
+            restart_strategy: RestartStrategy::LocalLbd,
+            ..SolverConfig::default()
+        },
+        _ => SolverConfig::default(),
+    };
+    if let Ok(v) = std::env::var("REPHASE") {
+        if let Ok(n) = v.parse::<u32>() {
+            base_config.rephase_interval = n;
+        }
+    }
+    if let Ok(v) = std::env::var("INTERVAL") {
+        if let Ok(n) = v.parse::<u64>() {
+            base_config.restart_interval = n;
+        }
+    }
+    eprintln!(
+        "restart={:?} rephase_interval={}",
+        base_config.restart_strategy, base_config.rephase_interval
+    );
+
     let mut total_solve_ns: u128 = 0;
     let mut total_parse_ns: u128 = 0;
     let mut conflicts: u64 = 0;
@@ -50,7 +82,7 @@ fn main() {
 
     for f in &files {
         let mut parser = DimacsParser::new();
-        let mut solver = Solver::new();
+        let mut solver = Solver::with_config(base_config.clone());
 
         let t0 = Instant::now();
         if let Err(e) = parser.parse_file(f, &mut solver) {
