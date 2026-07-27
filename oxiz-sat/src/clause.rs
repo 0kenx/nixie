@@ -49,21 +49,23 @@ pub enum ClauseTier {
 #[derive(Debug, Clone)]
 #[repr(align(64))]
 pub struct Clause {
+    /// The literals in this clause — SmallVec placed FIRST for optimal struct
+    /// layout: 7 inline lits (28B) + len/cap (16B) = 44B, leaving 20B for
+    /// metadata in the same 64-byte cache line. Eliminates heap spills for
+    /// 5-7 literal clauses (the previous SmallVec<[Lit;4]> spilled at 5).
+    pub lits: SmallVec<[Lit; 7]>,
+    /// LBD (Literal Block Distance) for quality metric
+    pub lbd: u32,
+    /// Number of times this clause was used in conflict analysis
+    pub usage_count: u32,
     /// Activity for clause deletion heuristic
     pub activity: f64,
     /// Whether this is a learned clause
     pub learned: bool,
-    /// LBD (Literal Block Distance) for quality metric
-    pub lbd: u32,
-    /// Keep hot metadata at the front of the struct so propagation and clause
-    /// management usually touch a single cache line before reading literals.
+    /// Whether this clause has been deleted
     pub deleted: bool,
-    /// The literals in this clause
-    pub lits: SmallVec<[Lit; 4]>,
     /// Tier for tiered database management (only used for learned clauses)
     pub tier: ClauseTier,
-    /// Number of times this clause was used in conflict analysis (for tier promotion)
-    pub usage_count: u32,
 }
 
 impl Clause {
@@ -664,5 +666,16 @@ mod tests {
         } else {
             panic!("Expected self-subsuming resolvent");
         }
+    }
+}
+
+#[cfg(test)]
+mod size_check {
+    use super::*;
+    #[test]
+    fn clause_size() {
+        let s = std::mem::size_of::<Clause>();
+        println!("Clause (SmallVec<[Lit;7]>): {} bytes", s);
+        assert!(s <= 64, "Clause must fit in 1 cache line, got {} bytes", s);
     }
 }

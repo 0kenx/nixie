@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 pub struct SharedClause {
     /// The literals in the clause
-    pub lits: SmallVec<[Lit; 4]>,
+    pub lits: SmallVec<[Lit; 7]>,
     /// LBD (quality metric)
     pub lbd: u32,
     /// Activity (for prioritization)
@@ -32,7 +32,7 @@ pub struct SharedClause {
 impl SharedClause {
     /// Create a new shared clause
     #[must_use]
-    pub fn new(lits: SmallVec<[Lit; 4]>, lbd: u32, activity: f64, source_id: usize) -> Self {
+    pub fn new(lits: SmallVec<[Lit; 7]>, lbd: u32, activity: f64, source_id: usize) -> Self {
         Self {
             lits,
             lbd,
