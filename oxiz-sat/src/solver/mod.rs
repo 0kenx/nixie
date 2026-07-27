@@ -173,6 +173,9 @@ pub struct SolverConfig {
     /// true; can be disabled to exercise the other inprocessing passes
     /// (pure-literal / subsumption / strengthening) in isolation.
     pub enable_failed_literal_probing: bool,
+    /// Run failed-literal probing with on-the-fly hyper-binary resolution as
+    /// part of inprocessing. Default true when inprocessing is on.
+    pub enable_hyper_binary_probing: bool,
     /// Try a cadical-style "lucky" assignment (uniform + positive-Horn guess)
     /// before search. Off by default: a failed lucky guess perturbs the
     /// watched-literal state and can slow the subsequent search on structured
@@ -260,6 +263,7 @@ impl Default for SolverConfig {
             rephase_interval: 0,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_hyper_binary_probing: true,
             enable_lucky: false,
             external_branching: None,
         }
@@ -1101,6 +1105,9 @@ impl Solver {
         if self.config.enable_inprocessing {
             if self.config.enable_failed_literal_probing {
                 self.failed_literal_probing();
+            }
+            if !self.trivially_unsat && self.config.enable_hyper_binary_probing {
+                self.probe_hyper_binary();
             }
             if !self.trivially_unsat {
                 self.inprocess();

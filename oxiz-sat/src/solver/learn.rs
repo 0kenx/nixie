@@ -955,6 +955,100 @@ impl Solver {
         true
     }
 
+    /// Failed-literal probing with on-the-fly hyper-binary resolution
+    /// (cadical-style, simplified — no dominator LCA).
+    ///
+    /// Probe each still-unassigned literal `r` at decision level 1 and run BCP.
+    ///   * If the probe conflicts, `r` is a *failed literal*: force `¬r` as a
+    ///     level-0 unit (every model must set `r` false).
+    ///   * If it does not conflict, every literal `q` forced during the probe by
+    ///     a *non-binary* clause satisfies `r → q` (the clause became unit solely
+    ///     because `r` made its other literals false), so the binary clause
+    ///     `(¬r ∨ q)` is implied — add it as a learned binary (a hyper-binary
+    ///     resolvent) when not already present. This enriches the binary
+    ///     implication graph, making later propagation/probing stronger.
+    ///
+    /// Soundness: forced units and derived binaries are all consequences of the
+    /// formula (BCP is sound and learned clauses are implied). Bounded by a
+    /// wall-clock budget and a per-probe cap so it never dominates.
+    pub(super) fn probe_hyper_binary(&mut self) -> (usize, usize) {
+        if self.trail.decision_level() != 0 {
+            return (0, 0);
+        }
+        const TIME_BUDGET_MS: u128 = 200;
+        const PER_PROBE_CAP: u32 = 20_000;
+        let t0 = Instant::now();
+        let mut failed = 0usize;
+        let mut hyper = 0usize;
+
+        let n = self.num_vars;
+        for i in 0..n {
+            if self.trivially_unsat {
+                break;
+            }
+            if t0.elapsed().as_millis() > TIME_BUDGET_MS {
+                break;
+            }
+            let v = Var::new(i as u32);
+            if self.trail.is_assigned(v) {
+                continue;
+            }
+            let r = Lit::pos(v);
+
+            self.trail.new_decision_level();
+            self.trail.assign_decision(r);
+            let before = self.stats.propagations;
+            let conflict = self.propagate().is_some();
+            // Bail this probe if its cascade blew up (densely constrained, not
+            // worth it) — same guard as the lucky pass.
+            let cascade = self.stats.propagations - before;
+            if conflict {
+                self.backtrack(0);
+                self.force_level0(r.negate());
+                failed += 1;
+            } else if cascade > PER_PROBE_CAP.into() {
+                self.backtrack(0);
+            } else {
+                self.derive_hyper_binaries(r, &mut hyper);
+                self.backtrack(0);
+            }
+        }
+        (failed, hyper)
+    }
+
+    /// Add `(¬r ∨ q)` as a learned binary for every literal `q` forced during the
+    /// probe of `r` whose reason is a non-binary clause (the hyper-binary case).
+    fn derive_hyper_binaries(&mut self, r: Lit, hyper: &mut usize) {
+        // Walk the literals assigned at the probe level (level >= 1) with a
+        // propagation reason; the probe literal itself is a decision, skipped.
+        let probe_lits: SmallVec<[Lit; 64]> = self.trail.level_assignments().to_vec().into();
+        let mut added = 0u32;
+        for q in probe_lits {
+            if added >= 64 {
+                break; // cap binaries derived per probe to limit clutter
+            }
+            let Reason::Propagation(cid) = self.trail.reason(q.var()) else {
+                continue;
+            };
+            // Only derive from non-binary reasons (binary reasons are already edges).
+            let is_long = self.clauses.get(cid).is_some_and(|c| c.lits.len() > 2);
+            if !is_long {
+                continue;
+            }
+            // r → q already? (binary (¬r ∨ q) present)
+            if self.has_binary_implication(r, q) {
+                continue;
+            }
+            let id = self.clauses.add_learned([r.negate(), q]);
+            self.binary_graph.add(r, q, id);
+            self.binary_graph.add(q.negate(), r.negate(), id);
+            self.watches.add(r, Watcher::new(id, q));
+            self.watches.add(q.negate(), Watcher::new(id, r.negate()));
+            *hyper += 1;
+            added += 1;
+        }
+    }
+
     /// Failed-literal probing (at decision level 0).
     ///
     /// For each unassigned variable, tentatively assign each polarity and run
