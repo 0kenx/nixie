@@ -62,6 +62,9 @@ fn main() {
     if let Ok(v) = std::env::var("INPROCESS") {
         base_config.enable_inprocessing = v != "0";
     }
+    if let Ok(v) = std::env::var("CHRONO") {
+        base_config.enable_chronological_backtrack = v != "0";
+    }
     if let Ok(v) = std::env::var("INTERVAL") {
         if let Ok(n) = v.parse::<u64>() {
             base_config.restart_interval = n;
@@ -81,6 +84,7 @@ fn main() {
     let mut minimizations: u64 = 0;
     let mut literals_removed: u64 = 0;
     let mut learned_clauses: u64 = 0;
+    let mut deleted_clauses: u64 = 0;
     let mut total_lbd: u64 = 0;
     let mut n = 0usize;
     let mut sat = 0usize;
@@ -109,6 +113,7 @@ fn main() {
         minimizations += s.minimizations;
         literals_removed += s.literals_removed;
         learned_clauses += s.learned_clauses;
+        deleted_clauses += s.deleted_clauses;
         total_lbd += s.total_lbd;
 
         match r {
@@ -125,9 +130,10 @@ fn main() {
         "files={n} sat={sat} unsat={unsat} | parse={parse_ms:.1}ms solve={solve_ms:.1}ms \
          (mean {:.3}ms/file) | conflicts={conflicts} decisions={decisions} propagations={propagations} \
          ({:.2}M props/s) | restarts={restarts} learned={learned_clauses} \
-         minizm={minimizations} lits_removed={literals_removed} avg_lbd={:.2}",
+         minizm={minimizations} lits_removed={literals_removed} avg_lbd={:.2} alive_learned={}",
         solve_ms / n.max(1) as f64,
         propagations as f64 / (solve_ms / 1000.0).max(1e-9) / 1e6,
-        total_lbd as f64 / learned_clauses.max(1) as f64
+        total_lbd as f64 / learned_clauses.max(1) as f64,
+        learned_clauses.saturating_sub(deleted_clauses)
     );
 }
