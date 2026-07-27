@@ -54,6 +54,11 @@ fn main() {
     {
         config.enable_inprocessing = v != "0";
     }
+    if let Ok(v) = std::env::var("LUBYCAP") {
+        if let Ok(n) = v.parse::<u64>() {
+            config.luby_cap = n;
+        }
+    }
     if let Some(v) = std::env::var("LUCKY")
         .ok()
         .filter(|s| !s.is_empty())

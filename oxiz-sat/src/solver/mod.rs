@@ -160,6 +160,12 @@ pub struct SolverConfig {
     pub enable_chronological_backtrack: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
     pub chrono_backtrack_threshold: u32,
+    /// Cap on the Luby restart multiplier. The Luby sequence grows as 2^k, so
+    /// without a cap the restart interval explodes on long runs into
+    /// multi-10k-conflict grinds (a 3-30x slowdown vs cadical on r3sat
+    /// n300/n350). 0 = uncapped (legacy). Default caps at 1024× the base
+    /// restart interval.
+    pub luby_cap: u64,
     /// Restarts between phase inversions (rephasing). 0 disables rephase.
     /// Periodically flipping the saved polarity lets a restart explore the
     /// complementary phase region instead of re-deriving the previous trail —
@@ -260,6 +266,7 @@ impl Default for SolverConfig {
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            luby_cap: 64,
             rephase_interval: 0,
             reuse_trail: true,
             enable_failed_literal_probing: true,

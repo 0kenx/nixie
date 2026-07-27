@@ -234,8 +234,18 @@ impl Solver {
         match self.config.restart_strategy {
             RestartStrategy::Luby => {
                 self.luby_index += 1;
-                self.restart_threshold = self.stats.conflicts
-                    + Self::luby(self.luby_index) * self.config.restart_interval;
+                // Cap the Luby value: the sequence grows as 2^k, so on long runs
+                // the restart interval explodes into multi-10k-conflict grinds
+                // (a 3-30x slowdown vs cadical on r3sat n300/n350). Capping
+                // keeps restarts regular without losing Luby's short-window
+                // structure. `luby_cap` = 0 means uncapped (legacy behavior).
+                let cap = self.config.luby_cap;
+                let luby = if cap == 0 {
+                    Self::luby(self.luby_index)
+                } else {
+                    Self::luby(self.luby_index).min(cap)
+                };
+                self.restart_threshold = self.stats.conflicts + luby * self.config.restart_interval;
             }
             RestartStrategy::Geometric => {
                 let current_interval = if self.restart_threshold > self.stats.conflicts {
