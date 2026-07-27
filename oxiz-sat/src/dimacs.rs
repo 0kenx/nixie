@@ -128,6 +128,11 @@ impl DimacsParser {
                 continue;
             }
 
+            // DIMACS end-of-file marker (SATLIB and older generators)
+            if line.starts_with('%') {
+                break;
+            }
+
             // Parse problem line
             if line.starts_with('p') {
                 self.parse_problem_line(line)?;
