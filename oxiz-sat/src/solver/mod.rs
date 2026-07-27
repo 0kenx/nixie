@@ -435,6 +435,14 @@ pub struct Solver {
     pub(super) model: Vec<LBool>,
     /// Whether formula is trivially unsatisfiable
     pub(super) trivially_unsat: bool,
+    /// Optional per-call propagation step limit for preprocessing passes
+    /// (lucky/probing/vivify). When set, `propagate` stops and sets
+    /// `propagate_aborted` once the limit is reached, so a single doomed
+    /// cascade can't run unbounded (it was a ~7s slowdown on Urquhart). `None`
+    /// (the default, used by the real search) means no limit.
+    pub(super) propagate_step_limit: Option<u64>,
+    /// Set by `propagate` when it bailed early due to `propagate_step_limit`.
+    pub(super) propagate_aborted: bool,
     /// Phase saving: last polarity assigned to each variable
     pub(super) phase: Vec<bool>,
     /// Global polarity flip applied on top of saved phases (rephasing). Toggled
@@ -545,6 +553,8 @@ impl Solver {
             assertion_clause_ids: vec![Vec::new()],
             model: Vec::new(),
             trivially_unsat: false,
+            propagate_step_limit: None,
+            propagate_aborted: false,
             phase: Vec::new(),
             phase_inverted: false,
             luby_index: 0,

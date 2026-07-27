@@ -15,6 +15,17 @@ impl Solver {
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
 
+            // Bounded propagation for preprocessing: bail (as "no conflict, but
+            // incomplete") once the step budget is exhausted, so a single doomed
+            // cascade can't run unbounded. The real search leaves this `None`.
+            if let Some(ref mut limit) = self.propagate_step_limit {
+                if *limit == 0 {
+                    self.propagate_aborted = true;
+                    return None;
+                }
+                *limit -= 1;
+            }
+
             // First, propagate binary implications (faster)
             let binary_len = self.binary_graph.get(lit).len();
             for idx in 0..binary_len {

@@ -893,6 +893,21 @@ impl Solver {
     /// the propagation done during a failed guess perturbs the watched-literal
     /// state, which can slow the subsequent search on structured UNSAT, so it
     /// is off by default.
+    /// Run propagation capped at `limit` steps. Returns `(conflict, aborted)`:
+    /// `aborted=true` means the step budget was hit before propagation finished
+    /// — treat as "bail this probe" (neither a real conflict nor a complete
+    /// model). Used by preprocessing passes (lucky/probing/vivify) so a single
+    /// doomed cascade can't run unbounded (a ~7s slowdown on Urquhart).
+    pub(super) fn propagate_bounded(&mut self, limit: u64) -> (bool, bool) {
+        self.propagate_step_limit = Some(limit);
+        self.propagate_aborted = false;
+        let conflict = self.propagate().is_some();
+        let aborted = self.propagate_aborted;
+        self.propagate_step_limit = None;
+        self.propagate_aborted = false;
+        (conflict, aborted)
+    }
+
     pub(super) fn try_lucky_assignment(&mut self, phase_value: bool) -> bool {
         if self.trail.decision_level() != 0 {
             return false;
@@ -910,7 +925,8 @@ impl Solver {
             };
             self.trail.assign_decision(lit);
         }
-        if self.propagate().is_none() {
+        let (conflict, aborted) = self.propagate_bounded(50_000);
+        if !conflict && !aborted {
             return true;
         }
         self.backtrack(0);
@@ -973,9 +989,8 @@ impl Solver {
             };
             self.trail.new_decision_level();
             self.trail.assign_decision(pos);
-            let before = self.stats.propagations;
-            let conflict = self.propagate().is_some();
-            if conflict || self.stats.propagations - before > CASCADE_CAP {
+            let (conflict, aborted) = self.propagate_bounded(CASCADE_CAP);
+            if conflict || aborted {
                 undo(self);
                 return false;
             }
@@ -991,9 +1006,8 @@ impl Solver {
             }
             self.trail.new_decision_level();
             self.trail.assign_decision(Lit::neg(v));
-            let before = self.stats.propagations;
-            let conflict = self.propagate().is_some();
-            if conflict || self.stats.propagations - before > CASCADE_CAP {
+            let (conflict, aborted) = self.propagate_bounded(CASCADE_CAP);
+            if conflict || aborted {
                 undo(self);
                 return false;
             }
@@ -1043,16 +1057,13 @@ impl Solver {
 
             self.trail.new_decision_level();
             self.trail.assign_decision(r);
-            let before = self.stats.propagations;
-            let conflict = self.propagate().is_some();
-            // Bail this probe if its cascade blew up (densely constrained, not
-            // worth it) — same guard as the lucky pass.
-            let cascade = self.stats.propagations - before;
+            let (conflict, aborted) = self.propagate_bounded(PER_PROBE_CAP.into());
             if conflict {
                 self.backtrack(0);
                 self.force_level0(r.negate());
                 failed += 1;
-            } else if cascade > PER_PROBE_CAP.into() {
+            } else if aborted {
+                // Cascade hit the step cap — densely constrained, skip.
                 self.backtrack(0);
             } else {
                 self.derive_hyper_binaries(r, &mut hyper);
@@ -1149,7 +1160,7 @@ impl Solver {
     fn probe_conflicts(&mut self, lit: Lit) -> bool {
         self.trail.new_decision_level();
         self.trail.assign_decision(lit);
-        let conflict = self.propagate().is_some();
+        let (conflict, _aborted) = self.propagate_bounded(50_000);
         self.backtrack_with_phase_saving(0);
         conflict
     }
