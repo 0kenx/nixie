@@ -53,7 +53,7 @@ pub struct Clause {
     /// layout: 7 inline lits (28B) + len/cap (16B) = 44B, leaving 20B for
     /// metadata in the same 64-byte cache line. Eliminates heap spills for
     /// 5-7 literal clauses (the previous SmallVec<[Lit;4]> spilled at 5).
-    pub lits: SmallVec<[Lit; 7]>,
+    pub lits: SmallVec<[Lit; 8]>,
     /// LBD (Literal Block Distance) for quality metric
     pub lbd: u32,
     /// Number of times this clause was used in conflict analysis
