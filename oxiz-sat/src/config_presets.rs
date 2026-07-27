@@ -82,6 +82,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -112,6 +113,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -142,6 +144,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -172,6 +175,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -202,6 +206,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -232,6 +237,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -258,6 +264,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -284,6 +291,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -310,6 +318,7 @@ impl ConfigPreset {
             rephase_interval: 50,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }

@@ -2,6 +2,7 @@
 
 use super::*;
 use smallvec::SmallVec;
+use std::time::Instant;
 
 impl Solver {
     /// Install the consequence of a freshly learned clause on the trail.
@@ -832,6 +833,126 @@ impl Solver {
                 }
             }
         }
+    }
+
+    /// "Lucky" assignment (cadical-style pre-solving guess): try to satisfy
+    /// the formula without search by guessing assignments. Soundness-preserving
+    /// (a miss is backtracked without touching saved phases). Strategies:
+    ///   * uniform all-false / all-true (single propagation — only when few
+    ///     variables remain, else one huge doomed cascade on a dense UNSAT);
+    ///   * positive-Horn: assign each clause's first positive unassigned literal
+    ///     true, then any remainder false — cracks `simon` (mixed-sign model).
+    /// Both positive-Horn loops are wall-clock bounded so a doomed guess on a
+    /// dense UNSAT bails quickly. OPT-IN (see `SolverConfig::enable_lucky`):
+    /// the propagation done during a failed guess perturbs the watched-literal
+    /// state, which can slow the subsequent search on structured UNSAT, so it
+    /// is off by default.
+    pub(super) fn try_lucky_assignment(&mut self, phase_value: bool) -> bool {
+        if self.trail.decision_level() != 0 {
+            return false;
+        }
+        self.trail.new_decision_level();
+        for i in 0..self.num_vars {
+            let v = Var::new(i as u32);
+            if self.trail.is_assigned(v) {
+                continue;
+            }
+            let lit = if phase_value {
+                Lit::pos(v)
+            } else {
+                Lit::neg(v)
+            };
+            self.trail.assign_decision(lit);
+        }
+        if self.propagate().is_none() {
+            return true;
+        }
+        self.backtrack(0);
+        false
+    }
+
+    pub(super) fn try_lucky_positive_horn(&mut self) -> bool {
+        if self.trail.decision_level() != 0 {
+            return false;
+        }
+        const TIME_BUDGET_MS: u128 = 100;
+        const CASCADE_CAP: u64 = 20_000;
+        let t0 = Instant::now();
+        let over_time = || t0.elapsed().as_millis() > TIME_BUDGET_MS;
+
+        let snapshots: SmallVec<[(ClauseId, SmallVec<[Lit; 8]>); 64]> = self
+            .clauses
+            .iter_ids()
+            .filter_map(|id| {
+                self.clauses
+                    .get(id)
+                    .map(|c| (id, c.lits.iter().copied().collect()))
+            })
+            .collect();
+
+        let mut undo = |s: &mut Solver| {
+            s.backtrack(0);
+        };
+        for (id, lits) in snapshots {
+            if over_time() {
+                undo(self);
+                return false;
+            }
+            if self.clauses.get(id).is_some_and(|c| c.deleted || c.learned) {
+                continue;
+            }
+            let mut satisfied = false;
+            let mut positive = None;
+            for &lit in &lits {
+                match self.trail.lit_value(lit) {
+                    crate::literal::LBool::True => {
+                        satisfied = true;
+                        break;
+                    }
+                    crate::literal::LBool::False => continue,
+                    crate::literal::LBool::Undef => {
+                        if lit.is_pos() {
+                            positive = Some(lit);
+                            break;
+                        }
+                    }
+                }
+            }
+            if satisfied {
+                continue;
+            }
+            let Some(pos) = positive else {
+                undo(self);
+                return false;
+            };
+            self.trail.new_decision_level();
+            self.trail.assign_decision(pos);
+            let before = self.stats.propagations;
+            let conflict = self.propagate().is_some();
+            if conflict || self.stats.propagations - before > CASCADE_CAP {
+                undo(self);
+                return false;
+            }
+        }
+        for i in 0..self.num_vars {
+            if over_time() {
+                undo(self);
+                return false;
+            }
+            let v = Var::new(i as u32);
+            if self.trail.is_assigned(v) {
+                continue;
+            }
+            self.trail.new_decision_level();
+            self.trail.assign_decision(Lit::neg(v));
+            let before = self.stats.propagations;
+            let conflict = self.propagate().is_some();
+            if conflict || self.stats.propagations - before > CASCADE_CAP {
+                undo(self);
+                return false;
+            }
+        }
+        true
     }
 
     /// Failed-literal probing (at decision level 0).

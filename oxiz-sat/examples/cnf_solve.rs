@@ -54,6 +54,13 @@ fn main() {
     {
         config.enable_inprocessing = v != "0";
     }
+    if let Some(v) = std::env::var("LUCKY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .as_deref()
+    {
+        config.enable_lucky = v != "0";
+    }
     if let Some(v) = std::env::var("REPHASE").ok().filter(|s| !s.is_empty()) {
         if let Ok(n) = v.parse::<u32>() {
             config.rephase_interval = n;

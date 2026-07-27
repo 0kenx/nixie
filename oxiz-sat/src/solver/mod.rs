@@ -173,6 +173,12 @@ pub struct SolverConfig {
     /// true; can be disabled to exercise the other inprocessing passes
     /// (pure-literal / subsumption / strengthening) in isolation.
     pub enable_failed_literal_probing: bool,
+    /// Try a cadical-style "lucky" assignment (uniform + positive-Horn guess)
+    /// before search. Off by default: a failed lucky guess perturbs the
+    /// watched-literal state and can slow the subsequent search on structured
+    /// UNSAT instances. Enable to solve easy-but-lucky instances (e.g.
+    /// `simon-r16`) that the search otherwise times out on.
+    pub enable_lucky: bool,
     /// Optional external branching heuristic. When `Some`, called before built-in
     /// VSIDS/LRB/CHB; returning `None` from the heuristic falls back to built-in.
     /// Default: `None` (pure built-in strategy).
@@ -254,6 +260,7 @@ impl Default for SolverConfig {
             rephase_interval: 0,
             reuse_trail: true,
             enable_failed_literal_probing: true,
+            enable_lucky: false,
             external_branching: None,
         }
     }
@@ -1068,6 +1075,20 @@ impl Solver {
         if self.propagate().is_some() {
             self.drat_emit_empty();
             return SolverResult::Unsat;
+        }
+
+        // Lucky assignment (opt-in): try to satisfy the formula without search
+        // by guessing assignments (cadical solves `simon` this way). Off by
+        // default — see `enable_lucky`.
+        if self.config.enable_lucky {
+            let unassigned = self.num_vars - self.trail.size();
+            let lucky = (unassigned <= 1500
+                && (self.try_lucky_assignment(false) || self.try_lucky_assignment(true)))
+                || self.try_lucky_positive_horn();
+            if lucky {
+                self.save_model();
+                return SolverResult::Sat;
+            }
         }
 
         // Pre-search inprocessing pass (failed-literal probing + subsumption +
