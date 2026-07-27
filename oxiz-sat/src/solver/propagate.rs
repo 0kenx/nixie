@@ -70,21 +70,26 @@ impl Solver {
                 self.ticks_focused = self.ticks_focused.saturating_add(ticks);
             }
             let mut conflict_found: Option<ClauseId> = None;
-            let mut watch_idx = 0;
 
-            while watch_idx < watches.len() {
-                let watcher = watches[watch_idx];
+            // Two-pointer in-place compaction (cadical-style): read pointer
+            // scans all watchers; write pointer only advances for kept ones.
+            // Eliminates swap_remove (2 writes per removal → 0) and enables
+            // bounds-check elision on the read index (0..len range).
+            let mut write = 0usize;
+
+            for read in 0..watches.len() {
+                let watcher = watches[read];
 
                 if self.trail.lit_value(watcher.blocker).is_true() {
-                    watch_idx += 1;
+                    watches[write] = watcher;
+                    write += 1;
                     continue;
                 }
 
                 let clause = match self.clauses.get_mut(watcher.clause) {
                     Some(c) if !c.deleted => c,
                     _ => {
-                        // Deleted clause - remove its watcher in place.
-                        watches.swap_remove(watch_idx);
+                        // Deleted clause — drop (don't advance write).
                         continue;
                     }
                 };
@@ -97,8 +102,8 @@ impl Solver {
                 // If first watch is true, clause is satisfied
                 let first = clause.lits[0];
                 if self.trail.lit_value(first).is_true() {
-                    watches[watch_idx] = Watcher::new(watcher.clause, first);
-                    watch_idx += 1;
+                    watches[write] = Watcher::new(watcher.clause, first);
+                    write += 1;
                     continue;
                 }
 
@@ -110,21 +115,26 @@ impl Solver {
                         clause.swap(1, j);
                         self.watches
                             .add(clause.lits[1].negate(), Watcher::new(watcher.clause, first));
-                        watches.swap_remove(watch_idx);
                         found = true;
                         break;
                     }
                 }
 
                 if found {
-                    continue;
+                    continue; // dropped from this list (moved to another)
                 }
 
                 // No new watch found - clause is unit or conflicting
-                watches[watch_idx] = Watcher::new(watcher.clause, first);
+                watches[write] = Watcher::new(watcher.clause, first);
 
                 if self.trail.lit_value(first).is_false() {
                     conflict_found = Some(watcher.clause);
+                    write += 1; // keep the conflicting watcher
+                    // Copy remaining watchers to preserve them
+                    for rest in read + 1..watches.len() {
+                        watches[write] = watches[rest];
+                        write += 1;
+                    }
                     break;
                 } else {
                     // Unit propagation
@@ -135,9 +145,11 @@ impl Solver {
                         self.check_hyper_binary_resolution(lit, first, watcher.clause);
                     }
 
-                    watch_idx += 1;
+                    write += 1;
                 }
             }
+
+            watches.truncate(write);
 
             *self.watches.get_mut(lit) = watches;
 
