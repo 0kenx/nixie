@@ -166,6 +166,13 @@ pub struct SolverConfig {
     /// essential for frequent (LBD) restarts to be productive rather than
     /// counterproductive.
     pub rephase_interval: u32,
+    /// Whether restarts reuse the decision trail prefix (Heule/cadical
+    /// reuse-trail) instead of backtracking to the root. Default true.
+    pub reuse_trail: bool,
+    /// Run failed-literal probing as the first step of inprocessing. Default
+    /// true; can be disabled to exercise the other inprocessing passes
+    /// (pure-literal / subsumption / strengthening) in isolation.
+    pub enable_failed_literal_probing: bool,
     /// Optional external branching heuristic. When `Some`, called before built-in
     /// VSIDS/LRB/CHB; returning `None` from the heuristic falls back to built-in.
     /// Default: `None` (pure built-in strategy).
@@ -245,6 +252,8 @@ impl Default for SolverConfig {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
             rephase_interval: 0,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -1059,6 +1068,26 @@ impl Solver {
         if self.propagate().is_some() {
             self.drat_emit_empty();
             return SolverResult::Unsat;
+        }
+
+        // Pre-search inprocessing pass (failed-literal probing + subsumption +
+        // strengthening) when enabled. Mirrors cadical's preprocessing: for
+        // structured instances (e.g. `longmult`) probing deduces forced units
+        // up front. Probing runs once here (not on every periodic inprocess
+        // call) because brute-force per-variable probing is too expensive to
+        // repeat — cadical schedules it on binary-implication roots, which is a
+        // larger follow-up.
+        if self.config.enable_inprocessing {
+            if self.config.enable_failed_literal_probing {
+                self.failed_literal_probing();
+            }
+            if !self.trivially_unsat {
+                self.inprocess();
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty();
+                return SolverResult::Unsat;
+            }
         }
 
         loop {

@@ -19,6 +19,10 @@ fn solved_instance_with_inprocessing_logs_pure_and_subsumed_deletions_to_drat() 
         enable_inprocessing: true,
         inprocessing_interval: 1,
         clause_deletion_threshold: 5,
+        // Disable failed-literal probing so this test exercises the pure-literal
+        // and subsumption passes in isolation (FLP would otherwise deduce the
+        // PHP(3,2) unsat directly via propagation, short-circuiting them).
+        enable_failed_literal_probing: false,
         ..SolverConfig::default()
     });
 

@@ -80,6 +80,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -108,6 +110,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -136,6 +140,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 50,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -164,6 +170,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -192,6 +200,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -220,6 +230,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 200,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -244,6 +256,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -268,6 +282,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }
@@ -292,6 +308,8 @@ impl ConfigPreset {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
             rephase_interval: 50,
+            reuse_trail: true,
+            enable_failed_literal_probing: true,
             external_branching: None,
         }
     }

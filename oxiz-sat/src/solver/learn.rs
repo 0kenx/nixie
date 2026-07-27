@@ -834,6 +834,83 @@ impl Solver {
         }
     }
 
+    /// Failed-literal probing (at decision level 0).
+    ///
+    /// For each unassigned variable, tentatively assign each polarity and run
+    /// unit propagation. If a probe leads to a conflict, the opposite polarity
+    /// is implied by the current level-0 facts, so we add it as a permanent
+    /// level-0 unit and propagate. This deduces forced assignments that plain
+    /// unit propagation cannot — it is the technique that lets cadical solve
+    /// structured instances such as `simon` with zero search decisions. Bounded
+    /// by a propagation budget so it never dominates on huge instances.
+    ///
+    /// Returns the number of units forced this round.
+    pub(super) fn failed_literal_probing(&mut self) -> usize {
+        if self.trail.decision_level() != 0 {
+            return 0;
+        }
+
+        let budget = (self.num_vars.saturating_mul(8)).max(10_000) as u64;
+        let start_props = self.stats.propagations;
+        let mut forced = 0usize;
+
+        // Snapshot the currently-unassigned variables (probing forces some).
+        let vars: SmallVec<[Var; 64]> = (0..self.num_vars as u32).map(Var::new).collect();
+
+        for &v in &vars {
+            if self.trivially_unsat {
+                break;
+            }
+            if self.stats.propagations.saturating_sub(start_props) > budget {
+                break;
+            }
+            if self.trail.is_assigned(v) {
+                continue;
+            }
+
+            // Probe positive polarity.
+            if self.probe_conflicts(Lit::pos(v)) {
+                self.force_level0(Lit::neg(v));
+                forced += 1;
+                continue;
+            }
+            // Probe negative polarity.
+            if self.probe_conflicts(Lit::neg(v)) {
+                self.force_level0(Lit::pos(v));
+                forced += 1;
+            }
+        }
+        forced
+    }
+
+    /// Probe a single literal: assign it at a fresh decision level, propagate,
+    /// then undo. Returns true if the probe conflicted (the literal is false).
+    fn probe_conflicts(&mut self, lit: Lit) -> bool {
+        self.trail.new_decision_level();
+        self.trail.assign_decision(lit);
+        let conflict = self.propagate().is_some();
+        self.backtrack_with_phase_saving(0);
+        conflict
+    }
+
+    /// Force a literal as a permanent level-0 fact and propagate. Assumes we
+    /// are at decision level 0. Sets `trivially_unsat` if it conflicts.
+    fn force_level0(&mut self, lit: Lit) {
+        use crate::literal::LBool;
+        match self.trail.lit_value(lit) {
+            LBool::True => return,
+            LBool::False => {
+                self.trivially_unsat = true;
+                return;
+            }
+            LBool::Undef => {}
+        }
+        self.trail.assign_decision(lit);
+        if self.propagate().is_some() {
+            self.trivially_unsat = true;
+        }
+    }
+
     /// Perform inprocessing (apply preprocessing during search)
     pub(super) fn inprocess(&mut self) {
         use crate::Preprocessor;

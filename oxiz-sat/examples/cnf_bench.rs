@@ -56,6 +56,12 @@ fn main() {
             base_config.rephase_interval = n;
         }
     }
+    if let Ok(v) = std::env::var("REUSE") {
+        base_config.reuse_trail = v != "0";
+    }
+    if let Ok(v) = std::env::var("INPROCESS") {
+        base_config.enable_inprocessing = v != "0";
+    }
     if let Ok(v) = std::env::var("INTERVAL") {
         if let Ok(n) = v.parse::<u64>() {
             base_config.restart_interval = n;
