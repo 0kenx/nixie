@@ -142,12 +142,17 @@ impl DimacsParser {
                     .map_err(|_| DimacsError::Parse(format!("Invalid literal: {token}")))?;
 
                 if lit_val == 0 {
-                    // End of clause
-                    if !current_clause.is_empty() {
-                        solver.add_clause(current_clause.iter().copied());
-                        current_clause.clear();
-                        _clauses_read += 1;
-                    }
+                    // End of clause. Always hand the clause to the solver —
+                    // including the *empty* clause. An empty clause (a lone `0`,
+                    // as in `p cnf 0 1` / `0`) is the unsatisfiable unit and must
+                    // be recorded: `Solver::add_clause` marks the solver
+                    // trivially UNSAT for an empty input. The previous
+                    // `!current_clause.is_empty()` guard silently dropped empty
+                    // clauses, so `false.cnf` parsed as clause-free (trivially
+                    // SAT) instead of UNSAT.
+                    solver.add_clause(current_clause.iter().copied());
+                    current_clause.clear();
+                    _clauses_read += 1;
                 } else {
                     // Add literal to current clause
                     let lit = self.dimacs_to_lit(lit_val)?;
@@ -429,5 +434,36 @@ mod tests {
 
         assert_eq!(parser.num_vars(), 3);
         assert_eq!(parser.num_clauses(), 3);
+    }
+
+    // Regression: an empty clause (a lone `0`, as in cadical's
+    // test/cnf/false.cnf = `p cnf 0 1` / `0`) is the unsatisfiable unit and must
+    // be handed to the solver. The parser previously guarded clause emission
+    // with `!current_clause.is_empty()`, silently dropping empty clauses so
+    // this file parsed as clause-free and solved as SAT instead of UNSAT.
+    #[test]
+    fn test_parse_empty_clause_is_unsat() {
+        let cnf = "p cnf 0 1\n0\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("test operation should succeed");
+        assert_eq!(solver.solve(), SolverResult::Unsat);
+    }
+
+    // An empty clause embedded among ordinary clauses must still flip a
+    // satisfiable formula to UNSAT (guards against the parser only handling a
+    // trailing empty clause).
+    #[test]
+    fn test_parse_empty_clause_in_middle_is_unsat() {
+        // (x1) ∧ (empty) — satisfiable by x1=true except for the empty clause.
+        let cnf = "p cnf 1 2\n1 0\n0\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("test operation should succeed");
+        assert_eq!(solver.solve(), SolverResult::Unsat);
     }
 }
