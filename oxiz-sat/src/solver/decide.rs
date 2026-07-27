@@ -215,6 +215,31 @@ impl Solver {
         reuse
     }
 
+    /// cadical-style stable/focused mode switch (opt-in via `enable_stabilize`):
+    /// alternate focused mode (frequent restarts) and stable mode (rare
+    /// restarts + rephase) on a quadratically-growing conflict schedule, so
+    /// each instance type hits its preferred restart aggressiveness. Called
+    /// once per conflict from the solve loop.
+    pub(super) fn check_stabilize(&mut self) {
+        if !self.config.enable_stabilize || self.stats.conflicts < self.next_stabilize {
+            return;
+        }
+        self.stable = !self.stable;
+        self.stabphases = self.stabphases.saturating_add(1);
+        const MAX_PHASE: u64 = 200_000;
+        let interval = (self
+            .config
+            .stabilize_base
+            .saturating_mul(self.stabphases)
+            .saturating_mul(self.stabphases))
+        .min(MAX_PHASE);
+        self.next_stabilize = self.stats.conflicts.saturating_add(interval);
+        // Rephase on entering stable mode.
+        if self.stable {
+            self.phase_inverted = !self.phase_inverted;
+        }
+    }
+
     /// Restart
     pub(super) fn restart(&mut self) {
         self.stats.restarts += 1;
@@ -238,8 +263,17 @@ impl Solver {
                 // the restart interval explodes into multi-10k-conflict grinds
                 // (a 3-30x slowdown vs cadical on r3sat n300/n350). Capping
                 // keeps restarts regular without losing Luby's short-window
-                // structure. `luby_cap` = 0 means uncapped (legacy behavior).
-                let cap = self.config.luby_cap;
+                // structure. Mode-dependent under the stable/focused schedule:
+                // focused = frequent (focused_luby_cap), stable = rare (uncapped).
+                let cap = if self.config.enable_stabilize {
+                    if self.stable {
+                        0
+                    } else {
+                        self.config.focused_luby_cap
+                    }
+                } else {
+                    self.config.luby_cap
+                };
                 let luby = if cap == 0 {
                     Self::luby(self.luby_index)
                 } else {

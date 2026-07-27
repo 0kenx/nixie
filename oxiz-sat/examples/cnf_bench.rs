@@ -65,6 +65,9 @@ fn main() {
     if let Ok(v) = std::env::var("CHRONO") {
         base_config.enable_chronological_backtrack = v != "0";
     }
+    if let Ok(v) = std::env::var("STABLE") {
+        base_config.enable_stabilize = v != "0";
+    }
     if let Ok(v) = std::env::var("LUBYCAP") {
         if let Ok(n) = v.parse::<u64>() {
             base_config.luby_cap = n;

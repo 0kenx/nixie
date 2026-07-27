@@ -166,6 +166,18 @@ pub struct SolverConfig {
     /// n300/n350). 0 = uncapped (legacy). Default caps at 1024× the base
     /// restart interval.
     pub luby_cap: u64,
+    /// Enable the cadical-style stable/focused restart schedule: alternate
+    /// focused mode (frequent restarts, `focused_luby_cap`) and stable mode
+    /// (rare restarts + rephase) on a quadratically-growing conflict schedule.
+    /// Default true. Makes restart aggressiveness adaptive to the instance
+    /// instead of a single fixed cap.
+    pub enable_stabilize: bool,
+    /// Base conflict interval for the first stable/focused switch; subsequent
+    /// intervals grow quadratically (`base × phase²`).
+    pub stabilize_base: u64,
+    /// Luby restart cap used in *focused* mode (frequent restarts). Stable
+    /// mode restarts uncapped (rare). 0 = uncapped.
+    pub focused_luby_cap: u64,
     /// Restarts between phase inversions (rephasing). 0 disables rephase.
     /// Periodically flipping the saved polarity lets a restart explore the
     /// complementary phase region instead of re-deriving the previous trail —
@@ -267,6 +279,9 @@ impl Default for SolverConfig {
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
             luby_cap: 64,
+            enable_stabilize: false,
+            stabilize_base: 1000,
+            focused_luby_cap: 16,
             rephase_interval: 0,
             reuse_trail: true,
             enable_failed_literal_probing: true,
@@ -459,6 +474,15 @@ pub struct Solver {
     pub(super) phase_inverted: bool,
     /// Luby sequence index for restarts
     pub(super) luby_index: u64,
+    /// cadical-style stable/focused mode flag. Focused (false) = frequent
+    /// restarts (aggressive search); stable (true) = rare restarts + rephase
+    /// (deep exploration). Alternated on a growing schedule.
+    pub(super) stable: bool,
+    /// Stabilization phase counter (drives the quadratic switch-interval
+    /// growth).
+    pub(super) stabphases: u64,
+    /// Conflict count at which to next switch stable/focused mode.
+    pub(super) next_stabilize: u64,
     /// Level marks for LBD computation
     pub(super) level_marks: Vec<u32>,
     /// Current mark counter for LBD computation
@@ -539,6 +563,7 @@ impl Solver {
     pub fn with_config(config: SolverConfig) -> Self {
         let chrono_enabled = config.enable_chronological_backtrack;
         let chrono_threshold = config.chrono_backtrack_threshold;
+        let stabilize_base = config.stabilize_base;
 
         Self {
             restart_threshold: config.restart_interval,
@@ -565,6 +590,9 @@ impl Solver {
             phase: Vec::new(),
             phase_inverted: false,
             luby_index: 0,
+            stable: false,
+            stabphases: 0,
+            next_stabilize: stabilize_base,
             level_marks: Vec::new(),
             lbd_mark: 0,
             learned_clause_ids: Vec::new(),
@@ -1278,6 +1306,11 @@ impl Solver {
                         }
                     }
                 }
+
+                // Stable/focused mode switch (cadical-style adaptive restart
+                // schedule) — checked each conflict, before the restart decision
+                // so the mode affects this restart's interval.
+                self.check_stabilize();
 
                 // Check for restart. Glucose fires only when clause quality is
                 // degrading beyond a margin (fast LBD EMA >= (1+margin)*slow,
