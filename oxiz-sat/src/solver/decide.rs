@@ -298,16 +298,40 @@ impl Solver {
     /// Restart
     pub(super) fn restart(&mut self) {
         self.stats.restarts += 1;
+
+        // Best-phase tracking: snapshot the current (pre-backtrack) trail when
+        // it is the longest reached so far. The trail holds the just-explored
+        // partial assignment; remembering its polarities lets a later rephase
+        // refocus the search near the best-known region (cadical's "best"
+        // phase array — the one genuinely missing SAT-side phase signal).
+        let trail_size = self.trail.size();
+        if trail_size > self.best_trail_size {
+            self.best_trail_size = trail_size;
+            self.best_phase.resize(self.num_vars, false);
+            for &lit in self.trail.assignments() {
+                self.best_phase[lit.var().index()] = lit.is_pos();
+            }
+        }
+
         self.backtrack_with_phase_saving(self.reuse_trail());
 
         // Rephase: periodically flip the global polarity so the next descent
         // explores the complementary phase region instead of re-deriving the
-        // previous trail. Without this, frequent (LBD) restarts just redo work
-        // and inflate the conflict count.
+        // previous trail. Alternates with restoring the best-known phase to
+        // refocus near the longest trail. Without this, frequent (LBD) restarts
+        // just redo work and inflate the conflict count.
         if self.config.rephase_interval > 0
             && self.stats.restarts % u64::from(self.config.rephase_interval) == 0
         {
-            self.phase_inverted = !self.phase_inverted;
+            self.rephase_count += 1;
+            if self.rephase_count % 2 == 1 && self.best_trail_size > 0 {
+                // Restore the best partial assignment's polarities.
+                let n = self.best_phase.len().min(self.phase.len());
+                self.phase[..n].copy_from_slice(&self.best_phase[..n]);
+                self.phase_inverted = false;
+            } else {
+                self.phase_inverted = !self.phase_inverted;
+            }
         }
 
         // Calculate next restart threshold based on strategy
