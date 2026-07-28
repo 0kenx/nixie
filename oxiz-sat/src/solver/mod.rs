@@ -514,6 +514,16 @@ pub struct Solver {
     /// region instead of re-deriving the same trail — without it, frequent
     /// (Glucose) restarts just redo work and inflate the conflict count.
     pub(super) phase_inverted: bool,
+    /// Best partial assignment found so far (the phase of the longest trail
+    /// reached without conflict). Restored on some rephase rounds to refocus
+    /// the search near the best-known region — the one genuinely missing
+    /// SAT-side phase signal (cadical's "best" phase array).
+    pub(super) best_phase: Vec<bool>,
+    /// Length of the trail that produced `best_phase` (0 until a trail is
+    /// snappedshotted).
+    pub(super) best_trail_size: usize,
+    /// Rephase round counter (alternates restore-best vs invert).
+    pub(super) rephase_count: u64,
     /// Luby sequence index for restarts
     pub(super) luby_index: u64,
     /// cadical-style stable/focused mode flag. Focused (false) = frequent
@@ -668,6 +678,9 @@ impl Solver {
             propagate_aborted: false,
             phase: Vec::new(),
             phase_inverted: false,
+            best_phase: Vec::new(),
+            best_trail_size: 0,
+            rephase_count: 0,
             luby_index: 0,
             stable: false,
             stabphases: 0,
@@ -847,6 +860,7 @@ impl Solver {
         self.seen.resize(self.num_vars, false);
         self.model.resize(self.num_vars, LBool::Undef);
         self.phase.resize(self.num_vars, false); // Default phase: negative
+        self.best_phase.resize(self.num_vars, false);
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
