@@ -348,6 +348,8 @@ pub struct SolverStats {
     pub bve_eliminated: u64,
     /// Number of clauses removed by forward subsumption.
     pub subsumed_removed: u64,
+    /// Number of literals removed by BIG-based self-subsumption.
+    pub self_subsumed: u64,
     /// Total LBD of learned clauses
     pub total_lbd: u64,
     /// Number of clause minimizations
@@ -1240,6 +1242,7 @@ impl Solver {
         // those passes actually reduce the formula.
         if self.config.enable_bve || self.config.enable_equiv_substitution {
             self.forward_subsumption();
+            self.self_subsumption_pass();
             if self.trivially_unsat {
                 self.drat_emit_empty();
                 return SolverResult::Unsat;

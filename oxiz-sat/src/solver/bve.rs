@@ -467,3 +467,59 @@ fn subset_of(needle: &[Lit], hay: &[Lit]) -> bool {
     }
     i == needle.len()
 }
+
+impl Solver {
+    /// BIG-based self-subsumption (diagnostic rebuild). Strengthen each clause
+    /// by removing a literal implied (via the binary implication graph) by
+    /// another literal in the same clause. Sound in isolation.
+    pub(super) fn self_subsumption_pass(&mut self) -> usize {
+        use crate::literal::LBool;
+        if self.trail.decision_level() != 0 {
+            return 0;
+        }
+        const MAX_LEN: usize = 16;
+        let mut removed_lits = 0usize;
+        let mut units: SmallVec<[Lit; 32]> = SmallVec::new();
+        let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
+        for cid in ids {
+            let mut lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
+                Some(c) if !c.deleted && (3..=MAX_LEN).contains(&c.lits.len()) => c.lits.iter().copied().collect(),
+                _ => continue,
+            };
+            let orig_len = lits.len();
+            loop {
+                if lits.len() < 2 { break; }
+                let mut remove_idx: Option<usize> = None;
+                'find: for i in 0..lits.len() {
+                    let li = lits[i];
+                    for j in 0..lits.len() {
+                        if i == j { continue; }
+                        if self.has_binary_implication(li, lits[j]) { remove_idx = Some(i); break 'find; }
+                    }
+                }
+                match remove_idx {
+                    Some(i) => { lits.remove(i); removed_lits += 1; }
+                    None => break,
+                }
+            }
+            match lits.len() {
+                0 => { self.trivially_unsat = true; return removed_lits; }
+                1 => { units.push(lits[0]); if let Some(c) = self.clauses.get_mut(cid) { c.deleted = true; } }
+                n if n < orig_len => { if let Some(c) = self.clauses.get_mut(cid) { c.lits = lits; } }
+                _ => {}
+            }
+        }
+        if removed_lits > 0 {
+            self.rebuild_watches_and_binary_graph();
+            for lit in units {
+                match self.trail.lit_value(lit) {
+                    LBool::True => {}
+                    LBool::False => { self.trivially_unsat = true; return removed_lits; }
+                    LBool::Undef => self.trail.assign_decision(lit),
+                }
+            }
+            if self.propagate().is_some() { self.trivially_unsat = true; }
+        }
+        removed_lits
+    }
+}
