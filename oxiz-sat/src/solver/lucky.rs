@@ -24,16 +24,18 @@
 //!
 //! Flip / discrepancy (`lucky_discrepancy`, CaDiCaL
 //! `lucky_propagate_discrepancy`): when assuming a literal `dec` conflicts we
-//! flip to `¬dec`; if *both* polarities conflict above the root the partial
-//! prefix is doomed and the strategy aborts; if both conflict at the root
-//! (level 1) the formula is UNSAT — analyzed and reported like any other
-//! root-level refutation.
+//! flip to `¬dec`; if both polarities conflict the partial prefix is doomed and
+//! the strategy aborts. Unlike CaDiCaL this does not analyze a root-level
+//! conflict to learn a unit or prove UNSAT — that would mutate the clause
+//! database / VSIDS and break the snapshot/restore that keeps lucky
+//! transparent to the search (see `lucky_phases`).
 //!
 //! Runs automatically in `Solver::solve` whenever `enable_lucky` is on
 //! (default, matching CaDiCaL's `opts.lucky = 1`). Skipped under
 //! assumptions / external branching, where a CDCL loop is required.
 
 use super::*;
+use smallvec::SmallVec;
 
 /// Outcome of a single lucky strategy.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -43,9 +45,6 @@ enum LuckyOutcome {
     Fail,
     /// A full model is on the trail (caller saves it).
     Sat,
-    /// The formula was proven UNSAT (empty clause emitted, `trivially_unsat`
-    /// set).
-    Unsat,
 }
 
 /// Outcome of a single discrepancy probe.
@@ -54,11 +53,9 @@ enum Discrepancy {
     /// `dec` (or its flip) propagated without conflict — the variable is now
     /// assigned; the caller re-checks and advances.
     Ok,
-    /// Both `dec` and `¬dec` conflicted above the root — abandon the strategy
-    /// (trail left at the conflicting level; caller backtracks to the root).
+    /// Both `dec` and `¬dec` conflicted — abandon the strategy (trail left at
+    /// the conflicting level; caller backtracks to the root).
     BothConflict,
-    /// A root-level (level-1) double conflict proved the formula UNSAT.
-    Unsat,
 }
 
 impl Solver {
@@ -98,6 +95,25 @@ impl Solver {
 
         self.stats.lucky_tried += 1;
 
+        // Snapshot the search-relevant state that lucky's propagation mutates:
+        //   * the two-watched-literal lists (propagation moves watches) and the
+        //     clause literal order (`clause.swap` in propagate);
+        //   * the per-mode tick counters, which drive the focused/stable
+        //     stabilization schedule — lucky's propagation would otherwise
+        //     shift the whole restart trajectory.
+        // CaDiCaL avoids this by running lucky outside search accounting
+        // (START/STOP); oxiz's solver is sensitive to all three, so we restore
+        // them on failure. On `Sat` we keep the trail (the model) and return.
+        // Lucky never learns clauses or bumps VSIDS (see `lucky_discrepancy`),
+        // so these three are the *complete* set of persistent mutations.
+        let snap_watches = self.watches.clone();
+        let snap_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = self
+            .clauses
+            .iter_ids()
+            .filter_map(|id| self.clauses.get(id).map(|c| (id, c.lits.clone())))
+            .collect();
+        let snap_ticks = (self.ticks_focused, self.ticks_stable, self.stats.propagations);
+
         // Try each strategy in CaDiCaL order. Each leaves the trail at level 0
         // on `Fail`, so they compose cleanly.
         let mut res = self.lucky_trivially(false);
@@ -130,8 +146,19 @@ impl Solver {
                 // decision levels); the caller saves it via `save_model`.
                 Some(SolverResult::Sat)
             }
-            LuckyOutcome::Unsat => Some(SolverResult::Unsat),
             LuckyOutcome::Fail => {
+                // Restore the pre-lucky search state so the probe is fully
+                // transparent to the CDCL search.
+                self.watches = snap_watches;
+                for (id, lits) in snap_lits {
+                    if let Some(c) = self.clauses.get_mut(id) {
+                        c.lits = lits;
+                    }
+                }
+                let (tf, ts, prop) = snap_ticks;
+                self.ticks_focused = tf;
+                self.ticks_stable = ts;
+                self.stats.propagations = prop;
                 debug_assert_eq!(
                     self.trail.decision_level(),
                     0,
@@ -305,10 +332,8 @@ impl Solver {
         loop {
             let v = Var::new(idx as u32);
             // `goto START`: re-check this variable until it is assigned or the
-            // strategy fails. A successful discrepancy either assigns `v`
-            // directly (no-conflict path) or learns a root unit (level-1
-            // analyze path) that may assign a *different* variable — so we
-            // must re-check `is_assigned(v)` rather than blindly advancing.
+            // strategy fails. A successful discrepancy assigns `v` (either
+            // polarity), so we re-check `is_assigned(v)` before advancing.
             loop {
                 if self.lucky_interrupted() {
                     self.backtrack(0);
@@ -324,7 +349,6 @@ impl Solver {
                         self.backtrack(0);
                         return LuckyOutcome::Fail;
                     }
-                    Discrepancy::Unsat => return LuckyOutcome::Unsat,
                 }
             }
             // Advance to the next variable.
@@ -343,48 +367,27 @@ impl Solver {
     }
 
     /// `lucky_propagate_discrepancy` (CaDiCaL). Decide `dec`; on conflict flip
-    /// to `¬dec`. A root-level (level-1) conflict is analyzed and the implied
-    /// unit learned (a follow-up root conflict proves UNSAT); a double conflict
-    /// above the root just abandons the probe.
+    /// to `¬dec`. If both polarities conflict the prefix is doomed and the
+    /// strategy aborts. Unlike CaDiCaL this does *not* analyze a root-level
+    /// (level-1) conflict to learn a unit / prove UNSAT: doing so would mutate
+    /// the clause database and VSIDS, breaking the snapshot/restore that keeps
+    /// lucky transparent to the search (see `lucky_phases`). The lost early
+    /// UNSAT detection is rare and the search recovers it.
     fn lucky_discrepancy(&mut self, dec: Lit) -> Discrepancy {
         self.trail.new_decision_level();
         self.trail.assign_decision(dec);
-        let conflict = match self.propagate() {
-            None => return Discrepancy::Ok,
-            Some(c) => c,
-        };
+        if self.propagate().is_none() {
+            return Discrepancy::Ok;
+        }
+        // Conflict: undo just this decision and try the opposite polarity.
         let level = self.trail.decision_level();
-        if level > 1 {
-            // Undo just this decision and try the opposite polarity.
-            self.backtrack(level - 1);
-            self.trail.new_decision_level();
-            self.trail.assign_decision(dec.negate());
-            if self.propagate().is_none() {
-                Discrepancy::Ok
-            } else {
-                Discrepancy::BothConflict
-            }
-        } else {
-            // Level 1: analyze the conflict, learn the implied root unit,
-            // propagate. A second conflict completes a root-level refutation.
-            let (bt, learnt) = self.analyze(conflict);
-            if learnt.is_empty() {
-                self.trivially_unsat = true;
-                self.drat_emit_empty();
-                self.backtrack(0);
-                return Discrepancy::Unsat;
-            }
-            self.backtrack(bt);
-            self.learn_clause(learnt);
-            if self.propagate().is_some() {
-                self.trivially_unsat = true;
-                self.drat_emit_empty();
-                self.backtrack(0);
-                return Discrepancy::Unsat;
-            }
-            // The learnt root unit may have assigned `dec`'s variable (or
-            // another); the caller re-checks before advancing.
+        self.backtrack(level - 1);
+        self.trail.new_decision_level();
+        self.trail.assign_decision(dec.negate());
+        if self.propagate().is_none() {
             Discrepancy::Ok
+        } else {
+            Discrepancy::BothConflict
         }
     }
 }
