@@ -48,13 +48,15 @@ impl Solver {
                 self.config.use_vmtf
             };
             if use_vmtf_now {
-                // Borrow only `trail` and `equiv_substitution` (disjoint from the
-                // `&mut self.vmtf` the call below needs) — a full `&self`
-                // method like `var_eliminated` would conflict.
+                // Borrow only `trail`, `equiv_substitution`, and `bve_def`
+                // (disjoint from the `&mut self.vmtf` the call below needs) —
+                // a full `&self` method like `var_eliminated` would conflict.
                 let trail = &self.trail;
                 let subst = &self.equiv_substitution;
+                let bve = &self.bve_def;
                 let eliminated = |v: Var| {
                     subst.get(v.index()).is_some_and(|&r| r.var() != v)
+                        || bve.get(v.index()).is_some_and(|d| !d.is_empty())
                 };
                 if let Some(var) = self
                     .vmtf

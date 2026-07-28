@@ -491,21 +491,31 @@ impl Solver {
             }
         }
 
-        // Reconstruct variables eliminated by equivalent-literal substitution
-        // (equiv.rs): give each the value of its representative literal. The
-        // representative's own variable is never eliminated, so its model value
-        // was already set from the trail above.
-        if !self.equiv_substitution.is_empty() {
-            for v in 0..self.num_vars {
-                let Some(rep) = self.equiv_substitution.get(v).copied() else {
-                    continue;
+        // Reconstruct variables eliminated by BVE in reverse elimination order.
+        // For eliminated `v` with positive clauses `(v ∨ A_i)` (stripped of `v`):
+        //   - if EVERY `A_i` already has a satisfied literal, set `v = false`
+        //     (the `(v ∨ A_i)` are satisfied without it, and `¬v` satisfies the
+        //     `(¬v ∨ B_j)`);
+        //   - else SOME `A_k` is all-false, forcing `v = true` to satisfy
+        //     `(v ∨ A_k)`. The resolvents `(A_k ∨ B_j)` then guarantee every
+        //     `B_j` is true, so the `(¬v ∨ B_j)` are satisfied too.
+        // (The earlier version used "any satisfied" → wrong when some but not
+        //  all `A_i` are satisfied: it set v=false and violated the all-false
+        //  clause.)
+        if !self.bve_order.is_empty() {
+            for &v in self.bve_order.iter().rev() {
+                let clauses = match self.bve_def.get(v.index()) {
+                    Some(c) if !c.is_empty() => c,
+                    _ => continue,
                 };
-                if rep.var().index() == v {
-                    continue; // not eliminated
-                }
-                let rep_val = self.model.get(rep.var().index()).copied().unwrap_or(LBool::Undef);
-                let val = if rep.is_pos() { rep_val } else { rep_val.negate() };
-                self.model[v] = val;
+                let lit_true = |l: Lit| {
+                    self.model.get(l.var().index()).copied().unwrap_or(LBool::Undef)
+                        == if l.is_pos() { LBool::True } else { LBool::False }
+                };
+                let all_satisfied = clauses
+                    .iter()
+                    .all(|clause| clause.iter().any(|&l| lit_true(l)));
+                self.model[v.index()] = if all_satisfied { LBool::False } else { LBool::True };
             }
         }
     }

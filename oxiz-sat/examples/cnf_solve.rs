@@ -54,6 +54,8 @@ fn main() {
     {
         config.enable_inprocessing = v != "0";
     }
+    if let Ok(v) = std::env::var("EQUIV") { config.enable_equiv_substitution = v != "0"; }
+    if let Ok(v) = std::env::var("BVE") { config.enable_bve = v != "0"; }
     if let Ok(v) = std::env::var("STABLE") {
         config.enable_stabilize = v != "0";
     }

@@ -8,6 +8,7 @@ mod learn;
 mod propagate;
 mod search_ext;
 mod equiv;
+mod bve;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -168,6 +169,12 @@ pub struct SolverConfig {
     /// Enable for one-shot solving of binary-heavy formulas where collapsing
     /// equivalences is expected to pay off.
     pub enable_equiv_substitution: bool,
+    /// Enable bounded variable elimination (BVE / SatELite) as a one-shot
+    /// pre-search pass. Eliminates variables by resolving their clauses when
+    /// the resolvents don't grow the formula, with model reconstruction. The
+    /// most foundational SAT preprocessing technique. Off by default (same
+    /// incremental/AllSAT caveat as substitution).
+    pub enable_bve: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
     /// Enable chronological backtracking
@@ -297,6 +304,7 @@ impl Default for SolverConfig {
             use_lrb_branching: false,
             enable_inprocessing: false,
             enable_equiv_substitution: false,
+            enable_bve: false,
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
@@ -336,6 +344,8 @@ pub struct SolverStats {
     pub unit_clauses: u64,
     /// Number of variables eliminated by equivalent-literal substitution.
     pub substitutions: u64,
+    /// Number of variables eliminated by bounded variable elimination (BVE).
+    pub bve_eliminated: u64,
     /// Total LBD of learned clauses
     pub total_lbd: u64,
     /// Number of clause minimizations
@@ -571,12 +581,24 @@ pub struct Solver {
     /// already-substituted clauses and, for incremental callers, on top of
     /// assumptions/blocking clauses expressed in the original variable space).
     pub(super) did_equiv_subst: bool,
+    /// One-shot latch for BVE (see `did_equiv_subst`).
+    pub(super) did_bve: bool,
     /// Model-reconstruction map for equivalent-literal substitution
     /// (`equiv.rs`): `equiv_substitution[v]` is the representative literal
     /// whose value variable `v` should inherit in the model. For a variable
     /// that was *not* eliminated this is `Lit::pos(v)` (identity). For an
     /// eliminated variable it is a literal of a different variable.
     pub(super) equiv_substitution: Vec<Lit>,
+    /// Model-reconstruction data for BVE-eliminated variables. Indexed by
+    /// variable; `bve_def[v]` holds the non-`v` literals of every clause that
+    /// contained `v` *positively* at elimination time. At model-extension time
+    /// `v` is set true iff all of those clauses are falsified by the current
+    /// model (else false) — see [`Solver::save_model`].
+    pub(super) bve_def: Vec<Vec<SmallVec<[Lit; 4]>>>,
+    /// Elimination order of BVE-eliminated variables (reconstruction runs in
+    /// reverse, so a variable eliminated later — which may appear in an earlier
+    /// variable's recorded clauses — is assigned first).
+    pub(super) bve_order: Vec<Var>,
     pub(super) interrupt: Option<Arc<AtomicBool>>,
     /// Optional conflict budget. When `Some(n)`, the search loop returns
     /// [`SolverResult::Unknown`] once `n` conflicts have been reached instead of
@@ -668,6 +690,9 @@ impl Solver {
             memory_optimizer: MemoryOptimizer::new(),
             pure_literal_reconstruction: Vec::new(),
             equiv_substitution: Vec::new(),
+            bve_def: Vec::new(),
+            bve_order: Vec::new(),
+            did_bve: false,
             did_equiv_subst: false,
             interrupt: None,
             max_conflicts: None,
@@ -1188,6 +1213,16 @@ impl Solver {
         // Equivalent-literal substitution (SCC on the binary implication graph).
         // Collapses binary-heavy formulas before search; a no-op (early-out)
         // when there are no non-trivial SCCs. Runs at level 0 / base scope only.
+        if self.config.enable_bve {
+            if self.bounded_variable_elimination() == equiv::SubstOutcome::Unsat {
+                self.drat_emit_empty();
+                return SolverResult::Unsat;
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty();
+                return SolverResult::Unsat;
+            }
+        }
         if self.config.enable_equiv_substitution {
             if self.substitute_equivalent_literals() == equiv::SubstOutcome::Unsat {
                 self.drat_emit_empty();

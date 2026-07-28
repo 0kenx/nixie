@@ -42,9 +42,10 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize) -> Vec<Vec<i32>> {
     out
 }
 
-fn solve(equiv: bool, cnf: &str) -> (oxiz_sat::SolverResult, Vec<u8>) {
+fn solve(equiv: bool, bve: bool, cnf: &str) -> (oxiz_sat::SolverResult, Vec<u8>) {
     let mut cfg = SolverConfig::default();
     cfg.enable_equiv_substitution = equiv;
+    cfg.enable_bve = bve;
     let mut s = Solver::with_config(cfg);
     let mut p = DimacsParser::new();
     p.parse_reader(Cursor::new(cnf.as_bytes()), &mut s).unwrap();
@@ -79,17 +80,16 @@ fn main() {
         let nclauses = 8 + (rand(&mut seed) as usize) % 60;
         let f = gen_formula(&mut seed, nvars, nclauses);
         let cnf = to_cnf(nvars, &f);
-        let (r_off, _) = solve(false, &cnf);
-        let (r_on, m_on) = solve(true, &cnf);
+        let (r_off, _) = solve(false, false, &cnf);
+        let (r_on, m_on) = solve(false, true, &cnf);
         let agree = matches!((r_off, r_on),
             (oxiz_sat::SolverResult::Sat, oxiz_sat::SolverResult::Sat)
             | (oxiz_sat::SolverResult::Unsat, oxiz_sat::SolverResult::Unsat));
         if !agree {
             mismatch += 1;
-            if mismatch == 1 {
-                std::fs::write("/tmp/fail_equiv.cnf", &cnf).ok();
-                eprintln!("dumped /tmp/fail_equiv.cnf  off={r_off:?} on={r_on:?}");
-            }
+            std::fs::write("/tmp/fail_equiv.cnf", &cnf).ok();
+            eprintln!("MISMATCH nv={nvars} nc={nclauses} off={r_off:?} on={r_on:?}");
+            if mismatch >= 3 { break; }
             if mismatch <= 3 {
                 eprintln!("MISMATCH iter={i} nv={nvars} nc={nclauses}: off={r_off:?} on={r_on:?}");
             }

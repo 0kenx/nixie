@@ -204,33 +204,7 @@ impl Solver {
 
 
         // ---- Rebuild watch lists + binary implication graph. ----
-        self.watches = WatchLists::new(num_vars);
-        self.binary_graph.clear();
-        let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        for cid in live_ids {
-            let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
-                Some(c) if !c.deleted => c.lits.iter().copied().collect(),
-                _ => continue,
-            };
-            match lits.len() {
-                2 => {
-                    let (a, b) = (lits[0], lits[1]);
-                    self.binary_graph.add(a.negate(), b, cid);
-                    self.binary_graph.add(b.negate(), a, cid);
-                    self.watches.add(a.negate(), Watcher::new(cid, b));
-                    self.watches.add(b.negate(), Watcher::new(cid, a));
-                }
-                n if n >= 3 => {
-                    let (a, b) = (lits[0], lits[1]);
-                    self.watches.add(a.negate(), Watcher::new(cid, b));
-                    self.watches.add(b.negate(), Watcher::new(cid, a));
-                }
-                _ => {} // units collected above; empties handled
-            }
-        }
-
-        self.learned_clause_ids
-            .retain(|&cid| self.clauses.get(cid).is_some_and(|c| !c.deleted));
+        self.rebuild_watches_and_binary_graph();
 
         // ---- Assign the newly exposed level-0 units and re-propagate. ----
         for lit in new_units {
@@ -253,13 +227,48 @@ impl Solver {
         SubstOutcome::Ok
     }
 
-    /// True if `v` was folded away by equivalent-literal substitution and must
-    /// not be branched on (its value is determined by its representative, set
-    /// in [`Solver::save_model`]). Cheap: an empty/short map means no pass ran.
+    /// True if `v` was folded away by equivalent-literal substitution or BVE
+    /// and must not be branched on. Cheap: empty maps mean no pass ran.
     #[inline]
     pub(super) fn var_eliminated(&self, v: Var) -> bool {
-        self.equiv_substitution
-            .get(v.index())
-            .is_some_and(|&rep| rep.var() != v)
+        (self.equiv_substitution.len() > v.index()
+            && self.equiv_substitution[v.index()].var() != v)
+            || (self.bve_def.len() > v.index() && !self.bve_def[v.index()].is_empty())
+    }
+
+    /// Rebuild the two-watched-literal structures and the binary implication
+    /// graph from the current set of live (non-deleted) clauses. Used after any
+    /// preprocessing pass that rewrites clause literals in place (equivalent-
+    /// literal substitution, BVE): the old watches point at stale literals, so
+    /// the whole structure is regenerated. Binary clauses also repopulate the
+    /// binary implication graph.
+    pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
+        let num_vars = self.num_vars;
+        self.watches = WatchLists::new(num_vars);
+        self.binary_graph.clear();
+        let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
+        for cid in live_ids {
+            let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
+                Some(c) if !c.deleted => c.lits.iter().copied().collect(),
+                _ => continue,
+            };
+            match lits.len() {
+                2 => {
+                    let (a, b) = (lits[0], lits[1]);
+                    self.binary_graph.add(a.negate(), b, cid);
+                    self.binary_graph.add(b.negate(), a, cid);
+                    self.watches.add(a.negate(), Watcher::new(cid, b));
+                    self.watches.add(b.negate(), Watcher::new(cid, a));
+                }
+                n if n >= 3 => {
+                    let (a, b) = (lits[0], lits[1]);
+                    self.watches.add(a.negate(), Watcher::new(cid, b));
+                    self.watches.add(b.negate(), Watcher::new(cid, a));
+                }
+                _ => {} // units are level-0 facts on the trail
+            }
+        }
+        self.learned_clause_ids
+            .retain(|&cid| self.clauses.get(cid).is_some_and(|c| !c.deleted));
     }
 }

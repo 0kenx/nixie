@@ -62,6 +62,8 @@ fn main() {
     if let Ok(v) = std::env::var("INPROCESS") {
         base_config.enable_inprocessing = v != "0";
     }
+    if let Ok(v) = std::env::var("EQUIV") { base_config.enable_equiv_substitution = v != "0"; }
+    if let Ok(v) = std::env::var("BVE") { base_config.enable_bve = v != "0"; }
     if let Ok(v) = std::env::var("CHRONO") {
         base_config.enable_chronological_backtrack = v != "0";
     }
