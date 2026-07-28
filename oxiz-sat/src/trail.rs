@@ -397,10 +397,17 @@ impl Trail {
             if self.var_info[var_idx].level <= level {
                 replay.push(lit);
             } else {
-                // Keep the dense `values[]` mirror in sync with `var_info`
-                // (ported from main's dense-trail perf change).
+                // Keep the dense `values[]` mirror in sync (ported from main's
+                // dense-trail change).
                 self.values[var_idx] = LBool::Undef;
-                self.var_info[var_idx].value = LBool::Undef;
+                // Reset the full VarInfo (not just `.value`): leaving `.level`
+                // stale after backtracking made `Trail::level` report the *old*
+                // decision level for unassigned variables, corrupting every
+                // consumer of levels on unassigned vars — most importantly
+                // `compute_lbd` (computed on the freshly-learned clause *after*
+                // backtracking, so literals above the backtrack level read stale
+                // levels and produced garbage glue) and the Glucose restart EMA.
+                self.var_info[var_idx] = VarInfo::default();
                 callback(lit);
             }
         }

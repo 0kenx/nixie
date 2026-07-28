@@ -1288,6 +1288,7 @@ impl Solver {
                     // Set LBD score for the clause
                     if let Some(clause) = self.clauses.get_mut(clause_id) {
                         clause.lbd = lbd;
+                        clause.assign_tier_from_lbd();
                     }
                     self.debug_check_learned_clause_lbd(clause_id);
 

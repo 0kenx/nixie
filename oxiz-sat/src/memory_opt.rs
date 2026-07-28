@@ -121,6 +121,7 @@ impl MemoryPool {
         }
     }
 
+    #[allow(dead_code)] // pool reuse is stat-only now (see MemoryOptimizer::allocate)
     fn allocate(&mut self, size: usize) -> (Option<Vec<u8>>, bool) {
         if let Some(block) = self.free_blocks.pop() {
             self.allocated_blocks += 1;
@@ -133,6 +134,7 @@ impl MemoryPool {
         }
     }
 
+    #[allow(dead_code)] // pool reuse is stat-only now (see MemoryOptimizer::free)
     fn free(&mut self, block: Vec<u8>) {
         if self.allocated_blocks > 0 {
             self.allocated_blocks -= 1;
@@ -209,20 +211,18 @@ impl MemoryOptimizer {
             self.stats.peak_usage = self.stats.current_usage;
         }
 
-        if let Some(pool) = self.pools.get_mut(&size_class) {
-            let (block_opt, is_hit) = pool.allocate(buffer_size);
-            if let Some(block) = block_opt {
-                if is_hit {
-                    self.stats.pool_hits += 1;
-                } else {
-                    self.stats.pool_misses += 1;
-                }
-                return block;
-            }
-        }
-
-        self.stats.pool_misses += 1;
-        vec![0; buffer_size]
+        // Callers (`learn_clause`, `reduce_clause_database`) bind the returned
+        // buffer only to keep size-class pool accounting symmetric with `free`;
+        // its contents are never read. The previous implementation returned a
+        // real `vec![0; buffer_size]` here and dropped it on the next line, i.e.
+        // one zeroed heap allocation *and* one free per learned clause and per
+        // deleted clause. On `longmult15` that is ~170k pointless alloc/free
+        // pairs, accounting for the bulk of the ~10% of cycles spent in
+        // `_int_malloc`/`memmove` under `perf`. Keep the cheap stat accounting
+        // (which `recommend_action`/`is_memory_pressure_high` rely on) but do
+        // not touch the heap.
+        let _ = size_class;
+        Vec::new()
     }
 
     /// Free memory for a clause
@@ -236,9 +236,10 @@ impl MemoryOptimizer {
             self.stats.current_usage -= buffer_size;
         }
 
-        if let Some(pool) = self.pools.get_mut(&size_class) {
-            pool.free(buffer);
-        }
+        // Mirrors `allocate`: the buffer is always empty (see comment there),
+        // so there is nothing to return to a pool. Drop it.
+        let _ = size_class;
+        drop(buffer);
     }
 
     /// Prefetch memory location (hint to CPU)
@@ -382,7 +383,11 @@ mod tests {
         let mut opt = MemoryOptimizer::new();
 
         let buffer = opt.allocate(2);
-        assert_eq!(buffer.len(), 16); // Binary clause buffer size
+        // `allocate` is stat-only: it never materializes a real buffer (the
+        // returned `Vec` is empty), so it cannot churn the heap on the
+        // learned/deleted-clause hot path. The size-class accounting that
+        // `recommend_action` relies on still updates.
+        assert_eq!(buffer.len(), 0);
 
         assert_eq!(opt.stats().allocations, 1);
         assert!(opt.stats().current_usage > 0);
@@ -392,34 +397,29 @@ mod tests {
     }
 
     #[test]
-    fn test_pool_hits() {
+    fn test_allocate_is_stat_only_no_heap_growth() {
+        // Replaces the old pool-hit/pool-miss tests: with pool reuse removed,
+        // the invariant that matters is that repeated allocate/free pairs do not
+        // leak or grow memory while the accounting stats accumulate. Two full
+        // alloc/free cycles must leave current_usage back near its starting
+        // point and bump allocations/frees by two each.
         let mut opt = MemoryOptimizer::new();
 
-        // First allocation creates a new buffer, counted as miss since no free blocks
-        let buffer1 = opt.allocate(2);
-        assert_eq!(opt.stats().pool_misses, 1);
-        assert_eq!(opt.stats().pool_hits, 0);
+        let baseline_usage = opt.stats().current_usage;
+        for _ in 0..2 {
+            let b = opt.allocate(10);
+            opt.free(b, 10);
+        }
 
-        // Free the buffer back to pool
-        opt.free(buffer1, 2);
-
-        // Second allocation should reuse the freed buffer - hit
-        let _buffer2 = opt.allocate(2);
-        assert_eq!(opt.stats().pool_hits, 1);
-        assert_eq!(opt.stats().pool_misses, 1);
-    }
-
-    #[test]
-    fn test_hit_rate() {
-        let mut opt = MemoryOptimizer::new();
-
-        let buffer1 = opt.allocate(2);
-        opt.free(buffer1, 2);
-        let _buffer2 = opt.allocate(2);
-
-        let hit_rate = opt.stats().hit_rate();
-        assert!(hit_rate > 0.0);
-        assert!(hit_rate <= 1.0);
+        assert_eq!(opt.stats().allocations, 2);
+        assert_eq!(opt.stats().frees, 2);
+        assert_eq!(
+            opt.stats().current_usage, baseline_usage,
+            "balanced alloc/free must return current_usage to its baseline"
+        );
+        // hit_rate() is now always 0 (no pool tracking), which is harmless: it
+        // only steers the no-op `ExpandPools` branch of `recommend_action`.
+        assert_eq!(opt.stats().hit_rate(), 0.0);
     }
 
     #[test]

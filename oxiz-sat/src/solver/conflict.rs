@@ -1622,10 +1622,17 @@ mod tests {
         solver.trail.backtrack_to(3);
         assert_eq!(solver.trail.decision_level(), 3);
         assert!(!solver.trail.is_assigned(v1), "v1 must be unassigned");
+        // `Trail::backtrack_to_with_callback` now resets the full `VarInfo`
+        // (level included) on unassignment, so an unassigned variable reports
+        // level 0 rather than its pre-backtrack level. Previously `level` was
+        // left stale (5 here), which forced `analyze_theory_conflict` to route
+        // unassigned-literal lemmas through a dedicated handler keyed on
+        // `lit_value == Undef`; that routing still applies, but the stale level
+        // is no longer there to mislead a naive level-based computation.
         assert_eq!(
             solver.trail.level(v1),
-            5,
-            "v1's level must remain stale at 5 after backtrack"
+            0,
+            "v1's level must be reset to 0 after backtrack (no longer stale)"
         );
 
         // Theory conflict clause: all three are meant to be the (false) clause

@@ -125,6 +125,7 @@ impl Solver {
 
             if let Some(clause) = self.clauses.get_mut(clause_id) {
                 clause.lbd = lbd;
+                clause.assign_tier_from_lbd();
             }
             self.debug_check_learned_clause_lbd(clause_id);
 
@@ -151,6 +152,7 @@ impl Solver {
 
             if let Some(clause) = self.clauses.get_mut(clause_id) {
                 clause.lbd = lbd;
+                clause.assign_tier_from_lbd();
             }
             self.debug_check_learned_clause_lbd(clause_id);
 
@@ -1122,7 +1124,13 @@ impl Solver {
             return 0;
         }
 
-        let budget = (self.num_vars.saturating_mul(8)).max(10_000) as u64;
+        // Propagation budget for the whole pass. The old `num_vars*8` value
+        // (~62K props on longmult15) allowed barely a single probe before
+        // bailing, so probing was effectively a no-op even with `INPROCESS=1`.
+        // A full failed-literal pass is ~2*num_vars probes; on the binary-heavy
+        // structured instances it targets, BCP is cheap, so allow a generous
+        // fraction of a full sweep.
+        let budget = (self.num_vars.saturating_mul(512)).max(50_000) as u64;
         let start_props = self.stats.propagations;
         let mut forced = 0usize;
 

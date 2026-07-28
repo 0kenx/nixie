@@ -153,6 +153,29 @@ impl Clause {
         self.tier = ClauseTier::Core;
     }
 
+    /// Eagerly assign a tier from the clause's current LBD.
+    ///
+    /// Mirrors CaDiCaL: low-glue clauses are protected *immediately* at
+    /// learning time rather than waiting for `record_usage` to promote them.
+    /// Without this, a freshly-learned glue-2 clause lands in `Local` and is
+    /// eligible for the aggressive 75%-per-cycle Local sweep before it ever gets
+    /// reused — which is catastrophic on multiplier circuits (e.g. `longmult`),
+    /// where the short glue-1/glue-2 clauses *are* the propagating cascade that
+    /// collapses the formula. Promotion is one-way upward (never demotes a
+    /// clause that `record_usage`/`promote_to_core` already lifted higher).
+    pub fn assign_tier_from_lbd(&mut self) {
+        let target = if self.lbd <= 2 {
+            ClauseTier::Core
+        } else if self.lbd <= 6 {
+            ClauseTier::Mid
+        } else {
+            ClauseTier::Local
+        };
+        if target as u8 <= self.tier as u8 {
+            self.tier = target;
+        }
+    }
+
     /// Normalize clause: remove duplicates, sort literals, check for tautology
     /// Returns true if clause is a tautology (contains both l and ~l)
     pub fn normalize(&mut self) -> bool {
