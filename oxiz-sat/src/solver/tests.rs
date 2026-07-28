@@ -105,9 +105,13 @@ fn test_phase_saving() {
 
 #[test]
 fn test_lbd_computation() {
-    // Test that clause deletion can handle a problem that generates learned clauses
+    // Test that clause deletion can handle a problem that generates learned clauses.
+    // Lucky is disabled: it can refute small pigeonhole formulas (PHP(3,2))
+    // without entering search, which would defeat the point of exercising the
+    // clause-deletion path here.
     let mut solver = Solver::with_config(SolverConfig {
         clause_deletion_threshold: 5, // Trigger deletion quickly
+        enable_lucky: false,
         ..SolverConfig::default()
     });
 

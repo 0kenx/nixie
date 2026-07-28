@@ -69,6 +69,7 @@ fn main() {
         .filter(|s| !s.is_empty())
         .as_deref()
     {
+        // Lucky phases default to on (matching CaDiCaL); set LUCKY=0 to disable.
         config.enable_lucky = v != "0";
     }
     if let Some(v) = std::env::var("REPHASE").ok().filter(|s| !s.is_empty()) {

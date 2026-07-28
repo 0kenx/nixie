@@ -24,6 +24,10 @@ fn solved_instance_with_inprocessing_logs_pure_and_subsumed_deletions_to_drat() 
         // PHP(3,2) unsat directly via propagation, short-circuiting them).
         enable_failed_literal_probing: false,
         enable_hyper_binary_probing: false,
+        // Disable lucky phases for the same reason: lucky's discrepancy search
+        // refutes PHP(3,2) before inprocessing ever runs, which would skip the
+        // pure-literal/subsumption deletions this test checks for.
+        enable_lucky: false,
         ..SolverConfig::default()
     });
 
