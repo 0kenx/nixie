@@ -350,3 +350,120 @@ fn resolve(pc: &[Lit], nc: &[Lit], pos: Lit, neg: Lit) -> Option<SmallVec<[Lit; 
     }
     Some(out)
 }
+
+impl Solver {
+    /// Forward subsumption: remove every clause that is subsumed by some other
+    /// clause (C subsumes C' iff C ⊆ C'). This is what lets BVE / congruence
+    /// actually *shrink* the formula — resolvents and rewritten clauses
+    /// frequently subsume older, weaker clauses, and dropping them keeps
+    /// propagation cheap.
+    ///
+    /// Occurrence-based with the smallest-occurrence-literal heuristic: for a
+    /// clause C', a subsumer must share at least one literal with it, and we
+    /// scan the occurrence list of C''s rarest literal (fewest candidates) and
+    /// merge-check each. Cost-guarded so a single high-degree literal cannot
+    /// dominate. Incomplete by construction (a subsumer missing the rarest
+    /// literal is not found) — fine, since subsumption is an optimization.
+    /// Returns the number of clauses removed.
+    pub(super) fn forward_subsumption(&mut self) -> usize {
+        if self.trail.decision_level() != 0 {
+            return 0;
+        }
+        // Ensure every live clause is sorted + deduped (resolvents from BVE are
+        // not), and drop any tautology that slipped through.
+        let norm_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
+        for cid in norm_ids {
+            let needs = self
+                .clauses
+                .get(cid)
+                .is_some_and(|c| !c.deleted && c.lits.len() >= 2);
+            if !needs {
+                continue;
+            }
+            let taut = self.clauses.get_mut(cid).is_some_and(|c| c.normalize());
+            if taut {
+                if let Some(c) = self.clauses.get_mut(cid) {
+                    c.deleted = true;
+                }
+            }
+        }
+
+        let num_vars = self.num_vars;
+        let mut occ = OccurrenceList::new();
+        occ.resize(num_vars);
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else { continue };
+            if c.deleted || c.lits.len() < 2 {
+                continue;
+            }
+            for &lit in &c.lits {
+                occ.add(lit, cid);
+            }
+        }
+
+        const OCC_CAP: usize = 512;
+        let mut removed = 0usize;
+        let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
+        for cid in ids {
+            let target_lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
+                Some(c) if !c.deleted && c.lits.len() >= 2 => c.lits.iter().copied().collect(),
+                _ => continue,
+            };
+            // Rarest literal → fewest candidates. Skip if even that is too
+            // highly connected to bound the pass.
+            let Some(&lstar) = target_lits.iter().min_by_key(|&&l| occ.count(l)) else {
+                continue;
+            };
+            if occ.count(lstar) > OCC_CAP {
+                continue;
+            }
+            let subsumed = occ.get(lstar).iter().any(|&cand| {
+                if cand == cid {
+                    return false;
+                }
+                let Some(c) = self.clauses.get(cand) else {
+                    return false;
+                };
+                if c.deleted || c.lits.len() > target_lits.len() {
+                    return false;
+                }
+                subset_of(&c.lits, &target_lits)
+            });
+            if subsumed {
+                if let Some(c) = self.clauses.get(cid) {
+                    for &lit in &c.lits {
+                        occ.remove(lit, cid);
+                    }
+                }
+                if let Some(c) = self.clauses.get_mut(cid) {
+                    c.deleted = true;
+                }
+                removed += 1;
+            }
+        }
+
+        if removed > 0 {
+            self.rebuild_watches_and_binary_graph();
+            self.stats.subsumed_removed += removed as u64;
+        }
+        removed
+    }
+}
+
+/// Check if `needle` (sorted) ⊆ `hay` (sorted), i.e. every literal of `needle`
+/// appears in `hay`. Linear merge.
+fn subset_of(needle: &[Lit], hay: &[Lit]) -> bool {
+    let mut i = 0;
+    let mut j = 0;
+    while i < needle.len() && j < hay.len() {
+        if needle[i] == hay[j] {
+            i += 1;
+            j += 1;
+        } else if needle[i].code() < hay[j].code() {
+            return false;
+        } else {
+            j += 1;
+        }
+    }
+    i == needle.len()
+}

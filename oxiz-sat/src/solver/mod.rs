@@ -346,6 +346,8 @@ pub struct SolverStats {
     pub substitutions: u64,
     /// Number of variables eliminated by bounded variable elimination (BVE).
     pub bve_eliminated: u64,
+    /// Number of clauses removed by forward subsumption.
+    pub subsumed_removed: u64,
     /// Total LBD of learned clauses
     pub total_lbd: u64,
     /// Number of clause minimizations
@@ -1228,6 +1230,16 @@ impl Solver {
                 self.drat_emit_empty();
                 return SolverResult::Unsat;
             }
+            if self.trivially_unsat {
+                self.drat_emit_empty();
+                return SolverResult::Unsat;
+            }
+        }
+        // Forward subsumption cleans up clauses subsumed by BVE resolvents or
+        // by substitution-rewritten clauses — the shrinking step that makes
+        // those passes actually reduce the formula.
+        if self.config.enable_bve || self.config.enable_equiv_substitution {
+            self.forward_subsumption();
             if self.trivially_unsat {
                 self.drat_emit_empty();
                 return SolverResult::Unsat;
