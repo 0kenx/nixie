@@ -5,6 +5,7 @@ mod decide;
 pub mod heuristic;
 mod incremental;
 mod learn;
+mod lucky;
 mod propagate;
 mod search_ext;
 mod equiv;
@@ -223,11 +224,13 @@ pub struct SolverConfig {
     /// Run failed-literal probing with on-the-fly hyper-binary resolution as
     /// part of inprocessing. Default true when inprocessing is on.
     pub enable_hyper_binary_probing: bool,
-    /// Try a cadical-style "lucky" assignment (uniform + positive-Horn guess)
-    /// before search. Off by default: a failed lucky guess perturbs the
-    /// watched-literal state and can slow the subsequent search on structured
-    /// UNSAT instances. Enable to solve easy-but-lucky instances (e.g.
-    /// `simon-r16`) that the search otherwise times out on.
+    /// Try CaDiCaL-style "lucky" pre-solving phase guesses before search
+    /// (uniform all-false / all-true, ordered-with-flip, positive/negative
+    /// Horn). Default **true**, matching CaDiCaL's `opts.lucky = 1`: the
+    /// strategies are soundness-preserving — a doomed guess performs at most a
+    /// pure `O(|literals|)` scan or a single-literal-at-a-time probe that
+    /// backtracks to the root on failure, so it never perturbs the search
+    /// state. Set `false` to disable (e.g. to isolate search-only behaviour).
     pub enable_lucky: bool,
     /// Optional external branching heuristic. When `Some`, called before built-in
     /// VSIDS/LRB/CHB; returning `None` from the heuristic falls back to built-in.
@@ -318,7 +321,7 @@ impl Default for SolverConfig {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -361,6 +364,10 @@ pub struct SolverStats {
     pub chrono_backtracks: u64,
     /// Number of non-chronological backtracks
     pub non_chrono_backtracks: u64,
+    /// Number of CaDiCaL-style "lucky" pre-solving attempts (see `lucky_phases`).
+    pub lucky_tried: u64,
+    /// Number of "lucky" attempts that produced a model without search.
+    pub lucky_succeeded: u64,
 }
 
 impl SolverStats {
@@ -827,6 +834,23 @@ impl Solver {
     /// loop returns [`SolverResult::Unknown`] once the budget is reached.
     pub fn set_max_conflicts(&mut self, max_conflicts: Option<u64>) {
         self.max_conflicts = max_conflicts;
+    }
+
+    /// Set the preferred (default) decision phase for a variable.
+    ///
+    /// Used by theory-combination axiomatization (the z3-style "triangle"
+    /// axioms `(t1=t2) ⟺ (t1≤t2 ∧ t1≥t2)`): biasing the equality atom toward
+    /// `true` (`try_true_first`) makes CDCL prefer merging shared terms, so the
+    /// arithmetic solver's consistency check (`check`) — not fragile reason
+    /// extraction — drives theory combination.
+    pub fn set_preferred_phase(&mut self, var: Var, phase: bool) {
+        let idx = var.index();
+        if idx < self.phase.len() {
+            self.phase[idx] = phase;
+        }
+        if idx < self.best_phase.len() {
+            self.best_phase[idx] = phase;
+        }
     }
 
     /// Returns `true` when the search must stop early: the conflict budget has
@@ -1297,17 +1321,20 @@ impl Solver {
             }
         }
 
-        // Lucky assignment (opt-in): try to satisfy the formula without search
-        // by guessing assignments (cadical solves `simon` this way). Off by
-        // default — see `enable_lucky`.
+        // Lucky pre-solving (CaDiCaL `lucky_phases`): try to satisfy the
+        // formula without search via a small set of structured phase guesses
+        // (uniform / Horn / ordered-with-flip). On by default, matching
+        // CaDiCaL — each strategy is soundness-preserving (a pure scan or a
+        // single-literal-at-a-time probe that bails to the root on failure, so
+        // a doomed guess never perturbs the watched-literal state).
         if self.config.enable_lucky {
-            let unassigned = self.num_vars - self.trail.size();
-            let lucky = (unassigned <= 1500
-                && (self.try_lucky_assignment(false) || self.try_lucky_assignment(true)))
-                || self.try_lucky_positive_horn();
-            if lucky {
-                self.save_model();
-                return SolverResult::Sat;
+            match self.lucky_phases() {
+                Some(SolverResult::Sat) => {
+                    self.save_model();
+                    return SolverResult::Sat;
+                }
+                Some(SolverResult::Unsat) => return SolverResult::Unsat,
+                _ => {}
             }
         }
 

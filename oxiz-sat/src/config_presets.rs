@@ -90,7 +90,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -129,7 +129,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -168,7 +168,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -207,7 +207,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -246,7 +246,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -285,7 +285,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -320,7 +320,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -355,7 +355,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
@@ -390,7 +390,7 @@ impl ConfigPreset {
             reuse_trail: true,
             enable_failed_literal_probing: true,
             enable_hyper_binary_probing: true,
-            enable_lucky: false,
+            enable_lucky: true,
             external_branching: None,
         }
     }
