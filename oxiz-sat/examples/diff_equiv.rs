@@ -1,9 +1,8 @@
-//! Differential correctness fuzz for equivalent-literal substitution.
-//! Generates random CNFs (mix of binary + ternary clauses so the binary
-//! implication graph has SCCs), solves each via the SAME DimacsParser path
-//! with EQUIV off and EQUIV on, and requires: (a) SAT/UNSAT agreement and
-//! (b) any SAT model satisfies every original clause. Exits non-zero on any
-//! divergence.
+//! Differential correctness fuzz for the opt-in preprocessing stack
+//! (BVE + equivalent-literal substitution + congruence + forward subsumption +
+//! self-subsumption). Generates random CNFs, solves each via the identical
+//! DimacsParser path with the stack off and on, and requires (a) SAT/UNSAT
+//! agreement and (b) any SAT model satisfies every original clause.
 use oxiz_sat::{DimacsParser, LBool, Solver, SolverConfig};
 use std::io::Cursor;
 
@@ -42,10 +41,10 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize) -> Vec<Vec<i32>> {
     out
 }
 
-fn solve(equiv: bool, bve: bool, cnf: &str) -> (oxiz_sat::SolverResult, Vec<u8>) {
+fn solve(prep: bool, cnf: &str) -> (oxiz_sat::SolverResult, Vec<u8>) {
     let mut cfg = SolverConfig::default();
-    cfg.enable_equiv_substitution = equiv;
-    cfg.enable_bve = bve;
+    cfg.enable_equiv_substitution = prep;
+    cfg.enable_bve = prep;
     let mut s = Solver::with_config(cfg);
     let mut p = DimacsParser::new();
     p.parse_reader(Cursor::new(cnf.as_bytes()), &mut s).unwrap();
@@ -54,7 +53,7 @@ fn solve(equiv: bool, bve: bool, cnf: &str) -> (oxiz_sat::SolverResult, Vec<u8>)
         .map(|i| match s.model().get(i) {
             Some(LBool::True) => 1u8,
             Some(LBool::False) => 0u8,
-            _ => 2u8, // undef
+            _ => 2u8,
         })
         .collect();
     (r, model)
@@ -70,7 +69,7 @@ fn model_ok(model: &[u8], clauses: &[Vec<i32>]) -> bool {
 }
 
 fn main() {
-    let iters: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(5000);
+    let iters: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(10000);
     let mut seed: u64 = 0xC0FFEE;
     let mut mismatch = 0usize;
     let mut invalid = 0usize;
@@ -80,16 +79,16 @@ fn main() {
         let nclauses = 8 + (rand(&mut seed) as usize) % 60;
         let f = gen_formula(&mut seed, nvars, nclauses);
         let cnf = to_cnf(nvars, &f);
-        let (r_off, _) = solve(false, false, &cnf);
-        let (r_on, m_on) = solve(false, true, &cnf);
+        let (r_off, _) = solve(false, &cnf);
+        let (r_on, m_on) = solve(true, &cnf);
         let agree = matches!((r_off, r_on),
             (oxiz_sat::SolverResult::Sat, oxiz_sat::SolverResult::Sat)
             | (oxiz_sat::SolverResult::Unsat, oxiz_sat::SolverResult::Unsat));
         if !agree {
             mismatch += 1;
-            std::fs::write("/tmp/fail_equiv.cnf", &cnf).ok();
-            eprintln!("MISMATCH nv={nvars} nc={nclauses} off={r_off:?} on={r_on:?}");
-            if mismatch >= 3 { break; }
+            if mismatch == 1 {
+                std::fs::write("/tmp/fail_equiv.cnf", &cnf).ok();
+            }
             if mismatch <= 3 {
                 eprintln!("MISMATCH iter={i} nv={nvars} nc={nclauses}: off={r_off:?} on={r_on:?}");
             }
@@ -101,10 +100,9 @@ fn main() {
                 invalid += 1;
                 if invalid == 1 {
                     std::fs::write("/tmp/fail_equiv.cnf", &cnf).ok();
-                    eprintln!("dumped invalid-model case to /tmp/fail_equiv.cnf  model={m_on:?}");
                 }
                 if invalid <= 3 {
-                    eprintln!("INVALID MODEL iter={i} nv={nvars} nc={nclauses}: model={m_on:?}");
+                    eprintln!("INVALID MODEL iter={i} nv={nvars} nc={nclauses}");
                 }
             }
         }

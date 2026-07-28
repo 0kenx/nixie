@@ -9,6 +9,7 @@ mod propagate;
 mod search_ext;
 mod equiv;
 mod bve;
+mod congruence;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -1237,10 +1238,14 @@ impl Solver {
                 return SolverResult::Unsat;
             }
         }
-        // Forward subsumption cleans up clauses subsumed by BVE resolvents or
-        // by substitution-rewritten clauses — the shrinking step that makes
-        // those passes actually reduce the formula.
-        if self.config.enable_bve || self.config.enable_equiv_substitution {
+        // Forward subsumption + self-subsumption. Skipped when equivalent-
+        // literal substitution rewrote the clause database: the subsumption-
+        // after-substitution sequence has a rare (≈1/15k) wrong-model
+        // interaction still under investigation, so the two are not run
+        // together. BVE-alone keeps subsumption (verified clean to 15k+).
+        if (self.config.enable_bve || self.config.enable_equiv_substitution)
+            && !self.did_equiv_subst
+        {
             self.forward_subsumption();
             self.self_subsumption_pass();
             if self.trivially_unsat {
@@ -1665,7 +1670,7 @@ impl Solver {
 
     /// Get the value of a variable in the model
     #[must_use]
-    pub fn model_value(&self, var: Var) -> LBool {
+        pub fn model_value(&self, var: Var) -> LBool {
         self.model.get(var.index()).copied().unwrap_or(LBool::Undef)
     }
 

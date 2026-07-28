@@ -417,6 +417,19 @@ impl Solver {
             if occ.count(lstar) > OCC_CAP {
                 continue;
             }
+            // A clause justifying a level-0 trail assignment (a propagation
+            // reason) must not be deleted — conflict analysis reads reason
+            // clauses, and a deleted reason yields garbage (wrong UNSAT).
+            let is_reason = self.clauses.get(cid).is_some_and(|c| {
+                c.lits.iter().any(|&lit| {
+                    let var = lit.var();
+                    self.trail.is_assigned(var)
+                        && matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
+                })
+            });
+            if is_reason {
+                continue;
+            }
             let subsumed = occ.get(lstar).iter().any(|&cand| {
                 if cand == cid {
                     return false;

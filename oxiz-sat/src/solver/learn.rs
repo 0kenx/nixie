@@ -491,6 +491,39 @@ impl Solver {
             }
         }
 
+        // Reconstruct variables eliminated by equivalent-literal substitution
+        // (equiv.rs / congruence.rs): give each the value of its representative
+        // literal (flipped when polarities differ). Iterated to a fixpoint so a
+        // representative that is itself eliminated (or whose value arrives via
+        // BVE reconstruction below) is handled regardless of variable order.
+        if !self.equiv_substitution.is_empty() {
+            loop {
+                let mut changed = false;
+                for v in 0..self.num_vars {
+                    if self.model[v] != LBool::Undef {
+                        continue;
+                    }
+                    let Some(rep) = self.equiv_substitution.get(v).copied() else {
+                        continue;
+                    };
+                    if rep.var().index() == v {
+                        continue; // not eliminated
+                    }
+                    let Some(rep_val) = self.model.get(rep.var().index()).copied() else {
+                        continue;
+                    };
+                    if rep_val == LBool::Undef {
+                        continue; // rep not yet known; retry next iteration
+                    }
+                    self.model[v] = if rep.is_pos() { rep_val } else { rep_val.negate() };
+                    changed = true;
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
+
         // Reconstruct variables eliminated by BVE in reverse elimination order.
         // For eliminated `v` with positive clauses `(v ∨ A_i)` (stripped of `v`):
         //   - if EVERY `A_i` already has a satisfied literal, set `v = false`
