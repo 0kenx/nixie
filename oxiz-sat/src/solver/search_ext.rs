@@ -93,28 +93,38 @@ impl Solver {
 
             // Theory propagation check after each assignment
             loop {
-                // Get only NEW (unprocessed) assignments and notify theory
-                let assignments = self.trail.assignments().to_vec();
                 let mut theory_conflict = None;
                 let mut theory_propagations = Vec::new();
 
-                // Check only NEW assignments with theory (skip already-processed ones).
-                // Guard against stale theory_processed after backtracks/restarts.
-                let safe_start = theory_processed.min(assignments.len());
-                for &lit in &assignments[safe_start..] {
-                    match theory.on_assignment(lit) {
-                        TheoryCheckResult::Sat => {}
-                        TheoryCheckResult::Conflict(conflict_lits) => {
-                            theory_conflict = Some(conflict_lits);
-                            break;
-                        }
-                        TheoryCheckResult::Propagated(props) => {
-                            theory_propagations.extend(props);
+                // Process only NEW (unprocessed) trail assignments.  Iterate the
+                // trail slice in place — the previous code cloned the *entire*
+                // trail (`to_vec()`) on every iteration of this loop, which is
+                // O(trail) allocation + copy per theory-check and dominated QF_UF
+                // runtime (trails reach thousands of literals).  The trail is not
+                // mutated inside this loop — only after, when propagations /
+                // conflicts are applied — so holding an immutable borrow across
+                // the `on_assignment` calls (which take `&mut theory`, a separate
+                // parameter, not `&mut self`) is sound.
+                let new_len = {
+                    let trail = self.trail.assignments();
+                    // Guard against stale theory_processed after backtracks/restarts.
+                    let safe_start = theory_processed.min(trail.len());
+                    for &lit in &trail[safe_start..] {
+                        match theory.on_assignment(lit) {
+                            TheoryCheckResult::Sat => {}
+                            TheoryCheckResult::Conflict(conflict_lits) => {
+                                theory_conflict = Some(conflict_lits);
+                                break;
+                            }
+                            TheoryCheckResult::Propagated(props) => {
+                                theory_propagations.extend(props);
+                            }
                         }
                     }
-                }
+                    trail.len()
+                };
                 // Update processed count
-                theory_processed = assignments.len();
+                theory_processed = new_len;
 
                 // Handle theory conflict
                 if let Some(conflict_lits) = theory_conflict {
