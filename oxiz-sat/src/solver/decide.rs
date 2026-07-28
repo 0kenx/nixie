@@ -320,7 +320,13 @@ impl Solver {
         // previous trail. Alternates with restoring the best-known phase to
         // refocus near the longest trail. Without this, frequent (LBD) restarts
         // just redo work and inflate the conflict count.
+        // Rephase fires only in stable mode (cadical-style): stable mode runs
+        // long Luby intervals where refocusing the phase has room to compound,
+        // whereas in focused mode (frequent Glucose restarts) rephasing just
+        // discards the memoized phase and the search re-derives it. Measured:
+        // ungated rephase regresses broadly; stable-gated rephase is neutral.
         if self.config.rephase_interval > 0
+            && self.stable
             && self.stats.restarts % u64::from(self.config.rephase_interval) == 0
         {
             self.rephase_count += 1;
