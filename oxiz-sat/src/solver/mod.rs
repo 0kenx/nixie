@@ -1686,6 +1686,7 @@ impl Solver {
                         self.rand_bool(0.5)
                     } else {
                         self.phase.get(var.index()).copied().unwrap_or(false)
+                            ^ self.phase_inverted
                     };
                     let lit = if polarity {
                         Lit::pos(var)
