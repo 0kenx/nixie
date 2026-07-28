@@ -45,6 +45,12 @@ impl Solver {
         let num_vars = self.num_vars;
         let num_lits = num_vars * 2;
 
+        // Refresh the binary implication graph from current (incl. learned)
+        // binary clauses so the SCC sees equivalences exposed during search —
+        // essential for inprocessing re-runs. (On the first, pre-search call
+        // the graph is already current; this is a cheap no-op there.)
+        self.refresh_binary_graph();
+
         // Augment the binary implication graph with equivalences inferred from
         // congruent AND/XOR gates (multiplier / adder structure) before SCC, so
         // the closure below folds them in too.
@@ -195,12 +201,25 @@ impl Solver {
         }
 
         // ---- Record model-reconstruction map + branching-skip flag. ----
-        // A variable is eliminated iff pos(v) resolved to a representative of a
-        // *different* variable. model[v] is then value(sub[pos(v)]).
-        self.equiv_substitution.resize(num_vars, Lit::from_code(0));
+        // `equiv_substitution[v]` is the CUMULATIVE representative literal for
+        // `v` across all substitution rounds (identity `pos(v)` if never
+        // eliminated). Each round COMPOSES this round's `sub` onto it — so an
+        // inprocessing re-run that further folds a previous representative is
+        // recorded correctly, instead of overwriting (and losing) the earlier
+        // elimination. (Overwriting was the inprocessing soundness bug: a var
+        // eliminated in round 1 became non-eliminated in round 2's map, got
+        // re-branched, and took an unreconstructed value.)
+        if !self.equiv_subst_inited {
+            self.equiv_substitution.clear();
+            self.equiv_substitution
+                .extend((0..num_vars).map(|v| Lit::pos(Var::new(v as u32))));
+            self.equiv_subst_inited = true;
+        } else {
+            self.equiv_substitution.resize(num_vars, Lit::pos(Var::new(0)));
+        }
         for v in 0..num_vars {
-            let pos = Lit::pos(Var::new(v as u32));
-            let rep = sub[pos.code() as usize];
+            let cur = self.equiv_substitution[v];
+            let rep = sub[cur.code() as usize];
             self.equiv_substitution[v] = rep;
             if rep.var().index() != v {
                 eliminated += 1;
@@ -247,6 +266,23 @@ impl Solver {
     /// literal substitution, BVE): the old watches point at stale literals, so
     /// the whole structure is regenerated. Binary clauses also repopulate the
     /// binary implication graph.
+    /// Rebuild ONLY the binary implication graph from current live binary
+    /// clauses (original + learned). Used before re-running substitution during
+    /// inprocessing so the SCC sees equivalences exposed by learned binaries.
+    pub(super) fn refresh_binary_graph(&mut self) {
+        self.binary_graph.clear();
+        let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
+        for cid in live_ids {
+            let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
+                Some(c) if !c.deleted && c.lits.len() == 2 => c.lits.iter().copied().collect(),
+                _ => continue,
+            };
+            let (a, b) = (lits[0], lits[1]);
+            self.binary_graph.add(a.negate(), b, cid);
+            self.binary_graph.add(b.negate(), a, cid);
+        }
+    }
+
     pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
         let num_vars = self.num_vars;
         self.watches = WatchLists::new(num_vars);

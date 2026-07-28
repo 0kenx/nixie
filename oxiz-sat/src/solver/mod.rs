@@ -586,6 +586,9 @@ pub struct Solver {
     /// already-substituted clauses and, for incremental callers, on top of
     /// assumptions/blocking clauses expressed in the original variable space).
     pub(super) did_equiv_subst: bool,
+    /// Whether `equiv_substitution` has been identity-initialized (one-time;
+    /// subsequent substitution rounds compose onto it).
+    pub(super) equiv_subst_inited: bool,
     /// One-shot latch for BVE (see `did_equiv_subst`).
     pub(super) did_bve: bool,
     /// Model-reconstruction map for equivalent-literal substitution
@@ -699,6 +702,7 @@ impl Solver {
             bve_order: Vec::new(),
             did_bve: false,
             did_equiv_subst: false,
+            equiv_subst_inited: false,
             interrupt: None,
             max_conflicts: None,
             drat: None,
