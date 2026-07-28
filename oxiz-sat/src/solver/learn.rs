@@ -490,6 +490,24 @@ impl Solver {
                 };
             }
         }
+
+        // Reconstruct variables eliminated by equivalent-literal substitution
+        // (equiv.rs): give each the value of its representative literal. The
+        // representative's own variable is never eliminated, so its model value
+        // was already set from the trail above.
+        if !self.equiv_substitution.is_empty() {
+            for v in 0..self.num_vars {
+                let Some(rep) = self.equiv_substitution.get(v).copied() else {
+                    continue;
+                };
+                if rep.var().index() == v {
+                    continue; // not eliminated
+                }
+                let rep_val = self.model.get(rep.var().index()).copied().unwrap_or(LBool::Undef);
+                let val = if rep.is_pos() { rep_val } else { rep_val.negate() };
+                self.model[v] = val;
+            }
+        }
     }
 
     /// Safety net for the purely Boolean entry points: check that the model just

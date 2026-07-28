@@ -9,7 +9,7 @@ impl Solver {
         if let Some(ref ext) = self.config.external_branching {
             let candidates: Vec<Var> = (0..self.num_vars)
                 .map(|i| Var::new(i as u32))
-                .filter(|&v| !self.trail.is_assigned(v))
+                .filter(|&v| !self.trail.is_assigned(v) && !self.var_eliminated(v))
                 .collect();
             let scores: Vec<f64> = candidates.iter().map(|&v| self.vsids.activity(v)).collect();
             if let Ok(mut h) = ext.lock()
@@ -22,7 +22,7 @@ impl Solver {
         if self.config.use_lrb_branching {
             // Use LRB branching
             while let Some(var) = self.lrb.select() {
-                if !self.trail.is_assigned(var) {
+                if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
                     self.lrb.on_assign(var);
                     return Some(var);
                 }
@@ -35,7 +35,7 @@ impl Solver {
             }
 
             while let Some(var) = self.chb.pop_max() {
-                if !self.trail.is_assigned(var) {
+                if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
                     return Some(var);
                 }
             }
@@ -48,12 +48,23 @@ impl Solver {
                 self.config.use_vmtf
             };
             if use_vmtf_now {
-                if let Some(var) = self.vmtf.next_decision(|v| self.trail.is_assigned(v)) {
+                // Borrow only `trail` and `equiv_substitution` (disjoint from the
+                // `&mut self.vmtf` the call below needs) — a full `&self`
+                // method like `var_eliminated` would conflict.
+                let trail = &self.trail;
+                let subst = &self.equiv_substitution;
+                let eliminated = |v: Var| {
+                    subst.get(v.index()).is_some_and(|&r| r.var() != v)
+                };
+                if let Some(var) = self
+                    .vmtf
+                    .next_decision(|v| trail.is_assigned(v) || eliminated(v))
+                {
                     return Some(var);
                 }
             }
             while let Some(var) = self.vsids.pop_max() {
-                if !self.trail.is_assigned(var) {
+                if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
                     return Some(var);
                 }
             }

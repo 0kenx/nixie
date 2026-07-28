@@ -7,6 +7,7 @@ mod incremental;
 mod learn;
 mod propagate;
 mod search_ext;
+mod equiv;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -156,6 +157,17 @@ pub struct SolverConfig {
     pub use_lrb_branching: bool,
     /// Enable inprocessing (periodic preprocessing during search)
     pub enable_inprocessing: bool,
+    /// Enable equivalent-literal substitution (SCC on the binary implication
+    /// graph) as a one-shot pre-search pass. Sound and well-tested (50k+
+    /// differential fuzz vs the un-substituted path), but OFF by default: it
+    /// folds equivalent variables out of the search, which is incompatible with
+    /// incremental/AllSAT clients that reference original variables between
+    /// solve() calls, and on the one structured benchmark with many
+    /// equivalences (`longmult15`, 29% of vars in SCCs) it does not help —
+    /// CaDiCaL's edge there is pure search quality, not structural collapse.
+    /// Enable for one-shot solving of binary-heavy formulas where collapsing
+    /// equivalences is expected to pay off.
+    pub enable_equiv_substitution: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
     /// Enable chronological backtracking
@@ -284,6 +296,7 @@ impl Default for SolverConfig {
             use_chb_branching: false,
             use_lrb_branching: false,
             enable_inprocessing: false,
+            enable_equiv_substitution: false,
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
@@ -321,6 +334,8 @@ pub struct SolverStats {
     pub binary_clauses: u64,
     /// Number of unit clauses learned
     pub unit_clauses: u64,
+    /// Number of variables eliminated by equivalent-literal substitution.
+    pub substitutions: u64,
     /// Total LBD of learned clauses
     pub total_lbd: u64,
     /// Number of clause minimizations
@@ -551,10 +566,17 @@ pub struct Solver {
     /// literal is forced to `true` in the reconstructed model (see
     /// [`Solver::save_model`]). At most one polarity per variable is recorded.
     pub(super) pure_literal_reconstruction: Vec<Lit>,
-    /// Optional cooperative interrupt flag. When set to `true` by another thread
-    /// (e.g. a portfolio coordinator on timeout), the search loop stops at the
-    /// next check and returns [`SolverResult::Unknown`]. `None` means no external
-    /// interrupt is wired.
+    /// One-shot latch: once equivalent-literal substitution has rewritten the
+    /// clause database we must not run it again (a second pass would operate on
+    /// already-substituted clauses and, for incremental callers, on top of
+    /// assumptions/blocking clauses expressed in the original variable space).
+    pub(super) did_equiv_subst: bool,
+    /// Model-reconstruction map for equivalent-literal substitution
+    /// (`equiv.rs`): `equiv_substitution[v]` is the representative literal
+    /// whose value variable `v` should inherit in the model. For a variable
+    /// that was *not* eliminated this is `Lit::pos(v)` (identity). For an
+    /// eliminated variable it is a literal of a different variable.
+    pub(super) equiv_substitution: Vec<Lit>,
     pub(super) interrupt: Option<Arc<AtomicBool>>,
     /// Optional conflict budget. When `Some(n)`, the search loop returns
     /// [`SolverResult::Unknown`] once `n` conflicts have been reached instead of
@@ -645,6 +667,8 @@ impl Solver {
             clause_bump_increment: 1.0,
             memory_optimizer: MemoryOptimizer::new(),
             pure_literal_reconstruction: Vec::new(),
+            equiv_substitution: Vec::new(),
+            did_equiv_subst: false,
             interrupt: None,
             max_conflicts: None,
             drat: None,
@@ -1159,6 +1183,20 @@ impl Solver {
         if self.propagate().is_some() {
             self.drat_emit_empty();
             return SolverResult::Unsat;
+        }
+
+        // Equivalent-literal substitution (SCC on the binary implication graph).
+        // Collapses binary-heavy formulas before search; a no-op (early-out)
+        // when there are no non-trivial SCCs. Runs at level 0 / base scope only.
+        if self.config.enable_equiv_substitution {
+            if self.substitute_equivalent_literals() == equiv::SubstOutcome::Unsat {
+                self.drat_emit_empty();
+                return SolverResult::Unsat;
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty();
+                return SolverResult::Unsat;
+            }
         }
 
         // Lucky assignment (opt-in): try to satisfy the formula without search
