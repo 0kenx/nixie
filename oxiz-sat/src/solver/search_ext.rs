@@ -158,11 +158,39 @@ impl Solver {
                     continue 'search;
                 }
 
-                // Handle theory propagations
+                // Handle theory propagations.
+                //
+                // Split empty-reason (unconditional) propagations from
+                // reasoned ones. A non-empty reason yields a regular two-watched
+                // explanation clause assigned at the current level. An empty
+                // reason is a level-0 theory fact: a unit cannot be two-watched,
+                // and using it as a mid-level propagation reason breaks 1-UIP
+                // conflict analysis (it resolves to nothing, so the propagated
+                // literal becomes a spurious UIP and the learned clause can
+                // negate a genuinely-forced atom → false UNSAT). Such facts
+                // must be installed at level 0 — handled first, which discards
+                // the reasoned propagations in a mixed batch (they were derived
+                // from the now-backtracked trail and will be re-derived).
+                let has_units = theory_propagations.iter().any(|(_, r)| r.is_empty());
+                if has_units {
+                    let units: SmallVec<[Lit; 4]> = theory_propagations
+                        .iter()
+                        .filter(|(_, r)| r.is_empty())
+                        .map(|(l, _)| *l)
+                        .collect();
+                    if self.install_theory_units(theory, &mut theory_processed, &units) {
+                        return SolverResult::Unsat;
+                    }
+                    // Restart the theory loop so the newly forced level-0
+                    // literals are re-sent to the theory via on_assignment.
+                    continue;
+                }
+
                 let mut made_propagation = false;
                 for (lit, reason_lits) in theory_propagations {
                     if !self.trail.is_assigned(lit.var()) {
-                        // Add reason clause and propagate
+                        // Add the two-watched reason clause and propagate at the
+                        // current level.
                         let clause_id = self.add_theory_reason_clause(&reason_lits, lit);
                         self.trail.assign_propagation(lit, clause_id);
                         made_propagation = true;
@@ -273,17 +301,82 @@ impl Solver {
                         self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     }
                     TheoryCheckResult::Propagated(props) => {
-                        // Handle late propagations
-                        for (lit, reason_lits) in props {
-                            if !self.trail.is_assigned(lit.var()) {
-                                let clause_id = self.add_theory_reason_clause(&reason_lits, lit);
-                                self.trail.assign_propagation(lit, clause_id);
+                        // Handle late propagations with the same sound split as
+                        // the mid-search path: unconditional facts become
+                        // level-0 units, reasoned ones become two-watched
+                        // explanation clauses.
+                        let has_units = props.iter().any(|(_, r)| r.is_empty());
+                        if has_units {
+                            let units: SmallVec<[Lit; 4]> = props
+                                .iter()
+                                .filter(|(_, r)| r.is_empty())
+                                .map(|(l, _)| *l)
+                                .collect();
+                            if self.install_theory_units(theory, &mut theory_processed, &units) {
+                                return SolverResult::Unsat;
+                            }
+                            // Loop back: the outer loop re-decides from the new
+                            // level-0 state (final_check fired at a full
+                            // assignment, so the forced unit opens new search).
+                        } else {
+                            for (lit, reason_lits) in props {
+                                if !self.trail.is_assigned(lit.var()) {
+                                    let clause_id =
+                                        self.add_theory_reason_clause(&reason_lits, lit);
+                                    self.trail.assign_propagation(lit, clause_id);
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Install a batch of *unconditional* (empty-reason) theory facts as
+    /// permanent level-0 units, backtracking to the root first and notifying
+    /// the theory so its trail view stays in sync.
+    ///
+    /// An empty reason means the propagated literal is a consequence of nothing
+    /// on the trail — a theory tautology. It must live at level 0: a unit
+    /// clause cannot be two-watched, and using one as the reason of a mid-level
+    /// propagation breaks 1-UIP conflict analysis. Each fact is stored as a
+    /// Core-tier unit clause ([`Solver::force_theory_unit`]) and forced as a
+    /// level-0 decision.
+    ///
+    /// `theory_processed` is clamped to the post-backtrack trail so the newly
+    /// forced literals are re-sent to the theory on the next `on_assignment`
+    /// sweep. Returns `true` if installing the units discovered a contradiction
+    /// at level 0 (with `trivially_unsat` set); the caller then returns `Unsat`.
+    fn install_theory_units<T: TheoryCallback>(
+        &mut self,
+        theory: &mut T,
+        theory_processed: &mut usize,
+        units: &[Lit],
+    ) -> bool {
+        // Backtrack to root so the units can be assigned at level 0.
+        if self.trail.decision_level() > 0 {
+            theory.on_backtrack(0);
+            self.backtrack_with_phase_saving(0);
+            *theory_processed = (*theory_processed).min(self.trail.assignments().len());
+        }
+        for &lit in units {
+            // The theory's view was just rewound to level 0, so a unit may now
+            // collide with a pre-existing level-0 fact.
+            match self.trail.lit_value(lit) {
+                LBool::True => {}
+                LBool::False => {
+                    self.trivially_unsat = true;
+                    return true;
+                }
+                LBool::Undef => self.force_theory_unit(lit),
+            }
+        }
+        if self.propagate().is_some() {
+            self.trivially_unsat = true;
+            return true;
+        }
+        false
     }
 
     /// Run clause-database reduction and the restart check, keeping the theory's
