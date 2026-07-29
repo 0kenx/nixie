@@ -242,41 +242,83 @@ impl Solver {
         }
     }
 
-    /// Add a theory reason clause
-    /// The clause is: reason_lits[0] OR reason_lits[1] OR ... OR propagated_lit
+    /// Add a *reasoned* theory explanation clause for a propagation.
+    ///
+    /// The clause is `(propagated_lit ∨ ¬r0 ∨ … ∨ ¬r_{n-1})`, sound because the
+    /// theory guarantees every `r_i` is currently TRUE on the trail, so the
+    /// clause is unit under the current assignment and propagates
+    /// `propagated_lit`.  The clause is registered as a two-watched learned
+    /// clause so that, after any later backtrack, BCP re-derives the
+    /// propagation as soon as the reasons are re-established — the
+    /// two-watched-literal invariant that keeps the clause enforced.
+    ///
+    /// `reason_lits` MUST be non-empty.  An empty reason denotes an
+    /// *unconditional* theory fact — a level-0 unit, which cannot be
+    /// two-watched and which would break 1-UIP conflict analysis if used as a
+    /// mid-level propagation reason (the unit resolves to nothing, so the
+    /// propagated literal becomes a spurious UIP and the learned clause can
+    /// negate a genuinely-forced atom → false UNSAT).  The caller routes
+    /// empty-reason propagations through [`Solver::force_theory_unit`].
+    ///
+    /// Watch literals are picked with [`Solver::watch_rank`] (prefer a
+    /// satisfied literal, then an unassigned one, then the latest-falsified)
+    /// and swapped into positions 0 and 1 of the stored clause, because the
+    /// watcher / propagation loop assumes the watched literals live there.
+    /// `propagated_lit` is currently unassigned (the caller only propagates
+    /// unassigned variables) and so is the highest-ranked literal — it stays
+    /// at index 0; the second watch is the latest-falsified reason, so a watch
+    /// always fires on re-falsification.  The previous code watched indices 0
+    /// and 1 blindly, which on a clause whose index-1 literal was false below
+    /// the eventual backtrack level left both watches cold and the clause
+    /// silently unenforced after backtracking.
     pub(super) fn add_theory_reason_clause(
         &mut self,
         reason_lits: &[Lit],
         propagated_lit: Lit,
     ) -> ClauseId {
+        debug_assert!(
+            !reason_lits.is_empty(),
+            "add_theory_reason_clause requires non-empty reasons; empty-reason \
+             theory facts must go through force_theory_unit"
+        );
+
+        // Build the explanation clause: (propagated_lit ∨ ¬r0 ∨ …).
         let mut clause_lits: SmallVec<[Lit; 8]> = SmallVec::new();
         clause_lits.push(propagated_lit);
         for &lit in reason_lits {
-            clause_lits.push(lit.negate());
+            let neg = lit.negate();
+            // Dedup by variable (keep first occurrence so propagated_lit stays
+            // at index 0) and skip a degenerate self-negation that would make
+            // the clause a tautology (`propagated_lit ∨ ¬propagated_lit`).
+            if neg.var() == propagated_lit.var() {
+                continue;
+            }
+            if clause_lits.iter().any(|&l| l.var() == neg.var()) {
+                continue;
+            }
+            clause_lits.push(neg);
         }
 
-        // Pick the second watch the way `Solver::add_clause` does, instead of
-        // blindly taking `clause_lits[1]`.
-        //
-        // `propagated_lit` stays at index 0: the caller assigns it immediately,
-        // so it is the only literal here that is not already false and is by
-        // construction the best watch. Every other literal is the negation of a
-        // theory reason literal and is therefore false *right now* — and, being
-        // an existing assignment, already behind the propagation head. Watching
-        // whichever of them happens to come first can leave the clause watched on
-        // a literal falsified long ago, whose watch event has already been and
-        // gone; that watch can never fire again, so the clause can be silently
-        // falsified and a later `solve()` reports `Sat` on a model violating it.
-        //
-        // `watch_rank` instead picks the literal that is *last* to become false
-        // (a true literal, else an unassigned one, else the false literal at the
-        // highest decision level), which is MiniSat's `attachClause` invariant:
-        // the clause can then only become fully false through a watched literal,
-        // and that always re-examines it. This mirrors the identical fix already
-        // documented in `add_clause`.
-        if clause_lits.len() >= 2 {
+        // After dedup at least propagated_lit + one distinct reason remain.
+        let n = clause_lits.len();
+        debug_assert!(
+            n >= 2,
+            "theory reason clause collapsed to a unit; route through force_theory_unit"
+        );
+
+        // Select the two best watch literals and swap them into positions 0
+        // and 1 (the watcher/propagation loop assumes watched literals live
+        // there), mirroring `add_clause` / `learn_clause`.
+        if n >= 2 {
+            let mut best = 0;
+            for i in 1..n {
+                if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[best]) {
+                    best = i;
+                }
+            }
+            clause_lits.swap(0, best);
             let mut second = 1;
-            for i in 2..clause_lits.len() {
+            for i in 2..n {
                 if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[second]) {
                     second = i;
                 }
@@ -284,37 +326,69 @@ impl Solver {
             clause_lits.swap(1, second);
         }
 
+        let lbd = self.compute_lbd(&clause_lits);
         let clause_id = self.clauses.add_learned(clause_lits.iter().copied());
 
-        // Set up watches
-        if clause_lits.len() >= 2 {
-            let lit0 = clause_lits[0];
-            let lit1 = clause_lits[1];
-            self.watches
-                .add(lit0.negate(), Watcher::new(clause_id, lit1));
-            self.watches
-                .add(lit1.negate(), Watcher::new(clause_id, lit0));
-
-            // Every other `add_learned` call site computes and stores an LBD for
-            // its clause (see `Solver::compute_lbd`'s call sites in `solve` and
-            // `learn_clause`); this one used to be the odd one out, leaving
-            // `clause.lbd` at `Clause::learned`'s default of 0 forever. That is
-            // not just a missing statistic: `Clause::record_usage` promotes a
-            // clause straight to the rarely-deleted `Core` tier once
-            // `lbd <= 2`, so a stuck LBD of 0 gave every theory reason clause an
-            // artificially easy path into permanent retention regardless of its
-            // actual quality. Computed here, before `propagated_lit` is assigned
-            // by the caller, matching the timing every other call site uses
-            // (LBD is computed while the asserting/propagated literal is still
-            // unassigned).
-            let lbd = self.compute_lbd(&clause_lits);
-            if let Some(clause) = self.clauses.get_mut(clause_id) {
-                clause.lbd = lbd;
-            }
-            self.debug_check_learned_clause_lbd(clause_id);
+        // Track as a Core-tier learned clause so it is accounted for (clause-db
+        // reduction, compaction, DRAT-minimality) and never aggressively
+        // deleted: a theory lemma is entailed for as long as the formula stands.
+        self.learned_clause_ids.push(clause_id);
+        if let Some(clause) = self.clauses.get_mut(clause_id) {
+            clause.lbd = lbd;
+            clause.promote_to_core();
         }
 
+        // DRAT: the explanation clause is a valid theory lemma.
+        self.drat_add(&clause_lits);
+
+        let lit0 = clause_lits[0];
+        let lit1 = clause_lits[1];
+        if n == 2 {
+            // Binary clause: also register in the binary implication graph,
+            // matching how `learn_clause` attaches binaries.
+            self.binary_graph.add(lit0.negate(), lit1, clause_id);
+            self.binary_graph.add(lit1.negate(), lit0, clause_id);
+        }
+        self.watches
+            .add(lit0.negate(), Watcher::new(clause_id, lit1));
+        self.watches
+            .add(lit1.negate(), Watcher::new(clause_id, lit0));
+
         clause_id
+    }
+
+    /// Force an *unconditional* theory fact (a propagation the theory reported
+    /// with an empty reason clause) as a permanent level-0 unit.
+    ///
+    /// Must be called at decision level 0 — the caller backtracks to the root
+    /// first (see `install_theory_units`).  Stores the unit lemma `[lit]` as a
+    /// Core-tier clause (so the DRAT proof records it and it survives clause-db
+    /// reduction) and assigns `lit` as a level-0 decision so it persists across
+    /// every later backtrack.
+    ///
+    /// A unit clause cannot be two-watched, and using one as the reason of a
+    /// mid-level propagation breaks 1-UIP conflict analysis (the unit resolves
+    /// to nothing, so the propagated literal becomes a spurious UIP and the
+    /// learned clause can negate a genuinely-forced atom → false UNSAT).
+    /// Installing the fact at level 0 keeps it out of 1-UIP resolution (the
+    /// `level > 0` filter in `analyze`) while still constraining the search.
+    pub(super) fn force_theory_unit(&mut self, lit: Lit) {
+        debug_assert_eq!(
+            self.trail.decision_level(),
+            0,
+            "force_theory_unit requires decision level 0 (caller backtracks first)"
+        );
+        // Store the unit lemma permanently (Core tier, tracked for reduction).
+        let clause_id = self.clauses.add_learned(std::iter::once(lit));
+        self.learned_clause_ids.push(clause_id);
+        if let Some(clause) = self.clauses.get_mut(clause_id) {
+            clause.lbd = 1;
+            clause.promote_to_core();
+        }
+        self.drat_add(&[lit]);
+        // Assign at level 0 as a decision (no propagation reason): this is the
+        // only sound home for a unit, and it survives every backtrack.
+        self.trail.assign_decision(lit);
     }
 
     /// Reduce the learned clause database using tier-based deletion strategy
@@ -515,7 +589,11 @@ impl Solver {
                     if rep_val == LBool::Undef {
                         continue; // rep not yet known; retry next iteration
                     }
-                    self.model[v] = if rep.is_pos() { rep_val } else { rep_val.negate() };
+                    self.model[v] = if rep.is_pos() {
+                        rep_val
+                    } else {
+                        rep_val.negate()
+                    };
                     changed = true;
                 }
                 if !changed {
@@ -542,13 +620,24 @@ impl Solver {
                     _ => continue,
                 };
                 let lit_true = |l: Lit| {
-                    self.model.get(l.var().index()).copied().unwrap_or(LBool::Undef)
-                        == if l.is_pos() { LBool::True } else { LBool::False }
+                    self.model
+                        .get(l.var().index())
+                        .copied()
+                        .unwrap_or(LBool::Undef)
+                        == if l.is_pos() {
+                            LBool::True
+                        } else {
+                            LBool::False
+                        }
                 };
                 let all_satisfied = clauses
                     .iter()
                     .all(|clause| clause.iter().any(|&l| lit_true(l)));
-                self.model[v.index()] = if all_satisfied { LBool::False } else { LBool::True };
+                self.model[v.index()] = if all_satisfied {
+                    LBool::False
+                } else {
+                    LBool::True
+                };
             }
         }
     }
