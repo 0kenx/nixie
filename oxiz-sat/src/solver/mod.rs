@@ -1426,6 +1426,11 @@ impl Solver {
                     // Compute LBD for the learned clause
                     let lbd = self.compute_lbd(&learnt_clause);
 
+                    // Accumulate for the `avg_lbd` stat. (The only other writers
+                    // of `stats.total_lbd` are on a dead legacy path in
+                    // `learn.rs`, so without this the reported average was 0.)
+                    self.stats.total_lbd = self.stats.total_lbd.saturating_add(lbd as u64);
+
                     // Track recent LBD for the local-restart strategy.
                     self.recent_lbd_sum += u64::from(lbd);
                     self.recent_lbd_count += 1;
@@ -1478,7 +1483,9 @@ impl Solver {
 
                 // Decay activities
                 self.vsids.decay();
-                self.chb.decay();
+                if self.config.use_chb_branching {
+                    self.chb.decay();
+                }
                 self.lrb.decay();
                 self.lrb.on_conflict();
                 self.decay_clause_activity();

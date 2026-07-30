@@ -12,7 +12,7 @@
 //! cargo run --release --example cnf_solve -- path/to/file.cnf
 //! ```
 
-use oxiz_sat::{DimacsParser, RestartStrategy, Solver, SolverConfig, SolverResult};
+use oxiz_sat::{ConfigPreset, DimacsParser, RestartStrategy, Solver, SolverConfig, SolverResult};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -20,20 +20,45 @@ fn main() {
         std::process::exit(2);
     });
 
-    let mut config = match std::env::var("RESTART").ok().as_deref() {
-        Some("glucose") => SolverConfig {
-            restart_strategy: RestartStrategy::Glucose,
-            ..SolverConfig::default()
-        },
-        Some("geometric") => SolverConfig {
-            restart_strategy: RestartStrategy::Geometric,
-            ..SolverConfig::default()
-        },
-        Some("locallbd") => SolverConfig {
-            restart_strategy: RestartStrategy::LocalLbd,
-            ..SolverConfig::default()
-        },
-        _ => SolverConfig::default(),
+    // Optional full-preset override (e.g. PRESET=cadical) takes precedence over
+    // the individual RESTART/INPROCESS/... knobs below. Accepts lowercase names
+    // matching the `ConfigPreset` variants.
+    let preset_config = std::env::var("PRESET").ok().and_then(|s| {
+        let s = s.trim().to_ascii_lowercase();
+        let p = match s.as_str() {
+            "default" => Some(ConfigPreset::Default),
+            "industrial" => Some(ConfigPreset::Industrial),
+            "random" => Some(ConfigPreset::Random),
+            "cryptographic" => Some(ConfigPreset::Cryptographic),
+            "hardware" => Some(ConfigPreset::Hardware),
+            "aggressive" => Some(ConfigPreset::Aggressive),
+            "conservative" => Some(ConfigPreset::Conservative),
+            "glucose" => Some(ConfigPreset::Glucose),
+            "minisat" => Some(ConfigPreset::MiniSat),
+            "cadical" => Some(ConfigPreset::CaDiCaL),
+            _ => None,
+        };
+        p.map(|preset| preset.config())
+    });
+
+    let mut config = if let Some(c) = preset_config {
+        c
+    } else {
+        match std::env::var("RESTART").ok().as_deref() {
+            Some("glucose") => SolverConfig {
+                restart_strategy: RestartStrategy::Glucose,
+                ..SolverConfig::default()
+            },
+            Some("geometric") => SolverConfig {
+                restart_strategy: RestartStrategy::Geometric,
+                ..SolverConfig::default()
+            },
+            Some("locallbd") => SolverConfig {
+                restart_strategy: RestartStrategy::LocalLbd,
+                ..SolverConfig::default()
+            },
+            _ => SolverConfig::default(),
+        }
     };
     if let Some(v) = std::env::var("INTERVAL").ok().filter(|s| !s.is_empty()) {
         if let Ok(n) = v.parse::<u64>() {
