@@ -4,9 +4,14 @@
 //! standard `s SATISFIABLE` / `s UNSATISFIABLE` line (matching the output
 //! convention used by CaDiCaL/MiniSAT, so results can be diffed directly).
 //!
+//! Defaults to the CaDiCaL preset (the strongest sound configuration:
+//! Glucose-style stabilize restarts, inprocessing, rephase, probing). Pass
+//! `PRESET=default` to recover the bare `SolverConfig::default()` baseline.
+//!
 //! Optional env overrides for A/B testing single files:
+//!   PRESET=<name>   (cadical|default|industrial|glucose|...; wins over below)
 //!   RESTART=luby|glucose|geometric|locallbd  INTERVAL=N  REUSE=0|1
-//!   REPHASE=N  MAXC=N (conflict limit → returns UNKNOWN if exceeded)
+//!   INPROCESS=0|1  BVE=0|1  EQUIV=0|1  STABLE=0|1  REPHASE=N  MAXC=N
 //!
 //! ```text
 //! cargo run --release --example cnf_solve -- path/to/file.cnf
@@ -57,7 +62,7 @@ fn main() {
                 restart_strategy: RestartStrategy::LocalLbd,
                 ..SolverConfig::default()
             },
-            _ => SolverConfig::default(),
+            _ => ConfigPreset::CaDiCaL.config(),
         }
     };
     if let Some(v) = std::env::var("INTERVAL").ok().filter(|s| !s.is_empty()) {
