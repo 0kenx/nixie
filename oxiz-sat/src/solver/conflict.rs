@@ -227,7 +227,11 @@ impl Solver {
 
         // Batch bump all collected variables at once (single heap rebuild)
         self.vsids.bump_batch(&vars_to_bump);
-        self.chb.bump_batch(&vars_to_bump);
+        // CHB's `bump_batch` performs an O(num_vars) heap rebuild; only pay
+        // for it when CHB is actually the active branching heuristic.
+        if self.config.use_chb_branching {
+            self.chb.bump_batch(&vars_to_bump);
+        }
         self.lrb.on_reason_batch(&vars_to_bump);
         // VMTF move-to-front: bump conflict-involved variables (cadical sorts
         // them by bump-order first to preserve relative order; the bump is
@@ -735,7 +739,9 @@ impl Solver {
 
         // Batch bump all collected variables
         self.vsids.bump_batch(&vars_to_bump);
-        self.chb.bump_batch(&vars_to_bump);
+        if self.config.use_chb_branching {
+            self.chb.bump_batch(&vars_to_bump);
+        }
         self.lrb.on_reason_batch(&vars_to_bump);
 
         // Set asserting literal
@@ -868,7 +874,9 @@ impl Solver {
         // Bump activity for the falsified literals, mirroring 1-UIP conflict
         // analysis so branching heuristics still react to the near-conflict.
         self.vsids.bump_batch(&vars_to_bump);
-        self.chb.bump_batch(&vars_to_bump);
+        if self.config.use_chb_branching {
+            self.chb.bump_batch(&vars_to_bump);
+        }
         self.lrb.on_reason_batch(&vars_to_bump);
 
         // Backtrack level = highest decision level among the *assigned* (false)
