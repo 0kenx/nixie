@@ -72,7 +72,7 @@ impl ConfigPreset {
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Glucose,
-            enable_lazy_hyper_binary: true,
+            enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true, // LRB for structured problems
@@ -150,7 +150,7 @@ impl ConfigPreset {
             clause_decay: 0.999,
             random_polarity_prob: 0.01,
             restart_strategy: RestartStrategy::Luby,
-            enable_lazy_hyper_binary: true,
+            enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: true, // CHB good for crypto
             use_lrb_branching: false,
@@ -189,7 +189,7 @@ impl ConfigPreset {
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Glucose,
-            enable_lazy_hyper_binary: true,
+            enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,
@@ -267,7 +267,7 @@ impl ConfigPreset {
             clause_decay: 0.999,
             random_polarity_prob: 0.01,
             restart_strategy: RestartStrategy::Luby,
-            enable_lazy_hyper_binary: true,
+            enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,
@@ -302,7 +302,7 @@ impl ConfigPreset {
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
             restart_strategy: RestartStrategy::Glucose,
-            enable_lazy_hyper_binary: true,
+            enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false, // VSIDS like Glucose
@@ -372,7 +372,7 @@ impl ConfigPreset {
             clause_decay: 0.999,
             random_polarity_prob: 0.01,
             restart_strategy: RestartStrategy::Glucose,
-            enable_lazy_hyper_binary: true,
+            enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false, // VMTF in real CaDiCaL

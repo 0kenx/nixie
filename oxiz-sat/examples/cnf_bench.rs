@@ -6,7 +6,7 @@
 //! cargo run --release --example cnf_bench -- /path/to/cnf/dir
 //! ```
 
-use oxiz_sat::{DimacsParser, RestartStrategy, Solver, SolverConfig, SolverResult};
+use oxiz_sat::{ConfigPreset, DimacsParser, RestartStrategy, Solver, SolverConfig, SolverResult};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -34,22 +34,47 @@ fn main() {
     walk(Path::new(&root), &mut files);
     files.sort();
 
+    // Optional full-preset base (PRESET=cadical|glucose|...) takes precedence
+    // over the RESTART selector; the per-feature env knobs below still apply on
+    // top, so e.g. `PRESET=cadical LAZY_HYPER=0` is a clean isolation.
+    let preset_config = std::env::var("PRESET").ok().and_then(|s| {
+        let s = s.trim().to_ascii_lowercase();
+        let p = match s.as_str() {
+            "default" => Some(ConfigPreset::Default),
+            "industrial" => Some(ConfigPreset::Industrial),
+            "random" => Some(ConfigPreset::Random),
+            "cryptographic" => Some(ConfigPreset::Cryptographic),
+            "hardware" => Some(ConfigPreset::Hardware),
+            "aggressive" => Some(ConfigPreset::Aggressive),
+            "conservative" => Some(ConfigPreset::Conservative),
+            "glucose" => Some(ConfigPreset::Glucose),
+            "minisat" => Some(ConfigPreset::MiniSat),
+            "cadical" => Some(ConfigPreset::CaDiCaL),
+            _ => None,
+        };
+        p.map(|preset| preset.config())
+    });
+
     // Optional restart-strategy override (RESTART=luby|glucose|geometric|locallbd)
     // and rephase-interval override (REPHASE=N, 0 disables) for A/B comparisons.
-    let mut base_config = match std::env::var("RESTART").ok().as_deref() {
-        Some("glucose") => SolverConfig {
-            restart_strategy: RestartStrategy::Glucose,
-            ..SolverConfig::default()
-        },
-        Some("geometric") => SolverConfig {
-            restart_strategy: RestartStrategy::Geometric,
-            ..SolverConfig::default()
-        },
-        Some("locallbd") => SolverConfig {
-            restart_strategy: RestartStrategy::LocalLbd,
-            ..SolverConfig::default()
-        },
-        _ => SolverConfig::default(),
+    let mut base_config = if let Some(c) = preset_config {
+        c
+    } else {
+        match std::env::var("RESTART").ok().as_deref() {
+            Some("glucose") => SolverConfig {
+                restart_strategy: RestartStrategy::Glucose,
+                ..SolverConfig::default()
+            },
+            Some("geometric") => SolverConfig {
+                restart_strategy: RestartStrategy::Geometric,
+                ..SolverConfig::default()
+            },
+            Some("locallbd") => SolverConfig {
+                restart_strategy: RestartStrategy::LocalLbd,
+                ..SolverConfig::default()
+            },
+            _ => SolverConfig::default(),
+        }
     };
     if let Ok(v) = std::env::var("REPHASE") {
         if let Ok(n) = v.parse::<u32>() {
@@ -80,9 +105,26 @@ fn main() {
             base_config.restart_interval = n;
         }
     }
+    // Additional isolation knobs (apply on top of any base/preset).
+    if let Ok(v) = std::env::var("LAZY_HYPER") {
+        base_config.enable_lazy_hyper_binary = v != "0";
+    }
+    if let Ok(v) = std::env::var("PROBE") {
+        base_config.enable_failed_literal_probing = v != "0";
+    }
+    if let Ok(v) = std::env::var("HBPROBE") {
+        base_config.enable_hyper_binary_probing = v != "0";
+    }
     eprintln!(
-        "restart={:?} rephase_interval={}",
-        base_config.restart_strategy, base_config.rephase_interval
+        "restart={:?} rephase={} inproc={} lazy_hyper={} probe={} hbprobe={} bve={} equiv={}",
+        base_config.restart_strategy,
+        base_config.rephase_interval,
+        base_config.enable_inprocessing,
+        base_config.enable_lazy_hyper_binary,
+        base_config.enable_failed_literal_probing,
+        base_config.enable_hyper_binary_probing,
+        base_config.enable_bve,
+        base_config.enable_equiv_substitution,
     );
 
     let mut total_solve_ns: u128 = 0;
