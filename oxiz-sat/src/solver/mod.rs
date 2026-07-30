@@ -1,16 +1,16 @@
 //! CDCL SAT Solver
 
+mod bve;
 mod conflict;
+mod congruence;
 mod decide;
+mod equiv;
 pub mod heuristic;
 mod incremental;
 mod learn;
 mod lucky;
 mod propagate;
 mod search_ext;
-mod equiv;
-mod bve;
-mod congruence;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -1712,8 +1712,7 @@ impl Solver {
                     let polarity = if self.rand_bool(self.config.random_polarity_prob) {
                         self.rand_bool(0.5)
                     } else {
-                        self.phase.get(var.index()).copied().unwrap_or(false)
-                            ^ self.phase_inverted
+                        self.phase.get(var.index()).copied().unwrap_or(false) ^ self.phase_inverted
                     };
                     let lit = if polarity {
                         Lit::pos(var)
@@ -1741,7 +1740,7 @@ impl Solver {
 
     /// Get the value of a variable in the model
     #[must_use]
-        pub fn model_value(&self, var: Var) -> LBool {
+    pub fn model_value(&self, var: Var) -> LBool {
         self.model.get(var.index()).copied().unwrap_or(LBool::Undef)
     }
 
@@ -1961,6 +1960,24 @@ impl Solver {
         self.assertion_clause_ids.push(Vec::new());
         self.model.clear();
         self.num_vars = 0;
+        // Decision heuristics: `vsids`/`chb` are cleared below, but `vmtf`
+        // and `lrb` only ever *grow* (`resize` is a no-op when num_vars shrinks),
+        // so without resetting them they keep every variable from the pre-reset
+        // problem as a live decision candidate.  Reusing the solver then lets
+        // `pick_branch_var` return a variable index that no longer exists
+        // (`num_vars` was reset to 0 and only the new problem's vars were
+        // re-created via `new_var`), which `assign_decision` happily pushes onto
+        // the trail — and the next `propagate` indexes the still-small
+        // `binary_graph` (and other var-indexed arrays) out of bounds.
+        // Rebuild them empty so `new_var` repopulates from scratch.
+        self.vmtf = VMTF::new(0);
+        self.lrb = LRB::new(0);
+        self.best_phase.clear();
+        self.best_trail_size = 0;
+        // `ever_pushed` latches once push/pop is used and permanently disables
+        // the `trail_falsifies_live_clause` backstop.  It must be cleared on
+        // reset so a fresh problem gets the backstop again.
+        self.ever_pushed = false;
         self.restart_threshold = self.config.restart_interval;
         self.trivially_unsat = false;
         self.phase.clear();
