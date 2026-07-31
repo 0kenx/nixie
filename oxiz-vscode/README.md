@@ -1,6 +1,6 @@
 # OxiZ SMT Solver - VS Code Extension
 
-VS Code extension for [OxiZ](https://github.com/cooljapan-ou/oxiz), a high-performance SMT solver written in pure Rust.
+VS Code extension for [OxiZ](https://github.com/cool-japan/oxiz), a high-performance SMT solver written in pure Rust.
 
 ## Features
 
@@ -33,17 +33,17 @@ Execute the solver directly from VS Code:
 
 ## Requirements
 
-- [OxiZ SMT Solver](https://github.com/cooljapan-ou/oxiz) installed and available in PATH
+- [OxiZ SMT Solver](https://github.com/cool-japan/oxiz) installed and available in PATH
 - VS Code 1.85.0 or later
 
 ### Installing OxiZ
 
 ```bash
-# From crates.io (when published)
+# From crates.io
 cargo install oxiz-cli
 
 # From source
-git clone https://github.com/cooljapan-ou/oxiz
+git clone https://github.com/cool-japan/oxiz
 cd oxiz
 cargo install --path oxiz-cli
 ```
@@ -137,4 +137,4 @@ Apache License 2.0 - see [LICENSE](../LICENSE) for details.
 
 ## Contributing
 
-Contributions are welcome! Please see the [main repository](https://github.com/cooljapan-ou/oxiz) for contribution guidelines.
+Contributions are welcome! Please see the [main repository](https://github.com/cool-japan/oxiz) for contribution guidelines.

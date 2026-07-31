@@ -730,8 +730,23 @@ impl NarySetOp {
             }
         }
 
-        // Recursive helper: collect all leaf operands for a root binary op,
+        // Iterative helper: collect all leaf operands for a root binary op,
         // flattening same-kind children in-place.
+        //
+        // `ops` is caller-supplied data (this is a `pub fn`'s internals),
+        // and nothing prevents a `result_to_idx` chain from being cyclic --
+        // e.g. two `SetOp::Binary` entries whose `result`s feed back into
+        // each other's operands. A plain recursive walk of "is this var
+        // itself produced by a same-kind op, then recurse into its
+        // operands" would revisit such a cycle forever. This walks the
+        // same tree with an explicit work-stack and an `on_path` set: a var
+        // already being expanded on the current path is a back-edge, and is
+        // emitted as an un-flattened (opaque) leaf instead of absorbed
+        // again. That is a sound fallback, not a fabrication -- declining
+        // to inline a variable's definition further never changes what it
+        // denotes, it only leaves that part of the expression less
+        // flattened, exactly as already happens for non-associative ops and
+        // for vars that are not produced by any op at all.
         fn collect_leaves(
             var: SetVarId,
             root_op: SetBinOp,
@@ -739,20 +754,59 @@ impl NarySetOp {
             result_to_idx: &FxHashMap<SetVarId, usize>,
             leaves: &mut SmallVec<[SetVarId; 8]>,
         ) {
-            // Check whether this var is itself the result of a same-kind binary op
-            if let Some(&idx) = result_to_idx.get(&var)
-                && let SetOp::Binary { op, lhs, rhs, .. } = &ops[idx]
-            {
-                // Only absorb if the op kind is the same AND it is associative
+            // A flat stack of "still need to resolve this var" work items is
+            // enough for the leaf-emitting steps (each pops, absorbs its
+            // operands, or emits a leaf, no result to combine afterward);
+            // `Leave` markers below are pushed under a var's operands so
+            // they are only popped once that var's whole subtree is done,
+            // which is when its `on_path` entry must be released.
+            enum Work {
+                Visit(SetVarId),
+                Leave(SetVarId),
+            }
+
+            let mut on_path: FxHashSet<SetVarId> = FxHashSet::default();
+            let mut work: Vec<Work> = vec![Work::Visit(var)];
+
+            while let Some(item) = work.pop() {
+                let v = match item {
+                    Work::Leave(v) => {
+                        on_path.remove(&v);
+                        continue;
+                    }
+                    Work::Visit(v) => v,
+                };
+
+                if on_path.contains(&v) {
+                    // Back-edge: `v` is already being expanded higher up
+                    // this path. Stop absorbing and reference it directly.
+                    leaves.push(v);
+                    continue;
+                }
+
+                let Some(&idx) = result_to_idx.get(&v) else {
+                    leaves.push(v);
+                    continue;
+                };
+                let SetOp::Binary { op, lhs, rhs, .. } = &ops[idx] else {
+                    leaves.push(v);
+                    continue;
+                };
                 let absorb =
                     *op == root_op && matches!(root_op, SetBinOp::Union | SetBinOp::Intersection);
-                if absorb {
-                    collect_leaves(*lhs, root_op, ops, result_to_idx, leaves);
-                    collect_leaves(*rhs, root_op, ops, result_to_idx, leaves);
-                    return;
+                if !absorb {
+                    leaves.push(v);
+                    continue;
                 }
+
+                // Absorb: push a `Leave` marker beneath this var's operands
+                // so it pops (releasing `on_path`) only after both operands
+                // -- and everything they in turn absorb -- are resolved.
+                on_path.insert(v);
+                work.push(Work::Leave(v));
+                work.push(Work::Visit(*rhs));
+                work.push(Work::Visit(*lhs));
             }
-            leaves.push(var);
         }
 
         let mut nary_ops: Vec<NarySetOp> = Vec::new();
@@ -1267,5 +1321,214 @@ mod tests {
         assert!(!result_must.contains(&3));
         assert!(!result_must.contains(&4));
         assert_eq!(result_must.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // `NarySetOp::flatten` / `collect_leaves` cycle-safety regression tests
+    // (audit: a cyclic `result_to_idx` chain made the leaf-collecting
+    // recursion loop forever; `flatten` itself had no prior test coverage).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_flatten_normal_nested_union() {
+        // Basic behaviour-preservation smoke test (flatten had zero prior
+        // coverage): result = (a ∪ b) ∪ c must flatten into one n-ary op
+        // over [a, b, c].
+        let a = SetVarId(0);
+        let b = SetVarId(1);
+        let c = SetVarId(2);
+        let ab = SetVarId(3);
+        let root = SetVarId(4);
+        let ops = vec![
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: a,
+                rhs: b,
+                result: ab,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: ab,
+                rhs: c,
+                result: root,
+            },
+        ];
+        let nary = NarySetOp::flatten(ops);
+        assert_eq!(nary.len(), 1);
+        assert_eq!(nary[0].result, root);
+        assert_eq!(nary[0].op, SetBinOp::Union);
+        assert_eq!(nary[0].operands.to_vec(), vec![a, b, c]);
+    }
+
+    #[test]
+    fn test_flatten_diamond_shared_substructure_matches_expansion_order() {
+        // X = A ∪ B is shared by P = X ∪ Y and Q = X ∪ Z; root = P ∪ Q.
+        // Flattening does not memoize/dedupe shared subterms (each
+        // consuming branch expands its own copy), so X's operands appear
+        // twice -- pinning this exact order guards against the iterative
+        // conversion silently changing it (e.g. by adding memoization that
+        // would be wrong here, unlike the sibling fixes in this module
+        // where memoizing a *pure* per-call computation is safe).
+        let a = SetVarId(0);
+        let b = SetVarId(1);
+        let x = SetVarId(2);
+        let y = SetVarId(3);
+        let z = SetVarId(4);
+        let p = SetVarId(5);
+        let q = SetVarId(6);
+        let root = SetVarId(7);
+        let ops = vec![
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: a,
+                rhs: b,
+                result: x,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: x,
+                rhs: y,
+                result: p,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: x,
+                rhs: z,
+                result: q,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: p,
+                rhs: q,
+                result: root,
+            },
+        ];
+        let nary = NarySetOp::flatten(ops);
+        assert_eq!(nary.len(), 1, "only `root` is not consumed by another op");
+        assert_eq!(
+            nary[0].operands.to_vec(),
+            vec![a, b, y, a, b, z],
+            "X = A ∪ B is expanded independently under both P and Q"
+        );
+    }
+
+    #[test]
+    fn test_flatten_cyclic_result_to_idx_terminates_with_defensible_leaves() {
+        // V1 = V0 ∪ V2 and V0 = V1 ∪ V3 mutually depend on each other's
+        // result (never producible via `SetOpBuilder`, but nothing in the
+        // public `SetOp`/`flatten` API rules it out). V5 = V0 ∪ V4 is a
+        // root reaching into the cycle through V0. Neither V0 nor V1 is a
+        // root itself (each is consumed by the other), so the only work
+        // `flatten` has to do is collect_leaves(V0) / collect_leaves(V4)
+        // for V5's op -- and collect_leaves(V0) is exactly where the
+        // recursion used to loop forever (V0 -> absorbs via V1's op -> V1
+        // -> absorbs via V0's op -> V0 -> ...).
+        let v0 = SetVarId(0);
+        let v1 = SetVarId(1);
+        let v2 = SetVarId(2);
+        let v3 = SetVarId(3);
+        let v4 = SetVarId(4);
+        let v5 = SetVarId(5);
+        let ops = vec![
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: v0,
+                rhs: v2,
+                result: v1,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: v1,
+                rhs: v3,
+                result: v0,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: v0,
+                rhs: v4,
+                result: v5,
+            },
+        ];
+
+        // The primary assertion is that this call returns at all.
+        let nary = NarySetOp::flatten(ops);
+
+        assert_eq!(nary.len(), 1, "only v5's op is a root");
+        assert_eq!(nary[0].result, v5);
+        assert_eq!(nary[0].op, SetBinOp::Union);
+        // The back-edge to v0 is emitted as an opaque (un-flattened) leaf
+        // rather than absorbed again, alongside the ordinary leaves v2..v4.
+        let mut operands: Vec<SetVarId> = nary[0].operands.to_vec();
+        operands.sort();
+        assert_eq!(operands, vec![v0, v2, v3, v4]);
+    }
+
+    #[test]
+    fn test_flatten_self_referential_op_terminates() {
+        // An op whose result is also (directly) one of its own operands:
+        // V0 = V0 ∪ V1. Also never producible via `SetOpBuilder`, but a
+        // caller-constructed `SetOp` list is not prevented from shaping it
+        // this way.
+        let v0 = SetVarId(0);
+        let v1 = SetVarId(1);
+        let v5 = SetVarId(5);
+        let v4 = SetVarId(4);
+        let ops = vec![
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: v0,
+                rhs: v1,
+                result: v0,
+            },
+            SetOp::Binary {
+                op: SetBinOp::Union,
+                lhs: v0,
+                rhs: v4,
+                result: v5,
+            },
+        ];
+        let nary = NarySetOp::flatten(ops);
+        assert_eq!(nary.len(), 1);
+        let mut operands: Vec<SetVarId> = nary[0].operands.to_vec();
+        operands.sort();
+        assert_eq!(operands, vec![v0, v1, v4]);
+    }
+
+    #[test]
+    fn test_flatten_deep_associative_chain_small_stack() {
+        // Build (iteratively) a long left-leaning chain
+        // (((leaf_0 ∪ leaf_1) ∪ leaf_2) ∪ ... ∪ leaf_n) and flatten it from
+        // inside a thread with a deliberately small (128 KiB) stack. A stack
+        // overflow aborts the whole process, so "the thread returned at
+        // all" is itself part of the assertion. The stack size and `depth` are
+        // scaled together and only their ratio (~21 bytes per level) matters --
+        // never raise one without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth: u32 = 12_500;
+                let mut ops = Vec::with_capacity(depth as usize);
+                // Leaves use even ids, intermediate results use odd ids, so
+                // neither range collides with the other.
+                let mut prev_result = SetVarId(0); // leaf_0, not itself a result
+                for i in 1..=depth {
+                    let leaf = SetVarId(2 * i);
+                    let result = SetVarId(2 * i + 1);
+                    ops.push(SetOp::Binary {
+                        op: SetBinOp::Union,
+                        lhs: prev_result,
+                        rhs: leaf,
+                        result,
+                    });
+                    prev_result = result;
+                }
+                let nary = NarySetOp::flatten(ops);
+                assert_eq!(nary.len(), 1);
+                assert_eq!(nary[0].operands.len() as u32, depth + 1);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deep but acyclic associative chain must not overflow a 128 KiB stack");
     }
 }

@@ -18,6 +18,7 @@ use num_rational::Rational64;
 use num_traits::{One, ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints, dispatch_nra_constraints};
+use smallvec::SmallVec;
 
 use super::Solver;
 use super::types::SolverResult;
@@ -270,36 +271,49 @@ impl Solver {
     }
 
     /// Collect nonlinear atoms from a term (top-level assertion).
+    ///
+    /// Iterative over the `and`-nesting (the only structure descended into),
+    /// with a visited set so shared conjuncts of the hash-consed DAG
+    /// contribute their atoms once; every downstream consumer performs pure
+    /// existence checks over the collected atoms, so dropping duplicates
+    /// preserves the verdict exactly.
     fn collect_nl_atoms(&self, term_id: TermId, manager: &TermManager, atoms: &mut Vec<NlAtom>) {
-        let Some(term) = manager.get(term_id) else {
-            return;
-        };
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![term_id];
+        while let Some(term_id) = stack.pop() {
+            if !visited.insert(term_id) {
+                continue;
+            }
+            let Some(term) = manager.get(term_id) else {
+                continue;
+            };
 
-        match &term.kind {
-            TermKind::Eq(lhs, rhs) => {
-                self.extract_nl_eq(*lhs, *rhs, manager, atoms);
-            }
-            TermKind::Gt(lhs, rhs) => {
-                // lhs > rhs  i.e. lhs - rhs > 0
-                self.extract_nl_comparison(*lhs, *rhs, CompOp::Gt, manager, atoms);
-            }
-            TermKind::Ge(lhs, rhs) => {
-                self.extract_nl_comparison(*lhs, *rhs, CompOp::Ge, manager, atoms);
-            }
-            TermKind::Lt(lhs, rhs) => {
-                // lhs < rhs  →  rhs > lhs
-                self.extract_nl_comparison(*rhs, *lhs, CompOp::Gt, manager, atoms);
-            }
-            TermKind::Le(lhs, rhs) => {
-                // lhs <= rhs  →  rhs >= lhs
-                self.extract_nl_comparison(*rhs, *lhs, CompOp::Ge, manager, atoms);
-            }
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.collect_nl_atoms(arg, manager, atoms);
+            match &term.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    self.extract_nl_eq(*lhs, *rhs, manager, atoms);
                 }
+                TermKind::Gt(lhs, rhs) => {
+                    // lhs > rhs  i.e. lhs - rhs > 0
+                    self.extract_nl_comparison(*lhs, *rhs, CompOp::Gt, manager, atoms);
+                }
+                TermKind::Ge(lhs, rhs) => {
+                    self.extract_nl_comparison(*lhs, *rhs, CompOp::Ge, manager, atoms);
+                }
+                TermKind::Lt(lhs, rhs) => {
+                    // lhs < rhs  →  rhs > lhs
+                    self.extract_nl_comparison(*rhs, *lhs, CompOp::Gt, manager, atoms);
+                }
+                TermKind::Le(lhs, rhs) => {
+                    // lhs <= rhs  →  rhs >= lhs
+                    self.extract_nl_comparison(*rhs, *lhs, CompOp::Ge, manager, atoms);
+                }
+                TermKind::And(args) => {
+                    // Reversed push keeps the original left-to-right visit
+                    // order (and with it the order of `atoms`).
+                    stack.extend(args.iter().rev().copied());
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -531,46 +545,53 @@ impl Solver {
     /// Handles:
     /// - `x` → Some((x, 1))
     /// - `(* c x)` → Some((x, c))
+    ///
+    /// Iterative: the only recursion was through `Neg` nesting, which is a
+    /// simple sign-flipping unwrap loop.
     fn extract_linear_var(
         &self,
         term_id: TermId,
         manager: &TermManager,
     ) -> Option<(TermId, Rational64)> {
-        let term = manager.get(term_id)?;
+        let mut sign = Rational64::one();
+        let mut current = term_id;
+        loop {
+            let term = manager.get(current)?;
 
-        match &term.kind {
-            TermKind::Var(_) => Some((term_id, Rational64::one())),
-            TermKind::Mul(args) => {
-                let mut const_coeff = Rational64::one();
-                let mut var_opt: Option<TermId> = None;
-
-                for &arg in args {
-                    let arg_term = manager.get(arg)?;
-                    match &arg_term.kind {
-                        TermKind::IntConst(n) => {
-                            let v = n.to_i64()?;
-                            const_coeff *= Rational64::from_integer(v);
-                        }
-                        TermKind::RealConst(r) => {
-                            const_coeff *= *r;
-                        }
-                        TermKind::Var(_) => {
-                            if var_opt.is_some() {
-                                return None; // multiple vars → nonlinear
-                            }
-                            var_opt = Some(arg);
-                        }
-                        _ => return None,
-                    }
+            match &term.kind {
+                TermKind::Neg(inner) => {
+                    sign = -sign;
+                    current = *inner;
                 }
+                TermKind::Var(_) => return Some((current, sign)),
+                TermKind::Mul(args) => {
+                    let mut const_coeff = Rational64::one();
+                    let mut var_opt: Option<TermId> = None;
 
-                var_opt.map(|v| (v, const_coeff))
+                    for &arg in args {
+                        let arg_term = manager.get(arg)?;
+                        match &arg_term.kind {
+                            TermKind::IntConst(n) => {
+                                let v = n.to_i64()?;
+                                const_coeff *= Rational64::from_integer(v);
+                            }
+                            TermKind::RealConst(r) => {
+                                const_coeff *= *r;
+                            }
+                            TermKind::Var(_) => {
+                                if var_opt.is_some() {
+                                    return None; // multiple vars → nonlinear
+                                }
+                                var_opt = Some(arg);
+                            }
+                            _ => return None,
+                        }
+                    }
+
+                    return var_opt.map(|v| (v, sign * const_coeff));
+                }
+                _ => return None,
             }
-            TermKind::Neg(inner) => {
-                let (v, coeff) = self.extract_linear_var(*inner, manager)?;
-                Some((v, -coeff))
-            }
-            _ => None,
         }
     }
 
@@ -582,32 +603,89 @@ impl Solver {
     /// - `Neg(x)` → -extract(x)
     /// - `Sub(0, x)` → -extract(x)  [unary minus is parsed as Sub(0, x)]
     /// - `Sub(x, y)` → extract(x) - extract(y)
+    /// - `Add(xs)` → Σ extract(xᵢ)
+    ///
+    /// Iterative (explicit frame stack), so arbitrarily deep constant
+    /// expressions are folded without native recursion; any non-constant
+    /// sub-term makes the whole extraction `None`, exactly as before.
     fn extract_rational_const(&self, term_id: TermId, manager: &TermManager) -> Option<Rational64> {
-        let term = manager.get(term_id)?;
+        /// A pending arithmetic operator waiting for operand values.
+        enum ConstFrame {
+            Neg,
+            SubLhs {
+                rhs: TermId,
+            },
+            SubRhs {
+                lhs: Rational64,
+            },
+            Add {
+                args: SmallVec<[TermId; 4]>,
+                next: usize,
+                acc: Rational64,
+            },
+        }
 
-        match &term.kind {
-            TermKind::IntConst(n) => {
-                let v = n.to_i64()?;
-                Some(Rational64::from_integer(v))
-            }
-            TermKind::RealConst(r) => Some(*r),
-            TermKind::Neg(inner) => {
-                let v = self.extract_rational_const(*inner, manager)?;
-                Some(-v)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let lv = self.extract_rational_const(*lhs, manager)?;
-                let rv = self.extract_rational_const(*rhs, manager)?;
-                Some(lv - rv)
-            }
-            TermKind::Add(args) => {
-                let mut acc = Rational64::zero();
-                for &arg in args {
-                    acc += self.extract_rational_const(arg, manager)?;
+        let mut frames: Vec<ConstFrame> = Vec::new();
+        let mut current = term_id;
+        'open: loop {
+            // Descend to a constant leaf.
+            let mut value: Rational64 = loop {
+                let term = manager.get(current)?;
+                match &term.kind {
+                    TermKind::IntConst(n) => {
+                        let v = n.to_i64()?;
+                        break Rational64::from_integer(v);
+                    }
+                    TermKind::RealConst(r) => break *r,
+                    TermKind::Neg(inner) => {
+                        frames.push(ConstFrame::Neg);
+                        current = *inner;
+                    }
+                    TermKind::Sub(lhs, rhs) => {
+                        frames.push(ConstFrame::SubLhs { rhs: *rhs });
+                        current = *lhs;
+                    }
+                    TermKind::Add(args) => match args.first() {
+                        Some(&first) => {
+                            frames.push(ConstFrame::Add {
+                                args: args.clone(),
+                                next: 1,
+                                acc: Rational64::zero(),
+                            });
+                            current = first;
+                        }
+                        None => break Rational64::zero(),
+                    },
+                    _ => return None,
                 }
-                Some(acc)
+            };
+
+            // Fold the leaf value into the pending operators.
+            loop {
+                match frames.pop() {
+                    None => return Some(value),
+                    Some(ConstFrame::Neg) => value = -value,
+                    Some(ConstFrame::SubLhs { rhs }) => {
+                        frames.push(ConstFrame::SubRhs { lhs: value });
+                        current = rhs;
+                        continue 'open;
+                    }
+                    Some(ConstFrame::SubRhs { lhs }) => value = lhs - value,
+                    Some(ConstFrame::Add { args, next, acc }) => {
+                        let acc = acc + value;
+                        if let Some(&child) = args.get(next) {
+                            frames.push(ConstFrame::Add {
+                                args,
+                                next: next + 1,
+                                acc,
+                            });
+                            current = child;
+                            continue 'open;
+                        }
+                        value = acc;
+                    }
+                }
             }
-            _ => None,
         }
     }
 }

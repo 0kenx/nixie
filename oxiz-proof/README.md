@@ -51,15 +51,14 @@ println!("{}", proof.to_alethe());
 (step t3 (cl false) :rule false_rule :premises (t2))
 ```
 
-## Status (v0.3.0)
+## Status (v0.3.1)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.0 |
+| Version | 0.3.1 |
 | Status | Stable |
-| Release Date | 2026-06-01 |
-| Tests | 622 passing |
-| Rust LoC | 25,818 (52 files) |
+| Tests | 712 passing |
+| Rust LoC | 24,590 (63 files) |
 | Public API items | 804 |
 
 ## References

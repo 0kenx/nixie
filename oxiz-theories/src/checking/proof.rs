@@ -106,6 +106,30 @@ impl ProofStep {
     }
 }
 
+/// Outcome of beginning exploration of a step in [`ProofChecker::validate_step`].
+enum StepEntry {
+    /// The step's verdict is already known without exploring its
+    /// antecedents (already validated, unknown, or a cyclic back-edge).
+    Immediate(CheckResult),
+    /// The step needs its antecedents checked; the caller should push this
+    /// frame and resume the exploration loop.
+    Explore(StepFrame),
+}
+
+/// One level of [`ProofChecker::validate_step`]'s explicit exploration
+/// stack, equivalent to one still-open recursive call.
+struct StepFrame {
+    /// The step this frame is validating.
+    step_id: usize,
+    /// A clone of the step's data (owned so it can be read while `self` is
+    /// mutably borrowed for `check_step`/stats bookkeeping elsewhere).
+    step: ProofStep,
+    /// Index of the next antecedent to resolve.
+    next_antecedent: usize,
+    /// When this frame started, for the `check_time_us` stat.
+    start: Instant,
+}
+
 /// Proof checker that validates proof steps
 #[derive(Debug)]
 pub struct ProofChecker {
@@ -149,40 +173,139 @@ impl ProofChecker {
     ///
     /// The manager is required to decode the structure of the terms referenced
     /// by equality/quantifier rules; without it those rules could only be
-    /// rubber-stamped. Antecedent steps are validated first (recursively).
+    /// rubber-stamped. Antecedent steps are validated first (iteratively; see
+    /// below), and any step's verdict is exactly what a direct recursive
+    /// implementation would have produced: propagate an antecedent's
+    /// non-valid result upward as-is (skipping this step's own check and
+    /// stats update, matching the antecedent-cascade behaviour), and only
+    /// mark a step validated once its own `check_step` succeeds.
+    ///
+    /// # Why iterative
+    ///
+    /// A direct recursive implementation ("first validate antecedents, then
+    /// check this step") both overflows the native stack on a deep proof and
+    /// hangs forever on a cyclic antecedent graph (a step that transitively
+    /// depends on itself), since nothing marks a step "in progress" before
+    /// recursing into it. This walks the antecedent graph with an explicit
+    /// stack instead, and `enter_step` marks each step's exploration
+    /// with `in_progress`: revisiting one is a back-edge, reported as a
+    /// malformed proof (`CheckResult::Invalid`) rather than looped on
+    /// forever. A cyclic proof is unsound by construction (its "premises"
+    /// include its own conclusion), so rejecting it is the correct verdict,
+    /// not merely a safe one.
     pub fn validate_step(&mut self, step_id: usize, manager: &mut TermManager) -> CheckResult {
-        let start = Instant::now();
+        // Steps currently being explored on the current path (as opposed to
+        // already validated or not yet visited). Revisiting one of these
+        // means the antecedent graph has a cycle back to an ancestor.
+        let mut in_progress: HashSet<usize> = HashSet::new();
 
-        if self.validated.contains(&step_id) {
-            return CheckResult::Valid;
-        }
-
-        let step = match self.steps.get(&step_id) {
-            Some(s) => s.clone(),
-            None => return CheckResult::Invalid(format!("Unknown step: {}", step_id)),
+        // `top` is the frame currently being resolved, owned directly rather
+        // than peeked from `stack` -- `stack` holds only the *suspended*
+        // ancestors waiting for `top` (or one of its descendants) to finish,
+        // one entry per still-open recursive call.
+        let mut top = match self.enter_step(step_id, &mut in_progress) {
+            StepEntry::Immediate(result) => return result,
+            StepEntry::Explore(frame) => frame,
         };
+        let mut stack: Vec<StepFrame> = Vec::new();
 
-        // First validate antecedents
-        for &ant_id in &step.antecedents {
-            if !self.validated.contains(&ant_id) {
-                let result = self.validate_step(ant_id, manager);
-                if !result.is_valid() {
-                    return result;
+        loop {
+            let next_antecedent = top.step.antecedents.get(top.next_antecedent).copied();
+            top.next_antecedent += 1;
+
+            match next_antecedent {
+                Some(ant_id) => match self.enter_step(ant_id, &mut in_progress) {
+                    StepEntry::Immediate(result) if !result.is_valid() => {
+                        // Propagate the antecedent's non-valid verdict as
+                        // this step's own verdict, exactly like a
+                        // direct-recursion early `return result`: no
+                        // check_step call and no stats update for the step
+                        // being unwound here -- and every still-open
+                        // ancestor below it made that identical recursive
+                        // call and so unwinds the same way in turn.
+                        in_progress.remove(&top.step_id);
+                        return Self::unwind_invalid(&mut stack, &mut in_progress, result);
+                    }
+                    StepEntry::Immediate(_valid) => {
+                        // The antecedent resolved to Valid; keep resuming
+                        // `top` at its next antecedent (index already
+                        // advanced above).
+                    }
+                    StepEntry::Explore(frame) => {
+                        stack.push(top);
+                        top = frame;
+                    }
+                },
+                None => {
+                    // Every antecedent validated; check this step itself.
+                    let result = self.check_step(&top.step, manager);
+                    if result.is_valid() {
+                        self.validated.insert(top.step_id);
+                    }
+                    let elapsed = top.start.elapsed();
+                    self.stats.check_time_us += elapsed.as_micros() as u64;
+                    in_progress.remove(&top.step_id);
+
+                    if !result.is_valid() {
+                        return Self::unwind_invalid(&mut stack, &mut in_progress, result);
+                    }
+                    top = match stack.pop() {
+                        Some(parent) => parent,
+                        None => return result,
+                    };
                 }
             }
         }
+    }
 
-        // Now validate this step
-        let result = self.check_step(&step, manager);
-
-        if result.is_valid() {
-            self.validated.insert(step_id);
+    /// Drain every still-suspended ancestor frame in `stack`, removing each
+    /// from `in_progress` without ever running its `check_step` (mirroring a
+    /// chain of direct-recursion early `return result` calls unwinding
+    /// through each waiting caller in turn), then hand back `result` once
+    /// none are left -- the empty case is not a failure, it is the answer
+    /// for the original `validate_step` call.
+    fn unwind_invalid(
+        stack: &mut Vec<StepFrame>,
+        in_progress: &mut HashSet<usize>,
+        result: CheckResult,
+    ) -> CheckResult {
+        while let Some(frame) = stack.pop() {
+            in_progress.remove(&frame.step_id);
         }
-
-        let elapsed = start.elapsed();
-        self.stats.check_time_us += elapsed.as_micros() as u64;
-
         result
+    }
+
+    /// Begin exploring `id` during [`Self::validate_step`]: resolve it
+    /// immediately if possible (already validated, unknown, or a cyclic
+    /// back-edge), otherwise stake out `in_progress` and hand back a frame
+    /// for the caller to push.
+    fn enter_step(&self, id: usize, in_progress: &mut HashSet<usize>) -> StepEntry {
+        if self.validated.contains(&id) {
+            return StepEntry::Immediate(CheckResult::Valid);
+        }
+        let step = match self.steps.get(&id) {
+            Some(s) => s.clone(),
+            None => {
+                return StepEntry::Immediate(CheckResult::Invalid(format!("Unknown step: {}", id)));
+            }
+        };
+        if !in_progress.insert(id) {
+            // `id` is already on the exploration path: some antecedent of
+            // `id`, transitively, names `id` itself. A proof that requires
+            // its own conclusion as a premise is malformed, not merely
+            // unverifiable -- report it as such instead of recursing
+            // forever.
+            return StepEntry::Immediate(CheckResult::Invalid(format!(
+                "Cyclic proof: step {} depends on itself through its antecedents",
+                id
+            )));
+        }
+        StepEntry::Explore(StepFrame {
+            step_id: id,
+            step,
+            next_antecedent: 0,
+            start: Instant::now(),
+        })
     }
 
     /// Check a single proof step
@@ -1080,5 +1203,170 @@ mod tests {
             vec![Literal::pos(t)],
         ));
         assert!(sk.validate_step(0, &mut m).is_invalid());
+    }
+
+    // -----------------------------------------------------------------------
+    // `validate_step` cycle-safety regression tests (audit: `validated.insert`
+    // runs only after antecedents are validated, with no in-progress marker,
+    // so a cyclic antecedent edge recursed forever).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_step_self_loop_reports_cyclic_invalid_not_a_hang() {
+        let mut m = TermManager::new();
+        let mut checker = ProofChecker::new();
+        let t1 = TermId::from(1u32);
+        // Step 0 lists itself as its own antecedent.
+        checker.add_step(ProofStep::with_antecedents(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+            vec![0],
+        ));
+
+        let result = checker.validate_step(0, &mut m);
+        assert!(
+            result.is_invalid(),
+            "a step that depends on itself must be rejected, got {result:?}"
+        );
+        assert_eq!(
+            checker.num_validated(),
+            0,
+            "a step whose own cycle fails validation must not be marked validated"
+        );
+    }
+
+    #[test]
+    fn test_validate_step_mutual_cycle_reports_cyclic_invalid_not_a_hang() {
+        let mut m = TermManager::new();
+        let mut checker = ProofChecker::new();
+        let t1 = TermId::from(1u32);
+        let t2 = TermId::from(2u32);
+        // Step 0 depends on step 1, which depends back on step 0.
+        checker.add_step(ProofStep::with_antecedents(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+            vec![1],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t2)],
+            vec![0],
+        ));
+
+        let result = checker.validate_step(0, &mut m);
+        assert!(
+            result.is_invalid(),
+            "a 2-cycle between antecedents must be rejected, got {result:?}"
+        );
+        assert_eq!(checker.num_validated(), 0);
+    }
+
+    #[test]
+    fn test_validate_step_antecedent_failure_cascades_without_checking_self() {
+        // Pins the exact cascading semantics the iterative rewrite must
+        // preserve: when an antecedent fails, the *dependent* step's own
+        // check_step must never run (and it must not be marked validated),
+        // even though that step's own rule (Axiom) would trivially succeed.
+        let mut m = TermManager::new();
+        let mut checker = ProofChecker::new();
+        let t1 = TermId::from(1u32);
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Contradiction,
+            vec![Literal::pos(t1)], // non-empty clause -> Invalid
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+            vec![0],
+        ));
+
+        let result = checker.validate_step(1, &mut m);
+        assert!(result.is_invalid());
+        assert_eq!(
+            checker.num_validated(),
+            0,
+            "step 1 must not be validated when its antecedent fails"
+        );
+    }
+
+    #[test]
+    fn test_validate_step_diamond_dependency_shared_antecedent() {
+        // A (step 0) is a shared antecedent of B (step 1) and C (step 2);
+        // D (step 3) depends on both. Not a cycle -- a DAG -- and must
+        // validate cleanly, with every step validated exactly once.
+        let mut m = TermManager::new();
+        let mut checker = ProofChecker::new();
+        let t1 = TermId::from(1u32);
+        checker.add_step(ProofStep::new(
+            0,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            1,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+            vec![0],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            2,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+            vec![0],
+        ));
+        checker.add_step(ProofStep::with_antecedents(
+            3,
+            ProofStepKind::Axiom,
+            vec![Literal::pos(t1)],
+            vec![1, 2],
+        ));
+
+        let result = checker.validate_step(3, &mut m);
+        assert!(result.is_valid());
+        assert_eq!(checker.num_validated(), 4);
+    }
+
+    #[test]
+    fn test_validate_step_deep_chain_small_stack() {
+        // Build (iteratively) a long chain of steps, each depending on the
+        // previous one, and validate the deepest one from inside a thread
+        // with a deliberately small (128 KiB) stack. A stack overflow aborts
+        // the whole process, so "the thread returned at all" is itself part
+        // of the assertion. The stack size and `depth` are scaled together and
+        // only their ratio (~21 bytes per level) matters -- never raise one
+        // without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut m = TermManager::new();
+                let mut checker = ProofChecker::new();
+                let t1 = TermId::from(1u32);
+                let depth: usize = 6_250;
+                checker.add_step(ProofStep::new(
+                    0,
+                    ProofStepKind::Axiom,
+                    vec![Literal::pos(t1)],
+                ));
+                for i in 1..=depth {
+                    checker.add_step(ProofStep::with_antecedents(
+                        i,
+                        ProofStepKind::Axiom,
+                        vec![Literal::pos(t1)],
+                        vec![i - 1],
+                    ));
+                }
+                let result = checker.validate_step(depth, &mut m);
+                assert!(result.is_valid());
+                assert_eq!(checker.num_validated(), depth + 1);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deep but acyclic antecedent chain must not overflow a 128 KiB stack");
     }
 }

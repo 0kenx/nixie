@@ -67,6 +67,55 @@ pub enum Pattern {
     },
 }
 
+impl Drop for Pattern {
+    /// Dismantle the argument tree iteratively.
+    ///
+    /// Compiler-generated drop glue recurses once per pattern level, so a
+    /// trigger deep enough to build is deep enough to abort the process at
+    /// scope exit, after it has already been matched successfully.
+    fn drop(&mut self) {
+        let mut stack: Vec<Pattern> = Vec::new();
+        take_pattern_children(self, &mut stack);
+        while let Some(mut node) = stack.pop() {
+            take_pattern_children(&mut node, &mut stack);
+        }
+    }
+}
+
+/// Move `pattern`'s arguments onto `out`, leaving a childless pattern behind.
+fn take_pattern_children(pattern: &mut Pattern, out: &mut Vec<Pattern>) {
+    match pattern {
+        Pattern::Var(_) => {}
+        Pattern::App { args, .. } => out.append(args),
+    }
+}
+
+/// One entry of [`EMatcher::match_args`]'s explicit goal stack.
+#[derive(Clone)]
+enum MatchGoal<'p> {
+    /// Match this pattern against this ground term.
+    Pair(&'p Pattern, TermId),
+    /// The nested application opened at the top choice point matched: commit
+    /// to the candidate it chose and discard its remaining alternatives.
+    Commit,
+}
+
+/// An open alternative for one nested application in [`EMatcher::match_args`].
+struct MatchChoice<'p> {
+    /// The goals still outstanding when this application was opened.
+    goals: Vec<MatchGoal<'p>>,
+    /// The substitution as it stood when this application was opened.
+    subst: Substitution,
+    /// The function symbol whose registered applications are the candidates.
+    func: TermId,
+    /// The argument patterns to match against a candidate's arguments.
+    args: &'p [Pattern],
+    /// The ground term the candidate must be.
+    ground: TermId,
+    /// Index of the next candidate to try.
+    next: usize,
+}
+
 /// Variable identifier in patterns
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarId(pub u32);
@@ -165,15 +214,20 @@ impl Trigger {
     }
 
     /// Collect all variables in a pattern
+    ///
+    /// Explicit stack: pattern nesting comes from a caller-supplied
+    /// `:pattern` trigger and is not bounded by anything this type controls,
+    /// and the return type is `()` — a depth cap could only drop variables
+    /// from the trigger, which silently changes which instantiations are
+    /// generated.
     fn collect_vars(pattern: &Pattern, vars: &mut FxHashSet<VarId>) {
-        match pattern {
-            Pattern::Var(v) => {
-                vars.insert(*v);
-            }
-            Pattern::App { args, .. } => {
-                for arg in args {
-                    Self::collect_vars(arg, vars);
+        let mut stack: Vec<&Pattern> = vec![pattern];
+        while let Some(current) = stack.pop() {
+            match current {
+                Pattern::Var(v) => {
+                    vars.insert(*v);
                 }
+                Pattern::App { args, .. } => stack.extend(args.iter().rev()),
             }
         }
     }
@@ -572,51 +626,107 @@ impl EMatchEngine {
     }
 
     /// Match pattern arguments against ground arguments
+    ///
+    /// Explicit goal stack with explicit choice points, not recursion: trigger
+    /// patterns nest as deeply as the caller's `:pattern` annotation does, and
+    /// every frame of the recursive version also cloned the whole
+    /// substitution.
+    ///
+    /// The search order is preserved exactly, including its *commitment* rule:
+    /// the recursive version `break`s out of its candidate loop as soon as one
+    /// candidate application matches the nested pattern, so a failure that
+    /// happens after that point never re-tries the committed candidate. Here
+    /// the `Commit` goal marker pops the choice point at exactly that moment.
     fn match_args(
         &self,
         patterns: &[Pattern],
         ground: &[TermId],
         current_subst: &Substitution,
     ) -> Option<Substitution> {
+        let mut goals: Vec<MatchGoal<'_>> = patterns
+            .iter()
+            .zip(ground.iter().copied())
+            .rev()
+            .map(|(p, g)| MatchGoal::Pair(p, g))
+            .collect();
         let mut subst = current_subst.clone();
+        let mut choices: Vec<MatchChoice<'_>> = Vec::new();
 
-        for (pattern, &ground_term) in patterns.iter().zip(ground.iter()) {
-            match pattern {
-                Pattern::Var(v) => {
-                    if let Some(bound) = subst.get(*v) {
-                        // Check consistency
-                        if bound != ground_term {
-                            return None;
-                        }
-                    } else {
-                        subst.bind(*v, ground_term);
+        loop {
+            // Run goals until one fails, one opens a nested application, or
+            // all of them are discharged.
+            let mut needs_candidate = false;
+            while let Some(goal) = goals.pop() {
+                match goal {
+                    MatchGoal::Commit => {
+                        choices.pop();
                     }
-                }
-                Pattern::App { func, args } => {
-                    // Recursively match nested applications
-                    if let Some(apps) = self.apps.get(func) {
-                        let mut matched = false;
-                        for (app_term, app_args) in apps {
-                            if *app_term == ground_term
-                                && app_args.len() == args.len()
-                                && let Some(new_subst) = self.match_args(args, app_args, &subst)
-                            {
-                                subst = new_subst;
-                                matched = true;
-                                break;
-                            }
+                    MatchGoal::Pair(Pattern::Var(v), ground_term) => match subst.get(*v) {
+                        // Already bound: check consistency.
+                        Some(bound) if bound != ground_term => {
+                            needs_candidate = true;
+                            break;
                         }
-                        if !matched {
-                            return None;
-                        }
-                    } else {
-                        return None;
+                        Some(_) => {}
+                        None => subst.bind(*v, ground_term),
+                    },
+                    MatchGoal::Pair(Pattern::App { func, args }, ground_term) => {
+                        choices.push(MatchChoice {
+                            goals: goals.clone(),
+                            subst: subst.clone(),
+                            func: *func,
+                            args,
+                            ground: ground_term,
+                            next: 0,
+                        });
+                        needs_candidate = true;
+                        break;
                     }
                 }
             }
-        }
+            if !needs_candidate {
+                return Some(subst);
+            }
 
-        Some(subst)
+            // Resume the deepest choice point that still has an untried
+            // candidate; a choice point with none left is discarded, which is
+            // how the recursive version's `return None` propagated outwards.
+            let mut resumed = false;
+            while let Some(choice) = choices.last_mut() {
+                let candidates: &[(TermId, SmallVec<[TermId; 4]>)] =
+                    match self.apps.get(&choice.func) {
+                        Some(apps) => apps,
+                        None => &[],
+                    };
+                let mut chosen: Option<SmallVec<[TermId; 4]>> = None;
+                while choice.next < candidates.len() {
+                    let (app_term, app_args) = &candidates[choice.next];
+                    choice.next += 1;
+                    if *app_term == choice.ground && app_args.len() == choice.args.len() {
+                        chosen = Some(app_args.clone());
+                        break;
+                    }
+                }
+                match chosen {
+                    Some(app_args) => {
+                        goals.clone_from(&choice.goals);
+                        subst.clone_from(&choice.subst);
+                        goals.push(MatchGoal::Commit);
+                        for (p, g) in choice.args.iter().zip(app_args.iter().copied()).rev() {
+                            goals.push(MatchGoal::Pair(p, g));
+                        }
+                        resumed = true;
+                        break;
+                    }
+                    None => {
+                        choices.pop();
+                    }
+                }
+            }
+            if !resumed {
+                return None;
+            }
+        }
     }
 
     /// Get all instantiations
@@ -812,8 +922,15 @@ impl EMatchEngine {
         results
     }
 
-    /// Recursively match pattern arguments against ground argument terms,
-    /// using E-class equivalence for consistency checks on already-bound variables.
+    /// Match pattern arguments against ground argument terms, using E-class
+    /// equivalence for consistency checks on already-bound variables.
+    ///
+    /// Explicit goal stack, not recursion (see [`Self::match_args`]); no
+    /// choice points are needed here because the ground application is
+    /// determined by the ground term, so the walk never has to backtrack.
+    /// Nested operands are pushed in reverse so they are matched left to
+    /// right and before the next sibling — the order the recursive descent
+    /// used.
     fn match_args_egraph(
         &self,
         patterns: &[Pattern],
@@ -822,8 +939,10 @@ impl EMatchEngine {
         solver: &super::solver::EufSolver,
     ) -> Option<Substitution> {
         let mut subst = current_subst.clone();
+        let mut goals: Vec<(&Pattern, TermId)> =
+            patterns.iter().zip(ground.iter().copied()).rev().collect();
 
-        for (pattern, &ground_term) in patterns.iter().zip(ground.iter()) {
+        while let Some((pattern, ground_term)) = goals.pop() {
             match pattern {
                 Pattern::Var(v) => {
                     if let Some(bound) = subst.get(*v) {
@@ -875,7 +994,7 @@ impl EMatchEngine {
                         return None;
                     }
 
-                    subst = self.match_args_egraph(args, &nested_ground, &subst, solver)?;
+                    goals.extend(args.iter().zip(nested_ground).rev());
                 }
             }
         }

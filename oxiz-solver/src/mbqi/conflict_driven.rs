@@ -18,7 +18,6 @@ use crate::prelude::*;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::interner::Spur;
 use oxiz_core::sort::SortId;
-use smallvec::SmallVec;
 
 use super::model_completion::CompletedModel;
 use super::{Instantiation, InstantiationReason, QuantifiedFormula, QuantifierId};
@@ -314,7 +313,13 @@ impl ConflictDrivenInstantiator {
         analysis
     }
 
-    /// Recursively collect terms from a conflict clause
+    /// Collect terms from a conflict clause.
+    ///
+    /// Explicit-stack pre-order walk (children pushed in reverse so they are
+    /// visited left-to-right, preserving the retired recursion's collection
+    /// order exactly); no input depth can overflow the call stack. The
+    /// descent set is unchanged: kinds outside it are recorded as conflict
+    /// terms but deliberately not descended by this heuristic.
     fn collect_conflict_terms(
         &self,
         term: TermId,
@@ -322,77 +327,77 @@ impl ConflictDrivenInstantiator {
         visited: &mut FxHashSet<TermId>,
         manager: &TermManager,
     ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-        analysis.conflict_terms.push(term);
+        let mut work = vec![term];
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+            analysis.conflict_terms.push(t_id);
 
-        let Some(t) = manager.get(term) else {
-            return;
-        };
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
 
-        // Collect ground values by sort
-        match &t.kind {
-            TermKind::IntConst(_) | TermKind::RealConst(_) | TermKind::BitVecConst { .. } => {
-                analysis.ground_values.entry(t.sort).or_default().push(term);
+            // Collect ground values by sort
+            match &t.kind {
+                TermKind::IntConst(_) | TermKind::RealConst(_) | TermKind::BitVecConst { .. } => {
+                    analysis.ground_values.entry(t.sort).or_default().push(t_id);
+                }
+                TermKind::True | TermKind::False => {
+                    analysis.ground_values.entry(t.sort).or_default().push(t_id);
+                }
+                TermKind::Var(name) => {
+                    analysis.conflict_variables.insert(*name);
+                }
+                _ => {}
             }
-            TermKind::True | TermKind::False => {
-                analysis.ground_values.entry(t.sort).or_default().push(term);
-            }
-            TermKind::Var(name) => {
-                analysis.conflict_variables.insert(*name);
-            }
-            _ => {}
-        }
 
-        // Recurse
-        match &t.kind {
-            TermKind::Not(a) | TermKind::Neg(a) => {
-                self.collect_conflict_terms(*a, analysis, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &a in args {
-                    self.collect_conflict_terms(a, analysis, visited, manager);
+            // Descend
+            match &t.kind {
+                TermKind::Not(a) | TermKind::Neg(a) => work.push(*a),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &a in args.iter().rev() {
+                        work.push(a);
+                    }
                 }
-            }
-            TermKind::Eq(l, r)
-            | TermKind::Lt(l, r)
-            | TermKind::Le(l, r)
-            | TermKind::Gt(l, r)
-            | TermKind::Ge(l, r)
-            | TermKind::Implies(l, r)
-            | TermKind::Sub(l, r)
-            | TermKind::Div(l, r)
-            | TermKind::Mod(l, r) => {
-                self.collect_conflict_terms(*l, analysis, visited, manager);
-                self.collect_conflict_terms(*r, analysis, visited, manager);
-            }
-            TermKind::Add(args) | TermKind::Mul(args) => {
-                for &a in args.iter() {
-                    self.collect_conflict_terms(a, analysis, visited, manager);
+                TermKind::Eq(l, r)
+                | TermKind::Lt(l, r)
+                | TermKind::Le(l, r)
+                | TermKind::Gt(l, r)
+                | TermKind::Ge(l, r)
+                | TermKind::Implies(l, r)
+                | TermKind::Sub(l, r)
+                | TermKind::Div(l, r)
+                | TermKind::Mod(l, r) => {
+                    work.push(*r);
+                    work.push(*l);
                 }
-            }
-            TermKind::Ite(c, t_br, e_br) => {
-                self.collect_conflict_terms(*c, analysis, visited, manager);
-                self.collect_conflict_terms(*t_br, analysis, visited, manager);
-                self.collect_conflict_terms(*e_br, analysis, visited, manager);
-            }
-            TermKind::Apply { args, .. } => {
-                for &a in args.iter() {
-                    self.collect_conflict_terms(a, analysis, visited, manager);
+                TermKind::Add(args) | TermKind::Mul(args) => {
+                    for &a in args.iter().rev() {
+                        work.push(a);
+                    }
                 }
+                TermKind::Ite(c, t_br, e_br) => {
+                    work.push(*e_br);
+                    work.push(*t_br);
+                    work.push(*c);
+                }
+                TermKind::Apply { args, .. } => {
+                    for &a in args.iter().rev() {
+                        work.push(a);
+                    }
+                }
+                TermKind::Select(arr, idx) => {
+                    work.push(*idx);
+                    work.push(*arr);
+                }
+                TermKind::Store(arr, idx, val) => {
+                    work.push(*val);
+                    work.push(*idx);
+                    work.push(*arr);
+                }
+                _ => {}
             }
-            TermKind::Select(arr, idx) => {
-                self.collect_conflict_terms(*arr, analysis, visited, manager);
-                self.collect_conflict_terms(*idx, analysis, visited, manager);
-            }
-            TermKind::Store(arr, idx, val) => {
-                self.collect_conflict_terms(*arr, analysis, visited, manager);
-                self.collect_conflict_terms(*idx, analysis, visited, manager);
-                self.collect_conflict_terms(*val, analysis, visited, manager);
-            }
-            _ => {}
         }
     }
 
@@ -413,55 +418,50 @@ impl ConflictDrivenInstantiator {
         body_funcs.intersection(&conflict_funcs).next().is_some()
     }
 
-    /// Collect function symbol names from a term
+    /// Collect function symbol names from a term.
+    ///
+    /// Explicit-stack walk with a visited set (the output is a set, so
+    /// traversal order is irrelevant); no input depth can overflow the call
+    /// stack. The descent set (`Apply` args, `Not`/`Neg`, `And`/`Or`,
+    /// `Eq`/`Lt`/`Le`/`Implies` sides) is the retired recursion's, unchanged.
     fn collect_function_symbols(&self, term: TermId, manager: &TermManager) -> FxHashSet<Spur> {
         let mut symbols = FxHashSet::default();
-        let mut visited = FxHashSet::default();
-        self.collect_func_symbols_rec(term, &mut symbols, &mut visited, manager);
-        symbols
-    }
-
-    fn collect_func_symbols_rec(
-        &self,
-        term: TermId,
-        symbols: &mut FxHashSet<Spur>,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if let TermKind::Apply { func, args } = &t.kind {
-            symbols.insert(*func);
-            for &a in args.iter() {
-                self.collect_func_symbols_rec(a, symbols, visited, manager);
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work = vec![term];
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
             }
-        }
 
-        match &t.kind {
-            TermKind::Not(a) | TermKind::Neg(a) => {
-                self.collect_func_symbols_rec(*a, symbols, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &a in args {
-                    self.collect_func_symbols_rec(a, symbols, visited, manager);
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            if let TermKind::Apply { func, args } = &t.kind {
+                symbols.insert(*func);
+                for &a in args.iter() {
+                    work.push(a);
                 }
             }
-            TermKind::Eq(l, r)
-            | TermKind::Lt(l, r)
-            | TermKind::Le(l, r)
-            | TermKind::Implies(l, r) => {
-                self.collect_func_symbols_rec(*l, symbols, visited, manager);
-                self.collect_func_symbols_rec(*r, symbols, visited, manager);
+
+            match &t.kind {
+                TermKind::Not(a) | TermKind::Neg(a) => work.push(*a),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &a in args {
+                        work.push(a);
+                    }
+                }
+                TermKind::Eq(l, r)
+                | TermKind::Lt(l, r)
+                | TermKind::Le(l, r)
+                | TermKind::Implies(l, r) => {
+                    work.push(*l);
+                    work.push(*r);
+                }
+                _ => {}
             }
-            _ => {}
         }
+        symbols
     }
 
     /// Bump relevance of tracked instances that match the conflict
@@ -660,140 +660,39 @@ impl ConflictDrivenInstantiator {
         key
     }
 
-    /// Apply substitution to a term
+    /// Substitute a quantifier's bound variables in `term`, by variable name.
+    ///
+    /// Delegates to [`utils::substitute`](crate::mbqi::macros::utils::substitute),
+    /// the one shared implementation for this crate, which resolves the
+    /// name-keyed map against the term's actual free occurrences and hands the
+    /// result to [`TermManager::substitute`].
+    ///
+    /// This used to be a local recursive walk with a memo table and a
+    /// `TermKind` whitelist that ended in `_ => term`, so every kind outside
+    /// the whitelist was returned **unchanged** -- the whitelist covered 19 kinds, so
+    /// `Xor`, `Distinct`, every bit-vector, string, floating-point and
+    /// datatype operator, and every binder fell through. A
+    /// bound variable sitting anywhere under such a kind therefore survived
+    /// into the "ground instance", which is then not an instance at all: the
+    /// engine reported a substitution it had not performed. Four
+    /// near-identical copies of that walk existed in this module (here, and in
+    /// `instantiation`, `counterexample`, `lazy_instantiation`,
+    /// `conflict_driven`); they are all now this one call, because a duplicate
+    /// that has diverged four times will diverge again.
+    ///
+    /// The shared routine additionally descends into
+    /// `Forall`/`Exists`/`Let`/`Match` bodies, bindings, cases and trigger
+    /// patterns with capture-avoiding alpha-renaming, and walks with an
+    /// explicit heap stack rather than native recursion.
+    ///
+    /// [`TermManager::substitute`]: oxiz_core::ast::TermManager::substitute
     fn apply_substitution(
         &self,
         term: TermId,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
     ) -> TermId {
-        let mut cache = FxHashMap::default();
-        self.apply_substitution_cached(term, subst, manager, &mut cache)
-    }
-
-    fn apply_substitution_cached(
-        &self,
-        term: TermId,
-        subst: &FxHashMap<Spur, TermId>,
-        manager: &mut TermManager,
-        cache: &mut FxHashMap<TermId, TermId>,
-    ) -> TermId {
-        if let Some(&cached) = cache.get(&term) {
-            return cached;
-        }
-
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
-
-        let result = match &t.kind {
-            TermKind::Var(name) => subst.get(name).copied().unwrap_or(term),
-            TermKind::Not(a) => {
-                let sa = self.apply_substitution_cached(*a, subst, manager, cache);
-                manager.mk_not(sa)
-            }
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_or(new_args)
-            }
-            TermKind::Eq(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_eq(sl, sr)
-            }
-            TermKind::Implies(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_implies(sl, sr)
-            }
-            TermKind::Lt(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_lt(sl, sr)
-            }
-            TermKind::Le(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_le(sl, sr)
-            }
-            TermKind::Gt(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_gt(sl, sr)
-            }
-            TermKind::Ge(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_ge(sl, sr)
-            }
-            TermKind::Add(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_add(new_args)
-            }
-            TermKind::Mul(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_mul(new_args)
-            }
-            TermKind::Sub(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_sub(sl, sr)
-            }
-            TermKind::Div(l, r) => {
-                let sl = self.apply_substitution_cached(*l, subst, manager, cache);
-                let sr = self.apply_substitution_cached(*r, subst, manager, cache);
-                manager.mk_div(sl, sr)
-            }
-            TermKind::Neg(a) => {
-                let sa = self.apply_substitution_cached(*a, subst, manager, cache);
-                manager.mk_neg(sa)
-            }
-            TermKind::Ite(c, t_br, e_br) => {
-                let sc = self.apply_substitution_cached(*c, subst, manager, cache);
-                let st = self.apply_substitution_cached(*t_br, subst, manager, cache);
-                let se = self.apply_substitution_cached(*e_br, subst, manager, cache);
-                manager.mk_ite(sc, st, se)
-            }
-            TermKind::Apply { func, args } => {
-                let fname = manager.resolve_str(*func).to_string();
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_apply(&fname, new_args, t.sort)
-            }
-            TermKind::Select(arr, idx) => {
-                let sa = self.apply_substitution_cached(*arr, subst, manager, cache);
-                let si = self.apply_substitution_cached(*idx, subst, manager, cache);
-                manager.mk_select(sa, si)
-            }
-            TermKind::Store(arr, idx, val) => {
-                let sa = self.apply_substitution_cached(*arr, subst, manager, cache);
-                let si = self.apply_substitution_cached(*idx, subst, manager, cache);
-                let sv = self.apply_substitution_cached(*val, subst, manager, cache);
-                manager.mk_store(sa, si, sv)
-            }
-            _ => term,
-        };
-
-        cache.insert(term, result);
-        result
+        crate::mbqi::macros::utils::substitute(term, subst, manager)
     }
 
     /// Apply decay to all tracked instances
@@ -895,7 +794,156 @@ impl Default for ConflictDrivenInstantiator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===== Substitution regression tests =====
+    //
+    // `apply_substitution` used to be a local recursive walk whose `TermKind`
+    // whitelist ended in `_ => term`, so a bound variable under any unlisted
+    // kind survived into the supposedly ground instance. All four copies in
+    // this module now delegate to `crate::mbqi::macros::utils::substitute`.
+
+    /// A body whose only variable occurrence sits under a kind the old
+    /// whitelist missed must still be substituted.
+    #[test]
+    fn substitution_reaches_kinds_outside_the_old_whitelist() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let int_sort = m.sorts.int_sort;
+        let bv8 = m.sorts.bitvec(8);
+
+        let p = m.mk_var("p", bool_sort);
+        let i = m.mk_var("i", int_sort);
+        let b = m.mk_var("b", bv8);
+
+        let p_name = match m.get(p).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("p is a variable"),
+        };
+        let i_name = match m.get(i).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("i is a variable"),
+        };
+        let b_name = match m.get(b).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("b is a variable"),
+        };
+
+        let truth = m.mk_true();
+        let two = m.mk_int(2);
+        let ones = m.mk_bitvec(1, 8);
+
+        // Every one of these was returned unchanged by the old walk.
+        let xor = m.mk_xor(p, truth);
+        let distinct = m.mk_distinct([i, two]);
+        let bv_lt = m.mk_bv_ult(b, ones);
+        let implies = m.mk_implies(p, truth);
+        let nested = m.mk_forall([("z", int_sort)], distinct);
+
+        let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+        subst.insert(p_name, truth);
+        subst.insert(i_name, two);
+        subst.insert(b_name, ones);
+
+        let subject = ConflictDrivenInstantiator::default_config();
+        for (label, term) in [
+            ("xor", xor),
+            ("distinct", distinct),
+            ("bvult", bv_lt),
+            ("implies", implies),
+            ("nested forall", nested),
+        ] {
+            let result = subject.apply_substitution(term, &subst, &mut m);
+            let free = m.free_vars_including_patterns(result);
+            assert!(
+                free.is_empty(),
+                "{label}: substitution left free variables {free:?} in the result"
+            );
+        }
+    }
     use oxiz_core::interner::Key;
+    use smallvec::SmallVec;
+
+    /// Run `f` on a dedicated 128 KiB stack: overflow aborts the process, so
+    /// returning at all is part of the assertion.
+    ///
+    /// This stack and every depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    /// Conflict analysis must survive a 12 500-deep conflict term on a tiny
+    /// stack (the old recursion overflowed), through the public entry point.
+    #[test]
+    fn conflict_analysis_survives_deep_terms_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut manager = TermManager::new();
+            let int_sort = manager.sorts.int_sort;
+            let forty_two = manager.mk_int(42);
+            let mut chain = forty_two;
+            for _ in 0..DEPTH {
+                chain = manager.mk_apply("f", [chain], int_sort);
+            }
+
+            let mut cdqi = ConflictDrivenInstantiator::default_config();
+            let model = CompletedModel::new();
+            let result = cdqi.analyze_conflict(&[chain], &[], &model, &mut manager);
+            assert!(result.is_empty(), "no quantifiers, so no instances");
+
+            // The private symbol collector shares the same shape; exercise
+            // it directly as well.
+            let symbols = cdqi.collect_function_symbols(chain, &manager);
+            assert_eq!(symbols.len(), 1, "only the symbol f occurs");
+        });
+    }
+
+    /// Pin the exact traversal artifacts of `collect_conflict_terms` --
+    /// pre-order term order, ground values by sort, and conflict variables
+    /// -- so the iterative conversion is proven behavior-preserving.
+    #[test]
+    fn collect_conflict_terms_preserves_preorder_and_classification() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        let cond = manager.mk_var("c", bool_sort);
+        let a = manager.mk_var("a", int_sort);
+        let forty_two = manager.mk_int(42);
+        let ite = manager.mk_ite(cond, a, forty_two);
+
+        let cdqi = ConflictDrivenInstantiator::default_config();
+        let mut analysis = ConflictAnalysis {
+            conflict_terms: Vec::new(),
+            conflict_variables: FxHashSet::default(),
+            ground_values: FxHashMap::default(),
+            related_quantifiers: Vec::new(),
+        };
+        let mut visited = FxHashSet::default();
+        cdqi.collect_conflict_terms(ite, &mut analysis, &mut visited, &manager);
+
+        assert_eq!(
+            analysis.conflict_terms,
+            vec![ite, cond, a, forty_two],
+            "pre-order, children left to right"
+        );
+        assert_eq!(
+            analysis.conflict_variables.len(),
+            2,
+            "c and a are variables"
+        );
+        assert_eq!(
+            analysis.ground_values.get(&int_sort).map(Vec::as_slice),
+            Some(&[forty_two][..])
+        );
+    }
 
     fn make_qf(term_id: u32, body_id: u32, var_names: &[usize]) -> QuantifiedFormula {
         let bound_vars: SmallVec<[(Spur, SortId); 4]> = var_names

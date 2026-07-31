@@ -1,6 +1,6 @@
 //! Python wrapper for Term, TermManager, and expression builder operators.
 
-use ::oxiz::core::ast::{RoundingMode, TermId, TermManager};
+use ::oxiz::core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_rational::Rational64;
 use pyo3::exceptions::PyValueError;
@@ -925,7 +925,16 @@ impl PyTermManager {
     fn term_to_string(&self, term: &PyTerm) -> String {
         let tm = self.inner.borrow();
         if let Some(t) = tm.get(term.id) {
-            format!("{:?}", t.kind)
+            match &t.kind {
+                // The actual string content, not Rust's `{:?}` Debug
+                // formatter (which would render e.g. `StringLit("a\"b")`,
+                // using *Rust's* escape syntax -- not Python's, and not
+                // SMT-LIB's). A Python caller of a "human-readable string
+                // representation" of a String-sorted term wants the string
+                // back, not a debug-formatted Rust literal.
+                TermKind::StringLit(s) => s.clone(),
+                other => format!("{other:?}"),
+            }
         } else {
             format!("Term({})", term.id.raw())
         }
@@ -943,64 +952,108 @@ impl PyTermManager {
 /// - ``"Float[eb,sb]"`` or ``"FP[eb,sb]"`` — floating-point with *eb* exponent bits
 ///   and *sb* significand bits (including the implicit leading bit)
 /// - ``"Array[D,R]"`` — array from sort D to sort R (nested bracketed sorts)
+///
+/// This parser is iterative (explicit heap stack). `Array[...]` nesting is
+/// bounded only by the length of the Python string, so a one-liner such as
+/// `oxiz.Context().const_of_sort("x", "Array[" * 200000 + "Int" + "]" * 200000)`
+/// overflowed the stack against a recursive parser. Errors are still reported
+/// through the existing `PyResult` channel, unchanged.
 pub(crate) fn parse_sort_name(
     tm: &mut TermManager,
     sort_name: &str,
 ) -> PyResult<::oxiz::core::SortId> {
-    match sort_name {
-        "Bool" => Ok(tm.sorts.bool_sort),
-        "Int" => Ok(tm.sorts.int_sort),
-        "Real" => Ok(tm.sorts.real_sort),
-        "String" => Ok(tm.sorts.string_sort()),
-        s if s.starts_with("BitVec[") && s.ends_with(']') => {
-            let width_str = &s[7..s.len() - 1];
-            let width: u32 = width_str.parse().map_err(|_| {
-                PyValueError::new_err(format!("Invalid BitVec width: {}", width_str))
-            })?;
-            Ok(tm.sorts.bitvec(width))
-        }
-        s if (s.starts_with("Float[") || s.starts_with("FP[")) && s.ends_with(']') => {
-            let inner = if s.starts_with("Float[") {
-                &s[6..s.len() - 1]
-            } else {
-                &s[3..s.len() - 1]
-            };
-            let comma = inner.find(',').ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "Invalid Float/FP sort '{}': expected 'Float[eb,sb]'",
-                    sort_name
-                ))
-            })?;
-            let eb: u32 = inner[..comma].trim().parse().map_err(|_| {
-                PyValueError::new_err(format!("Invalid exponent width in sort '{}'", sort_name))
-            })?;
-            let sb: u32 = inner[comma + 1..].trim().parse().map_err(|_| {
-                PyValueError::new_err(format!("Invalid significand width in sort '{}'", sort_name))
-            })?;
-            Ok(tm.sorts.float_sort(eb, sb))
-        }
-        s if s.starts_with("Array[") && s.ends_with(']') => {
-            // Find the comma separating domain and range, respecting nested brackets.
-            let inner = &s[6..s.len() - 1];
-            let split = find_top_level_comma(inner).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "Invalid Array sort '{}': expected 'Array[D,R]'",
-                    sort_name
-                ))
-            })?;
-            let domain_str = inner[..split].trim();
-            let range_str = inner[split + 1..].trim();
-            let domain = parse_sort_name(tm, domain_str)?;
-            let range = parse_sort_name(tm, range_str)?;
-            Ok(tm.sorts.array(domain, range))
-        }
-        _ => Err(PyValueError::new_err(format!(
-            "Unknown sort: '{}'. \
-             Supported: 'Bool', 'Int', 'Real', 'String', 'BitVec[N]', \
-             'Float[eb,sb]', 'FP[eb,sb]', 'Array[D,R]'",
-            sort_name
-        ))),
+    /// Work item for the iterative sort parser.
+    enum SortTask<'a> {
+        /// Parse this sort name.
+        Parse(&'a str),
+        /// Build an array sort from the two most recently parsed sorts.
+        BuildArray,
     }
+
+    let mut tasks = vec![SortTask::Parse(sort_name)];
+    let mut parsed: Vec<::oxiz::core::SortId> = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        let s = match task {
+            SortTask::BuildArray => {
+                let range = parsed.pop();
+                let domain = parsed.pop();
+                let (Some(domain), Some(range)) = (domain, range) else {
+                    return Err(PyValueError::new_err(format!(
+                        "Invalid Array sort '{}': expected 'Array[D,R]'",
+                        sort_name
+                    )));
+                };
+                parsed.push(tm.sorts.array(domain, range));
+                continue;
+            }
+            SortTask::Parse(s) => s,
+        };
+
+        let sort = match s {
+            "Bool" => tm.sorts.bool_sort,
+            "Int" => tm.sorts.int_sort,
+            "Real" => tm.sorts.real_sort,
+            "String" => tm.sorts.string_sort(),
+            s if s.starts_with("BitVec[") && s.ends_with(']') => {
+                let width_str = &s[7..s.len() - 1];
+                let width: u32 = width_str.parse().map_err(|_| {
+                    PyValueError::new_err(format!("Invalid BitVec width: {}", width_str))
+                })?;
+                tm.sorts.bitvec(width)
+            }
+            s if (s.starts_with("Float[") || s.starts_with("FP[")) && s.ends_with(']') => {
+                let inner = if s.starts_with("Float[") {
+                    &s[6..s.len() - 1]
+                } else {
+                    &s[3..s.len() - 1]
+                };
+                let comma = inner.find(',').ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "Invalid Float/FP sort '{}': expected 'Float[eb,sb]'",
+                        s
+                    ))
+                })?;
+                let eb: u32 = inner[..comma].trim().parse().map_err(|_| {
+                    PyValueError::new_err(format!("Invalid exponent width in sort '{}'", s))
+                })?;
+                let sb: u32 = inner[comma + 1..].trim().parse().map_err(|_| {
+                    PyValueError::new_err(format!("Invalid significand width in sort '{}'", s))
+                })?;
+                tm.sorts.float_sort(eb, sb)
+            }
+            s if s.starts_with("Array[") && s.ends_with(']') => {
+                // Find the comma separating domain and range, respecting nested brackets.
+                let inner = &s[6..s.len() - 1];
+                let split = find_top_level_comma(inner).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "Invalid Array sort '{}': expected 'Array[D,R]'",
+                        s
+                    ))
+                })?;
+                let domain_str = inner[..split].trim();
+                let range_str = inner[split + 1..].trim();
+                // Domain completes first, so it is pushed last.
+                tasks.push(SortTask::BuildArray);
+                tasks.push(SortTask::Parse(range_str));
+                tasks.push(SortTask::Parse(domain_str));
+                continue;
+            }
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "Unknown sort: '{}'. \
+                     Supported: 'Bool', 'Int', 'Real', 'String', 'BitVec[N]', \
+                     'Float[eb,sb]', 'FP[eb,sb]', 'Array[D,R]'",
+                    other
+                )));
+            }
+        };
+        parsed.push(sort);
+    }
+
+    parsed
+        .pop()
+        .ok_or_else(|| PyValueError::new_err(format!("Invalid sort: '{}'", sort_name)))
 }
 
 /// Find the index of the first top-level comma in ``s`` (not inside brackets).
@@ -1033,5 +1086,108 @@ pub(crate) fn parse_rounding_mode(rm: &str) -> PyResult<RoundingMode> {
             "Unknown rounding mode '{}'. Valid modes: RNE, RNA, RTP, RTN, RTZ",
             other
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `term_to_string` used to render *every* term via Rust's `{:?}` Debug
+    /// formatter, so a String-sorted term came back as e.g.
+    /// `StringLit("a\"b")` -- Rust's *own* escape syntax, not Python's and
+    /// not SMT-LIB's -- instead of the actual string content. It must now
+    /// return the raw string for a `"`, a `\`, a `\u`-prefixed literal
+    /// substring, a non-ASCII code point, and a control character: the
+    /// natural rendering for a Python `str` is the value itself, not an
+    /// escaped literal.
+    #[test]
+    fn term_to_string_string_lit_returns_raw_content_not_debug_format() {
+        let tm = PyTermManager::new();
+        for raw in ["a\"b", "a\\b", "\\u0041", "caf\u{e9}", "line\u{0}break"] {
+            let term_id = tm.inner.borrow_mut().mk_string_lit(raw);
+            let term = PyTerm::bare(term_id);
+            assert_eq!(
+                tm.term_to_string(&term),
+                raw,
+                "expected the raw string back unchanged"
+            );
+        }
+    }
+
+    /// Control: plain ASCII (no special characters at all) must also come
+    /// back unchanged, matching every case above.
+    #[test]
+    fn term_to_string_string_lit_plain_ascii_control() {
+        let tm = PyTermManager::new();
+        let term_id = tm.inner.borrow_mut().mk_string_lit("hello world");
+        let term = PyTerm::bare(term_id);
+        assert_eq!(tm.term_to_string(&term), "hello world");
+    }
+
+    /// Control: a non-string term's representation is unaffected by this
+    /// fix -- it still goes through the pre-existing `{:?}` Debug fallback,
+    /// confirming the new `StringLit` arm didn't accidentally swallow any
+    /// other `TermKind`.
+    #[test]
+    fn term_to_string_non_string_term_still_uses_debug_format() {
+        let tm = PyTermManager::new();
+        let term_id = tm.inner.borrow_mut().mk_int(42);
+        let term = PyTerm::bare(term_id);
+        assert!(tm.term_to_string(&term).contains("42"));
+    }
+
+    /// `parse_sort_name` used to recurse once per `Array[` level, so a Python
+    /// one-liner (`const_of_sort("x", "Array[" * 200000 + "Int" + "]" * 200000)`)
+    /// overflowed the stack. A stack overflow aborts the process rather than
+    /// failing a test, so *returning at all* is the assertion; the small stack
+    /// makes a surviving recursion detectable.
+    #[test]
+    fn parse_sort_name_survives_deeply_nested_array_sorts() {
+        std::thread::Builder::new()
+            .name("py_deep_sort".to_string())
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let depth = 100_000;
+                let mut sort_name = String::from("Int");
+                for _ in 0..depth {
+                    sort_name = format!("Array[Int,{sort_name}]");
+                }
+
+                let manager = PyTermManager::new();
+                let mut inner = manager.inner.borrow_mut();
+                let sort = parse_sort_name(&mut inner, &sort_name);
+                assert!(sort.is_ok(), "deeply nested array sort should parse");
+            })
+            .expect("test thread should spawn")
+            .join()
+            .expect("test thread should not panic");
+    }
+
+    /// Semantic pins: the iterative parser accepts and rejects exactly what the
+    /// recursive one did.
+    #[test]
+    fn parse_sort_name_results_are_unchanged() {
+        let manager = PyTermManager::new();
+        let mut inner = manager.inner.borrow_mut();
+
+        let int_sort = parse_sort_name(&mut inner, "Int").expect("Int should parse");
+        let nested =
+            parse_sort_name(&mut inner, "Array[Int,Array[Int,Int]]").expect("nested should parse");
+        let nested_again =
+            parse_sort_name(&mut inner, "Array[Int, Array[Int, Int]]").expect("should parse");
+        // Sorts are interned, so equal descriptions give the same id.
+        assert_eq!(nested, nested_again);
+        assert_ne!(int_sort, nested);
+
+        assert!(parse_sort_name(&mut inner, "BitVec[8]").is_ok());
+        assert!(parse_sort_name(&mut inner, "Float[8,24]").is_ok());
+        assert!(parse_sort_name(&mut inner, "FP[8,24]").is_ok());
+
+        // Errors still come back through PyResult, naming the offending sort.
+        assert!(parse_sort_name(&mut inner, "Nope").is_err());
+        assert!(parse_sort_name(&mut inner, "Array[Int]").is_err());
+        assert!(parse_sort_name(&mut inner, "Array[Int,Nope]").is_err());
+        assert!(parse_sort_name(&mut inner, "BitVec[x]").is_err());
     }
 }

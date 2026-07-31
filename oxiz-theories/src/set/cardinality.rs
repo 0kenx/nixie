@@ -10,6 +10,16 @@ use super::{SetConflict, SetLiteral, SetProofStep, SetVar, SetVarId};
 use crate::prelude::*;
 use smallvec::SmallVec;
 
+/// One suspended branch of the iterative at-most-k subset enumeration.
+struct SubsetClauseFrame {
+    /// Index of the next variable to decide on.
+    start: usize,
+    /// Length the shared prefix must be rewound to before this branch runs.
+    prefix_len: usize,
+    /// Variable this branch appends to the prefix, if any.
+    include: Option<u32>,
+}
+
 /// Cardinality constraint kind
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CardConstraintKind {
@@ -813,6 +823,15 @@ impl CardinalityCompiler {
         }
     }
 
+    /// Emit one clause per `size`-subset of `vars`, include-branch first
+    ///
+    /// Explicit stack, not recursion: the depth is `vars.len()`, i.e. the
+    /// number of caller-supplied literals in the cardinality constraint, and
+    /// the function returns nothing -- there is no channel on which a depth cap
+    /// could report that clauses were dropped, and dropping an at-most-k clause
+    /// makes the encoding accept assignments it must reject. Frames carry the
+    /// position the shared `current` prefix must be rewound to, which
+    /// reproduces the recursive push/pop exactly.
     fn generate_subset_clauses(
         &mut self,
         clauses: &mut Vec<SmallVec<[i32; 4]>>,
@@ -821,27 +840,49 @@ impl CardinalityCompiler {
         size: usize,
         current: &mut SmallVec<[u32; 16]>,
     ) {
-        if current.len() == size {
-            // Add clause: at least one of these variables must be false
-            let mut clause = SmallVec::new();
-            for &v in current.iter() {
-                clause.push(-(v as i32));
+        let entry_len = current.len();
+        let mut stack: Vec<SubsetClauseFrame> = vec![SubsetClauseFrame {
+            start,
+            prefix_len: entry_len,
+            include: None,
+        }];
+
+        while let Some(frame) = stack.pop() {
+            current.truncate(frame.prefix_len);
+            if let Some(var) = frame.include {
+                current.push(var);
             }
-            clauses.push(clause);
-            return;
+
+            if current.len() == size {
+                // Add clause: at least one of these variables must be false
+                let mut clause = SmallVec::new();
+                for &v in current.iter() {
+                    clause.push(-(v as i32));
+                }
+                clauses.push(clause);
+                continue;
+            }
+
+            let Some(&var) = vars.get(frame.start) else {
+                continue;
+            };
+
+            let prefix_len = current.len();
+            // Pushed in reverse: the include branch is explored first, exactly
+            // as the recursive version did.
+            stack.push(SubsetClauseFrame {
+                start: frame.start + 1,
+                prefix_len,
+                include: None,
+            });
+            stack.push(SubsetClauseFrame {
+                start: frame.start + 1,
+                prefix_len,
+                include: Some(var),
+            });
         }
 
-        if start >= vars.len() {
-            return;
-        }
-
-        // Include vars[start]
-        current.push(vars[start]);
-        self.generate_subset_clauses(clauses, vars, start + 1, size, current);
-        current.pop();
-
-        // Exclude vars[start]
-        self.generate_subset_clauses(clauses, vars, start + 1, size, current);
+        current.truncate(entry_len);
     }
 
     #[allow(clippy::needless_range_loop)]
@@ -952,6 +993,56 @@ impl Default for CardinalityCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_generate_subset_clauses_deep_variable_list_small_stack() {
+        // The include/exclude recursion nests once per variable of a
+        // caller-supplied cardinality constraint and returns nothing -- there
+        // is no channel on which a depth cap could report dropped clauses, and
+        // a dropped at-most-k clause makes the encoding accept assignments it
+        // must reject. With `size == 1` the enumeration is linear (one unit
+        // clause per variable) while the exclude spine is as deep as the
+        // variable list, which isolates the depth from the inherent 2^n
+        // blow-up. Run on a deliberately small (128 KiB) stack: a stack
+        // overflow aborts the process, so "the thread returned at all" is part
+        // of the assertion. The stack size and `count` are scaled together and
+        // only their ratio (~21 bytes per level) matters -- never raise one
+        // without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let count: u32 = 12_500;
+                let vars: Vec<u32> = (1..=count).collect();
+                let mut compiler = CardinalityCompiler::new();
+                let mut clauses: Vec<SmallVec<[i32; 4]>> = Vec::new();
+                let mut current: SmallVec<[u32; 16]> = SmallVec::new();
+
+                compiler.generate_subset_clauses(&mut clauses, &vars, 0, 1, &mut current);
+
+                assert_eq!(clauses.len() as u32, count);
+                // Include-before-exclude order: the first variable comes first.
+                assert_eq!(clauses[0].as_slice(), &[-1]);
+                assert!(current.is_empty());
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a large variable list must not overflow a 128 KiB stack");
+    }
+
+    #[test]
+    fn test_generate_subset_clauses_exact_enumeration_and_order() {
+        // Semantic pin for the iterative rewrite: same clauses, same order,
+        // all literals negated.
+        let mut compiler = CardinalityCompiler::new();
+        let mut clauses: Vec<SmallVec<[i32; 4]>> = Vec::new();
+        let mut current: SmallVec<[u32; 16]> = SmallVec::new();
+
+        compiler.generate_subset_clauses(&mut clauses, &[1, 2, 3], 0, 2, &mut current);
+
+        let observed: Vec<Vec<i32>> = clauses.iter().map(|c| c.to_vec()).collect();
+        assert_eq!(observed, vec![vec![-1, -2], vec![-1, -3], vec![-2, -3]]);
+    }
 
     #[test]
     fn test_card_constraint_kind_check() {

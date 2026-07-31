@@ -96,17 +96,22 @@ The solver is optimized for:
 - Minimal allocations during solving
 - Fast unit propagation via two-watched literals
 
-## Status (v0.3.0)
+## Status (v0.3.1)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.0 |
+| Version | 0.3.1 |
 | Status | Stable |
-| Tests | 757 passing |
-| Source files | 81 |
-| Public API items | 1,185 |
+| Tests | 778 passing |
+| Source files | 89 |
+| Public API items | 1,147+ |
 
-*Last updated: 2026-06-01*
+0.3.1 hardening: hyper-binary-resolution clauses are now registered in the
+learned/assertion ledgers (previously unreclaimable by clause-DB reduction,
+`forget`, or `pop`, which could grow a goal's clause count unboundedly across
+repeated push/pop+check cycles).
+
+*Last updated: 2026-07-31*
 
 ## License
 

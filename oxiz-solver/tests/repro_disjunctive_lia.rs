@@ -441,9 +441,13 @@ fn test_random_disjunctive_lia_vs_brute_force() {
                 }
             }
             // `Unknown` is honest — the model-verification gate refusing to trust
-            // a model the (buggy) SAT core built over an inconsistent trail.
-            // Never a wrong result; tolerated but bounded so the solver still
-            // decides the large majority of this decidable fragment.
+            // a model the SAT core built over an inconsistent trail — but on this
+            // fragment it must never be needed.  Every instance here is decidable
+            // by construction, so a single `Unknown` means the CDCL(T) loop again
+            // produced a model that `model_refutes_assertions` had to reject.
+            // That is exactly what the propagation-fixpoint bug did (57 of these
+            // 400 instances); see `oxiz-sat`'s
+            // `cdclt_propagation_fixpoint_soundness` regression suite.
             SolverResult::Unknown => {
                 unknown += 1;
                 continue;
@@ -455,8 +459,129 @@ fn test_random_disjunctive_lia_vs_brute_force() {
         wrong, 0,
         "UNSOUND: {wrong} verdict(s) disagreed with brute force (checked={checked}, unknown={unknown})"
     );
-    assert!(
-        checked >= 300,
-        "too many Unknown results: checked={checked}, unknown={unknown}"
+    assert_eq!(
+        unknown, 0,
+        "every instance in this fragment is decidable: {unknown} Unknown verdict(s) mean the \
+         CDCL(T) search handed up a model the soundness gate had to refuse (checked={checked})"
     );
+}
+
+// ----------------------------------------------------------------------------
+// Regression: the CDCL(T) propagation-fixpoint bug, reduced.
+//
+// This is the smallest instance of the generated family above that made
+// `oxiz_sat::Solver::solve_with_theory` answer `Sat` over a *total* model
+// falsifying an original ternary clause whose three literals were all pinned
+// false at level 0.  `Context::check_sat` only escaped a wrong `Sat` because
+// `model_refutes_assertions` rejected the model and downgraded it to `Unknown`.
+//
+//   x0 = -1 ∧ (x1 = x0 + -1 ∨ x1 = x0 + 0) ∧ (x2 = x1 + -1 ∨ x2 = x1 + 0) ∧ x2 = 0
+//
+// x1 ∈ {-2,-1} and x2 ∈ {x1-1, x1}, so x2 ≤ -1 and `x2 = 0` is unreachable: the
+// only sound verdict is UNSAT.
+// ----------------------------------------------------------------------------
+#[test]
+fn test_cdclt_propagation_fixpoint_regression_unsat() {
+    let mut ctx = Context::new();
+    ctx.set_logic("QF_LIA");
+    let int_sort = ctx.terms.sorts.int_sort;
+    let xs: Vec<_> = (0..3)
+        .map(|i| ctx.declare_const(&format!("x{i}"), int_sort))
+        .collect();
+
+    let minus_one = ctx.terms.mk_int(-1);
+    let zero = ctx.terms.mk_int(0);
+
+    let a0 = ctx.terms.mk_eq(xs[0], minus_one);
+    ctx.assert(a0);
+
+    for i in 0..2 {
+        let dec = ctx.terms.mk_add(vec![xs[i], minus_one]);
+        let same = ctx.terms.mk_add(vec![xs[i], zero]);
+        let arm_dec = ctx.terms.mk_eq(xs[i + 1], dec);
+        let arm_same = ctx.terms.mk_eq(xs[i + 1], same);
+        let disj = ctx.terms.mk_or(vec![arm_dec, arm_same]);
+        ctx.assert(disj);
+    }
+
+    let endpoint = ctx.terms.mk_eq(xs[2], zero);
+    ctx.assert(endpoint);
+
+    let result = ctx.check_sat();
+    assert!(
+        matches!(result, SolverResult::Unsat),
+        "x2 ≤ -1 on every arm choice, so x2 = 0 is unsatisfiable; got {}",
+        check_str(result)
+    );
+}
+
+// Companion of the above: the satisfiable endpoint on the same chain must be
+// decided `Sat`, and the model must genuinely satisfy every assertion.  This is
+// the model-validity half of the contract — a `Sat` from the CDCL(T) path is
+// worthless if the assignment behind it does not satisfy the input.
+#[test]
+fn test_cdclt_propagation_fixpoint_regression_sat_model_is_valid() {
+    let mut ctx = Context::new();
+    ctx.set_logic("QF_LIA");
+    let int_sort = ctx.terms.sorts.int_sort;
+    let xs: Vec<_> = (0..3)
+        .map(|i| ctx.declare_const(&format!("x{i}"), int_sort))
+        .collect();
+
+    let minus_one = ctx.terms.mk_int(-1);
+    let zero = ctx.terms.mk_int(0);
+    let minus_two = ctx.terms.mk_int(-2);
+
+    let a0 = ctx.terms.mk_eq(xs[0], minus_one);
+    ctx.assert(a0);
+    for i in 0..2 {
+        let dec = ctx.terms.mk_add(vec![xs[i], minus_one]);
+        let same = ctx.terms.mk_add(vec![xs[i], zero]);
+        let arm_dec = ctx.terms.mk_eq(xs[i + 1], dec);
+        let arm_same = ctx.terms.mk_eq(xs[i + 1], same);
+        let disj = ctx.terms.mk_or(vec![arm_dec, arm_same]);
+        ctx.assert(disj);
+    }
+    // x2 = -2 is reachable (one "same" arm and one "-1" arm, in either order).
+    let endpoint = ctx.terms.mk_eq(xs[2], minus_two);
+    ctx.assert(endpoint);
+
+    let result = ctx.check_sat();
+    assert!(
+        matches!(result, SolverResult::Sat),
+        "x2 = -2 is reachable on this chain; got {}",
+        check_str(result)
+    );
+
+    // Every assertion must evaluate to true under the reported model.
+    let model = ctx.get_model().expect("Sat must come with a model");
+    let values: Vec<i64> = (0..3)
+        .map(|i| {
+            let name = format!("x{i}");
+            let raw = &model
+                .iter()
+                .find(|(n, _, _)| *n == name)
+                .unwrap_or_else(|| panic!("{name} must appear in the model"))
+                .2;
+            // SMT-LIB renders negative integers as `(- n)`.
+            let text = raw.trim();
+            let parsed = if let Some(rest) = text.strip_prefix("(-") {
+                let digits = rest.trim_end_matches(')').trim();
+                digits.parse::<i64>().map(|v| -v)
+            } else {
+                text.parse::<i64>()
+            };
+            parsed.unwrap_or_else(|_| panic!("{name} = {text:?} is not an integer literal"))
+        })
+        .collect();
+    assert_eq!(values[0], -1, "x0 = -1 is asserted");
+    assert_eq!(values[2], -2, "x2 = -2 is asserted");
+    for i in 0..2 {
+        let delta = values[i + 1] - values[i];
+        assert!(
+            delta == -1 || delta == 0,
+            "x{} - x{i} must be -1 or 0 (the two disjuncts), got {delta}",
+            i + 1
+        );
+    }
 }

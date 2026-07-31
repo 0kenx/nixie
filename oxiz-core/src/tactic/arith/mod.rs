@@ -7,12 +7,17 @@
 use crate::prelude::*;
 
 pub mod arith_bounds;
+pub mod bounds_refiner;
 pub mod card2bv;
 pub mod factor;
 pub mod fm_advanced;
 pub mod normalize_bounds;
 pub mod propagate_ineqs;
 
+pub use bounds_refiner::{
+    Bounds as RefinedBounds, BoundsRefinerConfig, BoundsRefinerStats, BoundsRefinerTactic,
+    Interval as RefinerInterval,
+};
 pub use card2bv::{
     BvTerm, BvVar, Card2BvConfig, Card2BvStats, Card2BvTactic, CardinalityConstraint,
     EncodingMetadata, EncodingResult, EncodingStrategy,

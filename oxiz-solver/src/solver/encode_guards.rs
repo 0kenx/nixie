@@ -47,12 +47,20 @@ impl Solver {
             if !lhs_is_arith {
                 continue;
             }
-            // A successful linear parse means the atom is fully handled.
+            // A successful linear parse means the atom's *shape* is handled.  It
+            // may still rest on a `div`/`mod`/numeric-`ite` sub-term that the
+            // parse accepted as an opaque atom, which only carries meaning once
+            // its defining axioms have been asserted (see `arith_axioms`).
             if self.var_to_parsed_arith.contains_key(var) {
+                if self.term_has_undefined_arith_def(lhs, manager)
+                    || self.term_has_undefined_arith_def(rhs, manager)
+                {
+                    return true;
+                }
                 continue;
             }
-            if Self::term_contains_unhandled_arith(lhs, manager)
-                || Self::term_contains_unhandled_arith(rhs, manager)
+            if self.term_contains_unhandled_arith(lhs, manager)
+                || self.term_contains_unhandled_arith(rhs, manager)
             {
                 return true;
             }
@@ -60,11 +68,45 @@ impl Solver {
         false
     }
 
-    /// Structural DAG scan (explicit stack, no unbounded recursion) that returns
-    /// `true` when `term` contains an arithmetic construct the linear solver
-    /// cannot encode: integer `div`/`mod`, a nonlinear multiplication (two or
-    /// more variable factors), or a constant too large for `i64`.
-    fn term_contains_unhandled_arith(term: TermId, manager: &TermManager) -> bool {
+    /// Returns `true` when some *active* arithmetic atom mentions a
+    /// `div` / `mod` / numeric-`ite` term whose defining axioms are missing.
+    ///
+    /// This is the post-search half of the honesty gate: `check_core`
+    /// axiomatises everything reachable from the assertions before solving, but
+    /// a lemma produced during the search can internalise a fresh such term, and
+    /// a `Sat` built over it would be a guess.
+    pub(super) fn arith_defs_incomplete(&self, manager: &TermManager) -> bool {
+        for constraint in self.var_to_constraint.values() {
+            let (lhs, rhs) = match constraint {
+                Constraint::Lt(l, r)
+                | Constraint::Le(l, r)
+                | Constraint::Gt(l, r)
+                | Constraint::Ge(l, r)
+                | Constraint::Eq(l, r) => (*l, *r),
+                _ => continue,
+            };
+            let lhs_is_arith = manager.get(lhs).is_some_and(|t| {
+                t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort
+            });
+            if !lhs_is_arith {
+                continue;
+            }
+            if self.term_has_undefined_arith_def(lhs, manager)
+                || self.term_has_undefined_arith_def(rhs, manager)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Structural DAG scan for `div` / `mod` / numeric-`ite` sub-terms that have
+    /// not received their defining axioms.
+    ///
+    /// Unlike [`Self::term_contains_unhandled_arith`] this asks *only* about
+    /// missing definitions, so it can be applied to atoms whose linear parse
+    /// already succeeded without re-litigating nonlinearity or constant range.
+    fn term_has_undefined_arith_def(&self, term: TermId, manager: &TermManager) -> bool {
         let mut stack: Vec<TermId> = vec![term];
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         while let Some(t) = stack.pop() {
@@ -75,7 +117,74 @@ impl Solver {
                 continue;
             };
             match &node.kind {
-                TermKind::Div(_, _) | TermKind::Mod(_, _) => return true,
+                TermKind::Div(a, b) | TermKind::Mod(a, b) => {
+                    if !self.arith_defined_terms.contains(&t) {
+                        return true;
+                    }
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+                TermKind::Ite(_, a, b) => {
+                    let numeric =
+                        node.sort == manager.sorts.int_sort || node.sort == manager.sorts.real_sort;
+                    if numeric {
+                        if !self.arith_defined_terms.contains(&t) {
+                            return true;
+                        }
+                        stack.push(*a);
+                        stack.push(*b);
+                    }
+                }
+                TermKind::Add(args) | TermKind::Mul(args) => {
+                    for &a in args {
+                        stack.push(a);
+                    }
+                }
+                TermKind::Sub(a, b) => {
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+                TermKind::Neg(a) => stack.push(*a),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Structural DAG scan (explicit stack, no unbounded recursion) that returns
+    /// `true` when `term` contains an arithmetic construct the linear solver
+    /// cannot encode: a `div`/`mod`/numeric-`ite` term still missing its
+    /// defining axioms, a nonlinear multiplication (two or more variable
+    /// factors), or a constant too large for `i64`.
+    fn term_contains_unhandled_arith(&self, term: TermId, manager: &TermManager) -> bool {
+        let mut stack: Vec<TermId> = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !visited.insert(t) {
+                continue;
+            }
+            let Some(node) = manager.get(t) else {
+                continue;
+            };
+            match &node.kind {
+                TermKind::Div(a, b) | TermKind::Mod(a, b) => {
+                    if !self.arith_defined_terms.contains(&t) {
+                        return true;
+                    }
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+                TermKind::Ite(_, a, b) => {
+                    let numeric =
+                        node.sort == manager.sorts.int_sort || node.sort == manager.sorts.real_sort;
+                    if numeric {
+                        if !self.arith_defined_terms.contains(&t) {
+                            return true;
+                        }
+                        stack.push(*a);
+                        stack.push(*b);
+                    }
+                }
                 TermKind::IntConst(n) if n.to_i64().is_none() => return true,
                 TermKind::BitVecConst { value, .. } if value.to_i64().is_none() => return true,
                 TermKind::Mul(args) => {
@@ -108,8 +217,8 @@ impl Solver {
 
     /// Returns `true` if the arithmetic subtree rooted at `term` is not a pure
     /// constant — i.e. it reaches a variable, an uninterpreted application, an
-    /// array select, or a div/mod node.  Used to count the non-constant factors
-    /// of a product when deciding whether it is nonlinear.
+    /// array select, a div/mod node, or a conditional value.  Used to count the
+    /// non-constant factors of a product when deciding whether it is nonlinear.
     fn arith_subterm_has_variable(term: TermId, manager: &TermManager) -> bool {
         let mut stack: Vec<TermId> = vec![term];
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -124,8 +233,10 @@ impl Solver {
                 TermKind::Var(_)
                 | TermKind::Apply { .. }
                 | TermKind::Select(_, _)
+                | TermKind::DtSelector { .. }
                 | TermKind::Div(_, _)
-                | TermKind::Mod(_, _) => return true,
+                | TermKind::Mod(_, _)
+                | TermKind::Ite(_, _, _) => return true,
                 TermKind::Add(args) | TermKind::Mul(args) => {
                     for &a in args {
                         stack.push(a);
@@ -170,9 +281,15 @@ impl Solver {
     }
 
     /// Push every direct sub-term of `term` onto `stack` paired with
-    /// `child_depth`.  Covers all `TermKind` variants that carry `TermId`
-    /// children and can therefore contribute to formula depth; leaf and
-    /// nullary kinds add nothing.
+    /// `child_depth`.
+    ///
+    /// The match is exhaustive over every `TermKind` variant — child-carrying
+    /// kinds push their children, genuine leaves are listed in a final no-op
+    /// arm — so a future variant is a compile error here rather than a
+    /// silently unmeasured family.  This scan is what makes
+    /// [`Solver::term_exceeds_encode_depth`]'s answer trustworthy: a kind it
+    /// skips is a kind through which an over-deep term can pass the guard and
+    /// reach the native-recursive passes the guard exists to protect.
     fn push_child_terms(
         term: TermId,
         manager: &TermManager,
@@ -238,6 +355,8 @@ impl Solver {
             TermKind::StrLen(a)
             | TermKind::StrToInt(a)
             | TermKind::IntToStr(a)
+            | TermKind::StrToCode(a)
+            | TermKind::StrFromCode(a)
             | TermKind::FpAbs(a)
             | TermKind::FpNeg(a)
             | TermKind::FpToReal(a)
@@ -254,6 +373,8 @@ impl Solver {
             | TermKind::StrContains(a, b)
             | TermKind::StrPrefixOf(a, b)
             | TermKind::StrSuffixOf(a, b)
+            | TermKind::StrLt(a, b)
+            | TermKind::StrLe(a, b)
             | TermKind::FpRem(a, b)
             | TermKind::FpMin(a, b)
             | TermKind::FpMax(a, b)
@@ -277,6 +398,8 @@ impl Solver {
             TermKind::StrSubstr(a, b, c)
             | TermKind::StrReplace(a, b, c)
             | TermKind::StrReplaceAll(a, b, c)
+            | TermKind::StrReplaceRe(a, b, c)
+            | TermKind::StrReplaceReAll(a, b, c)
             | TermKind::StrIndexOf(a, b, c) => {
                 push(*a);
                 push(*b);
@@ -294,9 +417,56 @@ impl Solver {
                 push(*body);
             }
             TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => push(*body),
-            // Every other kind is a leaf or a shallow theory atom for the
-            // purpose of depth: it cannot build unbounded nesting on its own.
-            _ => {}
+            // Datatype values nest through constructor arguments — a
+            // `succ(succ(...))` chain is one level per constructor — and
+            // testers/selectors through their single operand.  These kinds
+            // (with `Match`, `FpFma` and the FP conversions below) once fell
+            // into a `_ => {}` catch-all presumed to hold only leaves, which
+            // silently under-measured such chains: an over-deep datatype term
+            // then passed this guard unmeasured.
+            TermKind::DtConstructor { args, .. } => {
+                for &a in args {
+                    push(a);
+                }
+            }
+            TermKind::DtTester { arg, .. } | TermKind::DtSelector { arg, .. } => push(*arg),
+            TermKind::Match { scrutinee, cases } => {
+                push(*scrutinee);
+                for case in cases {
+                    push(case.body);
+                }
+            }
+            // Fused multiply-add and the FP conversions carry term children
+            // and nest like any other operation (rounding modes and width
+            // parameters are not terms and add no depth).
+            TermKind::FpFma(_, a, b, c) => {
+                push(*a);
+                push(*b);
+                push(*c);
+            }
+            TermKind::FpToFp { arg, .. }
+            | TermKind::FpToSBV { arg, .. }
+            | TermKind::FpToUBV { arg, .. }
+            | TermKind::RealToFp { arg, .. }
+            | TermKind::SBVToFp { arg, .. }
+            | TermKind::UBVToFp { arg, .. } => push(*arg),
+            // Genuine leaves: no `TermId` children, so no depth contribution.
+            // Listed explicitly (no `_` catch-all) so a future `TermKind`
+            // variant fails to compile here instead of joining a silently
+            // unmeasured family.
+            TermKind::True
+            | TermKind::False
+            | TermKind::Var(_)
+            | TermKind::IntConst(_)
+            | TermKind::RealConst(_)
+            | TermKind::BitVecConst { .. }
+            | TermKind::StringLit(_)
+            | TermKind::FpLit { .. }
+            | TermKind::FpPlusInfinity { .. }
+            | TermKind::FpMinusInfinity { .. }
+            | TermKind::FpPlusZero { .. }
+            | TermKind::FpMinusZero { .. }
+            | TermKind::FpNaN { .. } => {}
         }
     }
 }

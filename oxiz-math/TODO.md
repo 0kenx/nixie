@@ -1,16 +1,19 @@
 # oxiz-math TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 Reference: Z3's `math/` directory
 
 ## Progress: 100% Complete
 
-- **Version:** 0.2.0 (Stable)
-- **Tests:** 566 passing
-- **Rust LoC:** 30,748 (60 files)
-- **Public API items:** 1,027
+- **Version:** 0.3.1 (Stable)
+- **Tests:** 753 passing
+- **Rust LoC:** 28,968 (78 files)
+- **Public API items:** 1,070
 - **Zero** `todo!`/`unimplemented!` calls
+
+### v0.3.1 change
+- [x] Multivariate polynomial GCD now implemented for real via primitive PRS (pseudo-division), replacing the previous stub
 
 ## Dependencies
 - **oxiz-core**: Term representation for polynomial constraints

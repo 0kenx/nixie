@@ -564,3 +564,212 @@ fn test_push_pop_with_learned_clauses() {
     // Should be SAT again
     assert_eq!(solver.solve(), SolverResult::Sat);
 }
+
+/// Reproduces the residual bug the coordinator flagged in
+/// `Solver::add_clause`: forcing an effective-unit clause's implied literal
+/// with `Trail::assign_propagation` (current decision level) instead of
+/// `Trail::assign_propagation_at` (the correct dependency level -- here, the
+/// falsifying literal's own level) over-approximates the implication's
+/// dependency set. Before the fix, adding `(x0 ∨ x1)` while `x0` is a
+/// *permanent* (level-0) fact but the search sits at some unrelated higher
+/// decision level (exactly the state `solve()` leaves behind on a plain
+/// `Sat`, since it does not backtrack to root the way
+/// `solve_with_assumptions` does) recorded `x1` at that higher level. A
+/// later backtrack below it then discarded `x1` while `x0`'s permanent
+/// falsity survived -- silently reopening the clause, with no live watcher
+/// able to notice (the falsifying literal's watcher event already happened,
+/// long before the rollback).
+///
+/// Deliberately white-box (direct `solver.trail` / `propagate()` manipulation,
+/// in the spirit of this module's other internal-state tests): the point is
+/// to pin the exact levels involved, which a heuristic-driven `solve()` call
+/// cannot deterministically control.
+#[test]
+fn add_clause_binary_effective_unit_is_forced_at_the_falsifying_literals_level_not_current() {
+    let mut solver = Solver::new();
+    let x0 = solver.new_var();
+
+    // x0 is a genuine, permanent level-0 fact.
+    assert!(solver.add_clause([Lit::neg(x0)]));
+    assert_eq!(solver.trail.level(x0), 0);
+
+    // Advance the search to an unrelated decision level > 0 -- exactly the
+    // "solve() returned Sat at level > 0" scenario: `solve()` does not
+    // backtrack to root on a plain `Sat` (unlike `solve_with_assumptions`),
+    // so a caller adding a clause afterward can find the trail sitting at
+    // any level, with nothing at all to do with x0.
+    let extra1 = solver.new_var();
+    let extra2 = solver.new_var();
+    let extra3 = solver.new_var();
+    solver.trail.new_decision_level(); // level 1
+    solver.trail.assign_decision(Lit::pos(extra1));
+    solver.trail.new_decision_level(); // level 2
+    solver.trail.assign_decision(Lit::pos(extra2));
+    solver.trail.new_decision_level(); // level 3
+    solver.trail.assign_decision(Lit::pos(extra3));
+    assert!(solver.propagate().is_none());
+    assert_eq!(solver.trail.decision_level(), 3);
+
+    // x1 is a brand-new variable, introduced by the clause below.
+    let x1 = Var::new(4);
+
+    // Add (x0 ∨ x1): x0 is false (permanently, level 0), x1 undefined ->
+    // effective unit. THE BUG (pre-fix): x1 was forced via
+    // `Trail::assign_propagation`, recording the search's *current* level
+    // (3) instead of the correct dependency level (0 -- x0's level, the only
+    // thing this implication actually depends on).
+    assert!(solver.add_clause([Lit::pos(x0), Lit::pos(x1)]));
+    assert!(solver.trail.value(x1).is_true());
+    assert_eq!(
+        solver.trail.level(x1),
+        0,
+        "x1's implication depends only on x0's permanent level-0 falsity, so it \
+         must be recorded at level 0, not the search's current level (3)"
+    );
+
+    // Confirm the fix actually matters, not just the level bookkeeping:
+    // backtracking to a level *below* the search's current level at
+    // attach-time (1, well below the old, wrongly-recorded level of 3) must
+    // NOT discard x1, now that it is correctly pinned at level 0.
+    solver.backtrack_with_phase_saving(1);
+    assert!(
+        solver.trail.value(x1).is_true(),
+        "the implication must survive a backtrack now that it is correctly \
+         recorded at level 0 (pre-fix, this would have unassigned x1 while \
+         x0 stayed permanently false, silently reopening the clause)"
+    );
+    assert!(
+        crate::invariants::check_unit_propagation_complete(&solver).is_ok(),
+        "(x0 v x1) must not be a hanging unit after this backtrack"
+    );
+}
+
+/// Companion to the test above: when the *falsifying* literal is itself
+/// **not** permanent (assigned above level 0), `add_clause` must backtrack
+/// to root and re-evaluate -- per `pre_check_effective_unit`'s doc comment --
+/// rather than forcing anything. After the rollback both literals are
+/// undefined, and ordinary two-watched-literal propagation is sufficient and
+/// correct: there is nothing left to force, since the falsifying literal
+/// itself does not survive.
+#[test]
+fn add_clause_binary_backtracks_and_reevaluates_when_falsifying_literal_is_not_permanent() {
+    let mut solver = Solver::new();
+    let x0 = solver.new_var();
+    let extra1 = solver.new_var();
+
+    solver.trail.new_decision_level(); // level 1
+    solver.trail.assign_decision(Lit::pos(extra1));
+    solver.trail.new_decision_level(); // level 2
+    solver.trail.assign_decision(Lit::neg(x0)); // x0 = false @ level 2 (not permanent)
+    assert!(solver.propagate().is_none());
+
+    let x1 = Var::new(2);
+
+    // Add (x0 ∨ x1): x0 is false only at level 2, x1 undefined.
+    assert!(solver.add_clause([Lit::pos(x0), Lit::pos(x1)]));
+
+    // The fix must backtrack to root (x0's falsity is not permanent), after
+    // which both x0 and x1 are undefined -- there is nothing to force.
+    assert_eq!(solver.trail.decision_level(), 0);
+    assert!(!solver.trail.is_assigned(x0));
+    assert!(!solver.trail.is_assigned(x1));
+    assert!(crate::invariants::check_all_sat_invariants(&solver).is_ok());
+}
+
+/// General (3+ literal) analogue of
+/// `add_clause_binary_effective_unit_is_forced_at_the_falsifying_literals_level_not_current`:
+/// the same wrong-level hazard, and the same fix, apply identically when the
+/// clause has more than two literals.
+#[test]
+fn add_clause_general_effective_unit_is_forced_at_the_falsifying_literals_level_not_current() {
+    let mut solver = Solver::new();
+    let x0 = solver.new_var();
+    let x_extra_permanent = solver.new_var();
+
+    // Two genuine, permanent level-0 facts.
+    assert!(solver.add_clause([Lit::neg(x0)]));
+    assert!(solver.add_clause([Lit::neg(x_extra_permanent)]));
+
+    // Advance to an unrelated decision level > 0.
+    let extra1 = solver.new_var();
+    solver.trail.new_decision_level(); // level 1
+    solver.trail.assign_decision(Lit::pos(extra1));
+    assert!(solver.propagate().is_none());
+    assert_eq!(solver.trail.decision_level(), 1);
+
+    let x1 = Var::new(3);
+
+    // Add (x0 ∨ x_extra_permanent ∨ x1): both x0 and x_extra_permanent are
+    // permanently false (level 0); x1 is undefined -> effective unit.
+    assert!(solver.add_clause([Lit::pos(x0), Lit::pos(x_extra_permanent), Lit::pos(x1)]));
+    assert!(solver.trail.value(x1).is_true());
+    assert_eq!(
+        solver.trail.level(x1),
+        0,
+        "x1's implication depends only on permanent level-0 facts"
+    );
+
+    solver.backtrack_with_phase_saving(0);
+    assert!(
+        solver.trail.value(x1).is_true(),
+        "the implication must survive a backtrack to root"
+    );
+}
+
+/// Answers the coordinator's explicit question about the 3+-literal path: a
+/// clause that is fully false at attach time, with its falsifying literals
+/// at a *mix* of level 0 (permanent) and a higher level (not permanent),
+/// must resolve via backtrack-and-re-evaluate into a forced implication --
+/// it is not yet a genuine conflict, because undoing the non-permanent
+/// falsity leaves an open (forceable) clause, not a contradiction.
+#[test]
+fn add_clause_general_all_false_with_mixed_levels_forces_rather_than_conflicts() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    let c = solver.new_var();
+
+    // a, b permanently false (level 0).
+    assert!(solver.add_clause([Lit::neg(a)]));
+    assert!(solver.add_clause([Lit::neg(b)]));
+
+    // c false only at level 2 (a decision, not permanent).
+    let filler = solver.new_var();
+    solver.trail.new_decision_level(); // level 1
+    solver.trail.assign_decision(Lit::pos(filler));
+    solver.trail.new_decision_level(); // level 2
+    solver.trail.assign_decision(Lit::neg(c)); // c = false @ level 2
+    assert!(solver.propagate().is_none());
+
+    // (a ∨ b ∨ c): all three literals are false right now, but c's falsity
+    // is not permanent, so this is not a genuine conflict.
+    assert!(solver.add_clause([Lit::pos(a), Lit::pos(b), Lit::pos(c)]));
+    assert!(
+        !solver.trivially_unsat,
+        "undoing c's non-permanent falsity leaves an open, forceable clause, \
+         not a real conflict"
+    );
+    assert!(solver.trail.value(c).is_true());
+    assert_eq!(solver.trail.level(c), 0);
+}
+
+/// Answers the other half of the coordinator's question: when *every*
+/// falsifying literal genuinely is permanent (level 0), the 3+-literal path
+/// must still report an unconditional conflict rather than silently
+/// dropping it.
+#[test]
+fn add_clause_general_all_false_at_level_zero_is_a_genuine_conflict() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    let c = solver.new_var();
+
+    assert!(solver.add_clause([Lit::neg(a)]));
+    assert!(solver.add_clause([Lit::neg(b)]));
+    assert!(solver.add_clause([Lit::neg(c)]));
+
+    // (a ∨ b ∨ c): every literal is permanently false -- a genuine,
+    // unconditional conflict.
+    assert!(!solver.add_clause([Lit::pos(a), Lit::pos(b), Lit::pos(c)]));
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+}

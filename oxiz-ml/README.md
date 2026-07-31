@@ -4,12 +4,11 @@ Machine learning-guided heuristics for the OxiZ SMT solver, providing adaptive b
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.0 |
+| Version | 0.3.1 |
 | Status | Alpha |
-| Release Date | 2026-06-01 |
-| Tests | 158 passing |
-| Source Files | 27 |
-| Rust LoC | ~7,351 |
+| Tests | 175 passing |
+| Source Files | 29 |
+| Rust LoC | ~6,042 |
 | Public API | 296 items |
 | `todo!`/`unimplemented!` | 0 |
 

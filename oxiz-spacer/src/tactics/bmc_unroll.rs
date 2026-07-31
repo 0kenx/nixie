@@ -48,7 +48,12 @@ impl<'a> BmcEngine<'a> {
     /// producing wrong SAT/UNSAT results — this delegation makes it impossible
     /// for any variable to escape renaming.
     fn rename_term(&mut self, term: TermId, step: usize) -> TermId {
-        let vars = self.manager.free_vars(term);
+        // Pattern-aware: `TermManager::substitute` rewrites quantifier
+        // trigger terms as well as bodies, so a variable occurring only in a
+        // trigger must be in the substitution's *domain* too -- otherwise it
+        // keeps its un-step-indexed name and silently mixes time frames,
+        // exactly the class of bug this delegation exists to rule out.
+        let vars = self.manager.free_vars_including_patterns(term);
         let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
         for var in vars {
             let Some(node) = self.manager.get(var).cloned() else {

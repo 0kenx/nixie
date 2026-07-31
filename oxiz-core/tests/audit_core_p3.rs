@@ -30,6 +30,7 @@
 //!   - `tactic/mod.rs`: `ManagedTactic` is now re-exported from the crate's
 //!     `tactic` module root.
 
+use num_bigint::BigUint;
 use oxiz_core::ast::{Model, ModelValue, SubstitutionBuilder, TermManager, eval_term};
 use oxiz_core::smtlib::{Command, parse_script};
 use oxiz_core::tactic::mbp::{MbpEngine, Model as MbpModel};
@@ -92,10 +93,7 @@ fn eval_term_bv_not_width_64_does_not_panic_and_is_correct() {
     let result = eval_term(not_x, &m, &model);
     assert_eq!(
         result,
-        Some(ModelValue::BitVec {
-            value: u64::MAX,
-            width: 64,
-        }),
+        Some(ModelValue::from_bitvec_bits(BigUint::from(u64::MAX), 64)),
         "!0 over 64 bits must be all-ones, not masked to 0"
     );
 }
@@ -114,10 +112,10 @@ fn eval_term_bv_not_width_64_nonzero_value_is_correct() {
     let result = eval_term(not_x, &m, &model);
     assert_eq!(
         result,
-        Some(ModelValue::BitVec {
-            value: !0x8000_0000_0000_0001u64,
-            width: 64,
-        })
+        Some(ModelValue::from_bitvec_bits(
+            BigUint::from(!0x8000_0000_0000_0001u64),
+            64
+        ))
     );
 }
 
@@ -139,10 +137,7 @@ fn cached_evaluator_bv_not_width_64_does_not_panic() {
     let result = evaluator.eval(not_x);
     assert_eq!(
         result,
-        Some(ModelValue::BitVec {
-            value: u64::MAX,
-            width: 64,
-        })
+        Some(ModelValue::from_bitvec_bits(BigUint::from(u64::MAX), 64))
     );
 }
 

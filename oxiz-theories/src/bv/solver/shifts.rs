@@ -81,14 +81,15 @@ impl BvSolver {
     ///
     /// Shift amounts >= width yield all-zero, per SMT-LIB semantics. The high
     /// bits of the shift amount participate via the over-shift detector.
-    pub fn bv_shl(&mut self, result: TermId, a: TermId, shift_amount: TermId) {
-        if let (Some(va), Some(shift)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&shift_amount).cloned(),
-        ) {
-            assert_eq!(va.width, shift.width);
+    pub fn bv_shl(&mut self, result: TermId, a: TermId, shift_amount: TermId) -> bool {
+        if let Some((va, shift)) = self.binop_bits(a, shift_amount) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
             let num_stages = Self::barrel_stages(width);
 
             let mut current = va.bits.clone();
@@ -119,6 +120,9 @@ impl BvSolver {
             let overshift = self.encode_or_bits(&shift.bits[num_stages as usize..]);
             let fill = self.fresh_zero();
             self.commit_shift_result(&r.bits, &current, overshift, fill);
+            true
+        } else {
+            false
         }
     }
 
@@ -126,14 +130,15 @@ impl BvSolver {
     ///
     /// Shift amounts >= width yield all-zero. High shift bits participate via
     /// the over-shift detector.
-    pub fn bv_lshr(&mut self, result: TermId, a: TermId, shift_amount: TermId) {
-        if let (Some(va), Some(shift)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&shift_amount).cloned(),
-        ) {
-            assert_eq!(va.width, shift.width);
+    pub fn bv_lshr(&mut self, result: TermId, a: TermId, shift_amount: TermId) -> bool {
+        if let Some((va, shift)) = self.binop_bits(a, shift_amount) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
             let num_stages = Self::barrel_stages(width);
 
             let mut current = va.bits.clone();
@@ -163,6 +168,9 @@ impl BvSolver {
             let overshift = self.encode_or_bits(&shift.bits[num_stages as usize..]);
             let fill = self.fresh_zero();
             self.commit_shift_result(&r.bits, &current, overshift, fill);
+            true
+        } else {
+            false
         }
     }
 
@@ -172,14 +180,15 @@ impl BvSolver {
     /// Shift amounts >= width yield an all-`sign` result (0 for non-negative
     /// `a`, all-ones for negative `a`). High shift bits participate via the
     /// over-shift detector, with the sign bit as the fill value.
-    pub fn bv_ashr(&mut self, result: TermId, a: TermId, shift_amount: TermId) {
-        if let (Some(va), Some(shift)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&shift_amount).cloned(),
-        ) {
-            assert_eq!(va.width, shift.width);
+    pub fn bv_ashr(&mut self, result: TermId, a: TermId, shift_amount: TermId) -> bool {
+        if let Some((va, shift)) = self.binop_bits(a, shift_amount) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
             let num_stages = Self::barrel_stages(width);
 
             // Sign bit is the fill for both in-range and over-shift cases.
@@ -210,6 +219,9 @@ impl BvSolver {
 
             let overshift = self.encode_or_bits(&shift.bits[num_stages as usize..]);
             self.commit_shift_result(&r.bits, &current, overshift, sign);
+            true
+        } else {
+            false
         }
     }
 }

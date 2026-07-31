@@ -400,7 +400,14 @@ impl MultiPatternMatcher {
         self.match_recursive(pattern.root, term, subst, manager)
     }
 
-    /// Recursive pattern matching
+    /// Match a pattern against a term, threading one substitution.
+    ///
+    /// Iterative: the recursive form took the whole `Substitution` (an
+    /// `FxHashMap`) *by value* into every frame and recursed once per level
+    /// of pattern nesting. The explicit stack visits the (pattern, term)
+    /// pairs in the same depth-first, left-to-right order, so the order in
+    /// which variables are bound — and therefore which inconsistent binding
+    /// is detected first — is unchanged.
     fn match_recursive(
         &self,
         pattern: TermId,
@@ -408,58 +415,53 @@ impl MultiPatternMatcher {
         mut subst: Substitution,
         manager: &TermManager,
     ) -> Result<Option<Substitution>> {
-        let Some(p) = manager.get(pattern) else {
-            return Ok(None);
-        };
+        let mut stack = vec![(pattern, term)];
 
-        let Some(t) = manager.get(term) else {
-            return Ok(None);
-        };
+        while let Some((pattern_id, term_id)) = stack.pop() {
+            let Some(p) = manager.get(pattern_id) else {
+                return Ok(None);
+            };
 
-        match &p.kind {
-            TermKind::Var(name) => {
-                // Variable in pattern - bind or check consistency
-                if let Some(existing) = subst.get(name) {
-                    if existing == term {
-                        Ok(Some(subst))
+            let Some(t) = manager.get(term_id) else {
+                return Ok(None);
+            };
+
+            match &p.kind {
+                TermKind::Var(name) => {
+                    // Variable in pattern - bind or check consistency
+                    if let Some(existing) = subst.get(name) {
+                        if existing != term_id {
+                            return Ok(None); // Inconsistent binding
+                        }
                     } else {
-                        Ok(None) // Inconsistent binding
+                        subst.insert(*name, term_id);
                     }
-                } else {
-                    subst.insert(*name, term);
-                    Ok(Some(subst))
                 }
-            }
 
-            TermKind::Apply { func: pf, args: pa } => {
-                if let TermKind::Apply { func: tf, args: ta } = &t.kind {
+                TermKind::Apply { func: pf, args: pa } => {
+                    let TermKind::Apply { func: tf, args: ta } = &t.kind else {
+                        return Ok(None);
+                    };
                     if pf != tf || pa.len() != ta.len() {
                         return Ok(None);
                     }
 
-                    // Match all arguments
-                    for (p_arg, t_arg) in pa.iter().zip(ta.iter()) {
-                        match self.match_recursive(*p_arg, *t_arg, subst, manager)? {
-                            Some(new_subst) => subst = new_subst,
-                            None => return Ok(None),
-                        }
+                    // Match all arguments, left to right
+                    for (p_arg, t_arg) in pa.iter().zip(ta.iter()).rev() {
+                        stack.push((*p_arg, *t_arg));
                     }
-
-                    Ok(Some(subst))
-                } else {
-                    Ok(None)
                 }
-            }
 
-            _ => {
-                // For other terms, require exact match
-                if pattern == term {
-                    Ok(Some(subst))
-                } else {
-                    Ok(None)
+                _ => {
+                    // For other terms, require exact match
+                    if pattern_id != term_id {
+                        return Ok(None);
+                    }
                 }
             }
         }
+
+        Ok(Some(subst))
     }
 
     /// Get statistics
@@ -587,5 +589,68 @@ mod tests {
 
         cache.insert(p, t, Some(Substitution::new()));
         assert!(cache.get(p, t).is_some());
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+    use crate::ast::TermManager;
+
+    #[test]
+    fn test_match_recursive_binds_and_rejects() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let a = manager.mk_var("a", int_sort);
+        let b = manager.mk_var("b", int_sort);
+
+        // Pattern f(x, x) matches f(a, a) but not f(a, b).
+        let pattern = manager.mk_apply("f", [x, x], int_sort);
+        let good = manager.mk_apply("f", [a, a], int_sort);
+        let bad = manager.mk_apply("f", [a, b], int_sort);
+
+        let matcher = MultiPatternMatcher::new_default();
+        let x_name = manager.intern_str("x");
+
+        let subst = matcher
+            .match_recursive(pattern, good, Substitution::new(), &manager)
+            .expect("match should succeed")
+            .expect("pattern must match");
+        assert_eq!(subst.get(&x_name), Some(a));
+
+        assert!(
+            matcher
+                .match_recursive(pattern, bad, Substitution::new(), &manager)
+                .expect("match should succeed")
+                .is_none(),
+            "inconsistent binding must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_match_recursive_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let x = manager.mk_var("x", int_sort);
+                let a = manager.mk_var("a", int_sort);
+                let (mut pattern, mut term) = (x, a);
+                for _ in 0..60_000 {
+                    pattern = manager.mk_apply("f", [pattern], int_sort);
+                    term = manager.mk_apply("f", [term], int_sort);
+                }
+
+                let matcher = MultiPatternMatcher::new_default();
+                matcher
+                    .match_recursive(pattern, term, Substitution::new(), &manager)
+                    .expect("match should succeed")
+                    .is_some()
+            })
+            .expect("thread spawn should succeed");
+
+        assert!(handle.join().expect("deep match must not overflow"));
     }
 }

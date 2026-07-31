@@ -26,6 +26,57 @@ use crate::sort::SortId;
 use core::fmt;
 use smallvec::SmallVec;
 
+/// Sub-terms a pattern walk descends into.
+///
+/// The exhaustive [`crate::ast::traversal::get_children`], except that
+/// nested binders are opaque: a `forall`/`exists`/`let`/`match` inside a
+/// pattern may rebind a name, so a `Var` below it is not an occurrence of
+/// the pattern's own variable.
+///
+/// Everything else is descended into. The per-kind lists these walks used
+/// ended in silent catch-alls, so the operands of string, bit-vector,
+/// floating-point, datatype and `distinct` terms were invisible: pattern
+/// variables under them were never collected, and
+/// [`PatternCompiler::build_dag`] produced a node with no children for
+/// them — a pattern DAG that cannot match what the pattern says.
+fn pattern_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
+    match kind {
+        TermKind::Forall { .. }
+        | TermKind::Exists { .. }
+        | TermKind::Let { .. }
+        | TermKind::Match { .. } => SmallVec::new(),
+        other => crate::ast::traversal::get_children(other),
+    }
+}
+
+/// Children-before-parents listing of the sub-terms of `root`, computed with
+/// an explicit stack. Shared sub-terms appear exactly once.
+fn pattern_postorder(root: TermId, manager: &TermManager) -> Vec<TermId> {
+    let mut order = Vec::new();
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    let mut stack = vec![(root, false)];
+
+    while let Some((current, expanded)) = stack.pop() {
+        if expanded {
+            order.push(current);
+            continue;
+        }
+        if !visited.insert(current) {
+            continue;
+        }
+        stack.push((current, true));
+        if let Some(t) = manager.get(current) {
+            for child in pattern_children(&t.kind) {
+                if !visited.contains(&child) {
+                    stack.push((child, false));
+                }
+            }
+        }
+    }
+
+    order
+}
+
 /// A pattern for E-matching
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Pattern {
@@ -238,7 +289,12 @@ impl PatternCompiler {
         Ok(pattern)
     }
 
-    /// Collect all pattern variables from a term
+    /// Collect all pattern variables from a term.
+    ///
+    /// Iterative pre-order walk (children pushed in reverse so they are
+    /// visited left-to-right, preserving the order in which variables were
+    /// first encountered by the recursive form), with a visited set so a
+    /// shared sub-term is not re-expanded.
     fn collect_pattern_variables(
         &self,
         term: TermId,
@@ -247,15 +303,21 @@ impl PatternCompiler {
         seen: &mut FxHashSet<Spur>,
         manager: &TermManager,
     ) -> Result<()> {
-        let Some(t) = manager.get(term) else {
-            return Err(OxizError::EmatchError(format!(
-                "Term {:?} not found in manager",
-                term
-            )));
-        };
+        let mut stack = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        match &t.kind {
-            TermKind::Var(name) => {
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(t) = manager.get(current) else {
+                return Err(OxizError::EmatchError(format!(
+                    "Term {:?} not found in manager",
+                    current
+                )));
+            };
+
+            if let TermKind::Var(name) = &t.kind {
                 // Check if this is a bound variable
                 if let Some((idx, (_, sort))) =
                     bound_vars.iter().enumerate().find(|(_, (n, _))| n == name)
@@ -268,164 +330,118 @@ impl PatternCompiler {
                     });
                     seen.insert(*name);
                 }
+                continue;
             }
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    self.collect_pattern_variables(arg, bound_vars, variables, seen, manager)?;
-                }
-            }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => {
-                self.collect_pattern_variables(*lhs, bound_vars, variables, seen, manager)?;
-                self.collect_pattern_variables(*rhs, bound_vars, variables, seen, manager)?;
-            }
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                for &arg in args.iter() {
-                    self.collect_pattern_variables(arg, bound_vars, variables, seen, manager)?;
-                }
-            }
-            TermKind::Not(inner) | TermKind::Neg(inner) => {
-                self.collect_pattern_variables(*inner, bound_vars, variables, seen, manager)?;
-            }
-            TermKind::Ite(c, t, e) => {
-                self.collect_pattern_variables(*c, bound_vars, variables, seen, manager)?;
-                self.collect_pattern_variables(*t, bound_vars, variables, seen, manager)?;
-                self.collect_pattern_variables(*e, bound_vars, variables, seen, manager)?;
-            }
-            TermKind::Select(arr, idx) => {
-                self.collect_pattern_variables(*arr, bound_vars, variables, seen, manager)?;
-                self.collect_pattern_variables(*idx, bound_vars, variables, seen, manager)?;
-            }
-            TermKind::Store(arr, idx, val) => {
-                self.collect_pattern_variables(*arr, bound_vars, variables, seen, manager)?;
-                self.collect_pattern_variables(*idx, bound_vars, variables, seen, manager)?;
-                self.collect_pattern_variables(*val, bound_vars, variables, seen, manager)?;
-            }
-            // Constants and other ground terms don't contribute variables
-            _ => {}
+
+            let children = pattern_children(&t.kind);
+            stack.extend(children.iter().rev().copied());
         }
 
         Ok(())
     }
 
-    /// Classify a pattern by its structure
+    /// Classify a pattern by its structure.
+    ///
+    /// Iterative bottom-up classification with a memo, so nested
+    /// applications neither recurse without bound nor re-classify shared
+    /// sub-terms once per path.
     fn classify_pattern(
         &self,
         term: TermId,
         var_map: &FxHashMap<Spur, usize>,
         manager: &TermManager,
     ) -> Result<PatternKind> {
-        let Some(t) = manager.get(term) else {
-            return Err(OxizError::EmatchError(format!(
-                "Term {:?} not found in manager",
-                term
-            )));
-        };
+        let mut memo: FxHashMap<TermId, PatternKind> = FxHashMap::default();
 
-        match &t.kind {
-            TermKind::Var(name) if var_map.contains_key(name) => Ok(PatternKind::VarOnly),
-            TermKind::Var(_)
-            | TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. }
-            | TermKind::StringLit(_) => Ok(PatternKind::Ground),
-            TermKind::Apply { args, .. } => {
-                // Check if all arguments are ground or variables
-                let mut has_var = false;
-                let mut has_nested = false;
+        for current in pattern_postorder(term, manager) {
+            let Some(t) = manager.get(current) else {
+                return Err(OxizError::EmatchError(format!(
+                    "Term {:?} not found in manager",
+                    current
+                )));
+            };
 
-                for &arg in args.iter() {
-                    let arg_kind = self.classify_pattern(arg, var_map, manager)?;
-                    match arg_kind {
-                        PatternKind::VarOnly => has_var = true,
-                        PatternKind::Nested | PatternKind::Simple => has_nested = true,
-                        _ => {}
+            let kind = match &t.kind {
+                TermKind::Var(name) if var_map.contains_key(name) => PatternKind::VarOnly,
+                TermKind::Var(_)
+                | TermKind::True
+                | TermKind::False
+                | TermKind::IntConst(_)
+                | TermKind::RealConst(_)
+                | TermKind::BitVecConst { .. }
+                | TermKind::StringLit(_) => PatternKind::Ground,
+                TermKind::Apply { args, .. } => {
+                    // Check if all arguments are ground or variables
+                    let mut has_var = false;
+                    let mut has_nested = false;
+
+                    for arg in args.iter() {
+                        match memo.get(arg) {
+                            Some(PatternKind::VarOnly) => has_var = true,
+                            Some(PatternKind::Nested | PatternKind::Simple) => has_nested = true,
+                            _ => {}
+                        }
+                    }
+
+                    if has_nested {
+                        PatternKind::Nested
+                    } else if has_var {
+                        PatternKind::Simple
+                    } else {
+                        PatternKind::Ground
                     }
                 }
-
-                if has_nested {
-                    Ok(PatternKind::Nested)
-                } else if has_var {
-                    Ok(PatternKind::Simple)
-                } else {
-                    Ok(PatternKind::Ground)
+                _ => {
+                    // For other terms, the classification is decided by
+                    // whether a bound variable occurs anywhere below.
+                    if self.contains_bound_var(current, var_map, manager)? {
+                        PatternKind::Nested
+                    } else {
+                        PatternKind::Ground
+                    }
                 }
-            }
-            _ => {
-                // For other terms, check recursively
-                if self.contains_bound_var(term, var_map, manager)? {
-                    Ok(PatternKind::Nested)
-                } else {
-                    Ok(PatternKind::Ground)
-                }
-            }
+            };
+            memo.insert(current, kind);
         }
+
+        memo.get(&term)
+            .copied()
+            .ok_or_else(|| OxizError::EmatchError(format!("Term {:?} not found in manager", term)))
     }
 
-    /// Check if a term contains any bound variables
+    /// Check if a term contains any bound variables.
+    ///
+    /// Iterative with a visited set: the recursive form both recursed once
+    /// per level of nesting and re-expanded shared sub-terms, and its
+    /// catch-all reported "no bound variable" for every kind it did not
+    /// enumerate — which classified a genuine pattern as ground and
+    /// discarded it.
     fn contains_bound_var(
         &self,
         term: TermId,
         var_map: &FxHashMap<Spur, usize>,
         manager: &TermManager,
     ) -> Result<bool> {
-        let Some(t) = manager.get(term) else {
-            return Ok(false);
-        };
+        let mut stack = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        match &t.kind {
-            TermKind::Var(name) => Ok(var_map.contains_key(name)),
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    if self.contains_bound_var(arg, var_map, manager)? {
-                        return Ok(true);
-                    }
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+            if let TermKind::Var(name) = &t.kind {
+                if var_map.contains_key(name) {
+                    return Ok(true);
                 }
-                Ok(false)
+                continue;
             }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => Ok(self.contains_bound_var(*lhs, var_map, manager)?
-                || self.contains_bound_var(*rhs, var_map, manager)?),
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                for &arg in args.iter() {
-                    if self.contains_bound_var(arg, var_map, manager)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            TermKind::Not(inner) | TermKind::Neg(inner) => {
-                self.contains_bound_var(*inner, var_map, manager)
-            }
-            TermKind::Ite(c, t, e) => Ok(self.contains_bound_var(*c, var_map, manager)?
-                || self.contains_bound_var(*t, var_map, manager)?
-                || self.contains_bound_var(*e, var_map, manager)?),
-            TermKind::Select(arr, idx) => Ok(self.contains_bound_var(*arr, var_map, manager)?
-                || self.contains_bound_var(*idx, var_map, manager)?),
-            TermKind::Store(arr, idx, val) => Ok(self
-                .contains_bound_var(*arr, var_map, manager)?
-                || self.contains_bound_var(*idx, var_map, manager)?
-                || self.contains_bound_var(*val, var_map, manager)?),
-            _ => Ok(false),
+            stack.extend(pattern_children(&t.kind));
         }
+
+        Ok(false)
     }
 
     /// Compute the matching cost of a pattern
@@ -434,137 +450,83 @@ impl PatternCompiler {
     /// - Number of variables (more variables = higher cost)
     /// - Pattern depth (deeper patterns = higher cost)
     /// - Ground subterms (ground terms = lower cost)
+    ///
+    /// Evaluated bottom-up over an explicit post-order with a memo: the
+    /// recursive form re-expanded shared sub-terms once per path (a
+    /// doubling DAG made it exponential) and had no depth bound. Each
+    /// occurrence still contributes its cost, so the value is exactly the
+    /// one the recursion produced; the accumulation saturates rather than
+    /// overflowing.
     fn compute_cost(&self, term: TermId, manager: &TermManager) -> Result<u32> {
-        let Some(t) = manager.get(term) else {
-            return Ok(1000); // Penalty for missing terms
-        };
+        let mut memo: FxHashMap<TermId, u32> = FxHashMap::default();
 
-        let base_cost = match &t.kind {
-            TermKind::Var(_) => 10, // Variables are expensive to match
-            TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. }
-            | TermKind::StringLit(_) => 1, // Constants are cheap
-            TermKind::Apply { args, .. } => {
-                let mut cost = 5; // Base cost for function application
-                for &arg in args.iter() {
-                    cost += self.compute_cost(arg, manager)?;
-                }
-                cost
-            }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => {
-                3 + self.compute_cost(*lhs, manager)? + self.compute_cost(*rhs, manager)?
-            }
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                let mut cost = 3;
-                for &arg in args.iter() {
-                    cost += self.compute_cost(arg, manager)?;
-                }
-                cost
-            }
-            TermKind::Not(inner) | TermKind::Neg(inner) => {
-                2 + self.compute_cost(*inner, manager)?
-            }
-            TermKind::Ite(c, t, e) => {
-                5 + self.compute_cost(*c, manager)?
-                    + self.compute_cost(*t, manager)?
-                    + self.compute_cost(*e, manager)?
-            }
-            TermKind::Select(arr, idx) => {
-                4 + self.compute_cost(*arr, manager)? + self.compute_cost(*idx, manager)?
-            }
-            TermKind::Store(arr, idx, val) => {
-                5 + self.compute_cost(*arr, manager)?
-                    + self.compute_cost(*idx, manager)?
-                    + self.compute_cost(*val, manager)?
-            }
-            _ => 20, // Default cost for unknown terms
-        };
+        for current in pattern_postorder(term, manager) {
+            let Some(t) = manager.get(current) else {
+                memo.insert(current, 1000); // Penalty for missing terms
+                continue;
+            };
+            let child = |id: &TermId, memo: &FxHashMap<TermId, u32>| -> u32 {
+                memo.get(id).copied().unwrap_or(1000)
+            };
+            let sum = |base: u32, ids: &[TermId], memo: &FxHashMap<TermId, u32>| -> u32 {
+                ids.iter()
+                    .fold(base, |acc, id| acc.saturating_add(child(id, memo)))
+            };
+            let cost = match &t.kind {
+                TermKind::Var(_) => 10, // Variables are expensive to match
+                TermKind::True
+                | TermKind::False
+                | TermKind::IntConst(_)
+                | TermKind::RealConst(_)
+                | TermKind::BitVecConst { .. }
+                | TermKind::StringLit(_) => 1, // Constants are cheap
+                TermKind::Apply { args, .. } => sum(5, args, &memo),
+                TermKind::Eq(lhs, rhs)
+                | TermKind::Lt(lhs, rhs)
+                | TermKind::Le(lhs, rhs)
+                | TermKind::Gt(lhs, rhs)
+                | TermKind::Ge(lhs, rhs)
+                | TermKind::Sub(lhs, rhs)
+                | TermKind::Div(lhs, rhs) => sum(3, &[*lhs, *rhs], &memo),
+                TermKind::Add(args)
+                | TermKind::Mul(args)
+                | TermKind::And(args)
+                | TermKind::Or(args) => sum(3, args, &memo),
+                TermKind::Not(inner) | TermKind::Neg(inner) => sum(2, &[*inner], &memo),
+                TermKind::Ite(c, then_b, else_b) => sum(5, &[*c, *then_b, *else_b], &memo),
+                TermKind::Select(arr, idx) => sum(4, &[*arr, *idx], &memo),
+                TermKind::Store(arr, idx, val) => sum(5, &[*arr, *idx, *val], &memo),
+                _ => 20, // Default cost for unknown terms
+            };
+            memo.insert(current, cost);
+        }
 
-        Ok(base_cost)
+        Ok(memo.get(&term).copied().unwrap_or(1000))
     }
 
-    /// Compute the depth of a pattern
+    /// Compute the depth of a pattern.
+    ///
+    /// Bottom-up over an explicit post-order with a memo, measuring depth
+    /// through *every* operand. The old per-kind list reported depth 1 for
+    /// any kind it did not enumerate, which let arbitrarily deep patterns
+    /// slip past the `max_depth` limit that exists to reject them.
     fn compute_depth(&self, term: TermId, manager: &TermManager) -> Result<usize> {
-        let Some(t) = manager.get(term) else {
-            return Ok(0);
-        };
+        let mut memo: FxHashMap<TermId, usize> = FxHashMap::default();
 
-        let child_depth = match &t.kind {
-            TermKind::Var(_)
-            | TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. }
-            | TermKind::StringLit(_) => 0,
-            TermKind::Apply { args, .. } => {
-                let mut max_depth = 0;
-                for &arg in args.iter() {
-                    let depth = self.compute_depth(arg, manager)?;
-                    if depth > max_depth {
-                        max_depth = depth;
-                    }
-                }
-                max_depth
-            }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => {
-                let left_depth = self.compute_depth(*lhs, manager)?;
-                let right_depth = self.compute_depth(*rhs, manager)?;
-                left_depth.max(right_depth)
-            }
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                let mut max_depth = 0;
-                for &arg in args.iter() {
-                    let depth = self.compute_depth(arg, manager)?;
-                    if depth > max_depth {
-                        max_depth = depth;
-                    }
-                }
-                max_depth
-            }
-            TermKind::Not(inner) | TermKind::Neg(inner) => self.compute_depth(*inner, manager)?,
-            TermKind::Ite(c, t, e) => {
-                let c_depth = self.compute_depth(*c, manager)?;
-                let t_depth = self.compute_depth(*t, manager)?;
-                let e_depth = self.compute_depth(*e, manager)?;
-                c_depth.max(t_depth).max(e_depth)
-            }
-            TermKind::Select(arr, idx) => {
-                let arr_depth = self.compute_depth(*arr, manager)?;
-                let idx_depth = self.compute_depth(*idx, manager)?;
-                arr_depth.max(idx_depth)
-            }
-            TermKind::Store(arr, idx, val) => {
-                let arr_depth = self.compute_depth(*arr, manager)?;
-                let idx_depth = self.compute_depth(*idx, manager)?;
-                let val_depth = self.compute_depth(*val, manager)?;
-                arr_depth.max(idx_depth).max(val_depth)
-            }
-            _ => 0,
-        };
+        for current in pattern_postorder(term, manager) {
+            let Some(t) = manager.get(current) else {
+                memo.insert(current, 0);
+                continue;
+            };
+            let child_depth = pattern_children(&t.kind)
+                .iter()
+                .map(|c| memo.get(c).copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            memo.insert(current, child_depth + 1);
+        }
 
-        Ok(child_depth + 1)
+        Ok(memo.get(&term).copied().unwrap_or(0))
     }
 
     /// Build a pattern DAG for efficient matching
@@ -575,7 +537,14 @@ impl PatternCompiler {
         Ok(nodes)
     }
 
-    /// Recursive helper for building pattern DAG
+    /// Iterative helper for building the pattern DAG.
+    ///
+    /// Children are created before their parent (post-order, left to
+    /// right), so node indices are numbered exactly as the recursive form
+    /// numbered them. The node's children now come from the exhaustive
+    /// [`pattern_children`]: the previous catch-all created a childless
+    /// node for every kind it did not enumerate, i.e. a DAG that silently
+    /// claimed the pattern had no structure below that point.
     fn build_dag_recursive(
         &self,
         term: TermId,
@@ -584,95 +553,64 @@ impl PatternCompiler {
         node_map: &mut FxHashMap<TermId, usize>,
         manager: &TermManager,
     ) -> Result<usize> {
-        // Check if we've already created a node for this term
-        if let Some(&node_idx) = node_map.get(&term) {
-            return Ok(node_idx);
+        let mut stack = vec![(term, false)];
+
+        while let Some((current, expanded)) = stack.pop() {
+            // Check if we've already created a node for this term
+            if node_map.contains_key(&current) {
+                continue;
+            }
+
+            let Some(t) = manager.get(current) else {
+                return Err(OxizError::EmatchError(format!(
+                    "Term {:?} not found in manager",
+                    current
+                )));
+            };
+            let children = pattern_children(&t.kind);
+
+            if !expanded {
+                stack.push((current, true));
+                for &child in children.iter().rev() {
+                    stack.push((child, false));
+                }
+                continue;
+            }
+
+            // Check if this is a pattern variable
+            let var_index = if let TermKind::Var(name) = &t.kind {
+                pattern.variables.iter().position(|v| v.name == *name)
+            } else {
+                None
+            };
+
+            let mut child_indices: SmallVec<[usize; 4]> = SmallVec::new();
+            for child in &children {
+                let Some(&idx) = node_map.get(child) else {
+                    return Err(OxizError::EmatchError(format!(
+                        "Pattern child {:?} was not built before its parent",
+                        child
+                    )));
+                };
+                child_indices.push(idx);
+            }
+
+            let node = PatternNode {
+                term: current,
+                var_index,
+                children: child_indices,
+                exact_match: false, // Will be set by optimizer later
+            };
+
+            let node_idx = nodes.len();
+            nodes.push(node);
+            node_map.insert(current, node_idx);
         }
 
-        let Some(t) = manager.get(term) else {
-            return Err(OxizError::EmatchError(format!(
-                "Term {:?} not found in manager",
-                term
-            )));
-        };
-
-        // Check if this is a pattern variable
-        let var_index = if let TermKind::Var(name) = &t.kind {
-            pattern.variables.iter().position(|v| v.name == *name)
-        } else {
-            None
-        };
-
-        // Build children first
-        let children = match &t.kind {
-            TermKind::Apply { args, .. } => {
-                let mut child_indices = SmallVec::new();
-                for &arg in args.iter() {
-                    let idx = self.build_dag_recursive(arg, pattern, nodes, node_map, manager)?;
-                    child_indices.push(idx);
-                }
-                child_indices
-            }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => {
-                let left_idx = self.build_dag_recursive(*lhs, pattern, nodes, node_map, manager)?;
-                let right_idx =
-                    self.build_dag_recursive(*rhs, pattern, nodes, node_map, manager)?;
-                smallvec::smallvec![left_idx, right_idx]
-            }
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                let mut child_indices = SmallVec::new();
-                for &arg in args.iter() {
-                    let idx = self.build_dag_recursive(arg, pattern, nodes, node_map, manager)?;
-                    child_indices.push(idx);
-                }
-                child_indices
-            }
-            TermKind::Not(inner) | TermKind::Neg(inner) => {
-                let idx = self.build_dag_recursive(*inner, pattern, nodes, node_map, manager)?;
-                smallvec::smallvec![idx]
-            }
-            TermKind::Ite(c, t, e) => {
-                let c_idx = self.build_dag_recursive(*c, pattern, nodes, node_map, manager)?;
-                let t_idx = self.build_dag_recursive(*t, pattern, nodes, node_map, manager)?;
-                let e_idx = self.build_dag_recursive(*e, pattern, nodes, node_map, manager)?;
-                smallvec::smallvec![c_idx, t_idx, e_idx]
-            }
-            TermKind::Select(arr, idx) => {
-                let arr_idx = self.build_dag_recursive(*arr, pattern, nodes, node_map, manager)?;
-                let idx_idx = self.build_dag_recursive(*idx, pattern, nodes, node_map, manager)?;
-                smallvec::smallvec![arr_idx, idx_idx]
-            }
-            TermKind::Store(arr, idx, val) => {
-                let arr_idx = self.build_dag_recursive(*arr, pattern, nodes, node_map, manager)?;
-                let idx_idx = self.build_dag_recursive(*idx, pattern, nodes, node_map, manager)?;
-                let val_idx = self.build_dag_recursive(*val, pattern, nodes, node_map, manager)?;
-                smallvec::smallvec![arr_idx, idx_idx, val_idx]
-            }
-            _ => SmallVec::new(),
-        };
-
-        // Create the node
-        let node = PatternNode {
-            term,
-            var_index,
-            children,
-            exact_match: false, // Will be set by optimizer later
-        };
-
-        let node_idx = nodes.len();
-        nodes.push(node);
-        node_map.insert(term, node_idx);
-
-        Ok(node_idx)
+        node_map
+            .get(&term)
+            .copied()
+            .ok_or_else(|| OxizError::EmatchError(format!("Term {:?} not found in manager", term)))
     }
 
     /// Get statistics
@@ -982,5 +920,105 @@ mod tests {
         let stats = compiler.stats();
         assert_eq!(stats.patterns_compiled, 2);
         assert_eq!(stats.ground_patterns, 1);
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+    use crate::ast::TermManager;
+
+    #[test]
+    fn test_pattern_variables_seen_under_store() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+        let arr = manager.mk_var("a", array_sort);
+        let x = manager.mk_var("x", int_sort);
+        let value = manager.mk_int(1);
+        let stored = manager.mk_store(arr, x, value);
+
+        let x_name = manager.intern_str("x");
+        let bound_vars = vec![(x_name, int_sort)];
+        let mut compiler = PatternCompiler::new_default();
+        let pattern = compiler
+            .compile(stored, &bound_vars, &manager)
+            .expect("compilation should succeed");
+
+        assert!(
+            pattern.variables.iter().any(|v| v.name == x_name),
+            "pattern variable below `store` was lost"
+        );
+        assert!(!pattern.is_ground);
+
+        // The DAG must carry the operands of `store`.
+        let nodes = compiler
+            .build_dag(&pattern, &manager)
+            .expect("dag build should succeed");
+        let root = nodes.last().expect("dag has a root node");
+        assert_eq!(root.term, stored);
+        assert_eq!(root.children.len(), 3);
+    }
+
+    #[test]
+    fn test_pattern_walks_deep_nesting_do_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let x = manager.mk_var("x", int_sort);
+                let mut term = x;
+                for _ in 0..60_000 {
+                    term = manager.mk_apply("f", [term], int_sort);
+                }
+
+                let x_name = manager.intern_str("x");
+                let var_map: FxHashMap<Spur, usize> = [(x_name, 0)].into_iter().collect();
+                let compiler = PatternCompiler::new_default();
+
+                let contains = compiler
+                    .contains_bound_var(term, &var_map, &manager)
+                    .expect("walk should succeed");
+                let depth = compiler
+                    .compute_depth(term, &manager)
+                    .expect("walk should succeed");
+                let cost = compiler
+                    .compute_cost(term, &manager)
+                    .expect("walk should succeed");
+                let kind = compiler
+                    .classify_pattern(term, &var_map, &manager)
+                    .expect("walk should succeed");
+                (contains, depth, cost, kind)
+            })
+            .expect("thread spawn should succeed");
+
+        let (contains, depth, cost, kind) = handle.join().expect("deep walks must not overflow");
+        assert!(contains);
+        assert_eq!(depth, 60_001);
+        assert!(cost > 0);
+        assert_eq!(kind, PatternKind::Nested);
+    }
+
+    #[test]
+    fn test_pattern_cost_shared_dag_is_fast() {
+        // 40 doubling levels: exponential re-expansion would never finish.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let mut level = x;
+        for _ in 0..40 {
+            level = manager.mk_apply("f", [level, level], int_sort);
+        }
+
+        let compiler = PatternCompiler::new_default();
+        let cost = compiler
+            .compute_cost(level, &manager)
+            .expect("walk should succeed");
+        assert_eq!(cost, u32::MAX, "saturating accumulation expected");
+        let depth = compiler
+            .compute_depth(level, &manager)
+            .expect("walk should succeed");
+        assert_eq!(depth, 41);
     }
 }

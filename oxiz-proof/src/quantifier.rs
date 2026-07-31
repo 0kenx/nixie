@@ -1,14 +1,53 @@
 //! Quantifier instantiation proof generation.
 //!
 //! This module provides infrastructure for generating proofs of quantifier
-//! instantiation steps, which are crucial for SMT solving with quantifiers.
+//! instantiation steps: [`QuantifierProofRecorder`] records forall-elimination,
+//! exists-introduction, and skolemization steps against the crate's generic
+//! [`crate::proof::Proof`], and [`EMatchPattern`] provides a small
+//! S-expression e-matching unifier for finding instantiations by pattern.
+//!
+//! # Relationship to `theory`'s quantifier rules
+//!
+//! [`crate::theory::TheoryProof`] already has its own quantifier
+//! proof-step constructors -- `forall_elim`, `exists_intro`, `skolemize`,
+//! `quant_inst` -- built on [`crate::theory::TheoryRule`] and checkable
+//! (structurally) via [`crate::checker::ProofChecker::check_theory_proof`].
+//! This module is a parallel, independent facility for the crate's *other*
+//! proof representation, the generic string-conclusion [`crate::proof::Proof`]
+//! used by [`crate::builder::ProofBuilder`] -- the same relationship
+//! `ProofBuilder`/`TheoryProofBuilder` already have to each other in
+//! `builder`. There is no checker for the generic `Proof` type in this
+//! crate, so [`QuantifierProofRecorder`]'s own internal validation (see
+//! its methods' "# Errors" sections) is the only verification its output
+//! gets.
+//!
+//! # Examples
+//!
+//! ```
+//! use oxiz_proof::{Proof, QuantVar, QuantifiedFormula, QuantifierProofRecorder};
+//! use oxiz_proof::QuantifierSubstitution as Substitution;
+//!
+//! let mut proof = Proof::new();
+//! let premise = proof.add_axiom("(> 5 0)");
+//!
+//! let formula = QuantifiedFormula::exists(vec![QuantVar::new("x", "Int")], "(> x 0)");
+//! let mut witness = Substitution::default();
+//! witness.insert("x".to_string(), "5".to_string());
+//!
+//! let mut recorder = QuantifierProofRecorder::new();
+//! // The premise (> 5 0) genuinely witnesses (exists x (> x 0)) at x = 5,
+//! // so this succeeds; a premise that didn't would be rejected instead --
+//! // see `QuantifierProofRecorder::record_exists_intro`'s `# Errors`.
+//! recorder
+//!     .record_exists_intro(&mut proof, formula, witness, premise)
+//!     .expect("premise witnesses the existential");
+//! ```
 
 use crate::proof::{Proof, ProofNodeId};
 use rustc_hash::FxHashMap;
 use std::fmt;
 
 /// A quantified variable.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QuantVar {
     /// Variable name.
@@ -17,7 +56,6 @@ pub struct QuantVar {
     pub sort: String,
 }
 
-#[allow(dead_code)]
 impl QuantVar {
     /// Create a new quantified variable.
     #[must_use]
@@ -36,7 +74,6 @@ impl fmt::Display for QuantVar {
 }
 
 /// A quantified formula.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuantifiedFormula {
     /// Universal quantification: ∀x. φ(x)
@@ -55,7 +92,6 @@ pub enum QuantifiedFormula {
     },
 }
 
-#[allow(dead_code)]
 impl QuantifiedFormula {
     /// Create a universal quantification.
     #[must_use]
@@ -134,8 +170,72 @@ impl fmt::Display for QuantifiedFormula {
 /// A substitution mapping variables to terms.
 pub type Substitution = FxHashMap<String, String>;
 
+/// Apply `substitution` to `body` by simple, non-capture-aware string
+/// replacement. Shared by [`Instantiation::apply_substitution`] and
+/// [`QuantifierProofRecorder::record_forall_inst`] so the two can never
+/// disagree about what a given substitution actually produces (see that
+/// recorder method's doc comment for why that used to be possible, and
+/// unsound).
+fn substitute(body: &str, substitution: &Substitution) -> String {
+    let mut result = body.to_string();
+    for (var, term) in substitution {
+        // Not semantically correct for all cases (e.g. a variable name that
+        // is also a substring of another symbol); see `apply_substitution`'s
+        // own doc comment, which carries the same caveat.
+        result = result.replace(var, term);
+    }
+    result
+}
+
+/// Errors from [`QuantifierProofRecorder`]'s proof-step recording methods.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuantifierProofError {
+    /// [`QuantifierProofRecorder::record_exists_intro`]'s `premise` does not
+    /// name an existing node of the `Proof` it was given.
+    MissingPremise(ProofNodeId),
+    /// [`QuantifierProofRecorder::record_exists_intro`]'s premise does not
+    /// actually establish the witness-instantiated body of the existential
+    /// being introduced, so it cannot justify it.
+    WitnessMismatch {
+        /// What substituting the witness into the existential's body
+        /// actually produces.
+        expected: String,
+        /// What the premise's conclusion actually says.
+        found: String,
+    },
+    /// [`QuantifierProofRecorder::record_skolemization`] was given a number
+    /// of Skolem terms that does not match the number of the existential's
+    /// bound variables, so there is no well-defined correspondence between
+    /// them.
+    SkolemArityMismatch {
+        /// Number of bound variables in the existential formula.
+        vars: usize,
+        /// Number of Skolem terms supplied.
+        terms: usize,
+    },
+}
+
+impl fmt::Display for QuantifierProofError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPremise(id) => {
+                write!(f, "premise node {id:?} does not exist in this proof")
+            }
+            Self::WitnessMismatch { expected, found } => write!(
+                f,
+                "premise concludes {found:?}, but the witness substitution requires {expected:?}"
+            ),
+            Self::SkolemArityMismatch { vars, terms } => write!(
+                f,
+                "existential has {vars} bound variable(s) but {terms} Skolem term(s) were supplied"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for QuantifierProofError {}
+
 /// An instantiation of a quantified formula.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Instantiation {
     /// The original quantified formula.
@@ -146,7 +246,6 @@ pub struct Instantiation {
     pub instantiated: String,
 }
 
-#[allow(dead_code)]
 impl Instantiation {
     /// Create a new instantiation.
     #[must_use]
@@ -168,17 +267,11 @@ impl Instantiation {
     /// would use proper term substitution.
     #[must_use]
     pub fn apply_substitution(&self) -> String {
-        let mut result = self.formula.body().to_string();
-        for (var, term) in &self.substitution {
-            // Simple string replacement (not semantically correct for all cases)
-            result = result.replace(var, term);
-        }
-        result
+        substitute(self.formula.body(), &self.substitution)
     }
 }
 
 /// Proof recorder for quantifier instantiation.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct QuantifierProofRecorder {
     /// Recorded instantiations.
@@ -187,7 +280,6 @@ pub struct QuantifierProofRecorder {
     inst_to_node: FxHashMap<String, ProofNodeId>,
 }
 
-#[allow(dead_code)]
 impl QuantifierProofRecorder {
     /// Create a new quantifier proof recorder.
     #[must_use]
@@ -200,15 +292,24 @@ impl QuantifierProofRecorder {
 
     /// Record a forall instantiation.
     ///
-    /// Given a formula ∀x. φ(x) and a term t, records the instantiation φ(t).
+    /// Given a formula ∀x. φ(x) and a substitution for `x`, records the
+    /// instantiation φ(t).
+    ///
+    /// The instantiated conclusion is always computed *from* `substitution`
+    /// (via the same logic as [`Instantiation::apply_substitution`]), not
+    /// supplied separately by the caller: an earlier version of this method
+    /// took the instantiated string as a second, independent argument, which
+    /// meant a caller could pass a `substitution` that had nothing to do
+    /// with the `instantiated` string actually recorded, and nothing
+    /// checked the two agreed. Deriving it here instead makes that
+    /// particular mismatch unwritable rather than merely unchecked.
     pub fn record_forall_inst(
         &mut self,
         proof: &mut Proof,
         formula: QuantifiedFormula,
         substitution: Substitution,
-        instantiated: impl Into<String>,
     ) -> ProofNodeId {
-        let instantiated = instantiated.into();
+        let instantiated = substitute(formula.body(), &substitution);
 
         // Check if we already have this instantiation
         if let Some(&node_id) = self.inst_to_node.get(&instantiated) {
@@ -232,39 +333,76 @@ impl QuantifierProofRecorder {
 
     /// Record an exists introduction.
     ///
-    /// Given a formula ∃x. φ(x) and a witness term t where φ(t) holds,
-    /// records the derivation of ∃x. φ(x).
+    /// Given a formula ∃x. φ(x), a witness substitution for `x`, and a
+    /// `premise` node establishing φ(t) for that witness, records the
+    /// derivation of ∃x. φ(x) from it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuantifierProofError::MissingPremise`] if `premise` does
+    /// not name a node of `proof`, or
+    /// [`QuantifierProofError::WitnessMismatch`] if `premise`'s conclusion
+    /// is not exactly the witness-instantiated body. An earlier version of
+    /// this method computed the witness-instantiated body and then never
+    /// used it for anything (not even to validate `premise`, let alone to
+    /// record it) -- the entire point of exists-introduction is that the
+    /// *specific* premise given is what licenses the conclusion, so
+    /// silently accepting an unrelated premise made the rule vacuous rather
+    /// than restrict what "record_exists_intro" claims to a check.
     pub fn record_exists_intro(
         &mut self,
         proof: &mut Proof,
         formula: QuantifiedFormula,
         witness: Substitution,
         premise: ProofNodeId,
-    ) -> ProofNodeId {
-        let instantiated_body = formula.body().to_string();
-        // Apply witness substitution
-        let mut result = instantiated_body;
-        for (var, term) in &witness {
-            result = result.replace(var, term);
+    ) -> Result<ProofNodeId, QuantifierProofError> {
+        let instantiated = substitute(formula.body(), &witness);
+
+        let premise_node = proof
+            .get_node(premise)
+            .ok_or(QuantifierProofError::MissingPremise(premise))?;
+        if premise_node.conclusion() != instantiated {
+            return Err(QuantifierProofError::WitnessMismatch {
+                expected: instantiated,
+                found: premise_node.conclusion().to_string(),
+            });
         }
 
-        proof.add_inference("exists_intro", vec![premise], format!("{}", formula))
+        Ok(proof.add_inference(
+            "exists_intro",
+            vec![premise],
+            format!("(=> {instantiated} {formula})"),
+        ))
     }
 
     /// Record a skolemization step.
     ///
     /// Replaces an existential quantifier with a Skolem function/constant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuantifierProofError::SkolemArityMismatch`] if
+    /// `skolem_terms` does not have exactly one term per bound variable of
+    /// `formula` -- there is otherwise no well-defined correspondence
+    /// between them, and the previous unchecked version simply embedded
+    /// whichever counts were given via `{:?}` formatting.
     pub fn record_skolemization(
         &mut self,
         proof: &mut Proof,
         formula: QuantifiedFormula,
         skolem_terms: Vec<String>,
-    ) -> ProofNodeId {
-        proof.add_inference(
+    ) -> Result<ProofNodeId, QuantifierProofError> {
+        if skolem_terms.len() != formula.vars().len() {
+            return Err(QuantifierProofError::SkolemArityMismatch {
+                vars: formula.vars().len(),
+                terms: skolem_terms.len(),
+            });
+        }
+        Ok(proof.add_inference(
             "skolem",
             Vec::new(),
             format!("(skolem {} {:?})", formula, skolem_terms),
-        )
+        ))
     }
 
     /// Get the number of recorded instantiations.
@@ -296,7 +434,6 @@ impl QuantifierProofRecorder {
 ///
 /// E-matching is a technique for finding instantiations of quantified formulas
 /// by pattern matching against the ground terms in the current context.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EMatchPattern {
     /// Pattern to match (with variables).
@@ -305,7 +442,6 @@ pub struct EMatchPattern {
     pub vars: Vec<String>,
 }
 
-#[allow(dead_code)]
 impl EMatchPattern {
     /// Create a new e-matching pattern.
     #[must_use]
@@ -345,47 +481,112 @@ impl EMatchPattern {
         }
     }
 
-    /// Recursively unify `pattern` against `term`, extending `subst` with
-    /// any new variable bindings. Returns `false` (leaving `subst` in an
-    /// unspecified but still-valid state) on a mismatch.
+    /// Unify `pattern` against `term`, extending `subst` with any new variable
+    /// bindings. Returns `false` (leaving `subst` in an unspecified but still
+    /// valid state) on a mismatch.
+    ///
+    /// Iterative (explicit worklist of pattern/term pairs). Patterns and terms
+    /// come from caller-supplied strings whose S-expression nesting is not
+    /// bounded by anything this crate controls, and this walk has no error
+    /// channel to report a depth cap through -- `false` would mean "does not
+    /// match", silently losing instantiations -- so the pairs still to be
+    /// unified live on the heap instead of the native stack.
+    ///
+    /// Argument pairs are pushed in reverse so they are visited left to right,
+    /// matching the short-circuiting order of the original `zip(..).all(..)`:
+    /// the first mismatching argument stops the walk, and the bindings made
+    /// before it are exactly the ones the recursive version would have made.
     fn unify(
         pattern: &SExpr,
         term: &SExpr,
         vars: &std::collections::HashSet<&str>,
         subst: &mut Substitution,
     ) -> bool {
-        match pattern {
-            SExpr::Atom(name) if vars.contains(name.as_str()) => {
-                let term_repr = term.to_string_repr();
-                match subst.get(name) {
-                    // Same variable bound again: must bind to the same subterm.
-                    Some(existing) => *existing == term_repr,
-                    None => {
-                        subst.insert(name.clone(), term_repr);
-                        true
+        let mut worklist = vec![(pattern, term)];
+
+        while let Some((pattern, term)) = worklist.pop() {
+            match pattern {
+                SExpr::Atom(name) if vars.contains(name.as_str()) => {
+                    let term_repr = term.to_string_repr();
+                    match subst.get(name) {
+                        // Same variable bound again: must bind to the same subterm.
+                        Some(existing) => {
+                            if *existing != term_repr {
+                                return false;
+                            }
+                        }
+                        None => {
+                            subst.insert(name.clone(), term_repr);
+                        }
                     }
                 }
+                SExpr::Atom(name) => {
+                    if !matches!(term, SExpr::Atom(other) if name == other) {
+                        return false;
+                    }
+                }
+                SExpr::List(pattern_args) => match term {
+                    SExpr::List(term_args) if pattern_args.len() == term_args.len() => {
+                        worklist.extend(pattern_args.iter().zip(term_args.iter()).rev());
+                    }
+                    _ => return false,
+                },
             }
-            SExpr::Atom(name) => matches!(term, SExpr::Atom(other) if name == other),
-            SExpr::List(pattern_args) => match term {
-                SExpr::List(term_args) if pattern_args.len() == term_args.len() => pattern_args
-                    .iter()
-                    .zip(term_args.iter())
-                    .all(|(p, t)| Self::unify(p, t, vars, subst)),
-                _ => false,
-            },
         }
+
+        true
     }
 }
 
 /// A minimal S-expression (parenthesized prefix syntax) parser used by
 /// [`EMatchPattern::matches`] for structural e-matching.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Depth invariant
+///
+/// There is deliberately no bound on how deep a parsed `SExpr` may be:
+/// [`SExpr::parse`] is fed caller-supplied pattern and term strings, and
+/// rejecting a deep one would silently turn into "the pattern does not match",
+/// losing quantifier instantiations rather than reporting anything. Every walk
+/// over this type is therefore iterative -- [`SExpr::parse_tokens`],
+/// [`SExpr::to_string_repr`], [`EMatchPattern::unify`] and the [`Drop`] impl
+/// below.
+///
+/// No trait is derived for the same reason: the compiler-generated `Debug`,
+/// `Clone`, `PartialEq` and `Hash` walks are all recursive, so deriving one
+/// would reintroduce an unbounded native-stack walk over a value whose depth
+/// is attacker-controlled. Add an iterative hand-written impl if one is ever
+/// needed.
 enum SExpr {
     /// A single symbol (variable, constant, or function name).
     Atom(String),
     /// A parenthesized application, e.g. `(f a b)`.
     List(Vec<SExpr>),
+}
+
+impl Drop for SExpr {
+    /// Iterative drop.
+    ///
+    /// [`SExpr::parse`] builds one nesting level per `(` in the input, so the
+    /// compiler-generated recursive `drop_in_place` would overflow the stack on
+    /// a deeply nested pattern -- after [`EMatchPattern::matches`] has already
+    /// returned its answer, making it an abort with no diagnostic. Each node is
+    /// dismantled into a shallow shell before being released, so the drop that
+    /// runs for real is never more than one level deep.
+    fn drop(&mut self) {
+        /// Detach a node's children, leaving a shell that drops trivially.
+        fn dismantle(node: &mut SExpr, out: &mut Vec<SExpr>) {
+            match node {
+                SExpr::Atom(_) => {}
+                SExpr::List(items) => out.append(items),
+            }
+        }
+
+        let mut pending = Vec::new();
+        dismantle(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            dismantle(&mut node, &mut pending);
+        }
+    }
 }
 
 impl SExpr {
@@ -429,42 +630,74 @@ impl SExpr {
         tokens
     }
 
+    /// Parse one complete S-expression off the front of `iter`.
+    ///
+    /// Iterative (explicit heap stack of the lists currently open): the input
+    /// is caller-supplied text where every `(` costs one nesting level, so a
+    /// call frame per level would overflow the native stack. Behaviour is
+    /// unchanged, including both `None` cases -- an unmatched `)` and running
+    /// out of tokens inside an open list.
     fn parse_tokens<'a, I>(iter: &mut std::iter::Peekable<I>) -> Option<Self>
     where
         I: Iterator<Item = &'a String>,
     {
-        match iter.next()?.as_str() {
-            "(" => {
-                let mut items = Vec::new();
-                loop {
-                    match iter.peek().map(|token| token.as_str()) {
-                        Some(")") => {
-                            iter.next();
-                            break;
-                        }
-                        Some(_) => items.push(Self::parse_tokens(iter)?),
-                        // Unbalanced: ran out of tokens before a closing paren.
-                        None => return None,
-                    }
+        // Arguments accumulated for each list that is currently open.
+        let mut open: Vec<Vec<Self>> = Vec::new();
+
+        loop {
+            let value = match iter.next()?.as_str() {
+                "(" => {
+                    open.push(Vec::new());
+                    continue;
                 }
-                Some(Self::List(items))
+                // A closing paren finishes the innermost open list; with none
+                // open it is an unexpected closing paren with no matching open.
+                ")" => Self::List(open.pop()?),
+                atom => Self::Atom(atom.to_string()),
+            };
+
+            match open.last_mut() {
+                Some(items) => items.push(value),
+                None => return Some(value),
             }
-            // Unexpected closing paren with no matching open.
-            ")" => None,
-            atom => Some(Self::Atom(atom.to_string())),
         }
     }
 
     /// Render back to the same parenthesized textual form used by patterns
     /// and terms elsewhere in this module.
+    ///
+    /// Iterative (explicit heap stack). Output is byte-identical to the
+    /// recursive formulation; see the type-level depth invariant.
     fn to_string_repr(&self) -> String {
-        match self {
-            Self::Atom(a) => a.clone(),
-            Self::List(items) => {
-                let inner: Vec<String> = items.iter().map(Self::to_string_repr).collect();
-                format!("({})", inner.join(" "))
+        /// Work item for the iterative rendering below.
+        enum Task<'a> {
+            /// Render this subexpression.
+            Node(&'a SExpr),
+            /// Emit a structural token verbatim.
+            Text(&'static str),
+        }
+
+        let mut out = String::new();
+        let mut stack = vec![Task::Node(self)];
+
+        while let Some(task) = stack.pop() {
+            match task {
+                Task::Text(text) => out.push_str(text),
+                Task::Node(SExpr::Atom(a)) => out.push_str(a),
+                Task::Node(SExpr::List(items)) => {
+                    out.push('(');
+                    stack.push(Task::Text(")"));
+                    for (i, item) in items.iter().enumerate().rev() {
+                        stack.push(Task::Node(item));
+                        if i > 0 {
+                            stack.push(Task::Text(" "));
+                        }
+                    }
+                }
             }
         }
+
+        out
     }
 }
 
@@ -545,10 +778,17 @@ mod tests {
         let mut sub = Substitution::default();
         sub.insert("x".to_string(), "5".to_string());
 
-        let _node = recorder.record_forall_inst(&mut proof, formula, sub, "(> 5 0)");
+        let node = recorder.record_forall_inst(&mut proof, formula, sub);
 
         assert_eq!(recorder.len(), 1);
         assert!(!recorder.is_empty());
+        // The instantiated conclusion is computed from the substitution, not
+        // separately supplied -- confirm it actually reflects it.
+        let conclusion = proof
+            .get_node(node)
+            .expect("just-added node must exist")
+            .conclusion();
+        assert!(conclusion.contains("(> 5 0)"));
     }
 
     #[test]
@@ -564,9 +804,61 @@ mod tests {
         let mut witness = Substitution::default();
         witness.insert("x".to_string(), "5".to_string());
 
-        let _node = recorder.record_exists_intro(&mut proof, formula, witness, root);
+        let _node = recorder
+            .record_exists_intro(&mut proof, formula, witness, root)
+            .expect("premise (> 5 0) genuinely witnesses (exists x (> x 0)) at x = 5");
 
         assert_eq!(proof.node_count(), 2);
+    }
+
+    /// The bug this method's "# Errors" doc comment documents: a premise
+    /// that does not actually establish the witness-instantiated body must
+    /// be rejected, not silently accepted as if it did.
+    #[test]
+    fn test_quantifier_recorder_exists_rejects_mismatched_witness() {
+        let mut recorder = QuantifierProofRecorder::new();
+        let mut proof = Proof::new();
+        // Premise establishes (> 5 0), but the witness below claims x = 7,
+        // i.e. the instantiated body should be (> 7 0) -- a different
+        // conclusion the premise does not actually establish.
+        proof.add_axiom("(> 5 0)");
+        let root = proof.root().expect("test operation should succeed");
+
+        let vars = vec![QuantVar::new("x", "Int")];
+        let formula = QuantifiedFormula::exists(vars, "(> x 0)");
+
+        let mut witness = Substitution::default();
+        witness.insert("x".to_string(), "7".to_string());
+
+        let result = recorder.record_exists_intro(&mut proof, formula, witness, root);
+        assert!(
+            matches!(result, Err(QuantifierProofError::WitnessMismatch { .. })),
+            "a premise that does not establish the witness-instantiated body \
+             must be rejected: {result:?}"
+        );
+    }
+
+    /// Companion: a `premise` that does not exist in `proof` at all must
+    /// also be rejected, not (for instance) panic or fabricate a match.
+    #[test]
+    fn test_quantifier_recorder_exists_rejects_missing_premise() {
+        let mut recorder = QuantifierProofRecorder::new();
+        let mut proof = Proof::new();
+        proof.add_axiom("(> 5 0)");
+
+        let vars = vec![QuantVar::new("x", "Int")];
+        let formula = QuantifiedFormula::exists(vars, "(> x 0)");
+        let mut witness = Substitution::default();
+        witness.insert("x".to_string(), "5".to_string());
+
+        // A node ID from nowhere: this proof only ever had one node added,
+        // at ID 0.
+        let bogus_premise = ProofNodeId(9999);
+        let result = recorder.record_exists_intro(&mut proof, formula, witness, bogus_premise);
+        assert!(
+            matches!(result, Err(QuantifierProofError::MissingPremise(_))),
+            "a nonexistent premise must be rejected: {result:?}"
+        );
     }
 
     #[test]
@@ -578,9 +870,34 @@ mod tests {
         let vars = vec![QuantVar::new("x", "Int")];
         let formula = QuantifiedFormula::exists(vars, "(> x 0)");
 
-        let _node = recorder.record_skolemization(&mut proof, formula, vec!["sk_x".to_string()]);
+        let _node = recorder
+            .record_skolemization(&mut proof, formula, vec!["sk_x".to_string()])
+            .expect("one Skolem term for one bound variable must be accepted");
 
         assert_eq!(proof.node_count(), 2);
+    }
+
+    /// The bug this method's "# Errors" doc comment documents: a Skolem-term
+    /// count that does not match the existential's bound-variable count
+    /// must be rejected, not silently embedded via `{:?}` regardless.
+    #[test]
+    fn test_quantifier_recorder_skolem_rejects_arity_mismatch() {
+        let mut recorder = QuantifierProofRecorder::new();
+        let mut proof = Proof::new();
+        proof.add_axiom("true");
+
+        let vars = vec![QuantVar::new("x", "Int"), QuantVar::new("y", "Int")];
+        let formula = QuantifiedFormula::exists(vars, "(> (+ x y) 0)");
+
+        // Two bound variables, only one Skolem term supplied.
+        let result = recorder.record_skolemization(&mut proof, formula, vec!["sk_x".to_string()]);
+        assert!(
+            matches!(
+                result,
+                Err(QuantifierProofError::SkolemArityMismatch { vars: 2, terms: 1 })
+            ),
+            "a Skolem-term/bound-variable arity mismatch must be rejected: {result:?}"
+        );
     }
 
     #[test]
@@ -595,10 +912,9 @@ mod tests {
         let mut sub = Substitution::default();
         sub.insert("x".to_string(), "5".to_string());
 
-        let node1 =
-            recorder.record_forall_inst(&mut proof, formula.clone(), sub.clone(), "(> 5 0)");
+        let node1 = recorder.record_forall_inst(&mut proof, formula.clone(), sub.clone());
         let formula2 = QuantifiedFormula::forall(vars, "(> x 0)");
-        let node2 = recorder.record_forall_inst(&mut proof, formula2, sub, "(> 5 0)");
+        let node2 = recorder.record_forall_inst(&mut proof, formula2, sub);
 
         assert_eq!(node1, node2);
         assert_eq!(recorder.len(), 1);
@@ -616,7 +932,7 @@ mod tests {
         let mut sub = Substitution::default();
         sub.insert("x".to_string(), "5".to_string());
 
-        recorder.record_forall_inst(&mut proof, formula, sub, "(> 5 0)");
+        recorder.record_forall_inst(&mut proof, formula, sub);
         assert_eq!(recorder.len(), 1);
 
         recorder.clear();
@@ -689,6 +1005,99 @@ mod tests {
         let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
         assert!(pattern.matches("(f a").is_none());
         assert!(pattern.matches("f a)").is_none());
+    }
+
+    /// Build `(f (f ... (f a) ...))` nested `depth` levels deep.
+    #[cfg(test)]
+    fn nested_sexpr(depth: usize, leaf: &str) -> String {
+        let mut s = String::with_capacity(depth * 4 + leaf.len() + 1);
+        for _ in 0..depth {
+            s.push_str("(f ");
+        }
+        s.push_str(leaf);
+        for _ in 0..depth {
+            s.push(')');
+        }
+        s
+    }
+
+    /// A deeply nested pattern/term pair must unify without overflowing the
+    /// native stack: `SExpr::parse_tokens`, `EMatchPattern::unify`,
+    /// `SExpr::to_string_repr` and `SExpr`'s `Drop` are all iterative.
+    ///
+    /// Running on a deliberately small (128 KiB) stack: returning at all is the
+    /// proof. Every one of those four walks used to be recursive, so this
+    /// covers all of them at once -- the binding for `x` is produced by
+    /// `to_string_repr`, and both parsed trees are dropped on the way out.
+    ///
+    /// The stack size and `DEPTH` are scaled together on purpose: what is
+    /// pinned is the ratio, ~21 bytes per frame, which no real call frame fits
+    /// into. Never raise one without raising the other.
+    #[test]
+    fn test_ematch_deeply_nested_does_not_overflow() {
+        const DEPTH: usize = 6_250;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let pattern = EMatchPattern::new(nested_sexpr(DEPTH, "x"), vec!["x".to_string()]);
+                let term = nested_sexpr(DEPTH, "a");
+
+                let subst = pattern
+                    .matches(&term)
+                    .expect("a deeply nested term should match its own shape");
+                assert_eq!(subst.get("x").map(String::as_str), Some("a"));
+
+                // A mismatch buried at the bottom must be reported, not lost.
+                let mismatch = nested_sexpr(DEPTH, "(g a)");
+                let unbound = EMatchPattern::new(nested_sexpr(DEPTH, "b"), Vec::new());
+                assert!(unbound.matches(&mismatch).is_none());
+            })
+            .expect("thread spawn should succeed");
+
+        handle.join().expect("worker thread should not panic");
+    }
+
+    /// A deeply nested *binding* exercises `to_string_repr` on a big subterm:
+    /// the variable binds to the whole nested tail, which must be rendered
+    /// iteratively.
+    ///
+    /// Same 128 KiB / `DEPTH` pairing as above: the ~21 bytes-per-frame ratio is
+    /// what makes a surviving native recursion impossible.
+    #[test]
+    fn test_ematch_deep_binding_is_rendered_iteratively() {
+        const DEPTH: usize = 6_250;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let pattern = EMatchPattern::new("(f x)", vec!["x".to_string()]);
+                let term = format!("(f {})", nested_sexpr(DEPTH, "a"));
+
+                let subst = pattern.matches(&term).expect("pattern should match");
+                let bound = subst.get("x").cloned().unwrap_or_default();
+                assert_eq!(bound, nested_sexpr(DEPTH, "a"));
+            })
+            .expect("thread spawn should succeed");
+
+        handle.join().expect("worker thread should not panic");
+    }
+
+    /// Repeated variables must still be checked for consistency after the
+    /// conversion to a worklist, including when the second occurrence is
+    /// reached only after other arguments have already bound.
+    #[test]
+    fn test_ematch_worklist_preserves_left_to_right_binding() {
+        let pattern = EMatchPattern::new("(f x (g x) y)", vec!["x".to_string(), "y".to_string()]);
+
+        let subst = pattern
+            .matches("(f a (g a) (h b))")
+            .expect("consistent bindings should unify");
+        assert_eq!(subst.get("x").map(String::as_str), Some("a"));
+        assert_eq!(subst.get("y").map(String::as_str), Some("(h b)"));
+
+        // Inconsistent second occurrence of `x`.
+        assert!(pattern.matches("(f a (g c) (h b))").is_none());
     }
 
     #[test]

@@ -20,6 +20,29 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+/// Escape a string for embedding inside a JSON string literal.
+///
+/// Every string field written by [`TraceEvent::to_json`] goes through this.
+/// Escaping only the user-supplied `description` (as an earlier version of
+/// this module did) was not enough: theory names, theory results, restart
+/// reasons and strategy names are all caller-supplied too, and a single quote
+/// in any of them produced a trace file that no JSON parser would accept.
+fn escape_json(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// A solver trace event.
 #[derive(Debug, Clone)]
 pub enum TraceEvent {
@@ -116,7 +139,10 @@ impl TraceEvent {
             } => {
                 let var = literal.unsigned_abs();
                 let pol = if *literal > 0 { "T" } else { "F" };
-                format!("PROP    x{} = {} (reason: clause #{})", var, pol, reason_clause)
+                format!(
+                    "PROP    x{} = {} (reason: clause #{})",
+                    var, pol, reason_clause
+                )
             }
             TraceEvent::Conflict {
                 conflicting_clause,
@@ -128,10 +154,7 @@ impl TraceEvent {
                     (Some(lc), None) => format!(", learned clause #{}", lc),
                     _ => String::new(),
                 };
-                format!(
-                    "CONFLICT clause #{}{}",
-                    conflicting_clause, learned_str
-                )
+                format!("CONFLICT clause #{}{}", conflicting_clause, learned_str)
             }
             TraceEvent::TheoryCheck {
                 theory,
@@ -144,9 +167,7 @@ impl TraceEvent {
                 reason,
                 new_strategy,
             } => {
-                let strat = new_strategy
-                    .as_deref()
-                    .unwrap_or("unchanged");
+                let strat = new_strategy.as_deref().unwrap_or("unchanged");
                 format!("RESTART reason={}, strategy={}", reason, strat)
             }
             TraceEvent::Backtrack {
@@ -208,7 +229,9 @@ impl TraceEvent {
             } => {
                 format!(
                     r#"{{"type":"theory_check","theory":"{}","result":"{}","time_us":{}}}"#,
-                    theory, result, time_us
+                    escape_json(theory),
+                    escape_json(result),
+                    time_us
                 )
             }
             TraceEvent::Restart {
@@ -217,10 +240,11 @@ impl TraceEvent {
             } => {
                 let strat = new_strategy
                     .as_deref()
-                    .map_or("null".to_string(), |s| format!("\"{}\"", s));
+                    .map_or("null".to_string(), |s| format!("\"{}\"", escape_json(s)));
                 format!(
                     r#"{{"type":"restart","reason":"{}","new_strategy":{}}}"#,
-                    reason, strat
+                    escape_json(reason),
+                    strat
                 )
             }
             TraceEvent::Backtrack {
@@ -243,11 +267,10 @@ impl TraceEvent {
                 )
             }
             TraceEvent::AssertionAdded { index, description } => {
-                // Escape quotes in description for JSON safety.
-                let escaped = description.replace('\\', "\\\\").replace('"', "\\\"");
                 format!(
                     r#"{{"type":"assertion_added","index":{},"description":"{}"}}"#,
-                    index, escaped
+                    index,
+                    escape_json(description)
                 )
             }
         }
@@ -707,6 +730,35 @@ mod tests {
     }
 
     #[test]
+    fn test_every_string_field_is_json_escaped() {
+        // Regression: only `description` used to be escaped, so a quote in a
+        // theory name / result / restart reason produced invalid JSON.
+        let theory_json = TraceEvent::TheoryCheck {
+            theory: "EU\"F".to_string(),
+            result: "back\\slash".to_string(),
+            time_us: 1,
+        }
+        .to_json();
+        assert!(theory_json.contains(r#"EU\"F"#), "{theory_json}");
+        assert!(theory_json.contains(r#"back\\slash"#), "{theory_json}");
+
+        let restart_json = TraceEvent::Restart {
+            reason: "glu\"cose".to_string(),
+            new_strategy: Some("lu\"by".to_string()),
+        }
+        .to_json();
+        assert!(restart_json.contains(r#"glu\"cose"#), "{restart_json}");
+        assert!(restart_json.contains(r#"lu\"by"#), "{restart_json}");
+
+        let control_json = TraceEvent::AssertionAdded {
+            index: 0,
+            description: "a\nb\tc".to_string(),
+        }
+        .to_json();
+        assert!(control_json.contains(r"a\nb\tc"), "{control_json}");
+    }
+
+    #[test]
     fn test_high_level_filter() {
         let config = TraceConfig {
             filter: TraceFilter::high_level(),
@@ -715,8 +767,15 @@ mod tests {
         };
         let mut tracer = SolverTracer::new(config);
 
-        tracer.record(TraceEvent::Decision { var: 1, value: true, level: 0 });
-        tracer.record(TraceEvent::Propagation { literal: 2, reason_clause: 1 });
+        tracer.record(TraceEvent::Decision {
+            var: 1,
+            value: true,
+            level: 0,
+        });
+        tracer.record(TraceEvent::Propagation {
+            literal: 2,
+            reason_clause: 1,
+        });
         tracer.record(TraceEvent::Conflict {
             conflicting_clause: 3,
             learned_clause: None,

@@ -564,3 +564,47 @@ fn test_incremental_mul_aux_unreachable_const_is_unsat() {
         other => panic!("Expected UNSAT for aux=x*4 ∧ aux=7, got {:?}", other),
     }
 }
+
+/// A refutation that runs through the bit-blasted comparator's *multi-literal*
+/// clauses must survive being re-checked.
+///
+/// `BvSolver::check()` issues up to two `solve()` calls per probe — it
+/// re-verifies an `Unsat` verdict by discarding the probe's lemmas and solving
+/// again — and callers may invoke `check()` repeatedly. Every one of those
+/// `solve()` calls therefore lands on an engine that has already searched.
+///
+/// This is an end-to-end guard for the engine-level defect regression-tested in
+/// `oxiz-sat/tests/incremental_probe_soundness.rs`: the embedded solver used to
+/// leave its propagation head parked past a literal whose watch list it had
+/// abandoned when a level-0 conflict aborted propagation, so a later `solve()`
+/// resumed propagation *after* that literal, never re-examined the falsified
+/// clause, and answered `Sat`.
+///
+/// `assert_const` is what makes that shape reachable from the theory layer: it
+/// pins bits as clause-less level-0 units, so re-propagating them through the
+/// comparator's definitional clauses is the only thing that can refute `5 <u 3`.
+///
+/// Note this specific instance does **not** by itself reproduce the historical
+/// failure — it still answers `Unsat` against an engine with the propagation-head
+/// fix reverted, because the head does not happen to walk past both watched
+/// literals here. It is kept as a cheap guard on the real consumer's repeated
+/// `check()` pattern, not as a proof of that bug.
+#[test]
+fn test_repeated_check_keeps_comparator_refutation() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+
+    solver.new_bv(x, 8);
+    solver.new_bv(y, 8);
+    solver.assert_const(x, 5, 8);
+    solver.assert_const(y, 3, 8);
+    solver.assert_ult(x, y);
+
+    for probe in 0..5 {
+        match solver.check().expect("check should not error") {
+            TheoryCheckResult::Unsat(_) => {}
+            other => panic!("probe {probe}: 5 <u 3 is unsatisfiable, got {other:?}"),
+        }
+    }
+}

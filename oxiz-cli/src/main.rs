@@ -1330,6 +1330,16 @@ fn enumerate_additional_models(ctx: &mut Context, max_models: usize) -> Vec<Stri
     }
 
     ctx.push();
+    // `push` is a state-changing command: per SMT-LIB 2.6 §4.1.1 it returns the
+    // solver to `assert` mode, so the cached check result (and with it
+    // `get_model`/`eval_in_model`) is invalidated.  Re-establish `sat` inside
+    // the fresh scope — the assertion set is unchanged, so this simply restores
+    // the model the loop below reads to build its first blocking clause.
+    if ctx.check_sat() != oxiz_solver::SolverResult::Sat {
+        ctx.pop();
+        lines.push("; model enumeration stopped after 1 model(s): no model available".to_string());
+        return lines;
+    }
     let start = std::time::Instant::now();
     let mut found = 1usize;
     let mut stop_reason: Option<String> = None;
@@ -1438,7 +1448,10 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
     if args.validate_only {
         return match validate_script(script) {
             Ok(msg) => msg,
-            Err(e) => format!("(error \"Validation failed: {}\")", e),
+            Err(e) => format!(
+                "(error {})",
+                oxiz_core::smtlib::format_string_literal(&format!("Validation failed: {}", e))
+            ),
         };
     }
 
@@ -1637,7 +1650,13 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                 return output.join("\n");
             }
             Err(e) => {
-                return format!("(error \"Portfolio solving failed: {}\")", e);
+                return format!(
+                    "(error {})",
+                    oxiz_core::smtlib::format_string_literal(&format!(
+                        "Portfolio solving failed: {}",
+                        e
+                    ))
+                );
             }
         }
     }
@@ -1885,9 +1904,15 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                 // it, so the flag was accepted and silently did nothing.
                 let known_symbols: Vec<&str> = ctx.declared_function_names().collect();
                 let enhanced = e.enhance(Some(script), &known_symbols);
-                format!("(error \"{}\")", enhanced)
+                format!(
+                    "(error {})",
+                    oxiz_core::smtlib::format_string_literal(&enhanced.to_string())
+                )
             } else {
-                format!("(error \"{}\")", e)
+                format!(
+                    "(error {})",
+                    oxiz_core::smtlib::format_string_literal(&e.to_string())
+                )
             }
         }
     }

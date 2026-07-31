@@ -192,12 +192,27 @@ pub enum TermKind {
     StrReplace(TermId, TermId, TermId),
     /// Replace all (string, pattern, replacement)
     StrReplaceAll(TermId, TermId, TermId),
+    /// Replace the leftmost shortest regular-language match
+    /// (`str.replace_re`: string, regex, replacement)
+    StrReplaceRe(TermId, TermId, TermId),
+    /// Replace every shortest non-empty regular-language match
+    /// (`str.replace_re_all`: string, regex, replacement)
+    StrReplaceReAll(TermId, TermId, TermId),
     /// String to integer conversion
     StrToInt(TermId),
     /// Integer to string conversion
     IntToStr(TermId),
     /// String in regular expression
     StrInRe(TermId, TermId),
+    /// Strict lexicographic order over code points (`str.<`)
+    StrLt(TermId, TermId),
+    /// Reflexive lexicographic order over code points (`str.<=`)
+    StrLe(TermId, TermId),
+    /// Code point of a one-character string, `-1` otherwise (`str.to_code`)
+    StrToCode(TermId),
+    /// One-character string for a code point, `""` outside the alphabet
+    /// (`str.from_code`)
+    StrFromCode(TermId),
 
     // Floating-point operations
     /// Floating-point numeral (sign_bit, exponent_bitvec, significand_bitvec)

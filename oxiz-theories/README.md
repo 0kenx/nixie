@@ -89,16 +89,23 @@ solver.assert_eq(bv_term_a, bv_term_b, reason);
 let result = solver.check()?;
 ```
 
-## Status (v0.3.0)
+## Status (v0.3.1)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.0 |
+| Version | 0.3.1 |
 | Status | Stable |
-| Tests | 1,495 passing |
-| Release Date | 2026-06-01 |
-| Rust LoC | 72,028 (123 files) |
-| Public API items | 2,609 |
+| Tests | 1,714 passing |
+| Release Date | 2026-07-31 |
+| Rust LoC | 72,158 (174 files) |
+| Public API items | 2,758 |
+
+0.3.1 soundness fixes to the bit-vector solver: three verified >64-bit
+bit-vector bugs fixed (`assert_const` low-limb truncation causing false
+`sat`, a low-64-bit canonical interning key that merged distinct wide
+constants causing false `unsat`, and model-builder zero-filling of wide
+values), plus honest error returns on width-mismatched bit-vector operands
+instead of silent coercion.
 
 ## Dependencies
 

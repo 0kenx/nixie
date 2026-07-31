@@ -73,17 +73,141 @@ impl Simplifier {
     /// Simplify a term
     ///
     /// Returns a simplified version of the term, or the original if no simplification applies
+    ///
+    /// # Traversal
+    ///
+    /// The walk is an explicit heap stack, not recursion: nesting depth is
+    /// caller-controlled (an assertion is whatever the SMT-LIB input built),
+    /// and the return type is a bare `TermId` with no error channel, so a
+    /// depth cap could only ever return a *differently simplified* term --
+    /// silently wrong output rather than a reported failure.
+    ///
+    /// A node is only handed to [`Self::simplify_impl`] once every term that
+    /// rule application will look up is already in `self.cache`, so
+    /// `simplify_impl` performs one node's worth of rewriting and never
+    /// descends. See [`Self::push_missing_dependencies`] for what "every term
+    /// it will look up" means -- notably it includes the arguments of a
+    /// conjunct that itself simplified to a conjunction, which the flattening
+    /// rules simplify in turn.
+    ///
+    /// One deliberate difference from the previous recursive version: a
+    /// subterm that a short-circuiting rule would have skipped (the `y` in
+    /// `(and false y)`) is now simplified anyway, so the diagnostic counters
+    /// in [`SimplifyStats`] can be higher than before. The *terms* produced
+    /// are unchanged -- caching a correct simplification of an unused subterm
+    /// cannot change any other node's result.
     pub fn simplify(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
         // Check cache first
         if let Some(&simplified) = self.cache.get(&term) {
             return simplified;
         }
 
-        let result = self.simplify_impl(term, manager);
-        self.cache.insert(term, result);
-        result
+        let mut stack: Vec<TermId> = vec![term];
+        while let Some(&top) = stack.last() {
+            if self.cache.contains_key(&top) {
+                stack.pop();
+                continue;
+            }
+
+            if self.push_missing_dependencies(&mut stack, top, manager) > 0 {
+                // Revisit `top` once its dependencies are cached.
+                continue;
+            }
+
+            let result = self.simplify_impl(top, manager);
+            self.cache.insert(top, result);
+            stack.pop();
+        }
+
+        self.cache.get(&term).copied().unwrap_or(term)
     }
 
+    /// Push every term [`Self::simplify_impl`] will need for `term` that is
+    /// not simplified yet, returning how many were pushed.
+    ///
+    /// Two rounds are possible. The first pushes the direct children the rule
+    /// set looks at. Once those are cached, a conjunction (disjunction) whose
+    /// argument simplified to a conjunction (disjunction) additionally needs
+    /// that nested argument list, because the flattening rule simplifies those
+    /// nested arguments too; they are pushed on the second visit. Both rounds
+    /// only ever push terms that are proper subterms of an already-simplified
+    /// term, so the walk cannot cycle.
+    fn push_missing_dependencies(
+        &self,
+        stack: &mut Vec<TermId>,
+        term: TermId,
+        manager: &TermManager,
+    ) -> usize {
+        let Some(t) = manager.get(term) else {
+            return 0;
+        };
+
+        /// Push `child` unless it is already simplified; count the push.
+        fn push_if_missing(
+            cache: &FxHashMap<TermId, TermId>,
+            stack: &mut Vec<TermId>,
+            child: TermId,
+            pushed: &mut usize,
+        ) {
+            if !cache.contains_key(&child) {
+                stack.push(child);
+                *pushed += 1;
+            }
+        }
+
+        let cache = &self.cache;
+        let mut pushed = 0;
+
+        match &t.kind {
+            TermKind::Not(arg) => push_if_missing(cache, stack, *arg, &mut pushed),
+            TermKind::Implies(lhs, rhs) | TermKind::Eq(lhs, rhs) => {
+                push_if_missing(cache, stack, *rhs, &mut pushed);
+                push_if_missing(cache, stack, *lhs, &mut pushed);
+            }
+            TermKind::Ite(cond, then_br, else_br) => {
+                push_if_missing(cache, stack, *else_br, &mut pushed);
+                push_if_missing(cache, stack, *then_br, &mut pushed);
+                push_if_missing(cache, stack, *cond, &mut pushed);
+            }
+            TermKind::And(args) | TermKind::Or(args) => {
+                for &arg in args.iter().rev() {
+                    push_if_missing(cache, stack, arg, &mut pushed);
+                }
+                if pushed > 0 {
+                    // The nested arguments below depend on these results.
+                    return pushed;
+                }
+
+                let flattens_and = matches!(t.kind, TermKind::And(_));
+                for &arg in args.iter().rev() {
+                    let Some(&simplified) = cache.get(&arg) else {
+                        continue;
+                    };
+                    let Some(simplified_term) = manager.get(simplified) else {
+                        continue;
+                    };
+                    let nested = match (&simplified_term.kind, flattens_and) {
+                        (TermKind::And(nested), true) | (TermKind::Or(nested), false) => nested,
+                        _ => continue,
+                    };
+                    for &nested_arg in nested.iter().rev() {
+                        push_if_missing(cache, stack, nested_arg, &mut pushed);
+                    }
+                }
+            }
+            // Every other kind is returned unchanged by `simplify_impl`.
+            _ => {}
+        }
+
+        pushed
+    }
+
+    /// Apply the rewrite rules for a single node.
+    ///
+    /// Every `self.simplify(..)` call below is a cache hit by construction:
+    /// [`Self::simplify`] only calls this once the node's dependencies are
+    /// simplified. (If one were somehow missing, the call would start its own
+    /// -- still iterative -- solve rather than misbehave.)
     fn simplify_impl(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
         let Some(t) = manager.get(term).cloned() else {
             return term;
@@ -588,73 +712,136 @@ impl Simplifier {
         result
     }
 
-    /// Substitute unit assignments in a term
+    /// Substitute unit assignments in a term.
+    ///
+    /// Iterative post-order rebuild. Depth is caller-controlled (the nesting
+    /// of the asserted formula) and the result is a bare `TermId`, so this
+    /// walk must not be depth-capped: a cap would return a partially
+    /// substituted formula while the caller believes every unit was
+    /// propagated.
+    ///
+    /// A memo keyed on `TermId` makes a shared sub-DAG cost one visit instead
+    /// of one visit per path. The memo is sound here because the result
+    /// depends only on the subterm and on `units`, which is fixed for the
+    /// whole call -- none of the handled kinds binds a variable.
     fn substitute_units(
         &mut self,
         term: TermId,
         units: &FxHashMap<TermId, bool>,
         manager: &mut TermManager,
     ) -> TermId {
-        // Check if this term has a unit assignment
-        if let Some(&value) = units.get(&term) {
-            return if value {
-                manager.mk_true()
-            } else {
-                manager.mk_false()
-            };
+        /// A node whose children are being substituted.
+        enum Frame {
+            /// Rebuild `not`.
+            Not,
+            /// Rebuild an `and` over `arity` children.
+            And(usize),
+            /// Rebuild an `or` over `arity` children.
+            Or(usize),
         }
 
-        // Recursively substitute in subterms
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
+        let mut memo: FxHashMap<TermId, TermId> = FxHashMap::default();
+        // (term, pending frame). `None` means the term is a leaf for this walk.
+        let mut steps: Vec<(TermId, Option<Frame>)> = vec![(term, None)];
+        let mut values: Vec<TermId> = Vec::new();
 
+        while let Some((current, frame)) = steps.pop() {
+            let Some(frame) = frame else {
+                // Expansion step.
+                if let Some(&done) = memo.get(&current) {
+                    values.push(done);
+                    continue;
+                }
+
+                // Check if this term has a unit assignment
+                if let Some(&value) = units.get(&current) {
+                    let replacement = if value {
+                        manager.mk_true()
+                    } else {
+                        manager.mk_false()
+                    };
+                    memo.insert(current, replacement);
+                    values.push(replacement);
+                    continue;
+                }
+
+                let Some(t) = manager.get(current).cloned() else {
+                    memo.insert(current, current);
+                    values.push(current);
+                    continue;
+                };
+
+                match &t.kind {
+                    TermKind::Not(arg) => {
+                        steps.push((current, Some(Frame::Not)));
+                        steps.push((*arg, None));
+                    }
+                    TermKind::And(args) => {
+                        steps.push((current, Some(Frame::And(args.len()))));
+                        for &arg in args.iter().rev() {
+                            steps.push((arg, None));
+                        }
+                    }
+                    TermKind::Or(args) => {
+                        steps.push((current, Some(Frame::Or(args.len()))));
+                        for &arg in args.iter().rev() {
+                            steps.push((arg, None));
+                        }
+                    }
+                    _ => {
+                        memo.insert(current, current);
+                        values.push(current);
+                    }
+                }
+                continue;
+            };
+
+            // Rebuild step: the children's results are on top of `values`.
+            let arity = match frame {
+                Frame::Not => 1,
+                Frame::And(n) | Frame::Or(n) => n,
+            };
+            let start = values.len().saturating_sub(arity);
+            let new_args: Vec<TermId> = values.split_off(start);
+
+            let original_args = Self::substitution_children(current, manager);
+            let changed = new_args.len() != original_args.len()
+                || new_args
+                    .iter()
+                    .zip(original_args.iter())
+                    .any(|(new, old)| new != old);
+
+            let rebuilt = if !changed {
+                current
+            } else {
+                match frame {
+                    Frame::Not => match new_args.first() {
+                        Some(&arg) => manager.mk_not(arg),
+                        // Unreachable: a `Not` frame always has one child.
+                        None => current,
+                    },
+                    Frame::And(_) => manager.mk_and(new_args),
+                    Frame::Or(_) => manager.mk_or(new_args),
+                }
+            };
+
+            memo.insert(current, rebuilt);
+            values.push(rebuilt);
+        }
+
+        values.pop().unwrap_or(term)
+    }
+
+    /// The children [`Self::substitute_units`] descends into, for the kinds it
+    /// rebuilds.
+    fn substitution_children(term: TermId, manager: &TermManager) -> Vec<TermId> {
+        let Some(t) = manager.get(term) else {
+            return Vec::new();
+        };
         match &t.kind {
-            TermKind::Not(arg) => {
-                let arg_subst = self.substitute_units(*arg, units, manager);
-                if arg_subst == *arg {
-                    term
-                } else {
-                    manager.mk_not(arg_subst)
-                }
-            }
-            TermKind::And(args) => {
-                let mut changed = false;
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| {
-                        let subst = self.substitute_units(arg, units, manager);
-                        if subst != arg {
-                            changed = true;
-                        }
-                        subst
-                    })
-                    .collect();
-                if changed {
-                    manager.mk_and(new_args)
-                } else {
-                    term
-                }
-            }
-            TermKind::Or(args) => {
-                let mut changed = false;
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| {
-                        let subst = self.substitute_units(arg, units, manager);
-                        if subst != arg {
-                            changed = true;
-                        }
-                        subst
-                    })
-                    .collect();
-                if changed {
-                    manager.mk_or(new_args)
-                } else {
-                    term
-                }
-            }
-            _ => term,
+            TermKind::Not(arg) => vec![*arg],
+            TermKind::And(args) | TermKind::Or(args) => args.to_vec(),
+            _ => Vec::new(),
         }
     }
 
@@ -690,7 +877,18 @@ impl Simplifier {
         pure_literals
     }
 
-    /// Collect literal occurrences with their polarities
+    /// Collect literal occurrences with their polarities.
+    ///
+    /// Iterative: the walk returns `()`, so there is no channel through which
+    /// a depth cap could report that it gave up -- a capped walk would just
+    /// miss occurrences, and a literal wrongly classified as pure is assigned
+    /// a fixed polarity, which is unsound.
+    ///
+    /// The `(term, polarity)` pairs already expanded are remembered, so a
+    /// shared sub-DAG (or an ITE, whose condition is walked in both
+    /// polarities) is expanded once per polarity instead of once per path.
+    /// That is exactly semantics-preserving: the visit does nothing but insert
+    /// into `positive`/`negative`, which is idempotent.
     fn collect_literals(
         &self,
         term: TermId,
@@ -699,38 +897,45 @@ impl Simplifier {
         negative: &mut FxHashMap<TermId, ()>,
         manager: &TermManager,
     ) {
-        let Some(t) = manager.get(term) else {
-            return;
-        };
+        let mut seen: FxHashSet<(TermId, bool)> = FxHashSet::default();
+        let mut stack: Vec<(TermId, bool)> = vec![(term, polarity)];
 
-        match &t.kind {
-            TermKind::Var(_) => {
-                if polarity {
-                    positive.insert(term, ());
-                } else {
-                    negative.insert(term, ());
+        while let Some((current, polarity)) = stack.pop() {
+            if !seen.insert((current, polarity)) {
+                continue;
+            }
+
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+
+            match &t.kind {
+                TermKind::Var(_) => {
+                    if polarity {
+                        positive.insert(current, ());
+                    } else {
+                        negative.insert(current, ());
+                    }
                 }
-            }
-            TermKind::Not(arg) => {
-                self.collect_literals(*arg, !polarity, positive, negative, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_literals(arg, polarity, positive, negative, manager);
+                TermKind::Not(arg) => stack.push((*arg, !polarity)),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter().rev() {
+                        stack.push((arg, polarity));
+                    }
                 }
+                TermKind::Implies(lhs, rhs) => {
+                    stack.push((*rhs, polarity));
+                    stack.push((*lhs, !polarity));
+                }
+                TermKind::Ite(cond, then_br, else_br) => {
+                    // For ITE, both branches can be reached
+                    stack.push((*else_br, polarity));
+                    stack.push((*then_br, polarity));
+                    stack.push((*cond, false));
+                    stack.push((*cond, true));
+                }
+                _ => {}
             }
-            TermKind::Implies(lhs, rhs) => {
-                self.collect_literals(*lhs, !polarity, positive, negative, manager);
-                self.collect_literals(*rhs, polarity, positive, negative, manager);
-            }
-            TermKind::Ite(cond, then_br, else_br) => {
-                // For ITE, both branches can be reached
-                self.collect_literals(*cond, true, positive, negative, manager);
-                self.collect_literals(*cond, false, positive, negative, manager);
-                self.collect_literals(*then_br, polarity, positive, negative, manager);
-                self.collect_literals(*else_br, polarity, positive, negative, manager);
-            }
-            _ => {}
         }
     }
 }
@@ -947,5 +1152,187 @@ mod tests {
         assert_eq!(stats_after_reset.terms_eliminated, 0);
         assert_eq!(stats_after_reset.trivial_equalities, 0);
         assert_eq!(stats_after_reset.contradictions_found, 0);
+    }
+
+    /// `simplify` used to recurse once per nesting level. Returning at all is
+    /// the assertion (a stack overflow aborts the process).
+    #[test]
+    fn simplify_survives_a_deep_negation_chain_on_a_small_stack() {
+        // Stack and depth scale together (1 MiB/100k -> 128 KiB/12.5k): the
+        // ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let mut simplifier = Simplifier::new();
+
+                let mut term = manager.mk_var("p", manager.sorts.bool_sort);
+                for _ in 0..DEPTH {
+                    term = manager.mk_not(term);
+                }
+
+                let result = simplifier.simplify(term, &mut manager);
+                manager.get(result).is_some()
+            })
+            .expect("spawning the worker thread should succeed");
+
+        assert!(handle.join().expect("the walk must not overflow"));
+    }
+
+    /// The same, through the n-ary conjunction path (which also drives the
+    /// flattening rules).
+    #[test]
+    fn simplify_survives_a_deep_conjunction_nest_on_a_small_stack() {
+        // Stack and depth scale together (1 MiB/50k -> 128 KiB/6.25k): the
+        // ~21 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 6_250;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let mut simplifier = Simplifier::new();
+
+                // `mk_and` flattens nested conjunctions, so alternate the
+                // connective to actually build depth rather than width.
+                let leaf = manager.mk_var("q", manager.sorts.bool_sort);
+                let mut term = manager.mk_var("p", manager.sorts.bool_sort);
+                for level in 0..DEPTH {
+                    term = if level % 2 == 0 {
+                        manager.mk_and([term, leaf])
+                    } else {
+                        manager.mk_or([term, leaf])
+                    };
+                }
+
+                let result = simplifier.simplify(term, &mut manager);
+                manager.get(result).is_some()
+            })
+            .expect("spawning the worker thread should succeed");
+
+        assert!(handle.join().expect("the walk must not overflow"));
+    }
+
+    /// `unit_propagation` walks the same shapes through `substitute_units`.
+    #[test]
+    fn unit_propagation_survives_a_deep_negation_chain_on_a_small_stack() {
+        // Stack and depth scale together (1 MiB/100k -> 128 KiB/12.5k): the
+        // ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let mut simplifier = Simplifier::new();
+
+                let p = manager.mk_var("p", manager.sorts.bool_sort);
+                let mut term = p;
+                for _ in 0..DEPTH {
+                    term = manager.mk_not(term);
+                }
+
+                let not_p = manager.mk_not(p);
+                let results = simplifier.unit_propagation(&[not_p, term], &mut manager);
+                results.len()
+            })
+            .expect("spawning the worker thread should succeed");
+
+        assert_eq!(handle.join().expect("the walk must not overflow"), 2);
+    }
+
+    /// `detect_pure_literals` walks the formula with no memo of its own; the
+    /// visited set must collapse a doubling DAG or this never finishes.
+    #[test]
+    fn detect_pure_literals_collapses_a_shared_dag() {
+        let mut manager = TermManager::new();
+        let simplifier = Simplifier::new();
+
+        // Alternate the connective: `mk_and`/`mk_or` flatten a nested node of
+        // their own kind, which would build width instead of a shared DAG.
+        let mut term = manager.mk_var("p", manager.sorts.bool_sort);
+        for level in 0..55 {
+            term = if level % 2 == 0 {
+                manager.mk_and([term, term])
+            } else {
+                manager.mk_or([term, term])
+            };
+        }
+
+        let pure = simplifier.detect_pure_literals(&[term], &manager);
+        assert_eq!(pure.len(), 1);
+    }
+
+    /// Semantic pin: a `not(not(x))` chain of even length simplifies back to
+    /// the variable, of odd length to its negation.
+    #[test]
+    fn simplify_double_negation_pins() {
+        let mut manager = TermManager::new();
+        let mut simplifier = Simplifier::new();
+
+        let p = manager.mk_var("p", manager.sorts.bool_sort);
+        let not_p = manager.mk_not(p);
+
+        let mut even = p;
+        for _ in 0..8 {
+            even = manager.mk_not(even);
+        }
+        assert_eq!(simplifier.simplify(even, &mut manager), p);
+
+        let mut odd = p;
+        for _ in 0..9 {
+            odd = manager.mk_not(odd);
+        }
+        assert_eq!(simplifier.simplify(odd, &mut manager), not_p);
+    }
+
+    /// Semantic pin: contradiction detection still short-circuits a large
+    /// conjunction, and flattening still merges nested conjunctions.
+    #[test]
+    fn simplify_conjunction_pins() {
+        let mut manager = TermManager::new();
+        let mut simplifier = Simplifier::new();
+
+        let p = manager.mk_var("p", manager.sorts.bool_sort);
+        let q = manager.mk_var("q", manager.sorts.bool_sort);
+        let not_p = manager.mk_not(p);
+
+        let contradiction = manager.mk_and([p, q, not_p]);
+        let simplified = simplifier.simplify(contradiction, &mut manager);
+        assert!(matches!(
+            manager
+                .get(simplified)
+                .expect("simplified term exists")
+                .kind,
+            TermKind::False
+        ));
+
+        let inner = manager.mk_and([p, q]);
+        let outer = manager.mk_and([inner, q]);
+        let flattened = simplifier.simplify(outer, &mut manager);
+        let expected = manager.mk_and([p, q]);
+        assert_eq!(flattened, expected);
+    }
+
+    /// Semantic pin: unit propagation replaces the assigned literal and
+    /// leaves everything else alone.
+    #[test]
+    fn unit_propagation_substitutes_only_assigned_literals() {
+        let mut manager = TermManager::new();
+        let mut simplifier = Simplifier::new();
+
+        let p = manager.mk_var("p", manager.sorts.bool_sort);
+        let q = manager.mk_var("q", manager.sorts.bool_sort);
+        let not_p = manager.mk_not(p);
+        let clause = manager.mk_or([p, q]);
+
+        let results = simplifier.unit_propagation(&[not_p, clause], &mut manager);
+        assert_eq!(results.len(), 2);
+
+        let false_term = manager.mk_false();
+        let expected = manager.mk_or([false_term, q]);
+        assert_eq!(results[1], expected);
     }
 }

@@ -340,3 +340,83 @@ fn uflia_forall_ground_conflict_unsat() {
     );
     assert_eq!(r, "unsat", "forall/ground conflict must be unsat");
 }
+
+// ---------------------------------------------------------------------------
+// Polarity boundary: only *asserted* quantifiers may be instantiated.
+// ---------------------------------------------------------------------------
+
+/// A universal that sits behind a polarity boundary is not a fact, so MBQI must
+/// not instantiate it.
+///
+/// Registration used to happen inside the Tseitin encoder, which visits every
+/// sub-term at every polarity, so `(not (forall ((x Int)) (P x)))` — really
+/// `∃x. ¬P(x)` — was handed to MBQI as a universal. Instantiating it at `x = 5`
+/// contradicted the asserted `(not (P 5))` and produced a false `unsat` on a
+/// formula `z3` answers `sat` for. The same held for a universal inside a
+/// disjunct, an implication consequent or an `ite` branch.
+#[test]
+fn test_mbqi_quantifier_polarity_boundary() {
+    let cases = [
+        ("negated universal", "(not (forall ((x Int)) (P x)))"),
+        ("disjunct", "(or r (forall ((x Int)) (P x)))"),
+        ("implication consequent", "(=> r (forall ((x Int)) (P x)))"),
+        ("ite branch", "(ite r (forall ((x Int)) (P x)) true)"),
+        (
+            "conjunct of a negated And",
+            "(not (and r (not (forall ((x Int)) (P x)))))",
+        ),
+    ];
+
+    for (label, assertion) in cases {
+        let script = format!(
+            r#"
+            (set-logic AUFLIA)
+            (declare-fun P (Int) Bool)
+            (declare-const r Bool)
+            (assert {assertion})
+            (assert (not (P 5)))
+            (check-sat)
+        "#
+        );
+        assert_ne!(
+            check(&script),
+            "unsat",
+            "a universal reached through a {label} is not asserted; MBQI must \
+             not instantiate it"
+        );
+    }
+}
+
+/// Control: the same universal asserted *unconditionally* — directly, as an
+/// `And` conjunct, and through a double negation that lands back at positive
+/// polarity — must still be instantiated and refute `(not (P 5))`.
+#[test]
+fn test_mbqi_asserted_quantifier_still_instantiated() {
+    let cases = [
+        ("bare", "(forall ((x Int)) (P x))"),
+        ("And conjunct", "(and r (forall ((x Int)) (P x)))"),
+        (
+            "negated Or (de Morgan)",
+            "(not (or r (not (forall ((x Int)) (P x)))))",
+        ),
+    ];
+
+    for (label, assertion) in cases {
+        let script = format!(
+            r#"
+            (set-logic AUFLIA)
+            (declare-fun P (Int) Bool)
+            (declare-const r Bool)
+            (assert {assertion})
+            (assert (not (P 5)))
+            (check-sat)
+        "#
+        );
+        assert_eq!(
+            check(&script),
+            "unsat",
+            "an unconditionally asserted universal ({label}) must still be \
+             instantiated"
+        );
+    }
+}

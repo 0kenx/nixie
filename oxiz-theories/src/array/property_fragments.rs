@@ -71,7 +71,19 @@ impl BMSFragment {
 }
 
 /// Array term representation for fragment analysis
-#[derive(Debug, Clone)]
+///
+/// # Depth invariant
+///
+/// There is deliberately no bound on how deep an `ArrayTerm`'s `array` spine
+/// (the chain of `Select`/`Store` base arrays) may be: the variants are
+/// public, so callers build values directly, and this is exactly the shape
+/// [`UpdatePatternAnalyzer::analyze`] walks with an explicit loop rather than
+/// recursion. [`Clone`] and [`Drop`] are therefore iterative over that same
+/// spine -- see their impls below -- rather than derived. `indices` and
+/// `value` keep their ordinary (derived) `Clone`/`Drop`: they are a different
+/// type ([`IndexTerm`]/[`ValueTerm`]), not part of the spine this invariant
+/// is about.
+#[derive(Debug)]
 pub enum ArrayTerm {
     /// Base array variable
     Variable { id: u32, name: String },
@@ -143,6 +155,158 @@ impl ArrayTerm {
                 array.collect_variables(vars);
             }
             ArrayTerm::ConstArray { .. } => {}
+        }
+    }
+}
+
+/// The shape of a node being rebuilt by the iterative [`Clone`] impl: which
+/// variant it is, plus its already-cloned (non-recursive) fields.
+enum ArrayCloneShape {
+    /// `Select`, carrying its (derive-cloned) indices and depth.
+    Select {
+        /// Cloned index expressions.
+        indices: Vec<IndexTerm>,
+        /// Store depth at this node.
+        depth: usize,
+    },
+    /// `Store`, carrying its (derive-cloned) indices, value and depth.
+    Store {
+        /// Cloned index expressions.
+        indices: Vec<IndexTerm>,
+        /// Cloned stored value.
+        value: ValueTerm,
+        /// Store depth at this node.
+        depth: usize,
+    },
+}
+
+/// Work item for the iterative [`Clone`] impl.
+enum ArrayCloneTask<'a> {
+    /// Clone this subterm's `array` chain.
+    Visit(&'a ArrayTerm),
+    /// Rebuild a node from the already-cloned `array` child on the result
+    /// stack.
+    Rebuild(ArrayCloneShape),
+}
+
+impl Clone for ArrayTerm {
+    /// Iterative clone.
+    ///
+    /// The derived recursive `Clone` walked the `array` chain
+    /// (`Store(Store(Store(...)))`) with one native call frame per level --
+    /// the same hazard the iterative [`Drop`] below exists to avoid.
+    /// `indices` and `value` keep their ordinary derived `Clone`: this type's
+    /// depth invariant is driven by the `array` spine, which
+    /// [`UpdatePatternAnalyzer::analyze`] walks with an explicit loop for the
+    /// same reason.
+    fn clone(&self) -> Self {
+        /// A childless stand-in, used only when the result stack is starved
+        /// (which cannot happen: each `Rebuild` is preceded by exactly one
+        /// `Visit` for its `array` child).
+        fn placeholder() -> ArrayTerm {
+            ArrayTerm::Variable {
+                id: 0,
+                name: String::new(),
+            }
+        }
+
+        let mut tasks = vec![ArrayCloneTask::Visit(self)];
+        let mut results: Vec<Self> = Vec::new();
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                ArrayCloneTask::Visit(term) => match term {
+                    Self::Variable { id, name } => results.push(Self::Variable {
+                        id: *id,
+                        name: name.clone(),
+                    }),
+                    Self::Select {
+                        array,
+                        indices,
+                        depth,
+                    } => {
+                        tasks.push(ArrayCloneTask::Rebuild(ArrayCloneShape::Select {
+                            indices: indices.clone(),
+                            depth: *depth,
+                        }));
+                        tasks.push(ArrayCloneTask::Visit(array));
+                    }
+                    Self::Store {
+                        array,
+                        indices,
+                        value,
+                        depth,
+                    } => {
+                        tasks.push(ArrayCloneTask::Rebuild(ArrayCloneShape::Store {
+                            indices: indices.clone(),
+                            value: value.clone(),
+                            depth: *depth,
+                        }));
+                        tasks.push(ArrayCloneTask::Visit(array));
+                    }
+                    Self::ConstArray { value } => results.push(Self::ConstArray {
+                        value: value.clone(),
+                    }),
+                },
+                ArrayCloneTask::Rebuild(shape) => {
+                    let array = Box::new(results.pop().unwrap_or_else(placeholder));
+                    let rebuilt = match shape {
+                        ArrayCloneShape::Select { indices, depth } => Self::Select {
+                            array,
+                            indices,
+                            depth,
+                        },
+                        ArrayCloneShape::Store {
+                            indices,
+                            value,
+                            depth,
+                        } => Self::Store {
+                            array,
+                            indices,
+                            value,
+                            depth,
+                        },
+                    };
+                    results.push(rebuilt);
+                }
+            }
+        }
+
+        results.pop().unwrap_or_else(placeholder)
+    }
+}
+
+impl Drop for ArrayTerm {
+    /// Iterative drop.
+    ///
+    /// Compiler-generated drop glue recursed once per level of the `array`
+    /// chain; a `Store`/`Select` spine deep enough to build (see
+    /// [`UpdatePatternAnalyzer::analyze`], which walks the same spine with an
+    /// explicit loop) is deep enough to abort the process at scope exit.
+    /// `indices` and `value` are released via their own (derived) `Drop`,
+    /// unaffected by this: the hazard is specifically the `array` chain.
+    fn drop(&mut self) {
+        /// Detach a node's `array` child, leaving a shell that drops
+        /// trivially (its own remaining fields have bounded depth).
+        fn dismantle(node: &mut ArrayTerm, out: &mut Vec<ArrayTerm>) {
+            match node {
+                ArrayTerm::Variable { .. } | ArrayTerm::ConstArray { .. } => {}
+                ArrayTerm::Select { array, .. } | ArrayTerm::Store { array, .. } => {
+                    out.push(core::mem::replace(
+                        array.as_mut(),
+                        ArrayTerm::Variable {
+                            id: 0,
+                            name: String::new(),
+                        },
+                    ));
+                }
+            }
+        }
+
+        let mut pending = Vec::new();
+        dismantle(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            dismantle(&mut node, &mut pending);
         }
     }
 }
@@ -501,47 +665,61 @@ impl UpdatePatternAnalyzer {
         self.analyze_impl(term, 0);
     }
 
+    /// Walk the base-array spine, recording one pattern per `Store`
+    ///
+    /// A loop, not recursion: the spine is as long as the caller's term nests
+    /// (`store(store(store(...)))` chains are exactly what this analyzer is
+    /// for), and it returns nothing -- there is no channel on which a depth cap
+    /// could report that the tail of the spine went unanalysed.
     fn analyze_impl(&mut self, term: &ArrayTerm, recursion_depth: usize) {
-        match term {
-            ArrayTerm::Store {
-                array,
-                indices: _,
-                value,
-                depth,
-            } => {
-                // Use the Store's depth field, not recursion depth
-                let store_depth = *depth;
+        let mut current = term;
+        let mut recursion_depth = recursion_depth;
 
-                // Determine pattern type
-                let pattern_type = if recursion_depth == 0 {
-                    UpdatePatternType::Single
-                } else {
-                    // Check if this is part of a sequential pattern
-                    if matches!(value, ValueTerm::Constant(_)) {
-                        UpdatePatternType::ConstantPropagation
+        loop {
+            match current {
+                ArrayTerm::Store {
+                    array,
+                    indices: _,
+                    value,
+                    depth,
+                } => {
+                    // Use the Store's depth field, not recursion depth
+                    let store_depth = *depth;
+
+                    // Determine pattern type
+                    let pattern_type = if recursion_depth == 0 {
+                        UpdatePatternType::Single
                     } else {
-                        UpdatePatternType::Sequential
-                    }
-                };
+                        // Check if this is part of a sequential pattern
+                        if matches!(value, ValueTerm::Constant(_)) {
+                            UpdatePatternType::ConstantPropagation
+                        } else {
+                            UpdatePatternType::Sequential
+                        }
+                    };
 
-                let pattern = UpdatePattern {
-                    pattern_type,
-                    array: 0, // Would extract actual array ID
-                    locations: vec![vec![]],
-                    depth: store_depth,
-                };
+                    let pattern = UpdatePattern {
+                        pattern_type,
+                        array: 0, // Would extract actual array ID
+                        locations: vec![vec![]],
+                        depth: store_depth,
+                    };
 
-                self.patterns.push(pattern);
-                self.update_stats(pattern_type, store_depth);
+                    self.patterns.push(pattern);
+                    self.update_stats(pattern_type, store_depth);
 
-                // Recurse on base array
-                self.analyze_impl(array, recursion_depth + 1);
-            }
-            ArrayTerm::Variable { .. } | ArrayTerm::ConstArray { .. } => {
-                // Base case
-            }
-            ArrayTerm::Select { array, .. } => {
-                self.analyze_impl(array, recursion_depth);
+                    // Continue on the base array.
+                    current = array;
+                    recursion_depth += 1;
+                }
+                ArrayTerm::Variable { .. } | ArrayTerm::ConstArray { .. } => {
+                    // Base case
+                    return;
+                }
+                ArrayTerm::Select { array, .. } => {
+                    // `Select` does not count as an update level.
+                    current = array;
+                }
             }
         }
     }
@@ -651,6 +829,127 @@ impl fmt::Display for QuantifierComplexity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_analyze_deep_store_spine_small_stack() {
+        // `analyze_impl` walked the base-array spine by recursion, once per
+        // `store`, and returns nothing -- there is no channel on which a depth
+        // cap could report that the tail of the spine went unanalysed. Run on a
+        // deliberately small (128 KiB) stack: a stack overflow aborts the
+        // process, so "the thread returned at all" is part of the assertion.
+        // The stack size and `depth` are scaled together and only their ratio
+        // (~21 bytes per level) matters -- never raise one without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth = 6_250usize;
+                let mut term = ArrayTerm::Variable {
+                    id: 0,
+                    name: "a".to_string(),
+                };
+                for level in 1..=depth {
+                    term = ArrayTerm::Store {
+                        array: Box::new(term),
+                        indices: vec![IndexTerm::Constant(level as i64)],
+                        value: ValueTerm::Variable(level as u32),
+                        depth: level,
+                    };
+                }
+
+                let mut analyzer = UpdatePatternAnalyzer::new();
+                analyzer.analyze(&term);
+                assert_eq!(analyzer.get_patterns().len(), depth);
+                assert_eq!(
+                    analyzer.get_patterns()[0].pattern_type,
+                    UpdatePatternType::Single
+                );
+
+                // `ArrayTerm` now has an iterative `Drop`, so `term` going
+                // out of scope here exercises it instead of overflowing the
+                // native stack.
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deep store spine must not overflow a 128 KiB stack");
+    }
+
+    #[test]
+    fn test_array_term_deep_clone_and_drop_small_stack() {
+        // `ArrayTerm` used to keep the derived recursive `Clone`/`Drop`;
+        // either one recursing once per `Store` level would overflow the
+        // native stack on a spine deep enough to build -- the scenario
+        // `test_analyze_deep_store_spine_small_stack` above used to dodge
+        // with `core::mem::forget`. Both are now iterative. Run on a
+        // deliberately small (128 KiB) stack: a stack overflow aborts the
+        // process, so "the thread returned at all" is part of the assertion.
+        // The stack size and `depth` are scaled together and only their ratio
+        // (~21 bytes per level) matters -- never raise one without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth = 6_250usize;
+                let mut term = ArrayTerm::Variable {
+                    id: 0,
+                    name: "a".to_string(),
+                };
+                for level in 1..=depth {
+                    term = ArrayTerm::Store {
+                        array: Box::new(term),
+                        indices: vec![IndexTerm::Constant(level as i64)],
+                        value: ValueTerm::Variable(level as u32),
+                        depth: level,
+                    };
+                }
+
+                let cloned = term.clone();
+                assert_eq!(cloned.store_depth(), depth);
+
+                drop(term);
+                drop(cloned);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle.join().expect(
+            "cloning and dropping a deep ArrayTerm store spine must not overflow a 128 KiB stack",
+        );
+    }
+
+    #[test]
+    fn test_analyze_classifies_first_store_as_single() {
+        // Semantic pin for the loop rewrite: the outermost store is `Single`,
+        // deeper ones are `Sequential` (or `ConstantPropagation` for constant
+        // values), and `select` does not advance the update level.
+        let inner = ArrayTerm::Store {
+            array: Box::new(ArrayTerm::Variable {
+                id: 0,
+                name: "a".to_string(),
+            }),
+            indices: vec![IndexTerm::Constant(1)],
+            value: ValueTerm::Constant(7),
+            depth: 1,
+        };
+        let outer = ArrayTerm::Store {
+            array: Box::new(inner),
+            indices: vec![IndexTerm::Constant(2)],
+            value: ValueTerm::Variable(3),
+            depth: 2,
+        };
+
+        let mut analyzer = UpdatePatternAnalyzer::new();
+        analyzer.analyze(&outer);
+        let kinds: Vec<UpdatePatternType> = analyzer
+            .get_patterns()
+            .iter()
+            .map(|p| p.pattern_type)
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                UpdatePatternType::Single,
+                UpdatePatternType::ConstantPropagation
+            ]
+        );
+    }
 
     #[test]
     fn test_bms_fragment() {

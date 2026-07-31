@@ -390,10 +390,23 @@ impl Discriminant {
         Self::determinant(&matrix)
     }
 
-    /// Compute determinant of a matrix (simplified implementation).
+    /// Compute the determinant of a square matrix by Gaussian elimination
+    /// with partial (first-nonzero) pivoting.
+    ///
+    /// `None` means the input is not square — a shape check, never a
+    /// give-up: the elimination is exact over `BigRational`, so the result
+    /// is always the true determinant.
+    ///
+    /// This replaces a recursive Laplace cofactor expansion, which was
+    /// **O(n!)** in time and allocated a fresh `Vec<Vec<BigRational>>`
+    /// minor at every one of its n levels. The callers here are Sylvester
+    /// resultant matrices whose dimension is twice the polynomial degree,
+    /// so a degree-10 input meant n = 20 and 20! ≈ 2.4·10¹⁸ cofactor terms
+    /// — a permanent hang on ordinary input. Elimination is O(n³) and
+    /// iterative, so neither the time nor the stack is a concern.
     fn determinant(matrix: &[Vec<BigRational>]) -> Option<BigRational> {
         let n = matrix.len();
-        if n == 0 || matrix[0].len() != n {
+        if n == 0 || matrix.iter().any(|row| row.len() != n) {
             return None;
         }
 
@@ -406,48 +419,48 @@ impl Discriminant {
             return Some(det);
         }
 
-        // Laplace expansion along first row
-        let mut det = BigRational::zero();
-        for j in 0..n {
-            let minor = Self::minor(matrix, 0, j)?;
-            let minor_det = Self::determinant(&minor)?;
+        let mut work: Vec<Vec<BigRational>> = matrix.to_vec();
+        let mut det = BigRational::one();
 
-            let sign = if j % 2 == 0 {
-                BigRational::one()
-            } else {
-                -BigRational::one()
+        for col in 0..n {
+            // Find a pivot in this column at or below the diagonal.
+            let Some(pivot_row) = (col..n).find(|&row| !work[row][col].is_zero()) else {
+                // An all-zero column below the diagonal means the rows are
+                // linearly dependent: the determinant is exactly zero.
+                return Some(BigRational::zero());
             };
 
-            det += sign * &matrix[0][j] * minor_det;
+            if pivot_row != col {
+                work.swap(pivot_row, col);
+                det = -det;
+            }
+
+            let pivot = work[col][col].clone();
+            det *= &pivot;
+
+            for row in (col + 1)..n {
+                if work[row][col].is_zero() {
+                    continue;
+                }
+                let factor = &work[row][col] / &pivot;
+                // `col < row`, so the pivot row and the target row are in
+                // the two halves of this split and can be borrowed at once.
+                let (above, from_row) = work.split_at_mut(row);
+                let (Some(pivot_row), Some(target)) = (above.get(col), from_row.first_mut()) else {
+                    continue;
+                };
+                for (cell, pivot_cell) in target
+                    .iter_mut()
+                    .zip(pivot_row.iter())
+                    .skip(col)
+                    .take(n - col)
+                {
+                    *cell -= &factor * pivot_cell;
+                }
+            }
         }
 
         Some(det)
-    }
-
-    /// Extract minor matrix by removing row i and column j.
-    fn minor(matrix: &[Vec<BigRational>], i: usize, j: usize) -> Option<Vec<Vec<BigRational>>> {
-        let n = matrix.len();
-        if i >= n || j >= n {
-            return None;
-        }
-
-        let mut minor = Vec::with_capacity(n - 1);
-        for (row_idx, row) in matrix.iter().enumerate() {
-            if row_idx == i {
-                continue;
-            }
-
-            let mut new_row = Vec::with_capacity(n - 1);
-            for (col_idx, elem) in row.iter().enumerate() {
-                if col_idx == j {
-                    continue;
-                }
-                new_row.push(elem.clone());
-            }
-            minor.push(new_row);
-        }
-
-        Some(minor)
     }
 }
 
@@ -571,6 +584,66 @@ mod tests {
 
     fn rat(n: i64) -> BigRational {
         BigRational::from_integer(BigInt::from(n))
+    }
+
+    /// Semantic pins for the Gaussian-elimination determinant that replaced
+    /// the O(n!) Laplace expansion.
+    #[test]
+    fn test_determinant_values() {
+        // Identity.
+        let identity: Vec<Vec<BigRational>> = (0..4)
+            .map(|i| (0..4).map(|j| rat(i64::from(i == j))).collect())
+            .collect();
+        assert_eq!(Discriminant::determinant(&identity), Some(rat(1)));
+
+        // 3x3 with a known determinant of -306.
+        let m = vec![
+            vec![rat(6), rat(1), rat(1)],
+            vec![rat(4), rat(-2), rat(5)],
+            vec![rat(2), rat(8), rat(7)],
+        ];
+        assert_eq!(Discriminant::determinant(&m), Some(rat(-306)));
+
+        // A row swap is needed here (leading zero), and the sign must flip.
+        let swapped = vec![
+            vec![rat(0), rat(1), rat(1)],
+            vec![rat(4), rat(-2), rat(5)],
+            vec![rat(2), rat(8), rat(7)],
+        ];
+        assert_eq!(Discriminant::determinant(&swapped), Some(rat(18)));
+
+        // Linearly dependent rows: exactly zero.
+        let singular = vec![
+            vec![rat(1), rat(2), rat(3)],
+            vec![rat(2), rat(4), rat(6)],
+            vec![rat(7), rat(8), rat(9)],
+        ];
+        assert_eq!(Discriminant::determinant(&singular), Some(rat(0)));
+
+        // Non-square input is rejected (a shape check, not a give-up).
+        let ragged = vec![vec![rat(1), rat(2)], vec![rat(3)]];
+        assert_eq!(Discriminant::determinant(&ragged), None);
+    }
+
+    /// A 20x20 matrix — the size a degree-10 Sylvester resultant produces.
+    /// Laplace expansion would need 20! ≈ 2.4·10¹⁸ cofactor terms and never
+    /// return; elimination finishes instantly. The value is pinned via a
+    /// triangular matrix whose determinant is the product of its diagonal.
+    #[test]
+    fn test_determinant_resultant_sized_matrix_completes() {
+        const N: usize = 20;
+        let mut m: Vec<Vec<BigRational>> = vec![vec![rat(0); N]; N];
+        for (i, row) in m.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                if j > i {
+                    *cell = rat((i + j) as i64);
+                } else if i == j {
+                    *cell = rat(2);
+                }
+            }
+        }
+        let expected = rat(2).pow(N as i32);
+        assert_eq!(Discriminant::determinant(&m), Some(expected));
     }
 
     #[test]

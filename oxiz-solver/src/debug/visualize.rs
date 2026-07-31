@@ -150,11 +150,26 @@ impl SolverStateSnapshot {
 
         // Statistics
         out.push_str("--- Statistics ---\n");
-        out.push_str(&format!("  Decisions:           {}\n", self.statistics.decisions));
-        out.push_str(&format!("  Conflicts:           {}\n", self.statistics.conflicts));
-        out.push_str(&format!("  Propagations:        {}\n", self.statistics.propagations));
-        out.push_str(&format!("  Restarts:            {}\n", self.statistics.restarts));
-        out.push_str(&format!("  Learned clauses:     {}\n", self.statistics.learned_clauses));
+        out.push_str(&format!(
+            "  Decisions:           {}\n",
+            self.statistics.decisions
+        ));
+        out.push_str(&format!(
+            "  Conflicts:           {}\n",
+            self.statistics.conflicts
+        ));
+        out.push_str(&format!(
+            "  Propagations:        {}\n",
+            self.statistics.propagations
+        ));
+        out.push_str(&format!(
+            "  Restarts:            {}\n",
+            self.statistics.restarts
+        ));
+        out.push_str(&format!(
+            "  Learned clauses:     {}\n",
+            self.statistics.learned_clauses
+        ));
         out.push_str(&format!(
             "  Theory propagations: {}\n",
             self.statistics.theory_propagations
@@ -166,15 +181,15 @@ impl SolverStateSnapshot {
         out.push('\n');
 
         // Assignments
-        out.push_str(&format!("--- Assignments ({}) ---\n", self.assignments.len()));
+        out.push_str(&format!(
+            "--- Assignments ({}) ---\n",
+            self.assignments.len()
+        ));
         for a in &self.assignments {
             let bool_str = a
                 .bool_value
                 .map_or_else(|| "?".to_string(), |v| format!("{}", v));
-            let theory_str = a
-                .theory_value
-                .as_deref()
-                .unwrap_or("-");
+            let theory_str = a.theory_value.as_deref().unwrap_or("-");
             out.push_str(&format!(
                 "  {} (v{}): bool={}, theory={}, level={}\n",
                 a.name, a.var_id, bool_str, theory_str, a.decision_level
@@ -198,7 +213,10 @@ impl SolverStateSnapshot {
 
         // Conflicts
         if !self.conflicts.is_empty() {
-            out.push_str(&format!("--- Active Conflicts ({}) ---\n", self.conflicts.len()));
+            out.push_str(&format!(
+                "--- Active Conflicts ({}) ---\n",
+                self.conflicts.len()
+            ));
             for c in &self.conflicts {
                 out.push_str(&format!(
                     "  Clause #{}: {:?} -- {}\n",
@@ -233,18 +251,45 @@ impl SolverStateSnapshot {
         out
     }
 
+    /// Synthetic clause and conflict nodes share the DOT node-id space with
+    /// the variable nodes, so their bases must sit strictly above every
+    /// variable id actually present. The historical fixed offsets (`100_000`
+    /// and `200_000`) silently produced a *wrong* graph as soon as a solver
+    /// had 100 000 variables: clause `#5` and variable `100005` collapsed onto
+    /// the same node and the reason edge pointed at the wrong literal.
+    fn dot_id_bases(&self) -> (u32, u32) {
+        let max_var = self
+            .trail
+            .iter()
+            .map(|t| t.var_id)
+            .chain(
+                self.conflicts
+                    .iter()
+                    .flat_map(|c| c.literals.iter().map(|lit| lit.unsigned_abs() as u32)),
+            )
+            .max()
+            .unwrap_or(0);
+        let clause_base = max_var.saturating_add(1);
+        let max_clause = self
+            .trail
+            .iter()
+            .filter_map(|t| t.reason_clause)
+            .max()
+            .unwrap_or(0);
+        let conflict_base = clause_base.saturating_add(max_clause).saturating_add(1);
+        (clause_base, conflict_base)
+    }
+
     /// Format the implication graph as DOT format.
     ///
     /// This generates a DOT graph suitable for rendering with Graphviz.
     pub fn format_state_dot(&self) -> String {
         let mut dot = ImplicationGraphDot::new("solver_state");
+        let (clause_base, conflict_base) = self.dot_id_bases();
 
         // Add decision nodes
         for t in &self.trail {
-            let label = format!(
-                "v{} = {}\\nlevel={}",
-                t.var_id, t.value, t.level
-            );
+            let label = format!("v{} = {}\\nlevel={}", t.var_id, t.value, t.level);
             if t.is_propagation {
                 dot.add_propagation_node(t.var_id, &label);
             } else {
@@ -253,19 +298,22 @@ impl SolverStateSnapshot {
         }
 
         // Add edges from reason clauses
+        let mut clause_nodes: FxHashSet<u32> = FxHashSet::default();
         for t in &self.trail {
             if let Some(clause_id) = t.reason_clause {
                 // The reason clause implies this propagation.
                 // We add an edge from a synthetic clause node to this variable.
-                let clause_node_id = 100_000 + clause_id;
-                dot.add_clause_node(clause_node_id, &format!("clause #{}", clause_id));
+                let clause_node_id = clause_base.saturating_add(clause_id);
+                if clause_nodes.insert(clause_node_id) {
+                    dot.add_clause_node(clause_node_id, &format!("clause #{}", clause_id));
+                }
                 dot.add_edge(clause_node_id, t.var_id, "reason");
             }
         }
 
         // Add conflict nodes
         for c in &self.conflicts {
-            let conflict_node_id = 200_000 + c.clause_id;
+            let conflict_node_id = conflict_base.saturating_add(c.clause_id);
             dot.add_conflict_node(conflict_node_id, &format!("CONFLICT\\n{}", c.description));
 
             // Add edges from involved literals to conflict
@@ -276,6 +324,32 @@ impl SolverStateSnapshot {
         }
 
         dot.to_dot()
+    }
+}
+
+/// Escape a DOT label for embedding in a quoted attribute.
+///
+/// Only the double quote is escaped: labels in this module deliberately carry
+/// literal `\n` two-character sequences as DOT line breaks, so escaping
+/// backslashes would turn every multi-line label into one line reading
+/// `\\n`.
+fn escape_dot_label(label: &str) -> String {
+    label.replace('"', "\\\"")
+}
+
+/// Reduce a graph name to the `[A-Za-z0-9_]` DOT identifier alphabet.
+///
+/// The name is emitted unquoted, so anything else (a space, a quote, a `-`)
+/// produces a file Graphviz refuses to parse.
+fn sanitize_dot_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if sanitized.is_empty() {
+        "graph".to_string()
+    } else {
+        sanitized
     }
 }
 
@@ -383,7 +457,7 @@ impl ImplicationGraphDot {
     /// Generate the DOT format string.
     pub fn to_dot(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("digraph {} {{\n", self.name));
+        out.push_str(&format!("digraph {} {{\n", sanitize_dot_name(&self.name)));
         out.push_str("  rankdir=LR;\n");
         out.push_str("  node [fontname=\"Helvetica\"];\n\n");
 
@@ -396,7 +470,12 @@ impl ImplicationGraphDot {
             };
             out.push_str(&format!(
                 "  n{} [label=\"{}\", shape={}, color={}, style={}, fillcolor=\"{}30\"];\n",
-                node.id, node.label, shape, color, style, color
+                node.id,
+                escape_dot_label(&node.label),
+                shape,
+                color,
+                style,
+                color
             ));
         }
 
@@ -407,7 +486,9 @@ impl ImplicationGraphDot {
             } else {
                 out.push_str(&format!(
                     "  n{} -> n{} [label=\"{}\"];\n",
-                    edge.from, edge.to, edge.label
+                    edge.from,
+                    edge.to,
+                    escape_dot_label(&edge.label)
                 ));
             }
         }
@@ -447,9 +528,17 @@ impl ImplicationGraphDot {
             }
         }
 
-        // Add conflict node
+        // Add conflict node.  The id must sit strictly above every variable id
+        // in play: a fixed sentinel (the historical `999_999`) silently merged
+        // the conflict node with variable 999999's node on large instances.
         if !conflict_clause.is_empty() {
-            let conflict_id = 999_999;
+            let max_var = implications
+                .iter()
+                .map(|(lit, _, _, _)| lit.unsigned_abs() as u32)
+                .chain(conflict_clause.iter().map(|lit| lit.unsigned_abs() as u32))
+                .max()
+                .unwrap_or(0);
+            let conflict_id = max_var.saturating_add(1);
             dot.add_conflict_node(conflict_id, "CONFLICT");
             for &lit in conflict_clause {
                 let var_id = lit.unsigned_abs() as u32;
@@ -583,10 +672,10 @@ mod tests {
     #[test]
     fn test_implication_graph_dot_from_data() {
         let implications = vec![
-            (1_i64, 0_u32, vec![], true),        // x1=T at level 0, decision
-            (2, 0, vec![1], false),               // x2=T at level 0, propagated from x1
-            (-3, 1, vec![], true),                // x3=F at level 1, decision
-            (4, 1, vec![2, -3], false),           // x4=T at level 1, propagated from x2, x3
+            (1_i64, 0_u32, vec![], true), // x1=T at level 0, decision
+            (2, 0, vec![1], false),       // x2=T at level 0, propagated from x1
+            (-3, 1, vec![], true),        // x3=F at level 1, decision
+            (4, 1, vec![2, -3], false),   // x4=T at level 1, propagated from x2, x3
         ];
         let conflict_clause = vec![4, -2];
 
@@ -596,7 +685,7 @@ mod tests {
         assert!(output.contains("digraph implication_graph"));
         assert!(output.contains("CONFLICT"));
         // Should have decision nodes and propagation nodes
-        assert!(output.contains("shape=box"));    // decisions
+        assert!(output.contains("shape=box")); // decisions
         assert!(output.contains("shape=ellipse")); // propagations
         assert!(output.contains("shape=octagon")); // conflict
     }
@@ -627,6 +716,82 @@ mod tests {
         assert!(text.contains("LRA: terms=8"));
         assert!(text.contains("INCONSISTENT"));
         assert!(text.contains("Congruence classes: 5"));
+    }
+
+    /// Regression: the synthetic clause node used to be `100_000 + clause_id`,
+    /// which collided with a real variable id of `100_000 + clause_id` and
+    /// silently produced a graph whose reason edge pointed at the wrong node.
+    #[test]
+    fn test_dot_node_ids_never_collide_with_large_var_ids() {
+        let mut snap = SolverStateSnapshot::new("collide");
+        snap.add_trail_entry(TrailDecision {
+            var_id: 100_005,
+            value: true,
+            level: 0,
+            is_propagation: false,
+            reason_clause: None,
+        });
+        snap.add_trail_entry(TrailDecision {
+            var_id: 7,
+            value: false,
+            level: 1,
+            is_propagation: true,
+            reason_clause: Some(5),
+        });
+
+        let (clause_base, conflict_base) = snap.dot_id_bases();
+        assert!(clause_base > 100_005);
+        assert!(conflict_base > clause_base + 5);
+
+        let dot = snap.format_state_dot();
+        // The clause node must not reuse the variable node's id.
+        assert!(dot.contains("clause #5"));
+        assert_eq!(
+            dot.matches("n100005 [").count(),
+            1,
+            "variable node declared exactly once:\n{dot}"
+        );
+    }
+
+    /// A reason clause shared by several propagations must be declared once.
+    #[test]
+    fn test_shared_reason_clause_node_is_declared_once() {
+        let mut snap = SolverStateSnapshot::new("shared");
+        for var_id in 1..4 {
+            snap.add_trail_entry(TrailDecision {
+                var_id,
+                value: true,
+                level: 0,
+                is_propagation: true,
+                reason_clause: Some(2),
+            });
+        }
+        let dot = snap.format_state_dot();
+        assert_eq!(dot.matches("clause #2").count(), 1, "{dot}");
+        assert_eq!(dot.matches("[label=\"reason\"]").count(), 3, "{dot}");
+    }
+
+    #[test]
+    fn test_dot_labels_and_names_are_escaped() {
+        let mut dot = ImplicationGraphDot::new("bad name-with-dashes");
+        dot.add_decision_node(1, "x = \"q\"\\nlevel=0");
+        dot.add_propagation_node(2, "y");
+        dot.add_edge(1, 2, "a\"b");
+
+        let output = dot.to_dot();
+        assert!(output.contains("digraph bad_name_with_dashes"), "{output}");
+        // Quotes escaped, but the literal `\n` line break preserved.
+        assert!(output.contains(r#"x = \"q\"\nlevel=0"#), "{output}");
+        assert!(output.contains(r#"[label="a\"b"]"#), "{output}");
+    }
+
+    #[test]
+    fn test_implication_conflict_node_avoids_large_var_ids() {
+        let implications = vec![(999_999_i64, 0_u32, Vec::new(), true)];
+        let conflict_clause = vec![999_999];
+        let dot = ImplicationGraphDot::from_implication_data(&implications, &conflict_clause);
+        let output = dot.to_dot();
+        assert!(output.contains("n1000000 [label=\"CONFLICT\""), "{output}");
     }
 
     #[test]

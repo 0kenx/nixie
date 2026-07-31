@@ -1,6 +1,6 @@
 # OxiZ Architecture
 
-**Last Updated:** 2026-07-21 (v0.3.0)
+**Last Updated:** 2026-07-31 (v0.3.1)
 
 ## 1. Project Overview
 
@@ -9,10 +9,10 @@
 OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure Rust. It implements a modular CDCL(T) architecture that closely follows the design of Z3 while leveraging Rust's safety guarantees and modern features.
 
 **Project Statistics** (measured via `tokei`/`cargo nextest` at the time of this update — see `README.md` for the always-current figures):
-- 381,842 lines of production Rust code (479,121 total including comments/blank lines)
-- 8,119 tests passing, 8 skipped (`cargo nextest run --workspace --all-features`), plus 106 doc-tests
+- 438,793 lines of production Rust code (547,739 total including comments/blank lines, 1,236 files)
+- 9,668 tests passing, 8 skipped (`cargo nextest run --workspace --all-features`), plus 110 doc-tests
 - 17 workspace crates (`cargo metadata`)
-- Z3 parity is honestly measured per-logic, not a single percentage — 154/168 Correct on the extended `bench/z3_parity` suite (19 logics), 0 Wrong (not a "100% parity" claim — three quantified logics remain below 100%); the original 8-logic/88-benchmark quickstart core is 88/88 Correct; see `README.md`'s "Z3 Parity" section for the full breakdown before relying on any summary number
+- Z3 parity is honestly measured per-logic, not a single percentage — 168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error on the extended 19-logic / 168-benchmark differential suite (`bench/z3_parity`) against a real z3 4.15.4 binary under the honest comparator (`Unknown` never counts as a match), with all 19 logic families at 100% of that suite. That is a statement about the differential parity suite, not a blanket "100% Z3 compatibility" claim; see `README.md`'s "Z3 Parity" section for the full breakdown before relying on any summary number
 
 ### Key Differentiators vs Z3
 

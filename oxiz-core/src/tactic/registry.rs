@@ -699,7 +699,11 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(3u64, 4);
         let b = manager.mk_bitvec(5u64, 4);
-        let sum = manager.mk_bv_add(a, b);
+        // Interned raw: `mk_bv_add` folds two literals, and a goal with no BV
+        // structure left would be honestly NotApplicable instead of exercising
+        // the registry's manager-aware bit-blast path.
+        let bv4 = manager.sorts.bitvec(4);
+        let sum = manager.intern_term(crate::ast::TermKind::BvAdd(a, b), bv4);
         let expected = manager.mk_bitvec(8u64, 4); // 3 + 5 = 8
         let eq = manager.mk_eq(sum, expected);
 

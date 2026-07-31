@@ -450,6 +450,81 @@ impl Simplex {
             .copied()
             .unwrap_or_default()
     }
+    /// Concrete positive rational to substitute for the infinitesimal `δ` when
+    /// turning the delta-rational assignment into an ordinary rational model.
+    ///
+    /// A strict bound such as `x > 0` is stored as the delta-rational lower
+    /// bound `(0, 1)` and the assignment then sits at `0 + δ`.  Reading back
+    /// only the real part reports `x = 0`, which *violates* the very constraint
+    /// that produced it.  The fix is the standard δ-instantiation of
+    /// Dutertre & de Moura's "Simplex for DPLL(T)": pick the largest `δ₀ ∈ (0,1]`
+    /// for which every bound still holds after substituting `δ := δ₀`.
+    ///
+    /// Each bound contributes a constraint of the form `dr + dd·δ ≥ 0` where
+    /// `dr`/`dd` are the real/delta gaps between the assignment and the bound.
+    /// Only `dd < 0` can be violated by a large δ, and feasibility of the
+    /// delta-rational assignment guarantees `dr > 0` in that case, so the
+    /// binding limit is `δ ≤ dr / (-dd)`.  Tableau rows are linear in δ and are
+    /// preserved by any substitution, so bounds are the only source of
+    /// constraints.
+    ///
+    /// Reference: Z3's `lp::lar_solver::get_model` delta adjustment.
+    #[must_use]
+    pub fn delta_instantiation(&self) -> Rational64 {
+        // Smallest representable positive rational, used as a conservative
+        // fallback when an exact ratio overflows `Rational64`.
+        let tiny = Rational64::new(1, i64::MAX);
+        let mut delta = Rational64::one();
+        let mut tighten = |dr: Rational64, dd: Rational64| {
+            // Constraint `dr + dd·δ >= 0`.  Non-negative `dd` can never be
+            // violated by a positive δ, and a non-positive `dr` means the
+            // delta-rational assignment already violates this bound (the state
+            // is infeasible) — nothing to instantiate.
+            if !dd.is_negative() || !dr.is_positive() {
+                return;
+            }
+            let limit = checked_neg_r64(dd).and_then(|neg_dd| checked_div_r64(dr, neg_dd));
+            match limit {
+                Some(cand) => {
+                    if cand < delta {
+                        delta = cand;
+                    }
+                }
+                // Ratio not representable: clamp to the smallest positive value
+                // rather than risk keeping a δ that breaks the bound.
+                None => {
+                    if tiny < delta {
+                        delta = tiny;
+                    }
+                }
+            }
+        };
+        for (idx, assigned) in self.assignment.iter().enumerate() {
+            if let Some(bound) = self.lower.get(idx).and_then(Option::as_ref) {
+                // assignment >= lower  =>  (a.real - l.real) + (a.delta - l.delta)·δ >= 0
+                if let (Some(dr), Some(dd)) = (
+                    checked_neg_r64(bound.value.real)
+                        .and_then(|n| checked_add_r64(assigned.real, n)),
+                    checked_neg_r64(bound.value.delta)
+                        .and_then(|n| checked_add_r64(assigned.delta, n)),
+                ) {
+                    tighten(dr, dd);
+                }
+            }
+            if let Some(bound) = self.upper.get(idx).and_then(Option::as_ref) {
+                // assignment <= upper  =>  (u.real - a.real) + (u.delta - a.delta)·δ >= 0
+                if let (Some(dr), Some(dd)) = (
+                    checked_neg_r64(assigned.real)
+                        .and_then(|n| checked_add_r64(bound.value.real, n)),
+                    checked_neg_r64(assigned.delta)
+                        .and_then(|n| checked_add_r64(bound.value.delta, n)),
+                ) {
+                    tighten(dr, dd);
+                }
+            }
+        }
+        delta
+    }
     /// Set a lower bound (x >= value)
     pub fn set_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
         let idx = var as usize;

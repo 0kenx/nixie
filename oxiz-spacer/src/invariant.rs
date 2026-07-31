@@ -275,35 +275,38 @@ impl InvariantInference {
         constraints
     }
 
-    /// Recursively collect constraint terms
+    /// Collect the constraint atoms of a formula, flattening nested `And`s.
+    ///
+    /// The `And` tree comes from parsed CHC bodies, so its depth is
+    /// unbounded; this walks it with an explicit heap stack
+    /// ([`crate::walk::flatten_conjuncts`]) instead of recursing. The
+    /// classification of each non-`And` conjunct is unchanged: arithmetic
+    /// comparisons and `Distinct` are constraints, anything else is kept
+    /// only if it is a Boolean term.
     fn collect_constraints(
         &self,
         term: TermId,
         manager: &TermManager,
         constraints: &mut Vec<TermId>,
     ) {
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::And(args) => {
-                for &arg in args.iter() {
-                    self.collect_constraints(arg, manager, constraints);
+        for conjunct in crate::walk::flatten_conjuncts(manager, term) {
+            let Some(t) = manager.get(conjunct) else {
+                continue;
+            };
+            match &t.kind {
+                TermKind::Le(..)
+                | TermKind::Lt(..)
+                | TermKind::Ge(..)
+                | TermKind::Gt(..)
+                | TermKind::Eq(..)
+                | TermKind::Distinct(..) => {
+                    constraints.push(conjunct);
                 }
-            }
-            TermKind::Le(..)
-            | TermKind::Lt(..)
-            | TermKind::Ge(..)
-            | TermKind::Gt(..)
-            | TermKind::Eq(..)
-            | TermKind::Distinct(..) => {
-                constraints.push(term);
-            }
-            _ => {
-                // For other terms, add if they're boolean
-                if self.is_boolean_term(term, manager) {
-                    constraints.push(term);
+                _ => {
+                    // For other terms, add if they're boolean
+                    if self.is_boolean_term(conjunct, manager) {
+                        constraints.push(conjunct);
+                    }
                 }
             }
         }
@@ -337,8 +340,17 @@ impl InvariantInference {
         vars
     }
 
-    /// Recursively collect variables
-    #[allow(clippy::only_used_in_recursion)]
+    /// Collect the distinct variables of a term, in first-occurrence order.
+    ///
+    /// The visited set this already carried made the walk linear in DAG
+    /// size, but it was still native recursion, so nesting depth alone
+    /// could overflow the stack; it is an explicit-stack walk now (see
+    /// [`crate::walk`]). Descent is uniform over every `TermKind` child
+    /// rather than the previous enumeration, whose `_ => {}` arm dropped
+    /// variables occurring under `Apply`, `Select`/`Store`, `Xor`, `Let`,
+    /// quantifier bodies and every bitvector/string operator — an
+    /// understated variable set makes an inferred invariant candidate refer
+    /// to fewer variables than it actually constrains.
     fn collect_variables(
         &self,
         term: TermId,
@@ -346,54 +358,9 @@ impl InvariantInference {
         vars: &mut Vec<TermId>,
         visited: &mut FxHashSet<TermId>,
     ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::Var(_) => {
-                vars.push(term);
-            }
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_variables(*arg, manager, vars, visited);
-            }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => {
-                for &arg in args.iter() {
-                    self.collect_variables(arg, manager, vars, visited);
-                }
-            }
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b)
-            | TermKind::Implies(a, b) => {
-                self.collect_variables(*a, manager, vars, visited);
-                self.collect_variables(*b, manager, vars, visited);
-            }
-            TermKind::Ite(c, t, e) => {
-                self.collect_variables(*c, manager, vars, visited);
-                self.collect_variables(*t, manager, vars, visited);
-                self.collect_variables(*e, manager, vars, visited);
-            }
-            TermKind::Distinct(args) => {
-                for &arg in args.iter() {
-                    self.collect_variables(arg, manager, vars, visited);
-                }
-            }
-            _ => {
-                // Constants and other terms without children
+        for var in crate::walk::collect_vars(manager, term) {
+            if visited.insert(var) {
+                vars.push(var);
             }
         }
     }
@@ -824,6 +791,20 @@ pub mod templates {
 mod tests {
     use super::*;
 
+    /// Stack size and nesting depth for the deep-recursion test below.
+    ///
+    /// The two are scaled together on purpose: what the test actually pins is
+    /// the *ratio* -- about 21 bytes of stack per nesting level
+    /// (128 KiB / 6_250). A natively recursive flattener needs far more than
+    /// that per frame and still overflows, so the regression keeps every bit
+    /// of its detection power. The pair used to be 1 MiB / 50_000 -- the same
+    /// 21 bytes -- but `mk_and` flattens its arguments, so a chain built with
+    /// `acc = mk_and([acc, atom])` is quadratic, and 50_000 levels cost tens
+    /// of GB of live terms. Never raise `DEEP_DEPTH` without raising
+    /// `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 6_250;
+
     #[test]
     fn test_invariant_config_default() {
         let config = InvariantConfig::default();
@@ -918,5 +899,75 @@ mod tests {
 
         // Empty CHC should succeed with no invariants
         assert!(matches!(result, InferenceResult::Success(_)));
+    }
+
+    /// A deeply nested `And` body must be flattened without overflowing,
+    /// and every leaf constraint must still be collected in order.
+    #[test]
+    fn extract_body_constraints_survives_deep_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let zero = manager.mk_int(0);
+                let first = manager.mk_var("v0", int_sort);
+                let mut body = manager.mk_ge(first, zero);
+                for i in 1..DEEP_DEPTH {
+                    let v = manager.mk_var(&format!("v{i}"), int_sort);
+                    let atom = manager.mk_ge(v, zero);
+                    body = manager.mk_and([body, atom]);
+                }
+
+                let engine = InvariantInference::default();
+                let constraints = engine.extract_body_constraints(body, &manager);
+                assert!(
+                    constraints.len() >= DEEP_DEPTH as usize,
+                    "every conjunct must be collected, got {}",
+                    constraints.len()
+                );
+            })
+            .expect("thread spawn should succeed");
+        handle
+            .join()
+            .expect("deep constraint extraction must return");
+    }
+
+    /// Order and classification of collected constraints are unchanged.
+    #[test]
+    fn extract_body_constraints_pins_order() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let zero = manager.mk_int(0);
+        let a = manager.mk_ge(x, zero);
+        let b = manager.mk_lt(y, zero);
+        let inner = manager.mk_and([a, b]);
+        let c = manager.mk_eq(x, y);
+        let body = manager.mk_and([inner, c]);
+
+        let engine = InvariantInference::default();
+        let constraints = engine.extract_body_constraints(body, &manager);
+        assert_eq!(constraints, vec![a, b, c]);
+    }
+
+    /// Variables occurring under operators the old enumeration skipped must
+    /// still be collected.
+    #[test]
+    fn collect_variables_sees_through_select() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+        let arr = manager.mk_var("a", array_sort);
+        let idx = manager.mk_var("i", int_sort);
+        let select = manager.mk_select(arr, idx);
+
+        let engine = InvariantInference::default();
+        let vars = engine.extract_variables(select, &manager);
+        assert!(
+            vars.contains(&arr) && vars.contains(&idx),
+            "both the array and the index variable must be collected"
+        );
     }
 }

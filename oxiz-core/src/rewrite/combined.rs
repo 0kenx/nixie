@@ -301,10 +301,16 @@ impl CombinedRewriter {
             | TermKind::StrReplace(_, _, _)
             | TermKind::StrReplaceAll(_, _, _)
             | TermKind::StrToInt(_)
-            | TermKind::IntToStr(_) => RewriterKind::String,
+            | TermKind::IntToStr(_)
+            | TermKind::StrLt(_, _)
+            | TermKind::StrLe(_, _)
+            | TermKind::StrToCode(_)
+            | TermKind::StrFromCode(_) => RewriterKind::String,
 
             // Regex
-            TermKind::StrInRe(_, _) => RewriterKind::Regex,
+            TermKind::StrInRe(_, _)
+            | TermKind::StrReplaceRe(_, _, _)
+            | TermKind::StrReplaceReAll(_, _, _) => RewriterKind::Regex,
 
             // Floating-point
             TermKind::FpLit { .. }
@@ -673,6 +679,40 @@ impl CombinedRewriter {
                     return original_term;
                 }
                 manager.mk_str_contains(new_s, new_sub)
+            }
+            // The lexicographic comparisons and the character-code conversions
+            // fold in their builders, so rebuilding after the operands have been
+            // simplified is what turns e.g. `(str.< (str.++ "a" "b") "ac")` into
+            // a constant.
+            TermKind::StrLt(lhs, rhs) => {
+                let new_lhs = self.rewrite_bottom_up(*lhs, ctx, manager);
+                let new_rhs = self.rewrite_bottom_up(*rhs, ctx, manager);
+                if new_lhs == *lhs && new_rhs == *rhs {
+                    return original_term;
+                }
+                manager.mk_str_lt(new_lhs, new_rhs)
+            }
+            TermKind::StrLe(lhs, rhs) => {
+                let new_lhs = self.rewrite_bottom_up(*lhs, ctx, manager);
+                let new_rhs = self.rewrite_bottom_up(*rhs, ctx, manager);
+                if new_lhs == *lhs && new_rhs == *rhs {
+                    return original_term;
+                }
+                manager.mk_str_le(new_lhs, new_rhs)
+            }
+            TermKind::StrToCode(s) => {
+                let new_s = self.rewrite_bottom_up(*s, ctx, manager);
+                if new_s == *s {
+                    return original_term;
+                }
+                manager.mk_str_to_code(new_s)
+            }
+            TermKind::StrFromCode(n) => {
+                let new_n = self.rewrite_bottom_up(*n, ctx, manager);
+                if new_n == *n {
+                    return original_term;
+                }
+                manager.mk_str_from_code(new_n)
             }
             // For other term kinds (leaves, unsupported), return original term
             _ => original_term,

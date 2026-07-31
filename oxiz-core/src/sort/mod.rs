@@ -563,61 +563,108 @@ impl SortManager {
         Err(format!("Unknown parametric sort: {}", name))
     }
 
+    /// Immediate sub-sorts of a sort, in the order they appear
+    ///
+    /// Only `Array` and `Parametric` have structure to descend into; every
+    /// other kind is a leaf.
+    fn sub_sorts(&self, sort_id: SortId) -> smallvec::SmallVec<[SortId; 2]> {
+        match self.get(sort_id).map(|s| &s.kind) {
+            Some(SortKind::Array { domain, range }) => smallvec::smallvec![*domain, *range],
+            Some(SortKind::Parametric { args, .. }) => args.iter().copied().collect(),
+            _ => smallvec::SmallVec::new(),
+        }
+    }
+
     /// Substitute sort parameters with concrete sorts
+    ///
+    /// Driven by an explicit stack rather than recursion: this is public API,
+    /// so the nesting depth of `sort_id` is not bounded by any parser limit.
+    /// The traversal is two-phase — a DFS that records a post-order over the
+    /// reachable sorts, then a single linear rebuild pass — so a shared
+    /// sub-sort is visited once instead of once per path through the DAG.
     pub fn substitute_sort(
         &mut self,
         sort_id: SortId,
         subst: &FxHashMap<SortId, SortId>,
     ) -> SortId {
-        // Check if this sort is directly substituted
-        if let Some(&replacement) = subst.get(&sort_id) {
-            return replacement;
-        }
+        // Phase 1: post-order over the reachable sorts. A sort that is
+        // directly substituted is a leaf — its structure is discarded.
+        let mut visited: FxHashSet<SortId> = FxHashSet::default();
+        let mut post_order: Vec<SortId> = Vec::new();
+        let mut stack: Vec<(SortId, bool)> = vec![(sort_id, false)];
 
-        // Otherwise, recursively substitute in the sort's structure
-        let sort = match self.get(sort_id) {
-            Some(s) => s.kind.clone(),
-            None => return sort_id,
-        };
-
-        match sort {
-            SortKind::Bool
-            | SortKind::Int
-            | SortKind::Real
-            | SortKind::String
-            | SortKind::BitVec(_)
-            | SortKind::FloatingPoint { .. } => sort_id,
-            SortKind::Uninterpreted(_) => sort_id,
-            SortKind::Datatype(_) => sort_id,
-            SortKind::Parameter(_) => {
-                // If not in subst map, return as-is (free parameter)
-                sort_id
+        while let Some((id, expanded)) = stack.pop() {
+            if expanded {
+                post_order.push(id);
+                continue;
             }
-            SortKind::Array { domain, range } => {
-                let new_domain = self.substitute_sort(domain, subst);
-                let new_range = self.substitute_sort(range, subst);
-                if new_domain == domain && new_range == range {
-                    sort_id
-                } else {
-                    self.array(new_domain, new_range)
-                }
+            if !visited.insert(id) {
+                continue;
             }
-            SortKind::Parametric { name, args } => {
-                let new_args: smallvec::SmallVec<[SortId; 2]> = args
-                    .iter()
-                    .map(|&arg| self.substitute_sort(arg, subst))
-                    .collect();
-
-                if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                    sort_id
-                } else {
-                    self.intern(SortKind::Parametric {
-                        name,
-                        args: new_args,
-                    })
-                }
+            stack.push((id, true));
+            if subst.contains_key(&id) {
+                continue;
+            }
+            for child in self.sub_sorts(id) {
+                stack.push((child, false));
             }
         }
+
+        // Phase 2: rebuild bottom-up. Every child of `id` precedes it in
+        // `post_order`, so its result is already in `replacements`.
+        let mut replacements: FxHashMap<SortId, SortId> = FxHashMap::default();
+        for id in post_order {
+            if let Some(&replacement) = subst.get(&id) {
+                replacements.insert(id, replacement);
+                continue;
+            }
+
+            let Some(kind) = self.get(id).map(|s| s.kind.clone()) else {
+                // Unknown sort: nothing to substitute into.
+                replacements.insert(id, id);
+                continue;
+            };
+
+            let rebuilt = match kind {
+                SortKind::Bool
+                | SortKind::Int
+                | SortKind::Real
+                | SortKind::String
+                | SortKind::BitVec(_)
+                | SortKind::FloatingPoint { .. }
+                | SortKind::Uninterpreted(_)
+                | SortKind::Datatype(_)
+                // A parameter not in `subst` stays free.
+                | SortKind::Parameter(_) => id,
+                SortKind::Array { domain, range } => {
+                    let new_domain = replacements.get(&domain).copied().unwrap_or(domain);
+                    let new_range = replacements.get(&range).copied().unwrap_or(range);
+                    if new_domain == domain && new_range == range {
+                        id
+                    } else {
+                        self.array(new_domain, new_range)
+                    }
+                }
+                SortKind::Parametric { name, args } => {
+                    let new_args: smallvec::SmallVec<[SortId; 2]> = args
+                        .iter()
+                        .map(|arg| replacements.get(arg).copied().unwrap_or(*arg))
+                        .collect();
+
+                    if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
+                        id
+                    } else {
+                        self.intern(SortKind::Parametric {
+                            name,
+                            args: new_args,
+                        })
+                    }
+                }
+            };
+            replacements.insert(id, rebuilt);
+        }
+
+        replacements.get(&sort_id).copied().unwrap_or(sort_id)
     }
 
     /// Get the name of a sort if it has one
@@ -1228,5 +1275,81 @@ mod tests {
 
         let sort3 = manager.mk_datatype_sort("OtherType");
         assert_ne!(sort1, sort3);
+    }
+
+    /// Depth of the nested-array sorts used by the stack-safety tests.
+    const DEEP_SORT_NESTING: usize = 50_000;
+
+    /// Build `(Array Int (Array Int (... T)))` nested `DEEP_SORT_NESTING` deep
+    /// over the sort parameter `T`, returning the outermost sort and `T`'s id.
+    fn deep_nested_array_sort(manager: &mut SortManager) -> (SortId, SortId) {
+        let param = manager.mk_sort_parameter("T");
+        let int_sort = manager.int_sort;
+        let mut current = param;
+        for _ in 0..DEEP_SORT_NESTING {
+            current = manager.array(int_sort, current);
+        }
+        (current, param)
+    }
+
+    #[test]
+    fn test_substitute_sort_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = SortManager::new();
+                let (deep, param) = deep_nested_array_sort(&mut manager);
+
+                let mut subst = FxHashMap::default();
+                subst.insert(param, manager.bool_sort);
+                let substituted = manager.substitute_sort(deep, &subst);
+
+                // Walk down to the innermost range and check it was replaced.
+                let mut current = substituted;
+                let mut depth = 0usize;
+                while let Some(SortKind::Array { range, .. }) =
+                    manager.get(current).map(|s| s.kind.clone())
+                {
+                    current = range;
+                    depth += 1;
+                }
+                (depth, current == manager.bool_sort, substituted != deep)
+            })
+            .expect("thread spawn should succeed");
+
+        let (depth, innermost_is_bool, changed) =
+            handle.join().expect("deep substitution must not overflow");
+        assert_eq!(depth, DEEP_SORT_NESTING);
+        assert!(innermost_is_bool, "the parameter must be substituted");
+        assert!(changed, "substitution must produce a different sort");
+    }
+
+    #[test]
+    fn test_substitute_sort_without_match_is_identity() {
+        let mut manager = SortManager::new();
+        let (deep, _param) = deep_nested_array_sort(&mut manager);
+        // An empty substitution must return the very same interned sort, not
+        // a rebuilt copy.
+        let subst = FxHashMap::default();
+        assert_eq!(manager.substitute_sort(deep, &subst), deep);
+    }
+
+    #[test]
+    fn test_substitute_sort_replaces_the_whole_sort() {
+        let mut manager = SortManager::new();
+        let (deep, _param) = deep_nested_array_sort(&mut manager);
+        // A substitution keyed on the root replaces it wholesale, without
+        // descending into its (discarded) structure.
+        let mut subst = FxHashMap::default();
+        subst.insert(deep, manager.real_sort);
+        assert_eq!(manager.substitute_sort(deep, &subst), manager.real_sort);
+    }
+
+    #[test]
+    fn test_substitute_sort_unknown_sort_is_returned_unchanged() {
+        let mut manager = SortManager::new();
+        let unknown = SortId(u32::MAX);
+        let subst = FxHashMap::default();
+        assert_eq!(manager.substitute_sort(unknown, &subst), unknown);
     }
 }

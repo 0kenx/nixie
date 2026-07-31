@@ -107,7 +107,9 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::BvNot(a)
         | TermKind::StrLen(a)
         | TermKind::StrToInt(a)
-        | TermKind::IntToStr(a) => {
+        | TermKind::IntToStr(a)
+        | TermKind::StrToCode(a)
+        | TermKind::StrFromCode(a) => {
             children.push(*a);
         }
 
@@ -133,6 +135,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::StrPrefixOf(a, b)
         | TermKind::StrSuffixOf(a, b)
         | TermKind::StrInRe(a, b)
+        | TermKind::StrLt(a, b)
+        | TermKind::StrLe(a, b)
         | TermKind::BvConcat(a, b)
         | TermKind::BvAnd(a, b)
         | TermKind::BvOr(a, b)
@@ -161,7 +165,9 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::StrSubstr(c, t, e)
         | TermKind::StrIndexOf(c, t, e)
         | TermKind::StrReplace(c, t, e)
-        | TermKind::StrReplaceAll(c, t, e) => {
+        | TermKind::StrReplaceAll(c, t, e)
+        | TermKind::StrReplaceRe(c, t, e)
+        | TermKind::StrReplaceReAll(c, t, e) => {
             children.push(*c);
             children.push(*t);
             children.push(*e);
@@ -293,67 +299,73 @@ pub fn collect_subterms(term_id: TermId, manager: &TermManager) -> Vec<TermId> {
     collector.subterms
 }
 
-/// Collect all free variables in a term
+/// Collect all free variables in a term.
+///
+/// Delegates to [`TermManager::free_vars`], which does the actual
+/// (name, sort)-aware, capture-scope-correct walk with an explicit heap
+/// stack. This function used to carry its own independent implementation
+/// built directly on [`traverse`]'s generic, globally-memoized visitor,
+/// but that turned out to have two correctness bugs:
+///
+/// * Shadowing was tracked by variable *name* alone, ignoring sort, so a
+///   bound `x: Bool` in an enclosing scope could incorrectly shadow an
+///   unrelated, differently-sorted free `x: Int`.
+/// * `traverse`'s visited set is global and unconditional: once a shared
+///   subterm (structural sharing under hash-consing) was walked once
+///   *while under a binder* that happened to shadow one of its
+///   variables, revisiting that exact subterm later from an unshadowed
+///   position would be skipped as "already visited", silently dropping a
+///   genuinely free occurrence.
+///
+/// Both bugs matter here specifically: this function is called by
+/// `TermManager::prepare_binder_subst` (capture-avoiding substitution's
+/// name-avoidance computation) and by `oxiz-solver`'s MBQI instantiation
+/// checking, which rejects a grounding substitution if a bound variable
+/// it meant to eliminate is still reported free in the result -- an
+/// under-reported free-variable set there would let a not-fully-grounded
+/// lemma silently pass. Rather than fix this independent implementation
+/// in place and risk it diverging from `TermManager::free_vars` again
+/// later (this crate has hit that exact hazard before with this same
+/// module's [`map_terms`] and its retired `transform_children`), this now
+/// simply reuses the one, already-hardened implementation.
+///
+/// # Trigger patterns are *not* included
+///
+/// Like [`get_children`] (and therefore like every generic walk in this
+/// module), this ignores a `Forall`/`Exists` node's `patterns` field, so a
+/// variable occurring only inside an SMT-LIB `:pattern` / trigger
+/// annotation is not reported. Callers whose result drives a decision
+/// about variable *names* -- capture avoidance, fresh-name choice,
+/// groundedness of an instantiation -- must use
+/// [`collect_free_vars_including_patterns`] instead, because a name that
+/// is invisible here can still be captured. That includes
+/// `TermManager::prepare_binder_subst` and `oxiz-solver`'s MBQI grounding
+/// guard, both of which have been switched over.
 #[must_use]
 pub fn collect_free_vars(term_id: TermId, manager: &TermManager) -> FxHashSet<TermId> {
-    struct VarCollector {
-        vars: FxHashSet<TermId>,
-        bound_vars: Vec<FxHashSet<crate::interner::Spur>>,
-    }
+    manager.free_vars(term_id).into_iter().collect()
+}
 
-    impl TermVisitor for VarCollector {
-        fn visit_pre(&mut self, term_id: TermId, manager: &TermManager) -> VisitorAction {
-            if let Some(term) = manager.get(term_id) {
-                match &term.kind {
-                    TermKind::Var(name) => {
-                        // Check if this variable is bound
-                        let is_bound = self.bound_vars.iter().any(|scope| scope.contains(name));
-                        if !is_bound {
-                            self.vars.insert(term_id);
-                        }
-                    }
-                    TermKind::Forall { vars, .. } | TermKind::Exists { vars, .. } => {
-                        // Push new scope with bound variables
-                        let mut scope = FxHashSet::default();
-                        for (var_name, _) in vars {
-                            scope.insert(*var_name);
-                        }
-                        self.bound_vars.push(scope);
-                    }
-                    TermKind::Let { bindings, .. } => {
-                        // Push new scope with let-bound variables
-                        let mut scope = FxHashSet::default();
-                        for (var_name, _) in bindings {
-                            scope.insert(*var_name);
-                        }
-                        self.bound_vars.push(scope);
-                    }
-                    _ => {}
-                }
-            }
-            VisitorAction::Continue
-        }
-
-        fn visit_post(&mut self, term_id: TermId, manager: &TermManager) {
-            // Pop scopes when exiting quantifiers/let bindings
-            if let Some(term) = manager.get(term_id) {
-                match term.kind {
-                    TermKind::Forall { .. } | TermKind::Exists { .. } | TermKind::Let { .. } => {
-                        self.bound_vars.pop();
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    let mut collector = VarCollector {
-        vars: FxHashSet::default(),
-        bound_vars: Vec::new(),
-    };
-
-    let _ = traverse(term_id, manager, &mut collector);
-    collector.vars
+/// Collect all free variables in a term, including occurrences that appear
+/// only inside `Forall`/`Exists` trigger patterns.
+///
+/// Delegates to [`TermManager::free_vars_including_patterns`]; see
+/// [`collect_free_vars`] for the non-pattern-aware variant and for why
+/// both exist.
+///
+/// Use this one whenever the answer decides something about variable
+/// *names*: over-reporting a free variable merely makes substitution pick
+/// a different fresh name, whereas under-reporting silently captures a
+/// live occurrence.
+#[must_use]
+pub fn collect_free_vars_including_patterns(
+    term_id: TermId,
+    manager: &TermManager,
+) -> FxHashSet<TermId> {
+    manager
+        .free_vars_including_patterns(term_id)
+        .into_iter()
+        .collect()
 }
 
 /// Count the number of nodes in the term DAG

@@ -232,21 +232,94 @@ impl<'a> MbpEngine<'a> {
         literals
     }
 
+    /// Flatten a conjunction into its literals.
+    ///
+    /// Uses an explicit heap stack rather than native recursion: the `And`
+    /// nesting depth is attacker-controlled (a validly constructed
+    /// `(and (and (and ...)))` chain), the return type is `()`, and a depth
+    /// cap on a literal *collector* could only drop literals -- i.e. weaken
+    /// the projected formula into an unsound over-approximation. See the
+    /// module doc comment on `contains_array_ops` for the same reasoning
+    /// applied to the predicate walks.
+    ///
+    /// Note that unlike the predicate walks below this one deliberately does
+    /// *not* deduplicate on `TermId`: `extract_literals` returns a multiset
+    /// in source order and the projectors index into it positionally.
+    /// Re-reaching a shared `And` node twice through two different parents is
+    /// therefore reproduced faithfully, exactly as the previous recursive
+    /// version did.
     fn extract_literals_rec(&self, term: TermId, literals: &mut Vec<TermId>) {
-        let Some(t) = self.manager.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::And(args) => {
-                for &arg in args.iter() {
-                    self.extract_literals_rec(arg, literals);
+        // Reverse-push so children come off the stack in source order.
+        let mut stack = vec![term];
+        while let Some(id) = stack.pop() {
+            match self.manager.get(id).map(|t| &t.kind) {
+                Some(TermKind::And(args)) => {
+                    stack.extend(args.iter().rev().copied());
                 }
-            }
-            _ => {
-                literals.push(term);
+                // Every non-conjunction node -- including a dangling id with
+                // no term behind it -- is a literal of the conjunction. This
+                // catch-all is a pure leaf classification (`And` is the one
+                // connective this function decomposes), so a future
+                // `TermKind` variant is correctly treated as an opaque
+                // literal rather than silently dropped.
+                _ => literals.push(id),
             }
         }
+    }
+
+    /// Iteratively test whether any node of `root`'s term DAG satisfies
+    /// `hit`.
+    ///
+    /// Shared by [`Self::contains_array_ops`],
+    /// [`Self::contains_datatype_ops`], [`Self::contains_nonlinear_arith`]
+    /// and [`Self::mentions_var`], each of which used to carry its own
+    /// hand-written recursive walk with a `_ => false` catch-all. Two
+    /// separate defects came out of that shape:
+    ///
+    /// * **Unbounded native recursion** on a `-> bool` return type. A depth
+    ///   cap is not available as a fix here: every one of these predicates
+    ///   answers "does this formula contain X", so a capped `false` is a
+    ///   *wrong answer*, not a weaker one (see each caller's doc comment).
+    /// * **Silently unvisited children.** The hand-written matches each
+    ///   enumerated only the handful of `TermKind` variants their author had
+    ///   in mind; every other variant -- `Store`, `Select`, `Distinct`,
+    ///   `Implies`, `Xor`, `Mod`, `Let`, all of `Str*`/`Bv*`/`Fp*`, the
+    ///   quantifiers -- fell into `_ => false` and had its children *never
+    ///   looked at*. So e.g. `mentions_var((store a x v), x)` answered
+    ///   `false`.
+    ///
+    /// Descending is now delegated to [`crate::ast::traversal::get_children`],
+    /// which matches `TermKind` exhaustively with no catch-all, so a newly
+    /// added variant is a compile error there rather than a silent
+    /// truncation here. `visited` makes this linear in DAG size rather than
+    /// exponential in the tree unfolding; that is unconditionally sound for
+    /// all four callers because each asks a question about a subterm that
+    /// does not depend on the path taken to reach it.
+    ///
+    /// Trigger patterns on `Forall`/`Exists` are not descended into, matching
+    /// `get_children` (and therefore every other generic walk in the crate).
+    /// A `:pattern` annotation is a matching hint that carries no assertional
+    /// content, so it cannot change what theory a formula lies in nor which
+    /// variables the formula constrains.
+    fn any_subterm<F>(&self, root: TermId, mut hit: F) -> bool
+    where
+        F: FnMut(&TermKind) -> bool,
+    {
+        let mut stack = vec![root];
+        let mut visited = FxHashSet::default();
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(term) = self.manager.get(id) else {
+                continue;
+            };
+            if hit(&term.kind) {
+                return true;
+            }
+            stack.extend(crate::ast::traversal::get_children(&term.kind));
+        }
+        false
     }
 
     /// Detect which projector to use based on formula structure
@@ -287,49 +360,32 @@ impl<'a> MbpEngine<'a> {
         ProjectorKind::Lra
     }
 
+    /// Whether `term` mentions any array operation anywhere.
+    ///
+    /// Answering `false` for a formula that *does* contain arrays makes
+    /// `detect_projector` route it to the arithmetic projector, which has no
+    /// array reasoning at all -- so this must be a complete walk, not a
+    /// capped one. See [`Self::any_subterm`].
     fn contains_array_ops(&self, term: TermId) -> bool {
-        let Some(t) = self.manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::Select(_, _) | TermKind::Store(_, _, _) => true,
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => args.iter().any(|&a| self.contains_array_ops(a)),
-            TermKind::Not(a) | TermKind::Neg(a) => self.contains_array_ops(*a),
-            TermKind::Eq(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Sub(a, b) => self.contains_array_ops(*a) || self.contains_array_ops(*b),
-            TermKind::Ite(c, t, e) => {
-                self.contains_array_ops(*c)
-                    || self.contains_array_ops(*t)
-                    || self.contains_array_ops(*e)
-            }
-            _ => false,
-        }
+        self.any_subterm(term, |kind| {
+            matches!(kind, TermKind::Select(_, _) | TermKind::Store(_, _, _))
+        })
     }
 
+    /// Whether `term` mentions any algebraic-datatype operation anywhere.
+    ///
+    /// Same reachability argument as [`Self::contains_array_ops`]: a `false`
+    /// here silently selects a projector that cannot reason about
+    /// constructors, testers or selectors.
     fn contains_datatype_ops(&self, term: TermId) -> bool {
-        let Some(t) = self.manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::DtConstructor { .. }
-            | TermKind::DtSelector { .. }
-            | TermKind::DtTester { .. } => true,
-            TermKind::And(args) | TermKind::Or(args) => {
-                args.iter().any(|&a| self.contains_datatype_ops(a))
-            }
-            TermKind::Not(a) => self.contains_datatype_ops(*a),
-            TermKind::Eq(a, b) => self.contains_datatype_ops(*a) || self.contains_datatype_ops(*b),
-            _ => false,
-        }
+        self.any_subterm(term, |kind| {
+            matches!(
+                kind,
+                TermKind::DtConstructor { .. }
+                    | TermKind::DtSelector { .. }
+                    | TermKind::DtTester { .. }
+            )
+        })
     }
 
     /// Whether `formula` contains only linear real arithmetic.
@@ -365,41 +421,13 @@ impl<'a> MbpEngine<'a> {
     /// bug even when a caller bypasses `detect_projector` by requesting a
     /// specific `ProjectorKind`.
     fn contains_nonlinear_arith(&self, term: TermId) -> bool {
-        let Some(t) = self.manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
+        self.any_subterm(term, |kind| match kind {
             TermKind::Mul(args) => {
-                let non_const_factors =
-                    args.iter().filter(|&&a| !self.is_arith_constant(a)).count();
-                non_const_factors >= 2 || args.iter().any(|&a| self.contains_nonlinear_arith(a))
+                args.iter().filter(|&&a| !self.is_arith_constant(a)).count() >= 2
             }
-            TermKind::Div(lhs, rhs) | TermKind::Mod(lhs, rhs) => {
-                !self.is_arith_constant(*rhs)
-                    || self.contains_nonlinear_arith(*lhs)
-                    || self.contains_nonlinear_arith(*rhs)
-            }
-            TermKind::And(args) | TermKind::Or(args) | TermKind::Add(args) => {
-                args.iter().any(|&a| self.contains_nonlinear_arith(a))
-            }
-            TermKind::Not(a) | TermKind::Neg(a) => self.contains_nonlinear_arith(*a),
-            TermKind::Eq(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Sub(a, b) => {
-                self.contains_nonlinear_arith(*a) || self.contains_nonlinear_arith(*b)
-            }
-            TermKind::Ite(c, then_br, else_br) => {
-                self.contains_nonlinear_arith(*c)
-                    || self.contains_nonlinear_arith(*then_br)
-                    || self.contains_nonlinear_arith(*else_br)
-            }
-            TermKind::Apply { args, .. } => args.iter().any(|&a| self.contains_nonlinear_arith(a)),
+            TermKind::Div(_, rhs) | TermKind::Mod(_, rhs) => !self.is_arith_constant(*rhs),
             _ => false,
-        }
+        })
     }
 
     /// Whether `term` is a numeric literal (no variables), used by
@@ -577,33 +605,20 @@ impl<'a> MbpEngine<'a> {
         }
     }
 
+    /// Whether the variable named `var` occurs anywhere in `term`.
+    ///
+    /// A `false` here is what tells the projectors "this literal is
+    /// independent of the variable being eliminated, keep it verbatim in the
+    /// residue". Answering `false` for a literal that *does* mention `var`
+    /// therefore leaves the supposedly-eliminated variable free in the
+    /// projection -- an unsound quantifier elimination -- which is why this
+    /// is a complete iterative walk with no depth cap. See
+    /// [`Self::any_subterm`].
     fn mentions_var(&self, term: TermId, var: Spur) -> bool {
-        let Some(t) = self.manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::Var(name) => *name == var,
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => args.iter().any(|&a| self.mentions_var(a, var)),
-            TermKind::Not(a) | TermKind::Neg(a) => self.mentions_var(*a, var),
-            TermKind::Eq(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b) => self.mentions_var(*a, var) || self.mentions_var(*b, var),
-            TermKind::Ite(c, t, e) => {
-                self.mentions_var(*c, var)
-                    || self.mentions_var(*t, var)
-                    || self.mentions_var(*e, var)
-            }
-            TermKind::Apply { args, .. } => args.iter().any(|&a| self.mentions_var(a, var)),
-            _ => false,
-        }
+        self.any_subterm(
+            term,
+            |kind| matches!(kind, TermKind::Var(name) if *name == var),
+        )
     }
 
     fn mentions_any_var(&self, term: TermId, vars: &FxHashSet<Spur>) -> bool {
@@ -918,6 +933,87 @@ mod tests {
     }
 
     // ── TODO-940: nonlinear input must not be linear-projected ────────────
+
+    /// Regression: `mentions_var` used to end in `_ => false`, so it never
+    /// looked inside `Store`/`Select` (or any other unlisted kind) and
+    /// reported `false` for a literal that plainly mentions the variable.
+    /// The projectors read that `false` as "this literal is independent of
+    /// the variable being eliminated, keep it verbatim", which leaves the
+    /// supposedly-eliminated variable free in the projection.
+    #[test]
+    fn mentions_var_sees_through_array_and_other_unlisted_kinds() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+
+        let a = manager.mk_var("a", array_sort);
+        let x = manager.mk_var("x", int_sort);
+        let v = manager.mk_int(7);
+        let stored = manager.mk_store(a, x, v);
+        let selected = manager.mk_select(stored, x);
+        let distinct = manager.mk_distinct([x, v]);
+
+        let x_name = manager.intern_str("x");
+        let z_name = manager.intern_str("z");
+        let engine = MbpEngine::new(&mut manager);
+
+        assert!(engine.mentions_var(stored, x_name));
+        assert!(engine.mentions_var(selected, x_name));
+        assert!(engine.mentions_var(distinct, x_name));
+        assert!(!engine.mentions_var(stored, z_name));
+    }
+
+    /// Same defect on the projector-selection side: an array operation buried
+    /// under an uninterpreted application used to be invisible, routing an
+    /// array formula to the arithmetic projector.
+    #[test]
+    fn contains_array_ops_sees_through_an_uninterpreted_application() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+
+        let a = manager.mk_var("a", array_sort);
+        let i = manager.mk_var("i", int_sort);
+        let sel = manager.mk_select(a, i);
+        let p = manager.mk_apply("P", [sel], bool_sort);
+
+        let engine = MbpEngine::new(&mut manager);
+        assert!(engine.contains_array_ops(p));
+    }
+
+    /// The predicate walks are iterative now: a chain far deeper than any
+    /// native stack could hold must simply return. Returning at all is the
+    /// assertion -- an overflow aborts the process.
+    #[test]
+    fn predicates_survive_a_deep_chain_on_a_tiny_stack() {
+        const DEPTH: usize = 60_000;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let x = manager.mk_var("x", int_sort);
+                let one = manager.mk_int(1);
+
+                let mut chain = x;
+                for _ in 0..DEPTH {
+                    chain = manager.mk_add([chain, one]);
+                }
+
+                let x_name = manager.intern_str("x");
+                let engine = MbpEngine::new(&mut manager);
+                (
+                    engine.mentions_var(chain, x_name),
+                    engine.contains_array_ops(chain),
+                    engine.contains_nonlinear_arith(chain),
+                )
+            })
+            .expect("test thread must spawn");
+
+        assert_eq!(handle.join().ok(), Some((true, false, false)));
+    }
 
     #[test]
     fn test_detect_projector_routes_nonlinear() {

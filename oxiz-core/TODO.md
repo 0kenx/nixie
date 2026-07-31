@@ -1,6 +1,6 @@
 # oxiz-core TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness sweep and hardening pass
 
 Reference: Z3's `ast/`, `util/`, and `tactic/` directories
 
@@ -176,6 +176,26 @@ Reference: Z3's `ast/`, `util/`, and `tactic/` directories
   - Comprehensive test suite with 14 tests
   - Pure Rust implementation with zero unsafe code
   - All 1,176 tests passing with zero warnings
+
+## Soundness and hardening (2026-07-31, v0.3.1)
+
+- [x] Wide bit-vector model values
+  - [x] `ModelValue::BitVec` widened from `u64` to `num_bigint::BigUint` (BREAKING, 0.x)
+  - [x] `from_bitvec_int` / `from_bitvec_bits` / `as_bitvec` / `bitvec_mask` constructors and accessors
+  - [x] `Model::assign_bitvec_big` alongside the narrow `assign_bitvec`
+  - [x] Fixed the low-64-bit interning key that merged distinct wide constants (false unsat)
+- [x] Unhandled input is an error, never a silent drop or default
+  - [x] Parser rejects mixed-width bit-vector binary operands at parse time, as Z3 does
+  - [x] Tier-1 silent fallthroughs replaced by exhaustive matches or honest errors
+- [x] No unguarded recursion on term depth
+  - [x] SMT-LIB2 parser made fully iterative
+  - [x] Printer, model evaluator and substitution converted to explicit heap stacks
+  - [x] `Drop` / `Clone` / `PartialEq` on the deep public enums made iterative
+- [x] Non-ASCII-safe string handling (no slicing on byte offsets inside a code point)
+- [x] E-matching trigger inference restricted to uninterpreted heads (mirrors Z3's `pattern_inference`; removes a matching loop)
+- [x] `to_cnf_tseitin` — equisatisfiable linear-size CNF; `TseitinCnfTactic` rewired to it
+- [x] Cooper quantifier elimination: Xor/Ite 4-way exponential expansion fixed
+- [x] `clippy::unwrap_used` denied crate-wide; clippy clean in dev and release profiles
 
 ---
 

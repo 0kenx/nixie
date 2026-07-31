@@ -231,73 +231,35 @@ impl Interpolator {
     /// returning unknown) yields `false`, so interpolant validation fails
     /// closed rather than trusting an unproven claim.
     fn is_unsat(terms: &mut TermManager, formulas: &[TermId]) -> bool {
-        use oxiz_core::ast::TermKind;
         use oxiz_solver::{Solver, SolverResult};
 
         // Assert each top-level `And` conjunct separately (mirrors
         // `SmtSolver::assert`): a single `And` carrying disequalities can be
         // mis-answered SAT by the backend, which would unsoundly weaken the
         // validation guard.
-        fn assert_flat(solver: &mut Solver, terms: &mut TermManager, formula: TermId) {
-            if let Some(TermKind::And(args)) = terms.get(formula).map(|d| d.kind.clone()) {
-                for arg in args {
-                    assert_flat(solver, terms, arg);
-                }
-                return;
-            }
-            solver.assert(formula, terms);
-        }
-
+        // `And`-nesting comes from parsed input and is unbounded, so the
+        // flattening is an explicit-stack walk (`crate::walk`), not
+        // recursion.
         let mut solver = Solver::new();
         for &formula in formulas {
-            assert_flat(&mut solver, terms, formula);
+            for conjunct in crate::walk::flatten_conjuncts(terms, formula) {
+                solver.assert(conjunct, terms);
+            }
         }
         matches!(solver.check(terms), SolverResult::Unsat)
     }
 
-    /// Collect all variables in a formula
+    /// Collect all variables in a formula.
+    ///
+    /// Iterative walk with a visited set (see [`crate::walk`]). The old
+    /// recursive helper threaded a `HashSet` that was the *output* set, not
+    /// a visited set, so it never pruned traversal: a shared DAG was
+    /// re-expanded once per path. It also had no depth bound, and its
+    /// `_ => {}` arm silently skipped variables under any operator outside a
+    /// short enumeration, which understated the "common variables" set an
+    /// interpolant is required to be built from.
     fn collect_vars(terms: &TermManager, formula: TermId) -> Vec<TermId> {
-        let mut vars = HashSet::new();
-        Self::collect_vars_rec(terms, formula, &mut vars);
-        vars.into_iter().collect()
-    }
-
-    /// Recursively collect variables
-    fn collect_vars_rec(terms: &TermManager, term: TermId, vars: &mut HashSet<TermId>) {
-        use oxiz_core::TermKind;
-
-        let Some(t) = terms.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::Var(_) => {
-                vars.insert(term);
-            }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => {
-                for &arg in args.iter() {
-                    Self::collect_vars_rec(terms, arg, vars);
-                }
-            }
-            TermKind::Not(arg) => {
-                Self::collect_vars_rec(terms, *arg, vars);
-            }
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => {
-                Self::collect_vars_rec(terms, *a, vars);
-                Self::collect_vars_rec(terms, *b, vars);
-            }
-            _ => {}
-        }
+        crate::walk::collect_vars(terms, formula)
     }
 
     /// Compute a sequence interpolant for a trace

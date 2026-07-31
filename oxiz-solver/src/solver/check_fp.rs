@@ -8,6 +8,10 @@ use oxiz_core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use super::Solver;
 use super::types::FpConstraintData;
 
+mod extended;
+#[cfg(test)]
+mod tests;
+
 impl Solver {
     /// Invalidate FP constraint cache (call when assertions change)
     pub(super) fn invalidate_fp_cache(&mut self) {
@@ -1052,645 +1056,6 @@ impl Solver {
         None
     }
 
-    /// Collect FP constraints from a term (extended version with additional tracking)
-    #[allow(clippy::too_many_arguments)]
-    fn collect_fp_constraints_extended(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        fp_additions: &mut Vec<(TermId, TermId, TermId, TermId, RoundingMode)>,
-        fp_divisions: &mut Vec<(TermId, TermId, TermId, TermId, RoundingMode)>,
-        fp_multiplications: &mut Vec<(TermId, TermId, TermId, TermId, RoundingMode)>,
-        fp_comparisons: &mut Vec<(TermId, TermId, bool)>,
-        fp_equalities: &mut Vec<(TermId, TermId)>,
-        fp_literals: &mut FxHashMap<TermId, f64>,
-        rounding_add_results: &mut FxHashMap<(TermId, TermId, RoundingMode), TermId>,
-        fp_is_zero: &mut FxHashSet<TermId>,
-        fp_is_positive: &mut FxHashSet<TermId>,
-        fp_is_negative: &mut FxHashSet<TermId>,
-        fp_not_nan: &mut FxHashSet<TermId>,
-        fp_gt_comparisons: &mut Vec<(TermId, TermId)>,
-        fp_lt_comparisons: &mut Vec<(TermId, TermId)>,
-        fp_conversions: &mut Vec<(TermId, u32, u32, TermId)>,
-        real_to_fp_conversions: &mut Vec<(TermId, u32, u32, TermId)>,
-        fp_subtractions: &mut Vec<(TermId, TermId, TermId)>,
-        in_positive_context: bool,
-    ) {
-        let Some(term_data) = manager.get(term) else {
-            return;
-        };
-
-        match &term_data.kind {
-            // FP predicates
-            TermKind::FpIsZero(arg) => {
-                if in_positive_context {
-                    fp_is_zero.insert(*arg);
-                }
-                self.collect_fp_constraints_extended_recurse(
-                    *arg,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            TermKind::FpIsPositive(arg) => {
-                if in_positive_context {
-                    fp_is_positive.insert(*arg);
-                }
-                self.collect_fp_constraints_extended_recurse(
-                    *arg,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            TermKind::FpIsNegative(arg) => {
-                if in_positive_context {
-                    fp_is_negative.insert(*arg);
-                }
-                self.collect_fp_constraints_extended_recurse(
-                    *arg,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            TermKind::FpIsNaN(arg) => {
-                // If in negative context (under a Not), this means not(isNaN(arg))
-                if !in_positive_context {
-                    fp_not_nan.insert(*arg);
-                }
-                self.collect_fp_constraints_extended_recurse(
-                    *arg,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            // FP comparisons
-            TermKind::FpLt(a, b) => {
-                if in_positive_context {
-                    fp_comparisons.push((*a, *b, true));
-                    fp_lt_comparisons.push((*a, *b));
-                }
-                self.collect_fp_constraints_extended_recurse(
-                    *a,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-                self.collect_fp_constraints_extended_recurse(
-                    *b,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            TermKind::FpGt(a, b) => {
-                if in_positive_context {
-                    fp_comparisons.push((*b, *a, true)); // a > b means b < a
-                    fp_gt_comparisons.push((*a, *b)); // Track original direction: a > b
-                }
-                self.collect_fp_constraints_extended_recurse(
-                    *a,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-                self.collect_fp_constraints_extended_recurse(
-                    *b,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            // Equality
-            TermKind::Eq(lhs, rhs) => {
-                // Equality-derived facts (a = b, literal assignments, operation
-                // results, conversions) only hold when the equality is asserted
-                // positively.  Under a `Not`, `(not (= a b))` is a DISequality and
-                // must NOT be recorded as `a = b`; treating it as an equality
-                // previously produced spurious UNSAT answers (e.g. Check 3 firing
-                // on a negated `y = fp.div 0 0`).
-                if in_positive_context {
-                    fp_equalities.push((*lhs, *rhs));
-
-                    // Check for FP literal assignment
-                    if let Some(val) =
-                        self.get_fp_literal_value_from_eq(*rhs, manager, fp_equalities)
-                    {
-                        fp_literals.insert(*lhs, val);
-                    } else if let Some(val) =
-                        self.get_fp_literal_value_from_eq(*lhs, manager, fp_equalities)
-                    {
-                        fp_literals.insert(*rhs, val);
-                    }
-
-                    // Check for FP operation results
-                    if let Some(rhs_data) = manager.get(*rhs) {
-                        match &rhs_data.kind {
-                            TermKind::FpAdd(rm, x, y) => {
-                                fp_additions.push((*lhs, *x, *y, *lhs, *rm));
-                                rounding_add_results.insert((*x, *y, *rm), *lhs);
-                            }
-                            TermKind::FpDiv(rm, x, y) => {
-                                fp_divisions.push((*lhs, *x, *y, *lhs, *rm));
-                            }
-                            TermKind::FpMul(rm, x, y) => {
-                                fp_multiplications.push((*lhs, *x, *y, *lhs, *rm));
-                            }
-                            TermKind::FpSub(_, x, y) => {
-                                // Track: (lhs_operand, rhs_operand, result)
-                                fp_subtractions.push((*x, *y, *lhs));
-                            }
-                            TermKind::FpToFp { arg, eb, sb, .. } => {
-                                fp_conversions.push((*arg, *eb, *sb, *lhs));
-                            }
-                            TermKind::RealToFp { arg, eb, sb, .. } => {
-                                real_to_fp_conversions.push((*arg, *eb, *sb, *lhs));
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(lhs_data) = manager.get(*lhs) {
-                        match &lhs_data.kind {
-                            TermKind::FpAdd(rm, x, y) => {
-                                fp_additions.push((*rhs, *x, *y, *rhs, *rm));
-                                rounding_add_results.insert((*x, *y, *rm), *rhs);
-                            }
-                            TermKind::FpDiv(rm, x, y) => {
-                                fp_divisions.push((*rhs, *x, *y, *rhs, *rm));
-                            }
-                            TermKind::FpMul(rm, x, y) => {
-                                fp_multiplications.push((*rhs, *x, *y, *rhs, *rm));
-                            }
-                            TermKind::FpSub(_, x, y) => {
-                                fp_subtractions.push((*x, *y, *rhs));
-                            }
-                            TermKind::FpToFp { arg, eb, sb, .. } => {
-                                fp_conversions.push((*arg, *eb, *sb, *rhs));
-                            }
-                            TermKind::RealToFp { arg, eb, sb, .. } => {
-                                real_to_fp_conversions.push((*arg, *eb, *sb, *rhs));
-                            }
-                            _ => {}
-                        }
-                    }
-                } // end `if in_positive_context`
-
-                self.collect_fp_constraints_extended_recurse(
-                    *lhs,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-                self.collect_fp_constraints_extended_recurse(
-                    *rhs,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            // FP conversions (standalone, not in equality)
-            TermKind::FpToFp { arg, eb, sb, .. } => {
-                fp_conversions.push((*arg, *eb, *sb, term));
-                self.collect_fp_constraints_extended_recurse(
-                    *arg,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            TermKind::RealToFp { arg, eb, sb, .. } => {
-                real_to_fp_conversions.push((*arg, *eb, *sb, term));
-                // Also extract literal value
-                if let Some(arg_data) = manager.get(*arg) {
-                    if let TermKind::RealConst(r) = &arg_data.kind {
-                        if let Some(val) = r.to_f64() {
-                            fp_literals.insert(term, val);
-                        }
-                    }
-                }
-            }
-            // Compound terms
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.collect_fp_constraints_extended(
-                        arg,
-                        manager,
-                        fp_additions,
-                        fp_divisions,
-                        fp_multiplications,
-                        fp_comparisons,
-                        fp_equalities,
-                        fp_literals,
-                        rounding_add_results,
-                        fp_is_zero,
-                        fp_is_positive,
-                        fp_is_negative,
-                        fp_not_nan,
-                        fp_gt_comparisons,
-                        fp_lt_comparisons,
-                        fp_conversions,
-                        real_to_fp_conversions,
-                        fp_subtractions,
-                        in_positive_context,
-                    );
-                }
-            }
-            TermKind::Or(args) => {
-                // Don't collect predicates from OR branches as they are disjunctions
-                for &arg in args {
-                    self.collect_fp_constraints_extended_recurse(
-                        arg,
-                        manager,
-                        fp_additions,
-                        fp_divisions,
-                        fp_multiplications,
-                        fp_comparisons,
-                        fp_equalities,
-                        fp_literals,
-                        rounding_add_results,
-                        fp_is_zero,
-                        fp_is_positive,
-                        fp_is_negative,
-                        fp_not_nan,
-                        fp_gt_comparisons,
-                        fp_lt_comparisons,
-                        fp_conversions,
-                        real_to_fp_conversions,
-                        fp_subtractions,
-                        in_positive_context,
-                    );
-                }
-            }
-            TermKind::Not(inner) => {
-                // Flip context when entering Not
-                self.collect_fp_constraints_extended(
-                    *inner,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    !in_positive_context,
-                );
-            }
-            _ => {}
-        }
-    }
-
-    /// Helper to recurse without collecting predicates (for subterms)
-    #[allow(clippy::too_many_arguments)]
-    fn collect_fp_constraints_extended_recurse(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        fp_additions: &mut Vec<(TermId, TermId, TermId, TermId, RoundingMode)>,
-        fp_divisions: &mut Vec<(TermId, TermId, TermId, TermId, RoundingMode)>,
-        fp_multiplications: &mut Vec<(TermId, TermId, TermId, TermId, RoundingMode)>,
-        fp_comparisons: &mut Vec<(TermId, TermId, bool)>,
-        fp_equalities: &mut Vec<(TermId, TermId)>,
-        fp_literals: &mut FxHashMap<TermId, f64>,
-        rounding_add_results: &mut FxHashMap<(TermId, TermId, RoundingMode), TermId>,
-        fp_is_zero: &mut FxHashSet<TermId>,
-        fp_is_positive: &mut FxHashSet<TermId>,
-        fp_is_negative: &mut FxHashSet<TermId>,
-        fp_not_nan: &mut FxHashSet<TermId>,
-        fp_gt_comparisons: &mut Vec<(TermId, TermId)>,
-        fp_lt_comparisons: &mut Vec<(TermId, TermId)>,
-        fp_conversions: &mut Vec<(TermId, u32, u32, TermId)>,
-        real_to_fp_conversions: &mut Vec<(TermId, u32, u32, TermId)>,
-        fp_subtractions: &mut Vec<(TermId, TermId, TermId)>,
-        in_positive_context: bool,
-    ) {
-        let Some(term_data) = manager.get(term) else {
-            return;
-        };
-
-        // Only recurse into compound terms or collect conversion info
-        match &term_data.kind {
-            TermKind::FpToFp { arg, eb, sb, .. } => {
-                fp_conversions.push((*arg, *eb, *sb, term));
-                self.collect_fp_constraints_extended_recurse(
-                    *arg,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                    fp_is_zero,
-                    fp_is_positive,
-                    fp_is_negative,
-                    fp_not_nan,
-                    fp_gt_comparisons,
-                    fp_lt_comparisons,
-                    fp_conversions,
-                    real_to_fp_conversions,
-                    fp_subtractions,
-                    in_positive_context,
-                );
-            }
-            TermKind::RealToFp { arg, eb, sb, .. } => {
-                real_to_fp_conversions.push((*arg, *eb, *sb, term));
-                if let Some(arg_data) = manager.get(*arg) {
-                    if let TermKind::RealConst(r) = &arg_data.kind {
-                        if let Some(val) = r.to_f64() {
-                            fp_literals.insert(term, val);
-                        }
-                    }
-                }
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_fp_constraints_extended_recurse(
-                        arg,
-                        manager,
-                        fp_additions,
-                        fp_divisions,
-                        fp_multiplications,
-                        fp_comparisons,
-                        fp_equalities,
-                        fp_literals,
-                        rounding_add_results,
-                        fp_is_zero,
-                        fp_is_positive,
-                        fp_is_negative,
-                        fp_not_nan,
-                        fp_gt_comparisons,
-                        fp_lt_comparisons,
-                        fp_conversions,
-                        real_to_fp_conversions,
-                        fp_subtractions,
-                        in_positive_context,
-                    );
-                }
-            }
-            // Handle Apply terms that are to_fp conversions from parser
-            TermKind::Apply { func, args } => {
-                let func_name = manager.resolve_str(*func);
-                // Check for indexed to_fp like "(_ to_fp 8 24)"
-                if func_name.starts_with("(_ to_fp ") || func_name.starts_with("(_to_fp ") {
-                    // Parse eb and sb from the function name: "(_ to_fp eb sb)"
-                    if let Some((eb, sb)) = Self::parse_to_fp_indices(func_name) {
-                        if args.len() >= 2 {
-                            // Format: ((_ to_fp eb sb) rm arg)
-                            // args[0] is rounding mode, args[1] is the value/term to convert
-                            let arg = args[1];
-                            // Determine if this is RealToFp or FpToFp by checking arg's sort/type
-                            if let Some(arg_data) = manager.get(arg) {
-                                let is_real_arg = matches!(
-                                    arg_data.kind,
-                                    TermKind::RealConst(_) | TermKind::IntConst(_)
-                                );
-                                if is_real_arg {
-                                    // RealToFp conversion
-                                    real_to_fp_conversions.push((arg, eb, sb, term));
-                                    // Also extract literal value
-                                    if let TermKind::RealConst(r) = &arg_data.kind {
-                                        if let Some(val) = r.to_f64() {
-                                            fp_literals.insert(term, val);
-                                        }
-                                    } else if let TermKind::IntConst(n) = &arg_data.kind {
-                                        if let Some(val) = n.to_i64() {
-                                            fp_literals.insert(term, val as f64);
-                                        }
-                                    }
-                                } else {
-                                    // FpToFp conversion (arg is a FP variable/term)
-                                    fp_conversions.push((arg, eb, sb, term));
-                                }
-                            }
-                        }
-                    }
-                }
-                // Recurse into args
-                for &arg in args.iter() {
-                    self.collect_fp_constraints_extended_recurse(
-                        arg,
-                        manager,
-                        fp_additions,
-                        fp_divisions,
-                        fp_multiplications,
-                        fp_comparisons,
-                        fp_equalities,
-                        fp_literals,
-                        rounding_add_results,
-                        fp_is_zero,
-                        fp_is_positive,
-                        fp_is_negative,
-                        fp_not_nan,
-                        fp_gt_comparisons,
-                        fp_lt_comparisons,
-                        fp_conversions,
-                        real_to_fp_conversions,
-                        fp_subtractions,
-                        in_positive_context,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Parse to_fp indices from function name like "(_ to_fp 8 24)" -> (8, 24)
-    fn parse_to_fp_indices(func_name: &str) -> Option<(u32, u32)> {
-        // Handle format: "(_ to_fp eb sb)"
-        let trimmed = func_name
-            .trim_start_matches("(_ to_fp")
-            .trim_start_matches("(_to_fp")
-            .trim();
-        let trimmed = trimmed.trim_end_matches(')').trim();
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.len() >= 2 {
-            let eb = parts[0].parse().ok()?;
-            let sb = parts[1].parse().ok()?;
-            Some((eb, sb))
-        } else {
-            None
-        }
-    }
-
     /// Check if two terms are transitively equal through equalities using BFS
     fn are_terms_equal_transitively(
         term1: TermId,
@@ -1735,52 +1100,31 @@ impl Solver {
         false
     }
 
-    /// Get FP literal value from a term (for use in collect_fp_constraints_extended)
-    fn get_fp_literal_value_from_eq(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        equalities: &[(TermId, TermId)],
-    ) -> Option<f64> {
-        // Check direct RealToFp
-        if let Some(term_data) = manager.get(term) {
-            if let TermKind::RealToFp { arg, .. } = &term_data.kind {
-                if let Some(arg_data) = manager.get(*arg) {
-                    if let TermKind::RealConst(r) = &arg_data.kind {
-                        return r.to_f64();
-                    }
-                }
-            }
-            if let TermKind::RealConst(r) = &term_data.kind {
-                return r.to_f64();
-            }
-            if let TermKind::IntConst(n) = &term_data.kind {
-                return n.to_i64().map(|v| v as f64);
-            }
-        }
-        // Check via equalities
-        for &(eq_lhs, eq_rhs) in equalities {
-            let to_check = if eq_lhs == term {
-                eq_rhs
-            } else if eq_rhs == term {
-                eq_lhs
-            } else {
-                continue;
-            };
-            if let Some(term_data) = manager.get(to_check) {
-                if let TermKind::RealToFp { arg, .. } = &term_data.kind {
-                    if let Some(arg_data) = manager.get(*arg) {
-                        if let TermKind::RealConst(r) = &arg_data.kind {
-                            return r.to_f64();
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// Collect FP constraints from a term
+    /// Collect FP constraints from a term that is asserted **positively and
+    /// unconditionally**.
+    ///
+    /// Superseded by [`Self::collect_fp_constraints_extended`], which tracks
+    /// polarity; kept as the narrow reference version.  It carries no polarity
+    /// flag, so it may only ever descend through the conjuncts of an `And` —
+    /// every other Boolean node is a polarity boundary whose sub-terms are
+    /// conditional, and the facts here feed a definite-conflict check.  Same
+    /// shape as `check_string.rs::collect_string_constraints`.
+    ///
+    /// Driven by an explicit heap worklist rather than native recursion: the
+    /// `And`-conjunct descent used to recurse once per nesting level, and a
+    /// term built directly through [`TermManager::intern_term`] can nest
+    /// `And`s arbitrarily deep (`mk_and` flattens; the raw interner does
+    /// not), so a sufficiently deep conjunction overflowed the native stack —
+    /// a fatal, `catch_unwind`-proof process abort.  A depth cap is not an
+    /// option: the return type is `()`, so a cap could only silently drop
+    /// constraints and turn a definite conflict into a false `Sat`.
+    /// Conjuncts are pushed in reverse so the pop order reproduces the
+    /// original left-to-right recursion exactly — `rounding_add_results` is a
+    /// `HashMap` whose later insertions overwrite earlier ones, so visit
+    /// order is observable.  No `visited` set, matching both the original and
+    /// [`Self::collect_fp_constraints_extended`] (see `check_fp/extended.rs`'s
+    /// module doc for why dedup is deliberately not added to these
+    /// collectors).
     #[allow(clippy::too_many_arguments)]
     #[allow(dead_code)]
     fn collect_fp_constraints(
@@ -1795,126 +1139,79 @@ impl Solver {
         fp_literals: &mut FxHashMap<TermId, f64>,
         rounding_add_results: &mut FxHashMap<(TermId, TermId, RoundingMode), TermId>,
     ) {
-        let Some(term_data) = manager.get(term) else {
-            return;
-        };
+        let mut stack: Vec<TermId> = vec![term];
+        while let Some(term) = stack.pop() {
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
 
-        match &term_data.kind {
-            TermKind::Eq(lhs, rhs) => {
-                fp_equalities.push((*lhs, *rhs));
+            match &term_data.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    fp_equalities.push((*lhs, *rhs));
 
-                // Check for FP literal assignment
-                if let Some(val) = self.get_fp_literal_value(*rhs, manager) {
-                    fp_literals.insert(*lhs, val);
-                } else if let Some(val) = self.get_fp_literal_value(*lhs, manager) {
-                    fp_literals.insert(*rhs, val);
+                    // Check for FP literal assignment
+                    if let Some(val) = self.get_fp_literal_value(*rhs, manager) {
+                        fp_literals.insert(*lhs, val);
+                    } else if let Some(val) = self.get_fp_literal_value(*lhs, manager) {
+                        fp_literals.insert(*rhs, val);
+                    }
+
+                    // Check for FP operation results
+                    if let Some(rhs_data) = manager.get(*rhs) {
+                        match &rhs_data.kind {
+                            TermKind::FpAdd(rm, x, y) => {
+                                fp_additions.push((*lhs, *x, *y, *lhs, *rm));
+                                rounding_add_results.insert((*x, *y, *rm), *lhs);
+                            }
+                            TermKind::FpDiv(rm, x, y) => {
+                                fp_divisions.push((*lhs, *x, *y, *lhs, *rm));
+                            }
+                            TermKind::FpMul(rm, x, y) => {
+                                fp_multiplications.push((*lhs, *x, *y, *lhs, *rm));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(lhs_data) = manager.get(*lhs) {
+                        match &lhs_data.kind {
+                            TermKind::FpAdd(rm, x, y) => {
+                                fp_additions.push((*rhs, *x, *y, *rhs, *rm));
+                                rounding_add_results.insert((*x, *y, *rm), *rhs);
+                            }
+                            TermKind::FpDiv(rm, x, y) => {
+                                fp_divisions.push((*rhs, *x, *y, *rhs, *rm));
+                            }
+                            TermKind::FpMul(rm, x, y) => {
+                                fp_multiplications.push((*rhs, *x, *y, *rhs, *rm));
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // No descent into `lhs` / `rhs`: an equality's operands are a
+                    // polarity boundary.  This AST has no `Iff`, so `(= a b)` on
+                    // two Bool-sorted terms is a `TermKind::Eq` and is satisfied
+                    // with both sides false.
                 }
-
-                // Check for FP operation results
-                if let Some(rhs_data) = manager.get(*rhs) {
-                    match &rhs_data.kind {
-                        TermKind::FpAdd(rm, x, y) => {
-                            fp_additions.push((*lhs, *x, *y, *lhs, *rm));
-                            rounding_add_results.insert((*x, *y, *rm), *lhs);
-                        }
-                        TermKind::FpDiv(rm, x, y) => {
-                            fp_divisions.push((*lhs, *x, *y, *lhs, *rm));
-                        }
-                        TermKind::FpMul(rm, x, y) => {
-                            fp_multiplications.push((*lhs, *x, *y, *lhs, *rm));
-                        }
-                        _ => {}
+                TermKind::FpLt(a, b) => {
+                    fp_comparisons.push((*a, *b, true));
+                }
+                TermKind::FpGt(a, b) => {
+                    fp_comparisons.push((*b, *a, true)); // a > b means b < a
+                }
+                TermKind::And(args) => {
+                    // Reverse push: popping then reproduces the original
+                    // left-to-right, subtree-complete-before-next-sibling
+                    // conjunct order exactly.
+                    for &arg in args.iter().rev() {
+                        stack.push(arg);
                     }
                 }
-                if let Some(lhs_data) = manager.get(*lhs) {
-                    match &lhs_data.kind {
-                        TermKind::FpAdd(rm, x, y) => {
-                            fp_additions.push((*rhs, *x, *y, *rhs, *rm));
-                            rounding_add_results.insert((*x, *y, *rm), *rhs);
-                        }
-                        TermKind::FpDiv(rm, x, y) => {
-                            fp_divisions.push((*rhs, *x, *y, *rhs, *rm));
-                        }
-                        TermKind::FpMul(rm, x, y) => {
-                            fp_multiplications.push((*rhs, *x, *y, *rhs, *rm));
-                        }
-                        _ => {}
-                    }
-                }
-
-                self.collect_fp_constraints(
-                    *lhs,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                );
-                self.collect_fp_constraints(
-                    *rhs,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                );
+                // `Or` and `Not` are deliberately NOT traversed: their sub-terms are
+                // conditional, and this collector's facts feed a definite-conflict
+                // check (see the doc comment above).
+                _ => {}
             }
-            TermKind::FpLt(a, b) => {
-                fp_comparisons.push((*a, *b, true));
-            }
-            TermKind::FpGt(a, b) => {
-                fp_comparisons.push((*b, *a, true)); // a > b means b < a
-            }
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.collect_fp_constraints(
-                        arg,
-                        manager,
-                        fp_additions,
-                        fp_divisions,
-                        fp_multiplications,
-                        fp_comparisons,
-                        fp_equalities,
-                        fp_literals,
-                        rounding_add_results,
-                    );
-                }
-            }
-            TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_fp_constraints(
-                        arg,
-                        manager,
-                        fp_additions,
-                        fp_divisions,
-                        fp_multiplications,
-                        fp_comparisons,
-                        fp_equalities,
-                        fp_literals,
-                        rounding_add_results,
-                    );
-                }
-            }
-            TermKind::Not(inner) => {
-                self.collect_fp_constraints(
-                    *inner,
-                    manager,
-                    fp_additions,
-                    fp_divisions,
-                    fp_multiplications,
-                    fp_comparisons,
-                    fp_equalities,
-                    fp_literals,
-                    rounding_add_results,
-                );
-            }
-            _ => {}
         }
     }
 

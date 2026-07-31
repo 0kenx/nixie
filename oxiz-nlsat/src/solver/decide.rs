@@ -902,30 +902,45 @@ impl NlsatSolver {
             .map(|r| r.numer() * (&lcm_denom / r.denom()))
             .collect();
 
-        let a0 = int_coeffs[0].clone(); // constant term
-        let an = int_coeffs[n - 1].clone(); // leading coefficient
+        let mut roots = Vec::new();
 
-        if a0.is_zero() {
-            // x=0 is a root; factor it out and recurse
-            let mut result = vec![BigRational::zero()];
-            // Deflate: divide by x (shift coefficients down)
-            let deflated_coeffs: Vec<BigInt> = int_coeffs[1..].to_vec();
-            if deflated_coeffs.len() >= 2 {
-                let deflated = poly_from_int_coeffs(&deflated_coeffs, var);
-                let mut more = self.find_rational_roots(&deflated, var);
-                result.append(&mut more);
-            }
-            result.sort();
-            result.dedup();
-            return result;
+        // Peel off the factors of x. This used to rebuild the deflated
+        // polynomial and recurse; the number of steps is the multiplicity
+        // of the root at zero, i.e. the input-controlled degree, and the
+        // `Vec` return type has no channel for a depth error.
+        let mut coeffs: &[BigInt] = &int_coeffs;
+        while coeffs.len() >= 2 && coeffs[0].is_zero() {
+            roots.push(BigRational::zero());
+            coeffs = &coeffs[1..];
         }
 
-        // Find divisors of a0 (constant term)
-        let divisors_a0 = integer_divisors(a0.abs());
-        // Find divisors of an (leading coeff)
-        let divisors_an = integer_divisors(an.abs());
+        let n = coeffs.len();
+        if n < 2 {
+            roots.sort();
+            roots.dedup();
+            return roots;
+        }
+        // The deflated polynomial is what the candidate test must run
+        // against, exactly as the recursive form did.
+        let poly = poly_from_int_coeffs(coeffs, var);
+        let poly = &poly;
 
-        let mut roots = Vec::new();
+        let a0 = coeffs[0].clone(); // constant term
+        let an = coeffs[n - 1].clone(); // leading coefficient
+
+        // Divisors of the constant term and of the leading coefficient. If
+        // either set could not be enumerated within the trial-division
+        // budget, return only the roots established by deflation rather
+        // than testing an incomplete candidate set — this list is already
+        // "the rational roots we could establish" (a degree>=3 polynomial's
+        // irrational roots are never in it either).
+        let (Some(divisors_a0), Some(divisors_an)) =
+            (integer_divisors(a0.abs()), integer_divisors(an.abs()))
+        else {
+            roots.sort();
+            roots.dedup();
+            return roots;
+        };
 
         // Test all p/q where p | a0, q | an (both positive and negative)
         for p in &divisors_a0 {
@@ -1300,18 +1315,37 @@ fn lcm_bigint(a: &num_bigint::BigInt, b: &num_bigint::BigInt) -> num_bigint::Big
     (a * b).abs() / g
 }
 
+/// Trial-division budget for divisor enumeration.
+///
+/// `n` is a polynomial coefficient straight from `.smt2` input, so its
+/// magnitude is attacker-chosen and `sqrt(n)` bignum modulos is unbounded
+/// work — a 40-digit prime coefficient would hang the solver forever. This
+/// budget enumerates every `n` below 10¹⁰ exactly and reports failure
+/// instead of hanging above that.
+const TRIAL_DIVISION_BUDGET: u64 = 100_000;
+
 /// Return all positive divisors of a positive BigInt.
-fn integer_divisors(n: num_bigint::BigInt) -> Vec<num_bigint::BigInt> {
+///
+/// `None` means the trial-division budget was exhausted, so the divisor set
+/// is not complete. Callers must not use a partial list: the rational-root
+/// theorem only rules candidates in or out when both divisor sets are
+/// complete.
+fn integer_divisors(n: num_bigint::BigInt) -> Option<Vec<num_bigint::BigInt>> {
     use num_traits::{One, Zero};
     if n.is_zero() {
-        return vec![num_bigint::BigInt::one()];
+        return Some(vec![num_bigint::BigInt::one()]);
     }
     let mut divisors = Vec::new();
     let mut i = num_bigint::BigInt::one();
+    let mut steps = 0u64;
     loop {
         if &i * &i > n {
             break;
         }
+        if steps >= TRIAL_DIVISION_BUDGET {
+            return None;
+        }
+        steps += 1;
         let r = &n % &i;
         let q = &n / &i;
         if r.is_zero() {
@@ -1322,7 +1356,7 @@ fn integer_divisors(n: num_bigint::BigInt) -> Vec<num_bigint::BigInt> {
         }
         i += num_bigint::BigInt::one();
     }
-    divisors
+    Some(divisors)
 }
 
 /// Build a univariate Polynomial from a Vec of BigInt coefficients (index = power of var).

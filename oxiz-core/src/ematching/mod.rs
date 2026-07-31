@@ -159,6 +159,20 @@ impl EmatchingEngine {
         self.engine.match_round(manager)
     }
 
+    /// Number of quantifiers currently registered (see
+    /// [`EmatchEngine::num_quantifiers`]).
+    #[must_use]
+    pub fn num_quantifiers(&self) -> usize {
+        self.engine.num_quantifiers()
+    }
+
+    /// Drop every quantifier registered after the `len`-th one (see
+    /// [`EmatchEngine::truncate_quantifiers`]).  Used by an incremental solver
+    /// to undo the registrations made inside a popped assertion scope.
+    pub fn truncate_quantifiers(&mut self, len: usize) {
+        self.engine.truncate_quantifiers(len);
+    }
+
     /// Get statistics
     pub fn stats(&self) -> &EmatchStats {
         self.engine.stats()

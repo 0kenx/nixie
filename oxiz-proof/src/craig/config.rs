@@ -30,7 +30,16 @@ pub struct InterpolationConfig {
     pub use_theory_interpolants: bool,
     /// Simplify interpolants after computation
     pub simplify_interpolants: bool,
-    /// Maximum depth for recursive simplification
+    /// Maximum recursion depth for simplifying the computed interpolant.
+    ///
+    /// Threaded into [`super::term::InterpolantTerm::simplify_bounded`] by
+    /// [`super::interpolator::CraigInterpolator::extract`] whenever
+    /// `simplify_interpolants` is set: an interpolant is built directly from
+    /// the resolution proof's own structure, whose depth is driven by the
+    /// size of the UNSAT proof being interpolated, so bounding the
+    /// simplification recursion keeps a pathologically large proof from
+    /// overflowing the native stack instead of returning a (possibly
+    /// less-simplified, but sound) result.
     pub max_simplify_depth: usize,
     /// Enable caching of intermediate interpolants
     pub enable_caching: bool,
@@ -44,7 +53,7 @@ impl Default for InterpolationConfig {
             algorithm: InterpolationAlgorithm::Pudlak,
             use_theory_interpolants: true,
             simplify_interpolants: true,
-            max_simplify_depth: 100,
+            max_simplify_depth: super::term::DEFAULT_SIMPLIFY_DEPTH,
             enable_caching: true,
             deduplicate_terms: true,
         }

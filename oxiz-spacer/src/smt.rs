@@ -98,14 +98,15 @@ pub(crate) fn var_subst(
 
 /// Assert `formula` onto `solver`, splitting a top-level `And` into separate
 /// assertions.  See [`SmtSolver::assert`] for why the split matters.
+///
+/// `And`-nesting is attacker-controlled (it comes straight from parsed
+/// CHC/SMT input), and this function returns `()`, so there is nowhere to
+/// report a depth failure: the flattening therefore uses an explicit heap
+/// stack ([`crate::walk::flatten_conjuncts`]) rather than recursion.
 fn assert_flat(solver: &mut Solver, terms: &mut TermManager, formula: TermId) {
-    if let Some(TermKind::And(args)) = terms.get(formula).map(|d| d.kind.clone()) {
-        for arg in args {
-            assert_flat(solver, terms, arg);
-        }
-        return;
+    for conjunct in crate::walk::flatten_conjuncts(terms, formula) {
+        solver.assert(conjunct, terms);
     }
-    solver.assert(formula, terms);
 }
 
 /// Errors from SMT queries
@@ -224,13 +225,16 @@ impl<'a> SmtSolver<'a> {
         // (`¬(x = k)`) can be answered SAT when the individually-asserted
         // conjuncts are correctly UNSAT.  Spacer's blocking lemmas are exactly
         // such disequalities, so this normalization is essential for soundness.
-        if let Some(TermKind::And(args)) = self.terms.get(formula).map(|d| d.kind.clone()) {
-            for arg in args {
-                self.assert(arg);
-            }
-            return;
+        //
+        // The flattening walks an explicit heap stack
+        // ([`crate::walk::flatten_conjuncts`]) instead of recursing: the
+        // `And`-nesting depth comes from parsed input, and `assert` returns
+        // `()`, so a depth limit would have no honest way to report that it
+        // dropped assertions.
+        let conjuncts = crate::walk::flatten_conjuncts(self.terms, formula);
+        for conjunct in conjuncts {
+            self.solver.assert(conjunct, self.terms);
         }
-        self.solver.assert(formula, self.terms);
         trace!("SMT assert formula");
     }
 
@@ -676,6 +680,20 @@ impl MbpResult {
 mod tests {
     use super::*;
 
+    /// Stack size and nesting depth for the deep-recursion test below.
+    ///
+    /// The two are scaled together on purpose: what the test actually pins is
+    /// the *ratio* -- about 21 bytes of stack per nesting level
+    /// (128 KiB / 6_250). A natively recursive `assert` needs far more than
+    /// that per frame and still overflows, so the regression keeps every bit
+    /// of its detection power. The pair used to be 1 MiB / 50_000 -- the same
+    /// 21 bytes -- but `mk_and` flattens its arguments, so a chain built with
+    /// `acc = mk_and([acc, lit])` is quadratic, and 50_000 levels cost tens of
+    /// GB of live terms. Never raise `DEEP_DEPTH` without raising
+    /// `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 6_250;
+
     #[test]
     fn test_smt_solver_creation() {
         let mut terms = TermManager::new();
@@ -819,5 +837,42 @@ mod tests {
              variable (pinned to 7 by the asserted state), not an \
              unconstrained fabricated variable"
         );
+    }
+
+    /// `SmtSolver::assert` splits top-level `And`s, and the `And` nesting
+    /// depth comes from parsed input: a [`DEEP_DEPTH`]-deep conjunction must
+    /// be asserted without overflowing the stack, and must still be solved
+    /// correctly (here: contradictory, hence UNSAT).
+    #[test]
+    fn assert_flattens_deeply_nested_conjunction() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut terms = TermManager::new();
+                let system = ChcSystem::new();
+                let int_sort = terms.sorts.int_sort;
+                let x = terms.mk_var("x", int_sort);
+                let zero = terms.mk_int(0);
+                let one = terms.mk_int(1);
+
+                // (x = 0) /\ (x = 1) /\ b0 /\ b1 /\ ... -- UNSAT.
+                let mut formula = terms.mk_eq(x, zero);
+                let contradiction = terms.mk_eq(x, one);
+                formula = terms.mk_and([formula, contradiction]);
+                for i in 0..DEEP_DEPTH {
+                    let b = terms.mk_var(&format!("b{i}"), terms.sorts.bool_sort);
+                    formula = terms.mk_and([formula, b]);
+                }
+
+                let mut solver = SmtSolver::new(&mut terms, &system);
+                solver.assert(formula);
+                assert_eq!(
+                    solver.check_sat().ok(),
+                    Some(false),
+                    "a contradictory deep conjunction must be UNSAT"
+                );
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep assert must return");
     }
 }

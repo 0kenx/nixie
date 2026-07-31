@@ -473,79 +473,226 @@ impl ModelCompleter {
     /// `Neg(IntConst(n))` → `IntConst(-n)`, `Add(...)`, `Sub(...)` etc.
     ///
     /// Returns `None` if the term cannot be reduced to a constant.
+    ///
+    /// Implemented as an explicit-stack machine with a per-call memo keyed
+    /// on `TermId`. The retired native recursion had no visited set, so a
+    /// hash-consed DAG whose `Add` operands share subterms was re-evaluated
+    /// once per path (exponential on a doubling DAG), and a deep chain
+    /// overflowed the call stack. Memoisation is sound because the
+    /// evaluation is a pure function of the term, and idempotent on the
+    /// manager (`mk_int`/`mk_real` hash-cons). `Neg`/`Sub` still
+    /// short-circuit on a non-constant operand exactly as before -- the
+    /// right-hand side of a `Sub` whose left side failed is never entered --
+    /// while `Add` still folds every operand regardless of earlier failures.
     fn eval_to_const(term: TermId, manager: &mut TermManager) -> Option<TermId> {
-        let t = manager.get(term)?.clone();
-        match &t.kind {
-            TermKind::IntConst(_) | TermKind::RealConst(_) => Some(term),
-            TermKind::Neg(arg) => {
-                let inner = Self::eval_to_const(*arg, manager)?;
-                let inner_t = manager.get(inner)?.clone();
-                match &inner_t.kind {
-                    TermKind::IntConst(n) => {
-                        let neg_n = -n.clone();
-                        Some(manager.mk_int(neg_n))
+        // Accumulator for an Add fold, mirroring the retired recursion's
+        // locals exactly.
+        struct AddAcc {
+            sum_r: Rational64,
+            sum_i: BigInt,
+            all_real: bool,
+            all_int: bool,
+        }
+
+        // Resume states. Each variant owns everything needed to continue,
+        // so no frame is ever popped in an impossible state.
+        enum Frame {
+            // Evaluate this term (memo-checked), leaving its result in `last`.
+            Enter(TermId),
+            // Neg(arg): `last` holds the operand's result.
+            NegDone {
+                term: TermId,
+            },
+            // Add: fold `last` (the result of args[next - 1]) into `acc`,
+            // then evaluate args[next..].
+            AddFold {
+                term: TermId,
+                args: SmallVec<[TermId; 4]>,
+                next: usize,
+                acc: AddAcc,
+            },
+            // Sub: `last` holds the lhs result; rhs not yet evaluated.
+            SubLhsDone {
+                term: TermId,
+                rhs: TermId,
+            },
+            // Sub: `last` holds the rhs result.
+            SubRhsDone {
+                term: TermId,
+                lhs_const: TermId,
+            },
+        }
+
+        let mut memo: FxHashMap<TermId, Option<TermId>> = FxHashMap::default();
+        // Result of the most recently completed evaluation. Every resume
+        // frame is pushed directly beneath the `Enter` of the child whose
+        // result it consumes, so `last` always holds that child's result
+        // when the resume frame pops.
+        let mut last: Option<TermId> = None;
+        let mut stack: Vec<Frame> = vec![Frame::Enter(term)];
+
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Enter(t_id) => {
+                    if let Some(&cached) = memo.get(&t_id) {
+                        last = cached;
+                        continue;
                     }
-                    TermKind::RealConst(r) => {
-                        let neg_r = -*r;
-                        Some(manager.mk_real(neg_r))
-                    }
-                    _ => None,
-                }
-            }
-            TermKind::Add(args) => {
-                let args_cloned: SmallVec<[TermId; 4]> = args.clone();
-                // Try to evaluate all args as real constants
-                let mut sum_r = Rational64::from_integer(0);
-                let mut all_real = true;
-                let mut all_int = true;
-                let mut sum_i = num_bigint::BigInt::from(0i64);
-                for &arg in &args_cloned {
-                    if let Some(c) = Self::eval_to_const(arg, manager) {
-                        let ct = manager.get(c)?.clone();
-                        match &ct.kind {
-                            TermKind::RealConst(r) => {
-                                sum_r += r;
-                                all_int = false;
-                            }
-                            TermKind::IntConst(n) => {
-                                sum_r += Rational64::from_integer(n.to_i64().unwrap_or(0));
-                                sum_i += n.clone();
-                                all_real = false;
-                            }
-                            _ => {
-                                all_real = false;
-                                all_int = false;
+                    let Some(t) = manager.get(t_id) else {
+                        // A missing term is not a constant.
+                        memo.insert(t_id, None);
+                        last = None;
+                        continue;
+                    };
+                    match &t.kind {
+                        TermKind::IntConst(_) | TermKind::RealConst(_) => {
+                            memo.insert(t_id, Some(t_id));
+                            last = Some(t_id);
+                        }
+                        TermKind::Neg(arg) => {
+                            let arg = *arg;
+                            stack.push(Frame::NegDone { term: t_id });
+                            stack.push(Frame::Enter(arg));
+                        }
+                        TermKind::Add(args) => {
+                            let args: SmallVec<[TermId; 4]> = args.clone();
+                            let acc = AddAcc {
+                                sum_r: Rational64::from_integer(0),
+                                sum_i: BigInt::from(0i64),
+                                all_real: true,
+                                all_int: true,
+                            };
+                            if let Some(&first) = args.first() {
+                                stack.push(Frame::AddFold {
+                                    term: t_id,
+                                    args,
+                                    next: 1,
+                                    acc,
+                                });
+                                stack.push(Frame::Enter(first));
+                            } else {
+                                // `all_* && !args.is_empty()` can never hold.
+                                memo.insert(t_id, None);
+                                last = None;
                             }
                         }
+                        TermKind::Sub(lhs, rhs) => {
+                            let (lhs, rhs) = (*lhs, *rhs);
+                            stack.push(Frame::SubLhsDone { term: t_id, rhs });
+                            stack.push(Frame::Enter(lhs));
+                        }
+                        _ => {
+                            memo.insert(t_id, None);
+                            last = None;
+                        }
+                    }
+                }
+                Frame::NegDone { term: t_id } => {
+                    let value = match last {
+                        Some(inner) => match manager.get(inner).map(|it| it.kind.clone()) {
+                            Some(TermKind::IntConst(n)) => {
+                                let neg_n = -n;
+                                Some(manager.mk_int(neg_n))
+                            }
+                            Some(TermKind::RealConst(r)) => Some(manager.mk_real(-r)),
+                            _ => None,
+                        },
+                        None => None,
+                    };
+                    memo.insert(t_id, value);
+                    last = value;
+                }
+                Frame::AddFold {
+                    term: t_id,
+                    args,
+                    next,
+                    mut acc,
+                } => {
+                    // Fold the result of args[next - 1].
+                    match last {
+                        Some(c) => match manager.get(c).map(|ct| ct.kind.clone()) {
+                            Some(TermKind::RealConst(r)) => {
+                                acc.sum_r += r;
+                                acc.all_int = false;
+                            }
+                            Some(TermKind::IntConst(n)) => {
+                                acc.sum_r += Rational64::from_integer(n.to_i64().unwrap_or(0));
+                                acc.sum_i += n;
+                                acc.all_real = false;
+                            }
+                            _ => {
+                                acc.all_real = false;
+                                acc.all_int = false;
+                            }
+                        },
+                        None => {
+                            acc.all_real = false;
+                            acc.all_int = false;
+                        }
+                    }
+                    if let Some(&next_arg) = args.get(next) {
+                        stack.push(Frame::AddFold {
+                            term: t_id,
+                            args,
+                            next: next + 1,
+                            acc,
+                        });
+                        stack.push(Frame::Enter(next_arg));
                     } else {
-                        all_real = false;
-                        all_int = false;
+                        // All operands folded (`args` is non-empty here).
+                        let value = if acc.all_int {
+                            Some(manager.mk_int(acc.sum_i))
+                        } else if acc.all_real {
+                            Some(manager.mk_real(acc.sum_r))
+                        } else {
+                            None
+                        };
+                        memo.insert(t_id, value);
+                        last = value;
                     }
                 }
-                if all_int && !args_cloned.is_empty() {
-                    Some(manager.mk_int(sum_i))
-                } else if all_real && !args_cloned.is_empty() {
-                    Some(manager.mk_real(sum_r))
-                } else {
-                    None
-                }
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let (lhs_v, rhs_v) = (*lhs, *rhs);
-                let lc = Self::eval_to_const(lhs_v, manager)?;
-                let rc = Self::eval_to_const(rhs_v, manager)?;
-                let lct = manager.get(lc)?.clone();
-                let rct = manager.get(rc)?.clone();
-                match (&lct.kind, &rct.kind) {
-                    (TermKind::IntConst(a), TermKind::IntConst(b)) => Some(manager.mk_int(a - b)),
-                    (TermKind::RealConst(a), TermKind::RealConst(b)) => {
-                        Some(manager.mk_real(a - b))
+                Frame::SubLhsDone { term: t_id, rhs } => match last {
+                    Some(lhs_const) => {
+                        stack.push(Frame::SubRhsDone {
+                            term: t_id,
+                            lhs_const,
+                        });
+                        stack.push(Frame::Enter(rhs));
                     }
-                    _ => None,
+                    None => {
+                        // Short-circuit: the rhs is never evaluated when the
+                        // lhs is not a constant (as in the retired recursion).
+                        memo.insert(t_id, None);
+                        last = None;
+                    }
+                },
+                Frame::SubRhsDone {
+                    term: t_id,
+                    lhs_const,
+                } => {
+                    let value = match last {
+                        Some(rhs_const) => {
+                            let lhs_kind = manager.get(lhs_const).map(|t| t.kind.clone());
+                            let rhs_kind = manager.get(rhs_const).map(|t| t.kind.clone());
+                            match (lhs_kind, rhs_kind) {
+                                (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => {
+                                    Some(manager.mk_int(a - b))
+                                }
+                                (Some(TermKind::RealConst(a)), Some(TermKind::RealConst(b))) => {
+                                    Some(manager.mk_real(a - b))
+                                }
+                                _ => None,
+                            }
+                        }
+                        None => None,
+                    };
+                    memo.insert(t_id, value);
+                    last = value;
                 }
             }
-            _ => None,
         }
+
+        last
     }
 
     /// Evaluate an argument to its canonical term: first check model.assignments,
@@ -819,78 +966,70 @@ impl MacroSolver {
         Ok(None)
     }
 
-    /// Check if term contains a function application
+    /// Check if term contains an application of `func`.
+    ///
+    /// Explicit-stack walk with a visited set (existence check, so traversal
+    /// order is irrelevant); no input depth can overflow the call stack. The
+    /// edge set is every syntactic subterm position, via
+    /// [`Self::subterm_positions`] — an occurs-check that misses a position
+    /// green-lights an ill-founded macro, so the enumeration must be total.
     fn contains_function(&self, term: TermId, func: Spur, manager: &TermManager) -> bool {
-        let mut visited = FxHashSet::default();
-        self.contains_function_rec(term, func, manager, &mut visited)
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work = vec![term];
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            if let TermKind::Apply { func: f, .. } = &t.kind
+                && *f == func
+            {
+                return true;
+            }
+            work.extend(Self::subterm_positions(t_id, manager));
+        }
+        false
     }
 
-    fn contains_function_rec(
-        &self,
-        term: TermId,
-        func: Spur,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) -> bool {
-        if visited.contains(&term) {
-            return false;
-        }
-        visited.insert(term);
-
+    /// Every immediate subterm position of `term`, for occurs-check purposes.
+    ///
+    /// Delegates to [`oxiz_core::ast::traversal::get_children`], which matches
+    /// **exhaustively** over `TermKind` with no catch-all arm: a newly added
+    /// term kind is a compile error there rather than a silently childless
+    /// node here.  This function used to carry its own 17-kind edge list with a
+    /// `_ => vec![]` fallback, so every bit-vector, floating-point, string,
+    /// array, `Distinct`, `Xor`, quantifier, `Let`, datatype and `Match` term
+    /// looked like a leaf — and [`Self::contains_function`], the occurs-check
+    /// that decides whether `forall x. f(x) = rhs` is a safe macro, could miss
+    /// an `f` inside `rhs` and install an ill-founded recursive definition as a
+    /// function interpretation.
+    ///
+    /// One position is added on top of the canonical enumeration: quantifier
+    /// **patterns** (triggers).  The canonical walk deliberately skips them
+    /// (they are instantiation metadata, not semantic children), but an
+    /// occurs-check wants *all* syntactic positions — a trigger mentioning `f`
+    /// still ties the candidate macro body back to `f`.
+    fn subterm_positions(term: TermId, manager: &TermManager) -> SmallVec<[TermId; 4]> {
         let Some(t) = manager.get(term) else {
-            return false;
+            return SmallVec::new();
         };
-
+        let mut children = oxiz_core::ast::traversal::get_children(&t.kind);
+        // Supplement only; the delegation above already covers every semantic
+        // child of every kind, so this arm adds positions rather than
+        // deciding them.
         match &t.kind {
-            TermKind::Apply { func: f, args } => {
-                if *f == func {
-                    return true;
+            TermKind::Forall { patterns, .. } | TermKind::Exists { patterns, .. } => {
+                for pattern in patterns {
+                    children.extend(pattern.iter().copied());
                 }
-                for &arg in args.iter() {
-                    if self.contains_function_rec(arg, func, manager, visited) {
-                        return true;
-                    }
-                }
-                false
             }
-            _ => {
-                // Recursively check children
-                let children = self.get_children(term, manager);
-                for child in children {
-                    if self.contains_function_rec(child, func, manager, visited) {
-                        return true;
-                    }
-                }
-                false
-            }
+            _ => {}
         }
-    }
-
-    /// Get children of a term
-    fn get_children(&self, term: TermId, manager: &TermManager) -> Vec<TermId> {
-        let Some(t) = manager.get(term) else {
-            return vec![];
-        };
-
-        match &t.kind {
-            TermKind::Not(arg) | TermKind::Neg(arg) => vec![*arg],
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => args.to_vec(),
-            TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs)
-            | TermKind::Mod(lhs, rhs)
-            | TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Implies(lhs, rhs) => vec![*lhs, *rhs],
-            TermKind::Ite(cond, then_br, else_br) => vec![*cond, *then_br, *else_br],
-            TermKind::Apply { args, .. } => args.to_vec(),
-            _ => vec![],
-        }
+        children
     }
 
     /// Convert a macro definition to a function interpretation.
@@ -1017,67 +1156,66 @@ impl ModelFixer {
         Ok(())
     }
 
-    /// Collect partial function symbols from quantifiers
+    /// Collect partial function symbols from quantifiers.
+    ///
+    /// Explicit-stack walk with a visited set shared across all quantifier
+    /// bodies. The retired native recursion had **no** visited set at all, so
+    /// a hash-consed DAG with shared subterms was re-walked once per path
+    /// (exponential on a doubling DAG) and a deep body overflowed the call
+    /// stack; the output is a set, so deduplicating visits changes nothing
+    /// observable. The descent set (`Apply` args, `Not`/`Neg`, `And`/`Or`,
+    /// `Eq`/`Lt`/`Le` sides) is unchanged.
     fn collect_partial_functions(
         &self,
         quantifiers: &[QuantifiedFormula],
         manager: &TermManager,
     ) -> FxHashSet<Spur> {
         let mut functions = FxHashSet::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work: Vec<TermId> = quantifiers.iter().map(|quant| quant.body).collect();
 
-        for quant in quantifiers {
-            self.collect_partial_functions_rec(quant.body, &mut functions, manager);
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            if let TermKind::Apply { func, args } = &t.kind {
+                // Check if any arg contains variables (not ground)
+                let has_vars = args.iter().any(|&arg| {
+                    manager
+                        .get(arg)
+                        .is_some_and(|arg_t| matches!(arg_t.kind, TermKind::Var(_)))
+                });
+
+                if has_vars {
+                    functions.insert(*func);
+                }
+
+                for &arg in args.iter() {
+                    work.push(arg);
+                }
+            }
+
+            match &t.kind {
+                TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter() {
+                        work.push(arg);
+                    }
+                }
+                TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) | TermKind::Le(lhs, rhs) => {
+                    work.push(*lhs);
+                    work.push(*rhs);
+                }
+                _ => {}
+            }
         }
 
         functions
-    }
-
-    fn collect_partial_functions_rec(
-        &self,
-        term: TermId,
-        functions: &mut FxHashSet<Spur>,
-        manager: &TermManager,
-    ) {
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if let TermKind::Apply { func, args } = &t.kind {
-            // Check if any arg contains variables (not ground)
-            let has_vars = args.iter().any(|&arg| {
-                if let Some(arg_t) = manager.get(arg) {
-                    matches!(arg_t.kind, TermKind::Var(_))
-                } else {
-                    false
-                }
-            });
-
-            if has_vars {
-                functions.insert(*func);
-            }
-
-            // Recurse into args
-            for &arg in args.iter() {
-                self.collect_partial_functions_rec(arg, functions, manager);
-            }
-        }
-
-        // Recurse into other children
-        match &t.kind {
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_partial_functions_rec(*arg, functions, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args.iter() {
-                    self.collect_partial_functions_rec(arg, functions, manager);
-                }
-            }
-            TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) | TermKind::Le(lhs, rhs) => {
-                self.collect_partial_functions_rec(*lhs, functions, manager);
-                self.collect_partial_functions_rec(*rhs, functions, manager);
-            }
-            _ => {}
-        }
     }
 
     /// Add projection functions for a function interpretation
@@ -1391,6 +1529,181 @@ mod tests {
     use super::*;
     use oxiz_core::interner::Key;
 
+    /// Run `f` on a dedicated 128 KiB stack: overflow aborts the process, so
+    /// returning at all is part of the assertion.
+    ///
+    /// This stack and every depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    /// Pin `eval_to_const`'s outputs so the explicit-stack conversion is
+    /// proven behavior-preserving, including the deliberately preserved
+    /// quirks (mixed Int/Real `Add` folds to `None`).
+    #[test]
+    fn eval_to_const_pins_semantics() {
+        let mut m = TermManager::new();
+        let five = m.mk_int(5);
+        assert_eq!(ModelCompleter::eval_to_const(five, &mut m), Some(five));
+
+        let neg_five = m.mk_neg(five);
+        let minus_five = m.mk_int(-5);
+        assert_eq!(
+            ModelCompleter::eval_to_const(neg_five, &mut m),
+            Some(minus_five)
+        );
+
+        let neg_neg_five = m.mk_neg(neg_five);
+        assert_eq!(
+            ModelCompleter::eval_to_const(neg_neg_five, &mut m),
+            Some(five)
+        );
+
+        let one = m.mk_int(1);
+        let two = m.mk_int(2);
+        let three = m.mk_int(3);
+        let sum = m.mk_add([one, two, three]);
+        let six = m.mk_int(6);
+        assert_eq!(ModelCompleter::eval_to_const(sum, &mut m), Some(six));
+
+        let half = m.mk_real(Rational64::new(1, 2));
+        let three_halves = m.mk_real(Rational64::new(3, 2));
+        let real_sum = m.mk_add([half, three_halves]);
+        let expected = m.mk_real(Rational64::from_integer(2));
+        assert_eq!(
+            ModelCompleter::eval_to_const(real_sum, &mut m),
+            Some(expected)
+        );
+
+        // Mixed Int/Real Add is not folded (both all_int and all_real drop).
+        let mixed = m.mk_add([one, half]);
+        assert_eq!(ModelCompleter::eval_to_const(mixed, &mut m), None);
+
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let with_var = m.mk_add([one, x]);
+        assert_eq!(ModelCompleter::eval_to_const(with_var, &mut m), None);
+
+        let ten = m.mk_int(10);
+        let diff = m.mk_sub(ten, three);
+        let seven = m.mk_int(7);
+        assert_eq!(ModelCompleter::eval_to_const(diff, &mut m), Some(seven));
+
+        // Mixed-sort Sub is not folded.
+        let mixed_sub = m.mk_sub(ten, half);
+        assert_eq!(ModelCompleter::eval_to_const(mixed_sub, &mut m), None);
+
+        assert_eq!(ModelCompleter::eval_to_const(x, &mut m), None);
+    }
+
+    /// A 12 500-deep Sub chain must evaluate on a 128 KiB stack (the retired
+    /// recursion overflowed), both when it folds to a constant and when it
+    /// short-circuits on a variable leaf.
+    #[test]
+    fn eval_to_const_survives_deep_chains_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let one = m.mk_int(1);
+
+            let mut chain = m.mk_int(0);
+            for _ in 0..DEPTH {
+                chain = m.mk_sub(chain, one);
+            }
+            let expected = m.mk_int(-(DEPTH as i64));
+            assert_eq!(ModelCompleter::eval_to_const(chain, &mut m), Some(expected));
+
+            let x = m.mk_var("x", m.sorts.int_sort);
+            let mut var_chain = x;
+            for _ in 0..DEPTH {
+                var_chain = m.mk_sub(var_chain, one);
+            }
+            assert_eq!(ModelCompleter::eval_to_const(var_chain, &mut m), None);
+        });
+    }
+
+    /// A doubling `Add` DAG is exponential without the memo (the retired
+    /// recursion re-evaluated both shared operands at every level); with the
+    /// memo it must fold essentially instantly, to the exact value.
+    #[test]
+    fn eval_to_const_memoizes_shared_dags() {
+        const LEVELS: usize = 55;
+        let mut m = TermManager::new();
+        let mut term = m.mk_int(1);
+        for _ in 0..LEVELS {
+            term = m.mk_add([term, term]);
+        }
+        let expected = m.mk_int(num_bigint::BigInt::from(1u64) << LEVELS);
+        assert_eq!(ModelCompleter::eval_to_const(term, &mut m), Some(expected));
+    }
+
+    /// `MacroSolver::contains_function` must walk a 12 500-deep term on a
+    /// 128 KiB stack; the "absent" answer requires visiting every node.
+    #[test]
+    fn contains_function_survives_deep_terms_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let int_sort = m.sorts.int_sort;
+            let x = m.mk_var("x", int_sort);
+            let mut chain = x;
+            for _ in 0..DEPTH {
+                chain = m.mk_apply("f", [chain], int_sort);
+            }
+            let f = m.intern_str("f");
+            let g = m.intern_str("g");
+            let solver = MacroSolver::new();
+            assert!(solver.contains_function(chain, f, &m));
+            assert!(!solver.contains_function(chain, g, &m));
+        });
+    }
+
+    /// `ModelFixer::collect_partial_functions` must survive a 12 500-deep
+    /// quantifier body on a 128 KiB stack, and its new visited set must make
+    /// a doubling DAG linear (the retired recursion had no visited set at
+    /// all).  `LEVELS` is a doubling count, not a stack depth, so it does not
+    /// scale with the thread stack.
+    #[test]
+    fn collect_partial_functions_survives_depth_and_shared_dags() {
+        const DEPTH: usize = 12_500;
+        const LEVELS: usize = 55;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let int_sort = m.sorts.int_sort;
+            let bool_sort = m.sorts.bool_sort;
+            let x = m.mk_var("x", int_sort);
+            let p_x = m.mk_apply("P", [x], bool_sort);
+
+            let mut chain = p_x;
+            for _ in 0..DEPTH {
+                chain = m.mk_apply("f", [chain], bool_sort);
+            }
+            let qf = QuantifiedFormula::new(TermId::new(1), SmallVec::new(), chain, true);
+            let fixer = ModelFixer::new();
+            let p = m.intern_str("P");
+            let functions = fixer.collect_partial_functions(core::slice::from_ref(&qf), &m);
+            assert_eq!(functions.len(), 1, "only P is applied to a variable");
+            assert!(functions.contains(&p));
+
+            // Doubling DAG: exponential without the visited set.
+            let mut dag = p_x;
+            for _ in 0..LEVELS {
+                dag = m.mk_apply("g", [dag, dag], bool_sort);
+            }
+            let qf = QuantifiedFormula::new(TermId::new(2), SmallVec::new(), dag, true);
+            let functions = fixer.collect_partial_functions(core::slice::from_ref(&qf), &m);
+            assert_eq!(functions.len(), 1);
+            assert!(functions.contains(&p));
+        });
+    }
+
     #[test]
     fn test_completed_model_creation() {
         let model = CompletedModel::new();
@@ -1518,5 +1831,159 @@ mod tests {
     fn test_completion_error_display() {
         let err = CompletionError::CompletionFailed("test".to_string());
         assert!(format!("{}", err).contains("test"));
+    }
+
+    // ---------------------------------------------------------------
+    // Macro occurs-check coverage
+    //
+    // `MacroSolver::get_children` used to enumerate 17 term kinds and fall
+    // through to "no children" for everything else, so `contains_function` --
+    // the occurs-check deciding whether `forall x. f(x) = rhs` is a safe macro
+    // -- walked straight past every string, array, bit-vector, FP, `Distinct`,
+    // `Xor`, quantifier and `Let` node.  An `f` hiding under any of them was
+    // invisible and the ill-founded recursive definition was installed as a
+    // function interpretation.
+    // ---------------------------------------------------------------
+
+    /// Build `forall x:sort. f(x) = rhs(f(x))` and ask the macro solver.
+    fn macro_from_body(m: &mut TermManager, var_sort: SortId, body: TermId) -> QuantifiedFormula {
+        let term = m.mk_forall([("x", var_sort)], body);
+        let x_name = m.intern_str("x");
+        let mut bound_vars: SmallVec<[(Spur, SortId); 4]> = SmallVec::new();
+        bound_vars.push((x_name, var_sort));
+        QuantifiedFormula::new(term, bound_vars, body, true)
+    }
+
+    /// `forall x:String. f(x) = (str.++ (f x) "a")` is ill-founded: `f` occurs
+    /// in the right-hand side under a `StrConcat`.  It must NOT be accepted.
+    #[test]
+    fn recursive_string_definition_is_not_a_macro() {
+        let mut m = TermManager::new();
+        let str_sort = m.sorts.string_sort();
+        let x = m.mk_var("x", str_sort);
+        let f_x = m.mk_apply("f", [x], str_sort);
+        let a = m.mk_string_lit("a");
+        let rhs = m.mk_str_concat(f_x, a);
+        let body = m.mk_eq(f_x, rhs);
+        let quant = macro_from_body(&mut m, str_sort, body);
+
+        let f = m.intern_str("f");
+        let solver = MacroSolver::new();
+        assert!(
+            solver.contains_function(rhs, f, &m),
+            "the occurs-check must see `f` under `str.++`"
+        );
+
+        let mut solver = MacroSolver::new();
+        let found = solver
+            .solve_macros(core::slice::from_ref(&quant), &mut m)
+            .expect("macro solving must not error");
+        assert!(
+            found.is_empty(),
+            "an ill-founded recursive string definition must be rejected as a macro"
+        );
+    }
+
+    /// `forall x:Int. f(x) = (select (store a x (f x)) x)` is ill-founded:
+    /// `f` occurs under `Select`/`Store`, neither of which the old edge list
+    /// enumerated.
+    #[test]
+    fn recursive_array_definition_is_not_a_macro() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let array_sort = m.sorts.array(int_sort, int_sort);
+        let x = m.mk_var("x", int_sort);
+        let f_x = m.mk_apply("f", [x], int_sort);
+        let arr = m.mk_apply("a", [], array_sort);
+        let stored = m.mk_store(arr, x, f_x);
+        let rhs = m.mk_select(stored, x);
+        let body = m.mk_eq(f_x, rhs);
+        let quant = macro_from_body(&mut m, int_sort, body);
+
+        let f = m.intern_str("f");
+        let solver = MacroSolver::new();
+        assert!(
+            solver.contains_function(rhs, f, &m),
+            "the occurs-check must see `f` under `select`/`store`"
+        );
+
+        let mut solver = MacroSolver::new();
+        let found = solver
+            .solve_macros(core::slice::from_ref(&quant), &mut m)
+            .expect("macro solving must not error");
+        assert!(
+            found.is_empty(),
+            "an ill-founded recursive array definition must be rejected as a macro"
+        );
+    }
+
+    /// A genuinely non-recursive definition still IS a macro -- the fix must
+    /// tighten the occurs-check, not disable macro extraction.
+    #[test]
+    fn non_recursive_definition_is_still_a_macro() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let array_sort = m.sorts.array(int_sort, int_sort);
+        let x = m.mk_var("x", int_sort);
+        let f_x = m.mk_apply("f", [x], int_sort);
+        let arr = m.mk_apply("a", [], array_sort);
+        let rhs = m.mk_select(arr, x);
+        let body = m.mk_eq(f_x, rhs);
+        let quant = macro_from_body(&mut m, int_sort, body);
+
+        let f = m.intern_str("f");
+        let mut solver = MacroSolver::new();
+        let found = solver
+            .solve_macros(core::slice::from_ref(&quant), &mut m)
+            .expect("macro solving must not error");
+        assert!(
+            found.contains_key(&f),
+            "`f(x) = (select a x)` is well-founded and must still be a macro"
+        );
+    }
+
+    /// The occurs-check reaches every syntactic position, including the ones
+    /// under quantifiers, `let` bindings, `distinct`, `xor` and bit-vector
+    /// operators -- each of which the retired 17-kind edge list treated as a
+    /// leaf.
+    #[test]
+    fn occurs_check_reaches_every_kind_of_position() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", int_sort);
+        let f_x = m.mk_apply("f", [x], int_sort);
+        let f = m.intern_str("f");
+        let solver = MacroSolver::new();
+
+        // Under a nested quantifier body.
+        let y = m.mk_var("y", int_sort);
+        let inner_eq = m.mk_eq(y, f_x);
+        let nested = m.mk_forall([("y", int_sort)], inner_eq);
+        assert!(solver.contains_function(nested, f, &m));
+
+        // Under `distinct`.
+        let zero = m.mk_int(0);
+        let distinct = m.mk_distinct([f_x, zero]);
+        assert!(solver.contains_function(distinct, f, &m));
+
+        // Under `xor`.
+        let p = m.mk_apply("p", [], bool_sort);
+        let is_zero = m.mk_eq(f_x, zero);
+        let xor = m.mk_xor(p, is_zero);
+        assert!(solver.contains_function(xor, f, &m));
+
+        // Under a quantifier *pattern* (trigger) with an `f`-free body.
+        let trigger_body = m.mk_eq(y, zero);
+        let with_pattern = m.mk_forall_with_patterns([("y", int_sort)], trigger_body, [vec![f_x]]);
+        assert!(
+            solver.contains_function(with_pattern, f, &m),
+            "a trigger mentioning `f` is still an occurrence of `f`"
+        );
+
+        // A term with no `f` anywhere stays negative.
+        let g_x = m.mk_apply("g", [x], int_sort);
+        let clean = m.mk_distinct([g_x, zero]);
+        assert!(!solver.contains_function(clean, f, &m));
     }
 }

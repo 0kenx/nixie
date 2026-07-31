@@ -95,17 +95,17 @@
 | regression.rs | Regression detection | Complete |
 | dashboard.rs | Web dashboard | Complete |
 
-## Current Status (v0.3.0)
+## Current Status (v0.3.1)
 
 | Metric | Value |
 |--------|-------|
-| Version | 0.3.0 |
+| Version | 0.3.1 |
 | Status | Production Ready (part of the OxiZ workspace) |
-| Tests | 255 passing (0 failures) |
-| Rust LoC | 15,187 code lines (49 files, tokei) |
+| Tests | 264 passing (0 failures) |
+| Rust LoC | 13,695 code lines (37 files, tokei) |
 | `todo!`/`unimplemented!` | 0 |
 
-*Last updated: 2026-07-21*
+*Last updated: 2026-07-31*
 
 ## Dependencies
 - `rayon` for parallel execution

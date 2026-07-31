@@ -1514,3 +1514,484 @@ fn test_lazy_eval_eq_reflexive() {
     solver.assert(eq, &mut manager);
     assert_eq!(solver.check(&mut manager), SolverResult::Sat);
 }
+
+// ---------------------------------------------------------------------------
+// Regression: GitHub issue #12 — `distinct` / `not (= t 0)` over Int/Real must
+// reach the arithmetic theory, and the reported model must actually satisfy it.
+//
+// Two independent defects produced the wrong `Sat` with `x = 0`:
+//   1. `Distinct` never generated the arithmetic ordering split, so the
+//      disequality was invisible to `ArithSolver`; and
+//   2. the LRA model read back only the real part of the delta-rational
+//      assignment, reporting a variable pinned at a strict bound *on* the bound.
+// ---------------------------------------------------------------------------
+
+/// Read the Int value a model assigns to `term`, failing the test if the model
+/// has no concrete integer for it.
+fn model_int_value(solver: &Solver, term: TermId, manager: &TermManager) -> i64 {
+    let model = solver
+        .model()
+        .expect("solver must expose a model after Sat");
+    let value_term = model.get(term).expect("model must assign the term");
+    let kind = &manager
+        .get(value_term)
+        .expect("model value must be a valid term")
+        .kind;
+    match kind {
+        TermKind::IntConst(n) => n.to_i64().expect("model value must fit in i64"),
+        other => panic!("expected IntConst in model, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_issue_12_distinct_int_disequality() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let zero = manager.mk_int(0u32);
+
+    // x >= 0 and x != 0, so x must be >= 1.
+    let ge = manager.mk_ge(x, zero);
+    solver.assert(ge, &mut manager);
+    let distinct = manager.mk_distinct([x, zero]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    let value = model_int_value(&solver, x, &manager);
+    assert!(
+        value >= 1,
+        "model x = {value} violates (>= x 0) and (distinct x 0)"
+    );
+}
+
+#[test]
+fn test_issue_12_not_eq_int() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let zero = manager.mk_int(0u32);
+
+    let ge = manager.mk_ge(x, zero);
+    solver.assert(ge, &mut manager);
+    let eq = manager.mk_eq(x, zero);
+    let ne = manager.mk_not(eq);
+    solver.assert(ne, &mut manager);
+
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    let value = model_int_value(&solver, x, &manager);
+    assert!(
+        value >= 1,
+        "model x = {value} violates (>= x 0) and (not (= x 0))"
+    );
+}
+
+#[test]
+fn test_issue_12_distinct_sum() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let y = manager.mk_var("y", manager.sorts.int_sort);
+    let zero = manager.mk_int(0u32);
+
+    let ge_x = manager.mk_ge(x, zero);
+    solver.assert(ge_x, &mut manager);
+    let ge_y = manager.mk_ge(y, zero);
+    solver.assert(ge_y, &mut manager);
+    let sum = manager.mk_add(vec![x, y]);
+    let distinct = manager.mk_distinct([sum, zero]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    let vx = model_int_value(&solver, x, &manager);
+    let vy = model_int_value(&solver, y, &manager);
+    assert!(
+        vx >= 0 && vy >= 0,
+        "model x = {vx}, y = {vy} violates the lower bounds"
+    );
+    assert_ne!(
+        vx + vy,
+        0,
+        "model x = {vx}, y = {vy} violates (distinct (+ x y) 0)"
+    );
+}
+
+/// The disequality must be strong enough to refute an over-constrained system:
+/// `x >= 0 && x <= 0 && distinct(x, 0)` has no model.
+#[test]
+fn test_issue_12_distinct_pinned_value_is_unsat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let zero = manager.mk_int(0u32);
+
+    let ge = manager.mk_ge(x, zero);
+    solver.assert(ge, &mut manager);
+    let le = manager.mk_le(x, zero);
+    solver.assert(le, &mut manager);
+    let distinct = manager.mk_distinct([x, zero]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
+}
+
+/// The ordering split must stay *guarded* by the equality atom: a disequality
+/// nested under a disjunction may be discharged through the other disjunct, so
+/// it must not force `x != 0` unconditionally.
+#[test]
+fn test_issue_12_diseq_under_disjunction_stays_sat() {
+    for use_distinct in [false, true] {
+        let mut solver = Solver::new();
+        let mut manager = TermManager::new();
+
+        let x = manager.mk_var("x", manager.sorts.int_sort);
+        let p = manager.mk_var("p", manager.sorts.bool_sort);
+        let zero = manager.mk_int(0u32);
+
+        let ge = manager.mk_ge(x, zero);
+        solver.assert(ge, &mut manager);
+        let le = manager.mk_le(x, zero);
+        solver.assert(le, &mut manager);
+
+        let diseq = if use_distinct {
+            manager.mk_distinct([x, zero])
+        } else {
+            let eq = manager.mk_eq(x, zero);
+            manager.mk_not(eq)
+        };
+        let disjunction = manager.mk_or(vec![p, diseq]);
+        solver.assert(disjunction, &mut manager);
+
+        assert_eq!(
+            solver.check(&mut manager),
+            SolverResult::Sat,
+            "satisfiable via p (use_distinct = {use_distinct})"
+        );
+    }
+}
+
+/// A strict bound must be witnessed strictly inside itself: `x > 0` may not be
+/// reported as `x = 0` (the delta-rational assignment needs instantiation).
+#[test]
+fn test_issue_12_strict_lower_bound_model() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let zero = manager.mk_int(0u32);
+
+    let ge = manager.mk_ge(x, zero);
+    solver.assert(ge, &mut manager);
+    let gt = manager.mk_gt(x, zero);
+    solver.assert(gt, &mut manager);
+
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    let value = model_int_value(&solver, x, &manager);
+    assert!(value >= 1, "model x = {value} violates (> x 0)");
+}
+
+// Incremental scope restoration: every fact derived from an assertion must be
+// undone by the matching `pop`.  State that survives keeps a retracted
+// assertion alive and produces a wrong verdict for whatever is asserted next.
+
+/// `(= v A)` inside a scope pinned `v` to constructor `A` in
+/// `dt_var_constructors` with no undo, so the `(= v B)` asserted after the
+/// `pop` looked mutually exclusive with a retracted fact: `sat` then `unsat`
+/// where z3 answers `sat` twice.
+#[test]
+fn test_dt_constructor_state_restored_on_pop() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let c_sort = manager.sorts.mk_datatype_sort("C");
+    let v = manager.mk_var("v", c_sort);
+    let ctor_a = manager.mk_dt_constructor("a", [], c_sort);
+    let ctor_b = manager.mk_dt_constructor("b", [], c_sort);
+    solver.push();
+    let v_is_a = manager.mk_eq(v, ctor_a);
+    solver.assert(v_is_a, &mut manager);
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    solver.pop();
+
+    assert!(
+        solver.dt_var_constructors.is_empty(),
+        "constructor pinned inside the popped scope outlived it"
+    );
+    let v_is_b = manager.mk_eq(v, ctor_b);
+    solver.assert(v_is_b, &mut manager);
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "(= v b) alone is satisfiable once (= v a) has been popped"
+    );
+}
+
+/// Control for the fix above: without a `pop`, two different constructors for
+/// the same variable must still be detected as mutually exclusive.
+#[test]
+fn test_dt_constructor_conflict_detected_without_pop() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let c_sort = manager.sorts.mk_datatype_sort("C");
+    let v = manager.mk_var("v", c_sort);
+    let ctor_a = manager.mk_dt_constructor("a", [], c_sort);
+    let ctor_b = manager.mk_dt_constructor("b", [], c_sort);
+    let v_is_a = manager.mk_eq(v, ctor_a);
+    solver.assert(v_is_a, &mut manager);
+    let v_is_b = manager.mk_eq(v, ctor_b);
+    solver.assert(v_is_b, &mut manager);
+    assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
+}
+
+/// A quantifier asserted inside a scope stayed registered with MBQI and the
+/// e-matching engine, and the ground lemmas its instantiation committed to the
+/// theory solvers were never retracted either: `f(k) = 2` after the `pop`
+/// contradicted the retracted `forall x. f(x) = 1` and answered `unsat`.
+#[test]
+fn test_mbqi_state_restored_on_pop() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let int_sort = manager.sorts.int_sort;
+
+    let k = manager.mk_var("k", int_sort);
+    let seven = manager.mk_int(7);
+    let k_is_7 = manager.mk_eq(k, seven);
+    solver.assert(k_is_7, &mut manager);
+    solver.push();
+    let x = manager.mk_var("x", int_sort);
+    let f_x = manager.mk_apply("f", [x], int_sort);
+    let one = manager.mk_int(1);
+    let body = manager.mk_eq(f_x, one);
+    let forall = manager.mk_forall([("x", int_sort)], body);
+    solver.assert(forall, &mut manager);
+    let _ = solver.check(&mut manager);
+    solver.pop();
+
+    assert_eq!(
+        solver.mbqi.num_quantifiers(),
+        0,
+        "MBQI kept a popped forall"
+    );
+    let ematch_quantifiers = solver.ematch_engine.num_quantifiers();
+    assert_eq!(ematch_quantifiers, 0, "e-matching kept a popped forall");
+    assert!(!solver.has_quantifiers, "has_quantifiers survived the pop");
+    let f_k = manager.mk_apply("f", [k], int_sort);
+    let two = manager.mk_int(2);
+    let f_k_is_2 = manager.mk_eq(f_k, two);
+    solver.assert(f_k_is_2, &mut manager);
+    assert_ne!(
+        solver.check(&mut manager),
+        SolverResult::Unsat,
+        "(= (f k) 2) is satisfiable once the forall has been popped"
+    );
+}
+
+/// Control for the fix above: while the quantifier is still asserted, its
+/// instantiation must keep refuting the contradicting ground equality.
+#[test]
+fn test_mbqi_quantifier_active_without_pop() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let int_sort = manager.sorts.int_sort;
+
+    let k = manager.mk_var("k", int_sort);
+    let seven = manager.mk_int(7);
+    let k_is_7 = manager.mk_eq(k, seven);
+    solver.assert(k_is_7, &mut manager);
+    let x = manager.mk_var("x", int_sort);
+    let f_x = manager.mk_apply("f", [x], int_sort);
+    let one = manager.mk_int(1);
+    let body = manager.mk_eq(f_x, one);
+    let forall = manager.mk_forall([("x", int_sort)], body);
+    solver.assert(forall, &mut manager);
+    let f_k = manager.mk_apply("f", [k], int_sort);
+    let two = manager.mk_int(2);
+    let f_k_is_2 = manager.mk_eq(f_k, two);
+    solver.assert(f_k_is_2, &mut manager);
+    assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
+}
+
+/// `tracked_compound_terms` memoises which compound terms `track_theory_vars`
+/// already walked, but that walk's registrations (`arith_terms`, `bv_terms`)
+/// are trail-undone.  Keeping the memo across a `pop` made the re-asserted
+/// `(> (+ x y) 5)` skip the walk, so `x` and `y` were never re-interned and the
+/// model came back without values for them.
+#[test]
+fn test_theory_var_tracking_restored_on_pop() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let int_sort = manager.sorts.int_sort;
+
+    let x = manager.mk_var("x", int_sort);
+    let y = manager.mk_var("y", int_sort);
+    let sum = manager.mk_add(vec![x, y]);
+    let five = manager.mk_int(5);
+    let sum_gt_5 = manager.mk_gt(sum, five);
+    solver.push();
+    solver.assert(sum_gt_5, &mut manager);
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    solver.pop();
+
+    assert!(
+        solver.tracked_compound_terms.is_empty(),
+        "traversal memo outlived the registrations it memoised"
+    );
+    assert!(
+        solver.arith_terms.is_empty(),
+        "arith terms outlived the pop"
+    );
+    solver.assert(sum_gt_5, &mut manager);
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    let model = solver.model().expect("sat must produce a model");
+    assert!(
+        model.get(x).is_some() && model.get(y).is_some(),
+        "re-asserted arithmetic variables must be tracked again after a pop"
+    );
+}
+
+/// Every sticky flag and dedup table the encoder fills while processing an
+/// assertion must be back to its push-time value afterwards.  A stale
+/// `array_axiom_instances` entry, for instance, suppresses a lemma whose clause
+/// the SAT core dropped with the scope.
+#[test]
+fn test_scope_derived_tables_restored_on_pop() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let int_sort = manager.sorts.int_sort;
+    let bv8 = manager.sorts.bitvec(8);
+    let arr_sort = manager.sorts.array(int_sort, int_sort);
+    solver.push();
+    let a = manager.mk_var("a", arr_sort);
+    let idx = manager.mk_int(0);
+    let sel = manager.mk_select(a, idx);
+    let three = manager.mk_int(3);
+    let sel_gt_3 = manager.mk_gt(sel, three);
+    solver.assert(sel_gt_3, &mut manager);
+    let b = manager.mk_var("b", bv8);
+    let c = manager.mk_var("c", bv8);
+    let quot = manager.mk_bv_udiv(b, c);
+    let bv_three = manager.mk_bitvec(3i64, 8);
+    let quot_eq = manager.mk_eq(quot, bv_three);
+    solver.assert(quot_eq, &mut manager);
+    let x = manager.mk_var("x", int_sort);
+    let zero = manager.mk_int(0);
+    let x_ge_0 = manager.mk_ge(x, zero);
+    solver.assert(x_ge_0, &mut manager);
+    let _ = solver.check(&mut manager);
+    solver.pop();
+
+    assert!(!solver.has_array_ops, "has_array_ops survived the pop");
+    assert!(!solver.has_bv_arith_ops, "has_bv_arith_ops survived");
+    assert!(!solver.encode_depth_exceeded, "depth flag survived the pop");
+    assert!(
+        solver.array_axiom_instances.is_empty(),
+        "array axiom dedup entries outlived the lemmas they guard"
+    );
+    assert!(
+        solver.var_to_parsed_arith.is_empty(),
+        "parsed arithmetic constraints outlived the pop"
+    );
+    assert!(
+        solver.var_to_constraint.is_empty(),
+        "theory constraints outlived the pop"
+    );
+    assert!(solver.bv_terms.is_empty(), "bv terms outlived the pop");
+    assert!(solver.assertions.is_empty(), "assertions outlived the pop");
+}
+
+/// Deterministic 64-bit LCG: the differential test below must be reproducible
+/// and free of any wall-clock or thread-scheduling input.
+struct Lcg(u64);
+
+impl Lcg {
+    fn below(&mut self, n: u64) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((self.0 >> 33) % n) as usize
+    }
+}
+
+/// Build one random linear-arithmetic / Boolean atom over `vars`.
+fn random_atom(rng: &mut Lcg, vars: &[TermId], manager: &mut TermManager) -> TermId {
+    let lhs = vars[rng.below(vars.len() as u64)];
+    let rhs = if rng.below(2) == 0 {
+        vars[rng.below(vars.len() as u64)]
+    } else {
+        manager.mk_int(rng.below(4) as i64)
+    };
+    let atom = match rng.below(5) {
+        0 => manager.mk_eq(lhs, rhs),
+        1 => manager.mk_lt(lhs, rhs),
+        2 => manager.mk_le(lhs, rhs),
+        3 => manager.mk_gt(lhs, rhs),
+        _ => manager.mk_ge(lhs, rhs),
+    };
+    if rng.below(4) == 0 {
+        manager.mk_not(atom)
+    } else {
+        atom
+    }
+}
+
+/// Build a small random formula (an atom, or a binary and/or of two atoms).
+fn random_formula(rng: &mut Lcg, vars: &[TermId], manager: &mut TermManager) -> TermId {
+    let first = random_atom(rng, vars, manager);
+    match rng.below(3) {
+        0 => {
+            let second = random_atom(rng, vars, manager);
+            manager.mk_and(vec![first, second])
+        }
+        1 => {
+            let second = random_atom(rng, vars, manager);
+            manager.mk_or(vec![first, second])
+        }
+        _ => first,
+    }
+}
+
+/// Randomised differential check on `push`/`pop`: solving a formula must give
+/// the same answer whether or not an unrelated scope was pushed, checked and
+/// popped beforehand.  Any state the popped scope leaves behind shows up as a
+/// disagreement.  Fixed seed, no wall-clock input, so failures reproduce.
+#[test]
+fn test_random_push_pop_differential() {
+    let mut rng = Lcg(0x0BAD_C0DE_1234_5678);
+
+    for case in 0..64u32 {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let vars: Vec<TermId> = ["p", "q", "r"]
+            .iter()
+            .map(|n| manager.mk_var(n, int_sort))
+            .collect();
+
+        let prefix = random_formula(&mut rng, &vars, &mut manager);
+        let distractor = random_formula(&mut rng, &vars, &mut manager);
+        let main = random_formula(&mut rng, &vars, &mut manager);
+
+        let mut plain = Solver::new();
+        plain.assert(prefix, &mut manager);
+        plain.assert(main, &mut manager);
+        let expected = plain.check(&mut manager);
+
+        let mut scoped = Solver::new();
+        scoped.assert(prefix, &mut manager);
+        scoped.push();
+        scoped.assert(distractor, &mut manager);
+        let _ = scoped.check(&mut manager);
+        scoped.pop();
+        scoped.assert(main, &mut manager);
+        let actual = scoped.check(&mut manager);
+
+        assert_eq!(
+            expected, actual,
+            "case {case}: a pushed-and-popped scope changed the verdict"
+        );
+    }
+}

@@ -181,33 +181,92 @@ impl ResolutionGraph {
         result_id
     }
 
-    /// Compute graph depth starting from a given node
+    /// Compute graph depth starting from a given node.
+    ///
+    /// The depth of a node is 1 for a leaf (no parents) and
+    /// `1 + max(depth of parents)` otherwise.
+    ///
+    /// A `node_id` that is not in the graph has no resolution depth and
+    /// reports `0`; the previous implementation indexed the node vector
+    /// directly and panicked instead, which is not acceptable in a public
+    /// method taking an arbitrary index.
     pub fn compute_depth(&self, node_id: usize) -> usize {
-        let mut visited = HashSet::new();
-        self.compute_depth_recursive(node_id, &mut visited)
+        let mut memo = HashMap::new();
+        self.compute_depth_memo(node_id, &mut memo)
     }
 
-    /// Recursive depth computation with cycle detection
-    fn compute_depth_recursive(&self, node_id: usize, visited: &mut HashSet<usize>) -> usize {
-        if visited.contains(&node_id) {
-            return 0; // Cycle detected (shouldn't happen in DAG)
+    /// Depth computation over an explicit heap stack, memoized on node id.
+    ///
+    /// This replaces a recursive walk with two defects:
+    ///
+    /// * Depth was the resolution-DAG depth, unguarded. The return type is
+    ///   `usize`, so there was no channel through which a depth cap could
+    ///   report giving up — a cap could only return a silently wrong depth.
+    /// * The `visited` set was shared across the whole walk and never
+    ///   unwound, so the *second* and later visits to a shared parent
+    ///   returned `0` rather than that parent's depth. Any resolution DAG
+    ///   with sharing — i.e. every non-trivial one — got an understated
+    ///   depth. `memo` now carries each node's real depth, so sharing is
+    ///   exploited instead of corrupting the answer.
+    ///
+    /// `on_path` keeps the original cycle behaviour: a parent that is still
+    /// being expanded further down the current path contributes `0`, so a
+    /// (malformed) cyclic graph terminates rather than looping.
+    fn compute_depth_memo(&self, node_id: usize, memo: &mut HashMap<usize, usize>) -> usize {
+        enum Step {
+            /// Start resolving this node.
+            Enter(usize),
+            /// Every parent of this node has been resolved; fold them.
+            Exit(usize),
         }
 
-        visited.insert(node_id);
+        let mut on_path: HashSet<usize> = HashSet::new();
+        let mut stack = vec![Step::Enter(node_id)];
 
-        let node = &self.nodes[node_id];
-        if node.parents.is_empty() {
-            return 1; // Leaf node
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Enter(id) => {
+                    if memo.contains_key(&id) {
+                        continue;
+                    }
+                    if !on_path.insert(id) {
+                        // Cycle: this node is still being expanded above us.
+                        continue;
+                    }
+                    let Some(node) = self.nodes.get(id) else {
+                        // Not a node of this graph: no depth.
+                        memo.insert(id, 0);
+                        on_path.remove(&id);
+                        continue;
+                    };
+                    if node.parents.is_empty() {
+                        memo.insert(id, 1); // Leaf node
+                        on_path.remove(&id);
+                        continue;
+                    }
+                    stack.push(Step::Exit(id));
+                    for &parent_id in &node.parents {
+                        stack.push(Step::Enter(parent_id));
+                    }
+                }
+                Step::Exit(id) => {
+                    let max_parent_depth = self.nodes.get(id).map_or(0, |node| {
+                        node.parents
+                            .iter()
+                            // A parent with no memo entry is one that is
+                            // still on the current path, i.e. a cycle edge;
+                            // it contributes 0, as in the recursive form.
+                            .map(|parent_id| memo.get(parent_id).copied().unwrap_or(0))
+                            .max()
+                            .unwrap_or(0)
+                    });
+                    memo.insert(id, max_parent_depth + 1);
+                    on_path.remove(&id);
+                }
+            }
         }
 
-        let max_parent_depth = node
-            .parents
-            .iter()
-            .map(|&parent_id| self.compute_depth_recursive(parent_id, visited))
-            .max()
-            .unwrap_or(0);
-
-        max_parent_depth + 1
+        memo.get(&node_id).copied().unwrap_or(0)
     }
 
     /// Analyze the graph and update statistics
@@ -216,11 +275,15 @@ impl ResolutionGraph {
             return;
         }
 
-        // Compute maximum depth
-        self.stats.max_depth = (0..self.nodes.len())
-            .map(|id| self.compute_depth(id))
+        // Compute maximum depth. A single memo shared across all start
+        // nodes makes this linear in the DAG; the previous code allocated a
+        // fresh visited set per node, making `analyze` quadratic.
+        let mut memo = HashMap::new();
+        let max_depth = (0..self.nodes.len())
+            .map(|id| self.compute_depth_memo(id, &mut memo))
             .max()
             .unwrap_or(0);
+        self.stats.max_depth = max_depth;
 
         // Compute average number of parents
         let total_parents: usize = self.nodes.iter().map(|n| n.parents.len()).sum();
@@ -587,6 +650,70 @@ mod tests {
         assert_eq!(graph.compute_depth(id1), 1); // Leaf
         assert_eq!(graph.compute_depth(id2), 1); // Leaf
         assert_eq!(graph.compute_depth(id3), 2); // One level above leaves
+    }
+
+    /// A node id that is not in the graph has no depth. This used to index
+    /// the node vector directly and panic.
+    #[test]
+    fn test_compute_depth_unknown_node_is_zero() {
+        let graph = ResolutionGraph::new();
+        assert_eq!(graph.compute_depth(42), 0);
+    }
+
+    /// Regression: the previous walk shared one `visited` set across the
+    /// whole traversal and never unwound it, so the *second* visit to a
+    /// shared parent contributed depth 0 and the reported depth was too
+    /// small. Here `mid1` and `mid2` share the leaf `root`, and the top
+    /// node has both as parents.
+    #[test]
+    fn test_compute_depth_counts_shared_parents_correctly() {
+        let mut graph = ResolutionGraph::new();
+        let v0 = Var(0);
+        let v1 = Var(1);
+        let v2 = Var(2);
+
+        let leaf_a = graph.add_clause(vec![Lit::pos(v0)], 0);
+        let leaf_b = graph.add_clause(vec![Lit::neg(v0), Lit::pos(v1)], 0);
+        let mid1 = graph.add_resolution(leaf_a, leaf_b, v0, vec![Lit::pos(v1)], 1);
+        let leaf_c = graph.add_clause(vec![Lit::neg(v1), Lit::pos(v2)], 0);
+        let mid2 = graph.add_resolution(mid1, leaf_c, v1, vec![Lit::pos(v2)], 2);
+        let top = graph.add_resolution(mid1, mid2, v2, vec![Lit::pos(v2), Lit::neg(v0)], 3);
+
+        assert_eq!(graph.compute_depth(mid1), 2);
+        assert_eq!(graph.compute_depth(mid2), 3);
+        // 1 + max(depth(mid1)=2, depth(mid2)=3) = 4. The old walk visited
+        // `mid1` first, marked its subtree, and then scored `mid2` as 0,
+        // reporting 3.
+        assert_eq!(graph.compute_depth(top), 4);
+    }
+
+    /// A 100_000-deep resolution chain on a 1 MiB stack: the assertion is
+    /// that `compute_depth` returns at all (a stack overflow aborts the
+    /// process), plus that the depth it reports is exact.
+    #[test]
+    fn test_compute_depth_deep_chain_does_not_overflow() {
+        let worker = std::thread::Builder::new().stack_size(1 << 20).spawn(|| {
+            const CHAIN: usize = 100_000;
+            let mut graph = ResolutionGraph::new();
+            let v0 = Var(0);
+            let mut current = graph.add_clause(vec![Lit::pos(v0)], 0);
+            for level in 1..=CHAIN {
+                let side = graph.add_clause(vec![Lit::neg(Var(level as u32))], 0);
+                current = graph.add_resolution(
+                    current,
+                    side,
+                    v0,
+                    vec![Lit::pos(Var(level as u32))],
+                    level,
+                );
+            }
+            (graph.compute_depth(current), CHAIN)
+        });
+        let (depth, chain) = match worker.map(std::thread::JoinHandle::join) {
+            Ok(Ok(result)) => result,
+            _ => panic!("deep-chain depth worker thread did not complete"),
+        };
+        assert_eq!(depth, chain + 1);
     }
 
     #[test]

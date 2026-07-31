@@ -738,37 +738,48 @@ fn gcd_bigint_eval(mut a: BigInt, mut b: BigInt) -> BigInt {
 }
 
 /// Test rational root candidates from integer coefficients.
+///
+/// The `a0 == 0` deflation is a loop rather than a recursive call: the
+/// number of deflation steps is the multiplicity of the root at zero, i.e.
+/// the polynomial degree, which comes straight from the input. The return
+/// type is a plain `Vec` with no channel for a depth error.
 fn rational_roots_from_int_coeffs(
     poly: &Polynomial,
     var: Var,
     int_coeffs: &[BigInt],
 ) -> Vec<BigRational> {
-    let n = int_coeffs.len();
-    if n < 2 {
-        return Vec::new();
-    }
-
     let mut roots = Vec::new();
-    let a0 = &int_coeffs[0];
-    let an = &int_coeffs[n - 1];
+    let mut coeffs: &[BigInt] = int_coeffs;
 
-    if a0.is_zero() {
+    // Peel off the factors of x. Each step drops the (zero) constant term,
+    // so the slice shrinks by one and the loop always terminates.
+    while coeffs.len() >= 2 && coeffs[0].is_zero() {
         // x=0 is a root
         roots.push(BigRational::zero());
-        // Divide polynomial by x (shift coefficients down) and recurse
-        let deflated: Vec<BigInt> = int_coeffs[1..].to_vec();
-        if deflated.len() >= 2 {
-            let mut more = rational_roots_from_int_coeffs(poly, var, &deflated);
-            roots.append(&mut more);
-        }
+        coeffs = &coeffs[1..];
+    }
+
+    let n = coeffs.len();
+    if n < 2 {
         roots.sort();
         roots.dedup();
         return roots;
     }
 
-    // Divisors of a0 and an
-    let divisors_a0 = pos_divisors(a0.abs());
-    let divisors_an = pos_divisors(an.abs());
+    let a0 = &coeffs[0];
+    let an = &coeffs[n - 1];
+
+    // Divisors of a0 and an. If either set could not be enumerated within
+    // the trial-division budget, report only the roots found by deflation
+    // rather than testing an incomplete candidate set. Callers already
+    // treat this list as "the rational roots we could establish" (irrational
+    // roots of a degree>=3 polynomial are never in it either).
+    let (Some(divisors_a0), Some(divisors_an)) = (pos_divisors(a0.abs()), pos_divisors(an.abs()))
+    else {
+        roots.sort();
+        roots.dedup();
+        return roots;
+    };
 
     let mut eval_map = rustc_hash::FxHashMap::default();
     for p in &divisors_a0 {
@@ -792,17 +803,39 @@ fn rational_roots_from_int_coeffs(
     roots
 }
 
-/// Return all positive divisors of a positive BigInt.
-fn pos_divisors(n: BigInt) -> Vec<BigInt> {
+/// Trial-division budget for divisor enumeration.
+///
+/// Enumerating the divisors of `n` by trial division costs `sqrt(n)` bignum
+/// modulos. `n` here is a polynomial coefficient taken straight from
+/// `.smt2` input, so it is entirely attacker-chosen: a 40-digit prime
+/// coefficient would need ~10²⁰ bignum modulos, i.e. the process never
+/// returns. This budget covers every `n` below `TRIAL_DIVISION_BUDGET²`
+/// (10¹⁰) exactly, and turns anything larger into an honest "cannot
+/// enumerate" rather than a hang.
+const TRIAL_DIVISION_BUDGET: u64 = 100_000;
+
+/// Return all positive divisors of a positive `BigInt`.
+///
+/// `None` means the trial-division budget was exhausted, so the divisor set
+/// could not be enumerated *completely*. Callers must not fall back to the
+/// partial list: the rational-root theorem only rules candidates in or out
+/// when the divisor sets are complete, and a partial list would silently
+/// change which candidates get tested.
+fn pos_divisors(n: BigInt) -> Option<Vec<BigInt>> {
     if n.is_zero() {
-        return vec![BigInt::one()];
+        return Some(vec![BigInt::one()]);
     }
     let mut divs = Vec::new();
     let mut i = BigInt::one();
+    let mut steps = 0u64;
     loop {
         if &i * &i > n {
             break;
         }
+        if steps >= TRIAL_DIVISION_BUDGET {
+            return None;
+        }
+        steps += 1;
         let r = &n % &i;
         let q = &n / &i;
         if r.is_zero() {
@@ -813,7 +846,7 @@ fn pos_divisors(n: BigInt) -> Vec<BigInt> {
         }
         i += BigInt::one();
     }
-    divs
+    Some(divs)
 }
 
 /// Compute the integer square root if the number is a perfect square.
@@ -845,6 +878,42 @@ mod tests {
 
     fn rat(n: i64) -> BigRational {
         BigRational::from_integer(BigInt::from(n))
+    }
+
+    /// Small inputs are still enumerated exactly.
+    #[test]
+    fn test_pos_divisors_small() {
+        let divisors = pos_divisors(BigInt::from(12)).expect("12 is within the budget");
+        let mut sorted = divisors;
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec![1, 2, 3, 4, 6, 12]
+                .into_iter()
+                .map(BigInt::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A 40-digit prime coefficient used to make this trial-divide ~10²⁰
+    /// times, i.e. never return. It must now report "cannot enumerate"
+    /// quickly instead of hanging.
+    #[test]
+    fn test_pos_divisors_huge_prime_reports_budget_exhaustion() {
+        // 2^127 - 1 (a Mersenne prime): sqrt is ~1.3e19 trial divisions.
+        let mersenne = (BigInt::from(1u8) << 127) - BigInt::from(1u8);
+        assert_eq!(pos_divisors(mersenne), None);
+    }
+
+    /// Semantic pin: rational roots are still found for ordinary input,
+    /// and the deflation of a root at zero is exhaustive.
+    #[test]
+    fn test_rational_roots_with_multiplicity_at_zero() {
+        // x^3 * (x - 2) = x^4 - 2x^3, roots 0 (multiplicity 3) and 2.
+        let int_coeffs: Vec<BigInt> = vec![0, 0, 0, -2, 1].into_iter().map(BigInt::from).collect();
+        let poly = Polynomial::from_coeffs_int(&[(1, &[(0, 4)]), (-2, &[(0, 3)])]);
+        let roots = rational_roots_from_int_coeffs(&poly, 0, &int_coeffs);
+        assert_eq!(roots, vec![rat(0), rat(2)]);
     }
 
     #[test]

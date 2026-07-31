@@ -22,3 +22,6 @@ num-rational = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 proptest.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"

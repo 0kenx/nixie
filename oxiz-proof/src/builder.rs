@@ -1,13 +1,59 @@
 //! Proof builder for ergonomic proof construction.
 //!
-//! This module provides a fluent API for building proofs step by step.
+//! This module provides a fluent API for building proofs step by step:
+//! [`ProofBuilder`] for the crate's generic, string-conclusion [`Proof`]
+//! type, and [`TheoryProofBuilder`] for the more structured
+//! [`crate::theory::TheoryProof`] used by theory solvers ([`crate::theory`]
+//! has the full set of theory-specific step constructors this delegates to
+//! -- `refl`/`trans` are only the two most common ones exposed directly
+//! here; use [`TheoryProofBuilder::step`] for any other [`TheoryRule`]).
+//!
+//! # What building does *not* guarantee
+//!
+//! Neither builder validates the proof steps it records: `ProofBuilder`'s
+//! `Proof` has no semantic checker in this crate at all (only structural
+//! queries -- premises exist, `is_ancestor`, and so on), and
+//! `TheoryProofBuilder` delegates straight to `TheoryProof`'s own
+//! constructors, which likewise perform no validation (see
+//! `TheoryProof::trans`'s doc comment). A built `TheoryProof` should be
+//! passed to [`crate::checker::ProofChecker::check_theory_proof`] --
+//! typically with [`crate::checker::CheckerConfig::verify_conclusions`] set,
+//! to actually verify the rules it knows how to check -- before being
+//! trusted. See the `# Examples` below for exactly that round trip,
+//! including the negative case (a checker that accepts every proof would
+//! also pass the positive case alone).
+//!
+//! Reusing a name already passed to a previous `axiom`/`inference`/`step`/
+//! etc. call silently rebinds it (the earlier node is still in the proof,
+//! just no longer reachable via [`ProofBuilder::get_named`] /
+//! [`TheoryProofBuilder::get_named`]) -- this is a plain last-write-wins
+//! name registry, not a validated one.
+//!
+//! # Examples
+//!
+//! ```
+//! use oxiz_proof::{CheckResult, CheckerConfig, ProofChecker, TheoryProofBuilder, TheoryRule};
+//!
+//! // Build (x = y), (y = z) |- (x = z) via transitivity.
+//! let mut builder = TheoryProofBuilder::new();
+//! let xy = builder.axiom(TheoryRule::Custom("assert".into()), "(= x y)", None);
+//! let yz = builder.axiom(TheoryRule::Custom("assert".into()), "(= y z)", None);
+//! builder.trans(xy, yz, "x", "z", None);
+//! let proof = builder.build();
+//!
+//! // Building it is not evidence it is correct -- checking it is.
+//! let mut checker = ProofChecker::with_config(CheckerConfig {
+//!     verify_conclusions: true,
+//!     ..Default::default()
+//! });
+//! assert!(matches!(checker.check_theory_proof(&proof), CheckResult::Valid));
+//! ```
 
 use crate::proof::{Proof, ProofNodeId};
 use crate::theory::{ProofTerm, TheoryProof, TheoryRule, TheoryStepId};
 use std::collections::HashMap;
 
 /// Builder for constructing proofs with a fluent API.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ProofBuilder {
     /// The proof being constructed.
@@ -16,7 +62,6 @@ pub struct ProofBuilder {
     named_nodes: HashMap<String, ProofNodeId>,
 }
 
-#[allow(dead_code)]
 impl ProofBuilder {
     /// Create a new proof builder starting with an axiom.
     #[must_use]
@@ -96,7 +141,6 @@ impl ProofBuilder {
 }
 
 /// Builder for constructing theory proofs with a fluent API.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct TheoryProofBuilder {
     /// The theory proof being constructed.
@@ -105,7 +149,6 @@ pub struct TheoryProofBuilder {
     named_steps: HashMap<String, TheoryStepId>,
 }
 
-#[allow(dead_code)]
 impl TheoryProofBuilder {
     /// Create a new theory proof builder.
     #[must_use]
@@ -266,5 +309,63 @@ mod tests {
 
         let proof = builder.build();
         assert_eq!(proof.len(), 1);
+    }
+
+    /// A proof object that is *built* is only evidence of anything once it
+    /// is *checked*: this round-trips a well-formed transitivity chain built
+    /// via [`TheoryProofBuilder`] through [`crate::checker::ProofChecker`]
+    /// with semantic verification enabled, and confirms the checker actually
+    /// accepts it.
+    #[test]
+    fn test_theory_proof_builder_output_passes_checker_with_valid_chain() {
+        let mut builder = TheoryProofBuilder::new();
+        let s1 = builder.axiom(TheoryRule::Custom("assert".into()), "(= x y)", None);
+        let s2 = builder.axiom(TheoryRule::Custom("assert".into()), "(= y z)", None);
+        builder.trans(s1, s2, "x", "z", None);
+
+        let proof = builder.build();
+
+        let mut checker =
+            crate::checker::ProofChecker::with_config(crate::checker::CheckerConfig {
+                verify_conclusions: true,
+                ..Default::default()
+            });
+        let result = checker.check_theory_proof(&proof);
+        assert!(
+            matches!(result, crate::checker::CheckResult::Valid),
+            "a genuine (x=y),(y=z) |- (x=z) chain must pass semantic verification: {result:?}"
+        );
+    }
+
+    /// Companion: a *malformed* transitivity chain -- concluding `(= x w)`
+    /// from premises that only chain `x` through `z`, never mentioning `w`
+    /// at all -- must be *rejected* by the checker. `TheoryProofBuilder`
+    /// itself performs no semantic validation (that is deliberately the
+    /// checker's job, not the builder's -- see `Solver::Trans`'s doc comment
+    /// in `theory.rs`), so this is the test that actually proves the checker
+    /// does its job: a checker that accepts everything would also pass the
+    /// test above.
+    #[test]
+    fn test_theory_proof_builder_output_is_rejected_by_checker_with_invalid_chain() {
+        let mut builder = TheoryProofBuilder::new();
+        let s1 = builder.axiom(TheoryRule::Custom("assert".into()), "(= x y)", None);
+        let s2 = builder.axiom(TheoryRule::Custom("assert".into()), "(= y z)", None);
+        // Wrong on purpose: the premises chain x -> y -> z, but this claims
+        // x = w, a term that appears nowhere above.
+        builder.trans(s1, s2, "x", "w", None);
+
+        let proof = builder.build();
+
+        let mut checker =
+            crate::checker::ProofChecker::with_config(crate::checker::CheckerConfig {
+                verify_conclusions: true,
+                ..Default::default()
+            });
+        let result = checker.check_theory_proof(&proof);
+        assert!(
+            matches!(result, crate::checker::CheckResult::Invalid { .. }),
+            "a transitivity step concluding something the premises do not \
+             actually chain to must be rejected: {result:?}"
+        );
     }
 }

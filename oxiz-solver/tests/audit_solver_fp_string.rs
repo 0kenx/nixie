@@ -199,6 +199,43 @@ fn fp_positive_zero_div_nan_is_unsat() {
     assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }
 
+/// Polarity boundary: `(not (and A B))` is `(or (not A) (not B))`, so neither
+/// conjunct is entailed.
+///
+/// The FP collector tracks polarity but used to pass it straight through its
+/// `And` arm, so a single `(not (and (fp.isNaN y) p))` recorded `y` as *not*
+/// NaN. Combined with `y = 0/0` that tripped Check 3 and refuted a formula
+/// which is satisfiable with `p = false` (`(fp.isNaN y)` is true, so
+/// `(and true false)` is false and the negation holds). `z3` answers `sat`.
+#[test]
+fn test_fp_disjunctive_fact_not_unconditional() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let f32 = manager.sorts.float32_sort();
+    let y = manager.mk_var("y", f32);
+    let p = manager.mk_var("p", manager.sorts.bool_sort);
+    let zero = manager.mk_fp_plus_zero(8, 24);
+    let div = manager.mk_fp_div(RoundingMode::RNE, zero, zero);
+
+    let is_zero = manager.mk_fp_is_zero(zero);
+    let eq = manager.mk_eq(y, div);
+    let is_nan = manager.mk_fp_is_nan(y);
+    let conjunction = manager.mk_and(vec![is_nan, p]);
+    let negated = manager.mk_not(conjunction);
+
+    solver.assert(is_zero, &mut manager);
+    solver.assert(eq, &mut manager);
+    solver.assert(negated, &mut manager);
+
+    assert_ne!(
+        solver.check(&mut manager),
+        SolverResult::Unsat,
+        "`fp.isNaN y` sits inside a negated conjunction, so `not (fp.isNaN y)` \
+         is not asserted; the 0/0-is-NaN check must not fire on it"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Gate is targeted: non-FP / non-string formulas are unaffected
 // ──────────────────────────────────────────────────────────────────

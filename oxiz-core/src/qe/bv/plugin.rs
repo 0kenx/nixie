@@ -123,8 +123,11 @@ impl BvQePlugin {
             return None;
         }
 
-        // 1. Unused variable.
-        if !tm.free_vars(formula).contains(&var) {
+        // 1. Unused variable. The pattern-aware query is used deliberately:
+        // an occurrence surviving only in a quantifier trigger still means
+        // the variable is *not* unused, and reporting the formula as already
+        // var-free would claim an elimination that never happened.
+        if !tm.free_vars_including_patterns(formula).contains(&var) {
             self.stats.quantifiers_eliminated += 1;
             self.stats.unused_var += 1;
             return Some(formula);
@@ -206,9 +209,11 @@ impl BvQePlugin {
         b: TermId,
         tm: &TermManager,
     ) -> Option<TermId> {
-        if a == var && !tm.free_vars(b).contains(&var) {
+        // Pattern-aware on purpose: an occurrence of `var` hiding in a
+        // trigger on the other side would make the "definition" circular.
+        if a == var && !tm.free_vars_including_patterns(b).contains(&var) {
             Some(b)
-        } else if b == var && !tm.free_vars(a).contains(&var) {
+        } else if b == var && !tm.free_vars_including_patterns(a).contains(&var) {
             Some(a)
         } else {
             None

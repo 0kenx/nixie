@@ -93,6 +93,15 @@ impl Solver {
         }
     }
 
+    /// Scan `term` for bounded integer domains and disequality pairs that a
+    /// pigeonhole encoding can exploit.
+    ///
+    /// Iterative (explicit task stack), so the `Implies` / `And` nesting of the
+    /// assertion is bounded by memory rather than by the native call stack.
+    /// The task ordering reproduces the recursive traversal exactly, including
+    /// the fact that an `And`'s own `domains.insert` runs *after* the scans of
+    /// its nested elements — so an inner domain for the same variable is
+    /// overwritten by the enclosing `And`, as before.
     pub(super) fn scan_for_pigeonhole(
         &self,
         term: TermId,
@@ -100,78 +109,98 @@ impl Solver {
         domains: &mut FxHashMap<TermId, (i64, i64)>,
         diseq_pairs: &mut Vec<(TermId, TermId)>,
     ) {
-        let Some(t) = manager.get(term) else { return };
-        match &t.kind {
-            // Recurse into Implies -- scan both guard and consequent
-            TermKind::Implies(_guard, consequent) => {
-                // The consequent typically has the constraint after guard filtering.
-                // Scan it for disequalities and domain bounds.
-                self.scan_for_pigeonhole(*consequent, manager, domains, diseq_pairs);
-            }
-            // And(Ge(x, L), Le(x, U)) -> domain for x
-            // Also recurse into And elements for nested patterns
-            TermKind::And(args) => {
-                let mut lower: Option<(TermId, i64)> = None;
-                let mut upper: Option<(TermId, i64)> = None;
-                for &a in args.iter() {
-                    if let Some(at) = manager.get(a) {
-                        match &at.kind {
-                            TermKind::Ge(lhs, rhs) => {
-                                if let Some(rt) = manager.get(*rhs) {
-                                    if let TermKind::IntConst(n) = &rt.kind {
-                                        if let Some(v) = n.to_i64() {
-                                            lower = Some((*lhs, v));
+        /// One pending unit of the scan.
+        enum ScanTask {
+            /// Scan this term.
+            Scan(TermId),
+            /// Record the domain an `And` established, after its nested
+            /// elements have been scanned.
+            RecordDomain { var: TermId, lo: i64, hi: i64 },
+        }
+
+        let mut stack: Vec<ScanTask> = vec![ScanTask::Scan(term)];
+        while let Some(task) = stack.pop() {
+            let term = match task {
+                ScanTask::RecordDomain { var, lo, hi } => {
+                    domains.insert(var, (lo, hi));
+                    continue;
+                }
+                ScanTask::Scan(term) => term,
+            };
+            let Some(t) = manager.get(term) else { continue };
+            match &t.kind {
+                // Descend into Implies -- the consequent typically holds the
+                // constraint after guard filtering.
+                TermKind::Implies(_guard, consequent) => {
+                    stack.push(ScanTask::Scan(*consequent));
+                }
+                // And(Ge(x, L), Le(x, U)) -> domain for x
+                // Nested elements are scanned for the same patterns.
+                TermKind::And(args) => {
+                    let mut lower: Option<(TermId, i64)> = None;
+                    let mut upper: Option<(TermId, i64)> = None;
+                    // Nested elements, in source order; collected first and
+                    // pushed in reverse so they pop left to right.
+                    let mut nested: Vec<TermId> = Vec::new();
+                    for &a in args.iter() {
+                        if let Some(at) = manager.get(a) {
+                            match &at.kind {
+                                TermKind::Ge(lhs, rhs) => {
+                                    if let Some(rt) = manager.get(*rhs) {
+                                        if let TermKind::IntConst(n) = &rt.kind {
+                                            if let Some(v) = n.to_i64() {
+                                                lower = Some((*lhs, v));
+                                            }
+                                        }
+                                    }
+                                    // Also check Ge(IntConst, x) -> upper bound
+                                    if let Some(lt) = manager.get(*lhs) {
+                                        if let TermKind::IntConst(n) = &lt.kind {
+                                            if let Some(v) = n.to_i64() {
+                                                upper = Some((*rhs, v));
+                                            }
                                         }
                                     }
                                 }
-                                // Also check Ge(IntConst, x) -> upper bound
-                                if let Some(lt) = manager.get(*lhs) {
-                                    if let TermKind::IntConst(n) = &lt.kind {
-                                        if let Some(v) = n.to_i64() {
-                                            upper = Some((*rhs, v));
+                                TermKind::Le(lhs, rhs) => {
+                                    if let Some(rt) = manager.get(*rhs) {
+                                        if let TermKind::IntConst(n) = &rt.kind {
+                                            if let Some(v) = n.to_i64() {
+                                                upper = Some((*lhs, v));
+                                            }
+                                        }
+                                    }
+                                    // Also check Le(IntConst, x) -> lower bound
+                                    if let Some(lt) = manager.get(*lhs) {
+                                        if let TermKind::IntConst(n) = &lt.kind {
+                                            if let Some(v) = n.to_i64() {
+                                                lower = Some((*rhs, v));
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            TermKind::Le(lhs, rhs) => {
-                                if let Some(rt) = manager.get(*rhs) {
-                                    if let TermKind::IntConst(n) = &rt.kind {
-                                        if let Some(v) = n.to_i64() {
-                                            upper = Some((*lhs, v));
-                                        }
-                                    }
-                                }
-                                // Also check Le(IntConst, x) -> lower bound
-                                if let Some(lt) = manager.get(*lhs) {
-                                    if let TermKind::IntConst(n) = &lt.kind {
-                                        if let Some(v) = n.to_i64() {
-                                            lower = Some((*rhs, v));
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                // Recurse into sub-elements
-                                self.scan_for_pigeonhole(a, manager, domains, diseq_pairs);
+                                _ => nested.push(a),
                             }
                         }
                     }
+                    // Pushed first, so it runs after every nested scan below.
+                    if let (Some((lx, lo)), Some((ux, hi))) = (lower, upper)
+                        && lx == ux
+                    {
+                        stack.push(ScanTask::RecordDomain { var: lx, lo, hi });
+                    }
+                    stack.extend(nested.into_iter().rev().map(ScanTask::Scan));
                 }
-                if let (Some((lx, lo)), Some((ux, hi))) = (lower, upper) {
-                    if lx == ux {
-                        domains.insert(lx, (lo, hi));
+                // Not(Eq(x, y)) -> disequality pair
+                TermKind::Not(inner) => {
+                    if let Some(it) = manager.get(*inner) {
+                        if let TermKind::Eq(lhs, rhs) = &it.kind {
+                            diseq_pairs.push((*lhs, *rhs));
+                        }
                     }
                 }
+                _ => {}
             }
-            // Not(Eq(x, y)) -> disequality pair
-            TermKind::Not(inner) => {
-                if let Some(it) = manager.get(*inner) {
-                    if let TermKind::Eq(lhs, rhs) = &it.kind {
-                        diseq_pairs.push((*lhs, *rhs));
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
@@ -306,5 +335,122 @@ impl Solver {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod s8_iterative_tests {
+    use super::*;
+    use oxiz_core::ast::TermManager;
+
+    /// Nesting depth that would overflow the native stack under the previous
+    /// recursive walk; the assertion is that the call **returns**.
+    ///
+    /// This depth and [`SMALL_STACK`] were scaled down together by a factor
+    /// of 8 (from 60 000 on 1 MiB).  What these tests pin is the ~17 bytes of
+    /// stack available per level — far under any native frame — not the
+    /// absolute depth, and the smaller pair costs a fraction of the memory
+    /// the interner has to keep live.  Never raise one without the other.
+    const DEEP: usize = 7_500;
+
+    /// Worker stack for the deep-nesting tests; see [`DEEP`].
+    const SMALL_STACK: usize = 1 << 17;
+
+    #[test]
+    fn s8_scan_for_pigeonhole_deep_implies_chain_returns() {
+        let handle = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let int_sort = tm.sorts.int_sort;
+                let bool_sort = tm.sorts.bool_sort;
+                let x = tm.mk_var("x", int_sort);
+                let y = tm.mk_var("y", int_sort);
+                let guard = tm.mk_var("g", bool_sort);
+                let eq = tm.mk_eq(x, y);
+                let mut current = tm.mk_not(eq);
+                for _ in 0..DEEP {
+                    current = tm.mk_implies(guard, current);
+                }
+                let solver = Solver::new();
+                let mut domains = FxHashMap::default();
+                let mut diseqs = Vec::new();
+                solver.scan_for_pigeonhole(current, &tm, &mut domains, &mut diseqs);
+                (domains.len(), diseqs)
+            })
+            .expect("spawn deep-nesting worker");
+        let (domain_count, diseqs) = handle.join().expect("deep scan must return");
+        assert_eq!(domain_count, 0);
+        assert_eq!(diseqs.len(), 1, "the innermost disequality is still found");
+    }
+
+    /// Deeply nested `and`s: each level's non-`Ge`/`Le` element is scanned.
+    #[test]
+    fn s8_scan_for_pigeonhole_deep_and_nesting_returns() {
+        let handle = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let int_sort = tm.sorts.int_sort;
+                let x = tm.mk_var("x", int_sort);
+                let y = tm.mk_var("y", int_sort);
+                let eq = tm.mk_eq(x, y);
+                let mut current = tm.mk_not(eq);
+                for _ in 0..DEEP {
+                    current = tm.mk_and(vec![current]);
+                }
+                let solver = Solver::new();
+                let mut domains = FxHashMap::default();
+                let mut diseqs = Vec::new();
+                solver.scan_for_pigeonhole(current, &tm, &mut domains, &mut diseqs);
+                diseqs.len()
+            })
+            .expect("spawn deep-nesting worker");
+        assert_eq!(handle.join().ok(), Some(1));
+    }
+
+    /// Semantic pin: bounds are still recognised in both operand orders, and
+    /// an *enclosing* `and`'s domain still wins over a nested one — the
+    /// post-order the recursive version had.
+    #[test]
+    fn s8_scan_for_pigeonhole_outer_domain_overrides_nested() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let x = tm.mk_var("x", int_sort);
+        let y = tm.mk_var("y", int_sort);
+
+        let zero = tm.mk_int(BigInt::from(0));
+        let three = tm.mk_int(BigInt::from(3));
+        let one = tm.mk_int(BigInt::from(1));
+        let two = tm.mk_int(BigInt::from(2));
+
+        // Inner: 1 <= x <= 2, written with the constant on the left of `Le`
+        // (`Le(1, x)` is a lower bound) to pin both operand orders.  It is
+        // wrapped in an `implies` so `mk_and`'s flattening cannot merge it
+        // into the enclosing conjunction — the nesting is the point here.
+        let inner_lo = tm.mk_le(one, x);
+        let inner_hi = tm.mk_le(x, two);
+        let inner = tm.mk_and(vec![inner_lo, inner_hi]);
+        let guard = tm.mk_var("g", tm.sorts.bool_sort);
+        let nested = tm.mk_implies(guard, inner);
+
+        // Outer: 0 <= x <= 3, plus the nested conjunction above and `x != y`.
+        let outer_lo = tm.mk_ge(x, zero);
+        let outer_hi = tm.mk_le(x, three);
+        let eq = tm.mk_eq(x, y);
+        let diseq = tm.mk_not(eq);
+        let outer = tm.mk_and(vec![outer_lo, outer_hi, nested, diseq]);
+
+        let solver = Solver::new();
+        let mut domains = FxHashMap::default();
+        let mut diseqs = Vec::new();
+        solver.scan_for_pigeonhole(outer, &tm, &mut domains, &mut diseqs);
+
+        assert_eq!(
+            domains.get(&x),
+            Some(&(0, 3)),
+            "the enclosing `and` records its domain last and therefore wins"
+        );
+        assert_eq!(diseqs, vec![(x, y)]);
     }
 }

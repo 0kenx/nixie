@@ -338,71 +338,317 @@ enum TacticKind {
     TryFor(Box<TacticKind>, u64),
 }
 
+/// Move `node`'s sub-tactics out into `pending`, leaving leaves behind.
+///
+/// Used by [`TacticKind`]'s [`Drop`] to dismantle a combinator tree without
+/// recursing. Children that are already leaves are left alone, so the nested
+/// `drop` of a detached node finds nothing to do.
+fn detach_subtactics(node: &mut TacticKind, pending: &mut Vec<TacticKind>) {
+    fn take(slot: &mut Box<TacticKind>, pending: &mut Vec<TacticKind>) {
+        if matches!(**slot, TacticKind::Named(_)) {
+            return;
+        }
+        let leaf = Box::new(TacticKind::Named(String::new()));
+        // Moving out of the `Box` releases its allocation right away; the
+        // node itself is parked in `pending` for the loop below to dismantle.
+        pending.push(*std::mem::replace(slot, leaf));
+    }
+
+    match node {
+        TacticKind::Named(_) => {}
+        TacticKind::Then(first, second) | TacticKind::OrElse(first, second) => {
+            take(first, pending);
+            take(second, pending);
+        }
+        TacticKind::Repeat(inner) | TacticKind::TryFor(inner, _) => take(inner, pending),
+    }
+}
+
+impl Drop for TacticKind {
+    /// Dismantle the combinator tree iteratively.
+    ///
+    /// The derived drop glue recurses once per `Box`, so releasing a tactic
+    /// built by folding a long list with `and_then` would overflow the stack
+    /// -- and a stack overflow during a destructor aborts the process, with no
+    /// way for a caller to react. Detaching children into a work list keeps
+    /// the teardown flat: the nested `drop` of a detached node sees only leaf
+    /// children and stops immediately.
+    fn drop(&mut self) {
+        let mut pending: Vec<TacticKind> = Vec::new();
+        detach_subtactics(self, &mut pending);
+
+        while let Some(mut node) = pending.pop() {
+            detach_subtactics(&mut node, &mut pending);
+        }
+    }
+}
+
+/// A suspended combinator waiting for the result of the sub-tactic currently
+/// being applied.
+///
+/// [`TacticKind::apply_to_goal`] evaluates one sub-tactic at a time and feeds
+/// its [`TacticResult`] to the innermost continuation, so a single result
+/// register plus this stack replaces the native call frames the combinator
+/// tree used to consume.
+enum TacticCont<'a> {
+    /// `Then(a, b)`: waiting for `a`'s result on the original goal.
+    ThenFirst {
+        /// The second tactic of the sequence.
+        second: &'a TacticKind,
+    },
+    /// `Then(a, b)`: waiting for `b`'s result on one of `a`'s sub-goals.
+    ThenEach {
+        /// The second tactic of the sequence.
+        second: &'a TacticKind,
+        /// The sub-goal `second` is currently being applied to.
+        current: Goal,
+        /// Sub-goals not visited yet, in reverse order (pop yields the next).
+        remaining: Vec<Goal>,
+        /// Sub-goals accumulated so far.
+        combined: Vec<Goal>,
+    },
+    /// `OrElse(a, b)`: waiting for `a`'s result.
+    OrElse {
+        /// The fallback tactic.
+        fallback: &'a TacticKind,
+        /// The goal to hand to the fallback.
+        goal: Goal,
+    },
+    /// `Repeat(inner)`: waiting for one iteration's result.
+    Repeat {
+        /// The repeated tactic.
+        inner: &'a TacticKind,
+        /// The goal this iteration was applied to.
+        current: Goal,
+        /// How many iterations have been started so far.
+        iterations: usize,
+    },
+}
+
+/// What the machine does next: evaluate a tactic, or hand a result back.
+enum TacticControl<'a> {
+    /// Apply `kind` to `goal`.
+    Apply {
+        /// Tactic to apply.
+        kind: &'a TacticKind,
+        /// Goal to apply it to.
+        goal: Goal,
+    },
+    /// Deliver `result` to the innermost pending continuation.
+    Deliver {
+        /// Result of the sub-tactic that just finished.
+        result: TacticResult,
+    },
+}
+
+/// Fixed-point iteration limit of the `Repeat` combinator.
+const REPEAT_LIMIT: usize = 1000;
+
 impl TacticKind {
     /// Apply this tactic kind to a [`Goal`].
+    ///
+    /// # Implementation
+    ///
+    /// Driven by an explicit continuation stack rather than by recursion.
+    /// The combinator tree is built by the public API (`Z3Tactic::and_then`,
+    /// `or_else`, `repeat`, `try_for`), so its depth is whatever the caller
+    /// chained together -- a program that folds a few hundred thousand
+    /// tactics with `and_then` used to nest one native frame per link, and the
+    /// return type carries no way to report having run out of stack. The
+    /// evaluation order, the `Then` short-circuits on `Solved`/`Failed`, the
+    /// `NotApplicable` fallbacks and `Repeat`'s fixed-point and
+    /// [`REPEAT_LIMIT`] cut-offs are all unchanged.
     fn apply_to_goal(&self, goal: &Goal) -> TacticResult {
-        match self {
-            TacticKind::Named(name) => apply_named_tactic(name.as_str(), goal),
-            TacticKind::Then(a, b) => {
-                let first_result = a.apply_to_goal(goal);
-                match first_result {
-                    TacticResult::SubGoals(sub) => {
-                        // Apply `b` to each sub-goal, collecting results.
-                        let mut combined: Vec<Goal> = Vec::new();
-                        for sg in sub {
-                            match b.apply_to_goal(&sg) {
-                                TacticResult::SubGoals(more) => combined.extend(more),
-                                TacticResult::Solved(r) => {
-                                    return TacticResult::Solved(r);
-                                }
-                                TacticResult::NotApplicable => combined.push(sg),
-                                TacticResult::Failed(msg) => {
-                                    return TacticResult::Failed(msg);
-                                }
-                            }
-                        }
-                        TacticResult::SubGoals(combined)
+        let mut stack: Vec<TacticCont<'_>> = Vec::new();
+        let mut control = TacticControl::Apply {
+            kind: self,
+            goal: goal.clone(),
+        };
+
+        loop {
+            match control {
+                TacticControl::Apply { kind, goal } => match kind {
+                    TacticKind::Named(name) => {
+                        control = TacticControl::Deliver {
+                            result: apply_named_tactic(name.as_str(), &goal),
+                        };
                     }
-                    other => other,
+                    TacticKind::Then(first, second) => {
+                        stack.push(TacticCont::ThenFirst { second });
+                        control = TacticControl::Apply { kind: first, goal };
+                    }
+                    TacticKind::OrElse(first, fallback) => {
+                        stack.push(TacticCont::OrElse {
+                            fallback,
+                            goal: goal.clone(),
+                        });
+                        control = TacticControl::Apply { kind: first, goal };
+                    }
+                    TacticKind::Repeat(inner) => {
+                        stack.push(TacticCont::Repeat {
+                            inner,
+                            current: goal.clone(),
+                            iterations: 1,
+                        });
+                        control = TacticControl::Apply { kind: inner, goal };
+                    }
+                    TacticKind::TryFor(inner, _ms) => {
+                        // Best-effort: run synchronously; timeout semantics are
+                        // honoured by the underlying solver's conflict limit,
+                        // not by wall-clock here.
+                        control = TacticControl::Apply { kind: inner, goal };
+                    }
+                },
+
+                TacticControl::Deliver { result } => {
+                    let Some(cont) = stack.pop() else {
+                        return result;
+                    };
+                    control = Self::resume(&mut stack, cont, result);
                 }
             }
-            TacticKind::OrElse(a, b) => {
-                let r = a.apply_to_goal(goal);
-                if matches!(r, TacticResult::NotApplicable) {
-                    b.apply_to_goal(goal)
+        }
+    }
+
+    /// Feed `result` to a suspended combinator and decide what runs next.
+    fn resume<'a>(
+        stack: &mut Vec<TacticCont<'a>>,
+        cont: TacticCont<'a>,
+        result: TacticResult,
+    ) -> TacticControl<'a> {
+        match cont {
+            TacticCont::ThenFirst { second } => match result {
+                TacticResult::SubGoals(sub) => {
+                    // Apply `second` to each sub-goal, collecting results.
+                    let mut remaining: Vec<Goal> = sub;
+                    remaining.reverse();
+                    match remaining.pop() {
+                        Some(current) => {
+                            stack.push(TacticCont::ThenEach {
+                                second,
+                                current: current.clone(),
+                                remaining,
+                                combined: Vec::new(),
+                            });
+                            TacticControl::Apply {
+                                kind: second,
+                                goal: current,
+                            }
+                        }
+                        None => TacticControl::Deliver {
+                            result: TacticResult::SubGoals(Vec::new()),
+                        },
+                    }
+                }
+                other => TacticControl::Deliver { result: other },
+            },
+
+            TacticCont::ThenEach {
+                second,
+                current,
+                mut remaining,
+                mut combined,
+            } => {
+                match result {
+                    TacticResult::SubGoals(more) => combined.extend(more),
+                    TacticResult::Solved(solved) => {
+                        return TacticControl::Deliver {
+                            result: TacticResult::Solved(solved),
+                        };
+                    }
+                    TacticResult::NotApplicable => combined.push(current),
+                    TacticResult::Failed(msg) => {
+                        return TacticControl::Deliver {
+                            result: TacticResult::Failed(msg),
+                        };
+                    }
+                }
+
+                match remaining.pop() {
+                    Some(next) => {
+                        stack.push(TacticCont::ThenEach {
+                            second,
+                            current: next.clone(),
+                            remaining,
+                            combined,
+                        });
+                        TacticControl::Apply {
+                            kind: second,
+                            goal: next,
+                        }
+                    }
+                    None => TacticControl::Deliver {
+                        result: TacticResult::SubGoals(combined),
+                    },
+                }
+            }
+
+            TacticCont::OrElse { fallback, goal } => {
+                if matches!(result, TacticResult::NotApplicable) {
+                    TacticControl::Apply {
+                        kind: fallback,
+                        goal,
+                    }
                 } else {
-                    r
+                    TacticControl::Deliver { result }
                 }
             }
-            TacticKind::Repeat(inner) => {
-                let mut current = goal.clone();
-                for _ in 0..1000_usize {
-                    match inner.apply_to_goal(&current) {
-                        TacticResult::Solved(r) => return TacticResult::Solved(r),
-                        TacticResult::SubGoals(sub) if sub.len() == 1 => {
-                            if sub[0].assertions == current.assertions {
-                                break; // fixed-point
+
+            TacticCont::Repeat {
+                inner,
+                current,
+                iterations,
+            } => match result {
+                TacticResult::Solved(solved) => TacticControl::Deliver {
+                    result: TacticResult::Solved(solved),
+                },
+                TacticResult::Failed(msg) => TacticControl::Deliver {
+                    result: TacticResult::Failed(msg),
+                },
+                // The tactic no longer applies: the current goal is the
+                // fixed point.
+                TacticResult::NotApplicable => TacticControl::Deliver {
+                    result: TacticResult::SubGoals(vec![current]),
+                },
+                TacticResult::SubGoals(sub) => {
+                    // A single sub-goal means the iteration made progress (or
+                    // reached the fixed point); anything else is handed back
+                    // as-is, exactly as the recursive version did.
+                    let mut goals = sub.into_iter();
+                    match (goals.next(), goals.next()) {
+                        (Some(only), None) => {
+                            if only.assertions == current.assertions {
+                                // Fixed point: the iteration changed nothing,
+                                // so the goal entering it is the answer.
+                                TacticControl::Deliver {
+                                    result: TacticResult::SubGoals(vec![current]),
+                                }
+                            } else if iterations >= REPEAT_LIMIT {
+                                // Iteration budget spent: report the goal the
+                                // last iteration produced.
+                                TacticControl::Deliver {
+                                    result: TacticResult::SubGoals(vec![only]),
+                                }
+                            } else {
+                                stack.push(TacticCont::Repeat {
+                                    inner,
+                                    current: only.clone(),
+                                    iterations: iterations + 1,
+                                });
+                                TacticControl::Apply {
+                                    kind: inner,
+                                    goal: only,
+                                }
                             }
-                            current = sub
-                                .into_iter()
-                                .next()
-                                .expect("sub.len() == 1 guarantees exactly one element");
                         }
-                        TacticResult::SubGoals(sub) => {
-                            return TacticResult::SubGoals(sub);
-                        }
-                        TacticResult::NotApplicable => break,
-                        TacticResult::Failed(msg) => return TacticResult::Failed(msg),
+                        (first, second) => TacticControl::Deliver {
+                            result: TacticResult::SubGoals(
+                                first.into_iter().chain(second).chain(goals).collect(),
+                            ),
+                        },
                     }
                 }
-                TacticResult::SubGoals(vec![current])
-            }
-            TacticKind::TryFor(inner, _ms) => {
-                // Best-effort: run synchronously; timeout semantics are
-                // honoured by the underlying solver's conflict limit, not by
-                // wall-clock here.
-                inner.apply_to_goal(goal)
-            }
+            },
         }
     }
 }
@@ -413,7 +659,7 @@ impl TacticKind {
 /// every call.  `apply_named_tactic` is on a hot path — the `Repeat` and `Then`
 /// combinators in [`TacticKind::apply_to_goal`] can invoke it up to 1000 times
 /// for a single `Z3Tactic::apply` — so we build the registry exactly once and
-/// share it behind a [`OnceLock`].
+/// share it behind a [`OnceLock`](std::sync::OnceLock).
 ///
 /// This is only sound because [`TacticRegistry`] is `Send + Sync`: its factory
 /// closures are stored as `Box<dyn Fn() -> Box<dyn Tactic> + Send + Sync>`.
@@ -1115,3 +1361,85 @@ pub use oxiz_theories::datatype::{
     Constructor as DtConstructor, DatatypeDecl as DtDecl, DatatypeSort as DtSort, Field as DtField,
     Selector as DtSelector,
 };
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tactic_combinator_tests {
+    use super::*;
+
+    /// Left-nested `and_then` chains are what a program that folds a list of
+    /// tactics produces. The combinator evaluator used to recurse once per
+    /// link, so a long chain overflowed the native stack; returning at all is
+    /// the assertion here.
+    #[test]
+    fn deeply_chained_then_survives_a_small_stack() {
+        // Stack and chain length scale together (1 MiB/100k -> 128 KiB/12.5k):
+        // the ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const CHAIN: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                // "smt" is not in the registry, so each link passes the goal
+                // through unchanged -- cheap, and it forces the `Then`
+                // combinator down the whole chain.
+                let mut kind = TacticKind::Named("smt".to_string());
+                for _ in 0..CHAIN {
+                    kind = TacticKind::Then(
+                        Box::new(kind),
+                        Box::new(TacticKind::Named("smt".to_string())),
+                    );
+                }
+
+                match kind.apply_to_goal(&Goal::empty()) {
+                    TacticResult::SubGoals(goals) => goals.len(),
+                    other => panic!("expected sub-goals, got {other:?}"),
+                }
+            })
+            .expect("spawning the worker thread should succeed");
+
+        assert_eq!(handle.join().expect("the walk must not overflow"), 1);
+    }
+
+    /// Semantic pin: `or_else` only runs its fallback when the first tactic
+    /// does not apply.
+    #[test]
+    fn or_else_prefers_the_first_applicable_tactic() {
+        // "simplify" is a registered tactic, so it applies; the fallback must
+        // not run.
+        let kind = TacticKind::OrElse(
+            Box::new(TacticKind::Named("simplify".to_string())),
+            Box::new(TacticKind::Named("definitely-not-a-tactic".to_string())),
+        );
+        assert!(matches!(
+            kind.apply_to_goal(&Goal::empty()),
+            TacticResult::SubGoals(_) | TacticResult::Solved(_)
+        ));
+    }
+
+    /// Semantic pin: `repeat` stops at the fixed point and yields exactly one
+    /// goal, whose assertions are unchanged for a pass-through tactic.
+    #[test]
+    fn repeat_stops_at_the_fixed_point() {
+        let kind = TacticKind::Repeat(Box::new(TacticKind::Named("smt".to_string())));
+        match kind.apply_to_goal(&Goal::empty()) {
+            TacticResult::SubGoals(goals) => {
+                assert_eq!(goals.len(), 1);
+                assert!(goals[0].assertions.is_empty());
+            }
+            other => panic!("expected a single sub-goal, got {other:?}"),
+        }
+    }
+
+    /// Semantic pin: `try_for` is a transparent wrapper.
+    #[test]
+    fn try_for_delegates_to_its_inner_tactic() {
+        let inner = TacticKind::Named("smt".to_string());
+        let wrapped = TacticKind::TryFor(Box::new(inner), 5);
+        match wrapped.apply_to_goal(&Goal::empty()) {
+            TacticResult::SubGoals(goals) => assert_eq!(goals.len(), 1),
+            other => panic!("expected sub-goals, got {other:?}"),
+        }
+    }
+}

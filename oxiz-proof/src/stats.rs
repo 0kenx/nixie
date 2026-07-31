@@ -70,11 +70,12 @@ impl DetailedProofStats {
             0.0
         };
 
-        // Compute average leaf depth
+        // Compute average leaf depth (single BFS, shared across all leaves)
         let mut total_leaf_depth = 0;
         if let Some(root) = proof.root() {
-            for &leaf in &leaf_nodes {
-                total_leaf_depth += compute_depth_to_node(proof, root, leaf);
+            let depths = depths_from_root(proof, root);
+            for leaf in &leaf_nodes {
+                total_leaf_depth += depths.get(leaf).copied().unwrap_or(0);
             }
         }
         let avg_leaf_depth = if !leaf_nodes.is_empty() {
@@ -167,26 +168,37 @@ pub struct TheoryProofStats {
     pub theory_usage: HashMap<String, usize>,
 }
 
-/// Compute depth from root to a specific node.
-fn compute_depth_to_node(
+/// Compute the distance from `root` to every reachable node.
+///
+/// Iterative breadth-first search over the proof DAG, so the result is the
+/// *shortest* root-to-node distance and each node is expanded exactly once.
+/// Nodes that are unreachable from `root` are simply absent from the map — the
+/// caller decides what to do with them, rather than a sentinel `0` standing in
+/// for both "is the root" and "not found".
+fn depths_from_root(
     proof: &Proof,
-    current: crate::proof::ProofNodeId,
-    target: crate::proof::ProofNodeId,
-) -> usize {
-    if current == target {
-        return 0;
-    }
+    root: crate::proof::ProofNodeId,
+) -> HashMap<crate::proof::ProofNodeId, usize> {
+    let mut depths = HashMap::new();
+    let mut queue = std::collections::VecDeque::new();
 
-    if let Some(premises) = proof.premises(current) {
+    depths.insert(root, 0usize);
+    queue.push_back(root);
+
+    while let Some(current) = queue.pop_front() {
+        let depth = depths.get(&current).copied().unwrap_or(0);
+        let Some(premises) = proof.premises(current) else {
+            continue;
+        };
         for &premise in premises {
-            let depth = compute_depth_to_node(proof, premise, target);
-            if depth > 0 || premise == target {
-                return depth + 1;
+            if let std::collections::hash_map::Entry::Vacant(slot) = depths.entry(premise) {
+                slot.insert(depth.saturating_add(1));
+                queue.push_back(premise);
             }
         }
     }
 
-    0
+    depths
 }
 
 /// Categorize a theory rule by its theory.

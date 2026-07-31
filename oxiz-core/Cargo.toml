@@ -63,3 +63,6 @@ property-tests = []
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[lints.clippy]
+unwrap_used = "deny"

@@ -523,6 +523,12 @@ fn bv_concat_computes_exact_combined_width_for_valid_operands() {
     assert_eq!(sort_kind(&m, concat), SortKind::BitVec(8));
 }
 
+// `mk_bv_concat` guards this with `debug_assert!`, which is compiled out in
+// release builds (where the documented `32`-width fallback takes over
+// instead). The test therefore only exists when debug assertions are on —
+// gating it here rather than weakening the assertion keeps the debug-profile
+// check exactly as strict as it was.
+#[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "mk_bv_concat")]
 fn bv_concat_debug_asserts_on_non_bitvector_operand() {

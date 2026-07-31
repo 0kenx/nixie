@@ -444,6 +444,15 @@ fn build_model_value(value_id: TermId, manager: &TermManager) -> PyModelValue {
                 // than silently returning a truncated/wrong integer.
                 PyModelValue::BitVec(value.clone(), *width)
             }
+            // The actual string content, not a Debug-formatted `StringLit("...")`.
+            // `PyModelValue::Str` becomes a real Python `str` object via
+            // `dict.set_item(name, s.as_str())` below, so this must be the
+            // plain value a Python caller compares against their original
+            // string -- not Rust's `{:?}` escaping (which uses Rust's own
+            // escape syntax, e.g. emitting `\u{e9}` in *Rust's* meaning) and
+            // not an SMT-LIB string literal either (Python has no use for
+            // the enclosing quotes or the `""`-doubling rule).
+            TermKind::StringLit(s) => PyModelValue::Str(s.clone()),
             other => PyModelValue::Str(format!("{:?}", other)),
         }
     } else {
@@ -527,6 +536,43 @@ mod tests {
                 assert_eq!(w, 8);
             }
             other => panic!("expected PyModelValue::BitVec, got {other:?}"),
+        }
+    }
+
+    /// `build_model_value` used to fall through its `other => ...`
+    /// catch-all for a `TermKind::StringLit`, rendering it via Rust's
+    /// `{:?}` Debug formatter (`StringLit("hello")`, with Rust's *own*
+    /// escape syntax for any special character) instead of the actual
+    /// string content. Since `PyModelValue::Str` becomes a real Python
+    /// `str` object via `dict.set_item(name, s.as_str())`, that corrupted
+    /// every Python user's string-sorted model value. It must now be
+    /// exactly the original string for a `"`, a `\`, a `\u`-prefixed
+    /// literal substring, a non-ASCII code point, and a control character --
+    /// none of which are Python-, Rust-, or SMT-LIB-escaped here: the
+    /// Python target grammar for a `str` is the raw value, not a literal.
+    #[test]
+    fn build_model_value_string_lit_returns_raw_content_not_debug_format() {
+        for raw in ["a\"b", "a\\b", "\\u0041", "caf\u{e9}", "line\u{0}break"] {
+            let mut tm = TermManager::new();
+            let term = tm.mk_string_lit(raw);
+            match build_model_value(term, &tm) {
+                PyModelValue::Str(s) => {
+                    assert_eq!(s, raw, "expected the raw string back unchanged")
+                }
+                other => panic!("expected PyModelValue::Str, got {other:?}"),
+            }
+        }
+    }
+
+    /// Control: plain ASCII (no special characters at all) must also come
+    /// back unchanged, matching every case above.
+    #[test]
+    fn build_model_value_string_lit_plain_ascii_control() {
+        let mut tm = TermManager::new();
+        let term = tm.mk_string_lit("hello world");
+        match build_model_value(term, &tm) {
+            PyModelValue::Str(s) => assert_eq!(s, "hello world"),
+            other => panic!("expected PyModelValue::Str, got {other:?}"),
         }
     }
 

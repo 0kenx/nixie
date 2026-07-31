@@ -112,6 +112,14 @@ pub enum CodeTreeInstr {
     Halt,
 }
 
+/// One step of the iterative pattern compiler.
+enum CompileTask {
+    /// Compile this pattern term.
+    Term(TermId),
+    /// Append this already-decided instruction.
+    Emit(CodeTreeInstr),
+}
+
 /// A compiled pattern for a quantified formula.
 #[derive(Debug, Clone)]
 pub struct CompiledPattern {
@@ -305,7 +313,12 @@ impl CodeTree {
         }
     }
 
-    /// Recursively compile a pattern term.
+    /// Compile a pattern term into code-tree instructions.
+    ///
+    /// Explicit stack, not recursion: the pattern term is caller-supplied and
+    /// nests arbitrarily deep, and this returns nothing -- there is no channel
+    /// on which a depth cap could report that part of a pattern was not
+    /// compiled, and a half-compiled pattern matches terms it must not.
     fn compile_term(
         &self,
         term: TermId,
@@ -313,6 +326,39 @@ impl CodeTree {
         bound_vars: &mut FxHashMap<PatternVar, usize>,
         variables: &mut FxHashMap<PatternVar, SortId>,
         instructions: &mut Vec<CodeTreeInstr>,
+        tm: &TermManager,
+    ) {
+        let mut tasks: Vec<CompileTask> = vec![CompileTask::Term(term)];
+        while let Some(task) = tasks.pop() {
+            let term = match task {
+                CompileTask::Emit(instr) => {
+                    instructions.push(instr);
+                    continue;
+                }
+                CompileTask::Term(term) => term,
+            };
+            self.compile_term_node(
+                term,
+                var_mapping,
+                bound_vars,
+                variables,
+                instructions,
+                &mut tasks,
+                tm,
+            );
+        }
+    }
+
+    /// Compile one pattern node, queueing its operands.
+    #[allow(clippy::too_many_arguments)]
+    fn compile_term_node(
+        &self,
+        term: TermId,
+        var_mapping: &FxHashMap<Spur, PatternVar>,
+        bound_vars: &mut FxHashMap<PatternVar, usize>,
+        variables: &mut FxHashMap<PatternVar, SortId>,
+        instructions: &mut Vec<CodeTreeInstr>,
+        tasks: &mut Vec<CompileTask>,
         tm: &TermManager,
     ) {
         let term_data = tm.get(term).expect("term should exist in manager");
@@ -363,11 +409,13 @@ impl CodeTree {
                     failure_pc,
                 });
 
-                // Recursively compile each argument
-                for (i, &arg) in args.iter().enumerate() {
-                    instructions.push(CodeTreeInstr::MoveToChild { index: i });
-                    self.compile_term(arg, var_mapping, bound_vars, variables, instructions, tm);
-                    instructions.push(CodeTreeInstr::MoveToParent);
+                // Queue each argument, innermost-first, so the emitted
+                // sequence is identical to the recursive walk's:
+                // MoveToChild(i), <argument code>, MoveToParent.
+                for (i, &arg) in args.iter().enumerate().rev() {
+                    tasks.push(CompileTask::Emit(CodeTreeInstr::MoveToParent));
+                    tasks.push(CompileTask::Term(arg));
+                    tasks.push(CompileTask::Emit(CodeTreeInstr::MoveToChild { index: i }));
                 }
             }
 
@@ -603,6 +651,127 @@ mod tests {
 
     fn setup_term_manager() -> (TermManager, Rodeo) {
         (TermManager::new(), Rodeo::default())
+    }
+
+    #[test]
+    fn test_compile_term_deep_pattern_small_stack() {
+        // `compile_term` used to recurse once per nesting level of a
+        // caller-supplied pattern, and it returns nothing -- there is no
+        // channel on which a depth cap could report that the tail of a pattern
+        // was never compiled, and a half-compiled pattern matches terms it must
+        // not. Run on a deliberately small (128 KiB) stack: a stack overflow
+        // aborts the process, so "the thread returned at all" is part of the
+        // assertion. The stack size and `depth` are scaled together and only
+        // their ratio (~21 bytes per level) matters -- never raise one without
+        // the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth = 6_250;
+                let mut tm = TermManager::new();
+                let int_sort = tm.sorts.int_sort;
+
+                let x = tm.mk_var("x", int_sort);
+                let mut term = x;
+                for _ in 0..depth {
+                    term = tm.mk_apply("f", [term], int_sort);
+                }
+
+                let mut var_mapping = FxHashMap::default();
+                let name = match &tm.get(x).expect("the variable term must exist").kind {
+                    TermKind::Var(name) => *name,
+                    other => panic!("expected a variable term, got {:?}", other),
+                };
+                var_mapping.insert(name, 0u32);
+
+                let tree = CodeTree::new();
+                let mut bound_vars = FxHashMap::default();
+                let mut variables = FxHashMap::default();
+                let mut instructions = Vec::new();
+                tree.compile_term(
+                    term,
+                    &var_mapping,
+                    &mut bound_vars,
+                    &mut variables,
+                    &mut instructions,
+                    &tm,
+                );
+
+                // Per level: CheckSymbol, MoveToChild, MoveToParent; plus the
+                // single Bind for the innermost variable.
+                assert_eq!(instructions.len(), depth * 3 + 1);
+                assert!(matches!(
+                    instructions.first(),
+                    Some(CodeTreeInstr::CheckSymbol { arity: 1, .. })
+                ));
+                assert!(matches!(
+                    instructions.last(),
+                    Some(CodeTreeInstr::MoveToParent)
+                ));
+                assert_eq!(variables.len(), 1);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deeply nested pattern must not overflow a 128 KiB stack");
+    }
+
+    #[test]
+    fn test_compile_term_emits_recursive_instruction_order() {
+        // Semantic pin for the iterative rewrite: nested arguments still emit
+        // MoveToChild(i), <argument code>, MoveToParent, in argument order.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+
+        let x = tm.mk_var("x", int_sort);
+        let y = tm.mk_var("y", int_sort);
+        let g_y = tm.mk_apply("g", [y], int_sort);
+        let pattern = tm.mk_apply("f", [x, g_y], int_sort);
+
+        let mut var_mapping = FxHashMap::default();
+        for (term, id) in [(x, 0u32), (y, 1u32)] {
+            match &tm.get(term).expect("the variable term must exist").kind {
+                TermKind::Var(name) => {
+                    var_mapping.insert(*name, id);
+                }
+                other => panic!("expected a variable term, got {:?}", other),
+            }
+        }
+
+        let tree = CodeTree::new();
+        let mut bound_vars = FxHashMap::default();
+        let mut variables = FxHashMap::default();
+        let mut instructions = Vec::new();
+        tree.compile_term(
+            pattern,
+            &var_mapping,
+            &mut bound_vars,
+            &mut variables,
+            &mut instructions,
+            &tm,
+        );
+
+        let shape: Vec<&str> = instructions
+            .iter()
+            .map(|instr| match instr {
+                CodeTreeInstr::CheckSymbol { .. } => "sym",
+                CodeTreeInstr::MoveToChild { .. } => "down",
+                CodeTreeInstr::MoveToParent => "up",
+                CodeTreeInstr::Bind { .. } => "bind",
+                CodeTreeInstr::CheckEq { .. } => "eq",
+                CodeTreeInstr::CheckVar { .. } => "var",
+                CodeTreeInstr::CheckConstant { .. } => "const",
+                CodeTreeInstr::Yield { .. } => "yield",
+                CodeTreeInstr::Halt => "halt",
+            })
+            .collect();
+
+        assert_eq!(
+            shape,
+            vec![
+                "sym", "down", "bind", "up", "down", "sym", "down", "bind", "up", "up"
+            ]
+        );
     }
 
     #[test]

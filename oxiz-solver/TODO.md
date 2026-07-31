@@ -1,21 +1,36 @@
 # oxiz-solver TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness sweep and hardening pass
 
 Reference: Z3's `smt/` directory
 
-## Current Status (v0.2.4)
+## Current Status (v0.3.1)
 
-- **Version**: 0.2.4
+- **Version**: 0.3.1
 - **Status**: Stable
-- **Tests**: 505+ passing
+- **Tests**: 1,684 passing
 - **Zero** `todo!`/`unimplemented!` calls
 
-### Milestone: 100% Z3 Parity (achieved v0.1.3)
+### Milestone: 168/168 on the differential parity suite (v0.3.1)
+
+**Date Achieved**: July 2026
+
+The oxiz-solver crate closed the last of the parity gap: **168/168 Correct,
+0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic /
+168-benchmark differential suite against a real `z3` 4.15.4 binary under the
+honest comparator (an `Unknown` never counts as a match), with all 19 logic
+families at 100%. That is 100% *of the differential parity suite*, not a blanket
+claim of Z3 compatibility outside it. The three quantified benchmarks that hit
+the 60s timeout at 0.3.0 (`AUFLIA`, `UFLIA`, `UFLRA`) now solve in roughly a
+millisecond.
+
+### Milestone: earlier 88-benchmark suite (v0.1.3)
 
 **Date Achieved**: February 5, 2026
 
-The oxiz-solver crate contributed to achieving **100% Z3 parity** across all 88 benchmark tests.
+The oxiz-solver crate contributed to matching z3 on all 88 benchmarks of the
+suite as it stood at the time; the suite has since grown to 168 benchmarks
+across 19 logics.
 
 ### Key Solver Infrastructure Fixes (v0.1.3)
 - FP to_fp parsing: Added support for `TermKind::Apply` with `to_fp` function names
@@ -291,3 +306,33 @@ The actual implementation leverages:
 ## Stub completions (2026-06-08)
 
 - [x] `Context::eval_in_model` — new public method; evaluates a TermId against the current model (clones Model, calls eval over ctx.terms). Added for oxiz-spacer BMC counterexample extraction.
+
+## MBQI completeness, honesty and resource behavior (2026-07-31, v0.3.1)
+
+### MBQI (closed the parity gap)
+
+- [x] Finite-range quantifier expansion (`AUFLIA`)
+- [x] Skolem witness synthesis with CEGAR refinement (`UFLIA`)
+- [x] Symbolic model certification over the reals, plus quasi-macro detection (`UFLRA`)
+- [x] E-matching substitution no longer leaves quantified variables free in generated BV/string lemmas
+- [x] Theory-solver scope leak across MBQI rounds fixed via `rebase_theory_state` (was a false Unsat on satisfiable re-checks)
+- [x] MBQI search state checkpointed and restored around each check (instantiation no longer stops silently after repeated checks on the same goal)
+
+### Honesty and state hygiene
+
+- [x] Model, unsat core and proof invalidated on `push` / `pop` / `assert` — no stale answers survive a mutation
+- [x] An unjustified conflict clause now yields `Unknown` instead of a fabricated `Unsat`
+- [x] Solver-owned `DerivedReasons` carrying absolute scope-depth stamps
+- [x] `(get-unsat-core)` works when `:produce-unsat-cores` is enabled mid-session (assertion names recorded unconditionally)
+
+### Resource behavior under repeated `check-sat`
+
+- [x] Hyper-binary-resolution clauses registered in the learned/assertion ledgers, so clause-DB reduction, `forget` and `pop` can reclaim them
+- [x] `Solver::pop` retracts Tseitin-memo entries per entry through the undo journal instead of clearing wholesale (wholesale clearing caused unbounded re-encoding: one goal grew 25 → 361 original clauses over 30 push/pop + check cycles)
+- [x] Verdict cache: repeating `check-sat` on an untouched goal is an O(1) cache hit, invalidated by `assert` / `push` / `pop` / `reset` and by every settings mutator
+
+### Encoding and arithmetic
+
+- [x] Encode-depth memoization, removing 2^n re-encoding of a shared DAG
+- [x] `ENCODE_DEPTH_LIMIT` measured and set to 512
+- [x] Bit-vector model builder no longer zero-fills values wider than 64 bits, and bit-vector constant assertion no longer truncates to the low limb (which produced a false sat)

@@ -208,52 +208,28 @@ impl TermDatabase {
         }
     }
 
-    /// Check if a term is ground (no free variables)
+    /// Check if a term is ground (no free variables).
+    ///
+    /// Delegates to [`utils::is_ground`](crate::mbqi::macros::utils::is_ground),
+    /// i.e. `free_vars_including_patterns(term).is_empty()` on the exhaustive,
+    /// binder-aware, explicit-stack free-variable walk in `oxiz-core`.
+    ///
+    /// This used to be a local recursive walk that descended only
+    /// `Apply`/`Not`/`Neg`/`And`/`Or` and then fell through `_ => true`, so
+    /// every other kind was classified ground *without looking at its
+    /// children*: `(+ x 1)`, `(bvadd x #x01)`, `(select a i)`, `(ite b x y)`
+    /// all counted as "ground" despite the free `x`. That is the unsound
+    /// direction for this database: a variable-containing term entered
+    /// `ground_terms`, was offered to `match_pattern`, and a pattern variable
+    /// could then bind to a term that still contains variables, producing a
+    /// non-ground "instance". Binders fell through the same arm, so a closed
+    /// `forall` answered `true` only by accident and a `forall` with a free
+    /// variable under it answered `true` incorrectly. The core query is
+    /// exhaustive over `TermKind` (a new variant is a compile error there,
+    /// not a silent misclassification here) and scope-aware, so both
+    /// directions are now correct.
     fn is_ground(&self, term: TermId, manager: &TermManager) -> bool {
-        let mut visited = FxHashSet::default();
-        self.is_ground_rec(term, manager, &mut visited)
-    }
-
-    fn is_ground_rec(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) -> bool {
-        if visited.contains(&term) {
-            return true;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return true;
-        };
-
-        if matches!(t.kind, TermKind::Var(_)) {
-            return false;
-        }
-
-        // Check children
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    if !self.is_ground_rec(arg, manager, visited) {
-                        return false;
-                    }
-                }
-                true
-            }
-            TermKind::Not(arg) | TermKind::Neg(arg) => self.is_ground_rec(*arg, manager, visited),
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    if !self.is_ground_rec(arg, manager, visited) {
-                        return false;
-                    }
-                }
-                true
-            }
-            _ => true,
-        }
+        crate::mbqi::macros::utils::is_ground(term, manager)
     }
 
     /// Match a pattern against the database
@@ -274,67 +250,82 @@ impl TermDatabase {
         matches
     }
 
-    /// Try to match a pattern against a term
+    /// Try to match a pattern against a term.
+    ///
+    /// Iterative worklist over `(pattern, term)` pairs with a visited-pair
+    /// set, replacing a native recursion that had no memoisation at all: the
+    /// two-sided walk re-expanded shared subterms of the hash-consed DAG once
+    /// per path (exponential on a doubling DAG) and overflowed the native
+    /// stack on deep patterns. Skipping an already-seen pair is sound because
+    /// this walk is a pure conjunction with no backtracking: bindings only
+    /// ever grow within one attempt, the first failing pair fails the whole
+    /// attempt, and a pair that succeeded pinned every pattern variable below
+    /// it to the corresponding subterm of `term`, so revisiting it cannot
+    /// change the outcome.
     fn try_match(
         &self,
         pattern: TermId,
         term: TermId,
         manager: &TermManager,
     ) -> Option<FxHashMap<Spur, TermId>> {
-        let mut binding = FxHashMap::default();
-        if self.try_match_rec(pattern, term, &mut binding, manager) {
-            Some(binding)
-        } else {
-            None
-        }
-    }
+        let mut binding: FxHashMap<Spur, TermId> = FxHashMap::default();
+        let mut seen: FxHashSet<(TermId, TermId)> = FxHashSet::default();
+        // Pairs still to match; children are pushed in reverse so they are
+        // matched left-to-right, exactly as the recursive walk did.
+        let mut work: Vec<(TermId, TermId)> = vec![(pattern, term)];
 
-    fn try_match_rec(
-        &self,
-        pattern: TermId,
-        term: TermId,
-        binding: &mut FxHashMap<Spur, TermId>,
-        manager: &TermManager,
-    ) -> bool {
-        let Some(p) = manager.get(pattern) else {
-            return false;
-        };
-
-        // Variable matches anything (but must be consistent)
-        if let TermKind::Var(var_name) = p.kind {
-            if let Some(&bound_term) = binding.get(&var_name) {
-                return bound_term == term;
-            } else {
-                binding.insert(var_name, term);
-                return true;
+        while let Some((p_id, t_id)) = work.pop() {
+            if !seen.insert((p_id, t_id)) {
+                continue;
             }
-        }
 
-        let Some(t) = manager.get(term) else {
-            return false;
-        };
+            let p = manager.get(p_id)?;
 
-        // Structural match
-        match (&p.kind, &t.kind) {
-            (TermKind::Apply { func: pf, args: pa }, TermKind::Apply { func: tf, args: ta }) => {
-                if pf != tf || pa.len() != ta.len() {
-                    return false;
-                }
-
-                for (parg, targ) in pa.iter().zip(ta.iter()) {
-                    if !self.try_match_rec(*parg, *targ, binding, manager) {
-                        return false;
+            // Variable matches anything (but must be consistent)
+            if let TermKind::Var(var_name) = p.kind {
+                match binding.get(&var_name) {
+                    Some(&bound_term) => {
+                        if bound_term != t_id {
+                            return None;
+                        }
+                    }
+                    None => {
+                        binding.insert(var_name, t_id);
                     }
                 }
-                true
+                continue;
             }
-            (TermKind::Not(pa), TermKind::Not(ta)) => {
-                self.try_match_rec(*pa, *ta, binding, manager)
+
+            let t = manager.get(t_id)?;
+
+            // Structural match
+            match (&p.kind, &t.kind) {
+                (
+                    TermKind::Apply { func: pf, args: pa },
+                    TermKind::Apply { func: tf, args: ta },
+                ) => {
+                    if pf != tf || pa.len() != ta.len() {
+                        return None;
+                    }
+                    for (parg, targ) in pa.iter().zip(ta.iter()).rev() {
+                        work.push((*parg, *targ));
+                    }
+                }
+                (TermKind::Not(pa), TermKind::Not(ta)) => work.push((*pa, *ta)),
+                (TermKind::IntConst(pv), TermKind::IntConst(tv)) => {
+                    if pv != tv {
+                        return None;
+                    }
+                }
+                (TermKind::True, TermKind::True) | (TermKind::False, TermKind::False) => {}
+                // Any other shape pair is simply not matched by this matcher.
+                // Failing is the conservative (sound) direction: it can only
+                // miss an instantiation, never fabricate a binding.
+                _ => return None,
             }
-            (TermKind::IntConst(pv), TermKind::IntConst(tv)) => pv == tv,
-            (TermKind::True, TermKind::True) | (TermKind::False, TermKind::False) => true,
-            _ => false,
         }
+
+        Some(binding)
     }
 
     /// Get terms by symbol
@@ -416,7 +407,14 @@ impl LazyInstantiator {
         inst
     }
 
-    /// Process quantifiers and generate instantiations lazily
+    /// Process quantifiers and generate instantiations lazily.
+    ///
+    /// Only **universal** quantifiers are instantiated, whichever strategy is
+    /// selected. For an existential, `body[t/x]` is not entailed by
+    /// `(exists x. body)`, so emitting it as a lemma over-constrains the
+    /// solver and can flip SAT to UNSAT -- the same rationale as the
+    /// `is_universal` gate in `mbqi::integration`. Existential entries in
+    /// `quantifiers` are skipped.
     pub fn process(
         &mut self,
         quantifiers: &[QuantifiedFormula],
@@ -449,6 +447,10 @@ impl LazyInstantiator {
         let mut instantiations = Vec::new();
 
         for quantifier in quantifiers {
+            // Universal quantifiers only (see `process`).
+            if !quantifier.is_universal {
+                continue;
+            }
             let cex_result = self.cex_generator.generate(quantifier, model, manager);
 
             for cex in cex_result.counterexamples {
@@ -471,9 +473,9 @@ impl LazyInstantiator {
         manager: &mut TermManager,
         max_instantiations: usize,
     ) -> Vec<Instantiation> {
-        // Add quantifiers to pending queue
+        // Add quantifiers to pending queue (universal only, see `process`)
         for quantifier in quantifiers {
-            if quantifier.can_instantiate() {
+            if quantifier.is_universal && quantifier.can_instantiate() {
                 self.pending_queue.push_back(PendingInstantiation {
                     quantifier: quantifier.clone(),
                     priority: quantifier.priority_score(),
@@ -522,6 +524,10 @@ impl LazyInstantiator {
         self.relevance.update_from_model(model, manager);
 
         for quantifier in quantifiers {
+            // Universal quantifiers only (see `process`).
+            if !quantifier.is_universal {
+                continue;
+            }
             // Check if quantifier is relevant
             if !self.relevance.is_relevant(quantifier.term) {
                 self.stats.num_relevance_filtered += 1;
@@ -549,9 +555,9 @@ impl LazyInstantiator {
         model: &CompletedModel,
         manager: &mut TermManager,
     ) -> Vec<Instantiation> {
-        // Add quantifiers to priority queue
+        // Add quantifiers to priority queue (universal only, see `process`)
         for quantifier in quantifiers {
-            if quantifier.can_instantiate() {
+            if quantifier.is_universal && quantifier.can_instantiate() {
                 let cost = self.estimate_cost(quantifier, manager);
                 let scored = ScoredInstantiation {
                     quantifier: quantifier.clone(),
@@ -597,6 +603,10 @@ impl LazyInstantiator {
         let mut instantiations = Vec::new();
 
         for quantifier in quantifiers {
+            // Universal quantifiers only (see `process`).
+            if !quantifier.is_universal {
+                continue;
+            }
             if instantiations.len() >= max_per_round {
                 break;
             }
@@ -633,89 +643,70 @@ impl LazyInstantiator {
         var_cost + body_size + inst_penalty
     }
 
+    /// Number of distinct nodes reachable through the propositional
+    /// connectives `And`/`Or`/`Not`; every other kind counts as one leaf.
+    ///
+    /// This is a cost heuristic only -- the deliberately shallow descent set
+    /// is part of its semantics -- but the walk itself is an explicit-stack
+    /// loop with a visited set, so no input depth can overflow the call
+    /// stack and shared subterms are counted once.
     fn term_size(&self, term: TermId, manager: &TermManager) -> usize {
-        let mut visited = FxHashSet::default();
-        self.term_size_rec(term, manager, &mut visited)
-    }
-
-    fn term_size_rec(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) -> usize {
-        if visited.contains(&term) {
-            return 0;
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut size = 0usize;
+        let mut work = vec![term];
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+            size += 1;
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+            match &t.kind {
+                TermKind::And(args) | TermKind::Or(args) => work.extend(args.iter().copied()),
+                TermKind::Not(arg) => work.push(*arg),
+                // Deliberate leaf classification: only propositional
+                // structure contributes to this cost estimate.
+                _ => {}
+            }
         }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return 1;
-        };
-
-        let children_size = match &t.kind {
-            TermKind::And(args) | TermKind::Or(args) => args
-                .iter()
-                .map(|&arg| self.term_size_rec(arg, manager, visited))
-                .sum(),
-            TermKind::Not(arg) => self.term_size_rec(*arg, manager, visited),
-            _ => 0,
-        };
-
-        1 + children_size
+        size
     }
 
-    /// Apply substitution to a term
+    /// Substitute a quantifier's bound variables in `term`, by variable name.
+    ///
+    /// Delegates to [`utils::substitute`](crate::mbqi::macros::utils::substitute),
+    /// the one shared implementation for this crate, which resolves the
+    /// name-keyed map against the term's actual free occurrences and hands the
+    /// result to [`TermManager::substitute`].
+    ///
+    /// This used to be a local recursive walk with a memo table and a
+    /// `TermKind` whitelist that ended in `_ => term`, so every kind outside
+    /// the whitelist was returned **unchanged** -- the whitelist covered only
+    /// `Var`/`Not`/`And`/`Or`, so *every* arithmetic, bit-vector, array,
+    /// string, floating-point, datatype and equality operator, and every
+    /// binder, fell through. A
+    /// bound variable sitting anywhere under such a kind therefore survived
+    /// into the "ground instance", which is then not an instance at all: the
+    /// engine reported a substitution it had not performed. Four
+    /// near-identical copies of that walk existed in this module (here, and in
+    /// `instantiation`, `counterexample`, `lazy_instantiation`,
+    /// `conflict_driven`); they are all now this one call, because a duplicate
+    /// that has diverged four times will diverge again.
+    ///
+    /// The shared routine additionally descends into
+    /// `Forall`/`Exists`/`Let`/`Match` bodies, bindings, cases and trigger
+    /// patterns with capture-avoiding alpha-renaming, and walks with an
+    /// explicit heap stack rather than native recursion.
+    ///
+    /// [`TermManager::substitute`]: oxiz_core::ast::TermManager::substitute
     fn apply_substitution(
         &self,
         term: TermId,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
     ) -> TermId {
-        let mut cache = FxHashMap::default();
-        self.apply_substitution_cached(term, subst, manager, &mut cache)
-    }
-
-    fn apply_substitution_cached(
-        &self,
-        term: TermId,
-        subst: &FxHashMap<Spur, TermId>,
-        manager: &mut TermManager,
-        cache: &mut FxHashMap<TermId, TermId>,
-    ) -> TermId {
-        if let Some(&cached) = cache.get(&term) {
-            return cached;
-        }
-
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
-
-        let result = match &t.kind {
-            TermKind::Var(name) => subst.get(name).copied().unwrap_or(term),
-            TermKind::Not(arg) => {
-                let new_arg = self.apply_substitution_cached(*arg, subst, manager, cache);
-                manager.mk_not(new_arg)
-            }
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_or(new_args)
-            }
-            _ => term,
-        };
-
-        cache.insert(term, result);
-        result
+        crate::mbqi::macros::utils::substitute(term, subst, manager)
     }
 
     /// Clear all caches and queues
@@ -845,7 +836,299 @@ pub struct LazyStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===== Substitution regression tests =====
+    //
+    // `apply_substitution` used to be a local recursive walk whose `TermKind`
+    // whitelist ended in `_ => term`, so a bound variable under any unlisted
+    // kind survived into the supposedly ground instance. All four copies in
+    // this module now delegate to `crate::mbqi::macros::utils::substitute`.
+
+    /// A body whose only variable occurrence sits under a kind the old
+    /// whitelist missed must still be substituted.
+    #[test]
+    fn substitution_reaches_kinds_outside_the_old_whitelist() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let int_sort = m.sorts.int_sort;
+        let bv8 = m.sorts.bitvec(8);
+
+        let p = m.mk_var("p", bool_sort);
+        let i = m.mk_var("i", int_sort);
+        let b = m.mk_var("b", bv8);
+
+        let p_name = match m.get(p).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("p is a variable"),
+        };
+        let i_name = match m.get(i).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("i is a variable"),
+        };
+        let b_name = match m.get(b).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("b is a variable"),
+        };
+
+        let truth = m.mk_true();
+        let two = m.mk_int(2);
+        let ones = m.mk_bitvec(1, 8);
+
+        // Every one of these was returned unchanged by the old walk.
+        let xor = m.mk_xor(p, truth);
+        let distinct = m.mk_distinct([i, two]);
+        let bv_lt = m.mk_bv_ult(b, ones);
+        let implies = m.mk_implies(p, truth);
+        let nested = m.mk_forall([("z", int_sort)], distinct);
+
+        let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+        subst.insert(p_name, truth);
+        subst.insert(i_name, two);
+        subst.insert(b_name, ones);
+
+        let subject = LazyInstantiator::new();
+        for (label, term) in [
+            ("xor", xor),
+            ("distinct", distinct),
+            ("bvult", bv_lt),
+            ("implies", implies),
+            ("nested forall", nested),
+        ] {
+            let result = subject.apply_substitution(term, &subst, &mut m);
+            let free = m.free_vars_including_patterns(result);
+            assert!(
+                free.is_empty(),
+                "{label}: substitution left free variables {free:?} in the result"
+            );
+        }
+    }
     use smallvec::SmallVec;
+
+    /// Run `f` to completion on a dedicated thread with a 128 KiB stack --
+    /// deliberately far smaller than the default main-thread stack. A stack
+    /// overflow aborts the whole process, so for the deep-nesting tests the
+    /// call *returning at all* is itself part of the assertion.
+    ///
+    /// This stack and every depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    /// `TermDatabase::is_ground` used to classify every kind outside a small
+    /// whitelist as ground without looking at its children (`_ => true`),
+    /// and binders fell through the same arm. Pin the corrected behavior.
+    #[test]
+    fn term_database_is_ground_is_exhaustive_and_binder_aware() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let bool_sort = m.sorts.bool_sort;
+        let bv8 = m.sorts.bitvec(8);
+        let db = TermDatabase::new();
+
+        let x = m.mk_var("x", int_sort);
+        let one = m.mk_int(1);
+        let sum = m.mk_add([x, one]);
+        assert!(
+            !db.is_ground(sum, &m),
+            "(+ x 1) is not ground; the old catch-all said it was"
+        );
+
+        let b = m.mk_var("b", bv8);
+        let bv_one = m.mk_bitvec(1, 8);
+        let bv_sum = m.mk_bv_add(b, bv_one);
+        assert!(!db.is_ground(bv_sum, &m), "(bvadd b #x01) is not ground");
+
+        let two = m.mk_int(2);
+        assert!(db.is_ground(two, &m), "an integer literal is ground");
+
+        // A closed forall is ground (previously true only by fall-through).
+        let zero = m.mk_int(0);
+        let gt = m.mk_gt(x, zero);
+        let closed = m.mk_forall([("x", int_sort)], gt);
+        assert!(
+            db.is_ground(closed, &m),
+            "(forall ((x Int)) (> x 0)) has no free variables"
+        );
+
+        // A forall with a free variable under it is NOT ground.
+        let z = m.mk_var("z", int_sort);
+        let p = m.mk_apply("P", [x, z], bool_sort);
+        let open = m.mk_forall([("x", int_sort)], p);
+        assert!(
+            !db.is_ground(open, &m),
+            "(forall ((x Int)) (P x z)) has z free"
+        );
+    }
+
+    /// A variable-containing term must never enter the ground-term index, so
+    /// a pattern variable can never bind to it.
+    #[test]
+    fn match_pattern_only_matches_ground_terms() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let mut db = TermDatabase::new();
+
+        let y = m.mk_var("y", int_sort);
+        let one = m.mk_int(1);
+        let non_ground = m.mk_add([y, one]);
+        let ground = m.mk_int(42);
+        db.add_term(non_ground, &m);
+        db.add_term(ground, &m);
+
+        // The pattern is a bare variable: it would match anything offered.
+        let x = m.mk_var("x", int_sort);
+        let matches = db.match_pattern(x, &m);
+        assert_eq!(matches.len(), 1, "only the literal 42 is ground");
+        assert_eq!(matches[0].term, ground);
+    }
+
+    /// The pattern matcher must survive a 12 500-deep pattern/term pair on a
+    /// 128 KiB stack (the old recursion overflowed) and still produce the
+    /// correct binding.
+    #[test]
+    fn try_match_survives_deep_patterns_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let int_sort = m.sorts.int_sort;
+            let x = m.mk_var("x", int_sort);
+            let seven = m.mk_int(7);
+
+            let mut pattern = x;
+            let mut term = seven;
+            for _ in 0..DEPTH {
+                pattern = m.mk_apply("f", [pattern], int_sort);
+                term = m.mk_apply("f", [term], int_sort);
+            }
+
+            let db = TermDatabase::new();
+            let binding = db
+                .try_match(pattern, term, &m)
+                .expect("the deep pattern must match the deep term");
+            let x_name = match m.get(x).map(|t| &t.kind) {
+                Some(TermKind::Var(n)) => *n,
+                _ => panic!("x is a variable"),
+            };
+            assert_eq!(binding.get(&x_name), Some(&seven));
+
+            // And a mismatch deep inside must be detected, not overflowed
+            // on: a constant-leaf pattern against a different constant leaf.
+            let eight = m.mk_int(8);
+            let mut const_pattern = seven;
+            let mut wrong = eight;
+            for _ in 0..DEPTH {
+                const_pattern = m.mk_apply("f", [const_pattern], int_sort);
+                wrong = m.mk_apply("f", [wrong], int_sort);
+            }
+            assert!(db.try_match(const_pattern, wrong, &m).is_none());
+        });
+    }
+
+    /// A doubling (pattern, term) DAG is exponential without the
+    /// visited-pair set; with it the match must complete essentially
+    /// instantly.
+    #[test]
+    fn try_match_handles_shared_dag_without_blowup() {
+        const LEVELS: usize = 55;
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let seven = m.mk_int(7);
+
+        let mut pattern = x;
+        let mut term = seven;
+        for _ in 0..LEVELS {
+            pattern = m.mk_apply("g", [pattern, pattern], int_sort);
+            term = m.mk_apply("g", [term, term], int_sort);
+        }
+
+        let db = TermDatabase::new();
+        let binding = db
+            .try_match(pattern, term, &m)
+            .expect("the doubling DAGs must match");
+        let x_name = match m.get(x).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("x is a variable"),
+        };
+        assert_eq!(binding.get(&x_name), Some(&seven));
+    }
+
+    /// `term_size` (cost heuristic) must survive deep propositional nesting
+    /// on a tiny stack and keep counting each distinct shared node once.
+    #[test]
+    fn term_size_survives_deep_nesting_and_counts_shared_nodes_once() {
+        const DEPTH: usize = 12_500;
+        let size = run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let bool_sort = m.sorts.bool_sort;
+            let x = m.mk_var("p", bool_sort);
+            let y = m.mk_var("q", bool_sort);
+            // Alternate And/Not so neither `mk_and` flattening nor
+            // `mk_not` double-negation folding can collapse the chain.
+            let mut chain = y;
+            for _ in 0..DEPTH {
+                let conj = m.mk_and([x, chain]);
+                chain = m.mk_not(conj);
+            }
+            let inst = LazyInstantiator::new();
+            inst.term_size(chain, &m)
+        });
+        // Each level adds one And and one Not; x and y are counted once.
+        assert_eq!(size, 2 * DEPTH + 2);
+    }
+
+    /// The lazy instantiator must never instantiate an existential:
+    /// `body[t/x]` is not entailed by `(exists x. body)`. The same setup
+    /// with a universal quantifier does produce instantiations, so the
+    /// empty result for the existential is the gate, not a vacuity.
+    #[test]
+    fn lazy_instantiator_skips_existential_quantifiers() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let x_name = match m.get(x).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("x is a variable"),
+        };
+        let body = x;
+        let forall = m.mk_forall([("x", bool_sort)], body);
+        let exists = m.mk_exists([("x", bool_sort)], body);
+        let vars: SmallVec<[(Spur, SortId); 4]> = core::iter::once((x_name, bool_sort)).collect();
+        let universal = QuantifiedFormula::new(forall, vars.clone(), body, true);
+        let existential = QuantifiedFormula::new(exists, vars, body, false);
+        let model = CompletedModel::new();
+
+        for strategy in [
+            LazyStrategy::Eager,
+            LazyStrategy::OnDemand,
+            LazyStrategy::CostGuided,
+            LazyStrategy::Incremental,
+        ] {
+            let mut inst = LazyInstantiator::with_strategy(strategy);
+            let from_universal =
+                inst.process(core::slice::from_ref(&universal), &model, &mut m, 16);
+            assert!(
+                !from_universal.is_empty(),
+                "{strategy:?}: the universal Bool quantifier must instantiate"
+            );
+
+            let mut inst = LazyInstantiator::with_strategy(strategy);
+            let from_existential =
+                inst.process(core::slice::from_ref(&existential), &model, &mut m, 16);
+            assert!(
+                from_existential.is_empty(),
+                "{strategy:?}: an existential must never be instantiated"
+            );
+        }
+    }
 
     #[test]
     fn test_lazy_strategy_equality() {

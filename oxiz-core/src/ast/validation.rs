@@ -7,225 +7,397 @@ use crate::ast::{Model, ModelValue, TermId, TermKind, TermManager};
 use crate::error::{OxizError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_rational::BigRational;
 use num_traits::{One, Zero};
+
+/// Work item of the iterative model evaluator.
+enum EvalFrame {
+    /// Classify a term and schedule whatever operands it needs.
+    Enter(TermId),
+    /// Sequential, short-circuiting fold of an `and`/`or` operand list.
+    BoolFold {
+        /// The `and`/`or` term being folded.
+        id: TermId,
+        /// Index of the operand whose value is now available.
+        idx: usize,
+        /// `true` for `and` (neutral value `true`), `false` for `or`.
+        conjunction: bool,
+    },
+    /// The condition of an `ite` has been evaluated; pick a branch.
+    IteBranch(TermId),
+    /// Copy the value of the taken `ite` branch to the `ite` itself.
+    IteResult {
+        /// The `ite` term.
+        id: TermId,
+        /// The branch that was taken.
+        branch: TermId,
+    },
+    /// Combine the values of all (strictly evaluated) operands.
+    Combine(TermId),
+}
+
+/// Evaluate a term under a model with an explicit stack and a value cache.
+///
+/// This is the single implementation behind both [`eval_term`] and
+/// [`CachedEvaluator`]. It replaces two structurally identical recursive
+/// evaluators that had no depth bound at all — and the public `eval_term`
+/// had no cache either, so it re-evaluated shared sub-terms once per path,
+/// which is exponential on a hash-consed DAG.
+///
+/// The lazy evaluation order of the recursive form is preserved exactly:
+/// `and`/`or` stop at the first decisive operand (so a `false` conjunct
+/// still yields `false` even when a later conjunct is not evaluable), and
+/// `ite` evaluates only the branch its condition selects.
+fn eval_cached(
+    root: TermId,
+    manager: &TermManager,
+    model: &Model,
+    cache: &mut FxHashMap<TermId, Option<ModelValue>>,
+) -> Option<ModelValue> {
+    let mut stack = vec![EvalFrame::Enter(root)];
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            EvalFrame::Enter(id) => {
+                if cache.contains_key(&id) {
+                    continue;
+                }
+                let Some(term) = manager.get(id) else {
+                    cache.insert(id, None);
+                    continue;
+                };
+
+                match &term.kind {
+                    // Constants
+                    TermKind::True => {
+                        cache.insert(id, Some(ModelValue::Bool(true)));
+                    }
+                    TermKind::False => {
+                        cache.insert(id, Some(ModelValue::Bool(false)));
+                    }
+                    TermKind::IntConst(n) => {
+                        cache.insert(id, Some(ModelValue::Int(n.clone())));
+                    }
+                    TermKind::RealConst(r) => {
+                        // Convert Rational<i64> to BigRational
+                        let numer = BigInt::from(*r.numer());
+                        let denom = BigInt::from(*r.denom());
+                        cache.insert(id, Some(ModelValue::Real(BigRational::new(numer, denom))));
+                    }
+                    TermKind::BitVecConst { value, width } => {
+                        // `ModelValue::BitVec` carries a `BigUint`, so every
+                        // width is representable exactly. An earlier form took
+                        // `value.iter_u64_digits().next()` — the *low 64 bits*
+                        // — regardless of the declared width, so a 128-bit
+                        // constant silently became a different value of the
+                        // same declared width, and `validate_assertion` could
+                        // certify a model that does not satisfy the assertion.
+                        cache.insert(id, bitvec_const_value(value, *width));
+                    }
+
+                    // Variables - look up in model
+                    TermKind::Var(_) => {
+                        let value = model.get_assignment(id).cloned();
+                        cache.insert(id, value);
+                    }
+
+                    // Short-circuiting boolean connectives
+                    TermKind::And(args) | TermKind::Or(args) => {
+                        let conjunction = matches!(&term.kind, TermKind::And(_));
+                        match args.first() {
+                            None => {
+                                cache.insert(id, Some(ModelValue::Bool(conjunction)));
+                            }
+                            Some(&first) => {
+                                stack.push(EvalFrame::BoolFold {
+                                    id,
+                                    idx: 0,
+                                    conjunction,
+                                });
+                                stack.push(EvalFrame::Enter(first));
+                            }
+                        }
+                    }
+
+                    TermKind::Ite(cond, _, _) => {
+                        stack.push(EvalFrame::IteBranch(id));
+                        stack.push(EvalFrame::Enter(*cond));
+                    }
+
+                    // Strictly evaluated operators
+                    TermKind::Not(arg) | TermKind::Neg(arg) | TermKind::BvNot(arg) => {
+                        stack.push(EvalFrame::Combine(id));
+                        stack.push(EvalFrame::Enter(*arg));
+                    }
+                    TermKind::Implies(lhs, rhs)
+                    | TermKind::Xor(lhs, rhs)
+                    | TermKind::Eq(lhs, rhs)
+                    | TermKind::Lt(lhs, rhs)
+                    | TermKind::Le(lhs, rhs)
+                    | TermKind::Gt(lhs, rhs)
+                    | TermKind::Ge(lhs, rhs)
+                    | TermKind::Sub(lhs, rhs)
+                    | TermKind::Div(lhs, rhs)
+                    | TermKind::Mod(lhs, rhs)
+                    | TermKind::BvAnd(lhs, rhs) => {
+                        stack.push(EvalFrame::Combine(id));
+                        stack.push(EvalFrame::Enter(*lhs));
+                        stack.push(EvalFrame::Enter(*rhs));
+                    }
+                    TermKind::Add(args) | TermKind::Mul(args) => {
+                        stack.push(EvalFrame::Combine(id));
+                        for &arg in args.iter() {
+                            stack.push(EvalFrame::Enter(arg));
+                        }
+                    }
+
+                    // For other operations, we can't evaluate without more
+                    // information: an honest "unknown", never a default value.
+                    _ => {
+                        cache.insert(id, None);
+                    }
+                }
+            }
+
+            EvalFrame::BoolFold {
+                id,
+                idx,
+                conjunction,
+            } => {
+                let Some(term) = manager.get(id) else {
+                    cache.insert(id, None);
+                    continue;
+                };
+                let args = match &term.kind {
+                    TermKind::And(args) | TermKind::Or(args) => args,
+                    // `BoolFold` is only ever scheduled for `and`/`or`.
+                    _ => {
+                        cache.insert(id, None);
+                        continue;
+                    }
+                };
+                let Some(&current) = args.get(idx) else {
+                    cache.insert(id, Some(ModelValue::Bool(conjunction)));
+                    continue;
+                };
+
+                match cache.get(&current).cloned().flatten() {
+                    Some(ModelValue::Bool(b)) if b != conjunction => {
+                        // Decisive operand: `false` in a conjunction, `true`
+                        // in a disjunction.
+                        cache.insert(id, Some(ModelValue::Bool(b)));
+                    }
+                    Some(ModelValue::Bool(_)) => match args.get(idx + 1) {
+                        Some(&next) => {
+                            stack.push(EvalFrame::BoolFold {
+                                id,
+                                idx: idx + 1,
+                                conjunction,
+                            });
+                            stack.push(EvalFrame::Enter(next));
+                        }
+                        None => {
+                            cache.insert(id, Some(ModelValue::Bool(conjunction)));
+                        }
+                    },
+                    _ => {
+                        cache.insert(id, None);
+                    }
+                }
+            }
+
+            EvalFrame::IteBranch(id) => {
+                let Some(term) = manager.get(id) else {
+                    cache.insert(id, None);
+                    continue;
+                };
+                let TermKind::Ite(cond, then_branch, else_branch) = &term.kind else {
+                    cache.insert(id, None);
+                    continue;
+                };
+                let branch = match cache.get(cond).cloned().flatten() {
+                    Some(ModelValue::Bool(true)) => *then_branch,
+                    Some(ModelValue::Bool(false)) => *else_branch,
+                    _ => {
+                        cache.insert(id, None);
+                        continue;
+                    }
+                };
+                stack.push(EvalFrame::IteResult { id, branch });
+                stack.push(EvalFrame::Enter(branch));
+            }
+
+            EvalFrame::IteResult { id, branch } => {
+                let value = cache.get(&branch).cloned().flatten();
+                cache.insert(id, value);
+            }
+
+            EvalFrame::Combine(id) => {
+                let Some(term) = manager.get(id) else {
+                    cache.insert(id, None);
+                    continue;
+                };
+                let operand = |child: &TermId,
+                               cache: &FxHashMap<TermId, Option<ModelValue>>|
+                 -> Option<ModelValue> {
+                    cache.get(child).cloned().flatten()
+                };
+
+                let value = match &term.kind {
+                    TermKind::Not(arg) => match operand(arg, cache) {
+                        Some(ModelValue::Bool(b)) => Some(ModelValue::Bool(!b)),
+                        _ => None,
+                    },
+                    TermKind::Implies(lhs, rhs) => {
+                        match (operand(lhs, cache), operand(rhs, cache)) {
+                            (Some(ModelValue::Bool(a)), Some(ModelValue::Bool(b))) => {
+                                Some(ModelValue::Bool(!a || b))
+                            }
+                            _ => None,
+                        }
+                    }
+                    TermKind::Xor(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(ModelValue::Bool(a)), Some(ModelValue::Bool(b))) => {
+                            Some(ModelValue::Bool(a != b))
+                        }
+                        _ => None,
+                    },
+                    TermKind::Eq(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => Some(ModelValue::Bool(a == b)),
+                        _ => None,
+                    },
+                    TermKind::Lt(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => compare_lt(&a, &b).map(ModelValue::Bool),
+                        _ => None,
+                    },
+                    TermKind::Le(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => compare_le(&a, &b).map(ModelValue::Bool),
+                        _ => None,
+                    },
+                    TermKind::Gt(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => compare_lt(&b, &a).map(ModelValue::Bool),
+                        _ => None,
+                    },
+                    TermKind::Ge(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => compare_le(&b, &a).map(ModelValue::Bool),
+                        _ => None,
+                    },
+                    TermKind::Add(args) => {
+                        fold_operands(args, ModelValue::Int(BigInt::zero()), add_values, cache)
+                    }
+                    TermKind::Mul(args) => {
+                        fold_operands(args, ModelValue::Int(BigInt::one()), mul_values, cache)
+                    }
+                    TermKind::Sub(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => sub_values(&a, &b),
+                        _ => None,
+                    },
+                    TermKind::Neg(arg) => operand(arg, cache).and_then(|v| neg_value(&v)),
+                    TermKind::Div(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => div_values(&a, &b),
+                        _ => None,
+                    },
+                    TermKind::Mod(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (Some(a), Some(b)) => mod_values(&a, &b),
+                        _ => None,
+                    },
+                    // Bit-vector operations (simplified - full implementation
+                    // would be more complex)
+                    TermKind::BvNot(arg) => match operand(arg, cache) {
+                        // Complementing within the declared width is exact at
+                        // any width: XOR with the all-ones mask. Only width 0
+                        // (not a legal bit-vector sort) is refused.
+                        Some(ModelValue::BitVec { value, width }) => {
+                            bitvec_width_mask(width).map(|mask| ModelValue::BitVec {
+                                value: value ^ mask,
+                                width,
+                            })
+                        }
+                        _ => None,
+                    },
+                    TermKind::BvAnd(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
+                        (
+                            Some(ModelValue::BitVec {
+                                value: v1,
+                                width: w1,
+                            }),
+                            Some(ModelValue::BitVec {
+                                value: v2,
+                                width: w2,
+                            }),
+                        ) if w1 == w2 => bitvec_width_mask(w1).map(|mask| ModelValue::BitVec {
+                            value: v1 & v2 & mask,
+                            width: w1,
+                        }),
+                        _ => None,
+                    },
+                    // `Combine` is only ever scheduled for the kinds above.
+                    _ => None,
+                };
+                cache.insert(id, value);
+            }
+        }
+    }
+
+    cache.get(&root).cloned().flatten()
+}
+
+/// The all-ones mask for `width` bits, or `None` if `width` is 0.
+///
+/// [`ModelValue::BitVec`] stores an arbitrary-precision bit pattern, so every
+/// legal width is representable exactly. `width == 0` is not a legal
+/// bit-vector sort, and refusing it is an honest failure rather than a
+/// silently clamped mask.
+fn bitvec_width_mask(width: u32) -> Option<BigUint> {
+    match width {
+        0 => None,
+        w => Some(crate::ast::model::bitvec_mask(w)),
+    }
+}
+
+/// Convert a bit-vector constant into a model value.
+///
+/// The mathematical value is reduced modulo `2^width` (the standard SMT-LIB
+/// bit-vector interpretation, which also gives negative literals their
+/// two's-complement bit pattern). The reduction is exact at every width, so
+/// wide constants are evaluated rather than reported as unknown; only the
+/// illegal `width == 0` sort yields `None`.
+fn bitvec_const_value(value: &BigInt, width: u32) -> Option<ModelValue> {
+    if width == 0 {
+        return None;
+    }
+    Some(ModelValue::from_bitvec_int(value, width))
+}
+
+/// Left-fold the already-evaluated operands of an n-ary arithmetic term.
+///
+/// An empty operand list yields the neutral element, exactly as the
+/// recursive evaluator did.
+fn fold_operands(
+    args: &[TermId],
+    neutral: ModelValue,
+    combine: fn(&ModelValue, &ModelValue) -> Option<ModelValue>,
+    cache: &FxHashMap<TermId, Option<ModelValue>>,
+) -> Option<ModelValue> {
+    let Some((first, rest)) = args.split_first() else {
+        return Some(neutral);
+    };
+    let mut result = cache.get(first).cloned().flatten()?;
+    for arg in rest {
+        let value = cache.get(arg).cloned().flatten()?;
+        result = combine(&result, &value)?;
+    }
+    Some(result)
+}
 
 /// Evaluate a term under a given model
 ///
 /// Returns `None` if the term cannot be fully evaluated (e.g., uninterpreted function
 /// without interpretation, or variable without assignment).
 pub fn eval_term(term_id: TermId, manager: &TermManager, model: &Model) -> Option<ModelValue> {
-    let term = manager.get(term_id)?;
-
-    match &term.kind {
-        // Constants
-        TermKind::True => Some(ModelValue::Bool(true)),
-        TermKind::False => Some(ModelValue::Bool(false)),
-        TermKind::IntConst(n) => Some(ModelValue::Int(n.clone())),
-        TermKind::RealConst(r) => {
-            // Convert Rational<i64> to BigRational
-            let numer = BigInt::from(*r.numer());
-            let denom = BigInt::from(*r.denom());
-            Some(ModelValue::Real(BigRational::new(numer, denom)))
-        }
-        TermKind::BitVecConst { value, width } => {
-            // Convert BigInt to u64 for model value
-            let val_u64 = value.iter_u64_digits().next().unwrap_or(0);
-            Some(ModelValue::BitVec {
-                value: val_u64,
-                width: *width,
-            })
-        }
-
-        // Variables - look up in model
-        TermKind::Var(_) => model.get_assignment(term_id).cloned(),
-
-        // Boolean operations
-        TermKind::Not(arg) => {
-            let val = eval_term(*arg, manager, model)?;
-            match val {
-                ModelValue::Bool(b) => Some(ModelValue::Bool(!b)),
-                _ => None,
-            }
-        }
-
-        TermKind::And(args) => {
-            for &arg in args {
-                let val = eval_term(arg, manager, model)?;
-                match val {
-                    ModelValue::Bool(false) => return Some(ModelValue::Bool(false)),
-                    ModelValue::Bool(true) => continue,
-                    _ => return None,
-                }
-            }
-            Some(ModelValue::Bool(true))
-        }
-
-        TermKind::Or(args) => {
-            for &arg in args {
-                let val = eval_term(arg, manager, model)?;
-                match val {
-                    ModelValue::Bool(true) => return Some(ModelValue::Bool(true)),
-                    ModelValue::Bool(false) => continue,
-                    _ => return None,
-                }
-            }
-            Some(ModelValue::Bool(false))
-        }
-
-        TermKind::Implies(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            match (lhs_val, rhs_val) {
-                (ModelValue::Bool(a), ModelValue::Bool(b)) => Some(ModelValue::Bool(!a || b)),
-                _ => None,
-            }
-        }
-
-        TermKind::Xor(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            match (lhs_val, rhs_val) {
-                (ModelValue::Bool(a), ModelValue::Bool(b)) => Some(ModelValue::Bool(a != b)),
-                _ => None,
-            }
-        }
-
-        // Comparisons
-        TermKind::Eq(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            Some(ModelValue::Bool(lhs_val == rhs_val))
-        }
-
-        TermKind::Lt(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            Some(ModelValue::Bool(compare_lt(&lhs_val, &rhs_val)?))
-        }
-
-        TermKind::Le(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            Some(ModelValue::Bool(compare_le(&lhs_val, &rhs_val)?))
-        }
-
-        TermKind::Gt(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            Some(ModelValue::Bool(compare_lt(&rhs_val, &lhs_val)?))
-        }
-
-        TermKind::Ge(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            Some(ModelValue::Bool(compare_le(&rhs_val, &lhs_val)?))
-        }
-
-        // Arithmetic
-        TermKind::Add(args) => {
-            if args.is_empty() {
-                return Some(ModelValue::Int(BigInt::zero()));
-            }
-            let first = eval_term(args[0], manager, model)?;
-            let mut result = first;
-            for &arg in &args[1..] {
-                let val = eval_term(arg, manager, model)?;
-                result = add_values(&result, &val)?;
-            }
-            Some(result)
-        }
-
-        TermKind::Mul(args) => {
-            if args.is_empty() {
-                return Some(ModelValue::Int(BigInt::one()));
-            }
-            let first = eval_term(args[0], manager, model)?;
-            let mut result = first;
-            for &arg in &args[1..] {
-                let val = eval_term(arg, manager, model)?;
-                result = mul_values(&result, &val)?;
-            }
-            Some(result)
-        }
-
-        TermKind::Sub(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            sub_values(&lhs_val, &rhs_val)
-        }
-
-        TermKind::Neg(arg) => {
-            let val = eval_term(*arg, manager, model)?;
-            neg_value(&val)
-        }
-
-        TermKind::Div(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            div_values(&lhs_val, &rhs_val)
-        }
-
-        TermKind::Mod(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            mod_values(&lhs_val, &rhs_val)
-        }
-
-        // ITE
-        TermKind::Ite(cond, then_branch, else_branch) => {
-            let cond_val = eval_term(*cond, manager, model)?;
-            match cond_val {
-                ModelValue::Bool(true) => eval_term(*then_branch, manager, model),
-                ModelValue::Bool(false) => eval_term(*else_branch, manager, model),
-                _ => None,
-            }
-        }
-
-        // Bit-vector operations (simplified - full implementation would be more complex)
-        TermKind::BvNot(arg) => {
-            let val = eval_term(*arg, manager, model)?;
-            match val {
-                ModelValue::BitVec { value, width } => {
-                    let mask = if width >= 64 {
-                        u64::MAX
-                    } else {
-                        (1u64 << width) - 1
-                    };
-                    Some(ModelValue::BitVec {
-                        value: (!value) & mask,
-                        width,
-                    })
-                }
-                _ => None,
-            }
-        }
-
-        TermKind::BvAnd(lhs, rhs) => {
-            let lhs_val = eval_term(*lhs, manager, model)?;
-            let rhs_val = eval_term(*rhs, manager, model)?;
-            match (lhs_val, rhs_val) {
-                (
-                    ModelValue::BitVec {
-                        value: v1,
-                        width: w1,
-                    },
-                    ModelValue::BitVec {
-                        value: v2,
-                        width: w2,
-                    },
-                ) if w1 == w2 => Some(ModelValue::BitVec {
-                    value: v1 & v2,
-                    width: w1,
-                }),
-                _ => None,
-            }
-        }
-
-        // For other operations, we can't evaluate without more information
-        _ => None,
-    }
+    let mut cache = FxHashMap::default();
+    eval_cached(term_id, manager, model, &mut cache)
 }
 
 /// Validate that a model satisfies an assertion
@@ -327,221 +499,7 @@ fn eval_term_internal(
     model: &Model,
     cache: &mut FxHashMap<TermId, Option<ModelValue>>,
 ) -> Option<ModelValue> {
-    // Check cache first
-    if let Some(cached) = cache.get(&term_id) {
-        return cached.clone();
-    }
-
-    let term = manager.get(term_id)?;
-
-    let result = match &term.kind {
-        // Constants
-        TermKind::True => Some(ModelValue::Bool(true)),
-        TermKind::False => Some(ModelValue::Bool(false)),
-        TermKind::IntConst(n) => Some(ModelValue::Int(n.clone())),
-        TermKind::RealConst(r) => {
-            let numer = BigInt::from(*r.numer());
-            let denom = BigInt::from(*r.denom());
-            Some(ModelValue::Real(BigRational::new(numer, denom)))
-        }
-        TermKind::BitVecConst { value, width } => {
-            let val_u64 = value.iter_u64_digits().next().unwrap_or(0);
-            Some(ModelValue::BitVec {
-                value: val_u64,
-                width: *width,
-            })
-        }
-
-        // Variables
-        TermKind::Var(_) => model.get_assignment(term_id).cloned(),
-
-        // Boolean operations
-        TermKind::Not(arg) => {
-            let val = eval_term_internal(*arg, manager, model, cache)?;
-            match val {
-                ModelValue::Bool(b) => Some(ModelValue::Bool(!b)),
-                _ => None,
-            }
-        }
-
-        TermKind::And(args) => {
-            for &arg in args {
-                let val = eval_term_internal(arg, manager, model, cache)?;
-                match val {
-                    ModelValue::Bool(false) => return Some(ModelValue::Bool(false)),
-                    ModelValue::Bool(true) => continue,
-                    _ => return None,
-                }
-            }
-            Some(ModelValue::Bool(true))
-        }
-
-        TermKind::Or(args) => {
-            for &arg in args {
-                let val = eval_term_internal(arg, manager, model, cache)?;
-                match val {
-                    ModelValue::Bool(true) => return Some(ModelValue::Bool(true)),
-                    ModelValue::Bool(false) => continue,
-                    _ => return None,
-                }
-            }
-            Some(ModelValue::Bool(false))
-        }
-
-        TermKind::Implies(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            match (lhs_val, rhs_val) {
-                (ModelValue::Bool(a), ModelValue::Bool(b)) => Some(ModelValue::Bool(!a || b)),
-                _ => None,
-            }
-        }
-
-        TermKind::Xor(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            match (lhs_val, rhs_val) {
-                (ModelValue::Bool(a), ModelValue::Bool(b)) => Some(ModelValue::Bool(a != b)),
-                _ => None,
-            }
-        }
-
-        // Comparisons
-        TermKind::Eq(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            Some(ModelValue::Bool(lhs_val == rhs_val))
-        }
-
-        TermKind::Lt(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            Some(ModelValue::Bool(compare_lt(&lhs_val, &rhs_val)?))
-        }
-
-        TermKind::Le(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            Some(ModelValue::Bool(compare_le(&lhs_val, &rhs_val)?))
-        }
-
-        TermKind::Gt(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            Some(ModelValue::Bool(compare_lt(&rhs_val, &lhs_val)?))
-        }
-
-        TermKind::Ge(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            Some(ModelValue::Bool(compare_le(&rhs_val, &lhs_val)?))
-        }
-
-        // Arithmetic
-        TermKind::Add(args) => {
-            if args.is_empty() {
-                return Some(ModelValue::Int(BigInt::zero()));
-            }
-            let first = eval_term_internal(args[0], manager, model, cache)?;
-            let mut result = first;
-            for &arg in &args[1..] {
-                let val = eval_term_internal(arg, manager, model, cache)?;
-                result = add_values(&result, &val)?;
-            }
-            Some(result)
-        }
-
-        TermKind::Mul(args) => {
-            if args.is_empty() {
-                return Some(ModelValue::Int(BigInt::one()));
-            }
-            let first = eval_term_internal(args[0], manager, model, cache)?;
-            let mut result = first;
-            for &arg in &args[1..] {
-                let val = eval_term_internal(arg, manager, model, cache)?;
-                result = mul_values(&result, &val)?;
-            }
-            Some(result)
-        }
-
-        TermKind::Sub(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            sub_values(&lhs_val, &rhs_val)
-        }
-
-        TermKind::Neg(arg) => {
-            let val = eval_term_internal(*arg, manager, model, cache)?;
-            neg_value(&val)
-        }
-
-        TermKind::Div(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            div_values(&lhs_val, &rhs_val)
-        }
-
-        TermKind::Mod(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            mod_values(&lhs_val, &rhs_val)
-        }
-
-        // ITE
-        TermKind::Ite(cond, then_branch, else_branch) => {
-            let cond_val = eval_term_internal(*cond, manager, model, cache)?;
-            match cond_val {
-                ModelValue::Bool(true) => eval_term_internal(*then_branch, manager, model, cache),
-                ModelValue::Bool(false) => eval_term_internal(*else_branch, manager, model, cache),
-                _ => None,
-            }
-        }
-
-        // Bit-vector operations
-        TermKind::BvNot(arg) => {
-            let val = eval_term_internal(*arg, manager, model, cache)?;
-            match val {
-                ModelValue::BitVec { value, width } => {
-                    let mask = if width >= 64 {
-                        u64::MAX
-                    } else {
-                        (1u64 << width) - 1
-                    };
-                    Some(ModelValue::BitVec {
-                        value: (!value) & mask,
-                        width,
-                    })
-                }
-                _ => None,
-            }
-        }
-
-        TermKind::BvAnd(lhs, rhs) => {
-            let lhs_val = eval_term_internal(*lhs, manager, model, cache)?;
-            let rhs_val = eval_term_internal(*rhs, manager, model, cache)?;
-            match (lhs_val, rhs_val) {
-                (
-                    ModelValue::BitVec {
-                        value: v1,
-                        width: w1,
-                    },
-                    ModelValue::BitVec {
-                        value: v2,
-                        width: w2,
-                    },
-                ) if w1 == w2 => Some(ModelValue::BitVec {
-                    value: v1 & v2,
-                    width: w1,
-                }),
-                _ => None,
-            }
-        }
-
-        _ => None,
-    };
-
-    cache.insert(term_id, result.clone());
-    result
+    eval_cached(term_id, manager, model, cache)
 }
 
 // Helper functions for arithmetic operations
@@ -911,5 +869,249 @@ mod tests {
 
         // x_squared should only be evaluated once and cached
         assert!(evaluator.cache_size() >= 3); // At least x, x_squared, and sum
+    }
+}
+
+#[cfg(test)]
+mod bitvec_const_tests {
+    use super::*;
+    use crate::ast::{Model, TermManager};
+
+    fn bv(value: u128, width: u32) -> ModelValue {
+        ModelValue::from_bitvec_bits(BigUint::from(value), width)
+    }
+
+    #[test]
+    fn test_bitvec_const_wider_than_64_is_not_truncated() {
+        // `2^64 + 5` in 128 bits shares its low 64 bits with plain `5`.
+        // Truncating to the low 64 bits made the two constants equal, so a
+        // model could be certified against an assertion it does not satisfy.
+        let mut manager = TermManager::new();
+        let big = BigInt::from(1u128 << 64) + BigInt::from(5);
+        let wide = manager.mk_bitvec(big, 128);
+
+        // The constant now evaluates exactly instead of being squeezed into
+        // a `u64` (or refused for being too wide).
+        let model = Model::new();
+        assert_eq!(
+            eval_term(wide, &manager, &model),
+            Some(bv((1u128 << 64) + 5, 128))
+        );
+
+        // The wrong-certification path: a model claiming `x = 5` used to
+        // satisfy `x = 2^64 + 5`, because the constant was truncated to its
+        // low 64 bits before the comparison. It is now decisively refuted.
+        let bv128 = manager.sorts.bitvec(128);
+        let x = manager.mk_var("x", bv128);
+        let eq = manager.mk_eq(x, wide);
+        let mut wrong = Model::new();
+        wrong.assign_bitvec(x, 5, 128);
+
+        assert_eq!(
+            eval_term(eq, &manager, &wrong),
+            Some(ModelValue::Bool(false))
+        );
+        // The assertion is now decided, and decided *against* the model:
+        // `Ok(false)`, not the "cannot evaluate" error it used to be.
+        assert_eq!(validate_assertion(eq, &manager, &wrong).ok(), Some(false));
+        assert_eq!(validate_model(&[eq], &manager, &wrong).ok(), Some(false));
+
+        // ... and the model that really does assign `2^64 + 5` validates.
+        let mut right = Model::new();
+        right.assign_bitvec_big(x, (BigUint::one() << 64u32) + BigUint::from(5u32), 128);
+        assert_eq!(
+            eval_term(eq, &manager, &right),
+            Some(ModelValue::Bool(true))
+        );
+        assert_eq!(validate_assertion(eq, &manager, &right).ok(), Some(true));
+        assert_eq!(validate_model(&[eq], &manager, &right).ok(), Some(true));
+    }
+
+    #[test]
+    fn test_bitvec_const_is_reduced_modulo_width() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+
+        // 260 mod 2^8 = 4
+        let over = manager.mk_bitvec(BigInt::from(260), 8);
+        assert_eq!(eval_term(over, &manager, &model), Some(bv(4, 8)));
+
+        // -1 mod 2^8 = 255 (two's-complement bit pattern)
+        let neg = manager.mk_bitvec(BigInt::from(-1), 8);
+        assert_eq!(eval_term(neg, &manager, &model), Some(bv(255, 8)));
+
+        // -1 in 128 bits is 128 one-bits, not 64.
+        let neg_wide = manager.mk_bitvec(BigInt::from(-1), 128);
+        assert_eq!(
+            eval_term(neg_wide, &manager, &model),
+            Some(ModelValue::BitVec {
+                value: crate::ast::model::bitvec_mask(128),
+                width: 128
+            })
+        );
+    }
+
+    #[test]
+    fn test_bitvec_const_width_64_is_exact() {
+        let mut manager = TermManager::new();
+        let model = Model::new();
+        let value = BigInt::from(u64::MAX);
+        let term = manager.mk_bitvec(value, 64);
+        assert_eq!(
+            eval_term(term, &manager, &model),
+            Some(bv(u128::from(u64::MAX), 64))
+        );
+    }
+
+    #[test]
+    fn test_bitvec_width_mask_rejects_only_width_zero() {
+        assert_eq!(bitvec_width_mask(0), None);
+        assert_eq!(bitvec_width_mask(1), Some(BigUint::one()));
+        assert_eq!(bitvec_width_mask(64), Some(BigUint::from(u64::MAX)));
+        assert_eq!(bitvec_width_mask(128), Some(BigUint::from(u128::MAX)));
+        // Widths past 64 are masks, not failures, any more.
+        assert_eq!(bitvec_width_mask(256).map(|m| m.count_ones()), Some(256));
+    }
+
+    #[test]
+    fn test_bv_not_of_wide_value_is_exact() {
+        let mut manager = TermManager::new();
+        let bv128 = manager.sorts.bitvec(128);
+        let x = manager.mk_var("x", bv128);
+        let not_x = manager.mk_bv_not(x);
+
+        let mut model = Model::new();
+        model.assign_bitvec(x, 0, 128);
+        // `!0` at 128 bits is 128 one-bits — the full width, not the low 64.
+        assert_eq!(
+            eval_term(not_x, &manager, &model),
+            Some(ModelValue::BitVec {
+                value: crate::ast::model::bitvec_mask(128),
+                width: 128
+            })
+        );
+    }
+
+    #[test]
+    fn test_bv_and_of_wide_values_is_exact() {
+        let mut manager = TermManager::new();
+        let bv128 = manager.sorts.bitvec(128);
+        let x = manager.mk_var("x", bv128);
+        let y = manager.mk_var("y", bv128);
+        let and = manager.mk_bv_and(x, y);
+
+        let mut model = Model::new();
+        let high = BigUint::one() << 100u32;
+        model.assign_bitvec_big(x, high.clone() + BigUint::from(3u32), 128);
+        model.assign_bitvec_big(y, high.clone() + BigUint::from(1u32), 128);
+        assert_eq!(
+            eval_term(and, &manager, &model),
+            Some(ModelValue::BitVec {
+                value: high + BigUint::one(),
+                width: 128
+            })
+        );
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+    use crate::ast::{Model, TermManager};
+
+    #[test]
+    fn test_eval_term_shared_dag_is_fast() {
+        // 55 levels of a two-strand DAG: each level has two nodes, each
+        // referencing both nodes of the level below, so an evaluator without
+        // a cache performs 2^55 evaluations.
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let p = manager.mk_var("p", bool_sort);
+        let q = manager.mk_var("q", bool_sort);
+        let (mut a, mut b) = (p, q);
+        for _ in 0..55 {
+            let next_a = manager.mk_implies(a, b);
+            let next_b = manager.mk_implies(b, a);
+            a = next_a;
+            b = next_b;
+        }
+
+        let mut model = Model::new();
+        model.assign_bool(p, true);
+        model.assign_bool(q, false);
+        assert!(matches!(
+            eval_term(a, &manager, &model),
+            Some(ModelValue::Bool(_))
+        ));
+    }
+
+    #[test]
+    fn test_eval_term_short_circuits_conjunction() {
+        // `false ∧ unassigned` is `false`, not "unknown": the recursive
+        // evaluator short-circuited and so must the iterative one.
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let unassigned = manager.mk_var("q", bool_sort);
+        let f = manager.mk_bool(false);
+        let conj = manager.mk_and([f, unassigned]);
+
+        let model = Model::new();
+        assert_eq!(
+            eval_term(conj, &manager, &model),
+            Some(ModelValue::Bool(false))
+        );
+
+        let t = manager.mk_bool(true);
+        let disj = manager.mk_or([t, unassigned]);
+        assert_eq!(
+            eval_term(disj, &manager, &model),
+            Some(ModelValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_eval_term_ite_only_takes_selected_branch() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let cond = manager.mk_var("c", bool_sort);
+        let unassigned = manager.mk_var("q", bool_sort);
+        let t = manager.mk_bool(true);
+        let ite = manager.mk_ite(cond, t, unassigned);
+
+        let mut model = Model::new();
+        model.assign_bool(cond, true);
+        assert_eq!(
+            eval_term(ite, &manager, &model),
+            Some(ModelValue::Bool(true))
+        );
+
+        model.assign_bool(cond, false);
+        assert_eq!(eval_term(ite, &manager, &model), None);
+    }
+
+    #[test]
+    fn test_eval_term_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let bool_sort = manager.sorts.bool_sort;
+                let p = manager.mk_var("p", bool_sort);
+                let mut term = p;
+                for _ in 0..60_000 {
+                    term = manager.mk_not(term);
+                }
+
+                let mut model = Model::new();
+                model.assign_bool(p, true);
+                eval_term(term, &manager, &model)
+            })
+            .expect("thread spawn should succeed");
+
+        // An even number of negations of `true`.
+        assert_eq!(
+            handle.join().expect("deep evaluation must not overflow"),
+            Some(ModelValue::Bool(true))
+        );
     }
 }

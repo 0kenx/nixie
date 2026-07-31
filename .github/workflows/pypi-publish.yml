@@ -16,7 +16,7 @@ on:
           - pypi
           - none
       version_tag:
-        description: 'Version tag (e.g., v0.1.2)'
+        description: 'Version tag (e.g., v0.3.1)'
         required: false
         type: string
 

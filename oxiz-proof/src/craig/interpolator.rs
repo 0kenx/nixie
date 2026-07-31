@@ -9,6 +9,15 @@ use crate::premise::PremiseTracker;
 use crate::proof::{Proof, ProofNodeId, ProofStep};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Work item for the iterative post-order walks over the proof DAG.
+#[derive(Debug, Clone, Copy)]
+enum WalkFrame {
+    /// The node's premises have not been scheduled yet.
+    Enter(ProofNodeId),
+    /// All premises of the node have been processed.
+    Exit(ProofNodeId),
+}
+
 /// Craig interpolation engine
 #[derive(Debug)]
 pub struct CraigInterpolator {
@@ -118,9 +127,12 @@ impl CraigInterpolator {
         // Phase 2: Compute interpolants (bottom-up)
         let result = self.compute_interpolant(proof, root)?;
 
-        // Simplify if configured
+        // Simplify if configured, bounding the simplification recursion by
+        // the configured depth (see `InterpolationConfig::max_simplify_depth`)
+        // since the interpolant's depth is driven by the size of the UNSAT
+        // proof being interpolated, not by anything this crate controls.
         let final_result = if self.config.simplify_interpolants {
-            result.simplify()
+            result.simplify_bounded(self.config.max_simplify_depth)
         } else {
             result
         };
@@ -209,70 +221,111 @@ impl CraigInterpolator {
             .collect()
     }
 
-    /// Compute colors for proof nodes
+    /// Compute colors for proof nodes.
+    ///
+    /// Iterative post-order walk over the proof DAG using an explicit heap
+    /// stack. Refutation depth here is driven by problem hardness rather than
+    /// by input nesting, so a legitimately hard `--interpolate` run reaches
+    /// depths a recursive descent cannot survive. A cycle in the proof is
+    /// reported as an error instead of recursing forever.
     fn compute_colors(
         &mut self,
         proof: &Proof,
         node_id: ProofNodeId,
     ) -> Result<InterpolantColor, InterpolationError> {
-        if let Some(&color) = self.colors.get(&node_id) {
-            self.stats.cache_hits += 1;
-            return Ok(color);
-        }
+        let mut stack = vec![WalkFrame::Enter(node_id)];
+        let mut in_progress: FxHashSet<ProofNodeId> = FxHashSet::default();
 
-        let node = proof
-            .get_node(node_id)
-            .ok_or(InterpolationError::NodeNotFound(node_id))?;
+        while let Some(frame) = stack.pop() {
+            match frame {
+                WalkFrame::Enter(id) => {
+                    if self.colors.contains_key(&id) {
+                        self.stats.cache_hits += 1;
+                        continue;
+                    }
 
-        self.stats.nodes_processed += 1;
+                    let node = proof
+                        .get_node(id)
+                        .ok_or(InterpolationError::NodeNotFound(id))?;
 
-        let color = match &node.step {
-            ProofStep::Axiom { conclusion } => self.color_axiom(node_id, conclusion),
-            ProofStep::Inference { premises, rule, .. } => {
-                // Track rule types
-                if rule == "resolution" {
-                    self.stats.resolution_steps += 1;
-                } else if rule.starts_with("theory") {
-                    self.stats.theory_lemmas += 1;
-                }
+                    self.stats.nodes_processed += 1;
 
-                // Inference nodes are colored based on their premises
-                let mut has_a = false;
-                let mut has_b = false;
+                    match &node.step {
+                        ProofStep::Axiom { conclusion } => {
+                            let color = self.color_axiom(id, conclusion);
+                            self.record_color(id, color);
+                        }
+                        ProofStep::Inference { premises, rule, .. } => {
+                            // Track rule types
+                            if rule == "resolution" {
+                                self.stats.resolution_steps += 1;
+                            } else if rule.starts_with("theory") {
+                                self.stats.theory_lemmas += 1;
+                            }
 
-                for &premise_id in premises {
-                    let premise_color = self.compute_colors(proof, premise_id)?;
-                    match premise_color {
-                        InterpolantColor::A => has_a = true,
-                        InterpolantColor::B => has_b = true,
-                        InterpolantColor::AB => {
-                            has_a = true;
-                            has_b = true;
+                            if !in_progress.insert(id) {
+                                return Err(InterpolationError::NodeNotFound(id));
+                            }
+                            stack.push(WalkFrame::Exit(id));
+                            stack.extend(premises.iter().rev().copied().map(WalkFrame::Enter));
                         }
                     }
                 }
+                WalkFrame::Exit(id) => {
+                    in_progress.remove(&id);
+                    let node = proof
+                        .get_node(id)
+                        .ok_or(InterpolationError::NodeNotFound(id))?;
+                    let ProofStep::Inference { premises, .. } = &node.step else {
+                        continue;
+                    };
 
-                if has_a && has_b {
-                    InterpolantColor::AB
-                } else if has_a {
-                    InterpolantColor::A
-                } else if has_b {
-                    InterpolantColor::B
-                } else {
-                    InterpolantColor::A
+                    // Inference nodes are colored based on their premises
+                    let mut has_a = false;
+                    let mut has_b = false;
+
+                    for premise_id in premises {
+                        let premise_color = self
+                            .colors
+                            .get(premise_id)
+                            .copied()
+                            .ok_or(InterpolationError::NodeNotFound(*premise_id))?;
+                        match premise_color {
+                            InterpolantColor::A => has_a = true,
+                            InterpolantColor::B => has_b = true,
+                            InterpolantColor::AB => {
+                                has_a = true;
+                                has_b = true;
+                            }
+                        }
+                    }
+
+                    let color = if has_a && has_b {
+                        InterpolantColor::AB
+                    } else if has_b {
+                        InterpolantColor::B
+                    } else {
+                        InterpolantColor::A
+                    };
+                    self.record_color(id, color);
                 }
             }
-        };
+        }
 
-        // Update statistics
+        self.colors
+            .get(&node_id)
+            .copied()
+            .ok_or(InterpolationError::NodeNotFound(node_id))
+    }
+
+    /// Record a node's color and fold it into the per-color statistics.
+    fn record_color(&mut self, node_id: ProofNodeId, color: InterpolantColor) {
         match color {
             InterpolantColor::A => self.stats.a_nodes += 1,
             InterpolantColor::B => self.stats.b_nodes += 1,
             InterpolantColor::AB => self.stats.ab_nodes += 1,
         }
-
         self.colors.insert(node_id, color);
-        Ok(color)
     }
 
     /// Color an axiom node using the user's explicit partition when
@@ -298,65 +351,106 @@ impl CraigInterpolator {
         }
     }
 
-    /// Compute interpolant for a proof node
+    /// Compute interpolant for a proof node.
+    ///
+    /// Iterative post-order walk over the proof DAG (explicit heap stack); see
+    /// [`Self::compute_colors`]. Partial results are always memoized for the
+    /// duration of the walk, so a shared premise is computed once even when
+    /// `config.enable_caching` is off; that flag continues to control only
+    /// whether the results outlive the call in `self.interpolants`.
     fn compute_interpolant(
         &mut self,
         proof: &Proof,
         node_id: ProofNodeId,
     ) -> Result<InterpolantTerm, InterpolationError> {
-        if let Some(interp) = self.interpolants.get(&node_id) {
-            return Ok(interp.clone());
-        }
+        let mut computed: FxHashMap<ProofNodeId, InterpolantTerm> = FxHashMap::default();
+        let mut stack = vec![WalkFrame::Enter(node_id)];
+        let mut in_progress: FxHashSet<ProofNodeId> = FxHashSet::default();
 
-        let node = proof
-            .get_node(node_id)
-            .ok_or(InterpolationError::NodeNotFound(node_id))?;
-        let color = *self
-            .colors
-            .get(&node_id)
-            .ok_or(InterpolationError::NoColor(node_id))?;
+        while let Some(frame) = stack.pop() {
+            let (id, is_exit) = match frame {
+                WalkFrame::Enter(id) => (id, false),
+                WalkFrame::Exit(id) => (id, true),
+            };
 
-        let interpolant = match &node.step {
-            ProofStep::Axiom { conclusion } => {
-                self.compute_axiom_interpolant(node_id, color, conclusion)?
-            }
-            ProofStep::Inference {
-                rule,
-                premises,
-                conclusion,
-                ..
-            } => {
-                // First compute premise interpolants and gather their raw
-                // conclusion text (needed for resolution pivot detection).
-                let mut premise_interpolants = Vec::with_capacity(premises.len());
-                let mut premise_conclusions: Vec<String> = Vec::with_capacity(premises.len());
-
-                for &p in premises {
-                    premise_interpolants.push(self.compute_interpolant(proof, p)?);
-                    let concl = proof
-                        .get_node(p)
-                        .map(|n| n.conclusion().to_string())
-                        .unwrap_or_default();
-                    premise_conclusions.push(concl);
+            if !is_exit {
+                if computed.contains_key(&id) {
+                    continue;
                 }
-                let premise_conclusion_refs: Vec<&str> =
-                    premise_conclusions.iter().map(String::as_str).collect();
-
-                self.compute_inference_interpolant(
-                    rule,
-                    &premise_interpolants,
-                    &premise_conclusion_refs,
-                    conclusion,
-                    color,
-                )
+                if let Some(interp) = self.interpolants.get(&id) {
+                    computed.insert(id, interp.clone());
+                    continue;
+                }
+            } else {
+                in_progress.remove(&id);
             }
-        };
 
-        if self.config.enable_caching {
-            self.interpolants.insert(node_id, interpolant.clone());
+            let node = proof
+                .get_node(id)
+                .ok_or(InterpolationError::NodeNotFound(id))?;
+            let color = *self
+                .colors
+                .get(&id)
+                .ok_or(InterpolationError::NoColor(id))?;
+
+            let interpolant = match &node.step {
+                ProofStep::Axiom { conclusion } => {
+                    self.compute_axiom_interpolant(id, color, conclusion)?
+                }
+                ProofStep::Inference {
+                    rule,
+                    premises,
+                    conclusion,
+                    ..
+                } => {
+                    if !is_exit {
+                        if !in_progress.insert(id) {
+                            return Err(InterpolationError::NodeNotFound(id));
+                        }
+                        stack.push(WalkFrame::Exit(id));
+                        stack.extend(premises.iter().rev().copied().map(WalkFrame::Enter));
+                        continue;
+                    }
+
+                    // Premise interpolants are all available; gather them along
+                    // with the raw conclusion text (needed for pivot detection).
+                    let mut premise_interpolants = Vec::with_capacity(premises.len());
+                    let mut premise_conclusions: Vec<String> = Vec::with_capacity(premises.len());
+
+                    for p in premises {
+                        let interp = computed
+                            .get(p)
+                            .cloned()
+                            .ok_or(InterpolationError::NodeNotFound(*p))?;
+                        premise_interpolants.push(interp);
+                        let concl = proof
+                            .get_node(*p)
+                            .map(|n| n.conclusion().to_string())
+                            .unwrap_or_default();
+                        premise_conclusions.push(concl);
+                    }
+                    let premise_conclusion_refs: Vec<&str> =
+                        premise_conclusions.iter().map(String::as_str).collect();
+
+                    self.compute_inference_interpolant(
+                        rule,
+                        &premise_interpolants,
+                        &premise_conclusion_refs,
+                        conclusion,
+                        color,
+                    )
+                }
+            };
+
+            if self.config.enable_caching {
+                self.interpolants.insert(id, interpolant.clone());
+            }
+            computed.insert(id, interpolant);
         }
 
-        Ok(interpolant)
+        computed
+            .remove(&node_id)
+            .ok_or(InterpolationError::NodeNotFound(node_id))
     }
 
     /// Compute interpolant for an axiom.

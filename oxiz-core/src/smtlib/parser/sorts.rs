@@ -2,7 +2,6 @@
 
 use super::super::lexer::TokenKind;
 use super::Parser;
-use crate::ast::TermId;
 use crate::error::{OxizError, Result};
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -51,142 +50,6 @@ impl<'a> Parser<'a> {
             });
         }
         Ok(())
-    }
-
-    /// Parse a let binding: (let ((name term) ...) body)
-    /// Called after consuming the "let" symbol
-    pub(super) fn parse_let(&mut self) -> Result<TermId> {
-        // Parse bindings: ((name term) ...)
-        self.expect_lparen()?;
-
-        let mut new_bindings: Vec<(String, TermId)> = Vec::new();
-
-        loop {
-            if let Some(token) = self.lexer.peek()
-                && matches!(token.kind, TokenKind::RParen)
-            {
-                self.lexer.next_token();
-                break;
-            }
-
-            self.expect_lparen()?;
-            let name = self.expect_symbol()?;
-            let term = self.parse_term()?;
-            self.expect_rparen()?;
-            new_bindings.push((name, term));
-        }
-
-        // Add bindings to scope
-        let old_bindings: Vec<_> = new_bindings
-            .iter()
-            .filter_map(|(name, _)| self.bindings.get(name).map(|&t| (name.clone(), t)))
-            .collect();
-
-        for (name, term) in &new_bindings {
-            self.bindings.insert(name.clone(), *term);
-        }
-
-        // Parse body
-        let body = self.parse_term()?;
-        self.expect_rparen()?;
-
-        // Restore old bindings
-        for (name, _) in &new_bindings {
-            self.bindings.remove(name);
-        }
-        for (name, term) in old_bindings {
-            self.bindings.insert(name, term);
-        }
-
-        // Create let term
-        let bindings: Vec<_> = new_bindings.iter().map(|(n, t)| (n.as_str(), *t)).collect();
-        Ok(self.manager.mk_let(bindings, body))
-    }
-
-    /// Parse a forall binder: (forall ((name sort) ...) body)
-    /// Called after consuming the "forall" symbol
-    pub(super) fn parse_forall(&mut self) -> Result<TermId> {
-        // Parse sorted vars: ((name sort) ...)
-        self.expect_lparen()?;
-        let vars = self.parse_sorted_vars()?;
-
-        // Bind quantifier variables so body references resolve correctly.
-        // This ensures that a bound variable like `i` is looked up from
-        // bindings (with the declared sort) rather than falling through to
-        // the default `mk_var(name, bool_sort)` path.
-        let old_bindings: Vec<_> = vars
-            .iter()
-            .filter_map(|(name, _)| self.bindings.get(name).map(|&t| (name.clone(), t)))
-            .collect();
-        let old_constants: Vec<_> = vars
-            .iter()
-            .filter_map(|(name, _)| self.constants.get(name).map(|&s| (name.clone(), s)))
-            .collect();
-        for (name, sort) in &vars {
-            let var_term = self.manager.mk_var(name, *sort);
-            self.bindings.insert(name.clone(), var_term);
-            // Remove from constants to avoid shadowing issues
-            self.constants.remove(name);
-        }
-
-        // Parse body (bound variables now resolve with the correct sort)
-        let body = self.parse_term()?;
-        self.expect_rparen()?;
-
-        // Restore old bindings and constants
-        for (name, _) in &vars {
-            self.bindings.remove(name);
-        }
-        for (name, term) in old_bindings {
-            self.bindings.insert(name, term);
-        }
-        for (name, sort) in old_constants {
-            self.constants.insert(name, sort);
-        }
-
-        let var_refs: Vec<_> = vars.iter().map(|(n, s)| (n.as_str(), *s)).collect();
-        Ok(self.manager.mk_forall(var_refs, body))
-    }
-
-    /// Parse an exists binder: (exists ((name sort) ...) body)
-    /// Called after consuming the "exists" symbol
-    pub(super) fn parse_exists(&mut self) -> Result<TermId> {
-        // Parse sorted vars: ((name sort) ...)
-        self.expect_lparen()?;
-        let vars = self.parse_sorted_vars()?;
-
-        // Bind quantifier variables (same scoping as forall).
-        let old_bindings: Vec<_> = vars
-            .iter()
-            .filter_map(|(name, _)| self.bindings.get(name).map(|&t| (name.clone(), t)))
-            .collect();
-        let old_constants: Vec<_> = vars
-            .iter()
-            .filter_map(|(name, _)| self.constants.get(name).map(|&s| (name.clone(), s)))
-            .collect();
-        for (name, sort) in &vars {
-            let var_term = self.manager.mk_var(name, *sort);
-            self.bindings.insert(name.clone(), var_term);
-            self.constants.remove(name);
-        }
-
-        // Parse body
-        let body = self.parse_term()?;
-        self.expect_rparen()?;
-
-        // Restore old bindings and constants
-        for (name, _) in &vars {
-            self.bindings.remove(name);
-        }
-        for (name, term) in old_bindings {
-            self.bindings.insert(name, term);
-        }
-        for (name, sort) in old_constants {
-            self.constants.insert(name, sort);
-        }
-
-        let var_refs: Vec<_> = vars.iter().map(|(n, s)| (n.as_str(), *s)).collect();
-        Ok(self.manager.mk_exists(var_refs, body))
     }
 
     /// Parse a list of sorted variable bindings: ((name sort) ...)
@@ -249,12 +112,42 @@ impl<'a> Parser<'a> {
                     .to_string(),
             }),
             _ => {
-                // Check for sort alias first
-                if let Some((params, base_sort)) = self.sort_aliases.get(name).cloned() {
-                    // For now, only support 0-arity sort aliases
-                    if params.is_empty() {
-                        return self.parse_sort_name(&base_sort);
-                    }
+                // Check for sort alias first. The chain is followed
+                // *iteratively* by `resolve_sort_alias_chain`, which returns a
+                // name that is itself no longer an alias — so the recursive
+                // call below descends exactly one level. Re-entering this
+                // function per link is what turned a cyclic alias table into
+                // unbounded recursion (`(define-sort A () A)` then
+                // `(declare-const x (Array A Int))` aborted the process with a
+                // stack overflow).
+                if let Some(base_sort) = self.resolve_sort_alias_chain(name)? {
+                    return self.parse_sort_name(&base_sort);
+                }
+
+                // A name introduced by `declare-datatype(s)` denotes that
+                // datatype's own sort, not a fresh uninterpreted one.
+                //
+                // Falling through to the `Uninterpreted` case below gave
+                // `(declare-const l Lst)` a sort unrelated to the one
+                // `mk_dt_constructor` stamps on `(cons 1 nil)`, so `l` and the
+                // constructor applications lived in different sorts and nothing
+                // downstream could tell that `l` was a datatype at all: the
+                // solver's datatype axiomatisation found no terms to axiomatise
+                // and every structural property (exhaustiveness, reconstruction,
+                // acyclicity, …) silently went missing.
+                //
+                // `is_datatype_declared` covers a datatype declared in an
+                // earlier text fragment parsed against the same `TermManager`;
+                // `dt_sorts` additionally covers the datatype *currently* being
+                // declared, whose own name appears in its recursive fields
+                // (`(tail Lst)`) before the declaration is complete.
+                if let Some(&sort_id) = self.dt_sorts.get(name) {
+                    return Ok(sort_id);
+                }
+                if self.manager.sorts.is_datatype_declared(name) {
+                    let sort_id = self.manager.sorts.mk_datatype_sort(name);
+                    self.dt_sorts.insert(name.to_string(), sort_id);
+                    return Ok(sort_id);
                 }
 
                 // Check for BitVec
@@ -290,6 +183,111 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    /// Follow a chain of 0-arity `define-sort` aliases from `name` to the
+    /// first name that is not itself such an alias.
+    ///
+    /// Returns `Ok(None)` when `name` names no 0-arity alias at all (so the
+    /// caller keeps its own resolution), and `Ok(Some(base))` for the end of
+    /// the chain, which is guaranteed not to be an alias.
+    ///
+    /// A chain that takes more steps than the table has entries must revisit a
+    /// name, i.e. the table is cyclic. `define-sort` rejects cycles when they
+    /// are defined (see the `"define-sort"` handler in `commands.rs`), so this
+    /// bound never fires on a table this parser built; it is kept so the walk
+    /// is *total* by construction rather than by the caller's discipline.
+    fn resolve_sort_alias_chain(&self, name: &str) -> Result<Option<String>> {
+        match self.sort_aliases.get(name) {
+            // Only 0-arity aliases resolve by name; a parametric one needs
+            // its arguments substituted and is rejected at definition time.
+            Some((params, base)) if params.is_empty() => {
+                let mut current = base.clone();
+                for _ in 0..self.sort_aliases.len() {
+                    match self.sort_aliases.get(&current) {
+                        Some((params, base)) if params.is_empty() => current = base.clone(),
+                        _ => return Ok(Some(current)),
+                    }
+                }
+                Err(OxizError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "sort alias '{name}' is cyclic: resolving it does not terminate"
+                    ),
+                })
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether `sort` *is*, or structurally contains, an uninterpreted or
+    /// datatype sort spelled `name`.
+    ///
+    /// The `define-sort` handler uses this to reject an abbreviation whose
+    /// body names the abbreviation itself — directly (`(define-sort A () A)`),
+    /// through another abbreviation (`(define-sort A () B)` then
+    /// `(define-sort B () A)`, whose body resolves back to `B`), or nested
+    /// inside a compound body (`(define-sort A () (Array A Int))`, where the
+    /// inner `A` would otherwise become a fresh free sort unrelated to the
+    /// abbreviation).
+    ///
+    /// The walk uses an explicit worklist rather than recursion: `Array`
+    /// sorts are interned bottom-up so the structure cannot itself be cyclic,
+    /// but it can be [`MAX_SORT_PARSE_DEPTH`] levels deep, and a definition
+    /// check has no business consuming that much native stack.
+    pub(super) fn sort_mentions_name(&self, sort: SortId, name: &str) -> bool {
+        use crate::sort::SortKind;
+        let mut work = vec![sort];
+        let mut seen = FxHashSet::default();
+        while let Some(current) = work.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
+            let Some(s) = self.manager.sorts.get(current) else {
+                continue;
+            };
+            match &s.kind {
+                // Interned by the *term* manager's interner.
+                SortKind::Uninterpreted(spur) => {
+                    if self.manager.resolve_str(*spur) == name {
+                        return true;
+                    }
+                }
+                // A sort parameter's name is interned by `SortManager` itself
+                // (`mk_sort_parameter` / `define_parametric_sort`), so it must
+                // be resolved through the sort manager's own interner — see
+                // the matching arm split in `Printer::write_sort`.
+                SortKind::Parameter(spur) => {
+                    if self.manager.sorts.resolve_spur(*spur) == name {
+                        return true;
+                    }
+                }
+                // Interned by the *sort* manager's own interner; the two are
+                // separate `Rodeo`s (see `sort_id_to_string`).
+                SortKind::Datatype(spur) => {
+                    if self.manager.sorts.resolve_spur(*spur) == name {
+                        return true;
+                    }
+                }
+                SortKind::Array { domain, range } => {
+                    work.push(*domain);
+                    work.push(*range);
+                }
+                SortKind::Parametric { name: head, args } => {
+                    if self.manager.sorts.resolve_spur(*head) == name {
+                        return true;
+                    }
+                    work.extend(args.iter().copied());
+                }
+                SortKind::Bool
+                | SortKind::Int
+                | SortKind::Real
+                | SortKind::String
+                | SortKind::BitVec(_)
+                | SortKind::FloatingPoint { .. } => {}
+            }
+        }
+        false
     }
 
     /// Parse an indexed identifier: (_ name index1 index2 ...)
@@ -467,33 +465,164 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Convert a SortId to its canonical SMT-LIB2 string representation
+    /// Convert a SortId to its canonical SMT-LIB2 string representation.
+    ///
+    /// Driven by an explicit worklist rather than by recursion. The return
+    /// type is a plain `String` — there is no error channel a depth cap could
+    /// report through, so a cap here could only ever produce a *silently
+    /// wrong* sort name. `(Array (Array (Array ...)))` nesting is bounded at
+    /// [`MAX_SORT_PARSE_DEPTH`] when it comes from SMT-LIB text, but
+    /// `SortManager::array` is `pub` and interns in constant stack, so an
+    /// embedder can hand this function an arbitrarily deep sort.
     pub(super) fn sort_id_to_string(&self, sort_id: SortId) -> String {
-        if let Some(sort) = self.manager.sorts.get(sort_id) {
-            match &sort.kind {
-                crate::sort::SortKind::Bool => "Bool".to_string(),
-                crate::sort::SortKind::Int => "Int".to_string(),
-                crate::sort::SortKind::Real => "Real".to_string(),
-                crate::sort::SortKind::String => "String".to_string(),
-                crate::sort::SortKind::BitVec(w) => format!("(_ BitVec {w})"),
-                crate::sort::SortKind::FloatingPoint { eb, sb } => {
-                    format!("(_ FloatingPoint {eb} {sb})")
-                }
-                crate::sort::SortKind::Array { domain, range } => {
-                    let domain_str = self.sort_id_to_string(*domain);
-                    let range_str = self.sort_id_to_string(*range);
-                    format!("(Array {domain_str} {range_str})")
-                }
-                crate::sort::SortKind::Uninterpreted(spur) => {
-                    self.manager.resolve_str(*spur).to_string()
-                }
-                crate::sort::SortKind::Datatype(spur) => {
-                    self.manager.resolve_str(*spur).to_string()
-                }
-                _ => "Unknown".to_string(),
-            }
-        } else {
-            "Unknown".to_string()
+        use crate::sort::SortKind;
+
+        /// One pending step of the walk: a sort still to render, or literal
+        /// punctuation already scheduled to follow one.
+        enum Step {
+            /// Render this sort.
+            Sort(SortId),
+            /// Emit this literal.
+            Text(&'static str),
         }
+
+        let mut out = String::new();
+        let mut stack = vec![Step::Sort(sort_id)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Text(text) => out.push_str(text),
+                Step::Sort(id) => {
+                    let Some(sort) = self.manager.sorts.get(id) else {
+                        out.push_str("Unknown");
+                        continue;
+                    };
+                    match &sort.kind {
+                        SortKind::Bool => out.push_str("Bool"),
+                        SortKind::Int => out.push_str("Int"),
+                        SortKind::Real => out.push_str("Real"),
+                        SortKind::String => out.push_str("String"),
+                        SortKind::BitVec(w) => out.push_str(&format!("(_ BitVec {w})")),
+                        SortKind::FloatingPoint { eb, sb } => {
+                            out.push_str(&format!("(_ FloatingPoint {eb} {sb})"));
+                        }
+                        SortKind::Array { domain, range } => {
+                            out.push_str("(Array ");
+                            // Pushed in reverse of emission order.
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Sort(*range));
+                            stack.push(Step::Text(" "));
+                            stack.push(Step::Sort(*domain));
+                        }
+                        SortKind::Uninterpreted(spur) => {
+                            out.push_str(self.manager.resolve_str(*spur));
+                        }
+                        // A sort parameter's name is interned by `SortManager`
+                        // itself (`mk_sort_parameter` /
+                        // `define_parametric_sort`), so it resolves through
+                        // the sort manager's interner, like `Datatype` below.
+                        SortKind::Parameter(spur) => {
+                            out.push_str(self.manager.sorts.resolve_spur(*spur));
+                        }
+                        // A datatype sort's name is interned by `SortManager`
+                        // itself (`mk_datatype_sort` / `declare_datatype`), not
+                        // by the term manager, so it must be resolved through
+                        // the sort manager's own interner — the two are
+                        // separate `Rodeo`s and crossing them yields the wrong
+                        // string or an out-of-range key. Same for a parametric
+                        // sort's head name (`declare_parametric_sort`).
+                        SortKind::Datatype(spur) => {
+                            out.push_str(self.manager.sorts.resolve_spur(*spur));
+                        }
+                        SortKind::Parametric { name, args } => {
+                            out.push('(');
+                            out.push_str(self.manager.sorts.resolve_spur(*name));
+                            stack.push(Step::Text(")"));
+                            for arg in args.iter().rev() {
+                                stack.push(Step::Sort(*arg));
+                                stack.push(Step::Text(" "));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::Parser;
+    use crate::ast::TermManager;
+    use crate::sort::SortKind;
+
+    /// `sort_id_to_string` renders `(Array ...)` with an explicit worklist.
+    /// It returns a plain `String`, so a depth cap could only ever have
+    /// produced a *different, wrong* sort name; recursing instead aborted the
+    /// process, and `SortManager::array` is `pub` and interns in constant
+    /// stack, so nothing bounds the depth an embedder can reach.
+    ///
+    /// Runs on a 1 MiB stack: the assertion is that the call returns at all.
+    #[test]
+    fn sort_id_to_string_survives_a_hundred_thousand_array_levels() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let mut sort = int_sort;
+                for _ in 0..100_000 {
+                    sort = manager.sorts.array(int_sort, sort);
+                }
+                let parser = Parser::new("", &mut manager);
+                parser.sort_id_to_string(sort).len()
+            })
+            .expect("spawn");
+        let len = handle.join().expect("worker thread must not overflow");
+        assert_eq!(len, 100_000 * 11 + 3 + 100_000);
+    }
+
+    /// Semantic pin for the shapes the recursive version already handled.
+    #[test]
+    fn sort_id_to_string_output_is_unchanged_for_shallow_sorts() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+        let bv = manager.sorts.bitvec(8);
+        let inner = manager.sorts.array(bv, bool_sort);
+        let nested = manager.sorts.array(int_sort, inner);
+        let parser = Parser::new("", &mut manager);
+        assert_eq!(parser.sort_id_to_string(int_sort), "Int");
+        assert_eq!(parser.sort_id_to_string(bool_sort), "Bool");
+        assert_eq!(parser.sort_id_to_string(bv), "(_ BitVec 8)");
+        assert_eq!(
+            parser.sort_id_to_string(nested),
+            "(Array Int (Array (_ BitVec 8) Bool))"
+        );
+    }
+
+    /// A sort *parameter* and a parametric sort application used to both
+    /// render as the literal string `"Unknown"` — two different sorts
+    /// collapsing onto one name, which `define-sort`/`define-fun` then stored
+    /// as the parameter's declared sort text. They now render honestly.
+    #[test]
+    fn parameter_and_parametric_sorts_render_their_real_names() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        // A sort parameter's name spur is minted by the *sort* manager in
+        // every real producer (`mk_sort_parameter`,
+        // `instantiate_parametric_sort`, `define_parametric_sort`) — build it
+        // the same way here so the pin reflects reality.
+        let param = manager.sorts.mk_sort_parameter("T");
+        // A parametric sort's head name lives in the *sort* manager's own
+        // interner, which is what `sort_id_to_string` must resolve it through.
+        let list_spur = manager.sorts.intern_str("List");
+        let list = manager.sorts.intern(SortKind::Parametric {
+            name: list_spur,
+            args: smallvec::smallvec![int_sort],
+        });
+        let parser = Parser::new("", &mut manager);
+        assert_eq!(parser.sort_id_to_string(param), "T");
+        assert_eq!(parser.sort_id_to_string(list), "(List Int)");
     }
 }

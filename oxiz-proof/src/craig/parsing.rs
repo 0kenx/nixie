@@ -28,16 +28,30 @@ pub(crate) fn parse_clause_literals(conclusion: &str) -> Vec<InterpolantTerm> {
 /// Parse a single literal: `(not X)` becomes `¬parse(X)`; `true`/`false`
 /// become the corresponding constants; anything else becomes an opaque
 /// atomic variable named after its exact text.
+///
+/// Iterative: `(not (not (not ...)))` in an untrusted conclusion string cost one
+/// call frame per `not`, and `-> InterpolantTerm` offers no channel through
+/// which a depth cap could report truncation. Peeling the `not` wrappers in a
+/// loop and re-applying [`InterpolantTerm::not`] the same number of times is
+/// exactly equivalent, including its double-negation and constant collapsing.
 fn parse_literal(text: &str) -> InterpolantTerm {
-    let trimmed = text.trim();
-    if let Some(inner) = strip_wrapped(trimmed, "not") {
-        return InterpolantTerm::not(parse_literal(inner));
+    let mut trimmed = text.trim();
+    let mut negations = 0usize;
+
+    while let Some(inner) = strip_wrapped(trimmed, "not") {
+        negations += 1;
+        trimmed = inner.trim();
     }
-    match trimmed {
+
+    let mut term = match trimmed {
         "true" => InterpolantTerm::true_val(),
         "false" => InterpolantTerm::false_val(),
         _ => InterpolantTerm::var(trimmed),
+    };
+    for _ in 0..negations {
+        term = InterpolantTerm::not(term);
     }
+    term
 }
 
 /// If `text` is `(keyword ...)`, return the content following `keyword`.

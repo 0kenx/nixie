@@ -153,7 +153,42 @@ impl PartialOrd for Value {
     }
 }
 
+impl Value {
+    /// Total order rank of this value's variant, used to order two values of
+    /// *different* variants.
+    ///
+    /// `Null` keeps rank 0 so it continues to sort before everything else;
+    /// the remaining ranks follow declaration order.
+    const fn variant_rank(&self) -> u8 {
+        match self {
+            Value::Null => 0,
+            Value::Bool(_) => 1,
+            Value::Int64(_) => 2,
+            Value::UInt64(_) => 3,
+            Value::Rational(_) => 4,
+            Value::Symbol(_) => 5,
+            Value::RelationRef(_) => 6,
+            Value::Term(_) => 7,
+            Value::Bytes(_) => 8,
+            Value::Tuple(_) => 9,
+        }
+    }
+}
+
 impl Ord for Value {
+    /// Total order over values.
+    ///
+    /// Two values of different variants are ordered by [`Value::variant_rank`].
+    /// This arm used to be `_ => Ordering::Equal`, which made the order a
+    /// *non-order*: `Int64(1).cmp(&Bool(true))` reported `Equal` while
+    /// `Int64(1) == Bool(true)` was `false`, breaking the `Ord`/`Eq`
+    /// consistency contract. Every ordered container the datalog engine builds
+    /// over tuples inherits that: a sort or a `BTreeMap`/binary-search index
+    /// treats two distinct values of different types as the same key, so a
+    /// lookup silently returns the wrong tuple (or misses one that is
+    /// present), and `Tuple::cmp` — which stops at the first non-`Equal`
+    /// column — could not distinguish tuples that differ only by a column's
+    /// *type*.
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Value::Null, Value::Null) => Ordering::Equal,
@@ -168,7 +203,7 @@ impl Ord for Value {
             (Value::Term(a), Value::Term(b)) => a.raw().cmp(&b.raw()),
             (Value::Bytes(a), Value::Bytes(b)) => a.as_ref().cmp(b.as_ref()),
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
-            _ => Ordering::Equal,
+            (a, b) => a.variant_rank().cmp(&b.variant_rank()),
         }
     }
 }
@@ -477,6 +512,64 @@ impl<'a> IntoIterator for &'a Tuple {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Ord` used to end in `_ => Ordering::Equal`, so two values of
+    /// *different* variants compared `Equal` while `PartialEq` said they were
+    /// unequal — a broken total order. Every ordered structure built over
+    /// tuples (sorts, binary-search probes, `BTreeMap` indexes) silently
+    /// treated such values as the same key.
+    #[test]
+    fn values_of_different_variants_are_not_all_equal() {
+        let values = [
+            Value::Null,
+            Value::Bool(true),
+            Value::Int64(1),
+            Value::UInt64(1),
+            Value::RelationRef(1),
+            Value::Term(crate::ast::TermId::from(1u32)),
+            Value::Bytes(std::sync::Arc::from(&b"x"[..])),
+            Value::Tuple(Box::new(Tuple::new(vec![Value::Int64(1)]))),
+        ];
+        for (i, a) in values.iter().enumerate() {
+            for (j, b) in values.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert_ne!(
+                    a.cmp(b),
+                    Ordering::Equal,
+                    "{a:?} and {b:?} are different values and must not compare Equal"
+                );
+                // `Ord` and `Eq` must agree.
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    /// The order is antisymmetric and consistent with equality within a
+    /// variant, so the fix did not disturb same-variant ordering.
+    #[test]
+    fn same_variant_ordering_is_unchanged() {
+        assert_eq!(Value::Int64(1).cmp(&Value::Int64(2)), Ordering::Less);
+        assert_eq!(Value::Int64(2).cmp(&Value::Int64(2)), Ordering::Equal);
+        assert_eq!(
+            Value::Bool(true).cmp(&Value::Bool(false)),
+            Ordering::Greater
+        );
+        // Null still sorts before everything else.
+        assert_eq!(Value::Null.cmp(&Value::Int64(-5)), Ordering::Less);
+        assert_eq!(Value::Int64(-5).cmp(&Value::Null), Ordering::Greater);
+    }
+
+    /// A tuple whose columns differ only by *type* is now distinguishable by
+    /// `Tuple::cmp`, which stops at the first non-`Equal` column.
+    #[test]
+    fn tuples_differing_only_by_column_type_are_ordered() {
+        let a = Tuple::new(vec![Value::Int64(1), Value::Int64(7)]);
+        let b = Tuple::new(vec![Value::UInt64(1), Value::Int64(7)]);
+        assert_ne!(a.cmp(&b), Ordering::Equal);
+        assert_ne!(a, b);
+    }
 
     #[test]
     fn test_tuple_creation() {

@@ -9,13 +9,22 @@
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
+use std::rc::Rc;
 
 /// Select-store elimination tactic.
 pub struct SelectStoreElimTactic {
     /// Rewrite cache
     cache: FxHashMap<TermId, TermId>,
-    /// Store chain analysis
-    store_chains: FxHashMap<TermId, StoreChain>,
+    /// Store terms reachable from a formula handed to [`SelectStoreElimTactic::apply`].
+    ///
+    /// Membership — not the chain itself — is what decides whether
+    /// extensionality may fire, so the scan phase only has to record the set.
+    store_terms: FxHashSet<TermId>,
+    /// Store chains, materialized on demand and shared by [`Rc`].
+    ///
+    /// Only the terms extensionality actually asks about ever get a chain, so
+    /// a long store spine costs one entry instead of one per spine node.
+    chain_cache: FxHashMap<TermId, Rc<StoreChain>>,
     /// Statistics
     stats: SelectStoreElimStats,
 }
@@ -49,15 +58,16 @@ impl SelectStoreElimTactic {
     pub fn new() -> Self {
         Self {
             cache: FxHashMap::default(),
-            store_chains: FxHashMap::default(),
+            store_terms: FxHashSet::default(),
+            chain_cache: FxHashMap::default(),
             stats: SelectStoreElimStats::default(),
         }
     }
 
     /// Apply the tactic to a formula.
     pub fn apply(&mut self, formula: TermId, tm: &mut TermManager) -> Result<TermId, String> {
-        // Phase 1: Build store chains
-        self.build_store_chains(formula, tm)?;
+        // Phase 1: Record which terms are store spines
+        self.collect_store_terms(formula, tm)?;
 
         // Phase 2: Rewrite formula
         let rewritten = self.rewrite(formula, tm)?;
@@ -65,38 +75,70 @@ impl SelectStoreElimTactic {
         Ok(rewritten)
     }
 
-    /// Build store chains for all array terms.
-    fn build_store_chains(&mut self, tid: TermId, tm: &TermManager) -> Result<(), String> {
-        let term = tm.get(tid).ok_or("term not found")?;
+    /// Record every store term reachable from `tid`.
+    ///
+    /// Iterative (explicit heap stack plus a `visited` set): the term DAG's
+    /// depth follows the input formula — a chain of `store`s is exactly the
+    /// shape this tactic exists for — so a recursive walk could overflow the
+    /// native stack on a deep formula, and would re-walk shared sub-DAGs once
+    /// per incoming edge.
+    ///
+    /// This phase deliberately does *not* materialize chains. Recording a
+    /// [`StoreChain`] per store node re-walked the whole spine from each of its
+    /// nodes, which is quadratic in time and memory in the chain length; the
+    /// sole consumer ([`Self::apply_extensionality`]) asks about a handful of
+    /// terms, so chains are built on demand by [`Self::store_chain`]. Terms are
+    /// immutable once interned, so an on-demand chain is identical to the one
+    /// this phase used to precompute.
+    fn collect_store_terms(&mut self, tid: TermId, tm: &TermManager) -> Result<(), String> {
+        let mut stack = vec![tid];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        match &term.kind {
-            TermKind::Store(array, index, value) => {
-                // Recursively build chains for nested stores
-                self.build_store_chains(*array, tm)?;
-                self.build_store_chains(*index, tm)?;
-                self.build_store_chains(*value, tm)?;
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
 
-                // Analyze this store
-                let chain = self.analyze_store_chain(tid, tm)?;
-                self.store_chains.insert(tid, chain);
+            let term = tm.get(current).ok_or("term not found")?;
+            let kind = &term.kind;
+
+            // Only stores are recorded; every other kind contributes nothing
+            // but its children, which `get_children` supplies below.
+            if let TermKind::Store(_, _, _) = kind {
+                self.store_terms.insert(current);
             }
-            _ => {
-                // Recursively process children
-                for child in self.get_children(&term.kind) {
-                    self.build_store_chains(child, tm)?;
-                }
-            }
+
+            stack.extend(self.get_children(kind));
         }
 
         Ok(())
     }
 
-    /// Analyze a store chain starting from a store term.
-    fn analyze_store_chain(
-        &self,
-        store_tid: TermId,
+    /// The store chain of `tid`, if `tid` is a store term seen by
+    /// [`Self::collect_store_terms`].
+    ///
+    /// Chains are memoized and handed out behind an [`Rc`], so repeated
+    /// extensionality checks over the same array share one materialization.
+    fn store_chain(
+        &mut self,
+        tid: TermId,
         tm: &TermManager,
-    ) -> Result<StoreChain, String> {
+    ) -> Result<Option<Rc<StoreChain>>, String> {
+        if !self.store_terms.contains(&tid) {
+            return Ok(None);
+        }
+
+        if let Some(chain) = self.chain_cache.get(&tid) {
+            return Ok(Some(Rc::clone(chain)));
+        }
+
+        let chain = Rc::new(Self::analyze_store_chain(tid, tm)?);
+        self.chain_cache.insert(tid, Rc::clone(&chain));
+        Ok(Some(chain))
+    }
+
+    /// Analyze a store chain starting from a store term.
+    fn analyze_store_chain(store_tid: TermId, tm: &TermManager) -> Result<StoreChain, String> {
         let mut stores = Vec::new();
         let mut current = store_tid;
 
@@ -120,51 +162,149 @@ impl SelectStoreElimTactic {
     }
 
     /// Rewrite a term applying select-store simplifications.
+    ///
+    /// Iterative (explicit heap stack): the walk is bottom-up — a node is
+    /// rewritten only once its children have been, exactly as the recursive
+    /// version did — but the pending work lives on the heap, so a deeply
+    /// nested formula can no longer exhaust the native stack. The rewrite
+    /// cache is consulted on entry and filled on completion, as before.
     fn rewrite(&mut self, tid: TermId, tm: &mut TermManager) -> Result<TermId, String> {
-        // Check cache
-        if let Some(&cached) = self.cache.get(&tid) {
-            return Ok(cached);
+        /// Work item for the iterative rewriter.
+        enum RewriteTask {
+            /// Rewrite this term (its children first).
+            Enter(TermId),
+            /// Rebuild a `select` from the top two results.
+            BuildSelect(TermId),
+            /// Rebuild a `store` from the top three results.
+            BuildStore(TermId),
+            /// Rebuild an equality (extensionality) from the top two results.
+            BuildEq(TermId),
+            /// Rebuild an `and` from the top `n` results.
+            BuildAnd(TermId, usize),
+            /// Rebuild an `or` from the top `n` results.
+            BuildOr(TermId, usize),
+            /// Rebuild a `not` from the single result on top.
+            BuildNot(TermId),
         }
 
-        let term = tm.get(tid).ok_or("term not found")?;
-        let kind = term.kind.clone();
-        let result = match &kind {
-            TermKind::Select(array, index) => {
-                // Rewrite array and index first
-                let array_rewritten = self.rewrite(*array, tm)?;
-                let index_rewritten = self.rewrite(*index, tm)?;
+        let mut tasks = vec![RewriteTask::Enter(tid)];
+        let mut results: Vec<TermId> = Vec::new();
 
-                // Try to simplify select-store pattern
-                self.simplify_select_store(array_rewritten, index_rewritten, tm)?
+        while let Some(task) = tasks.pop() {
+            match task {
+                RewriteTask::Enter(current) => {
+                    if let Some(&cached) = self.cache.get(&current) {
+                        results.push(cached);
+                        continue;
+                    }
+
+                    let term = tm.get(current).ok_or("term not found")?;
+                    let kind = term.kind.clone();
+
+                    match kind {
+                        TermKind::Select(array, index) => {
+                            tasks.push(RewriteTask::BuildSelect(current));
+                            tasks.push(RewriteTask::Enter(index));
+                            tasks.push(RewriteTask::Enter(array));
+                        }
+                        TermKind::Store(array, index, value) => {
+                            tasks.push(RewriteTask::BuildStore(current));
+                            tasks.push(RewriteTask::Enter(value));
+                            tasks.push(RewriteTask::Enter(index));
+                            tasks.push(RewriteTask::Enter(array));
+                        }
+                        TermKind::Eq(lhs, rhs) => {
+                            tasks.push(RewriteTask::BuildEq(current));
+                            tasks.push(RewriteTask::Enter(rhs));
+                            tasks.push(RewriteTask::Enter(lhs));
+                        }
+                        TermKind::And(args) => {
+                            tasks.push(RewriteTask::BuildAnd(current, args.len()));
+                            tasks.extend(args.iter().rev().map(|&a| RewriteTask::Enter(a)));
+                        }
+                        TermKind::Or(args) => {
+                            tasks.push(RewriteTask::BuildOr(current, args.len()));
+                            tasks.extend(args.iter().rev().map(|&a| RewriteTask::Enter(a)));
+                        }
+                        TermKind::Not(arg) => {
+                            tasks.push(RewriteTask::BuildNot(current));
+                            tasks.push(RewriteTask::Enter(arg));
+                        }
+                        // Every other term kind is left as-is, matching the
+                        // recursive version's `rewrite_children` fall-through.
+                        _ => self.finish_rewrite(current, current, &mut results),
+                    }
+                }
+                RewriteTask::BuildSelect(current) => {
+                    let (array, index) = Self::take_two(&mut results)?;
+                    let result = self.simplify_select_store(array, index, tm)?;
+                    self.finish_rewrite(current, result, &mut results);
+                }
+                RewriteTask::BuildStore(current) => {
+                    let value = Self::take_one(&mut results)?;
+                    let (array, index) = Self::take_two(&mut results)?;
+                    let result = self.simplify_store_store(array, index, value, tm)?;
+                    self.finish_rewrite(current, result, &mut results);
+                }
+                RewriteTask::BuildEq(current) => {
+                    let (lhs, rhs) = Self::take_two(&mut results)?;
+                    let result = self.apply_extensionality(lhs, rhs, tm)?;
+                    self.finish_rewrite(current, result, &mut results);
+                }
+                RewriteTask::BuildAnd(current, arity) => {
+                    let args = Self::take_n(&mut results, arity)?;
+                    let result = tm.mk_and(args);
+                    self.finish_rewrite(current, result, &mut results);
+                }
+                RewriteTask::BuildOr(current, arity) => {
+                    let args = Self::take_n(&mut results, arity)?;
+                    let result = tm.mk_or(args);
+                    self.finish_rewrite(current, result, &mut results);
+                }
+                RewriteTask::BuildNot(current) => {
+                    let arg = Self::take_one(&mut results)?;
+                    let result = tm.mk_not(arg);
+                    self.finish_rewrite(current, result, &mut results);
+                }
             }
+        }
 
-            TermKind::Store(array, index, value) => {
-                // Rewrite components
-                let array_rewritten = self.rewrite(*array, tm)?;
-                let index_rewritten = self.rewrite(*index, tm)?;
-                let value_rewritten = self.rewrite(*value, tm)?;
+        results
+            .pop()
+            .ok_or_else(|| "rewrite produced no result".to_string())
+    }
 
-                // Try to eliminate redundant stores
-                self.simplify_store_store(array_rewritten, index_rewritten, value_rewritten, tm)?
-            }
-
-            TermKind::Eq(lhs, rhs) => {
-                // Check for array extensionality
-                self.apply_extensionality(*lhs, *rhs, tm)?
-            }
-
-            _ => {
-                // Recursively rewrite children
-                self.rewrite_children(tid, tm)?
-            }
-        };
-
-        self.cache.insert(tid, result);
-        if result != tid {
+    /// Record a completed rewrite and make it available to the parent task.
+    fn finish_rewrite(&mut self, tid: TermId, result: TermId, results: &mut Vec<TermId>) {
+        // A shared DAG node can be entered twice before either completion, so
+        // only the first completion counts towards the statistic.
+        if self.cache.insert(tid, result).is_none() && result != tid {
             self.stats.terms_rewritten += 1;
         }
+        results.push(result);
+    }
 
-        Ok(result)
+    /// Detach the single most recent result.
+    fn take_one(results: &mut Vec<TermId>) -> Result<TermId, String> {
+        results
+            .pop()
+            .ok_or_else(|| "rewrite result stack underflow".to_string())
+    }
+
+    /// Detach the two most recent results, in their original order.
+    fn take_two(results: &mut Vec<TermId>) -> Result<(TermId, TermId), String> {
+        let second = Self::take_one(results)?;
+        let first = Self::take_one(results)?;
+        Ok((first, second))
+    }
+
+    /// Detach the `n` most recent results, in their original order.
+    fn take_n(results: &mut Vec<TermId>, n: usize) -> Result<Vec<TermId>, String> {
+        if results.len() < n {
+            return Err("rewrite result stack underflow".to_string());
+        }
+        let start = results.len() - n;
+        Ok(results.split_off(start))
     }
 
     /// Simplify select(store(...), index) patterns.
@@ -232,21 +372,20 @@ impl SelectStoreElimTactic {
     }
 
     /// Apply array extensionality: (∀i. select(a,i) = select(b,i)) ⇒ a = b.
+    ///
+    /// Both sides are the *already rewritten* operands: the iterative
+    /// [`Self::rewrite`] schedules them as child tasks, so rewriting them again
+    /// here would repeat the whole sub-walk.
     fn apply_extensionality(
         &mut self,
-        lhs: TermId,
-        rhs: TermId,
+        lhs_rewritten: TermId,
+        rhs_rewritten: TermId,
         tm: &mut TermManager,
     ) -> Result<TermId, String> {
-        // Rewrite both sides
-        let lhs_rewritten = self.rewrite(lhs, tm)?;
-        let rhs_rewritten = self.rewrite(rhs, tm)?;
-
         // Check if both are arrays with known stores
-        if let (Some(lhs_chain), Some(rhs_chain)) = (
-            self.store_chains.get(&lhs_rewritten),
-            self.store_chains.get(&rhs_rewritten),
-        ) {
+        let lhs_chain = self.store_chain(lhs_rewritten, tm)?;
+        let rhs_chain = self.store_chain(rhs_rewritten, tm)?;
+        if let (Some(lhs_chain), Some(rhs_chain)) = (lhs_chain, rhs_chain) {
             // If they have the same base and same stores, they're equal
             if lhs_chain.base == rhs_chain.base
                 && self.stores_equivalent(&lhs_chain.stores, &rhs_chain.stores, tm)?
@@ -377,34 +516,6 @@ impl SelectStoreElimTactic {
         }
     }
 
-    /// Rewrite children of a term.
-    fn rewrite_children(&mut self, tid: TermId, tm: &mut TermManager) -> Result<TermId, String> {
-        let term = tm.get(tid).ok_or("term not found")?;
-        let kind = term.kind.clone();
-
-        match kind {
-            TermKind::And(args) => {
-                let mut new_args = Vec::new();
-                for arg in args {
-                    new_args.push(self.rewrite(arg, tm)?);
-                }
-                Ok(tm.mk_and(new_args))
-            }
-            TermKind::Or(args) => {
-                let mut new_args = Vec::new();
-                for arg in args {
-                    new_args.push(self.rewrite(arg, tm)?);
-                }
-                Ok(tm.mk_or(new_args))
-            }
-            TermKind::Not(arg) => {
-                let new_arg = self.rewrite(arg, tm)?;
-                Ok(tm.mk_not(new_arg))
-            }
-            _ => Ok(tid),
-        }
-    }
-
     /// Get statistics.
     pub fn stats(&self) -> &SelectStoreElimStats {
         &self.stats
@@ -435,6 +546,297 @@ mod tests {
             stores: vec![(TermId::from(1), TermId::from(2))],
         };
         assert_eq!(chain.stores.len(), 1);
+    }
+
+    /// Run `body` on a worker thread with a deliberately small (1 MiB) stack,
+    /// so a recursive walk over a deep term would abort instead of getting
+    /// away with the main thread's much larger stack.
+    fn run_with_small_stack<F>(body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(body)
+            .expect("thread spawn should succeed")
+            .join()
+            .expect("deep-nesting walk must not overflow the stack");
+    }
+
+    #[test]
+    fn test_rewrite_and_chain_building_handle_deeply_nested_terms() {
+        run_with_small_stack(|| {
+            const DEPTH: usize = 50_000;
+
+            let mut tm = TermManager::new();
+            let bool_sort = tm.sorts.bool_sort;
+            let int_sort = tm.sorts.int_sort;
+            let x = tm.mk_var("x", int_sort);
+            let zero = tm.mk_int(0);
+
+            // A 50k-deep negation chain. `intern_term` bypasses `mk_not`'s
+            // double-negation folding so the depth is real.
+            let base = tm.mk_le(zero, x);
+            let mut current = base;
+            for _ in 0..DEPTH {
+                current = tm.intern_term(TermKind::Not(current), bool_sort);
+            }
+
+            let mut tactic = SelectStoreElimTactic::new();
+            let rewritten = tactic
+                .apply(current, &mut tm)
+                .expect("deep rewrite should succeed");
+
+            // The rebuild goes through `mk_not`, which folds double negations,
+            // so the chain collapses back to the base comparison (DEPTH is
+            // even). The point of the test is that neither phase recursed.
+            assert_eq!(rewritten, base);
+        });
+    }
+
+    /// Reference implementation of the original eager chain-building phase:
+    /// every reachable store node gets its own fully materialized
+    /// [`StoreChain`]. Used to pin the lazy path's chains against the old
+    /// path's, which is the only thing extensionality ever observed.
+    fn eager_store_chains(
+        tactic: &SelectStoreElimTactic,
+        tid: TermId,
+        tm: &TermManager,
+    ) -> FxHashMap<TermId, StoreChain> {
+        let mut chains = FxHashMap::default();
+        let mut stack = vec![tid];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(term) = tm.get(current) else {
+                continue;
+            };
+            if let TermKind::Store(_, _, _) = &term.kind {
+                let chain = SelectStoreElimTactic::analyze_store_chain(current, tm)
+                    .expect("chain analysis should succeed");
+                chains.insert(current, chain);
+            }
+            stack.extend(tactic.get_children(&term.kind));
+        }
+
+        chains
+    }
+
+    /// A formula with nested stores, aliasing and non-aliasing constant
+    /// indices, a variable index, selects, and a boolean skeleton.
+    fn nontrivial_nest(tm: &mut TermManager) -> TermId {
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let a = tm.mk_var("a", array_sort);
+        let i = tm.mk_var("i", int_sort);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let ten = tm.mk_int(10);
+        let twenty = tm.mk_int(20);
+
+        let s1 = tm.mk_store(a, one, ten);
+        let s2 = tm.mk_store(s1, two, twenty);
+        let s3 = tm.mk_store(s2, i, ten);
+
+        // Same base, same index→value map, opposite nesting order.
+        let permuted_inner = tm.mk_store(a, two, twenty);
+        let permuted = tm.mk_store(permuted_inner, one, ten);
+        let ext = tm.mk_eq(s2, permuted);
+
+        let sel_same = tm.mk_select(s2, two);
+        let sel_diff = tm.mk_select(s2, one);
+        let sel_unknown = tm.mk_select(s3, one);
+
+        let eq1 = tm.mk_eq(sel_same, twenty);
+        let eq2 = tm.mk_eq(sel_diff, ten);
+        let eq3 = tm.mk_eq(sel_unknown, ten);
+        let inner = tm.mk_or(vec![eq2, eq3]);
+        let negated = tm.mk_not(inner);
+        tm.mk_and(vec![eq1, negated, ext])
+    }
+
+    #[test]
+    fn test_lazy_chains_match_the_eager_chains_on_a_nontrivial_nest() {
+        let mut tm = TermManager::new();
+        let formula = nontrivial_nest(&mut tm);
+
+        let mut tactic = SelectStoreElimTactic::new();
+        let expected = eager_store_chains(&tactic, formula, &tm);
+        assert!(
+            expected.len() >= 5,
+            "the pinned nest must contain several store nodes"
+        );
+
+        tactic
+            .collect_store_terms(formula, &tm)
+            .expect("scan should succeed");
+
+        // Same set of store terms...
+        let mut recorded: Vec<TermId> = tactic.store_terms.iter().copied().collect();
+        let mut eager: Vec<TermId> = expected.keys().copied().collect();
+        recorded.sort();
+        eager.sort();
+        assert_eq!(recorded, eager);
+
+        // ...and, for each of them, the very same chain.
+        for (tid, chain) in &expected {
+            let lazy = tactic
+                .store_chain(*tid, &tm)
+                .expect("chain analysis should succeed")
+                .expect("a recorded store term must have a chain");
+            assert_eq!(lazy.base, chain.base);
+            assert_eq!(lazy.stores, chain.stores);
+        }
+
+        // Non-store terms still have no chain, as before.
+        let non_store = tm.mk_int(1);
+        assert!(
+            tactic
+                .store_chain(non_store, &tm)
+                .expect("lookup should succeed")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_extensionality_output_is_pinned() {
+        // Permuted stores over disjoint constant indices on a shared base:
+        // the two arrays are equal, and the tactic must say so.
+        let mut tm = TermManager::new();
+        let formula = nontrivial_nest(&mut tm);
+
+        let mut tactic = SelectStoreElimTactic::new();
+        let rewritten = tactic.apply(formula, &mut tm).expect("rewrite succeeds");
+
+        let expected = {
+            let int_sort = tm.sorts.int_sort;
+            let array_sort = tm.sorts.array(int_sort, int_sort);
+            let a = tm.mk_var("a", array_sort);
+            let i = tm.mk_var("i", int_sort);
+            let one = tm.mk_int(1);
+            let two = tm.mk_int(2);
+            let ten = tm.mk_int(10);
+            let twenty = tm.mk_int(20);
+            let s1 = tm.mk_store(a, one, ten);
+            let s2 = tm.mk_store(s1, two, twenty);
+            let s3 = tm.mk_store(s2, i, ten);
+
+            // select(store(_, 2, 20), 2) → 20.
+            let eq1 = tm.mk_eq(twenty, twenty);
+            // select(store(_, 2, 20), 1) → select(store(a, 1, 10), 1): the
+            // pass peels exactly one level, it does not re-simplify.
+            let sel_peeled = tm.mk_select(s1, one);
+            let eq2 = tm.mk_eq(sel_peeled, ten);
+            // select(store(_, i, 10), 1) is untouched: `i` may alias 1.
+            let sel_unknown = tm.mk_select(s3, one);
+            let eq3 = tm.mk_eq(sel_unknown, ten);
+            let inner = tm.mk_or(vec![eq2, eq3]);
+            let negated = tm.mk_not(inner);
+            // The permuted stores are provably the same array.
+            let ext = tm.mk_true();
+            tm.mk_and(vec![eq1, negated, ext])
+        };
+        assert_eq!(rewritten, expected);
+        assert_eq!(tactic.stats().extensionality_apps, 1);
+        assert_eq!(tactic.stats().select_store_same_index, 1);
+        assert_eq!(tactic.stats().select_store_diff_index, 1);
+    }
+
+    #[test]
+    fn test_extensionality_does_not_fire_on_different_bases() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let a = tm.mk_var("a", array_sort);
+        let b = tm.mk_var("b", array_sort);
+        let one = tm.mk_int(1);
+        let ten = tm.mk_int(10);
+        let lhs = tm.mk_store(a, one, ten);
+        let rhs = tm.mk_store(b, one, ten);
+        let formula = tm.mk_eq(lhs, rhs);
+
+        let mut tactic = SelectStoreElimTactic::new();
+        let rewritten = tactic.apply(formula, &mut tm).expect("rewrite succeeds");
+        assert_eq!(rewritten, formula);
+        assert_eq!(tactic.stats().extensionality_apps, 0);
+    }
+
+    #[test]
+    fn test_deep_store_chain_is_walked_iteratively() {
+        run_with_small_stack(|| {
+            // 50k stores: with chains materialized per store node this was
+            // quadratic and had to be capped at 1k. Chains are now built only
+            // when extensionality asks for one, so both phases are linear.
+            const CHAIN: usize = 50_000;
+
+            let mut tm = TermManager::new();
+            let int_sort = tm.sorts.int_sort;
+            let array_sort = tm.sorts.array(int_sort, int_sort);
+            let base = tm.mk_var("a", array_sort);
+
+            let mut array = base;
+            for i in 0..CHAIN {
+                let index = tm.mk_int(i as i64);
+                let value = tm.mk_int((i * 2) as i64);
+                array = tm.mk_store(array, index, value);
+            }
+
+            let probe = tm.mk_int(0);
+            let selected = tm.mk_select(array, probe);
+
+            let mut tactic = SelectStoreElimTactic::new();
+            let rewritten = tactic
+                .apply(selected, &mut tm)
+                .expect("deep store-chain rewrite should succeed");
+
+            // The outermost store has a provably distinct constant index, so
+            // one level is peeled off (this pass peels a single level).
+            assert_ne!(rewritten, selected);
+            assert_eq!(tactic.stats().select_store_diff_index, 1);
+        });
+    }
+
+    #[test]
+    fn test_select_over_store_same_index_yields_value() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let base = tm.mk_var("a", array_sort);
+        let index = tm.mk_var("i", int_sort);
+        let value = tm.mk_int(42);
+
+        let stored = tm.mk_store(base, index, value);
+        let selected = tm.mk_select(stored, index);
+
+        let mut tactic = SelectStoreElimTactic::new();
+        let rewritten = tactic.apply(selected, &mut tm).expect("rewrite succeeds");
+        assert_eq!(rewritten, value);
+        assert_eq!(tactic.stats().select_store_same_index, 1);
+    }
+
+    #[test]
+    fn test_select_over_unknown_index_is_not_peeled() {
+        // select(store(a, i, v), j) with i, j unrelated variables must keep
+        // the store: the indices may alias.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let base = tm.mk_var("a", array_sort);
+        let i = tm.mk_var("i", int_sort);
+        let j = tm.mk_var("j", int_sort);
+        let value = tm.mk_int(42);
+
+        let stored = tm.mk_store(base, i, value);
+        let selected = tm.mk_select(stored, j);
+
+        let mut tactic = SelectStoreElimTactic::new();
+        let rewritten = tactic.apply(selected, &mut tm).expect("rewrite succeeds");
+        assert_eq!(rewritten, selected);
+        assert_eq!(tactic.stats().select_store_same_index, 0);
+        assert_eq!(tactic.stats().select_store_diff_index, 0);
     }
 
     #[test]

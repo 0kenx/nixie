@@ -225,7 +225,13 @@ pub enum TheoryMode {
 }
 
 /// Solver configuration
-#[derive(Debug, Clone)]
+///
+/// Every field is a scalar or a field-less enum, so this is cheap to clone and
+/// cheap to compare.  `PartialEq` is part of the contract: the solver's
+/// repeated-`check` cache compares two of these to decide whether a previous
+/// verdict still answers the caller's question, and a field added here without
+/// an equality of its own would silently widen what counts as "the same query".
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SolverConfig {
     /// Timeout in milliseconds (0 = no timeout)
     pub timeout_ms: u64,
@@ -263,6 +269,20 @@ pub struct SolverConfig {
     pub enable_inprocessing: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
+    /// Cap on the number of ground instances a single bounded-integer
+    /// quantifier may be expanded into at assert time (`0` disables the
+    /// expansion entirely).
+    ///
+    /// A quantifier whose own guard pins every bound Int variable to a
+    /// concrete finite interval is rewritten into the *logically equivalent*
+    /// finite conjunction (`forall`) / disjunction (`exists`) over that
+    /// interval, so the ground solver decides it directly instead of MBQI
+    /// having to certify it (see the `solver::encode::finite_expand` module).
+    /// The product of the per-variable interval widths must not exceed this
+    /// cap; a wider box falls through to MBQI unchanged.
+    ///
+    /// Default: 64 (`DEFAULT_FINITE_EXPANSION_BUDGET`).
+    pub finite_expansion_budget: usize,
 }
 
 impl Default for SolverConfig {
@@ -295,6 +315,8 @@ impl SolverConfig {
             enable_symmetry_breaking: false,
             enable_inprocessing: false, // No inprocessing for speed
             inprocessing_interval: 0,
+            finite_expansion_budget:
+                crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
         }
     }
 
@@ -321,6 +343,8 @@ impl SolverConfig {
             enable_symmetry_breaking: false, // Still expensive
             enable_inprocessing: true,
             inprocessing_interval: 10000,
+            finite_expansion_budget:
+                crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
         }
     }
 
@@ -347,6 +371,8 @@ impl SolverConfig {
             enable_symmetry_breaking: true, // Enable for hard problems
             enable_inprocessing: true,
             inprocessing_interval: 5000, // More frequent inprocessing
+            finite_expansion_budget:
+                crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
         }
     }
 
@@ -373,6 +399,9 @@ impl SolverConfig {
             enable_symmetry_breaking: false,
             enable_inprocessing: false,
             inprocessing_interval: 0,
+            // `minimal()` disables every optional rewrite; the caller asked for
+            // full control, so quantifiers keep their plain MBQI path.
+            finite_expansion_budget: 0,
         }
     }
 
@@ -513,198 +542,455 @@ impl Model {
         &self.assignments
     }
 
-    /// Evaluate a term in this model
-    /// Returns the simplified/evaluated term
+    /// Evaluate a term in this model.
+    /// Returns the simplified/evaluated term.
+    ///
+    /// Runs on an explicit heap-allocated frame stack, so nesting depth is
+    /// bounded by memory rather than by the native call stack — this is a
+    /// public entry point (the `(get-value ...)` path) and callers control
+    /// the depth of the terms they hand in.  Shared sub-terms of the
+    /// hash-consed DAG are evaluated once per call through a per-call memo
+    /// keyed on `TermId` (no binders are descended into, so the memo needs no
+    /// binding context); cross-call caching remains `ModelCache`'s job.
+    ///
+    /// Short-circuit behaviour matches the recursive original exactly:
+    /// `and` stops at the first `false` operand, `or` at the first `true`,
+    /// and `ite` evaluates only the branch a constant condition selects,
+    /// while `=>`, `=`, `-` and the n-ary arithmetic operators evaluate all
+    /// of their operands.
     pub fn eval(&self, term: TermId, manager: &mut TermManager) -> TermId {
-        // First check if we have a direct assignment
-        if let Some(val) = self.get(term) {
-            return val;
-        }
+        let mut memo: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let mut frames: Vec<EvalFrame> = Vec::new();
+        let mut current = term;
 
-        // Otherwise, recursively evaluate based on term structure
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
-
-        match t.kind {
-            // Constants evaluate to themselves
-            TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. } => term,
-
-            // Variables: look up in model or return the variable itself
-            TermKind::Var(_) => self.get(term).unwrap_or(term),
-
-            // Boolean operations
-            TermKind::Not(arg) => {
-                let arg_val = self.eval(arg, manager);
-                if let Some(t) = manager.get(arg_val) {
-                    match t.kind {
-                        TermKind::True => manager.mk_false(),
-                        TermKind::False => manager.mk_true(),
-                        _ => manager.mk_not(arg_val),
-                    }
-                } else {
-                    manager.mk_not(arg_val)
+        'open: loop {
+            // Open `current`, descending through operators until some term
+            // produces a value.
+            let mut value = loop {
+                // Direct model assignment — checked before anything else,
+                // exactly as the recursive version did.
+                if let Some(val) = self.get(current) {
+                    break val;
                 }
-            }
+                if let Some(&val) = memo.get(&current) {
+                    break val;
+                }
+                let Some(t) = manager.get(current).cloned() else {
+                    break current;
+                };
+                match t.kind {
+                    // Constants evaluate to themselves.
+                    TermKind::True
+                    | TermKind::False
+                    | TermKind::IntConst(_)
+                    | TermKind::RealConst(_)
+                    | TermKind::BitVecConst { .. } => break current,
 
-            TermKind::And(ref args) => {
-                let mut eval_args = Vec::new();
-                for &arg in args {
-                    let val = self.eval(arg, manager);
-                    if let Some(t) = manager.get(val) {
-                        if matches!(t.kind, TermKind::False) {
-                            return manager.mk_false();
+                    // Variables: the model was already consulted above, so an
+                    // unassigned variable evaluates to itself.
+                    TermKind::Var(_) => break current,
+
+                    TermKind::Not(arg) => {
+                        frames.push(EvalFrame::Not { term: current });
+                        current = arg;
+                    }
+                    TermKind::And(args) => match args.first() {
+                        Some(&first) => {
+                            frames.push(EvalFrame::Connective {
+                                term: current,
+                                conjunction: true,
+                                args,
+                                next: 1,
+                                acc: Vec::new(),
+                            });
+                            current = first;
                         }
-                        if !matches!(t.kind, TermKind::True) {
-                            eval_args.push(val);
+                        None => break manager.mk_true(),
+                    },
+                    TermKind::Or(args) => match args.first() {
+                        Some(&first) => {
+                            frames.push(EvalFrame::Connective {
+                                term: current,
+                                conjunction: false,
+                                args,
+                                next: 1,
+                                acc: Vec::new(),
+                            });
+                            current = first;
                         }
-                    } else {
-                        eval_args.push(val);
+                        None => break manager.mk_false(),
+                    },
+                    TermKind::Implies(lhs, rhs) => {
+                        frames.push(EvalFrame::ImpliesLhs { term: current, rhs });
+                        current = lhs;
                     }
-                }
-                if eval_args.is_empty() {
-                    manager.mk_true()
-                } else if eval_args.len() == 1 {
-                    eval_args[0]
-                } else {
-                    manager.mk_and(eval_args)
-                }
-            }
-
-            TermKind::Or(ref args) => {
-                let mut eval_args = Vec::new();
-                for &arg in args {
-                    let val = self.eval(arg, manager);
-                    if let Some(t) = manager.get(val) {
-                        if matches!(t.kind, TermKind::True) {
-                            return manager.mk_true();
+                    TermKind::Ite(cond, then_br, else_br) => {
+                        frames.push(EvalFrame::IteCond {
+                            term: current,
+                            then_br,
+                            else_br,
+                        });
+                        current = cond;
+                    }
+                    TermKind::Eq(lhs, rhs) => {
+                        frames.push(EvalFrame::EqLhs { term: current, rhs });
+                        current = lhs;
+                    }
+                    TermKind::Neg(arg) => {
+                        frames.push(EvalFrame::Neg { term: current });
+                        current = arg;
+                    }
+                    TermKind::Add(args) => match args.first() {
+                        Some(&first) => {
+                            frames.push(EvalFrame::Nary {
+                                term: current,
+                                product: false,
+                                args,
+                                next: 1,
+                                acc: Vec::new(),
+                            });
+                            current = first;
                         }
-                        if !matches!(t.kind, TermKind::False) {
-                            eval_args.push(val);
+                        None => break manager.mk_add(Vec::<TermId>::new()),
+                    },
+                    TermKind::Sub(lhs, rhs) => {
+                        frames.push(EvalFrame::SubLhs { term: current, rhs });
+                        current = lhs;
+                    }
+                    TermKind::Mul(args) => match args.first() {
+                        Some(&first) => {
+                            frames.push(EvalFrame::Nary {
+                                term: current,
+                                product: true,
+                                args,
+                                next: 1,
+                                acc: Vec::new(),
+                            });
+                            current = first;
                         }
-                    } else {
-                        eval_args.push(val);
+                        None => break manager.mk_mul(Vec::<TermId>::new()),
+                    },
+
+                    // For other operations, just return the term (the model
+                    // was already consulted above).
+                    _ => break current,
+                }
+            };
+
+            // Fold the finished value into the pending frames; a frame that
+            // still needs another operand re-enters the open loop.
+            loop {
+                let Some(frame) = frames.pop() else {
+                    return value;
+                };
+                match frame {
+                    EvalFrame::Not { term } => {
+                        let arg_is_true = term_kind_is_true(value, manager);
+                        let arg_is_false = term_kind_is_false(value, manager);
+                        let v = if arg_is_true {
+                            manager.mk_false()
+                        } else if arg_is_false {
+                            manager.mk_true()
+                        } else {
+                            manager.mk_not(value)
+                        };
+                        memo.insert(term, v);
+                        value = v;
                     }
-                }
-                if eval_args.is_empty() {
-                    manager.mk_false()
-                } else if eval_args.len() == 1 {
-                    eval_args[0]
-                } else {
-                    manager.mk_or(eval_args)
-                }
-            }
-
-            TermKind::Implies(lhs, rhs) => {
-                let lhs_val = self.eval(lhs, manager);
-                let rhs_val = self.eval(rhs, manager);
-
-                if let Some(t) = manager.get(lhs_val) {
-                    if matches!(t.kind, TermKind::False) {
-                        return manager.mk_true();
-                    }
-                    if matches!(t.kind, TermKind::True) {
-                        return rhs_val;
-                    }
-                }
-
-                if let Some(t) = manager.get(rhs_val)
-                    && matches!(t.kind, TermKind::True)
-                {
-                    return manager.mk_true();
-                }
-
-                manager.mk_implies(lhs_val, rhs_val)
-            }
-
-            TermKind::Ite(cond, then_br, else_br) => {
-                let cond_val = self.eval(cond, manager);
-
-                if let Some(t) = manager.get(cond_val) {
-                    match t.kind {
-                        TermKind::True => return self.eval(then_br, manager),
-                        TermKind::False => return self.eval(else_br, manager),
-                        _ => {}
-                    }
-                }
-
-                let then_val = self.eval(then_br, manager);
-                let else_val = self.eval(else_br, manager);
-                manager.mk_ite(cond_val, then_val, else_val)
-            }
-
-            TermKind::Eq(lhs, rhs) => {
-                let lhs_val = self.eval(lhs, manager);
-                let rhs_val = self.eval(rhs, manager);
-
-                if lhs_val == rhs_val {
-                    return manager.mk_true();
-                }
-
-                // Simplify boolean equalities with constants:
-                // x = true  => x
-                // x = false => NOT x
-                // true = x  => x
-                // false = x => NOT x
-                if let Some(lhs_term) = manager.get(lhs_val)
-                    && lhs_term.sort == manager.sorts.bool_sort
-                {
-                    // Check if rhs is a boolean constant
-                    if let Some(rhs_term) = manager.get(rhs_val) {
-                        match rhs_term.kind {
-                            TermKind::True => return lhs_val,
-                            TermKind::False => return manager.mk_not(lhs_val),
-                            _ => {}
+                    EvalFrame::Connective {
+                        term,
+                        conjunction,
+                        args,
+                        next,
+                        mut acc,
+                    } => {
+                        let is_true = term_kind_is_true(value, manager);
+                        let is_false = term_kind_is_false(value, manager);
+                        if conjunction && is_false {
+                            // `and` short-circuit: remaining operands are not
+                            // evaluated, matching the recursive version.
+                            let v = manager.mk_false();
+                            memo.insert(term, v);
+                            value = v;
+                            continue;
                         }
+                        if !conjunction && is_true {
+                            let v = manager.mk_true();
+                            memo.insert(term, v);
+                            value = v;
+                            continue;
+                        }
+                        // `true` operands of `and` and `false` operands of
+                        // `or` are dropped; everything else is kept.
+                        let is_neutral = if conjunction { is_true } else { is_false };
+                        if !is_neutral {
+                            acc.push(value);
+                        }
+                        if let Some(&child) = args.get(next) {
+                            frames.push(EvalFrame::Connective {
+                                term,
+                                conjunction,
+                                args,
+                                next: next + 1,
+                                acc,
+                            });
+                            current = child;
+                            continue 'open;
+                        }
+                        let v = match (acc.len(), conjunction) {
+                            (0, true) => manager.mk_true(),
+                            (0, false) => manager.mk_false(),
+                            (1, _) => acc[0],
+                            (_, true) => manager.mk_and(acc),
+                            (_, false) => manager.mk_or(acc),
+                        };
+                        memo.insert(term, v);
+                        value = v;
                     }
-                    // Check if lhs is a boolean constant
-                    match lhs_term.kind {
-                        TermKind::True => return rhs_val,
-                        TermKind::False => return manager.mk_not(rhs_val),
-                        _ => {}
+                    EvalFrame::ImpliesLhs { term, rhs } => {
+                        frames.push(EvalFrame::ImpliesRhs {
+                            term,
+                            lhs_val: value,
+                        });
+                        current = rhs;
+                        continue 'open;
+                    }
+                    EvalFrame::ImpliesRhs { term, lhs_val } => {
+                        let rhs_val = value;
+                        let v = if term_kind_is_false(lhs_val, manager) {
+                            manager.mk_true()
+                        } else if term_kind_is_true(lhs_val, manager) {
+                            rhs_val
+                        } else if term_kind_is_true(rhs_val, manager) {
+                            manager.mk_true()
+                        } else {
+                            manager.mk_implies(lhs_val, rhs_val)
+                        };
+                        memo.insert(term, v);
+                        value = v;
+                    }
+                    EvalFrame::IteCond {
+                        term,
+                        then_br,
+                        else_br,
+                    } => {
+                        if term_kind_is_true(value, manager) {
+                            frames.push(EvalFrame::Forward { term });
+                            current = then_br;
+                            continue 'open;
+                        }
+                        if term_kind_is_false(value, manager) {
+                            frames.push(EvalFrame::Forward { term });
+                            current = else_br;
+                            continue 'open;
+                        }
+                        frames.push(EvalFrame::IteThen {
+                            term,
+                            cond_val: value,
+                            else_br,
+                        });
+                        current = then_br;
+                        continue 'open;
+                    }
+                    EvalFrame::IteThen {
+                        term,
+                        cond_val,
+                        else_br,
+                    } => {
+                        frames.push(EvalFrame::IteElse {
+                            term,
+                            cond_val,
+                            then_val: value,
+                        });
+                        current = else_br;
+                        continue 'open;
+                    }
+                    EvalFrame::IteElse {
+                        term,
+                        cond_val,
+                        then_val,
+                    } => {
+                        let v = manager.mk_ite(cond_val, then_val, value);
+                        memo.insert(term, v);
+                        value = v;
+                    }
+                    EvalFrame::Forward { term } => {
+                        // The selected branch's value is the `ite`'s value.
+                        memo.insert(term, value);
+                    }
+                    EvalFrame::EqLhs { term, rhs } => {
+                        frames.push(EvalFrame::EqRhs {
+                            term,
+                            lhs_val: value,
+                        });
+                        current = rhs;
+                        continue 'open;
+                    }
+                    EvalFrame::EqRhs { term, lhs_val } => {
+                        let rhs_val = value;
+                        // Simplify boolean equalities with constants:
+                        // x = true  => x
+                        // x = false => NOT x
+                        // true = x  => x
+                        // false = x => NOT x
+                        let lhs_is_bool = manager
+                            .get(lhs_val)
+                            .is_some_and(|t| t.sort == manager.sorts.bool_sort);
+                        let v = if lhs_val == rhs_val {
+                            manager.mk_true()
+                        } else if lhs_is_bool && term_kind_is_true(rhs_val, manager) {
+                            lhs_val
+                        } else if lhs_is_bool && term_kind_is_false(rhs_val, manager) {
+                            manager.mk_not(lhs_val)
+                        } else if lhs_is_bool && term_kind_is_true(lhs_val, manager) {
+                            rhs_val
+                        } else if lhs_is_bool && term_kind_is_false(lhs_val, manager) {
+                            manager.mk_not(rhs_val)
+                        } else {
+                            manager.mk_eq(lhs_val, rhs_val)
+                        };
+                        memo.insert(term, v);
+                        value = v;
+                    }
+                    EvalFrame::Neg { term } => {
+                        // Arithmetic constant folding; the residual case is a
+                        // *negation* term.  (The recursive version built a
+                        // boolean `not` here — a wrong-operator defect that
+                        // produced an ill-sorted term for an unassigned
+                        // arithmetic operand.)
+                        let folded = match manager.get(value).map(|t| t.kind.clone()) {
+                            Some(TermKind::IntConst(n)) => Some(manager.mk_int(-n)),
+                            Some(TermKind::RealConst(r)) => Some(manager.mk_real(-r)),
+                            _ => None,
+                        };
+                        let v = match folded {
+                            Some(v) => v,
+                            None => manager.mk_neg(value),
+                        };
+                        memo.insert(term, v);
+                        value = v;
+                    }
+                    EvalFrame::Nary {
+                        term,
+                        product,
+                        args,
+                        next,
+                        mut acc,
+                    } => {
+                        acc.push(value);
+                        if let Some(&child) = args.get(next) {
+                            frames.push(EvalFrame::Nary {
+                                term,
+                                product,
+                                args,
+                                next: next + 1,
+                                acc,
+                            });
+                            current = child;
+                            continue 'open;
+                        }
+                        let v = if product {
+                            manager.mk_mul(acc)
+                        } else {
+                            manager.mk_add(acc)
+                        };
+                        memo.insert(term, v);
+                        value = v;
+                    }
+                    EvalFrame::SubLhs { term, rhs } => {
+                        frames.push(EvalFrame::SubRhs {
+                            term,
+                            lhs_val: value,
+                        });
+                        current = rhs;
+                        continue 'open;
+                    }
+                    EvalFrame::SubRhs { term, lhs_val } => {
+                        let v = manager.mk_sub(lhs_val, value);
+                        memo.insert(term, v);
+                        value = v;
                     }
                 }
-
-                manager.mk_eq(lhs_val, rhs_val)
             }
-
-            // Arithmetic operations - basic constant folding
-            TermKind::Neg(arg) => {
-                let arg_val = self.eval(arg, manager);
-                if let Some(t) = manager.get(arg_val) {
-                    match &t.kind {
-                        TermKind::IntConst(n) => return manager.mk_int(-n),
-                        TermKind::RealConst(r) => return manager.mk_real(-r),
-                        _ => {}
-                    }
-                }
-                manager.mk_not(arg_val)
-            }
-
-            TermKind::Add(ref args) => {
-                let eval_args: Vec<_> = args.iter().map(|&a| self.eval(a, manager)).collect();
-                manager.mk_add(eval_args)
-            }
-
-            TermKind::Sub(lhs, rhs) => {
-                let lhs_val = self.eval(lhs, manager);
-                let rhs_val = self.eval(rhs, manager);
-                manager.mk_sub(lhs_val, rhs_val)
-            }
-
-            TermKind::Mul(ref args) => {
-                let eval_args: Vec<_> = args.iter().map(|&a| self.eval(a, manager)).collect();
-                manager.mk_mul(eval_args)
-            }
-
-            // For other operations, just return the term or look it up
-            _ => self.get(term).unwrap_or(term),
         }
     }
+}
+
+/// Whether `term` is interned and its kind is the boolean constant `true`.
+fn term_kind_is_true(term: TermId, manager: &TermManager) -> bool {
+    manager
+        .get(term)
+        .is_some_and(|t| matches!(t.kind, TermKind::True))
+}
+
+/// Whether `term` is interned and its kind is the boolean constant `false`.
+fn term_kind_is_false(term: TermId, manager: &TermManager) -> bool {
+    manager
+        .get(term)
+        .is_some_and(|t| matches!(t.kind, TermKind::False))
+}
+
+/// One pending operator of [`Model::eval`]'s explicit evaluation stack.
+///
+/// Each variant carries the original term it evaluates (the memo key for its
+/// finished value) plus per-operator progress; a frame that still needs an
+/// operand pushes itself back and re-enters the open loop.
+enum EvalFrame {
+    /// `not` — one operand.
+    Not { term: TermId },
+    /// `and` (`conjunction`) or `or`: operands evaluated left to right with
+    /// the recursive version's short-circuiting; `acc` holds the operands
+    /// kept so far.
+    Connective {
+        term: TermId,
+        conjunction: bool,
+        args: SmallVec<[TermId; 4]>,
+        next: usize,
+        acc: Vec<TermId>,
+    },
+    /// `=>` — waiting on the antecedent.
+    ImpliesLhs { term: TermId, rhs: TermId },
+    /// `=>` — waiting on the consequent.
+    ImpliesRhs { term: TermId, lhs_val: TermId },
+    /// `ite` — waiting on the condition.
+    IteCond {
+        term: TermId,
+        then_br: TermId,
+        else_br: TermId,
+    },
+    /// `ite` with a non-constant condition — waiting on the then-branch.
+    IteThen {
+        term: TermId,
+        cond_val: TermId,
+        else_br: TermId,
+    },
+    /// `ite` with a non-constant condition — waiting on the else-branch.
+    IteElse {
+        term: TermId,
+        cond_val: TermId,
+        then_val: TermId,
+    },
+    /// The child's value *is* this term's value (`ite` on a constant
+    /// condition evaluating only the selected branch).
+    Forward { term: TermId },
+    /// `=` — waiting on the left operand.
+    EqLhs { term: TermId, rhs: TermId },
+    /// `=` — waiting on the right operand.
+    EqRhs { term: TermId, lhs_val: TermId },
+    /// Unary arithmetic negation.
+    Neg { term: TermId },
+    /// n-ary `+` (`product = false`) or `*`; all operands are evaluated.
+    Nary {
+        term: TermId,
+        product: bool,
+        args: SmallVec<[TermId; 4]>,
+        next: usize,
+        acc: Vec<TermId>,
+    },
+    /// Binary `-` — waiting on the left operand.
+    SubLhs { term: TermId, rhs: TermId },
+    /// Binary `-` — waiting on the right operand.
+    SubRhs { term: TermId, lhs_val: TermId },
 }
 
 impl Default for Model {

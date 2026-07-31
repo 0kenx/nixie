@@ -9,7 +9,8 @@
 //!    a hard instance could hang the CLI forever despite an explicit
 //!    user-supplied limit.
 
-use std::env;
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -42,20 +43,13 @@ fn assert_prompt(elapsed: Duration, budget: Duration, label: &str) {
     }
 }
 
-/// Generate a unique temp file path for a `.smt2` script.
-fn temp_smt2_path(label: &str) -> PathBuf {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("time went backwards")
-        .as_nanos();
-    env::temp_dir().join(format!("audit_cli_p2_{label}_{nanos}.smt2"))
-}
-
-fn write_temp_smt2(label: &str, content: &str) -> PathBuf {
-    let path = temp_smt2_path(label);
-    fs::write(&path, content).expect("failed to write temp smt2 file");
-    path
+/// Create a unique temp `.smt2` script.
+///
+/// See `tests/common/mod.rs` for why this is collision-proof by
+/// construction (pid + per-process counter) rather than timestamp-based,
+/// and why it cleans up on `Drop` (including on panic).
+fn write_temp_smt2(label: &str, content: &str) -> common::TempPath {
+    common::TempPath::write(&format!("audit_cli_p2_{label}"), "smt2", content)
 }
 
 /// Build a pigeonhole-principle CNF (as SMT-LIB2) with `holes` holes and

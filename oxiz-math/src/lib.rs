@@ -29,6 +29,21 @@
 //! - **Rational**: Arbitrary precision rational arithmetic utilities
 //! - **MPFR**: Arbitrary precision floating-point arithmetic (MPFR-like)
 //!
+//! # Features
+//!
+//! - **`std`** (default): enables the standard library. Without it the crate
+//!   builds as `no_std` + `alloc`. The following modules need floating-point
+//!   or OS facilities that `core` does not provide and are therefore
+//!   available only with `std`: [`blas`], [`blas_ops`], [`mpfr`],
+//!   [`simd::matrix_simd`], [`simd::simplex_simd`], and
+//!   [`rational::is_prime`] (which needs a random number generator).
+//!   Everything else -- polynomials, Gröbner bases, simplex, intervals,
+//!   BDDs, real closure -- builds in both configurations.
+//! - **`simd`**: reserved. The kernels in [`simd`] are compiled
+//!   unconditionally and rely on auto-vectorization, so enabling this
+//!   feature currently changes nothing; it exists so that an explicit
+//!   opt-in does not become a breaking change later.
+//!
 //! # Examples
 //!
 //! ## Polynomial Arithmetic
@@ -117,7 +132,6 @@ pub mod rational;
 pub mod rational_function;
 pub mod realclosure;
 pub mod realclosure_advanced;
-#[cfg(feature = "std")]
 pub mod simd;
 pub mod simplex;
 pub mod simplex_parametric;

@@ -39,6 +39,55 @@ pub struct BddManager {
     unique_table: FxHashMap<(VarId, NodeId, NodeId), NodeId>,
     /// Cache for binary operations: (op, left, right) -> result
     op_cache: FxHashMap<(BddOp, NodeId, NodeId), NodeId>,
+    /// Computed table for negation: node -> !node.
+    ///
+    /// Without it, `not` re-expands every shared node: an n-variable BDD
+    /// has O(n) nodes but exponentially many tree unfoldings, which is the
+    /// entire point of a BDD's sharing.
+    not_cache: FxHashMap<NodeId, NodeId>,
+    /// Computed table for if-then-else: (cond, then, else) -> result.
+    ite_cache: FxHashMap<(NodeId, NodeId, NodeId), NodeId>,
+}
+
+/// One entry on the explicit work-stack used by [`BddManager::not`].
+enum NotStep {
+    /// Resolve `!node`, scheduling its cofactors if needed.
+    Enter(NodeId),
+    /// Both cofactors of `node` are memoized; build the result node.
+    Combine(NodeId),
+}
+
+/// One entry on the explicit work-stack used by [`BddManager::ite`].
+enum IteStep {
+    /// Resolve `ite(cond, then, else)` for this triple.
+    Enter(IteKey),
+    /// Both cofactor triples are memoized; build the result node.
+    Combine {
+        key: IteKey,
+        top_var: VarId,
+        low: IteKey,
+        high: IteKey,
+    },
+}
+
+/// An if-then-else triple, the key of the ITE computed table.
+type IteKey = (NodeId, NodeId, NodeId);
+
+/// An `(op, left, right)` triple, the key of the binary-operation
+/// computed table.
+type ApplyKey = (BddOp, NodeId, NodeId);
+
+/// One entry on the explicit work-stack used by [`BddManager::apply`].
+enum ApplyStep {
+    /// Resolve `op(left, right)` for this triple.
+    Enter(ApplyKey),
+    /// Both operand pairs are memoized; build the result node.
+    Combine {
+        key: ApplyKey,
+        var: VarId,
+        low: ApplyKey,
+        high: ApplyKey,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,6 +104,8 @@ impl BddManager {
             nodes: Vec::new(),
             unique_table: FxHashMap::default(),
             op_cache: FxHashMap::default(),
+            not_cache: FxHashMap::default(),
+            ite_cache: FxHashMap::default(),
         };
 
         // Initialize constant nodes
@@ -114,22 +165,67 @@ impl BddManager {
     }
 
     /// Negates a BDD node.
+    ///
+    /// Runs on an explicit work-stack with a computed table (`not_cache`),
+    /// rather than the tree recursion this replaces. Two defects are fixed:
+    ///
+    /// * The recursion had no computed table, so every shared node was
+    ///   re-expanded. `not` on a 40-variable parity BDD — O(n) nodes, 2ⁿ
+    ///   tree unfoldings — never returned.
+    /// * Recursion depth was the BDD height, i.e. the variable count, with
+    ///   no guard. The return type is `NodeId`, so a depth cap could only
+    ///   have produced a silently wrong diagram.
     pub fn not(&mut self, node: NodeId) -> NodeId {
-        self.apply_not_rec(node)
-    }
-
-    fn apply_not_rec(&mut self, node: NodeId) -> NodeId {
         if node == BDD_FALSE {
             return BDD_TRUE;
         }
         if node == BDD_TRUE {
             return BDD_FALSE;
         }
+        if let Some(&result) = self.not_cache.get(&node) {
+            return result;
+        }
 
-        let n = self.nodes[node];
-        let low = self.apply_not_rec(n.low);
-        let high = self.apply_not_rec(n.high);
-        self.make_node(n.var, low, high)
+        let mut stack = vec![NotStep::Enter(node)];
+        while let Some(step) = stack.pop() {
+            match step {
+                NotStep::Enter(id) => {
+                    if id == BDD_FALSE || id == BDD_TRUE || self.not_cache.contains_key(&id) {
+                        continue;
+                    }
+                    let n = self.nodes[id];
+                    stack.push(NotStep::Combine(id));
+                    stack.push(NotStep::Enter(n.low));
+                    stack.push(NotStep::Enter(n.high));
+                }
+                NotStep::Combine(id) => {
+                    if self.not_cache.contains_key(&id) {
+                        continue;
+                    }
+                    let n = self.nodes[id];
+                    let low = self.negated(n.low);
+                    let high = self.negated(n.high);
+                    let result = self.make_node(n.var, low, high);
+                    self.not_cache.insert(id, result);
+                }
+            }
+        }
+
+        self.not_cache[&node]
+    }
+
+    /// Negation of an already-resolved node: the two constants plus a
+    /// computed-table hit. Panics (loudly, via the map index) rather than
+    /// returning a wrong diagram if called on a node the walk has not yet
+    /// resolved — the driver above always schedules cofactors first.
+    fn negated(&self, node: NodeId) -> NodeId {
+        if node == BDD_FALSE {
+            return BDD_TRUE;
+        }
+        if node == BDD_TRUE {
+            return BDD_FALSE;
+        }
+        self.not_cache[&node]
     }
 
     /// Computes the AND of two BDD nodes.
@@ -160,103 +256,223 @@ impl BddManager {
     }
 
     /// Apply a binary operation with memoization.
+    ///
+    /// Like [`Self::not`] and [`Self::ite`], this runs on an explicit
+    /// work-stack. The computed table (`op_cache`) already kept the *work*
+    /// linear in diagram size, but the recursion depth was still the BDD
+    /// height — the variable count — with no guard and a `NodeId` return
+    /// that leaves nowhere to report a cap.
     fn apply(&mut self, op: BddOp, left: NodeId, right: NodeId) -> NodeId {
+        let root = (op, left, right);
+        if let Some(result) = self.apply_resolved(root) {
+            return result;
+        }
+
+        let mut stack = vec![ApplyStep::Enter(root)];
+        while let Some(step) = stack.pop() {
+            match step {
+                ApplyStep::Enter(key) => {
+                    if self.apply_resolved(key).is_some() {
+                        continue;
+                    }
+                    let (var, low, high) = self.apply_cofactors(key);
+                    stack.push(ApplyStep::Combine {
+                        key,
+                        var,
+                        low,
+                        high,
+                    });
+                    stack.push(ApplyStep::Enter(low));
+                    stack.push(ApplyStep::Enter(high));
+                }
+                ApplyStep::Combine {
+                    key,
+                    var,
+                    low,
+                    high,
+                } => {
+                    if self.op_cache.contains_key(&key) {
+                        continue;
+                    }
+                    // Both operand pairs were scheduled above this frame.
+                    let (Some(low_id), Some(high_id)) =
+                        (self.apply_resolved(low), self.apply_resolved(high))
+                    else {
+                        continue;
+                    };
+                    let result = self.make_node(var, low_id, high_id);
+                    self.op_cache.insert(key, result);
+                }
+            }
+        }
+
+        self.op_cache[&root]
+    }
+
+    /// The value of an `(op, left, right)` triple if it is already known:
+    /// an operator terminal case, or a computed-table hit.
+    fn apply_resolved(&mut self, (op, left, right): ApplyKey) -> Option<NodeId> {
         // Terminal cases
         match op {
             BddOp::And => {
                 if left == BDD_FALSE || right == BDD_FALSE {
-                    return BDD_FALSE;
+                    return Some(BDD_FALSE);
                 }
                 if left == BDD_TRUE {
-                    return right;
+                    return Some(right);
                 }
                 if right == BDD_TRUE {
-                    return left;
+                    return Some(left);
                 }
                 if left == right {
-                    return left;
+                    return Some(left);
                 }
             }
             BddOp::Or => {
                 if left == BDD_TRUE || right == BDD_TRUE {
-                    return BDD_TRUE;
+                    return Some(BDD_TRUE);
                 }
                 if left == BDD_FALSE {
-                    return right;
+                    return Some(right);
                 }
                 if right == BDD_FALSE {
-                    return left;
+                    return Some(left);
                 }
                 if left == right {
-                    return left;
+                    return Some(left);
                 }
             }
             BddOp::Xor => {
                 if left == BDD_FALSE {
-                    return right;
+                    return Some(right);
                 }
                 if right == BDD_FALSE {
-                    return left;
+                    return Some(left);
                 }
                 if left == BDD_TRUE {
-                    return self.apply_not_rec(right);
+                    return Some(self.not(right));
                 }
                 if right == BDD_TRUE {
-                    return self.apply_not_rec(left);
+                    return Some(self.not(left));
                 }
                 if left == right {
-                    return BDD_FALSE;
+                    return Some(BDD_FALSE);
                 }
             }
         }
 
-        // Check cache
-        let cache_key = (op, left, right);
-        if let Some(&result) = self.op_cache.get(&cache_key) {
-            return result;
-        }
+        self.op_cache.get(&(op, left, right)).copied()
+    }
 
-        // Recursive case: Shannon expansion
+    /// Shannon expansion of a non-terminal `apply` triple: the branching
+    /// variable and the two operand pairs. Pure code motion out of the
+    /// former recursive `apply` body.
+    fn apply_cofactors(&self, (op, left, right): ApplyKey) -> (VarId, ApplyKey, ApplyKey) {
         let left_node = self.nodes[left];
         let right_node = self.nodes[right];
 
-        let result = if left_node.var == right_node.var {
+        if left_node.var == right_node.var {
             // Same variable
-            let low = self.apply(op, left_node.low, right_node.low);
-            let high = self.apply(op, left_node.high, right_node.high);
-            self.make_node(left_node.var, low, high)
+            (
+                left_node.var,
+                (op, left_node.low, right_node.low),
+                (op, left_node.high, right_node.high),
+            )
         } else if left_node.var < right_node.var {
             // Left has smaller variable (higher in ordering)
-            let low = self.apply(op, left_node.low, right);
-            let high = self.apply(op, left_node.high, right);
-            self.make_node(left_node.var, low, high)
+            (
+                left_node.var,
+                (op, left_node.low, right),
+                (op, left_node.high, right),
+            )
         } else {
             // Right has smaller variable
-            let low = self.apply(op, left, right_node.low);
-            let high = self.apply(op, left, right_node.high);
-            self.make_node(right_node.var, low, high)
-        };
-
-        self.op_cache.insert(cache_key, result);
-        result
+            (
+                right_node.var,
+                (op, left, right_node.low),
+                (op, left, right_node.high),
+            )
+        }
     }
 
-    /// If-then-else operation: if cond then then_node else else_node
+    /// If-then-else operation: if cond then then_node else else_node.
+    ///
+    /// Runs on an explicit work-stack with the standard ITE computed table
+    /// keyed on the `(cond, then, else)` triple. The recursion this replaces
+    /// had neither: with triple fan-out and no memo, shared cofactors of the
+    /// hash-consed diagram were re-expanded exponentially, and the depth was
+    /// the (unguarded) variable count. `NodeId` has no error channel, so a
+    /// depth cap could only have returned a silently wrong diagram.
     pub fn ite(&mut self, cond: NodeId, then_node: NodeId, else_node: NodeId) -> NodeId {
-        // Terminal cases
-        if cond == BDD_TRUE {
-            return then_node;
-        }
-        if cond == BDD_FALSE {
-            return else_node;
-        }
-        if then_node == else_node {
-            return then_node;
-        }
-        if then_node == BDD_TRUE && else_node == BDD_FALSE {
-            return cond;
+        let root: IteKey = (cond, then_node, else_node);
+        if let Some(result) = self.ite_resolved(root) {
+            return result;
         }
 
+        let mut stack = vec![IteStep::Enter(root)];
+        while let Some(step) = stack.pop() {
+            match step {
+                IteStep::Enter(key) => {
+                    if self.ite_resolved(key).is_some() {
+                        continue;
+                    }
+                    let (top_var, low, high) = self.ite_cofactors(key);
+                    stack.push(IteStep::Combine {
+                        key,
+                        top_var,
+                        low,
+                        high,
+                    });
+                    stack.push(IteStep::Enter(low));
+                    stack.push(IteStep::Enter(high));
+                }
+                IteStep::Combine {
+                    key,
+                    top_var,
+                    low,
+                    high,
+                } => {
+                    if self.ite_cache.contains_key(&key) {
+                        continue;
+                    }
+                    // Both cofactor triples were scheduled above this frame,
+                    // so both are resolved by now.
+                    let (Some(low_id), Some(high_id)) =
+                        (self.ite_resolved(low), self.ite_resolved(high))
+                    else {
+                        continue;
+                    };
+                    let result = self.make_node(top_var, low_id, high_id);
+                    self.ite_cache.insert(key, result);
+                }
+            }
+        }
+
+        self.ite_cache[&root]
+    }
+
+    /// The value of an ITE triple if it is already known: a terminal case,
+    /// or a computed-table hit.
+    fn ite_resolved(&self, (cond, then_node, else_node): IteKey) -> Option<NodeId> {
+        if cond == BDD_TRUE {
+            return Some(then_node);
+        }
+        if cond == BDD_FALSE {
+            return Some(else_node);
+        }
+        if then_node == else_node {
+            return Some(then_node);
+        }
+        if then_node == BDD_TRUE && else_node == BDD_FALSE {
+            return Some(cond);
+        }
+        self.ite_cache.get(&(cond, then_node, else_node)).copied()
+    }
+
+    /// Shannon expansion of a non-terminal ITE triple: the top variable and
+    /// the two cofactor triples. Pure code motion out of the former
+    /// recursive `ite` body.
+    fn ite_cofactors(&self, (cond, then_node, else_node): IteKey) -> (VarId, IteKey, IteKey) {
         let cond_node = self.nodes[cond];
         let then_n = if then_node <= BDD_TRUE {
             None
@@ -316,9 +532,11 @@ impl BddManager {
             else_node
         };
 
-        let low = self.ite(cond_low, then_low, else_low);
-        let high = self.ite(cond_high, then_high, else_high);
-        self.make_node(top_var, low, high)
+        (
+            top_var,
+            (cond_low, then_low, else_low),
+            (cond_high, then_high, else_high),
+        )
     }
 
     /// Evaluates a BDD with a given variable assignment.
@@ -395,9 +613,11 @@ impl BddManager {
         self.nodes.len()
     }
 
-    /// Clears the operation cache (useful for memory management).
+    /// Clears the operation caches (useful for memory management).
     pub fn clear_cache(&mut self) {
         self.op_cache.clear();
+        self.not_cache.clear();
+        self.ite_cache.clear();
     }
 }
 
@@ -926,6 +1146,83 @@ mod tests {
 
         assignment.insert(0, false);
         assert!(!manager.eval(x, &assignment));
+    }
+
+    /// Build the conjunction `x0 ∧ x1 ∧ … ∧ x_{n-1}` directly, bottom-up.
+    /// Going through `and` would be O(n²); `make_node` gives an n-node,
+    /// n-high diagram in O(n).
+    fn conjunction_chain(manager: &mut BddManager, vars: u32) -> NodeId {
+        let mut node = BDD_TRUE;
+        for var in (0..vars).rev() {
+            node = manager.make_node(var, BDD_FALSE, node);
+        }
+        node
+    }
+
+    /// A 100_000-variable-high BDD negated on a 1 MiB stack. The recursive
+    /// form descended once per level and aborted the process; returning at
+    /// all is the assertion. Double negation pins the result.
+    #[test]
+    fn test_not_deep_diagram_does_not_overflow() {
+        let worker = std::thread::Builder::new().stack_size(1 << 20).spawn(|| {
+            let mut manager = BddManager::new();
+            let chain = conjunction_chain(&mut manager, 100_000);
+            let negated = manager.not(chain);
+            (negated != chain, manager.not(negated) == chain)
+        });
+        let (differs, involutive) = match worker.map(std::thread::JoinHandle::join) {
+            Ok(Ok(result)) => result,
+            _ => panic!("deep-BDD negation worker thread did not complete"),
+        };
+        assert!(differs);
+        assert!(involutive);
+    }
+
+    /// Same depth, through `apply` (`and`) and `ite`.
+    #[test]
+    fn test_apply_and_ite_deep_diagram_do_not_overflow() {
+        let worker = std::thread::Builder::new().stack_size(1 << 20).spawn(|| {
+            let mut manager = BddManager::new();
+            let chain = conjunction_chain(&mut manager, 100_000);
+            let shifted = {
+                let mut node = BDD_TRUE;
+                for var in (0..100_000u32).rev() {
+                    node = manager.make_node(var, node, BDD_FALSE);
+                }
+                node
+            };
+            let conj = manager.and(chain, shifted);
+            let selected = manager.ite(chain, shifted, BDD_FALSE);
+            (conj, selected)
+        });
+        let (conj, selected) = match worker.map(std::thread::JoinHandle::join) {
+            Ok(Ok(result)) => result,
+            _ => panic!("deep-BDD apply/ite worker thread did not complete"),
+        };
+        // `chain` requires every variable true, `shifted` every variable
+        // false, so both operations yield the empty function.
+        assert_eq!(conj, BDD_FALSE);
+        assert_eq!(selected, BDD_FALSE);
+    }
+
+    /// A 40-variable parity (XOR) BDD has ~80 nodes but 2^40 tree
+    /// unfoldings. Without a computed table `not` re-expands every shared
+    /// node and never returns; this test simply has to finish.
+    #[test]
+    fn test_not_on_parity_bdd_uses_computed_table() {
+        let mut manager = BddManager::new();
+        let mut parity = BDD_FALSE;
+        for var in 0..40 {
+            let x = manager.variable(var);
+            parity = manager.xor(parity, x);
+        }
+        let negated = manager.not(parity);
+        assert_ne!(negated, parity);
+        assert_eq!(manager.not(negated), parity);
+
+        // Semantic pin: !parity(x) == parity(x) xor 1.
+        let complement = manager.xor(parity, BDD_TRUE);
+        assert_eq!(negated, complement);
     }
 
     #[test]

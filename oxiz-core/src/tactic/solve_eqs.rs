@@ -2,7 +2,7 @@
 
 use super::core::*;
 use super::probe::Probe;
-use crate::ast::normal_forms::{to_cnf, to_nnf};
+use crate::ast::normal_forms::{to_cnf_tseitin, to_nnf};
 use crate::ast::{TermId, TermKind, TermManager};
 use crate::error::Result;
 #[allow(unused_imports)]
@@ -1685,8 +1685,12 @@ impl Tactic for StatelessNnfTactic {
 
 /// Tseitin CNF tactic - converts formulas to Conjunctive Normal Form
 ///
-/// Uses the Tseitin transformation which introduces auxiliary variables
-/// to avoid exponential blowup in formula size.
+/// Uses the Tseitin transformation ([`to_cnf_tseitin`]) which introduces
+/// auxiliary `tseitin!*` variables to avoid exponential blowup in formula
+/// size.  The result is **equisatisfiable**, not equivalent: every model of
+/// the output restricts to a model of the input and every model of the input
+/// extends to one of the output, but the auxiliary variables appear in
+/// models of the transformed goal.  This matches Z3's `tseitin-cnf` tactic.
 #[derive(Debug)]
 pub struct TseitinCnfTactic<'a> {
     manager: &'a mut TermManager,
@@ -1704,7 +1708,7 @@ impl<'a> TseitinCnfTactic<'a> {
         let mut new_assertions = Vec::with_capacity(goal.assertions.len());
 
         for &assertion in &goal.assertions {
-            let cnf = to_cnf(assertion, self.manager);
+            let cnf = to_cnf_tseitin(assertion, self.manager);
             if cnf != assertion {
                 changed = true;
             }

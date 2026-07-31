@@ -8,7 +8,7 @@ use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::error::Result;
 #[cfg(feature = "std")]
 use oxiz_core::smtlib::{Command, parse_script};
-use oxiz_core::sort::{SortId, SortKind};
+use oxiz_core::sort::SortId;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,17 @@ use std::path::{Path, PathBuf};
 /// and the function-interpretation extensions. Split into a child module so
 /// this file stays under the 2000-line policy limit.
 mod model_fmt;
+
+/// Sort-expression string resolution (`parse_sort_name`) for the
+/// declaration-shaped script commands. Split into a child module so this
+/// file stays under the 2000-line policy limit.
+mod sort_name;
+
+/// Regression tests for the closing restore check of `(get-consequences ..)`.
+/// Split into a child module so this file stays under the 2000-line policy
+/// limit.
+#[cfg(test)]
+mod consequences_tests;
 
 /// Raw function interpretation: a list of `(arg_strings, value_string)` entries
 /// together with an `else_value` string and the function arity.
@@ -214,6 +225,12 @@ impl Context {
             name: name.to_string(),
         });
         self.const_name_to_index.insert(name.to_string(), index);
+        // Seed the constant as an MBQI ground-instantiation candidate.  This is
+        // the call site [`crate::solver::Solver::register_declared_const`]
+        // documents ("must be called from the context layer whenever a
+        // `declare-const` command is processed"): without it, a trigger-free
+        // quantifier has no in-scope constant to instantiate with.
+        self.solver.register_declared_const(term, sort);
         term
     }
 
@@ -252,9 +269,17 @@ impl Context {
     }
 
     /// Set the logic
+    ///
+    /// SMT-LIB 2.6 Fig. 4.1 puts `set-logic` in `start` mode and leaves the
+    /// solver in `assert` mode, so it can never legally follow a `check-sat`.
+    /// It is accepted here anyway (leniently, like most solvers), but it must
+    /// still invalidate the cached verdict: [`crate::solver::Solver::set_logic`]
+    /// swaps the arithmetic engine and can install NLSAT, which would leave any
+    /// cached model describing a solver configuration that no longer exists.
     pub fn set_logic(&mut self, logic: &str) {
         self.logic = Some(logic.to_string());
         self.solver.set_logic(logic);
+        self.invalidate_last_check();
     }
 
     /// Get the current logic
@@ -263,10 +288,26 @@ impl Context {
         self.logic.as_deref()
     }
 
+    /// Drop the cached `check-sat` verdict and its assumption context.
+    ///
+    /// SMT-LIB 2.6 §4.1.1 (solver modes, Fig. 4.1): `assert`, `push`, `pop`,
+    /// `reset-assertions` and `reset` all take the solver back to `assert`
+    /// mode, and `get-model`, `get-value`, `get-assignment`, `get-unsat-core`,
+    /// `get-proof` and `get-unsat-assumptions` are available only in `sat` /
+    /// `unsat` mode.  Every one of those queries is gated on `last_result`, so
+    /// clearing it *is* that mode transition: they answer with the standard
+    /// "not available" error instead of reporting a model, core or proof that
+    /// belongs to a superseded assertion stack.
+    fn invalidate_last_check(&mut self) {
+        self.last_result = None;
+        self.last_assumptions.clear();
+    }
+
     /// Add an assertion
     pub fn assert(&mut self, term: TermId) {
         self.assertions.push(term);
         self.solver.assert(term, &mut self.terms);
+        self.invalidate_last_check();
     }
 
     /// Add a named assertion (from `(assert (! phi :named name))`).
@@ -274,11 +315,12 @@ impl Context {
     /// The name is threaded into the solver's named-assertion tracking so that,
     /// with `:produce-unsat-cores` enabled, `(get-unsat-core)` can report the
     /// user labels of the assertions that participate in an `unsat` refutation.
-    /// The name is only recorded by the solver when unsat-core production is on;
-    /// otherwise this behaves exactly like [`Context::assert`].
+    /// The name is recorded unconditionally at assert time, so enabling
+    /// `:produce-unsat-cores` mid-session still yields a labelled core.
     pub fn assert_named(&mut self, term: TermId, name: &str) {
         self.assertions.push(term);
         self.solver.assert_named(term, name, &mut self.terms);
+        self.invalidate_last_check();
     }
 
     /// Check satisfiability
@@ -433,10 +475,12 @@ impl Context {
         self.const_stack.push(self.declared_consts.len());
         self.fun_stack.push(self.declared_funs.len());
         self.solver.push();
+        self.invalidate_last_check();
     }
 
     /// Pop a context level with incremental declaration removal
     pub fn pop(&mut self) {
+        self.invalidate_last_check();
         if let Some(len) = self.assertion_stack.pop() {
             self.assertions.truncate(len);
             if let Some(const_len) = self.const_stack.pop() {
@@ -471,12 +515,27 @@ impl Context {
         self.fun_stack.clear();
         self.fun_name_to_index.clear();
         self.logic = None;
-        self.last_result = None;
-        self.last_assumptions.clear();
         self.options.clear();
+        self.invalidate_last_check();
     }
 
     /// Reset assertions (keep declarations and options)
+    ///
+    /// SMT-LIB 2.6 §4.2.5: `reset-assertions` empties the assertion stack but —
+    /// unlike `reset` — keeps the current logic, all declarations/definitions
+    /// and every option.  [`crate::solver::Solver::reset`] is a *total* reset,
+    /// so anything the context still owns has to be re-established on the fresh
+    /// solver afterwards, otherwise the solver silently loses configuration the
+    /// script never retracted:
+    ///
+    /// - the **logic**, which selects the arithmetic engine (`QF_NRA`/`QF_NIA`
+    ///   install NLSAT, `QF_LRA` an LRA simplex, …).  Without this a `QF_NRA`
+    ///   problem that answered `sat` before the reset answered `unknown` after.
+    /// - the **options**, replayed through [`Context::set_option`] so wired keys
+    ///   (`:random-seed`, `:timeout`, `:produce-proofs`, …) survive; the SAT
+    ///   engine's PRNG in particular is re-seeded to its default by a reset.
+    /// - the **declared constants** as MBQI ground-instantiation candidates, so
+    ///   trigger-free quantifiers keep the in-scope constants they had before.
     pub fn reset_assertions(&mut self) {
         self.solver.reset();
         self.assertions.clear();
@@ -484,8 +543,22 @@ impl Context {
         // Keep declared_consts, const_stack, const_name_to_index,
         // declared_funs, fun_stack, and fun_name_to_index
         // Re-assert nothing - solver is fresh
-        self.last_result = None;
-        self.last_assumptions.clear();
+        self.invalidate_last_check();
+
+        if let Some(logic) = self.logic.clone() {
+            self.solver.set_logic(&logic);
+        }
+        for (key, value) in self
+            .options
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>()
+        {
+            self.set_option(&key, &value);
+        }
+        for decl in &self.declared_consts {
+            self.solver.register_declared_const(decl.term, decl.sort);
+        }
     }
 
     /// Get all current assertions
@@ -672,7 +745,13 @@ impl Context {
                     _ => "(:reason-unknown \"not applicable\")".to_string(),
                 }
             }
-            _ => format!("(error \"unsupported info keyword: :{}\")", key),
+            _ => format!(
+                "(error {})",
+                oxiz_core::smtlib::format_string_literal(&format!(
+                    "unsupported info keyword: :{}",
+                    key
+                ))
+            ),
         }
     }
 
@@ -775,6 +854,31 @@ impl Context {
         self.solver.get_statistics()
     }
 
+    /// Borrow the embedded solver so a crate-internal test can inspect state
+    /// that has no place in the public API — currently the SAT clause count,
+    /// which `crate::solver::scope_rebase_tests` watches across MBQI rounds.
+    ///
+    /// Test-only on purpose: exposing the solver publicly would make every
+    /// internal field part of the compatibility surface.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn solver(&self) -> &crate::solver::Solver {
+        &self.solver
+    }
+
+    /// Mutably borrow the embedded solver, for the same crate-internal tests as
+    /// [`Context::solver`].
+    ///
+    /// This exists so a regression pin can reach
+    /// [`crate::solver::Solver::forget_cached_verdict`] and force a `check` to
+    /// run a real search: the repeated-`check` pins for task #28 have to observe
+    /// what the search machinery does on the second and twelfth run, which is
+    /// exactly what the verdict cache above it is there to avoid.
+    #[cfg(test)]
+    pub(crate) fn solver_mut(&mut self) -> &mut crate::solver::Solver {
+        &mut self.solver
+    }
+
     /// Return the current solver configuration.
     ///
     /// Callers that build diverse configurations (e.g. an external portfolio
@@ -866,7 +970,9 @@ impl Context {
     ///      `A ∧ ¬lit` is unsatisfiable; if so `A ⊨ lit`, so `lit` is a genuine
     ///      consequence.
     ///
-    /// Returns the output lines: `sat` followed by the Z3-shaped
+    /// Returns the output lines: a status (`sat`, or `unknown` when the
+    /// closing restore check could not reproduce the model — see
+    /// [`consequences_restore_state`]) followed by the Z3-shaped
     /// `((=> (and A) lit) ...)` implication list, or a single
     /// `unsat`/`unknown`/error line.
     #[cfg(feature = "std")]
@@ -924,9 +1030,23 @@ impl Context {
         // Restore a consistent `sat` state so a following get-model/get-value
         // reads a model built under exactly `assumptions` (the last
         // certification check left the solver in an arbitrary state).
-        let _ = self.check_with_assumptions_raw(assumptions);
-        self.last_result = Some(SolverResult::Sat);
-        self.last_assumptions = assumptions.to_vec();
+        //
+        // The restore check can fail to reproduce the opening `sat`: a
+        // wall-clock timeout or conflict budget consumed by the certification
+        // checks above can leave it `unknown`.  Its verdict used to be
+        // discarded (`let _ = ...`) and `last_result` forced to `Sat`, which
+        // put the context in `sat` mode with no model behind it — a following
+        // `(get-model)` then served a stale or absent interpretation while the
+        // session claimed `sat`.  Report the restore verdict honestly instead.
+        let restore = self.check_with_assumptions_raw(assumptions);
+        let (status, cached) = consequences_restore_state(restore);
+        match cached {
+            Some(result) => {
+                self.last_result = Some(result);
+                self.last_assumptions = assumptions.to_vec();
+            }
+            None => self.invalidate_last_check(),
+        }
 
         // Build the Z3-shaped implication list.  The antecedent is `(and A)`
         // rendered directly — NOT via `mk_implies`, which simplifies away the
@@ -939,125 +1059,22 @@ impl Context {
             .map(|&lit| format!("(=> {} {})", ante_str, printer.print_term(lit)))
             .collect();
 
-        vec!["sat".to_string(), format!("({})", impls.join(" "))]
-    }
-
-    /// Split a sort-expression string into its top-level whitespace
-    /// separated tokens, treating a parenthesized group as a single
-    /// token (so nested compound sorts like `(Array Int (_ BitVec 8))`
-    /// split into `["Array", "Int", "(_ BitVec 8)"]` rather than being
-    /// torn apart at the inner spaces).
-    fn split_sort_tokens(s: &str) -> Vec<String> {
-        let mut tokens = Vec::new();
-        let mut depth = 0i32;
-        let mut current = String::new();
-        for c in s.chars() {
-            match c {
-                '(' => {
-                    depth += 1;
-                    current.push(c);
-                }
-                ')' => {
-                    depth -= 1;
-                    current.push(c);
-                }
-                c if c.is_whitespace() && depth == 0 => {
-                    if !current.is_empty() {
-                        tokens.push(std::mem::take(&mut current));
-                    }
-                }
-                c => current.push(c),
-            }
-        }
-        if !current.is_empty() {
-            tokens.push(current);
-        }
-        tokens
-    }
-
-    /// Resolve a sort-expression string into a `SortId`.
-    ///
-    /// The strings handled here are exactly the ones `oxiz_core`'s
-    /// SMT-LIB parser produces for [`Command::DeclareConst`]/
-    /// [`Command::DeclareFun`]/[`Command::DefineFun`] (see
-    /// `Parser::sort_id_to_string`): the built-in atomic sorts, `(_
-    /// BitVec n)`, `(_ FloatingPoint eb sb)`, `(Array dom rng)`
-    /// (recursively), a previously-declared datatype name, or a plain
-    /// uninterpreted-sort name.
-    ///
-    /// Uninterpreted names are interned through `self.terms`'s own
-    /// string interner -- the same one the parser uses internally for
-    /// `SortKind::Uninterpreted` when building terms during parsing --
-    /// so a name declared via `declare-sort` resolves to the identical
-    /// `SortId` (and thus, since `mk_var` hash-conses on `(name, sort)`,
-    /// the identical `TermId`) that in-script term parsing already
-    /// produced for it. Without this, a declared constant of a
-    /// user-defined/compound sort would silently be registered here
-    /// under an unrelated, disconnected term instead.
-    fn parse_sort_name(&mut self, name: &str) -> SortId {
-        let name = name.trim();
-        match name {
-            "Bool" => return self.terms.sorts.bool_sort,
-            "Int" => return self.terms.sorts.int_sort,
-            "Real" => return self.terms.sorts.real_sort,
-            "String" => return self.terms.sorts.string_sort(),
-            _ => {}
-        }
-
-        if let Some(inner) = name.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
-            let tokens = Self::split_sort_tokens(inner.trim());
-            match tokens.first().map(String::as_str) {
-                Some("_") if tokens.len() == 3 && tokens[1] == "BitVec" => {
-                    if let Ok(width) = tokens[2].parse::<u32>()
-                        && width > 0
-                    {
-                        return self.terms.sorts.bitvec(width);
-                    }
-                }
-                Some("_") if tokens.len() == 4 && tokens[1] == "FloatingPoint" => {
-                    if let (Ok(eb), Ok(sb)) = (tokens[2].parse::<u32>(), tokens[3].parse::<u32>()) {
-                        return self.terms.sorts.float_sort(eb, sb);
-                    }
-                }
-                Some("Array") if tokens.len() == 3 => {
-                    let domain = self.parse_sort_name(&tokens[1]);
-                    let range = self.parse_sort_name(&tokens[2]);
-                    return self.terms.sorts.array(domain, range);
-                }
-                _ => {}
-            }
-            // A compound form the printer never actually emits; fall
-            // back to Bool rather than panicking on unreachable syntax.
-            return self.terms.sorts.bool_sort;
-        }
-
-        // Legacy compact BitVec spelling ("BitVec32"), kept for
-        // backward compatibility with any direct (non-script) callers.
-        if let Some(width_str) = name.strip_prefix("BitVec")
-            && let Ok(width) = width_str.trim().parse::<u32>()
-            && width > 0
-        {
-            return self.terms.sorts.bitvec(width);
-        }
-
-        // A previously-declared datatype resolves to its own sort.
-        if self.terms.sorts.is_datatype_declared(name) {
-            return self.terms.sorts.mk_datatype_sort(name);
-        }
-
-        // A sort alias registered by a prior `define-sort` (0-arity
-        // aliases only; see the `DefineSort` command handling below).
-        if let Some(sort_id) = self.terms.sorts.resolve_by_name(name) {
-            return sort_id;
-        }
-
-        // Otherwise: an uninterpreted sort, e.g. one introduced by
-        // `declare-sort`.
-        let spur = self.terms.intern_str(name);
-        self.terms.sorts.intern(SortKind::Uninterpreted(spur))
+        // The implication list survives a degraded `status`: every literal in
+        // it was certified by its own `unsat` refutation above, independently
+        // of whether the closing restore check reproduced the model.
+        vec![status.to_string(), format!("({})", impls.join(" "))]
     }
 
     /// Execute an SMT-LIB2 script
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the script fails to parse, or when a
+    /// declaration-shaped command (`declare-const`, `declare-fun`,
+    /// `declare-sort`, `define-sort`, `define-fun`) carries a malformed or
+    /// unsupported sort expression.  The latter used to resolve silently to
+    /// `Bool`, mis-sorting the declared symbol and corrupting every
+    /// model/value answer that mentioned it.
     #[cfg(feature = "std")]
     pub fn execute_script(&mut self, script: &str) -> Result<Vec<String>> {
         let commands = parse_script(script, &mut self.terms)?;
@@ -1091,19 +1108,21 @@ impl Context {
                     self.set_logic(&logic);
                 }
                 Command::DeclareConst(name, sort_name) => {
-                    let sort = self.parse_sort_name(&sort_name);
+                    let sort = self.parse_sort_name(&sort_name)?;
                     self.declare_const(&name, sort);
                 }
                 Command::DeclareFun(name, arg_sorts, ret_sort) => {
                     // Treat nullary functions as constants
                     if arg_sorts.is_empty() {
-                        let sort = self.parse_sort_name(&ret_sort);
+                        let sort = self.parse_sort_name(&ret_sort)?;
                         self.declare_const(&name, sort);
                     } else {
                         // Parse argument sorts and return sort
-                        let parsed_arg_sorts: Vec<SortId> =
-                            arg_sorts.iter().map(|s| self.parse_sort_name(s)).collect();
-                        let parsed_ret_sort = self.parse_sort_name(&ret_sort);
+                        let parsed_arg_sorts: Vec<SortId> = arg_sorts
+                            .iter()
+                            .map(|s| self.parse_sort_name(s))
+                            .collect::<Result<_>>()?;
+                        let parsed_ret_sort = self.parse_sort_name(&ret_sort)?;
                         self.declare_fun(&name, parsed_arg_sorts, parsed_ret_sort);
                     }
                 }
@@ -1204,15 +1223,26 @@ impl Context {
                     output.push(printer.print_term(simplified));
                 }
                 Command::GetUnsatCore => {
+                    // SMT-LIB 2.6 §4.1.1: an unsat core exists only in `unsat`
+                    // mode.  Without this gate a core computed before a `pop` /
+                    // `assert` was reported against the *current* assertion
+                    // list, whose indices no longer match — `minimize_unsat_core`
+                    // indexes `Solver::assertions` by the stale core indices and
+                    // panicked outright on a `(push)(assert)(check-sat)(pop)
+                    // (get-unsat-core)` script.
+                    //
                     // Minimize the conservative core (greedy deletion-based) so
                     // the reported set contains only assertions actually needed
                     // for the refutation, not every named assertion.  Fall back
                     // to the raw core when minimization is unavailable
                     // (unsat-core production disabled).
-                    let core = self
-                        .solver
-                        .minimize_unsat_core(&mut self.terms)
-                        .or_else(|| self.solver.get_unsat_core().cloned());
+                    let core = if self.last_result == Some(SolverResult::Unsat) {
+                        self.solver
+                            .minimize_unsat_core(&mut self.terms)
+                            .or_else(|| self.solver.get_unsat_core().cloned())
+                    } else {
+                        None
+                    };
                     match core {
                         Some(core) if !core.names.is_empty() => {
                             output.push(format!("({})", core.names.join(" ")));
@@ -1242,23 +1272,7 @@ impl Context {
                     }
                 }
                 Command::GetValue(terms) => {
-                    if self.last_result != Some(SolverResult::Sat) {
-                        output.push("(error \"No model available\")".to_string());
-                    } else if let Some(model) = self.solver.model() {
-                        let mut values = Vec::new();
-                        for term in terms {
-                            // Evaluate the term in the model first
-                            let value = model.eval(term, &mut self.terms);
-                            // Then create printer and format
-                            let printer = oxiz_core::smtlib::Printer::new(&self.terms);
-                            let term_str = printer.print_term(term);
-                            let value_str = printer.print_term(value);
-                            values.push(format!("({} {})", term_str, value_str));
-                        }
-                        output.push(format!("({})", values.join("\n ")));
-                    } else {
-                        output.push("(error \"No model available\")".to_string());
-                    }
+                    output.push(self.format_get_value(&terms));
                 }
                 Command::GetInfo(keyword) => {
                     output.push(self.get_info(&keyword));
@@ -1272,7 +1286,7 @@ impl Context {
                         // Eagerly materialize the sort so `declared_sort_names`
                         // reflects it immediately, matching what the parser
                         // already did (lazily, on first reference) internally.
-                        let _ = self.parse_sort_name(&name);
+                        self.parse_sort_name(&name)?;
                     }
                     // Arity > 0 parametric sorts are recorded for
                     // introspection; applying them with type arguments is
@@ -1282,7 +1296,7 @@ impl Context {
                 }
                 Command::DefineSort(name, params, sort_expr) => {
                     if params.is_empty() {
-                        let resolved = self.parse_sort_name(&sort_expr);
+                        let resolved = self.parse_sort_name(&sort_expr)?;
                         self.terms.sorts.define_alias(&name, resolved);
                     }
                     // Parametric aliases (non-empty `params`) are not
@@ -1292,7 +1306,7 @@ impl Context {
                     // no sound target to register here either.
                 }
                 Command::DefineFun(name, params, ret_sort, body) => {
-                    let sort = self.parse_sort_name(&ret_sort);
+                    let sort = self.parse_sort_name(&ret_sort)?;
                     if params.is_empty() {
                         // The parser already inlined every in-script
                         // reference to `name` directly as `body` (see
@@ -1322,7 +1336,7 @@ impl Context {
                         let arg_sorts: Vec<SortId> = params
                             .iter()
                             .map(|(_, sort_name)| self.parse_sort_name(sort_name))
-                            .collect();
+                            .collect::<Result<_>>()?;
                         self.declare_fun(&name, arg_sorts, sort);
                     }
                 }
@@ -1394,9 +1408,105 @@ impl Context {
     }
 }
 
+/// Decide what `(get-consequences ...)` reports, and what verdict the context
+/// may keep cached, from the verdict of its closing *restore* check.
+///
+/// After certifying the consequences (each by its own `unsat` refutation), the
+/// query re-checks the original assumptions so that a following `(get-model)` /
+/// `(get-value)` reads a model built under exactly those assumptions.  That
+/// re-check is a full solve and can therefore fail to reproduce the opening
+/// `sat`, e.g. when the certification checks have exhausted the wall-clock
+/// budget or the conflict limit.
+///
+/// Returns the status line to emit, and the verdict to cache in
+/// `Context::last_result` (`None` = cache nothing, i.e. leave `assert` mode, so
+/// the model queries answer "not available" instead of serving whatever the
+/// last certification check happened to leave behind).
+///
+/// * `Sat` — the model is back; stay in `sat` mode and report `sat`.
+/// * `Unknown` — no certified model; report `unknown`, cache nothing.
+/// * `Unsat` — contradicts the opening `sat` of the same assumption set, so
+///   the two checks disagree and neither may be published as a verdict.  That
+///   is precisely `unknown`, and nothing is cached.
+#[cfg(feature = "std")]
+fn consequences_restore_state(restore: SolverResult) -> (&'static str, Option<SolverResult>) {
+    match restore {
+        SolverResult::Sat => ("sat", Some(SolverResult::Sat)),
+        SolverResult::Unsat | SolverResult::Unknown => ("unknown", None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // `get_info`'s catch-all arm used to interpolate the (attacker- or
+    // merely awkward-input-controlled) keyword straight into
+    // `(error "unsupported info keyword: :{key}")` with no escaping, so a
+    // `"` in the keyword ended the string literal early and corrupted the
+    // rest of the SMT-LIB response. It now routes the whole message through
+    // `format_string_literal`, exactly like every other SMT-LIB string
+    // value in the workspace.
+
+    /// A keyword containing a `"`, a `\`, a `\u`-prefixed literal
+    /// substring, a non-ASCII code point, and a control character must all
+    /// come back as a single, well-formed, properly escaped SMT-LIB string
+    /// literal -- never a bare, unescaped quote that ends the literal
+    /// early.
+    #[test]
+    fn test_get_info_unknown_keyword_with_special_chars_is_escaped() {
+        for keyword in [
+            "weird\"keyword",
+            "weird\\keyword",
+            "weird\\u0041keyword",
+            "weird\u{e9}keyword",
+            "weird\u{0}keyword",
+        ] {
+            let ctx = Context::new();
+            let response = ctx.get_info(keyword);
+            assert!(
+                response.starts_with("(error "),
+                "expected an `(error ...)` response, got {response}"
+            );
+            // The response must be exactly one well-formed SMT-LIB string
+            // literal: scanning past the first `"`, the first *unescaped*
+            // `"` reached must be the very last character before the
+            // closing `)`.
+            let open = response.find('"').expect("response contains a quote");
+            let body = &response[open + 1..];
+            let mut chars = body.char_indices();
+            let mut closed_at = None;
+            while let Some((i, c)) = chars.next() {
+                if c == '"' {
+                    // SMT-LIB doubles an embedded quote (`""`); only a
+                    // *single* trailing quote is the real terminator.
+                    if body[i + 1..].starts_with('"') {
+                        chars.next();
+                        continue;
+                    }
+                    closed_at = Some(i);
+                    break;
+                }
+            }
+            let closed_at = closed_at.expect("literal must have an unescaped closing quote");
+            assert_eq!(
+                &body[closed_at..],
+                "\")",
+                "the closing quote must be the last thing before `)` in {response}"
+            );
+        }
+    }
+
+    /// Control: a keyword with no special characters renders exactly as
+    /// before, with no gratuitous escaping.
+    #[test]
+    fn test_get_info_unknown_keyword_plain_ascii_unchanged() {
+        let ctx = Context::new();
+        assert_eq!(
+            ctx.get_info("totally-unknown-keyword"),
+            "(error \"unsupported info keyword: :totally-unknown-keyword\")"
+        );
+    }
 
     #[test]
     fn test_context_basic() {

@@ -14,7 +14,11 @@ fn write_history_snapshot(dir: &std::path::Path, geomean: f64, count: usize) {
         "by_logic_summary": {}
     });
     let path = dir.join("2026-04-19_test.json");
-    fs::write(path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+    fs::write(
+        path,
+        serde_json::to_string(&snapshot).expect("snapshot serializes"),
+    )
+    .expect("history snapshot written");
 }
 
 #[test]

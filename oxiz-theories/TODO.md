@@ -1,6 +1,13 @@
 # oxiz-theories TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
+
+## Soundness fixes (2026-07-31, v0.3.1)
+
+- [x] Fixed `assert_const` low-limb truncation on >64-bit bit-vector constants (was causing false `sat`)
+- [x] Fixed low-64-bit canonical interning key merging distinct wide bit-vector constants (was causing false `unsat`)
+- [x] Fixed model builder zero-filling wide (>64-bit) bit-vector values
+- [x] Parser/solver now reject mixed-width bit-vector binary operands with an honest error at parse time, matching Z3, instead of silently coercing widths
 
 Reference: Z3's `smt/` directory
 

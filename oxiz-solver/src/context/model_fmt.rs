@@ -15,6 +15,90 @@ use oxiz_core::sort::{SortId, SortKind};
 
 use super::{Context, RawFuncInterp};
 
+/// Constructor-expansion budget for [`Context::default_value`]'s datatype
+/// arm.  Mirrors the solver-side ground-default budget; see
+/// [`crate::solver::model_builder::ground_default_term`].
+///
+/// This is the *only* bound in the default-value walk, and it is deliberate:
+///
+/// - Array nesting needs no bound.  `Array` sorts intern bottom-up, so the
+///   sort graph itself is acyclic and an array-only descent always
+///   terminates; the walk is an explicit heap stack
+///   ([`DefaultValueFrame`]), so depth cannot take the native stack down
+///   either.  A cap here (there used to be one at 512) could only replace a
+///   perfectly computable value with a wrong `?` placeholder.
+/// - Datatype constructor expansion **must** be bounded, because the walk
+///   steps through the datatype *definition* table and that edge can close
+///   a genuine cycle: `(declare-datatype T ((c (f (Array Int T)))))` has no
+///   finite ground value at all — every expansion of `c` needs a value of
+///   `(Array Int T)`, which needs a value of `T` again.  (An earlier fix
+///   threaded a shared budget through both halves of the cycle after the
+///   original code reset its counter to 0 at every datatype re-entry and
+///   recursed forever on `(get-model)`.)  When the budget is exhausted the
+///   walk yields the honest placeholder `?` — visibly not a value — rather
+///   than fabricating a wrong finite value for an ill-founded sort.
+const DT_DEFAULT_EXPANSION_LIMIT: u32 = 16;
+
+/// One suspended node of [`Context::default_value`]'s iterative walk.
+///
+/// The walk evaluates one `(sort, expansions)` task at a time; a compound
+/// sort pushes a frame here, evaluates its first child, and each finished
+/// child value is folded back into the innermost frame.
+enum DefaultValueFrame {
+    /// `((as const {sort_name}) {range_default})`, waiting for the range
+    /// default.
+    ArrayConst {
+        /// The rendered name of the array sort itself.
+        sort_name: String,
+    },
+    /// `({name} {field defaults...})`, collecting field defaults in order.
+    Constructor {
+        /// The constructor's name.
+        name: String,
+        /// Field default values collected so far.
+        done: Vec<String>,
+        /// All field sorts of the constructor.
+        fields: Vec<SortId>,
+        /// Index into `fields` of the next field to evaluate.
+        next_field: usize,
+        /// The constructor-expansion count charged to every field.
+        expansions: u32,
+    },
+}
+
+/// One suspended compound node of [`Context::format_sort_name`]'s iterative
+/// walk: an `(Array dom rng)` or a `(Name arg...)` parametric application.
+enum SortNameFrame {
+    /// The domain is being rendered; the range is next.
+    RangeAfter {
+        /// The array sort this frame will finish.
+        sort: SortId,
+        /// The not-yet-rendered range sort.
+        range: SortId,
+    },
+    /// The range is being rendered; the domain's text is finished.
+    Finish {
+        /// The array sort this frame will finish.
+        sort: SortId,
+        /// The rendered domain text.
+        domain: String,
+    },
+    /// A parametric application `(name arg...)` collecting its arguments in
+    /// order.
+    Parametric {
+        /// The parametric sort this frame will finish.
+        sort: SortId,
+        /// The already-resolved head name.
+        name: String,
+        /// Argument texts rendered so far.
+        done: Vec<String>,
+        /// All argument sorts of the application.
+        args: Vec<SortId>,
+        /// Index into `args` of the next argument to render.
+        next: usize,
+    },
+}
+
 impl Context {
     /// Get the model (if SAT)
     /// Returns a list of (name, sort, value) tuples
@@ -24,7 +108,22 @@ impl Context {
         }
 
         let mut model = Vec::new();
-        let solver_model = self.solver.model()?;
+        // An empty assertion stack is satisfied by *every* assignment, so the
+        // solver answers `sat` without ever building a model.  Completing from
+        // the sort defaults is exact there, not a guess — with nothing asserted
+        // no constraint exists that a completion could violate — whereas
+        // reporting "no model available" for a `sat` verdict is simply wrong.
+        // Any other missing model is a genuine extraction failure and stays
+        // `None`, so a real assignment is never fabricated.
+        let empty_model;
+        let solver_model = match self.solver.model() {
+            Some(solver_model) => solver_model,
+            None if self.assertions.is_empty() => {
+                empty_model = crate::solver::Model::new();
+                &empty_model
+            }
+            None => return None,
+        };
 
         // Witness bookkeeping for unconstrained uninterpreted-sort constants:
         // `per_sort_next` is the next fresh witness index for a sort, and
@@ -247,29 +346,189 @@ impl Context {
     /// declared uninterpreted/datatype sorts by name, so
     /// `get-model`/`get-value` output reflects a declared constant's
     /// real sort instead of falling back to a generic placeholder.
+    /// Sort parameters render as their name and parametric applications as
+    /// `(Name arg...)`, matching [`oxiz_core::smtlib::SmtLibPrinter`]; both
+    /// used to print as the literal string `Unknown`, which collapsed every
+    /// such sort — however many and however different — onto one name.
+    ///
+    /// The walk over nested `Array`/parametric sorts is an explicit heap stack
+    /// ([`SortNameFrame`]) — array-sort nesting is input-controlled (the
+    /// builder API composes sorts in O(1) stack, and chained `define-sort`
+    /// grows a sort by one level per command), so native recursion here was
+    /// an unbounded stack risk with no error channel to cap it honestly.
+    /// Sub-sorts reachable along more than one path are rendered once and
+    /// memoized; the memo is restricted to genuinely shared sorts so that a
+    /// deep unshared chain does not pay quadratic memory for cached copies
+    /// of every suffix.  (The *output* still spells shared sorts out in
+    /// full each time — SMT-LIB sort syntax has no sharing — so output
+    /// size, not the walk, remains the inherent cost on heavily shared
+    /// sorts.)
     fn format_sort_name(&self, sort: SortId) -> String {
-        let Some(s) = self.terms.sorts.get(sort) else {
-            return "Unknown".to_string();
-        };
-        match &s.kind {
-            SortKind::Bool => "Bool".to_string(),
-            SortKind::Int => "Int".to_string(),
-            SortKind::Real => "Real".to_string(),
-            SortKind::String => "String".to_string(),
-            SortKind::BitVec(w) => format!("(_ BitVec {w})"),
-            SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
-            SortKind::Array { domain, range } => {
-                let domain_str = self.format_sort_name(*domain);
-                let range_str = self.format_sort_name(*range);
-                format!("(Array {domain_str} {range_str})")
+        // Pre-pass over the sort DAG (visited-set bounded): find the sorts
+        // reachable along more than one path, the only ones worth caching.
+        let mut seen: crate::prelude::HashSet<SortId> = crate::prelude::HashSet::new();
+        let mut shared: crate::prelude::HashSet<SortId> = crate::prelude::HashSet::new();
+        let mut scan = vec![sort];
+        while let Some(s) = scan.pop() {
+            if !seen.insert(s) {
+                shared.insert(s);
+                continue;
             }
-            SortKind::Uninterpreted(spur) => self.terms.resolve_str(*spur).to_string(),
-            SortKind::Datatype(_) => self
-                .terms
-                .sorts
-                .datatype_name(sort)
-                .map_or_else(|| "Unknown".to_string(), ToString::to_string),
-            SortKind::Parameter(_) | SortKind::Parametric { .. } => "Unknown".to_string(),
+            if let Some(node) = self.terms.sorts.get(s) {
+                // Only the compound kinds have sub-sorts to visit; the leaf
+                // kinds are listed rather than swept up by a wildcard so a
+                // future sort kind with children cannot silently skip the
+                // pre-pass (and lose its memoization).
+                match &node.kind {
+                    SortKind::Array { domain, range } => {
+                        scan.push(*domain);
+                        scan.push(*range);
+                    }
+                    SortKind::Parametric { args, .. } => scan.extend(args.iter().copied()),
+                    SortKind::Bool
+                    | SortKind::Int
+                    | SortKind::Real
+                    | SortKind::String
+                    | SortKind::BitVec(_)
+                    | SortKind::FloatingPoint { .. }
+                    | SortKind::Uninterpreted(_)
+                    | SortKind::Parameter(_)
+                    | SortKind::Datatype(_) => {}
+                }
+            }
+        }
+
+        let mut memo: crate::prelude::HashMap<SortId, String> = crate::prelude::HashMap::new();
+        let mut pending: Vec<SortNameFrame> = Vec::new();
+        let mut current = sort;
+        'render: loop {
+            // Render `current`, descending through `Array` domains until a
+            // leaf (or memoized) sort is reached.
+            let mut text: String = loop {
+                if let Some(hit) = memo.get(&current) {
+                    break hit.clone();
+                }
+                let Some(s) = self.terms.sorts.get(current) else {
+                    break "Unknown".to_string();
+                };
+                let leaf = match &s.kind {
+                    SortKind::Array { domain, range } => {
+                        pending.push(SortNameFrame::RangeAfter {
+                            sort: current,
+                            range: *range,
+                        });
+                        current = *domain;
+                        continue;
+                    }
+                    SortKind::Bool => "Bool".to_string(),
+                    SortKind::Int => "Int".to_string(),
+                    SortKind::Real => "Real".to_string(),
+                    SortKind::String => "String".to_string(),
+                    SortKind::BitVec(w) => format!("(_ BitVec {w})"),
+                    SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
+                    // An uninterpreted sort's name is interned by the *term*
+                    // manager (`Parser::parse_sort` for `declare-sort` names
+                    // and `TermManager::reglan_sort` both call
+                    // `TermManager::intern_str`), so it resolves through
+                    // `self.terms`.
+                    SortKind::Uninterpreted(spur) => self.terms.resolve_str(*spur).to_string(),
+                    // A datatype/parameter/parametric name, by contrast, is
+                    // interned by the *sort* manager's own `Rodeo`
+                    // (`mk_datatype_sort` / `declare_datatype`,
+                    // `mk_sort_parameter`, `declare_parametric_sort` /
+                    // `instantiate_parametric_sort` / `define_parametric_sort`
+                    // all go through `SortManager::interner`).  The two
+                    // interners are separate, so a key from one resolved
+                    // through the other yields an unrelated string or indexes
+                    // out of range; each name below therefore goes through
+                    // `self.terms.sorts.resolve_spur`.  Mirrors
+                    // `SmtLibPrinter::write_sort`, where the same hazard is
+                    // documented.
+                    SortKind::Datatype(spur) => {
+                        self.terms.sorts.datatype_name(current).map_or_else(
+                            || self.terms.sorts.resolve_spur(*spur).to_string(),
+                            ToString::to_string,
+                        )
+                    }
+                    SortKind::Parameter(spur) => self.terms.sorts.resolve_spur(*spur).to_string(),
+                    // Rendered exactly as the printer spells it: `(Name
+                    // arg...)`, arguments rendered through this same walk.
+                    // Printing every parametric sort as the single literal
+                    // "Unknown" used to collapse distinct sorts -- `(List
+                    // Int)` and a bare parameter `T` alike -- onto one
+                    // meaningless name in `(get-model)` output.
+                    SortKind::Parametric { name, args } => {
+                        let head = self.terms.sorts.resolve_spur(*name).to_string();
+                        let args: Vec<SortId> = args.iter().copied().collect();
+                        match args.first().copied() {
+                            // A nullary application has no arguments to walk:
+                            // `(Name)`, as `write_sort` prints it.
+                            None => format!("({head})"),
+                            Some(first) => {
+                                pending.push(SortNameFrame::Parametric {
+                                    sort: current,
+                                    name: head,
+                                    done: Vec::with_capacity(args.len()),
+                                    args,
+                                    next: 1,
+                                });
+                                current = first;
+                                continue;
+                            }
+                        }
+                    }
+                };
+                if shared.contains(&current) {
+                    memo.insert(current, leaf.clone());
+                }
+                break leaf;
+            };
+            // Fold the rendered text upward: a finished domain schedules its
+            // partner range; a finished range completes its `(Array ..)`.
+            loop {
+                match pending.pop() {
+                    None => return text,
+                    Some(SortNameFrame::RangeAfter { sort, range }) => {
+                        pending.push(SortNameFrame::Finish { sort, domain: text });
+                        current = range;
+                        continue 'render;
+                    }
+                    Some(SortNameFrame::Finish { sort, domain }) => {
+                        text = format!("(Array {domain} {text})");
+                        if shared.contains(&sort) {
+                            memo.insert(sort, text.clone());
+                        }
+                    }
+                    Some(SortNameFrame::Parametric {
+                        sort,
+                        name,
+                        mut done,
+                        args,
+                        next,
+                    }) => {
+                        done.push(text);
+                        match args.get(next).copied() {
+                            Some(arg) => {
+                                pending.push(SortNameFrame::Parametric {
+                                    sort,
+                                    name,
+                                    done,
+                                    args,
+                                    next: next + 1,
+                                });
+                                current = arg;
+                                continue 'render;
+                            }
+                            None => {
+                                text = format!("({name} {})", done.join(" "));
+                                if shared.contains(&sort) {
+                                    memo.insert(sort, text.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -301,11 +560,18 @@ impl Context {
                     width = *width as usize
                 )
             }
-            // Floating-point constants, array store/const-array chains, and
-            // string literals are structured values that the shared SMT-LIB
-            // printer renders faithfully (`(fp ..)`, `(_ +zero eb sb)`,
-            // `(store ..)`, `"..."`), so delegate rather than emitting an
-            // invalid `?` placeholder.
+            // Floating-point constants, array store/const-array chains, string
+            // literals and datatype constructor applications are structured
+            // values that the shared SMT-LIB printer renders faithfully
+            // (`(fp ..)`, `(_ +zero eb sb)`, `(store ..)`, `"..."`,
+            // `(cons 7 nil)`), so delegate rather than emitting an invalid `?`
+            // placeholder.
+            //
+            // Delegating matters beyond brevity for the datatype case:
+            // `(get-value ..)` renders through the very same printer (see
+            // [`Context::format_get_value`]), so routing `(get-model)` through
+            // it is what keeps the two commands character-for-character in
+            // agreement about a reconstructed datatype value.
             Some(
                 TermKind::FpLit { .. }
                 | TermKind::FpPlusInfinity { .. }
@@ -314,7 +580,8 @@ impl Context {
                 | TermKind::FpMinusZero { .. }
                 | TermKind::FpNaN { .. }
                 | TermKind::Store(..)
-                | TermKind::StringLit(_),
+                | TermKind::StringLit(_)
+                | TermKind::DtConstructor { .. },
             ) => {
                 let printer = oxiz_core::smtlib::Printer::new(&self.terms);
                 printer.print_term(term)
@@ -327,63 +594,266 @@ impl Context {
     ///
     /// Used to complete `get-model` output for a declared constant that the
     /// model left unconstrained.  Every case yields a *valid* SMT-LIB value of
-    /// the sort (never the invalid `?` placeholder), except datatypes with no
-    /// nullary constructor, for which no ground witness can be synthesized
-    /// without a recursive completion.
+    /// the sort (never the invalid `?` placeholder), except uninhabited or
+    /// ill-founded datatypes, which have no ground value at all.
+    ///
+    /// The walk is an explicit heap stack ([`DefaultValueFrame`]), so array
+    /// nesting of any depth is rendered in full — the pre-conversion code
+    /// both recursed natively and truncated every value below 512 sort
+    /// levels to a wrong `?`.  The datatype arm expands constructors:
+    ///
+    /// - `nil`-style nullary constructors render as their bare name;
+    /// - compound constructors render as an application of the field
+    ///   defaults (`(mk-pair 0 0)`), the constructor chosen by the shared
+    ///   [`default_constructor_index`](crate::solver::model_builder::default_constructor_index)
+    ///   policy — the first one with no datatype-sorted field, so a
+    ///   well-founded construction bottoms out immediately, matching the
+    ///   solver's own reconstruction of an underdetermined datatype term;
+    /// - expansion is bounded by [`DT_DEFAULT_EXPANSION_LIMIT`], the one
+    ///   *deliberate* bound in this walk: an ill-founded declaration such
+    ///   as `(declare-datatype T ((c (f T))))`, or one that closes the
+    ///   cycle through an array field as in
+    ///   `(declare-datatype D ((c (f (Array Int D)))))`, has no finite
+    ///   ground value at all, and yields the honest `?` placeholder rather
+    ///   than a non-terminating expansion (see the limit's doc comment).
     fn default_value(&self, sort: SortId) -> String {
-        if sort == self.terms.sorts.bool_sort {
-            return "false".to_string();
-        }
-        if sort == self.terms.sorts.int_sort {
-            return "0".to_string();
-        }
-        if sort == self.terms.sorts.real_sort {
-            return "0.0".to_string();
-        }
-        let Some(s) = self.terms.sorts.get(sort) else {
-            return "?".to_string();
-        };
-        match &s.kind {
-            SortKind::BitVec(w) => format!("#b{:0>width$}", "0", width = *w as usize),
-            // Positive zero is a canonical, valid ground FP value.
-            SortKind::FloatingPoint { eb, sb } => format!("(_ +zero {eb} {sb})"),
-            // A constant array whose every entry is the range's default value.
-            SortKind::Array { range, .. } => {
-                let range = *range;
-                let sort_name = self.format_sort_name(sort);
-                let range_default = self.default_value(range);
-                format!("((as const {sort_name}) {range_default})")
-            }
-            // A datatype default is its first nullary constructor when one
-            // exists (a valid ground value).
-            SortKind::Datatype(_) => self.default_datatype_value(sort),
-            // Uninterpreted-sort defaults are abstract witnesses.  `get_model`
-            // assigns a distinct per-constant index; as a standalone fallback
-            // emit the zero-th witness for the sort.
-            SortKind::Uninterpreted(_) => {
-                format!("@uc_{}_0", self.format_sort_name(sort))
-            }
-            _ => "?".to_string(),
-        }
-    }
-
-    /// A ground default value for a datatype sort: the first nullary
-    /// constructor if the datatype has one, else the honest `?` placeholder
-    /// (a non-nullary constructor would require synthesizing default values
-    /// for its fields, which can diverge for recursive datatypes).
-    fn default_datatype_value(&self, sort: SortId) -> String {
-        let Some(dt_name) = self.terms.sorts.datatype_name(sort) else {
-            return "?".to_string();
-        };
-        let dt_name = dt_name.to_string();
-        if let Some(def) = self.terms.sorts.get_datatype(&dt_name) {
-            for ctor in &def.constructors {
-                if ctor.selectors.is_empty() {
-                    return self.terms.resolve_str(ctor.name).to_string();
+        let mut pending: Vec<DefaultValueFrame> = Vec::new();
+        // The task being evaluated: a sort, and the number of datatype
+        // constructor expansions already charged on the path to it.
+        let mut task: (SortId, u32) = (sort, 0);
+        'task: loop {
+            // Evaluate `task` down to a leaf value, pushing a frame for
+            // each compound sort passed through on the way.
+            let mut value: String = loop {
+                let (sort, expansions) = task;
+                let Some(s) = self.terms.sorts.get(sort) else {
+                    break "?".to_string();
+                };
+                match &s.kind {
+                    SortKind::Bool => break "false".to_string(),
+                    SortKind::Int => break "0".to_string(),
+                    SortKind::Real => break "0.0".to_string(),
+                    // The empty string is the canonical ground `String`
+                    // value; the old `?` fallback was not valid SMT-LIB
+                    // output at all.
+                    SortKind::String => break "\"\"".to_string(),
+                    SortKind::BitVec(w) => {
+                        break format!("#b{:0>width$}", "0", width = *w as usize);
+                    }
+                    // Positive zero is a canonical, valid ground FP value.
+                    SortKind::FloatingPoint { eb, sb } => break format!("(_ +zero {eb} {sb})"),
+                    // A constant array whose every entry is the range's
+                    // default value.  Descending into the range charges no
+                    // constructor expansion — the sort graph alone is
+                    // acyclic, so this edge cannot close a cycle.
+                    SortKind::Array { range, .. } => {
+                        let range = *range;
+                        let sort_name = self.format_sort_name(sort);
+                        pending.push(DefaultValueFrame::ArrayConst { sort_name });
+                        task = (range, expansions);
+                    }
+                    // A datatype default is a ground constructor
+                    // application built from the field sorts' own
+                    // defaults.  Every field charges one constructor
+                    // expansion, whatever its sort: the pre-fix code
+                    // charged nothing for non-datatype fields and
+                    // re-entered the walk at depth zero, which is exactly
+                    // the reset that let an array-mediated cycle run
+                    // forever.
+                    SortKind::Datatype(_) => {
+                        if expansions >= DT_DEFAULT_EXPANSION_LIMIT {
+                            break "?".to_string();
+                        }
+                        let Some(dt_name) = self.terms.sorts.datatype_name(sort) else {
+                            break "?".to_string();
+                        };
+                        let dt_name = dt_name.to_string();
+                        let Some(def) = self.terms.sorts.get_datatype(&dt_name) else {
+                            break "?".to_string();
+                        };
+                        let Some(index) = crate::solver::model_builder::default_constructor_index(
+                            def,
+                            &self.terms.sorts,
+                        ) else {
+                            break "?".to_string();
+                        };
+                        let Some(constructor) = def.constructors.get(index) else {
+                            break "?".to_string();
+                        };
+                        let name = self.terms.resolve_str(constructor.name).to_string();
+                        let fields: Vec<SortId> = constructor
+                            .selectors
+                            .iter()
+                            .map(|&(_, field_sort)| field_sort)
+                            .collect();
+                        // A nullary constructor is already its own ground
+                        // value.  (`fields.first()` returning `None` is the
+                        // same statement as `selectors.is_empty()`; matching
+                        // on it keeps the non-empty arm unwrap-free.)
+                        let charged = expansions.saturating_add(1);
+                        match fields.first().copied() {
+                            None => break name,
+                            Some(first) => {
+                                let arity = fields.len();
+                                pending.push(DefaultValueFrame::Constructor {
+                                    name,
+                                    done: Vec::with_capacity(arity),
+                                    fields,
+                                    next_field: 1,
+                                    expansions: charged,
+                                });
+                                task = (first, charged);
+                            }
+                        }
+                    }
+                    // Uninterpreted-sort defaults are abstract witnesses.
+                    // `get_model` assigns a distinct per-constant index; as
+                    // a standalone fallback emit the zero-th witness for
+                    // the sort.
+                    SortKind::Uninterpreted(_) => {
+                        break format!("@uc_{}_0", self.format_sort_name(sort));
+                    }
+                    // Sort parameters and unapplied parametric sorts have
+                    // no ground values.
+                    SortKind::Parameter(_) | SortKind::Parametric { .. } => {
+                        break "?".to_string();
+                    }
+                }
+            };
+            // Fold the finished value into the innermost pending frame; a
+            // constructor frame with fields left schedules the next one.
+            loop {
+                match pending.pop() {
+                    None => return value,
+                    Some(DefaultValueFrame::ArrayConst { sort_name }) => {
+                        value = format!("((as const {sort_name}) {value})");
+                    }
+                    Some(DefaultValueFrame::Constructor {
+                        name,
+                        mut done,
+                        fields,
+                        next_field,
+                        expansions,
+                    }) => {
+                        done.push(value);
+                        match fields.get(next_field).copied() {
+                            Some(field_sort) => {
+                                pending.push(DefaultValueFrame::Constructor {
+                                    name,
+                                    done,
+                                    fields,
+                                    next_field: next_field + 1,
+                                    expansions,
+                                });
+                                task = (field_sort, expansions);
+                                continue 'task;
+                            }
+                            None => value = format!("({} {})", name, done.join(" ")),
+                        }
+                    }
                 }
             }
         }
-        "?".to_string()
+    }
+
+    /// A ground *term* carrying the same default value that
+    /// [`Context::default_value`] renders as a string, or `None` for sorts with
+    /// no constructible ground witness (uninterpreted and array sorts, sort
+    /// parameters, and ill-founded datatypes).
+    ///
+    /// Used to complete the model before a `(get-value ...)` evaluation, so a
+    /// query over an unconstrained constant — including inside a compound term
+    /// such as `(+ x 1)` — reduces to a real value instead of echoing itself.
+    ///
+    /// Delegates to the solver's
+    /// [`ground_default_term`](crate::solver::model_builder::ground_default_term),
+    /// which is also what fills in an unconstrained *field* of a reconstructed
+    /// datatype value — one definition of "the default of this sort" rather
+    /// than one per caller.
+    fn default_value_term(&mut self, sort: SortId) -> Option<TermId> {
+        crate::solver::model_builder::ground_default_term(&mut self.terms, sort)
+    }
+
+    /// The value string [`Context::get_model`] reports for `term`, when `term`
+    /// is a declared constant that the model left unassigned.
+    ///
+    /// `(get-value ...)` and `(get-model)` must never disagree about the same
+    /// constant, and `get_model`'s uninterpreted-sort witnesses (`@uc_S_n`) are
+    /// numbered across the whole declaration list — so the answer is read back
+    /// out of `get_model` itself rather than recomputed.
+    fn unassigned_const_value(&self, term: TermId, model: &crate::solver::Model) -> Option<String> {
+        let index = self.declared_consts.iter().position(|d| d.term == term)?;
+        // A constant the model *did* assign keeps the ordinary evaluation path.
+        if model.get(term).is_some() {
+            return None;
+        }
+        let (_, _, value) = self.get_model()?.into_iter().nth(index)?;
+        Some(value)
+    }
+
+    /// Answer a `(get-value (t1 .. tn))` request.
+    ///
+    /// SMT-LIB 2.6 §4.1.1: the command is available only in `sat` mode, so a
+    /// missing/superseded check result is reported as an error rather than
+    /// answered from stale state.  Each term is evaluated in the current model,
+    /// which is first *completed* with the sort defaults `get_model` reports for
+    /// unconstrained declared constants — otherwise `Model::eval` returns an
+    /// unassigned constant unchanged and `(get-value (x))` answered `((x x))`,
+    /// echoing the term instead of producing a value.
+    pub(super) fn format_get_value(&mut self, terms: &[TermId]) -> String {
+        const NO_MODEL: &str = "(error \"No model available\")";
+        if self.last_result != Some(SolverResult::Sat) {
+            return NO_MODEL.to_string();
+        }
+        // Owned so the evaluation below can borrow `self.terms` mutably; see
+        // `get_model` for why an empty assertion stack yields an empty model
+        // rather than an error.
+        let model = match self.solver.model() {
+            Some(model) => model.clone(),
+            None if self.assertions.is_empty() => crate::solver::Model::new(),
+            None => return NO_MODEL.to_string(),
+        };
+
+        // Completion substitution: every declared constant with no model entry
+        // maps to its sort default.
+        let unassigned: Vec<(TermId, SortId)> = self
+            .declared_consts
+            .iter()
+            .filter(|d| model.get(d.term).is_none())
+            .map(|d| (d.term, d.sort))
+            .collect();
+        let mut completion: crate::prelude::FxHashMap<TermId, TermId> =
+            crate::prelude::FxHashMap::default();
+        for (term, sort) in unassigned {
+            if let Some(value) = self.default_value_term(sort) {
+                completion.insert(term, value);
+            }
+        }
+
+        let mut values = Vec::with_capacity(terms.len());
+        for &term in terms {
+            let value_str = if let Some(value) = self.unassigned_const_value(term, &model) {
+                // A bare unconstrained constant: report exactly what
+                // `(get-model)` reports for it, witnesses included.
+                value
+            } else {
+                let completed = if completion.is_empty() {
+                    term
+                } else {
+                    self.terms.substitute(term, &completion)
+                };
+                // `Model::eval` substitutes and folds the Boolean structure but
+                // leaves arithmetic/bit-vector applications of the substituted
+                // constants unreduced (`(+ x 1)` → `(+ 0 1)`), so run the
+                // rewriter over the result to reach an actual value.
+                let value = model.eval(completed, &mut self.terms);
+                let value = self.terms.simplify(value);
+                oxiz_core::smtlib::Printer::new(&self.terms).print_term(value)
+            };
+            let term_str = oxiz_core::smtlib::Printer::new(&self.terms).print_term(term);
+            values.push(format!("({} {})", term_str, value_str));
+        }
+        format!("({})", values.join("\n "))
     }
 
     /// Format the model as SMT-LIB2
@@ -400,5 +870,427 @@ impl Context {
                 lines.join("\n")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== default_value semantic pins ==================================
+    //
+    // Every expected string below was captured from the pre-conversion
+    // recursive implementation, so these tests prove the explicit-stack
+    // conversion is behavior-preserving.
+
+    /// Atomic sorts keep their canonical ground defaults.
+    #[test]
+    fn test_default_value_atomic_pins() {
+        let mut ctx = Context::new();
+        let bool_sort = ctx.terms.sorts.bool_sort;
+        let int_sort = ctx.terms.sorts.int_sort;
+        let real_sort = ctx.terms.sorts.real_sort;
+        let string_sort = ctx.terms.sorts.string_sort();
+        let bv8 = ctx.terms.sorts.bitvec(8);
+        let f32_sort = ctx.terms.sorts.float_sort(8, 24);
+        assert_eq!(ctx.default_value(bool_sort), "false");
+        assert_eq!(ctx.default_value(int_sort), "0");
+        assert_eq!(ctx.default_value(real_sort), "0.0");
+        assert_eq!(ctx.default_value(string_sort), "\"\"");
+        assert_eq!(ctx.default_value(bv8), "#b00000000");
+        assert_eq!(ctx.default_value(f32_sort), "(_ +zero 8 24)");
+
+        let spur = ctx.terms.intern_str("Widget");
+        let widget = ctx
+            .terms
+            .sorts
+            .intern(oxiz_core::sort::SortKind::Uninterpreted(spur));
+        assert_eq!(ctx.default_value(widget), "@uc_Widget_0");
+    }
+
+    /// Array defaults are const-arrays over the range default, spelled
+    /// exactly as before the conversion.
+    #[test]
+    fn test_default_value_array_pins() {
+        let mut ctx = Context::new();
+        let int_sort = ctx.terms.sorts.int_sort;
+        let a1 = ctx.terms.sorts.array(int_sort, int_sort);
+        let a2 = ctx.terms.sorts.array(int_sort, a1);
+        assert_eq!(ctx.default_value(a1), "((as const (Array Int Int)) 0)");
+        assert_eq!(
+            ctx.default_value(a2),
+            "((as const (Array Int (Array Int Int))) ((as const (Array Int Int)) 0))"
+        );
+    }
+
+    /// Well-founded datatype defaults: a compound constructor renders as an
+    /// application of the field defaults; a nullary constructor renders as
+    /// its bare name.
+    #[test]
+    fn test_default_value_datatype_pins() {
+        let mut ctx = Context::new();
+        ctx.execute_script("(declare-datatype Pair ((mk-pair (first Int) (second Int))))")
+            .expect("datatype declaration script");
+        let pair = ctx.terms.sorts.mk_datatype_sort("Pair");
+        assert_eq!(ctx.default_value(pair), "(mk-pair 0 0)");
+
+        let mut ctx2 = Context::new();
+        ctx2.execute_script("(declare-datatype Color ((red) (green)))")
+            .expect("datatype declaration script");
+        let color = ctx2.terms.sorts.mk_datatype_sort("Color");
+        assert_eq!(ctx2.default_value(color), "red");
+    }
+
+    /// The `(get-model)` infinite-recursion repro: a datatype whose only
+    /// constructor closes a cycle through an array field,
+    /// `(declare-datatype T ((c (f (Array Int T)))))`.
+    ///
+    /// The declaration IS accepted (verified against the working tree), and
+    /// the sort has no finite ground value, so the default expands the
+    /// constructor exactly [`DT_DEFAULT_EXPANSION_LIMIT`] times and bottoms
+    /// out in the honest `?` placeholder.  The original code reset its
+    /// depth counter to 0 at every re-entry and recursed forever; the
+    /// budgeted fix produced exactly this value, and the explicit-stack
+    /// conversion must keep producing it.
+    #[test]
+    fn test_default_value_ill_founded_array_cycle_pins() {
+        let mut ctx = Context::new();
+        ctx.execute_script("(declare-datatype T ((c (f (Array Int T)))))")
+            .expect("self-referential array-field datatype is accepted");
+        assert!(ctx.terms.sorts.is_datatype_declared("T"));
+        let t_sort = ctx.terms.sorts.mk_datatype_sort("T");
+
+        let mut expected = "?".to_string();
+        for _ in 0..DT_DEFAULT_EXPANSION_LIMIT {
+            expected = format!("(c ((as const (Array Int T)) {expected}))");
+        }
+        assert_eq!(ctx.default_value(t_sort), expected);
+    }
+
+    /// A *directly* self-referential ill-founded datatype
+    /// (`(declare-datatype W ((c (f W))))`) also terminates with the honest
+    /// placeholder at the same budget.
+    #[test]
+    fn test_default_value_ill_founded_direct_cycle_terminates() {
+        let mut ctx = Context::new();
+        ctx.execute_script("(declare-datatype W ((c (f W))))")
+            .expect("self-referential datatype is accepted");
+        let w_sort = ctx.terms.sorts.mk_datatype_sort("W");
+
+        let mut expected = "?".to_string();
+        for _ in 0..DT_DEFAULT_EXPANSION_LIMIT {
+            expected = format!("(c {expected})");
+        }
+        assert_eq!(ctx.default_value(w_sort), expected);
+    }
+
+    /// The full script-level repro from the audit terminates and reports a
+    /// model for the declared constant.
+    #[test]
+    fn test_get_model_ill_founded_datatype_script_terminates() {
+        let mut ctx = Context::new();
+        let out = ctx
+            .execute_script(
+                "(declare-datatype T ((c (f (Array Int T)))))\n\
+                 (declare-const a T)\n\
+                 (check-sat)\n\
+                 (get-model)",
+            )
+            .expect("repro script executes");
+        assert_eq!(out.first().map(String::as_str), Some("sat"));
+        let model = out.get(1).map(String::as_str).unwrap_or_default();
+        assert!(
+            model.contains("(define-fun a () T "),
+            "model must report the declared constant: {model}"
+        );
+    }
+
+    /// Beyond the removed 512-level cap the walk now renders the true
+    /// value: the pre-conversion code answered a wrong `?` for every array
+    /// sort nested deeper than 512.
+    ///
+    /// Depth is 2000 rather than the usual 50k-100k deep-nesting depth
+    /// because the *output* of `default_value` is inherently quadratic in
+    /// array depth — every level embeds its own full sort name — so 100k
+    /// levels would be a multi-gigabyte string; output construction, not
+    /// the walk, is the bottleneck.  The walk machinery itself is proven at
+    /// 12 500 levels on a 128 KiB stack by the `format_sort_name` tests
+    /// below, which share the same explicit-stack shape with linear output
+    /// and pin the same ~10 bytes-per-frame threshold a 1 MiB / 100k pair
+    /// would.  This test's own stack stays at 1 MiB: its depth is 2000, well
+    /// under the scaling threshold, and nothing here is quadratic in stack.
+    #[test]
+    fn test_default_value_deep_array_chain_beyond_old_cap() {
+        const DEPTH: usize = 2000;
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut ctx = Context::new();
+                let int_sort = ctx.terms.sorts.int_sort;
+                let mut sort = int_sort;
+                for _ in 0..DEPTH {
+                    sort = ctx.terms.sorts.array(int_sort, sort);
+                }
+                let value = ctx.default_value(sort);
+                assert!(
+                    !value.contains('?'),
+                    "a finite array sort must never render the `?` placeholder"
+                );
+                assert_eq!(value.matches("((as const ").count(), DEPTH);
+                assert!(value.starts_with("((as const (Array Int "));
+                // The innermost value is the Int default `0` wrapped by one
+                // closing paren per level.
+                let expected_suffix = format!(" 0{}", ")".repeat(DEPTH));
+                assert!(
+                    value.ends_with(&expected_suffix),
+                    "value must bottom out in the Int default"
+                );
+            })
+            .expect("spawn deep default-value thread");
+        handle.join().expect("deep default-value must not overflow");
+    }
+
+    // ===== format_sort_name =============================================
+
+    /// Leaf and compound sort names, pinned against the pre-conversion
+    /// recursive renderer.
+    #[test]
+    fn test_format_sort_name_pins() {
+        let mut ctx = Context::new();
+        let int_sort = ctx.terms.sorts.int_sort;
+        let bool_sort = ctx.terms.sorts.bool_sort;
+        let bv8 = ctx.terms.sorts.bitvec(8);
+        let f32_sort = ctx.terms.sorts.float_sort(8, 24);
+        let arr = ctx.terms.sorts.array(int_sort, bv8);
+        let nested = ctx.terms.sorts.array(arr, bool_sort);
+        assert_eq!(ctx.format_sort_name(int_sort), "Int");
+        assert_eq!(ctx.format_sort_name(bv8), "(_ BitVec 8)");
+        assert_eq!(ctx.format_sort_name(f32_sort), "(_ FloatingPoint 8 24)");
+        assert_eq!(ctx.format_sort_name(arr), "(Array Int (_ BitVec 8))");
+        assert_eq!(
+            ctx.format_sort_name(nested),
+            "(Array (Array Int (_ BitVec 8)) Bool)"
+        );
+
+        ctx.execute_script("(declare-datatype Pair ((mk-pair (first Int) (second Int))))")
+            .expect("datatype declaration script");
+        let pair = ctx.terms.sorts.mk_datatype_sort("Pair");
+        assert_eq!(ctx.format_sort_name(pair), "Pair");
+    }
+
+    /// Deep-nesting regression: a 12 500-level range-nested array sort (built
+    /// through the builder API in O(1) stack) renders on a 128 KiB thread
+    /// stack.  The pre-conversion renderer recursed natively per level, so
+    /// returning at all is the proof; the exact length pins correctness
+    /// (`len("(Array Int ") + len(")") = 12` added bytes per level).
+    #[test]
+    fn test_format_sort_name_deep_range_chain_small_stack() {
+        // Stack and depth scale together (1 MiB/100k -> 128 KiB/12.5k): the
+        // ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 12_500;
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut ctx = Context::new();
+                let int_sort = ctx.terms.sorts.int_sort;
+                let mut sort = int_sort;
+                for _ in 0..DEPTH {
+                    sort = ctx.terms.sorts.array(int_sort, sort);
+                }
+                let name = ctx.format_sort_name(sort);
+                assert_eq!(name.len(), 12 * DEPTH + 3);
+                assert!(name.starts_with("(Array Int (Array Int "));
+                // The innermost sort is `Int`, closed by one paren per level.
+                let suffix = format!("Int{}", ")".repeat(DEPTH));
+                assert!(name.ends_with(&suffix));
+            })
+            .expect("spawn deep-format thread");
+        handle.join().expect("deep-format thread must not overflow");
+    }
+
+    /// Same regression with the nesting on the domain side, which exercises
+    /// the domain-first descent frames.
+    #[test]
+    fn test_format_sort_name_deep_domain_chain_small_stack() {
+        // Stack and depth scale together (1 MiB/100k -> 128 KiB/12.5k): the
+        // ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 12_500;
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut ctx = Context::new();
+                let int_sort = ctx.terms.sorts.int_sort;
+                let mut sort = int_sort;
+                for _ in 0..DEPTH {
+                    sort = ctx.terms.sorts.array(sort, int_sort);
+                }
+                let name = ctx.format_sort_name(sort);
+                assert_eq!(name.len(), 12 * DEPTH + 3);
+                assert!(name.starts_with("(Array (Array "));
+                assert!(name.ends_with(" Int) Int)"));
+            })
+            .expect("spawn deep-format thread");
+        handle.join().expect("deep-format thread must not overflow");
+    }
+
+    /// Shared-DAG regression for the memo: a doubling array sort
+    /// (`s[i+1] = (Array s[i] s[i])`) is rendered once per *distinct* sort,
+    /// not once per path.
+    ///
+    /// Depth is 20 rather than the usual 50-60 doubling levels because the
+    /// *output* is inherently exponential in doubling depth — SMT-LIB sort
+    /// syntax has no sharing, so the rendered text of level `n` has length
+    /// `12 * 2^n - 9` and 60 levels would be an exabyte-scale string no
+    /// algorithm could materialize.  At depth 20 the test pins the exact
+    /// (12.6 MB) length and must complete quickly.
+    #[test]
+    fn test_format_sort_name_shared_doubling_dag() {
+        const LEVELS: u32 = 20;
+        let mut ctx = Context::new();
+        let int_sort = ctx.terms.sorts.int_sort;
+        let mut sort = int_sort;
+        for _ in 0..LEVELS {
+            sort = ctx.terms.sorts.array(sort, sort);
+        }
+        let name = ctx.format_sort_name(sort);
+        // len(n) = 2 * len(n-1) + len("(Array ") + len(" ") + len(")")
+        //        = 2 * len(n-1) + 9, len(0) = 3  =>  len(n) = 12 * 2^n - 9.
+        let expected_len = 12usize * (1usize << LEVELS) - 9;
+        assert_eq!(name.len(), expected_len);
+        assert!(name.starts_with("(Array (Array "));
+    }
+
+    // ===== get_model through the public surface =========================
+
+    /// An unconstrained array constant round-trips its sort and default
+    /// value through `(get-model)` exactly as before the conversion.
+    #[test]
+    fn test_get_model_array_const_roundtrip() {
+        let mut ctx = Context::new();
+        let out = ctx
+            .execute_script("(declare-const a (Array Int Int))\n(check-sat)\n(get-model)")
+            .expect("valid script executes");
+        let model = out.last().map(String::as_str).unwrap_or_default();
+        assert!(
+            model.contains("(define-fun a () (Array Int Int) "),
+            "model must render the array sort name: {model}"
+        );
+    }
+
+    // ===== parameter / parametric sort names ============================
+
+    /// A sort *parameter* renders as its declared name. It used to render as
+    /// the literal string "Unknown", so every parameter of every definition
+    /// printed identically.
+    #[test]
+    fn test_format_sort_name_parameter_uses_its_real_name() {
+        let mut ctx = Context::new();
+        let t_param = ctx.terms.sorts.mk_sort_parameter("T");
+        let u_param = ctx.terms.sorts.mk_sort_parameter("U");
+
+        assert_eq!(ctx.format_sort_name(t_param), "T");
+        assert_eq!(ctx.format_sort_name(u_param), "U");
+        assert_ne!(
+            ctx.format_sort_name(t_param),
+            ctx.format_sort_name(u_param),
+            "two distinct parameters must not collapse onto one printed name"
+        );
+    }
+
+    /// A parametric application renders as `(Name arg...)`, exactly as
+    /// `SmtLibPrinter::write_sort` spells it, with the head name resolved
+    /// through the *sort* manager's interner.
+    #[test]
+    fn test_format_sort_name_parametric_instance_uses_its_real_name() {
+        let mut ctx = Context::new();
+        let int_sort = ctx.terms.sorts.int_sort;
+        let bool_sort = ctx.terms.sorts.bool_sort;
+        ctx.terms.sorts.declare_parametric_sort("List", 1);
+        ctx.terms.sorts.declare_parametric_sort("Pair", 2);
+
+        let list_int = ctx
+            .terms
+            .sorts
+            .instantiate_parametric_sort("List", &[int_sort])
+            .expect("List has arity 1");
+        let pair = ctx
+            .terms
+            .sorts
+            .instantiate_parametric_sort("Pair", &[list_int, bool_sort])
+            .expect("Pair has arity 2");
+
+        assert_eq!(ctx.format_sort_name(list_int), "(List Int)");
+        assert_eq!(ctx.format_sort_name(pair), "(Pair (List Int) Bool)");
+    }
+
+    /// The parametric arguments are walked on the same explicit heap stack as
+    /// array domains, so a deeply nested application does not touch the
+    /// native stack: `(List (List ... Int ...))`.
+    #[test]
+    fn test_format_sort_name_deeply_nested_parametric() {
+        // Stack and depth scale together (1 MiB/20k -> 128 KiB/2.5k): the
+        // ~52 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 2_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut ctx = Context::new();
+                let int_sort = ctx.terms.sorts.int_sort;
+                ctx.terms.sorts.declare_parametric_sort("List", 1);
+                let mut sort = int_sort;
+                for _ in 0..DEPTH {
+                    sort = ctx
+                        .terms
+                        .sorts
+                        .instantiate_parametric_sort("List", &[sort])
+                        .expect("List has arity 1");
+                }
+                let name = ctx.format_sort_name(sort);
+                // "(List " * DEPTH + "Int" + ")" * DEPTH
+                assert_eq!(name.len(), 7 * DEPTH + 3);
+                assert!(name.starts_with("(List (List "));
+                // The innermost `Int` is followed by one closing paren per
+                // level: `(List (List ... (List Int)...))`.
+                assert!(name.ends_with(&format!(" Int{}", ")".repeat(DEPTH))));
+            })
+            .expect("spawn deep-parametric thread");
+        handle
+            .join()
+            .expect("deep-parametric thread must not overflow");
+    }
+
+    /// End to end through `get_model`: constants declared at a parametric
+    /// instance and at a sort parameter report their real sort names.  Both
+    /// used to report the single name "Unknown", so a model could not even
+    /// tell the two constants' sorts apart.
+    ///
+    /// Declared through the `Context` API rather than a script because the
+    /// SMT-LIB front end does not yet accept an applied user sort
+    /// constructor in sort position (`parse_sort` handles only `Array`
+    /// there); the model formatter is what is under test here either way.
+    #[test]
+    fn test_get_model_parameter_and_parametric_sorts_show_real_names() {
+        let mut ctx = Context::new();
+        let int_sort = ctx.terms.sorts.int_sort;
+        ctx.terms.sorts.declare_parametric_sort("List", 1);
+        let list_int = ctx
+            .terms
+            .sorts
+            .instantiate_parametric_sort("List", &[int_sort])
+            .expect("List has arity 1");
+        let t_param = ctx.terms.sorts.mk_sort_parameter("T");
+
+        ctx.declare_const("xs", list_int);
+        ctx.declare_const("t", t_param);
+        assert_eq!(ctx.check_sat(), SolverResult::Sat);
+
+        let model = ctx.get_model().expect("sat check produces a model");
+        let sorts: crate::prelude::HashMap<&str, &str> = model
+            .iter()
+            .map(|(name, sort, _)| (name.as_str(), sort.as_str()))
+            .collect();
+        assert_eq!(sorts.get("xs").copied(), Some("(List Int)"));
+        assert_eq!(sorts.get("t").copied(), Some("T"));
     }
 }

@@ -61,7 +61,24 @@ impl fmt::Display for LfscSort {
 }
 
 /// An LFSC term
-#[derive(Debug, Clone)]
+///
+/// # Depth invariant
+///
+/// There is deliberately no bound on how deep an `LfscTerm` may be: the
+/// variants are public, so callers build values directly (e.g. via repeated
+/// [`LfscTerm::App`] or [`LfscTerm::Lambda`] wrapping), and a proof converted
+/// from an external source (see [`crate::conversion::FormatConverter`]) can
+/// nest as deeply as that source does. [`Clone`] and [`Drop`] are therefore
+/// iterative -- see their impls below -- rather than derived. Do **not**
+/// replace either with a `derive`.
+///
+/// The one exception is the derived [`fmt::Debug`], which is still recursive:
+/// it is a diagnostics-only formatter, is never invoked by this crate outside
+/// tests, and hand-writing it would change `{:#?}` output. Prefer
+/// [`fmt::Display`] when rendering a term whose depth is not known -- it is
+/// also recursive today, so callers with depth-adversarial input should
+/// prefer walking the term themselves rather than formatting it directly.
+#[derive(Debug)]
 pub enum LfscTerm {
     /// Variable reference
     Var(String),
@@ -85,6 +102,167 @@ pub enum LfscTerm {
     Hold(Box<LfscTerm>),
     /// Type annotation
     Annotate(Box<LfscTerm>, Box<LfscSort>),
+}
+
+/// The shape of a node being rebuilt by the iterative [`Clone`] impl: which
+/// variant it is, plus anything that is not one of the cloned children.
+enum LfscCloneShape {
+    /// `App`, carrying its function name and arity.
+    App(String, usize),
+    /// `Lambda`, carrying its bound variable name and (derive-cloned) sort.
+    Lambda(String, Box<LfscSort>),
+    /// `Pi`, carrying its bound variable name and (derive-cloned) sort.
+    Pi(String, Box<LfscSort>),
+    /// `SideCondition`, carrying its name and arity.
+    SideCondition(String, usize),
+    /// `Hold`, one child.
+    Hold,
+    /// `Annotate`, carrying its (derive-cloned) sort.
+    Annotate(Box<LfscSort>),
+}
+
+/// Work item for the iterative [`Clone`] impl.
+enum LfscCloneTask<'a> {
+    /// Clone this subterm.
+    Visit(&'a LfscTerm),
+    /// Rebuild a node from the already-cloned children on the result stack.
+    Rebuild(LfscCloneShape),
+}
+
+impl Clone for LfscTerm {
+    /// Iterative clone.
+    ///
+    /// The derived recursive `Clone` walked the term with one native call
+    /// frame per nesting level -- the same hazard the iterative [`Drop`]
+    /// below exists to avoid, just triggered by a different standard-library
+    /// entry point (`.clone()` / `#[derive(Clone)]` callers). `LfscSort`
+    /// (the type of the `sort` field on `Lambda`/`Pi`/`Annotate`) keeps its
+    /// ordinary derived `Clone`: this type's depth invariant is driven by
+    /// term nesting, not sort nesting, and sorts built by this crate do not
+    /// nest to comparable depths. Nodes are rebuilt with their plain variant
+    /// constructors, exactly mirroring `InterpolantTerm` in
+    /// `craig/term.rs`.
+    fn clone(&self) -> Self {
+        /// Detach the top `n` results, preserving their original order.
+        fn take(results: &mut Vec<LfscTerm>, n: usize) -> Vec<LfscTerm> {
+            let start = results.len().saturating_sub(n);
+            results.split_off(start)
+        }
+
+        /// Rebuild a one-child node, or fall back to `False` if starved.
+        fn one(results: &mut Vec<LfscTerm>) -> Box<LfscTerm> {
+            let mut operand = take(results, 1);
+            Box::new(operand.pop().unwrap_or(LfscTerm::False))
+        }
+
+        let mut tasks = vec![LfscCloneTask::Visit(self)];
+        let mut results: Vec<Self> = Vec::new();
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                LfscCloneTask::Visit(term) => match term {
+                    Self::Var(s) => results.push(Self::Var(s.clone())),
+                    Self::IntLit(n) => results.push(Self::IntLit(*n)),
+                    Self::RatLit(n, d) => results.push(Self::RatLit(*n, *d)),
+                    Self::True => results.push(Self::True),
+                    Self::False => results.push(Self::False),
+                    Self::App(f, args) => {
+                        tasks.push(LfscCloneTask::Rebuild(LfscCloneShape::App(
+                            f.clone(),
+                            args.len(),
+                        )));
+                        tasks.extend(args.iter().rev().map(LfscCloneTask::Visit));
+                    }
+                    Self::Lambda(var, sort, body) => {
+                        tasks.push(LfscCloneTask::Rebuild(LfscCloneShape::Lambda(
+                            var.clone(),
+                            sort.clone(),
+                        )));
+                        tasks.push(LfscCloneTask::Visit(body));
+                    }
+                    Self::Pi(var, sort, body) => {
+                        tasks.push(LfscCloneTask::Rebuild(LfscCloneShape::Pi(
+                            var.clone(),
+                            sort.clone(),
+                        )));
+                        tasks.push(LfscCloneTask::Visit(body));
+                    }
+                    Self::SideCondition(name, args) => {
+                        tasks.push(LfscCloneTask::Rebuild(LfscCloneShape::SideCondition(
+                            name.clone(),
+                            args.len(),
+                        )));
+                        tasks.extend(args.iter().rev().map(LfscCloneTask::Visit));
+                    }
+                    Self::Hold(inner) => {
+                        tasks.push(LfscCloneTask::Rebuild(LfscCloneShape::Hold));
+                        tasks.push(LfscCloneTask::Visit(inner));
+                    }
+                    Self::Annotate(inner, sort) => {
+                        tasks.push(LfscCloneTask::Rebuild(LfscCloneShape::Annotate(
+                            sort.clone(),
+                        )));
+                        tasks.push(LfscCloneTask::Visit(inner));
+                    }
+                },
+                LfscCloneTask::Rebuild(shape) => {
+                    let rebuilt = match shape {
+                        LfscCloneShape::App(f, n) => Self::App(f, take(&mut results, n)),
+                        LfscCloneShape::Lambda(var, sort) => {
+                            Self::Lambda(var, sort, one(&mut results))
+                        }
+                        LfscCloneShape::Pi(var, sort) => Self::Pi(var, sort, one(&mut results)),
+                        LfscCloneShape::SideCondition(name, n) => {
+                            Self::SideCondition(name, take(&mut results, n))
+                        }
+                        LfscCloneShape::Hold => Self::Hold(one(&mut results)),
+                        LfscCloneShape::Annotate(sort) => Self::Annotate(one(&mut results), sort),
+                    };
+                    results.push(rebuilt);
+                }
+            }
+        }
+
+        results.pop().unwrap_or(Self::False)
+    }
+}
+
+impl Drop for LfscTerm {
+    /// Iterative drop.
+    ///
+    /// Every term built by this crate's converters and builders inherits the
+    /// depth of its source, and the compiler-generated recursive
+    /// `drop_in_place` would be the one remaining way to abort the process,
+    /// at scope exit, with no diagnostic. Each node is dismantled into a
+    /// shallow shell before being released, exactly mirroring
+    /// `InterpolantTerm` in `craig/term.rs`.
+    fn drop(&mut self) {
+        /// Detach a node's children, leaving a shell that drops trivially.
+        fn dismantle(node: &mut LfscTerm, out: &mut Vec<LfscTerm>) {
+            /// Replace a boxed child with a leaf and hand the child over.
+            fn take(slot: &mut Box<LfscTerm>, out: &mut Vec<LfscTerm>) {
+                out.push(std::mem::replace(slot.as_mut(), LfscTerm::False));
+            }
+
+            match node {
+                LfscTerm::Var(_)
+                | LfscTerm::IntLit(_)
+                | LfscTerm::RatLit(_, _)
+                | LfscTerm::True
+                | LfscTerm::False => {}
+                LfscTerm::App(_, args) | LfscTerm::SideCondition(_, args) => out.append(args),
+                LfscTerm::Lambda(_, _, body) | LfscTerm::Pi(_, _, body) => take(body, out),
+                LfscTerm::Hold(inner) => take(inner, out),
+                LfscTerm::Annotate(inner, _) => take(inner, out),
+            }
+        }
+
+        let mut pending = Vec::new();
+        dismantle(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            dismantle(&mut node, &mut pending);
+        }
+    }
 }
 
 impl fmt::Display for LfscTerm {
@@ -516,5 +694,54 @@ mod tests {
         );
 
         assert_eq!(format!("{}", lambda), "(\\ x mpz x)");
+    }
+
+    #[test]
+    fn test_lfsc_term_deep_clone_and_drop_small_stack() {
+        // `LfscTerm` is public with public variants (unbounded construction)
+        // and used to keep the derived recursive `Clone`/`Drop`; either one
+        // recursing once per nesting level would overflow the native stack on
+        // a term deep enough to build. Both are now iterative (mirroring
+        // `InterpolantTerm` in `oxiz-proof/src/craig/term.rs`). Run on a
+        // deliberately small (128 KiB) stack: a stack overflow aborts the
+        // process, so "the thread returned at all" is part of the assertion.
+        //
+        // The stack size and `depth` are scaled together on purpose: what is
+        // pinned is the ratio, ~21 bytes per frame, which no real call frame
+        // fits into. Never raise one without raising the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth = 6_250usize;
+                let mut term = LfscTerm::Var("x".to_string());
+                for _ in 0..depth {
+                    term = LfscTerm::App("f".to_string(), vec![term]);
+                }
+
+                let cloned = term.clone();
+
+                // Walk the spine iteratively to confirm the clone is
+                // structurally identical, then let both the original and the
+                // clone drop at scope exit -- exercising the iterative `Drop`
+                // twice.
+                let mut seen = 0usize;
+                let mut node = &cloned;
+                while let LfscTerm::App(func, args) = node {
+                    assert_eq!(func, "f");
+                    assert_eq!(args.len(), 1);
+                    let Some(first) = args.first() else { break };
+                    node = first;
+                    seen += 1;
+                }
+                assert_eq!(seen, depth);
+                assert!(matches!(node, LfscTerm::Var(v) if v == "x"));
+
+                drop(term);
+                drop(cloned);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle.join().expect(
+            "cloning and dropping a deeply nested LfscTerm must not overflow a 128 KiB stack",
+        );
     }
 }

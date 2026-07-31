@@ -119,40 +119,49 @@ impl CounterExample {
         self.quality = size_factor * const_factor;
     }
 
+    /// Number of distinct subterms reached from `term` through the
+    /// structural kinds below (each shared subterm counted once).
+    ///
+    /// Iterative with an explicit heap stack: the previous helper recursed
+    /// once per nesting level and returned a plain `usize` with no error
+    /// channel, so a deeply nested witness — witnesses come straight from
+    /// user input on the default `check_sat` path — could abort the process
+    /// by exhausting the native stack, and a depth cap could only have
+    /// reported a silently wrong size (skewing the counterexample quality
+    /// score).  `visited` keeps re-expansion of the shared, hash-consed DAG
+    /// linear, exactly as before.
+    ///
+    /// Semantics are preserved exactly: every newly visited term
+    /// contributes 1 (including an unresolvable id, whose children are not
+    /// explored), repeat visits contribute 0, and only `And`/`Or`/`Not`/
+    /// `Neg`/`Eq`/`Lt` descend — the sum is order-independent, so the
+    /// traversal order is immaterial.
     fn term_size(&self, term: TermId, manager: &TermManager) -> usize {
-        let mut visited = FxHashSet::default();
-        self.term_size_rec(term, manager, &mut visited)
-    }
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![term];
+        let mut size = 0usize;
 
-    fn term_size_rec(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) -> usize {
-        if visited.contains(&term) {
-            return 0;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return 1;
-        };
-
-        let children_size = match &t.kind {
-            TermKind::And(args) | TermKind::Or(args) => args
-                .iter()
-                .map(|&arg| self.term_size_rec(arg, manager, visited))
-                .sum(),
-            TermKind::Not(arg) | TermKind::Neg(arg) => self.term_size_rec(*arg, manager, visited),
-            TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) => {
-                self.term_size_rec(*lhs, manager, visited)
-                    + self.term_size_rec(*rhs, manager, visited)
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
             }
-            _ => 0,
-        };
+            size += 1;
 
-        1 + children_size
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+            match &t.kind {
+                TermKind::And(args) | TermKind::Or(args) => stack.extend(args.iter().copied()),
+                TermKind::Not(arg) | TermKind::Neg(arg) => stack.push(*arg),
+                TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) => {
+                    stack.push(*lhs);
+                    stack.push(*rhs);
+                }
+                _ => {}
+            }
+        }
+
+        size
     }
 
     fn is_constant(&self, term: TermId, manager: &TermManager) -> bool {
@@ -448,153 +457,39 @@ impl CounterExampleGenerator {
         results
     }
 
-    /// Apply substitution to a term
+    /// Substitute a quantifier's bound variables in `term`, by variable name.
+    ///
+    /// Delegates to [`utils::substitute`](crate::mbqi::macros::utils::substitute),
+    /// the one shared implementation for this crate, which resolves the
+    /// name-keyed map against the term's actual free occurrences and hands the
+    /// result to [`TermManager::substitute`].
+    ///
+    /// This used to be a local recursive walk with a memo table and a
+    /// `TermKind` whitelist that ended in `_ => term`, so every kind outside
+    /// the whitelist was returned **unchanged** -- the whitelist covered 20 kinds, so
+    /// `Xor`, `Distinct`, every bit-vector, string, floating-point and
+    /// datatype operator, and every binder fell through. A
+    /// bound variable sitting anywhere under such a kind therefore survived
+    /// into the "ground instance", which is then not an instance at all: the
+    /// engine reported a substitution it had not performed. Four
+    /// near-identical copies of that walk existed in this module (here, and in
+    /// `instantiation`, `counterexample`, `lazy_instantiation`,
+    /// `conflict_driven`); they are all now this one call, because a duplicate
+    /// that has diverged four times will diverge again.
+    ///
+    /// The shared routine additionally descends into
+    /// `Forall`/`Exists`/`Let`/`Match` bodies, bindings, cases and trigger
+    /// patterns with capture-avoiding alpha-renaming, and walks with an
+    /// explicit heap stack rather than native recursion.
+    ///
+    /// [`TermManager::substitute`]: oxiz_core::ast::TermManager::substitute
     fn apply_substitution(
         &self,
         term: TermId,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
     ) -> TermId {
-        let mut cache = FxHashMap::default();
-        self.apply_substitution_cached(term, subst, manager, &mut cache)
-    }
-
-    fn apply_substitution_cached(
-        &self,
-        term: TermId,
-        subst: &FxHashMap<Spur, TermId>,
-        manager: &mut TermManager,
-        cache: &mut FxHashMap<TermId, TermId>,
-    ) -> TermId {
-        if let Some(&cached) = cache.get(&term) {
-            return cached;
-        }
-
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
-
-        let result = match &t.kind {
-            TermKind::Var(name) => {
-                // Check if this variable should be substituted
-                subst.get(name).copied().unwrap_or(term)
-            }
-            TermKind::Not(arg) => {
-                let new_arg = self.apply_substitution_cached(*arg, subst, manager, cache);
-                manager.mk_not(new_arg)
-            }
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_or(new_args)
-            }
-            TermKind::Implies(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_implies(new_lhs, new_rhs)
-            }
-            TermKind::Eq(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_eq(new_lhs, new_rhs)
-            }
-            TermKind::Lt(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_lt(new_lhs, new_rhs)
-            }
-            TermKind::Le(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_le(new_lhs, new_rhs)
-            }
-            TermKind::Gt(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_gt(new_lhs, new_rhs)
-            }
-            TermKind::Ge(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_ge(new_lhs, new_rhs)
-            }
-            TermKind::Add(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_add(new_args)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_sub(new_lhs, new_rhs)
-            }
-            TermKind::Mul(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_mul(new_args)
-            }
-            TermKind::Div(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_div(new_lhs, new_rhs)
-            }
-            TermKind::Mod(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_mod(new_lhs, new_rhs)
-            }
-            TermKind::Neg(arg) => {
-                let new_arg = self.apply_substitution_cached(*arg, subst, manager, cache);
-                manager.mk_neg(new_arg)
-            }
-            TermKind::Ite(cond, then_br, else_br) => {
-                let new_cond = self.apply_substitution_cached(*cond, subst, manager, cache);
-                let new_then = self.apply_substitution_cached(*then_br, subst, manager, cache);
-                let new_else = self.apply_substitution_cached(*else_br, subst, manager, cache);
-                manager.mk_ite(new_cond, new_then, new_else)
-            }
-            TermKind::Apply { func, args } => {
-                let func_name = manager.resolve_str(*func).to_string();
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_apply(&func_name, new_args, t.sort)
-            }
-            // Array select: recurse into both array and index so that bound
-            // variables appearing in the index (e.g., `select(a, i)`) are
-            // properly substituted.
-            TermKind::Select(array, index) => {
-                let new_array = self.apply_substitution_cached(*array, subst, manager, cache);
-                let new_index = self.apply_substitution_cached(*index, subst, manager, cache);
-                manager.mk_select(new_array, new_index)
-            }
-            // Array store: substitute in array, index, and value.
-            TermKind::Store(array, index, value) => {
-                let new_array = self.apply_substitution_cached(*array, subst, manager, cache);
-                let new_index = self.apply_substitution_cached(*index, subst, manager, cache);
-                let new_value = self.apply_substitution_cached(*value, subst, manager, cache);
-                manager.mk_store(new_array, new_index, new_value)
-            }
-            // Constants and other terms don't need substitution
-            _ => term,
-        };
-
-        cache.insert(term, result);
-        result
+        crate::mbqi::macros::utils::substitute(term, subst, manager)
     }
 
     /// Evaluate a term under a model
@@ -608,303 +503,985 @@ impl CounterExampleGenerator {
         self.evaluate_under_model_cached(term, model, manager, &mut cache)
     }
 
+    /// Evaluate `root` under `model`, memoizing resolved subterms in `cache`.
+    ///
+    /// # Why this is an explicit-stack machine
+    ///
+    /// This used to be a pair of mutually recursive functions: the term
+    /// evaluator, and an inline `Exists` witness search
+    /// (`evaluate_exists_inline`) that re-entered the evaluator on every
+    /// substituted candidate body.  Evaluation depth therefore consumed
+    /// native call stack, and a deeply nested quantifier body — or a chain
+    /// of nested existentials — aborted the whole process by stack overflow.
+    /// MBQI runs on the default `check_sat` path for any quantified input,
+    /// so that was reachable from plain SMT-LIB scripts.  The memo cache
+    /// bounds *work* on the shared, hash-consed term DAG (each `TermId` is
+    /// resolved at most once per outer call), but it never bounded *stack*.
+    ///
+    /// The return type has no error channel — a symbolic residual is a
+    /// legitimate answer — so a depth cap could only have fabricated a wrong
+    /// evaluation.  Instead, both halves of the old recursion now run in one
+    /// frame machine: `stack` owns every suspended step as an `EvalFrame`,
+    /// the most recently completed subresult travels in `value`, and the
+    /// mutual edge (`Exists` candidate body → evaluator) is the
+    /// `ExistsAdvance` / `ExistsJudge` frame pair.  Nesting depth costs
+    /// heap, never native stack.
+    ///
+    /// Semantics are preserved exactly, including every short-circuit: a
+    /// definite `False` conjunct (dually `True` disjunct) resolves its
+    /// connective with the remaining operands left unevaluated; a decided
+    /// `Implies` premise or `Ite` condition skips the dead branch; and the
+    /// `Exists` odometer stops at the first witness.
     fn evaluate_under_model_cached(
         &self,
-        term: TermId,
+        root: TermId,
         model: &CompletedModel,
         manager: &mut TermManager,
         cache: &mut FxHashMap<TermId, TermId>,
     ) -> TermId {
-        if let Some(&cached) = cache.get(&term) {
-            return cached;
+        /// A binary operator whose operands are both evaluated (left, then
+        /// right) before folding.
+        enum BinOp {
+            /// `=` — folds via `eval_eq`.
+            Eq,
+            /// `<` — folds via `eval_lt`.
+            Lt,
+            /// `<=` — folds via `eval_le`.
+            Le,
+            /// `>` — folds via `eval_gt`.
+            Gt,
+            /// `>=` — folds via `eval_ge`.
+            Ge,
+            /// `-` — folds via `eval_sub`.
+            Sub,
+            /// `div` — folds via `eval_div`.
+            Div,
+            /// `mod` — folds via `eval_modulo`.
+            Mod,
         }
 
-        // Check if we have a direct model value
-        if let Some(val) = model.eval(term) {
-            cache.insert(term, val);
-            return val;
+        /// An n-ary arithmetic operator; every operand is evaluated before
+        /// folding.
+        enum NaryOp {
+            /// `+` — folds via `eval_add`.
+            Add,
+            /// `*` — folds via `eval_mul`.
+            Mul,
         }
 
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
+        /// The suspended inline evaluation of one `Exists` term: the
+        /// candidate odometer of the old `evaluate_exists_inline`, lifted
+        /// into a heap frame so evaluating a candidate body can re-enter the
+        /// machine without native recursion.
+        ///
+        /// The verdict rule is unchanged:
+        /// - `True` if any candidate gives a `True` body evaluation;
+        /// - `False` if ALL candidates give `False` body evaluations
+        ///   (provably no witness among the candidates);
+        /// - the symbolic body if any evaluation stayed symbolic (cannot
+        ///   determine), or if there was nothing to enumerate.
+        struct ExistsState {
+            /// The `Exists` term itself (the cache key for the verdict).
+            term: TermId,
+            /// The quantifier body candidates are substituted into.
+            body: TermId,
+            /// The bound variables, in `candidate_lists` order.
+            vars: SmallVec<[(Spur, SortId); 2]>,
+            /// Per-variable candidate values.
+            candidate_lists: Vec<Vec<TermId>>,
+            /// Odometer position (`indices[i]` indexes `candidate_lists[i]`).
+            indices: Vec<usize>,
+            /// Combinations classified so far.
+            combo_count: usize,
+            /// Enumeration budget (product of list lengths, capped at 50).
+            total_combos: usize,
+            /// A candidate body evaluated to `True` (witness found).
+            found_true: bool,
+            /// A candidate body stayed symbolic.
+            found_symbolic: bool,
+            /// Every classified candidate body evaluated to `False`.
+            all_false: bool,
+        }
 
-        let result = match &t.kind {
-            // Constants evaluate to themselves
-            TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. }
-            | TermKind::StringLit(_) => term,
+        /// One suspended evaluation step, owned by the heap `stack`.  A
+        /// frame is pushed *below* the `Enter` of the subterm it waits on
+        /// and reads that subterm's result from `value` when it resurfaces.
+        enum EvalFrame {
+            /// Evaluate a term: cache probe, direct model value, then
+            /// dispatch on the term kind.
+            Enter(TermId),
+            /// `Not(arg)`: fold the evaluated argument.
+            NotArg {
+                /// The `Not` term (cache key).
+                term: TermId,
+            },
+            /// `And(args)`: classify the conjunct just evaluated, then
+            /// evaluate `args[next..]` — unless a `False` ends it early.
+            AndArgs {
+                /// The `And` term (cache key).
+                term: TermId,
+                /// All conjuncts.
+                args: SmallVec<[TermId; 4]>,
+                /// Index of the next conjunct to evaluate.
+                next: usize,
+                /// Every conjunct so far evaluated to `True`.
+                all_true: bool,
+            },
+            /// `Or(args)`: dual of `AndArgs`.
+            OrArgs {
+                /// The `Or` term (cache key).
+                term: TermId,
+                /// All disjuncts.
+                args: SmallVec<[TermId; 4]>,
+                /// Index of the next disjunct to evaluate.
+                next: usize,
+                /// Every disjunct so far evaluated to `False`.
+                all_false: bool,
+            },
+            /// `Implies(lhs, rhs)`: inspect the evaluated premise and decide
+            /// how the conclusion is handled.
+            ImpliesLhs {
+                /// The `Implies` term (cache key).
+                term: TermId,
+                /// The unevaluated conclusion.
+                rhs: TermId,
+            },
+            /// `Implies` whose premise stayed symbolic (or unresolvable):
+            /// rebuild from both evaluated halves.
+            ImpliesRhs {
+                /// The `Implies` term (cache key).
+                term: TermId,
+                /// The evaluated premise.
+                lhs_eval: TermId,
+            },
+            /// The child's value *is* this term's value (an `Implies` with a
+            /// `True` premise, or an `Ite` whose condition decided a
+            /// branch); records it in the cache under `term`.
+            Forward {
+                /// The term whose cache entry receives the forwarded value.
+                term: TermId,
+            },
+            /// Binary operator: the left operand's value arrives next.
+            BinLhs {
+                /// The operator term (cache key).
+                term: TermId,
+                /// Which operator folds the operands.
+                op: BinOp,
+                /// The unevaluated right operand.
+                rhs: TermId,
+            },
+            /// Binary operator: the right operand's value arrives next, then
+            /// the operator folds.
+            BinRhs {
+                /// The operator term (cache key).
+                term: TermId,
+                /// Which operator folds the operands.
+                op: BinOp,
+                /// The evaluated left operand.
+                lhs_eval: TermId,
+            },
+            /// N-ary operator: collect the operand just evaluated, evaluate
+            /// `args[next..]`, then fold.
+            NaryArgs {
+                /// The operator term (cache key).
+                term: TermId,
+                /// Which operator folds the operands.
+                op: NaryOp,
+                /// All operands.
+                args: SmallVec<[TermId; 4]>,
+                /// Index of the next operand to evaluate.
+                next: usize,
+                /// Operand values collected so far.
+                evaluated: SmallVec<[TermId; 4]>,
+            },
+            /// `Neg(arg)`: fold the evaluated argument.
+            NegArg {
+                /// The `Neg` term (cache key).
+                term: TermId,
+            },
+            /// `Ite`: the condition's value arrives next.
+            IteCond {
+                /// The `Ite` term (cache key).
+                term: TermId,
+                /// The unevaluated then-branch.
+                then_br: TermId,
+                /// The unevaluated else-branch.
+                else_br: TermId,
+            },
+            /// `Ite` with a symbolic condition: the then-branch's value
+            /// arrives next (both branches are evaluated, as before).
+            IteThen {
+                /// The `Ite` term (cache key).
+                term: TermId,
+                /// The evaluated (symbolic) condition.
+                cond_eval: TermId,
+                /// The unevaluated else-branch.
+                else_br: TermId,
+            },
+            /// `Ite` with a symbolic condition: the else-branch's value
+            /// arrives next, then the `ite` is rebuilt.
+            IteElse {
+                /// The `Ite` term (cache key).
+                term: TermId,
+                /// The evaluated (symbolic) condition.
+                cond_eval: TermId,
+                /// The evaluated then-branch.
+                then_eval: TermId,
+            },
+            /// `Apply`: collect the argument just evaluated, evaluate
+            /// `args[next..]`, then consult the model's function table.
+            ApplyArgs {
+                /// The application term (cache key).
+                term: TermId,
+                /// The application's result sort (for rebuilding).
+                sort: SortId,
+                /// The applied function symbol.
+                func: Spur,
+                /// All argument terms.
+                args: SmallVec<[TermId; 4]>,
+                /// Index of the next argument to evaluate.
+                next: usize,
+                /// Argument values collected so far.
+                evaluated: Vec<TermId>,
+            },
+            /// `Select`: the index's value arrives next; the array is only
+            /// evaluated if the model lookups miss.
+            SelectIndex {
+                /// The `Select` term (cache key).
+                term: TermId,
+                /// The original (unevaluated) array operand.
+                array: TermId,
+            },
+            /// `Select` whose model lookups missed: the array's value
+            /// arrives next, then the select is rebuilt and probed once
+            /// more.
+            SelectArray {
+                /// The `Select` term (cache key).
+                term: TermId,
+                /// The evaluated index.
+                index_eval: TermId,
+            },
+            /// `Exists` loop top: emit the next candidate combination, or
+            /// finish when the budget is spent.
+            ExistsAdvance(Box<ExistsState>),
+            /// `Exists` after one candidate body evaluated: classify it,
+            /// step the odometer, and loop or finish.
+            ExistsJudge(Box<ExistsState>),
+        }
 
-            // Boolean connectives
-            TermKind::Not(arg) => {
-                let eval_arg = self.evaluate_under_model_cached(*arg, model, manager, cache);
-                if let Some(arg_t) = manager.get(eval_arg) {
-                    match arg_t.kind {
-                        TermKind::True => manager.mk_false(),
-                        TermKind::False => manager.mk_true(),
-                        _ => manager.mk_not(eval_arg),
-                    }
-                } else {
-                    manager.mk_not(eval_arg)
-                }
+        /// Close out an `Exists` search: the exact verdict rule of the old
+        /// `evaluate_exists_inline` tail, cached under the `Exists` term.
+        fn finish_exists(
+            st: &ExistsState,
+            manager: &mut TermManager,
+            cache: &mut FxHashMap<TermId, TermId>,
+        ) -> TermId {
+            let result = if st.found_true {
+                manager.mk_true()
+            } else if st.all_false && !st.found_symbolic && st.combo_count > 0 {
+                // All candidates gave False: exists is provably False under
+                // this model.
+                manager.mk_false()
+            } else {
+                // Some candidates were symbolic or we had a witness check
+                // issue -- return symbolic.
+                st.body
+            };
+            cache.insert(st.term, result);
+            result
+        }
+
+        /// Fold a fully evaluated application: function-table lookup first,
+        /// then rebuild with the evaluated arguments and probe the model for
+        /// the rebuilt term.
+        fn fold_apply(
+            func: Spur,
+            evaluated_args: &[TermId],
+            sort: SortId,
+            model: &CompletedModel,
+            manager: &mut TermManager,
+        ) -> TermId {
+            // Try looking up the function in the model's interpretation table
+            if let Some(result) = model.eval_apply(func, evaluated_args) {
+                result
+            } else {
+                // Rebuild with evaluated args and check model for the new term
+                let func_name = manager.resolve_str(func).to_string();
+                let new_term = manager.mk_apply(&func_name, evaluated_args.iter().copied(), sort);
+                model.eval(new_term).unwrap_or(new_term)
             }
-            TermKind::And(args) => {
-                let mut all_true = true;
-                for &arg in args.iter() {
-                    let eval_arg = self.evaluate_under_model_cached(arg, model, manager, cache);
-                    if let Some(arg_t) = manager.get(eval_arg) {
+        }
+
+        let mut stack: Vec<EvalFrame> = vec![EvalFrame::Enter(root)];
+        // The most recently completed subresult; only ever read by a frame
+        // popped immediately after the completion that wrote it.
+        let mut value: TermId = root;
+
+        while let Some(frame) = stack.pop() {
+            match frame {
+                EvalFrame::Enter(term) => {
+                    if let Some(&cached) = cache.get(&term) {
+                        value = cached;
+                        continue;
+                    }
+                    // Check if we have a direct model value
+                    if let Some(val) = model.eval(term) {
+                        cache.insert(term, val);
+                        value = val;
+                        continue;
+                    }
+                    let Some(t) = manager.get(term).cloned() else {
+                        // Unknown id: hand it back unchanged (and uncached),
+                        // exactly as the recursive version did.
+                        value = term;
+                        continue;
+                    };
+                    let term_sort = t.sort;
+                    match t.kind {
+                        // Constants evaluate to themselves
+                        TermKind::True
+                        | TermKind::False
+                        | TermKind::IntConst(_)
+                        | TermKind::RealConst(_)
+                        | TermKind::BitVecConst { .. }
+                        | TermKind::StringLit(_) => {
+                            cache.insert(term, term);
+                            value = term;
+                        }
+
+                        // Boolean connectives
+                        TermKind::Not(arg) => {
+                            stack.push(EvalFrame::NotArg { term });
+                            stack.push(EvalFrame::Enter(arg));
+                        }
+                        TermKind::And(args) => {
+                            if let Some(&first) = args.first() {
+                                stack.push(EvalFrame::AndArgs {
+                                    term,
+                                    args,
+                                    next: 1,
+                                    all_true: true,
+                                });
+                                stack.push(EvalFrame::Enter(first));
+                            } else {
+                                // Empty conjunction: vacuously true.
+                                let result = manager.mk_true();
+                                cache.insert(term, result);
+                                value = result;
+                            }
+                        }
+                        TermKind::Or(args) => {
+                            if let Some(&first) = args.first() {
+                                stack.push(EvalFrame::OrArgs {
+                                    term,
+                                    args,
+                                    next: 1,
+                                    all_false: true,
+                                });
+                                stack.push(EvalFrame::Enter(first));
+                            } else {
+                                // Empty disjunction: vacuously false.
+                                let result = manager.mk_false();
+                                cache.insert(term, result);
+                                value = result;
+                            }
+                        }
+                        TermKind::Implies(lhs, rhs) => {
+                            stack.push(EvalFrame::ImpliesLhs { term, rhs });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+
+                        // Comparisons
+                        TermKind::Eq(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Eq,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Lt(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Lt,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Le(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Le,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Gt(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Gt,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Ge(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Ge,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+
+                        // Arithmetic
+                        TermKind::Add(args) => {
+                            if let Some(&first) = args.first() {
+                                stack.push(EvalFrame::NaryArgs {
+                                    term,
+                                    op: NaryOp::Add,
+                                    args,
+                                    next: 1,
+                                    evaluated: SmallVec::new(),
+                                });
+                                stack.push(EvalFrame::Enter(first));
+                            } else {
+                                let result = self.eval_add(&[], manager);
+                                cache.insert(term, result);
+                                value = result;
+                            }
+                        }
+                        TermKind::Mul(args) => {
+                            if let Some(&first) = args.first() {
+                                stack.push(EvalFrame::NaryArgs {
+                                    term,
+                                    op: NaryOp::Mul,
+                                    args,
+                                    next: 1,
+                                    evaluated: SmallVec::new(),
+                                });
+                                stack.push(EvalFrame::Enter(first));
+                            } else {
+                                let result = self.eval_mul(&[], manager);
+                                cache.insert(term, result);
+                                value = result;
+                            }
+                        }
+                        TermKind::Sub(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Sub,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Div(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Div,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Mod(lhs, rhs) => {
+                            stack.push(EvalFrame::BinLhs {
+                                term,
+                                op: BinOp::Mod,
+                                rhs,
+                            });
+                            stack.push(EvalFrame::Enter(lhs));
+                        }
+                        TermKind::Neg(arg) => {
+                            stack.push(EvalFrame::NegArg { term });
+                            stack.push(EvalFrame::Enter(arg));
+                        }
+
+                        // If-then-else
+                        TermKind::Ite(cond, then_br, else_br) => {
+                            stack.push(EvalFrame::IteCond {
+                                term,
+                                then_br,
+                                else_br,
+                            });
+                            stack.push(EvalFrame::Enter(cond));
+                        }
+
+                        // Function applications: evaluate args, then look up
+                        // in the function table
+                        TermKind::Apply { func, args } => {
+                            if let Some(&first) = args.first() {
+                                stack.push(EvalFrame::ApplyArgs {
+                                    term,
+                                    sort: term_sort,
+                                    func,
+                                    args,
+                                    next: 1,
+                                    evaluated: Vec::new(),
+                                });
+                                stack.push(EvalFrame::Enter(first));
+                            } else {
+                                let result = fold_apply(func, &[], term_sort, model, manager);
+                                cache.insert(term, result);
+                                value = result;
+                            }
+                        }
+
+                        // Forall: return symbolic -- we only instantiate at
+                        // the top level
+                        TermKind::Forall { .. } => {
+                            cache.insert(term, term);
+                            value = term;
+                        }
+
+                        // Exists: try to find a witness using default
+                        // candidates (see `ExistsState` for the verdict rule).
+                        TermKind::Exists { vars, body, .. } => {
+                            let candidate_lists =
+                                self.build_exists_candidate_lists(&vars, model, manager);
+                            if candidate_lists.is_empty()
+                                || candidate_lists.iter().any(|c| c.is_empty())
+                            {
+                                // No candidates → cannot determine; symbolic.
+                                cache.insert(term, body);
+                                value = body;
+                            } else {
+                                // Enumerate combinations (simplified for the
+                                // single-var case; limit total).
+                                let total_combos: usize = candidate_lists
+                                    .iter()
+                                    .map(|c| c.len())
+                                    .product::<usize>()
+                                    .min(50);
+                                let indices = vec![0usize; candidate_lists.len()];
+                                stack.push(EvalFrame::ExistsAdvance(Box::new(ExistsState {
+                                    term,
+                                    body,
+                                    vars,
+                                    candidate_lists,
+                                    indices,
+                                    combo_count: 0,
+                                    total_combos,
+                                    found_true: false,
+                                    found_symbolic: false,
+                                    all_false: true,
+                                })));
+                            }
+                        }
+
+                        // Array select: evaluate index, then try multiple
+                        // model lookups.
+                        //
+                        // Key insight: the model stores values keyed by the
+                        // *original* term graph (e.g. select(a, 3)), not by
+                        // any model-evaluated variant.  If we first evaluate
+                        // the array `a` via the model (obtaining some value V)
+                        // and then build select(V, 3), the resulting TermId
+                        // won't match the model's entry for select(a, 3).
+                        // Therefore, we first try looking up
+                        // `select(original_array, evaluated_index)` before
+                        // falling back.
+                        TermKind::Select(array, index) => {
+                            stack.push(EvalFrame::SelectIndex { term, array });
+                            stack.push(EvalFrame::Enter(index));
+                        }
+
+                        // Variables that haven't been substituted -- look up
+                        // in model or return as-is
+                        TermKind::Var(_) => {
+                            let result = model.eval(term).unwrap_or(term);
+                            cache.insert(term, result);
+                            value = result;
+                        }
+
+                        // Anything else: try simplification
+                        _ => {
+                            let result = manager.simplify(term);
+                            cache.insert(term, result);
+                            value = result;
+                        }
+                    }
+                }
+                EvalFrame::NotArg { term } => {
+                    let eval_arg = value;
+                    let result = if let Some(arg_t) = manager.get(eval_arg) {
                         match arg_t.kind {
-                            TermKind::False => {
-                                let false_val = manager.mk_false();
-                                cache.insert(term, false_val);
-                                return false_val;
-                            }
+                            TermKind::True => manager.mk_false(),
+                            TermKind::False => manager.mk_true(),
+                            _ => manager.mk_not(eval_arg),
+                        }
+                    } else {
+                        manager.mk_not(eval_arg)
+                    };
+                    cache.insert(term, result);
+                    value = result;
+                }
+                EvalFrame::AndArgs {
+                    term,
+                    args,
+                    next,
+                    mut all_true,
+                } => {
+                    // `value` is the evaluation of `args[next - 1]`.
+                    let mut decided = false;
+                    if let Some(arg_t) = manager.get(value) {
+                        match arg_t.kind {
+                            TermKind::False => decided = true,
                             TermKind::True => { /* continue */ }
-                            _ => {
-                                all_true = false;
-                            }
+                            _ => all_true = false,
                         }
                     } else {
                         all_true = false;
                     }
+                    if decided {
+                        // A definite False decides the conjunction; the
+                        // remaining conjuncts stay unevaluated (the exact
+                        // recursive short-circuit).
+                        let false_val = manager.mk_false();
+                        cache.insert(term, false_val);
+                        value = false_val;
+                    } else if let Some(&next_arg) = args.get(next) {
+                        stack.push(EvalFrame::AndArgs {
+                            term,
+                            args,
+                            next: next + 1,
+                            all_true,
+                        });
+                        stack.push(EvalFrame::Enter(next_arg));
+                    } else if all_true {
+                        let result = manager.mk_true();
+                        cache.insert(term, result);
+                        value = result;
+                    } else {
+                        // Not fully evaluated -- return symbolic
+                        cache.insert(term, term);
+                        value = term;
+                    }
                 }
-                if all_true {
-                    manager.mk_true()
-                } else {
-                    // Not fully evaluated -- return symbolic
-                    term
-                }
-            }
-            TermKind::Or(args) => {
-                let mut all_false = true;
-                for &arg in args.iter() {
-                    let eval_arg = self.evaluate_under_model_cached(arg, model, manager, cache);
-                    if let Some(arg_t) = manager.get(eval_arg) {
+                EvalFrame::OrArgs {
+                    term,
+                    args,
+                    next,
+                    mut all_false,
+                } => {
+                    let mut decided = false;
+                    if let Some(arg_t) = manager.get(value) {
                         match arg_t.kind {
-                            TermKind::True => {
-                                let true_val = manager.mk_true();
-                                cache.insert(term, true_val);
-                                return true_val;
-                            }
+                            TermKind::True => decided = true,
                             TermKind::False => { /* continue */ }
-                            _ => {
-                                all_false = false;
-                            }
+                            _ => all_false = false,
                         }
                     } else {
                         all_false = false;
                     }
-                }
-                if all_false { manager.mk_false() } else { term }
-            }
-            TermKind::Implies(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                if let Some(lhs_t) = manager.get(eval_lhs) {
-                    match lhs_t.kind {
-                        TermKind::False => manager.mk_true(),
-                        TermKind::True => {
-                            self.evaluate_under_model_cached(*rhs, model, manager, cache)
-                        }
-                        _ => {
-                            let eval_rhs =
-                                self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                            manager.mk_implies(eval_lhs, eval_rhs)
-                        }
-                    }
-                } else {
-                    let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                    manager.mk_implies(eval_lhs, eval_rhs)
-                }
-            }
-
-            // Comparisons
-            TermKind::Eq(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_eq(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Lt(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_lt(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Le(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_le(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Gt(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_gt(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Ge(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_ge(eval_lhs, eval_rhs, manager)
-            }
-
-            // Arithmetic
-            TermKind::Add(args) => {
-                let eval_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.evaluate_under_model_cached(a, model, manager, cache))
-                    .collect();
-                self.eval_add(&eval_args, manager)
-            }
-            TermKind::Mul(args) => {
-                let eval_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.evaluate_under_model_cached(a, model, manager, cache))
-                    .collect();
-                self.eval_mul(&eval_args, manager)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_sub(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Div(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_div(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Mod(lhs, rhs) => {
-                let eval_lhs = self.evaluate_under_model_cached(*lhs, model, manager, cache);
-                let eval_rhs = self.evaluate_under_model_cached(*rhs, model, manager, cache);
-                self.eval_modulo(eval_lhs, eval_rhs, manager)
-            }
-            TermKind::Neg(arg) => {
-                let eval_arg = self.evaluate_under_model_cached(*arg, model, manager, cache);
-                self.eval_neg(eval_arg, manager)
-            }
-
-            // If-then-else
-            TermKind::Ite(cond, then_br, else_br) => {
-                let eval_cond = self.evaluate_under_model_cached(*cond, model, manager, cache);
-                if let Some(cond_t) = manager.get(eval_cond) {
-                    match cond_t.kind {
-                        TermKind::True => {
-                            self.evaluate_under_model_cached(*then_br, model, manager, cache)
-                        }
-                        TermKind::False => {
-                            self.evaluate_under_model_cached(*else_br, model, manager, cache)
-                        }
-                        _ => {
-                            // Can't determine branch -- evaluate both and return ite
-                            let eval_then =
-                                self.evaluate_under_model_cached(*then_br, model, manager, cache);
-                            let eval_else =
-                                self.evaluate_under_model_cached(*else_br, model, manager, cache);
-                            manager.mk_ite(eval_cond, eval_then, eval_else)
-                        }
-                    }
-                } else {
-                    term
-                }
-            }
-
-            // Function applications: evaluate args, then look up in function table
-            TermKind::Apply { func, args } => {
-                let evaluated_args: Vec<TermId> = args
-                    .iter()
-                    .map(|&a| self.evaluate_under_model_cached(a, model, manager, cache))
-                    .collect();
-
-                // Try looking up the function in the model's interpretation table
-                if let Some(result) = model.eval_apply(*func, &evaluated_args) {
-                    result
-                } else {
-                    // Rebuild with evaluated args and check model for the new term
-                    let func_name = manager.resolve_str(*func).to_string();
-                    let new_term =
-                        manager.mk_apply(&func_name, evaluated_args.iter().copied(), t.sort);
-                    model.eval(new_term).unwrap_or(new_term)
-                }
-            }
-
-            // Forall: return symbolic -- we only instantiate at the top level
-            TermKind::Forall { .. } => term,
-
-            // Exists: try to find a witness using default candidates.
-            // If all candidates evaluate to False, return False (proven no witness).
-            // If any evaluates to True, return True (witness found).
-            // If mixed (some symbolic), return symbolic (cannot determine).
-            TermKind::Exists {
-                vars,
-                body: exists_body,
-                ..
-            } => {
-                let vars_vec: SmallVec<[(Spur, SortId); 2]> = vars.clone();
-                let body_id = *exists_body;
-                self.evaluate_exists_inline(&vars_vec, body_id, model, manager, cache)
-            }
-
-            // Array select: evaluate index, then try multiple model lookups.
-            //
-            // Key insight: the model stores values keyed by the *original*
-            // term graph (e.g. select(a, 3)), not by any model-evaluated
-            // variant.  If we first evaluate the array `a` via the model
-            // (obtaining some value V) and then build select(V, 3), the
-            // resulting TermId won't match the model's entry for select(a, 3).
-            // Therefore, we first try looking up `select(original_array,
-            // evaluated_index)` before falling back.
-            TermKind::Select(array, index) => {
-                let eval_index = self.evaluate_under_model_cached(*index, model, manager, cache);
-                // Try 1: select(original_array, evaluated_index) — this matches
-                // the term graph created during MBQI instantiation encoding.
-                let select_with_orig_array = manager.mk_select(*array, eval_index);
-                if let Some(val) = model.eval(select_with_orig_array) {
-                    val
-                } else if let Some(val) = model.eval(term) {
-                    // Try 2: the un-modified original term (before substitution)
-                    val
-                } else {
-                    // Try 3: also evaluate the array in case it resolves
-                    let eval_array =
-                        self.evaluate_under_model_cached(*array, model, manager, cache);
-                    let new_select = manager.mk_select(eval_array, eval_index);
-                    if let Some(val) = model.eval(new_select) {
-                        val
+                    if decided {
+                        // A definite True decides the disjunction; the
+                        // remaining disjuncts stay unevaluated.
+                        let true_val = manager.mk_true();
+                        cache.insert(term, true_val);
+                        value = true_val;
+                    } else if let Some(&next_arg) = args.get(next) {
+                        stack.push(EvalFrame::OrArgs {
+                            term,
+                            args,
+                            next: next + 1,
+                            all_false,
+                        });
+                        stack.push(EvalFrame::Enter(next_arg));
+                    } else if all_false {
+                        let result = manager.mk_false();
+                        cache.insert(term, result);
+                        value = result;
                     } else {
-                        // Select term not in model — return symbolic.
-                        // This will make `all_evaluations_ground` false,
-                        // causing MBQI to return Unknown (not Satisfied),
-                        // which triggers blind instantiation as a fallback.
-                        new_select
+                        cache.insert(term, term);
+                        value = term;
+                    }
+                }
+                EvalFrame::ImpliesLhs { term, rhs } => {
+                    let eval_lhs = value;
+                    if let Some(lhs_t) = manager.get(eval_lhs) {
+                        match lhs_t.kind {
+                            TermKind::False => {
+                                let result = manager.mk_true();
+                                cache.insert(term, result);
+                                value = result;
+                            }
+                            TermKind::True => {
+                                // The conclusion's value is the implication's
+                                // value.
+                                stack.push(EvalFrame::Forward { term });
+                                stack.push(EvalFrame::Enter(rhs));
+                            }
+                            _ => {
+                                stack.push(EvalFrame::ImpliesRhs {
+                                    term,
+                                    lhs_eval: eval_lhs,
+                                });
+                                stack.push(EvalFrame::Enter(rhs));
+                            }
+                        }
+                    } else {
+                        // Unresolvable premise: rebuild from both halves,
+                        // exactly like the symbolic case.
+                        stack.push(EvalFrame::ImpliesRhs {
+                            term,
+                            lhs_eval: eval_lhs,
+                        });
+                        stack.push(EvalFrame::Enter(rhs));
+                    }
+                }
+                EvalFrame::ImpliesRhs { term, lhs_eval } => {
+                    let result = manager.mk_implies(lhs_eval, value);
+                    cache.insert(term, result);
+                    value = result;
+                }
+                EvalFrame::Forward { term } => {
+                    cache.insert(term, value);
+                }
+                EvalFrame::BinLhs { term, op, rhs } => {
+                    stack.push(EvalFrame::BinRhs {
+                        term,
+                        op,
+                        lhs_eval: value,
+                    });
+                    stack.push(EvalFrame::Enter(rhs));
+                }
+                EvalFrame::BinRhs { term, op, lhs_eval } => {
+                    let eval_rhs = value;
+                    let result = match op {
+                        BinOp::Eq => self.eval_eq(lhs_eval, eval_rhs, manager),
+                        BinOp::Lt => self.eval_lt(lhs_eval, eval_rhs, manager),
+                        BinOp::Le => self.eval_le(lhs_eval, eval_rhs, manager),
+                        BinOp::Gt => self.eval_gt(lhs_eval, eval_rhs, manager),
+                        BinOp::Ge => self.eval_ge(lhs_eval, eval_rhs, manager),
+                        BinOp::Sub => self.eval_sub(lhs_eval, eval_rhs, manager),
+                        BinOp::Div => self.eval_div(lhs_eval, eval_rhs, manager),
+                        BinOp::Mod => self.eval_modulo(lhs_eval, eval_rhs, manager),
+                    };
+                    cache.insert(term, result);
+                    value = result;
+                }
+                EvalFrame::NaryArgs {
+                    term,
+                    op,
+                    args,
+                    next,
+                    mut evaluated,
+                } => {
+                    evaluated.push(value);
+                    if let Some(&next_arg) = args.get(next) {
+                        stack.push(EvalFrame::NaryArgs {
+                            term,
+                            op,
+                            args,
+                            next: next + 1,
+                            evaluated,
+                        });
+                        stack.push(EvalFrame::Enter(next_arg));
+                    } else {
+                        let result = match op {
+                            NaryOp::Add => self.eval_add(&evaluated, manager),
+                            NaryOp::Mul => self.eval_mul(&evaluated, manager),
+                        };
+                        cache.insert(term, result);
+                        value = result;
+                    }
+                }
+                EvalFrame::NegArg { term } => {
+                    let result = self.eval_neg(value, manager);
+                    cache.insert(term, result);
+                    value = result;
+                }
+                EvalFrame::IteCond {
+                    term,
+                    then_br,
+                    else_br,
+                } => {
+                    let eval_cond = value;
+                    if let Some(cond_t) = manager.get(eval_cond) {
+                        match cond_t.kind {
+                            TermKind::True => {
+                                stack.push(EvalFrame::Forward { term });
+                                stack.push(EvalFrame::Enter(then_br));
+                            }
+                            TermKind::False => {
+                                stack.push(EvalFrame::Forward { term });
+                                stack.push(EvalFrame::Enter(else_br));
+                            }
+                            _ => {
+                                // Can't determine branch -- evaluate both and
+                                // return ite
+                                stack.push(EvalFrame::IteThen {
+                                    term,
+                                    cond_eval: eval_cond,
+                                    else_br,
+                                });
+                                stack.push(EvalFrame::Enter(then_br));
+                            }
+                        }
+                    } else {
+                        cache.insert(term, term);
+                        value = term;
+                    }
+                }
+                EvalFrame::IteThen {
+                    term,
+                    cond_eval,
+                    else_br,
+                } => {
+                    stack.push(EvalFrame::IteElse {
+                        term,
+                        cond_eval,
+                        then_eval: value,
+                    });
+                    stack.push(EvalFrame::Enter(else_br));
+                }
+                EvalFrame::IteElse {
+                    term,
+                    cond_eval,
+                    then_eval,
+                } => {
+                    let result = manager.mk_ite(cond_eval, then_eval, value);
+                    cache.insert(term, result);
+                    value = result;
+                }
+                EvalFrame::ApplyArgs {
+                    term,
+                    sort,
+                    func,
+                    args,
+                    next,
+                    mut evaluated,
+                } => {
+                    evaluated.push(value);
+                    if let Some(&next_arg) = args.get(next) {
+                        stack.push(EvalFrame::ApplyArgs {
+                            term,
+                            sort,
+                            func,
+                            args,
+                            next: next + 1,
+                            evaluated,
+                        });
+                        stack.push(EvalFrame::Enter(next_arg));
+                    } else {
+                        let result = fold_apply(func, &evaluated, sort, model, manager);
+                        cache.insert(term, result);
+                        value = result;
+                    }
+                }
+                EvalFrame::SelectIndex { term, array } => {
+                    let eval_index = value;
+                    // Try 1: select(original_array, evaluated_index) — this
+                    // matches the term graph created during MBQI
+                    // instantiation encoding.
+                    let select_with_orig_array = manager.mk_select(array, eval_index);
+                    if let Some(val) = model.eval(select_with_orig_array) {
+                        cache.insert(term, val);
+                        value = val;
+                    } else if let Some(val) = model.eval(term) {
+                        // Try 2: the un-modified original term (before
+                        // substitution)
+                        cache.insert(term, val);
+                        value = val;
+                    } else {
+                        // Try 3: also evaluate the array in case it resolves
+                        stack.push(EvalFrame::SelectArray {
+                            term,
+                            index_eval: eval_index,
+                        });
+                        stack.push(EvalFrame::Enter(array));
+                    }
+                }
+                EvalFrame::SelectArray { term, index_eval } => {
+                    let new_select = manager.mk_select(value, index_eval);
+                    // If even this misses, return the rebuilt select as a
+                    // symbolic residual.  This will make
+                    // `all_evaluations_ground` false, causing MBQI to return
+                    // Unknown (not Satisfied), which triggers blind
+                    // instantiation as a fallback.
+                    let result = model.eval(new_select).unwrap_or(new_select);
+                    cache.insert(term, result);
+                    value = result;
+                }
+                EvalFrame::ExistsAdvance(st) => {
+                    if st.combo_count >= st.total_combos {
+                        value = finish_exists(&st, manager, cache);
+                        continue;
+                    }
+                    // Build assignment for this combination
+                    let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+                    for (i, &(var_name, _sort)) in st.vars.iter().enumerate() {
+                        if let Some(&candidate) = st.candidate_lists[i].get(st.indices[i]) {
+                            subst.insert(var_name, candidate);
+                        }
+                    }
+                    // Apply substitution and evaluate
+                    let substituted = self.apply_substitution(st.body, &subst, manager);
+                    stack.push(EvalFrame::ExistsJudge(st));
+                    stack.push(EvalFrame::Enter(substituted));
+                }
+                EvalFrame::ExistsJudge(mut st) => {
+                    let evaluated = value;
+                    let mut witness = false;
+                    if let Some(eval_t) = manager.get(evaluated) {
+                        match eval_t.kind {
+                            TermKind::True => witness = true,
+                            TermKind::False => {
+                                // this candidate is False, keep checking
+                            }
+                            _ => {
+                                // symbolic
+                                st.found_symbolic = true;
+                                st.all_false = false;
+                            }
+                        }
+                    } else {
+                        st.found_symbolic = true;
+                        st.all_false = false;
+                    }
+                    if witness {
+                        // Witness found: stop enumerating (the recursive
+                        // version's `break` before the count/odometer step).
+                        st.found_true = true;
+                        value = finish_exists(&st, manager, cache);
+                        continue;
+                    }
+                    st.combo_count += 1;
+                    // Increment indices (odometer)
+                    let mut carry = true;
+                    for (i, idx) in st.indices.iter_mut().enumerate() {
+                        if carry {
+                            *idx += 1;
+                            let limit = st.candidate_lists.get(i).map_or(1, |c| c.len());
+                            if *idx >= limit {
+                                *idx = 0;
+                            } else {
+                                carry = false;
+                            }
+                        }
+                    }
+                    if carry {
+                        // All combinations tried.
+                        value = finish_exists(&st, manager, cache);
+                    } else {
+                        stack.push(EvalFrame::ExistsAdvance(st));
                     }
                 }
             }
-
-            // Variables that haven't been substituted -- look up in model or return as-is
-            TermKind::Var(_) => model.eval(term).unwrap_or(term),
-
-            // Anything else: try simplification
-            _ => manager.simplify(term),
-        };
-
-        cache.insert(term, result);
-        result
+        }
+        value
     }
 
-    /// Evaluate an Exists quantifier inline by trying default candidates.
-    ///
-    /// Returns:
-    /// - True  if any candidate gives a True body evaluation
-    /// - False if ALL candidates give False body evaluations (provably no witness)
-    /// - symbolic term if any evaluation is symbolic (cannot determine)
-    fn evaluate_exists_inline(
+    /// Build the per-variable candidate lists for an inline `Exists`
+    /// evaluation: universe elements, same-sort model values, then default
+    /// candidates for the built-in sorts, truncated to
+    /// `max_candidates_per_var` per variable.  (The candidate-selection half
+    /// of the old `evaluate_exists_inline`, unchanged.)
+    fn build_exists_candidate_lists(
         &self,
-        vars: &SmallVec<[(Spur, SortId); 2]>,
-        body: TermId,
+        vars: &[(Spur, SortId)],
         model: &CompletedModel,
         manager: &mut TermManager,
-        parent_cache: &mut FxHashMap<TermId, TermId>,
-    ) -> TermId {
-        // Build default candidate lists for each bound variable
+    ) -> Vec<Vec<TermId>> {
         let mut candidate_lists: Vec<Vec<TermId>> = Vec::new();
         for &(_var_name, sort) in vars {
             let mut cands = Vec::new();
@@ -942,92 +1519,7 @@ impl CounterExampleGenerator {
             cands.truncate(self.max_candidates_per_var);
             candidate_lists.push(cands);
         }
-
-        if candidate_lists.is_empty() || candidate_lists.iter().any(|c| c.is_empty()) {
-            // No candidates → cannot determine
-            return body; // symbolic
-        }
-
-        // Enumerate combinations (simplified for single-var case; limit total)
-        let total_combos: usize = candidate_lists
-            .iter()
-            .map(|c| c.len())
-            .product::<usize>()
-            .min(50);
-        let mut found_true = false;
-        let mut found_symbolic = false;
-        let mut all_false = true;
-        let mut combo_count = 0;
-
-        // Use the same enumerate_combinations helper logic
-        let mut indices = vec![0usize; candidate_lists.len()];
-        loop {
-            if combo_count >= total_combos {
-                break;
-            }
-            // Build assignment for this combination
-            let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
-            for (i, &(var_name, _sort)) in vars.iter().enumerate() {
-                if let Some(&candidate) = candidate_lists[i].get(indices[i]) {
-                    subst.insert(var_name, candidate);
-                }
-            }
-
-            // Apply substitution and evaluate
-            let mut sub_cache: FxHashMap<TermId, TermId> = FxHashMap::default();
-            let substituted = self.apply_substitution_cached(body, &subst, manager, &mut sub_cache);
-            let evaluated =
-                self.evaluate_under_model_cached(substituted, model, manager, parent_cache);
-
-            if let Some(eval_t) = manager.get(evaluated) {
-                match eval_t.kind {
-                    TermKind::True => {
-                        found_true = true;
-                        break; // witness found, no need to continue
-                    }
-                    TermKind::False => {
-                        // this candidate is False, keep checking
-                    }
-                    _ => {
-                        // symbolic
-                        found_symbolic = true;
-                        all_false = false;
-                    }
-                }
-            } else {
-                found_symbolic = true;
-                all_false = false;
-            }
-
-            combo_count += 1;
-
-            // Increment indices (odometer)
-            let mut carry = true;
-            for (i, idx) in indices.iter_mut().enumerate() {
-                if carry {
-                    *idx += 1;
-                    let limit = candidate_lists.get(i).map_or(1, |c| c.len());
-                    if *idx >= limit {
-                        *idx = 0;
-                    } else {
-                        carry = false;
-                    }
-                }
-            }
-            if carry {
-                break; // all combinations tried
-            }
-        }
-
-        if found_true {
-            manager.mk_true()
-        } else if all_false && !found_symbolic && combo_count > 0 {
-            // All candidates gave False: exists is provably False under this model
-            manager.mk_false()
-        } else {
-            // Some candidates were symbolic or we had a witness check issue
-            body // Return symbolic
-        }
+        candidate_lists
     }
 
     /// Evaluate equality
@@ -1373,140 +1865,5 @@ impl fmt::Display for CexStats {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_counterexample_creation() {
-        let cex = CounterExample::new(TermId::new(1), FxHashMap::default(), vec![], 0);
-        assert_eq!(cex.quantifier, TermId::new(1));
-        assert_eq!(cex.quality, 1.0);
-    }
-
-    #[test]
-    fn test_cex_generator_creation() {
-        let generator = CounterExampleGenerator::new();
-        assert_eq!(generator.max_cex_per_quantifier, 5);
-        assert_eq!(generator.max_candidates_per_var, 10);
-    }
-
-    #[test]
-    fn test_cex_generator_with_limits() {
-        let generator = CounterExampleGenerator::with_limits(10, 20, Duration::from_secs(2));
-        assert_eq!(generator.max_cex_per_quantifier, 10);
-        assert_eq!(generator.max_candidates_per_var, 20);
-        assert_eq!(generator.max_search_time, Duration::from_secs(2));
-    }
-
-    #[test]
-    fn test_enumerate_combinations_empty() {
-        let generator = CounterExampleGenerator::new();
-        let combos = generator.enumerate_combinations(&[], 10, 100);
-        assert_eq!(combos.len(), 1);
-        assert!(combos[0].is_empty());
-    }
-
-    #[test]
-    fn test_enumerate_combinations_single() {
-        let generator = CounterExampleGenerator::new();
-        let candidates = vec![vec![TermId::new(1), TermId::new(2)]];
-        let combos = generator.enumerate_combinations(&candidates, 10, 100);
-        assert_eq!(combos.len(), 2);
-    }
-
-    #[test]
-    fn test_enumerate_combinations_multiple() {
-        let generator = CounterExampleGenerator::new();
-        let candidates = vec![
-            vec![TermId::new(1), TermId::new(2)],
-            vec![TermId::new(3), TermId::new(4)],
-        ];
-        let combos = generator.enumerate_combinations(&candidates, 10, 100);
-        assert_eq!(combos.len(), 4); // 2 * 2
-    }
-
-    #[test]
-    fn test_enumerate_combinations_limit() {
-        let generator = CounterExampleGenerator::new();
-        let candidates = vec![
-            vec![TermId::new(1), TermId::new(2), TermId::new(3)],
-            vec![TermId::new(4), TermId::new(5), TermId::new(6)],
-        ];
-        let combos = generator.enumerate_combinations(&candidates, 10, 5);
-        assert!(combos.len() <= 5);
-    }
-
-    #[test]
-    fn test_cex_stats_display() {
-        let stats = CexStats {
-            num_searches: 10,
-            num_counterexamples_found: 5,
-            num_combinations_tried: 100,
-            num_timeouts: 1,
-            total_time: Duration::from_millis(500),
-        };
-        let display = format!("{}", stats);
-        assert!(display.contains("Searches: 10"));
-        assert!(display.contains("CEX found: 5"));
-    }
-
-    #[test]
-    fn test_refinement_strategy() {
-        assert_ne!(
-            RefinementStrategy::None,
-            RefinementStrategy::BlockCounterexamples
-        );
-    }
-
-    // ---------------------------------------------------------------------
-    // Audit regression: Euclidean div/mod (solver-p3b, finding #3)
-    // ---------------------------------------------------------------------
-
-    #[test]
-    fn test_audit_euclidean_div_rem_helper() {
-        // SMT-LIB Euclidean semantics: 0 <= r < |b|.
-        let cases = [
-            (7i64, 2i64, 3i64, 1i64),
-            (-7, 2, -4, 1),
-            (7, -2, -3, 1),
-            (-7, -2, 4, 1),
-            (6, 3, 2, 0),
-            (-6, 3, -2, 0),
-            (0, 5, 0, 0),
-        ];
-        for (a, b, eq, er) in cases {
-            let (q, r) = euclidean_div_rem(&BigInt::from(a), &BigInt::from(b));
-            assert_eq!(q, BigInt::from(eq), "div({a},{b})");
-            assert_eq!(r, BigInt::from(er), "mod({a},{b})");
-            // Verify the defining identity and remainder range.
-            assert_eq!(BigInt::from(b) * &q + &r, BigInt::from(a));
-            assert!(r >= BigInt::from(0) && r < BigInt::from(b.abs()));
-        }
-    }
-
-    #[test]
-    fn test_audit_eval_div_mod_negative_euclidean() {
-        let generator = CounterExampleGenerator::new();
-        let mut manager = TermManager::new();
-        let neg7 = manager.mk_int(BigInt::from(-7));
-        let two = manager.mk_int(BigInt::from(2));
-
-        let d = generator.eval_div(neg7, two, &mut manager);
-        let m = generator.eval_modulo(neg7, two, &mut manager);
-
-        // (div -7 2) = -4 (Euclidean), NOT -3 (truncated).
-        assert!(
-            matches!(manager.get(d).map(|t| &t.kind),
-                Some(TermKind::IntConst(v)) if *v == BigInt::from(-4)),
-            "eval_div(-7,2) must be Euclidean -4, got {:?}",
-            manager.get(d).map(|t| t.kind.clone())
-        );
-        // (mod -7 2) = 1 (non-negative), NOT -1.
-        assert!(
-            matches!(manager.get(m).map(|t| &t.kind),
-                Some(TermKind::IntConst(v)) if *v == BigInt::from(1)),
-            "eval_modulo(-7,2) must be Euclidean 1, got {:?}",
-            manager.get(m).map(|t| t.kind.clone())
-        );
-    }
-}
+#[path = "counterexample_tests.rs"]
+mod tests;

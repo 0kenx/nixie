@@ -16,83 +16,68 @@ impl Solver {
     /// After Skolemization produces `f(0, sk!0(0)) > 0`, the sub-term
     /// `sk!0(0)` must become a candidate for Int so that subsequent rounds
     /// can instantiate other universals with Skolem application values.
+    ///
+    /// Iterative (explicit work stack, `visited` set on the hash-consed DAG),
+    /// so nesting depth cannot overflow the native call stack; children are
+    /// pushed in reverse so registration keeps the original left-to-right
+    /// pre-order.
     pub(super) fn collect_ground_candidates_from_term(
         &mut self,
         term: TermId,
         manager: &TermManager,
     ) {
-        let mut visited = FxHashSet::default();
-        self.collect_ground_candidates_rec(term, manager, &mut visited);
-    }
-
-    pub(super) fn collect_ground_candidates_rec(
-        &mut self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) {
-        if !visited.insert(term) {
-            return;
-        }
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-        match &t.kind {
-            TermKind::Apply { func, args } => {
-                // Only register Skolem function applications as candidates.
-                // Non-Skolem Apply terms (like ack(0,1)) should NOT be
-                // used as integer candidates — using them would create
-                // nested applications (ack(ack(0,0), n)) that produce
-                // spurious conflicts.
-                let fname = manager.resolve_str(*func);
-                if fname.starts_with("sk") || fname.starts_with("skf") {
-                    self.mbqi.add_candidate(term, t.sort);
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![term];
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let Some(t) = manager.get(term) else {
+                continue;
+            };
+            match &t.kind {
+                TermKind::Apply { func, args } => {
+                    // Only register Skolem function applications as candidates.
+                    // Non-Skolem Apply terms (like ack(0,1)) should NOT be
+                    // used as integer candidates — using them would create
+                    // nested applications (ack(ack(0,0), n)) that produce
+                    // spurious conflicts.
+                    let fname = manager.resolve_str(*func);
+                    if fname.starts_with("sk") || fname.starts_with("skf") {
+                        self.mbqi.add_candidate(term, t.sort);
+                    }
+                    stack.extend(args.iter().rev().copied());
                 }
-                for &a in args.iter() {
-                    self.collect_ground_candidates_rec(a, manager, visited);
+                TermKind::And(args)
+                | TermKind::Or(args)
+                | TermKind::Add(args)
+                | TermKind::Mul(args) => {
+                    stack.extend(args.iter().rev().copied());
                 }
-            }
-            TermKind::Select(arr, idx) => {
-                // Array select terms are useful candidates for array theory
-                self.collect_ground_candidates_rec(*arr, manager, visited);
-                self.collect_ground_candidates_rec(*idx, manager, visited);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &a in args {
-                    self.collect_ground_candidates_rec(a, manager, visited);
+                TermKind::Not(a) | TermKind::Neg(a) => {
+                    stack.push(*a);
                 }
-            }
-            TermKind::Add(args) | TermKind::Mul(args) => {
-                for &a in args.iter() {
-                    self.collect_ground_candidates_rec(a, manager, visited);
+                // Array select terms are useful candidates for array theory.
+                TermKind::Select(a, b)
+                | TermKind::Implies(a, b)
+                | TermKind::Eq(a, b)
+                | TermKind::Lt(a, b)
+                | TermKind::Le(a, b)
+                | TermKind::Gt(a, b)
+                | TermKind::Ge(a, b)
+                | TermKind::Sub(a, b)
+                | TermKind::Div(a, b)
+                | TermKind::Mod(a, b) => {
+                    stack.push(*b);
+                    stack.push(*a);
                 }
+                TermKind::Ite(a, b, c) | TermKind::Store(a, b, c) => {
+                    stack.push(*c);
+                    stack.push(*b);
+                    stack.push(*a);
+                }
+                _ => {}
             }
-            TermKind::Not(a) | TermKind::Neg(a) => {
-                self.collect_ground_candidates_rec(*a, manager, visited);
-            }
-            TermKind::Implies(a, b)
-            | TermKind::Eq(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => {
-                self.collect_ground_candidates_rec(*a, manager, visited);
-                self.collect_ground_candidates_rec(*b, manager, visited);
-            }
-            TermKind::Ite(c, t_br, e) => {
-                self.collect_ground_candidates_rec(*c, manager, visited);
-                self.collect_ground_candidates_rec(*t_br, manager, visited);
-                self.collect_ground_candidates_rec(*e, manager, visited);
-            }
-            TermKind::Store(a, i, v) => {
-                self.collect_ground_candidates_rec(*a, manager, visited);
-                self.collect_ground_candidates_rec(*i, manager, visited);
-                self.collect_ground_candidates_rec(*v, manager, visited);
-            }
-            _ => {}
         }
     }
 }

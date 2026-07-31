@@ -509,6 +509,27 @@ impl StringRewriter {
         RewriteResult::Unchanged(manager.mk_int_to_str(arg))
     }
 
+    /// Report the outcome of re-running a term's builder.
+    ///
+    /// `str.<`, `str.<=`, `str.to_code` and `str.from_code` have all of their
+    /// constant folding in [`TermManager`]'s builders (which route through
+    /// `ast::str_fold`), so the rewriter re-runs construction rather than
+    /// keeping a second copy of the semantics that could drift from it. A
+    /// different term id back means the builder simplified something.
+    fn rebuilt_result(
+        original: TermId,
+        rebuilt: TermId,
+        rule: &'static str,
+        ctx: &mut RewriteContext,
+    ) -> RewriteResult {
+        if rebuilt == original {
+            RewriteResult::Unchanged(original)
+        } else {
+            ctx.stats_mut().record_rule(rule);
+            RewriteResult::Rewritten(rebuilt)
+        }
+    }
+
     /// Check if a term is a string term
     fn is_str_term(&self, term: TermId, manager: &TermManager) -> bool {
         let Some(t) = manager.get(term) else {
@@ -521,6 +542,9 @@ impl StringRewriter {
                 | TermKind::StrConcat(_, _)
                 | TermKind::StrSubstr(_, _, _)
                 | TermKind::StrReplace(_, _, _)
+                | TermKind::StrReplaceRe(_, _, _)
+                | TermKind::StrReplaceReAll(_, _, _)
+                | TermKind::StrFromCode(_)
                 | TermKind::IntToStr(_)
         )
     }
@@ -561,6 +585,22 @@ impl Rewriter for StringRewriter {
             }
             TermKind::StrToInt(arg) => self.rewrite_str_to_int(*arg, ctx, manager),
             TermKind::IntToStr(arg) => self.rewrite_int_to_str(*arg, ctx, manager),
+            TermKind::StrLt(lhs, rhs) => {
+                let rebuilt = manager.mk_str_lt(*lhs, *rhs);
+                Self::rebuilt_result(term, rebuilt, "str_lt_fold", ctx)
+            }
+            TermKind::StrLe(lhs, rhs) => {
+                let rebuilt = manager.mk_str_le(*lhs, *rhs);
+                Self::rebuilt_result(term, rebuilt, "str_le_fold", ctx)
+            }
+            TermKind::StrToCode(arg) => {
+                let rebuilt = manager.mk_str_to_code(*arg);
+                Self::rebuilt_result(term, rebuilt, "str_to_code_fold", ctx)
+            }
+            TermKind::StrFromCode(arg) => {
+                let rebuilt = manager.mk_str_from_code(*arg);
+                Self::rebuilt_result(term, rebuilt, "str_from_code_fold", ctx)
+            }
             TermKind::Eq(lhs, rhs) => {
                 // Check if it's a string equality
                 if self.is_str_term(*lhs, manager) || self.is_str_term(*rhs, manager) {
@@ -594,6 +634,10 @@ impl Rewriter for StringRewriter {
                 | TermKind::StrReplace(_, _, _)
                 | TermKind::StrToInt(_)
                 | TermKind::IntToStr(_)
+                | TermKind::StrLt(_, _)
+                | TermKind::StrLe(_, _)
+                | TermKind::StrToCode(_)
+                | TermKind::StrFromCode(_)
                 | TermKind::Eq(_, _)
         )
     }
@@ -887,5 +931,46 @@ mod tests {
             "expected an Ite encoding the side condition, got {:?}",
             t.kind
         );
+    }
+
+    /// `str.<` / `str.<=` / `str.to_code` / `str.from_code` fold once their
+    /// operands become constants, via the same `ast::str_fold` rules the term
+    /// builders use.  The `str.++` operands here are *not* constants at
+    /// construction time, so this exercises the rewriter path rather than the
+    /// builder's own fold.
+    #[test]
+    fn test_string_order_and_code_folds_after_operands_simplify() {
+        use crate::rewrite::CombinedRewriter;
+
+        let mut manager = TermManager::new();
+        let mut ctx = RewriteContext::new();
+        let mut rewriter = CombinedRewriter::new();
+
+        let a = manager.mk_string_lit("a");
+        let b = manager.mk_string_lit("b");
+        let ab = manager.mk_str_concat(a, b);
+        let ac = manager.mk_string_lit("ac");
+
+        let lt = manager.mk_str_lt(ab, ac);
+        assert!(
+            matches!(
+                manager.get(lt).map(|t| &t.kind),
+                Some(TermKind::StrLt(_, _))
+            ),
+            "the operand is not a literal yet, so the builder must not fold"
+        );
+        let folded = rewriter.rewrite(lt, &mut ctx, &mut manager);
+        assert!(matches!(
+            manager.get(folded.term()).map(|t| &t.kind),
+            Some(TermKind::True)
+        ));
+
+        // `str.to_code` of a concatenation that simplifies to a singleton.
+        let empty = manager.mk_string_lit("");
+        let a_concat = manager.mk_str_concat(empty, a);
+        let to_code = manager.mk_str_to_code(a_concat);
+        let folded = rewriter.rewrite(to_code, &mut ctx, &mut manager);
+        assert!(matches!(manager.get(folded.term()).map(|t| &t.kind),
+                Some(TermKind::IntConst(n)) if n == &BigInt::from(97)));
     }
 }

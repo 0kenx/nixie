@@ -37,7 +37,7 @@ fn test_interpolant_term_and() {
 
     // x ∧ y
     let and3 = InterpolantTerm::and(vec![x.clone(), y.clone()]);
-    match and3 {
+    match &and3 {
         InterpolantTerm::And(args) => assert_eq!(args.len(), 2),
         _ => panic!("Expected And"),
     }
@@ -157,6 +157,86 @@ fn test_interpolation_config_default() {
     assert!(config.use_theory_interpolants);
     assert!(config.simplify_interpolants);
     assert!(config.enable_caching);
+}
+
+#[test]
+fn test_interpolation_config_default_max_simplify_depth_matches_term_default() {
+    // `InterpolationConfig::default`'s `max_simplify_depth` and
+    // `InterpolantTerm`'s own convenience-entry-point default
+    // (`InterpolantTerm::simplify`, used when no configured interpolator is
+    // available) must stay in sync -- they share
+    // `term::DEFAULT_SIMPLIFY_DEPTH` so this cannot drift silently.
+    let config = InterpolationConfig::default();
+    assert_eq!(
+        config.max_simplify_depth,
+        super::term::DEFAULT_SIMPLIFY_DEPTH
+    );
+}
+
+#[test]
+fn test_max_simplify_depth_observably_changes_simplification_result() {
+    // Regression for `InterpolationConfig::max_simplify_depth`: this field
+    // used to be declared, defaulted, and never read anywhere --
+    // `CraigInterpolator::extract` called the unbounded `InterpolantTerm::
+    // simplify()` regardless of what the config said. It is now threaded
+    // into `InterpolantTerm::simplify_bounded`, so setting it to a small
+    // value must observably leave a term less simplified than a large one.
+    //
+    // Not^20(Eq(x,x)): 20 nested `Not`s -- built via the raw enum variant,
+    // not the `InterpolantTerm::not` smart constructor, which would cancel
+    // adjacent pairs immediately on construction -- wrapping a genuinely
+    // reducible `Eq`.
+    let x = InterpolantTerm::var("x");
+    let mut term = InterpolantTerm::Not(Box::new(InterpolantTerm::Eq(
+        Box::new(x.clone()),
+        Box::new(x),
+    )));
+    for _ in 0..19 {
+        term = InterpolantTerm::Not(Box::new(term));
+    }
+
+    // Count the `Not` nesting of a term built only from `Not`/`Eq` nodes,
+    // iteratively rather than recursively.
+    fn not_depth(mut t: &InterpolantTerm) -> usize {
+        let mut count = 0;
+        while let InterpolantTerm::Not(inner) = t {
+            count += 1;
+            t = inner;
+        }
+        count
+    }
+
+    // A depth budget of 0 leaves the term completely untouched.
+    let untouched = term.simplify_bounded(0);
+    assert_eq!(untouched, term, "a depth of 0 must not simplify anything");
+    assert_eq!(not_depth(&untouched), 20);
+
+    // A small budget only partially unwinds the `Not` chain: observably
+    // different from both the untouched term and the fully-simplified one.
+    let shallow = term.simplify_bounded(5);
+    assert_eq!(
+        not_depth(&shallow),
+        10,
+        "a depth of 5 must leave exactly 10 of the original 20 `Not` layers"
+    );
+    assert_ne!(shallow, term);
+
+    // A budget comfortably larger than the term's own depth (20) fully
+    // simplifies it down to a `Bool` constant.
+    let deep = term.simplify_bounded(21);
+    assert_eq!(
+        deep,
+        InterpolantTerm::Bool(true),
+        "a sufficient depth must fully simplify Not^20(Eq(x,x)) to a Bool constant"
+    );
+
+    // The whole point: the SAME term, simplified with different depth
+    // budgets, produces observably different results, proving `max_depth`
+    // (and therefore `InterpolationConfig::max_simplify_depth`, which
+    // `CraigInterpolator::extract` threads into it) actually does something.
+    assert_ne!(untouched, shallow);
+    assert_ne!(shallow, deep);
+    assert_ne!(untouched, deep);
 }
 
 #[test]
@@ -364,7 +444,7 @@ fn test_nested_and_or() {
     let inner = InterpolantTerm::and(vec![x.clone(), y.clone()]);
     let outer = InterpolantTerm::and(vec![inner, z.clone()]);
 
-    match outer {
+    match &outer {
         InterpolantTerm::And(args) => assert_eq!(args.len(), 3),
         _ => panic!("Expected flattened And"),
     }
@@ -451,7 +531,7 @@ fn test_mcmillan_inference_global_pivot_uses_and() {
     );
 
     // `p` is a global (shared) pivot -> McMillan combines with AND.
-    match result {
+    match &result {
         InterpolantTerm::And(args) => assert_eq!(args.len(), 2),
         _ => panic!("Expected And for a global pivot, got {result:?}"),
     }
@@ -480,7 +560,7 @@ fn test_mcmillan_inference_a_local_pivot_uses_or() {
         InterpolantColor::AB,
     );
 
-    match result {
+    match &result {
         InterpolantTerm::Or(args) => assert_eq!(args.len(), 2),
         _ => panic!("Expected Or for an A-local pivot, got {result:?}"),
     }
@@ -505,7 +585,7 @@ fn test_huang_inference_global_pivot_uses_or() {
         interpolator.huang_interpolant("resolution", &premises, &conclusions, InterpolantColor::AB);
 
     // `p` is global -> Huang (the McMillan dual) combines with OR.
-    match result {
+    match &result {
         InterpolantTerm::Or(args) => assert_eq!(args.len(), 2),
         _ => panic!("Expected Or for a global pivot, got {result:?}"),
     }
@@ -645,4 +725,116 @@ fn test_symbol_fallback_colors_unregistered_theory_lemma() {
         interpolator.color_axiom(lemma, "(or p r)"),
         InterpolantColor::A
     );
+}
+
+/// Build `And(And(... And(Var("x")) ...))` nested `depth` levels deep,
+/// iteratively and with the plain variant constructor (the normalizing
+/// `InterpolantTerm::and` would flatten the nesting away).
+fn deep_and_chain(depth: usize, leaf: &str) -> InterpolantTerm {
+    let mut node = InterpolantTerm::var(leaf);
+    for _ in 0..depth {
+        node = InterpolantTerm::And(vec![node]);
+    }
+    node
+}
+
+/// `InterpolantTerm` is public with public variants, so callers build values of
+/// unbounded depth directly (and `CraigInterpolator` builds them from proofs of
+/// unbounded depth). `PartialEq` and `Hash` used to be derived, i.e. recursive.
+///
+/// Running on a deliberately small (128 KiB) stack: returning at all is the
+/// proof.
+///
+/// The stack size and `DEPTH` are scaled together on purpose: what is pinned is
+/// the ratio, ~21 bytes per frame, which no real call frame fits into. Never
+/// raise one without raising the other.
+#[test]
+fn test_deep_interpolant_term_eq_and_hash_do_not_overflow() {
+    const DEPTH: usize = 6_250;
+
+    let handle = std::thread::Builder::new()
+        .stack_size(1 << 17)
+        .spawn(|| {
+            let a = deep_and_chain(DEPTH, "x");
+            let b = deep_and_chain(DEPTH, "x");
+            let c = deep_and_chain(DEPTH, "y");
+
+            // Equality is structural and iterative; a difference buried at the
+            // very bottom must still be found.
+            assert!(a == b);
+            assert!(a != c);
+
+            // Hashing is iterative and consistent with equality.
+            let hash_of = |value: &InterpolantTerm| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(value, &mut hasher);
+                std::hash::Hasher::finish(&hasher)
+            };
+            assert_eq!(hash_of(&a), hash_of(&b));
+            assert_ne!(hash_of(&a), hash_of(&c));
+        })
+        .expect("thread spawn should succeed");
+
+    handle.join().expect("worker thread should not panic");
+}
+
+/// The hand-written `PartialEq`/`Hash` must agree on every variant, not just
+/// the ones the interpolator happens to build.
+#[test]
+fn test_interpolant_term_eq_and_hash_across_variants() {
+    let hash_of = |value: &InterpolantTerm| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(value, &mut hasher);
+        std::hash::Hasher::finish(&hasher)
+    };
+    let x = || InterpolantTerm::var("x");
+    let y = || InterpolantTerm::var("y");
+    let boxed = |t: InterpolantTerm| Box::new(t);
+
+    let samples: Vec<InterpolantTerm> = vec![
+        InterpolantTerm::Bool(true),
+        InterpolantTerm::Bool(false),
+        x(),
+        y(),
+        InterpolantTerm::Not(boxed(x())),
+        InterpolantTerm::And(vec![x(), y()]),
+        InterpolantTerm::Or(vec![x(), y()]),
+        InterpolantTerm::Implies(boxed(x()), boxed(y())),
+        InterpolantTerm::Eq(boxed(x()), boxed(y())),
+        InterpolantTerm::Lt(boxed(x()), boxed(y())),
+        InterpolantTerm::Le(boxed(x()), boxed(y())),
+        InterpolantTerm::Num(BigRational::from_integer(3.into())),
+        InterpolantTerm::Add(vec![x(), y()]),
+        InterpolantTerm::Sub(boxed(x()), boxed(y())),
+        InterpolantTerm::Mul(vec![x(), y()]),
+        InterpolantTerm::App(Symbol::new("f", 1), vec![x()]),
+        InterpolantTerm::Select(boxed(x()), boxed(y())),
+        InterpolantTerm::Store(boxed(x()), boxed(y()), boxed(x())),
+    ];
+
+    for (i, a) in samples.iter().enumerate() {
+        // Reflexive, and consistent with its own clone.
+        let copy = a.clone();
+        assert!(a == &copy, "sample {i} should equal its clone");
+        assert_eq!(hash_of(a), hash_of(&copy), "sample {i} hash mismatch");
+
+        for (j, b) in samples.iter().enumerate() {
+            if i != j {
+                assert!(a != b, "samples {i} and {j} must not compare equal");
+            }
+        }
+    }
+
+    // Arity and operand order must both matter.
+    assert!(InterpolantTerm::And(vec![x(), y()]) != InterpolantTerm::And(vec![x()]));
+    assert!(InterpolantTerm::And(vec![x(), y()]) != InterpolantTerm::And(vec![y(), x()]));
+    assert!(
+        InterpolantTerm::Sub(boxed(x()), boxed(y()))
+            != InterpolantTerm::Sub(boxed(y()), boxed(x()))
+    );
+
+    // Structurally different shapes over the same leaves must hash differently.
+    let nested = InterpolantTerm::And(vec![InterpolantTerm::And(vec![x(), y()])]);
+    let flat = InterpolantTerm::And(vec![x(), y()]);
+    assert_ne!(hash_of(&nested), hash_of(&flat));
 }

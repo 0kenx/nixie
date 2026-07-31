@@ -3,6 +3,75 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+/// Largest code point in the alphabet of the SMT-LIB 2.6 Unicode Strings
+/// theory (`0x2FFFF`, i.e. 196607 — the BMP plus the two next planes).
+/// A `\u` escape denoting a larger value is **not** an escape sequence at
+/// all, so its backslash stands for itself.
+///
+/// Reference: Z3's `zstring.h` (`unicode_max_char()`).
+pub(crate) const MAX_STRING_CODE_POINT: u32 = 0x2_FFFF;
+
+/// Value of a single ASCII hexadecimal digit byte, or `None`.
+fn hex_digit_value(byte: u8) -> Option<u32> {
+    match byte {
+        b'0'..=b'9' => Some(u32::from(byte - b'0')),
+        b'a'..=b'f' => Some(u32::from(byte - b'a') + 10),
+        b'A'..=b'F' => Some(u32::from(byte - b'A') + 10),
+        _ => None,
+    }
+}
+
+/// Try to read an SMT-LIB Unicode-Strings escape sequence at the start of
+/// `input` (which must begin at a `\`), returning `(code_point, byte_len)`.
+///
+/// The SMT-LIB 2.6 Unicode Strings theory defines exactly two escape forms
+/// inside a string literal:
+///
+/// * `\ud₃d₂d₁d₀` — exactly four hexadecimal digits;
+/// * `\u{d₀}` … `\u{d₄d₃d₂d₁d₀}` — one to five hexadecimal digits in braces.
+///
+/// Both denote the character whose code point is that hexadecimal number,
+/// which must be in the range `0..=0x2FFFF`. **Any other occurrence of `\` is not an
+/// escape sequence and stands for itself** — including `\u{}`, a six-digit
+/// braced form, a too-large code point, and a `\` followed by anything else.
+///
+/// Reference: Z3's `zstring.cpp` (`zstring::is_escape_char`), mirrored here
+/// digit-for-digit so both accept exactly the same literals.
+fn scan_unicode_escape(input: &str) -> Option<(u32, usize)> {
+    // Only ASCII bytes are inspected, and every byte of a multi-byte UTF-8
+    // sequence is >= 0x80, so byte indexing can never split a character.
+    let bytes = input.as_bytes();
+    if bytes.first() != Some(&b'\\') || bytes.get(1) != Some(&b'u') {
+        return None;
+    }
+
+    // Braced form `\u{d...}`; `\u{}` is explicitly excluded (as in Z3, which
+    // requires the byte after `{` to differ from `}`).
+    if bytes.get(2) == Some(&b'{') && bytes.get(3).is_some_and(|b| *b != b'}') {
+        let mut value: u32 = 0;
+        // At most five digits fit, so the sixth inspected byte must be `}`
+        // for the sequence to be an escape at all.
+        for i in 0..6 {
+            let byte = *bytes.get(3 + i)?;
+            if let Some(digit) = hex_digit_value(byte) {
+                value = value * 16 + digit;
+            } else if byte == b'}' {
+                return (value <= MAX_STRING_CODE_POINT).then_some((value, 4 + i));
+            } else {
+                return None;
+            }
+        }
+        return None;
+    }
+
+    // Unbraced form `\ud₃d₂d₁d₀`: exactly four hexadecimal digits.
+    let mut value: u32 = 0;
+    for i in 0..4 {
+        value = value * 16 + hex_digit_value(*bytes.get(2 + i)?)?;
+    }
+    (value <= MAX_STRING_CODE_POINT).then_some((value, 6))
+}
+
 /// Token kind
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -325,27 +394,57 @@ impl<'a> Lexer<'a> {
     /// Read a `"..."`-quoted string literal body, starting just past the
     /// opening `"`. `start_of_token` is the opening `"`'s position, used
     /// only to anchor an error if the closing `"` is never found.
+    ///
+    /// The returned `String` is the literal's *value*: the doubled-quote
+    /// escape `""` is folded to a single `"`, and the two SMT-LIB Unicode
+    /// Strings escape forms (`\ud₃d₂d₁d₀` and `\u{d...}`) are decoded to the
+    /// single character they denote. Any other backslash stands for itself —
+    /// see [`scan_unicode_escape`].
     fn read_string_lit(&mut self, start_of_token: usize) -> String {
         let mut result = String::new();
         let mut terminated = false;
         while self.pos < self.input.len() {
-            if let Some(c) = self.input[self.pos..].chars().next() {
-                self.pos += c.len_utf8();
-                if c == '"' {
-                    // Check for escaped quote
-                    if self.pos < self.input.len() && self.input[self.pos..].starts_with('"') {
-                        result.push('"');
-                        self.pos += 1;
-                    } else {
-                        terminated = true;
-                        break;
-                    }
-                } else {
-                    result.push(c);
-                }
-            } else {
+            let Some(c) = self.input[self.pos..].chars().next() else {
                 break;
+            };
+            if c == '"' {
+                self.pos += 1;
+                // Check for escaped quote
+                if self.pos < self.input.len() && self.input[self.pos..].starts_with('"') {
+                    result.push('"');
+                    self.pos += 1;
+                } else {
+                    terminated = true;
+                    break;
+                }
+                continue;
             }
+            if c == '\\'
+                && let Some((code_point, len)) = scan_unicode_escape(&self.input[self.pos..])
+            {
+                if let Some(decoded) = char::from_u32(code_point) {
+                    result.push(decoded);
+                } else {
+                    // The SMT-LIB alphabet includes the UTF-16 surrogate range
+                    // `0xD800..=0xDFFF`, which a Rust `char` (and therefore
+                    // OxiZ's string representation) cannot hold. Rejecting the
+                    // literal is honest; silently keeping the undecoded text
+                    // would make `str.len` and friends answer about a
+                    // different string.
+                    self.errors.push(LexError {
+                        message: format!(
+                            "string literal escape denotes surrogate code point U+{code_point:04X}, \
+                             which is not representable"
+                        ),
+                        pos: self.pos,
+                    });
+                    result.push_str(&self.input[self.pos..self.pos + len]);
+                }
+                self.pos += len;
+                continue;
+            }
+            self.pos += c.len_utf8();
+            result.push(c);
         }
         if !terminated {
             self.errors.push(LexError {
@@ -492,5 +591,100 @@ mod tests {
             lexer.next_token().expect("should get keyword token").kind,
             TokenKind::Keyword(k) if k == "named"
         ));
+    }
+
+    /// Lex `input` (which must be a single string literal) and return its
+    /// decoded value together with whether any lexical error was recorded.
+    fn lex_string_lit(input: &str) -> (String, bool) {
+        let mut lexer = Lexer::new(input);
+        let token = lexer.next_token().expect("should get a token");
+        match token.kind {
+            TokenKind::StringLit(s) => (s, lexer.has_errors()),
+            other => panic!("expected a string literal token, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_string_escape_braced_form() {
+        // `\u{d...}` with 1..=5 hex digits decodes to one code point.
+        let (value, errored) = lex_string_lit(r#""\u{e9}""#);
+        assert_eq!(value, "\u{e9}");
+        assert_eq!(value.chars().count(), 1);
+        assert!(!errored);
+
+        let (value, _) = lex_string_lit(r#""\u{7}""#);
+        assert_eq!(value.chars().count(), 1);
+        let (value, _) = lex_string_lit(r#""\u{1F600}""#);
+        assert_eq!(value, "\u{1f600}");
+        assert_eq!(value.chars().count(), 1);
+    }
+
+    #[test]
+    fn test_string_escape_four_digit_form() {
+        // The unbraced form requires exactly four hexadecimal digits.
+        let (value, errored) = lex_string_lit("\"\\u0041\"");
+        assert_eq!(value, "A");
+        assert!(!errored);
+
+        // Three digits then a non-hex character is not an escape.
+        let (value, _) = lex_string_lit(r#""\u004z""#);
+        assert_eq!(value, r"\u004z");
+    }
+
+    #[test]
+    fn test_string_escape_code_point_boundaries() {
+        // 0 and 0x2FFFF are both in range and decode to one character.
+        let (value, _) = lex_string_lit(r#""\u{0}""#);
+        assert_eq!(value, "\0");
+        assert_eq!(value.chars().count(), 1);
+
+        let (value, _) = lex_string_lit(r#""\u{2ffff}""#);
+        assert_eq!(value, "\u{2ffff}");
+        assert_eq!(value.chars().count(), 1);
+
+        // 0x30000 is one above the SMT-LIB alphabet's maximum, so the
+        // sequence is not an escape and stands for itself.
+        let (value, errored) = lex_string_lit(r#""\u{30000}""#);
+        assert_eq!(value, r"\u{30000}");
+        assert_eq!(value.chars().count(), 9);
+        assert!(!errored);
+    }
+
+    #[test]
+    fn test_string_non_escape_backslash_stands_for_itself() {
+        for (input, expected) in [
+            (r#""\q""#, r"\q"),
+            (r#""\u{}""#, r"\u{}"),
+            (r#""\u{110000}""#, r"\u{110000}"),
+            (r#""\u{000041}""#, r"\u{000041}"),
+            (r#""\u00""#, r"\u00"),
+            (r#""\\""#, r"\\"),
+        ] {
+            let (value, errored) = lex_string_lit(input);
+            assert_eq!(value, expected, "input {input}");
+            assert!(!errored, "input {input} should not be a lexical error");
+        }
+    }
+
+    #[test]
+    fn test_string_doubled_quote_escape() {
+        let (value, errored) = lex_string_lit("\"a\"\"b\"");
+        assert_eq!(value, "a\"b");
+        assert!(!errored);
+    }
+
+    #[test]
+    fn test_string_mixed_escapes_and_plain_text() {
+        let (value, errored) = lex_string_lit("\"a\\u{62}c\\u0064e\"");
+        assert_eq!(value, "abcde");
+        assert!(!errored);
+    }
+
+    #[test]
+    fn test_string_surrogate_escape_is_a_lexical_error() {
+        let (_, errored) = lex_string_lit(r#""\ud800""#);
+        assert!(errored, "a lone surrogate escape must be reported");
+        let (_, errored) = lex_string_lit(r#""\u{dfff}""#);
+        assert!(errored, "a lone surrogate escape must be reported");
     }
 }

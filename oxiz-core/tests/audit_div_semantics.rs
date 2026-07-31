@@ -155,6 +155,41 @@ fn rewrite_real_division_stays_exact() {
     }
 }
 
+/// Issue #22: the exact Int `div`/`mod` constants appearing in the reported
+/// QF_AUFLIA read-over-write reproducer, over every operand-sign combination.
+///
+/// SMT-LIB Ints fixes `m = n * (div m n) + (mod m n)` with `0 <= (mod m n) <
+/// |n|`, so the remainder is *never* negative — unlike Rust's truncating `%`,
+/// where `-3 % -5 == -3` and `-3 % 5 == -3`.  Folding `div`/`mod` with `/`/`%`
+/// instead of `div_euclid`/`rem_euclid` would be a soundness bug across every
+/// Int logic, so pin the Euclidean answers directly.
+#[test]
+fn test_issue_22_euclidean_div_mod_folding() {
+    // (div 7 7) = 1 and (mod 7 7) = 0.
+    let (m, t) = fold_div(7, 7);
+    expect_int(&m, t, 1);
+    let (m, t) = fold_mod(7, 7);
+    expect_int(&m, t, 0);
+
+    // Both operands negative: -3 = -5*1 + 2.
+    let (m, t) = fold_div(-3, -5);
+    expect_int(&m, t, 1);
+    let (m, t) = fold_mod(-3, -5);
+    expect_int(&m, t, 2); // NOT Rust's -3 % -5 == -3
+
+    // Negative dividend, positive divisor: -3 = 5*(-1) + 2.
+    let (m, t) = fold_div(-3, 5);
+    expect_int(&m, t, -1);
+    let (m, t) = fold_mod(-3, 5);
+    expect_int(&m, t, 2); // NOT Rust's -3 % 5 == -3
+
+    // Positive dividend, negative divisor: 3 = -5*0 + 3.
+    let (m, t) = fold_div(3, -5);
+    expect_int(&m, t, 0);
+    let (m, t) = fold_mod(3, -5);
+    expect_int(&m, t, 3);
+}
+
 // ---------------------------------------------------------------------------
 // Model evaluator: Euclidean div/mod and exact real division.
 // ---------------------------------------------------------------------------

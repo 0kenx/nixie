@@ -42,5 +42,6 @@ unused_variables = "allow"
 dead_code = "allow"
 
 [lints.clippy]
+unwrap_used = "deny"
 too_many_arguments = "allow"
 type_complexity = "allow"

@@ -134,6 +134,12 @@ pub struct TheoryCoordinator {
     theories: FxHashMap<TheoryId, Box<dyn TheorySolver>>,
     /// Shared terms between theories
     shared_terms: FxHashMap<TermId, SharedTerm>,
+    /// Union-by-rank ranks for the equivalence-class union-find over
+    /// [`SharedTerm::representative`]. Kept outside [`SharedTerm`] so the
+    /// public shape of that struct stays a description of the term rather
+    /// than of the union-find that happens to index it. A missing entry means
+    /// rank 0.
+    class_rank: FxHashMap<TermId, u32>,
     /// Pending equality propagations
     pending_equalities: VecDeque<EqualityProp>,
     /// Memoized implied equalities by theory and decision level.
@@ -159,6 +165,7 @@ impl TheoryCoordinator {
             stats: CoordinatorStats::default(),
             theories: FxHashMap::default(),
             shared_terms: FxHashMap::default(),
+            class_rank: FxHashMap::default(),
             pending_equalities: VecDeque::new(),
             theory_propagation_cache: FxHashMap::default(),
             formula_theories: FxHashMap::default(),
@@ -380,9 +387,14 @@ impl TheoryCoordinator {
         theories
     }
 
-    /// Merge equivalence classes for two terms
+    /// Merge equivalence classes for two terms.
+    ///
+    /// Union by rank: the shallower tree is hung under the deeper one, which
+    /// together with the path compression in [`Self::find_representative`]
+    /// keeps the union-find near-flat (inverse-Ackermann amortized) instead of
+    /// degenerating into the O(N)-deep chain the previous parent-always-left
+    /// union produced.
     fn merge_equivalence_classes(&mut self, lhs: TermId, rhs: TermId) -> Result<(), String> {
-        // Get representatives
         let lhs_rep = self.find_representative(lhs);
         let rhs_rep = self.find_representative(rhs);
 
@@ -390,23 +402,74 @@ impl TheoryCoordinator {
             return Ok(());
         }
 
-        // Union: make lhs_rep point to rhs_rep
-        if let Some(st) = self.shared_terms.get_mut(&lhs_rep) {
-            st.representative = rhs_rep;
+        let lhs_rank = self.class_rank.get(&lhs_rep).copied().unwrap_or(0);
+        let rhs_rank = self.class_rank.get(&rhs_rep).copied().unwrap_or(0);
+
+        // (child, new_root)
+        let (child, root) = if lhs_rank < rhs_rank {
+            (lhs_rep, rhs_rep)
+        } else if lhs_rank > rhs_rank {
+            (rhs_rep, lhs_rep)
+        } else {
+            self.class_rank.insert(lhs_rep, lhs_rank + 1);
+            (rhs_rep, lhs_rep)
+        };
+
+        if let Some(st) = self.shared_terms.get_mut(&child) {
+            st.representative = root;
+        } else {
+            // `child` is a root that was never registered as a shared term, so
+            // there is no slot to write its new parent into. Materialize one
+            // rather than dropping the union on the floor and silently
+            // reporting two merged terms as unequal.
+            self.shared_terms.insert(
+                child,
+                SharedTerm {
+                    term: child,
+                    theories: FxHashSet::default(),
+                    representative: root,
+                },
+            );
+            self.stats.shared_terms_count = self.shared_terms.len();
         }
 
         Ok(())
     }
 
-    /// Find equivalence class representative
-    fn find_representative(&self, term: TermId) -> TermId {
-        if let Some(st) = self.shared_terms.get(&term)
-            && st.representative != term
-        {
-            // Path compression would be applied here
-            return self.find_representative(st.representative);
+    /// Find the equivalence class representative of `term`.
+    ///
+    /// Iterative two-pass find with path compression: the first pass walks to
+    /// the root collecting the path, the second re-points every node on that
+    /// path directly at the root. Written as an explicit loop rather than a
+    /// recursion because the return type is a bare `TermId` with no error
+    /// channel -- a depth cap here could only ever produce a silently wrong
+    /// representative, i.e. two equal terms reported as distinct.
+    fn find_representative(&mut self, term: TermId) -> TermId {
+        // Pass 1: walk to the root.
+        let mut path: Vec<TermId> = Vec::new();
+        let mut current = term;
+        loop {
+            match self.shared_terms.get(&current) {
+                Some(st) if st.representative != current => {
+                    let next = st.representative;
+                    path.push(current);
+                    current = next;
+                }
+                // Either `current` is its own representative, or it is not
+                // registered at all -- both are roots.
+                _ => break,
+            }
         }
-        term
+
+        // Pass 2: compress.
+        let root = current;
+        for node in path {
+            if let Some(st) = self.shared_terms.get_mut(&node) {
+                st.representative = root;
+            }
+        }
+
+        root
     }
 
     /// Add a shared term
@@ -1072,5 +1135,88 @@ mod tests {
             .backtrack(0)
             .expect("backtrack should clear higher-level cache entries");
         assert_eq!(coordinator.theory_propagation_cache.len(), 1);
+    }
+
+    /// A union-find chain built one link at a time used to be walked
+    /// recursively by `find_representative`, so a chain of a few tens of
+    /// thousands of shared terms overflowed the native stack. Returning at
+    /// all is the assertion here (a stack overflow aborts the process).
+    #[test]
+    fn find_representative_survives_a_long_union_chain_on_a_small_stack() {
+        // Stack and chain length scale together (1 MiB/100k -> 128 KiB/12.5k):
+        // the ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const CHAIN: TermId = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut coordinator = TheoryCoordinator::new(CoordinatorConfig::default());
+
+                for term in 0..=CHAIN {
+                    coordinator.add_shared_term(term, TheoryId::Arithmetic);
+                }
+                for term in 0..CHAIN {
+                    coordinator
+                        .merge_equivalence_classes(term, term + 1)
+                        .expect("merging two registered shared terms should succeed");
+                }
+
+                let first = coordinator.find_representative(0);
+                let last = coordinator.find_representative(CHAIN);
+                assert_eq!(first, last);
+                first
+            })
+            .expect("spawning the worker thread should succeed");
+
+        let representative = handle.join().expect("the walk must not overflow");
+        assert!(representative <= CHAIN);
+    }
+
+    /// Path compression must actually rewrite the path, not just report the
+    /// root: after one `find`, every node on the path points at the root.
+    #[test]
+    fn find_representative_compresses_the_path_it_walked() {
+        let mut coordinator = TheoryCoordinator::new(CoordinatorConfig::default());
+        for term in 0..8 {
+            coordinator.add_shared_term(term, TheoryId::Arithmetic);
+        }
+        for term in 0..7 {
+            coordinator
+                .merge_equivalence_classes(term, term + 1)
+                .expect("merge should succeed");
+        }
+
+        let root = coordinator.find_representative(0);
+        for term in 0..8 {
+            let entry = coordinator
+                .shared_terms
+                .get(&term)
+                .expect("every merged term is registered");
+            assert_eq!(entry.representative, root, "term {term} was not compressed");
+        }
+    }
+
+    /// Union by rank hangs the shallower tree under the deeper one, so merging
+    /// two singletons and then a third leaves depth one, not two.
+    #[test]
+    fn union_by_rank_hangs_the_shallower_tree_under_the_deeper_one() {
+        let mut coordinator = TheoryCoordinator::new(CoordinatorConfig::default());
+        for term in 0..3 {
+            coordinator.add_shared_term(term, TheoryId::Arithmetic);
+        }
+
+        coordinator
+            .merge_equivalence_classes(0, 1)
+            .expect("merge should succeed");
+        coordinator
+            .merge_equivalence_classes(2, 0)
+            .expect("merge should succeed");
+
+        let root = coordinator.find_representative(0);
+        assert_eq!(coordinator.find_representative(1), root);
+        assert_eq!(coordinator.find_representative(2), root);
+        // Rank-0 singleton {2} joined a rank-1 tree, so the root is unchanged.
+        assert_eq!(root, coordinator.find_representative(0));
+        assert_eq!(coordinator.class_rank.get(&root).copied().unwrap_or(0), 1);
     }
 }

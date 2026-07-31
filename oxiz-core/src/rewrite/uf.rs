@@ -26,19 +26,50 @@ use crate::prelude::*;
 use smallvec::SmallVec;
 
 /// Configuration for UF rewriting
+///
+/// There is deliberately no `max_depth` knob. One existed, defaulted to 100,
+/// and was never read by anything: it looked like a recursion bound for the
+/// (formerly native-recursive) substitution walk but could not fire. It is
+/// gone rather than wired up, because there is nothing sound to wire it to --
+/// `UfRewriter`'s internal substitution now delegates to
+/// [`TermManager::substitute`],
+/// which walks an explicit heap stack and so has no depth to bound, and a
+/// bound that *did* fire could only return an under-substituted term, which
+/// this rewriter's callers would silently install in place of the original
+/// application.
 #[derive(Debug, Clone)]
 pub struct UfRewriterConfig {
     /// Enable function congruence simplification
     pub enable_congruence: bool,
     /// Enable beta reduction
     pub enable_beta_reduction: bool,
-    /// Maximum term depth for rewriting
-    pub max_depth: usize,
     /// Enable argument normalization (sort arguments for AC symbols)
     pub enable_arg_normalization: bool,
     /// Track function definitions for inline expansion
     pub enable_inlining: bool,
-    /// Maximum inline expansion depth
+    /// Maximum number of expansion rounds the rewriter's private
+    /// `try_inline` may perform on one application.
+    ///
+    /// Round 1 expands the application itself; each further round expands
+    /// every defined application the previous round exposed. `0` therefore
+    /// disables inlining outright, and `1` makes it a single unfold (the
+    /// same step beta reduction performs).
+    ///
+    /// # What running out of budget does
+    ///
+    /// Nothing but *stop*. Expansion is replacement of a call by its
+    /// definition's body, which is an equality the definition itself
+    /// asserts, so any prefix of the expansion sequence is as valid as the
+    /// whole: a term left with `f(a)` still in it simply keeps that call.
+    /// The bound is what makes a self-referential definition
+    /// (`f(x) = f(x) + 1`) terminate instead of expanding forever, and it is
+    /// the *only* thing that bounds this: the expansion loop is otherwise
+    /// driven by the definitions, not by the input term's shape.
+    ///
+    /// This replaces a `depth` parameter that was threaded into
+    /// `try_inline` as a literal `0` by its single caller and never
+    /// incremented, so `depth >= max_inline_depth` was unfirable and
+    /// inlining was in fact a single unfold whatever this was set to.
     pub max_inline_depth: usize,
 }
 
@@ -47,7 +78,6 @@ impl Default for UfRewriterConfig {
         Self {
             enable_congruence: true,
             enable_beta_reduction: true,
-            max_depth: 100,
             enable_arg_normalization: true,
             enable_inlining: true,
             max_inline_depth: 5,
@@ -177,9 +207,17 @@ impl UfRewriter {
             return RewriteResult::Rewritten(result);
         }
 
-        // Try inlining
+        // Try inlining.
+        //
+        // Reachable only with `enable_beta_reduction` off: beta reduction
+        // above fires on exactly the same precondition (a definition of
+        // `func` with matching arity) and returns first. The two are kept
+        // apart because they promise different things -- beta reduction is
+        // one unfold, inlining is transitive expansion under
+        // `max_inline_depth` -- and a caller picks between them through the
+        // config rather than through call order.
         if self.config.enable_inlining
-            && let Some(result) = self.try_inline(func, args, 0, manager)
+            && let Some(result) = self.try_inline(func, args, manager)
         {
             ctx.stats_mut().record_rule("uf_inline");
             return RewriteResult::Rewritten(result);
@@ -216,8 +254,23 @@ impl UfRewriter {
         RewriteResult::Unchanged(term)
     }
 
-    /// Try beta reduction (substitute definition)
+    /// Try beta reduction: one unfold of `func`'s definition.
     fn try_beta_reduction(
+        &self,
+        func: Spur,
+        args: &SmallVec<[TermId; 4]>,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        self.expand_definition(func, args, manager)
+    }
+
+    /// Replace `func(args)` by its definition's body with the arguments
+    /// substituted for the parameters.
+    ///
+    /// `None` when `func` has no definition or the arity does not match.
+    /// The substitution itself is [`Self::substitute`], i.e. the
+    /// capture-avoiding [`TermManager::substitute`].
+    fn expand_definition(
         &self,
         func: Spur,
         args: &SmallVec<[TermId; 4]>,
@@ -242,341 +295,235 @@ impl UfRewriter {
         Some(self.substitute(def.body, &subst, manager))
     }
 
-    /// Try inlining with depth limit
+    /// Expand the application `func(args)` and keep expanding the defined
+    /// applications each expansion exposes, for at most
+    /// [`UfRewriterConfig::max_inline_depth`] rounds.
+    ///
+    /// # The bound is real
+    ///
+    /// The previous version took a `depth` argument, compared it against
+    /// `max_inline_depth`, and was called from exactly one place with a
+    /// literal `0`; it never recursed, so `depth` never grew and the
+    /// comparison never held. It was a single unfold wearing a bound's
+    /// clothing -- indistinguishable from [`Self::try_beta_reduction`],
+    /// which sits right above it in [`Self::rewrite_apply`].
+    ///
+    /// Now the rounds exist, so the budget is what stops them. There is no
+    /// other bound available: expansion is driven by the *definitions*, and
+    /// a definition may mention itself, so without a budget
+    /// `f(x) = f(x) + 1` expands forever. Running out is benign -- see
+    /// [`UfRewriterConfig::max_inline_depth`] -- because every intermediate
+    /// term is equal to the original by the definitions themselves.
+    ///
+    /// # Scope restriction
+    ///
+    /// Nested rounds refuse to enter binder scopes, and give up entirely on
+    /// a term that contains one (see
+    /// [`Self::collect_inlinable_applications`]). Round 1 is unaffected: it
+    /// expands the application it was handed regardless of what the body
+    /// contains.
+    ///
+    /// The traversal is iterative throughout -- both the search for nested
+    /// applications and [`TermManager::substitute`], which performs the
+    /// replacement -- so nothing here recurses on user-controlled nesting.
     fn try_inline(
         &self,
         func: Spur,
         args: &SmallVec<[TermId; 4]>,
-        depth: usize,
         manager: &mut TermManager,
     ) -> Option<TermId> {
-        if depth >= self.config.max_inline_depth {
+        // A zero budget means "do not inline", and it fires before any work
+        // is done rather than after the first unfold.
+        if self.config.max_inline_depth == 0 {
             return None;
         }
 
-        let def = self.definitions.get(&func)?;
+        // Round 1: the application itself.
+        let mut current = self.expand_definition(func, args, manager)?;
 
-        if def.params.len() != args.len() {
-            return None;
+        // Rounds 2..=max_inline_depth: whatever the previous round exposed.
+        for _ in 1..self.config.max_inline_depth {
+            let Some(applications) = self.collect_inlinable_applications(current, manager) else {
+                break;
+            };
+            if applications.is_empty() {
+                break;
+            }
+
+            let mut expansions: FxHashMap<TermId, TermId> = FxHashMap::default();
+            for application in applications {
+                if let Some(expansion) = self.expand_application_term(application, manager) {
+                    expansions.insert(application, expansion);
+                }
+            }
+            if expansions.is_empty() {
+                break;
+            }
+
+            let next = manager.substitute(current, &expansions);
+            if next == current {
+                break;
+            }
+            current = next;
         }
 
-        // Build substitution
-        let subst: FxHashMap<Spur, TermId> = def
-            .params
-            .iter()
-            .zip(args.iter())
-            .map(|(&param, &arg)| (param, arg))
-            .collect();
-
-        Some(self.substitute(def.body, &subst, manager))
+        Some(current)
     }
 
-    /// Apply substitution to a term
+    /// Expand the application *term* `application` (as opposed to a
+    /// `(func, args)` pair), or `None` if it is not a defined application.
+    fn expand_application_term(
+        &self,
+        application: TermId,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        // Clone the kind out first: `expand_definition` needs `&mut
+        // TermManager`, which cannot coexist with a borrow of the term.
+        let TermKind::Apply { func, args } = manager.get(application).map(|t| t.kind.clone())?
+        else {
+            return None;
+        };
+        self.expand_definition(func, &args, manager)
+    }
+
+    /// Collect the defined applications inside `root` that a further
+    /// inlining round may expand.
+    ///
+    /// Returns `None` when `root` contains a binder anywhere, meaning "do
+    /// not run further rounds on this term at all".
+    ///
+    /// # Why binders stop it
+    ///
+    /// A round replaces whole application *nodes* via
+    /// [`TermManager::substitute`]. That routine is capture-avoiding with
+    /// respect to the replacement terms' free variables: if a replacement
+    /// mentions `y` and the walk enters a `forall y`, it alpha-renames the
+    /// binder so the replacement's `y` cannot be captured. That is exactly
+    /// right for a replacement that came from outside the scope, and exactly
+    /// wrong for one that came from inside it -- expanding `f(y)` under
+    /// `forall y` yields a body mentioning that same bound `y`, and the
+    /// rename would push the binder off it. Terms are hash-consed, so an
+    /// application collected outside a binder can also occur inside one,
+    /// which makes "collect only outside binders" insufficient on its own;
+    /// bailing out on any binder is the conservative rule that has no such
+    /// hole. The cost is that applications in quantified formulas are
+    /// unfolded once (by round 1, or by beta reduction) rather than
+    /// transitively.
+    fn collect_inlinable_applications(
+        &self,
+        root: TermId,
+        manager: &TermManager,
+    ) -> Option<Vec<TermId>> {
+        let mut found: Vec<TermId> = Vec::new();
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![root];
+
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(term) = manager.get(id) else {
+                continue;
+            };
+            match &term.kind {
+                TermKind::Forall { .. }
+                | TermKind::Exists { .. }
+                | TermKind::Let { .. }
+                | TermKind::Match { .. } => return None,
+                TermKind::Apply { func, args } => {
+                    let defined = self
+                        .definitions
+                        .get(func)
+                        .is_some_and(|def| def.params.len() == args.len());
+                    if defined {
+                        found.push(id);
+                    }
+                    stack.extend(args.iter().copied());
+                }
+                kind => stack.extend(crate::ast::traversal::get_children(kind)),
+            }
+        }
+
+        Some(found)
+    }
+
+    /// Apply substitution to a term.
+    ///
+    /// # Why this delegates to [`TermManager::substitute`]
+    ///
+    /// This used to be a hand-rolled recursive walk over a whitelist of
+    /// `TermKind`s (`Var`, the Boolean connectives, `Eq`, the
+    /// linear-arithmetic operators, `Ite`, `Apply`, `Forall`/`Exists`/`Let`)
+    /// ending in
+    ///
+    /// ```text
+    /// // Leaves and other terms that don't need substitution
+    /// _ => term,
+    /// ```
+    ///
+    /// so every bit-vector, string, floating-point, datatype and array
+    /// operator, plus `Xor`, `Mod`, `Distinct` and `Match`, was returned
+    /// *unchanged*. The comment was true only of the literal leaves that also
+    /// land in that arm; for the operator kinds it was a silent
+    /// under-substitution.
+    ///
+    /// That is not a cosmetic gap here, because the result of this call
+    /// *replaces the application*: [`Self::try_beta_reduction`] and
+    /// [`Self::try_inline`] report `Some(..)` regardless of whether the
+    /// substitution did anything, and [`Self::rewrite_apply`] then returns it
+    /// as `RewriteResult::Rewritten`. With `f(p) = p + #x01`, rewriting
+    /// `f(#x05)` yielded `p + #x01` -- the callee's parameter variable, now
+    /// *free*, standing in for the application. See this module's
+    /// `tests::beta_reduction_substitutes_through_a_bitvector_operator`.
+    ///
+    /// The old walk was also **not capture-avoiding**: descending into a
+    /// binder it dropped shadowed names from the substitution but otherwise
+    /// rebuilt the binder verbatim, so `f(p) = ∀y. P(p, y)` applied to `y`
+    /// produced `∀y. P(y, y)` with the argument captured. And it recursed
+    /// natively once per level of term nesting, with no guard of any kind (the
+    /// `UfRewriterConfig::max_depth` field that looked like one was never read
+    /// -- it has been removed rather than left reading as a bound it never
+    /// was).
+    ///
+    /// [`TermManager::substitute`] fixes all three: it has an arm for every
+    /// `TermKind` with no catch-all (a new variant is a compile error there),
+    /// it is capture-avoiding across all four binder forms, it respects
+    /// shadowing, and it walks with an explicit heap stack. So this is now a
+    /// thin adapter: resolve each parameter *name* to the actual free
+    /// occurrences it denotes, then hand a `TermId`-keyed map to the core
+    /// routine.
+    ///
+    /// Occurrences are matched by name across all sorts, matching what the
+    /// caller supplies (a `FunctionDef`'s parameter `Spur`s carry no sort);
+    /// only *free* occurrences are replaced, so a binder re-binding a
+    /// parameter name still shadows it, exactly as before.
     fn substitute(
         &self,
         term: TermId,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
     ) -> TermId {
-        let Some(t) = manager.get(term).cloned() else {
+        if subst.is_empty() {
             return term;
-        };
-
-        match &t.kind {
-            TermKind::Var(name) => {
-                if let Some(&replacement) = subst.get(name) {
-                    replacement
-                } else {
-                    term
-                }
-            }
-
-            TermKind::Apply { func, args } => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&arg| self.substitute(arg, subst, manager))
-                    .collect();
-
-                if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                    term
-                } else {
-                    self.mk_apply_with_spur(*func, new_args.to_vec(), t.sort, manager)
-                }
-            }
-
-            TermKind::Not(arg) => {
-                let new_arg = self.substitute(*arg, subst, manager);
-                if new_arg == *arg {
-                    term
-                } else {
-                    manager.mk_not(new_arg)
-                }
-            }
-
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| self.substitute(arg, subst, manager))
-                    .collect();
-
-                if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                    term
-                } else {
-                    manager.mk_and(new_args)
-                }
-            }
-
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| self.substitute(arg, subst, manager))
-                    .collect();
-
-                if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                    term
-                } else {
-                    manager.mk_or(new_args)
-                }
-            }
-
-            TermKind::Implies(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_implies(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Eq(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_eq(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Ite(cond, then_br, else_br) => {
-                let new_cond = self.substitute(*cond, subst, manager);
-                let new_then = self.substitute(*then_br, subst, manager);
-                let new_else = self.substitute(*else_br, subst, manager);
-                if new_cond == *cond && new_then == *then_br && new_else == *else_br {
-                    term
-                } else {
-                    manager.mk_ite(new_cond, new_then, new_else)
-                }
-            }
-
-            TermKind::Add(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| self.substitute(arg, subst, manager))
-                    .collect();
-
-                if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                    term
-                } else {
-                    manager.mk_add(new_args)
-                }
-            }
-
-            TermKind::Mul(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&arg| self.substitute(arg, subst, manager))
-                    .collect();
-
-                if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                    term
-                } else {
-                    manager.mk_mul(new_args)
-                }
-            }
-
-            TermKind::Sub(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_sub(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Neg(arg) => {
-                let new_arg = self.substitute(*arg, subst, manager);
-                if new_arg == *arg {
-                    term
-                } else {
-                    manager.mk_neg(new_arg)
-                }
-            }
-
-            TermKind::Div(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_div(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Lt(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_lt(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Le(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_le(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Gt(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_gt(new_lhs, new_rhs)
-                }
-            }
-
-            TermKind::Ge(lhs, rhs) => {
-                let new_lhs = self.substitute(*lhs, subst, manager);
-                let new_rhs = self.substitute(*rhs, subst, manager);
-                if new_lhs == *lhs && new_rhs == *rhs {
-                    term
-                } else {
-                    manager.mk_ge(new_lhs, new_rhs)
-                }
-            }
-
-            // For quantifiers, need to avoid capturing
-            TermKind::Forall {
-                vars,
-                body,
-                patterns,
-            } => {
-                // Check if any bound variable shadows a substitution
-                let shadowed: FxHashSet<_> = vars.iter().map(|(name, _)| *name).collect();
-                let filtered_subst: FxHashMap<_, _> = subst
-                    .iter()
-                    .filter(|(k, _)| !shadowed.contains(*k))
-                    .map(|(&k, &v)| (k, v))
-                    .collect();
-
-                let new_body = self.substitute(*body, &filtered_subst, manager);
-                let new_patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns
-                    .iter()
-                    .map(|pat| {
-                        pat.iter()
-                            .map(|&t| self.substitute(t, &filtered_subst, manager))
-                            .collect()
-                    })
-                    .collect();
-
-                if new_body == *body && new_patterns == *patterns {
-                    term
-                } else {
-                    let var_strs: Vec<(String, _)> = vars
-                        .iter()
-                        .map(|(spur, sort)| (manager.resolve_str(*spur).to_string(), *sort))
-                        .collect();
-                    let var_refs: Vec<(&str, _)> = var_strs
-                        .iter()
-                        .map(|(s, sort)| (s.as_str(), *sort))
-                        .collect();
-                    manager.mk_forall_with_patterns(var_refs, new_body, new_patterns)
-                }
-            }
-
-            TermKind::Exists {
-                vars,
-                body,
-                patterns,
-            } => {
-                let shadowed: FxHashSet<_> = vars.iter().map(|(name, _)| *name).collect();
-                let filtered_subst: FxHashMap<_, _> = subst
-                    .iter()
-                    .filter(|(k, _)| !shadowed.contains(*k))
-                    .map(|(&k, &v)| (k, v))
-                    .collect();
-
-                let new_body = self.substitute(*body, &filtered_subst, manager);
-                let new_patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]> = patterns
-                    .iter()
-                    .map(|pat| {
-                        pat.iter()
-                            .map(|&t| self.substitute(t, &filtered_subst, manager))
-                            .collect()
-                    })
-                    .collect();
-
-                if new_body == *body && new_patterns == *patterns {
-                    term
-                } else {
-                    let var_strs: Vec<(String, _)> = vars
-                        .iter()
-                        .map(|(spur, sort)| (manager.resolve_str(*spur).to_string(), *sort))
-                        .collect();
-                    let var_refs: Vec<(&str, _)> = var_strs
-                        .iter()
-                        .map(|(s, sort)| (s.as_str(), *sort))
-                        .collect();
-                    manager.mk_exists_with_patterns(var_refs, new_body, new_patterns)
-                }
-            }
-
-            TermKind::Let { bindings, body } => {
-                // Substitute in binding values
-                let new_bindings: SmallVec<[(Spur, TermId); 2]> = bindings
-                    .iter()
-                    .map(|&(name, val)| (name, self.substitute(val, subst, manager)))
-                    .collect();
-
-                // Filter out shadowed variables for body
-                let shadowed: FxHashSet<_> = bindings.iter().map(|(name, _)| *name).collect();
-                let filtered_subst: FxHashMap<_, _> = subst
-                    .iter()
-                    .filter(|(k, _)| !shadowed.contains(*k))
-                    .map(|(&k, &v)| (k, v))
-                    .collect();
-
-                let new_body = self.substitute(*body, &filtered_subst, manager);
-
-                if new_bindings == *bindings && new_body == *body {
-                    term
-                } else {
-                    // Convert bindings to (String, TermId) and then (&str, TermId)
-                    let binding_strs: Vec<(String, TermId)> = new_bindings
-                        .iter()
-                        .map(|(spur, val)| (manager.resolve_str(*spur).to_string(), *val))
-                        .collect();
-                    let binding_refs: Vec<(&str, TermId)> = binding_strs
-                        .iter()
-                        .map(|(s, val)| (s.as_str(), *val))
-                        .collect();
-                    manager.mk_let(binding_refs, new_body)
-                }
-            }
-
-            // Leaves and other terms that don't need substitution
-            _ => term,
         }
+
+        let targets: FxHashMap<TermId, TermId> = manager
+            .free_vars_including_patterns(term)
+            .into_iter()
+            .filter_map(|var| match manager.get(var).map(|t| &t.kind) {
+                Some(TermKind::Var(name)) => subst.get(name).map(|&to| (var, to)),
+                _ => None,
+            })
+            .collect();
+
+        // No parameter occurs free (absent, or every occurrence shadowed by an
+        // inner binder of the same name): the term is its own substitution
+        // instance.
+        if targets.is_empty() {
+            return term;
+        }
+
+        manager.substitute(term, &targets)
     }
 
     /// Normalize commutative function arguments (sort by TermId)
@@ -749,6 +696,22 @@ mod tests {
         (manager, ctx, rewriter)
     }
 
+    /// Does `name` occur as a *free* variable anywhere in `term`?
+    ///
+    /// A beta reduction that silently skipped its body leaves the callee's
+    /// parameter variable free in the result, which is what these tests look
+    /// for.
+    fn mentions_free_var(manager: &TermManager, term: TermId, name: &str) -> bool {
+        manager
+            .free_vars_including_patterns(term)
+            .into_iter()
+            .filter_map(|v| match manager.get(v).map(|t| &t.kind) {
+                Some(TermKind::Var(n)) => Some(manager.resolve_str(*n).to_string()),
+                _ => None,
+            })
+            .any(|n| n == name)
+    }
+
     #[test]
     fn test_apply_unchanged() {
         let (mut manager, mut ctx, mut rewriter) = setup();
@@ -879,6 +842,340 @@ mod tests {
 
         // Should be unchanged since x is bound
         assert_eq!(result, forall);
+    }
+
+    /// Beta reduction through the *public* [`Rewriter::rewrite`] entry point
+    /// with a bit-vector body.
+    ///
+    /// `substitute` used to match a whitelist of `TermKind`s and end in
+    /// `_ => term`, so every bit-vector, string, floating-point, datatype and
+    /// array operator (plus `Xor`, `Mod`, `Distinct`, `Match`) was returned
+    /// *unchanged*. `try_beta_reduction` reports success regardless, so
+    /// `f(#x05)` with `f(p) = p + #x01` rewrote to `p + #x01` -- the callee's
+    /// parameter variable, now free, in place of the application.
+    #[test]
+    fn beta_reduction_substitutes_through_a_bitvector_operator() {
+        let (mut manager, mut ctx, mut rewriter) = setup();
+        let bv8 = manager.sorts.bitvec(8);
+
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", bv8);
+        let one = manager.mk_bitvec(1, 8);
+        let body = manager.mk_bv_add(param_var, one);
+
+        let f = manager.intern_str("f");
+        rewriter.register_definition(f, vec![param], body, bv8);
+
+        let five = manager.mk_bitvec(5, 8);
+        let apply = manager.mk_apply("f", vec![five], bv8);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager).term();
+
+        assert!(
+            !mentions_free_var(&manager, result, "p"),
+            "the parameter p must not survive beta reduction"
+        );
+        let expected = manager.mk_bv_add(five, one);
+        assert_eq!(result, expected, "expected #x05 + #x01");
+    }
+
+    /// Same gap, reached through a datatype constructor/selector body.
+    #[test]
+    fn beta_reduction_substitutes_through_a_datatype_constructor() {
+        let (mut manager, mut ctx, mut rewriter) = setup();
+        let int_sort = manager.sorts.int_sort;
+        let dt_sort = manager.sorts.mk_datatype_sort("Pair");
+
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", int_sort);
+        let zero = manager.mk_int(0);
+        let pair = manager.mk_dt_constructor("Pair", vec![param_var, zero], dt_sort);
+        let body = manager.mk_dt_selector("first", pair, int_sort);
+
+        let f = manager.intern_str("f");
+        rewriter.register_definition(f, vec![param], body, int_sort);
+
+        let seven = manager.mk_int(7);
+        let apply = manager.mk_apply("f", vec![seven], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager).term();
+
+        assert!(!mentions_free_var(&manager, result, "p"));
+        let expected_pair = manager.mk_dt_constructor("Pair", vec![seven, zero], dt_sort);
+        let expected = manager.mk_dt_selector("first", expected_pair, int_sort);
+        assert_eq!(result, expected);
+    }
+
+    /// Capture avoidance: `f(p) = ∀y. P(p, y)` applied to `y` must rename the
+    /// binder. The old walk rebuilt the `Forall` verbatim whenever the binder
+    /// did not shadow the substituted *name*, so `f(y)` became
+    /// `∀y. P(y, y)` -- the argument captured by the callee's own binder,
+    /// which is a different formula from the one beta reduction promises.
+    #[test]
+    fn beta_reduction_avoids_capturing_the_argument() {
+        let (mut manager, mut ctx, mut rewriter) = setup();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let inner = manager.mk_apply("P", vec![param_var, y], bool_sort);
+        let body = manager.mk_forall(vec![("y", int_sort)], inner);
+
+        let f = manager.intern_str("f");
+        rewriter.register_definition(f, vec![param], body, bool_sort);
+
+        let apply = manager.mk_apply("f", vec![y], bool_sort);
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager).term();
+
+        let kind = manager
+            .get(result)
+            .map(|t| t.kind.clone())
+            .expect("result term must exist");
+        let TermKind::Forall {
+            vars,
+            body: new_body,
+            ..
+        } = kind
+        else {
+            panic!("expected a Forall, got {kind:?}");
+        };
+        let (renamed, sort) = vars
+            .first()
+            .map(|&(n, s)| (manager.resolve_str(n).to_string(), s))
+            .expect("exactly one bound variable");
+        assert_ne!(renamed, "y", "the bound y must be alpha-renamed");
+
+        let fresh = manager.mk_var(&renamed, sort);
+        let expected_body = manager.mk_apply("P", vec![y, fresh], bool_sort);
+        assert_eq!(
+            new_body, expected_body,
+            "the argument y must not be captured by the callee's binder"
+        );
+    }
+
+    /// A `let` in the body: the value position must be substituted into, and a
+    /// `let` re-binding the parameter name must still shadow it.
+    #[test]
+    fn beta_reduction_descends_into_a_let_and_respects_shadowing() {
+        let (mut manager, mut ctx, mut rewriter) = setup();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", int_sort);
+        let zero = manager.mk_int(0);
+        // (let ((a p)) (> a 0))
+        let a = manager.mk_var("a", int_sort);
+        let inner = manager.mk_gt(a, zero);
+        let body = manager.mk_let(vec![("a", param_var)], inner);
+
+        let f = manager.intern_str("f");
+        rewriter.register_definition(f, vec![param], body, bool_sort);
+
+        let nine = manager.mk_int(9);
+        let apply = manager.mk_apply("f", vec![nine], bool_sort);
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager).term();
+
+        assert!(!mentions_free_var(&manager, result, "p"));
+        let expected = manager.mk_let(vec![("a", nine)], inner);
+        assert_eq!(result, expected);
+    }
+
+    // =======================================================================
+    // Inlining budget (`UfRewriterConfig::max_inline_depth`)
+    //
+    // These drive the rewriter through `enable_beta_reduction: false,
+    // enable_inlining: true`, which is the configuration that reaches
+    // `try_inline` at all -- with beta reduction on it fires first on the
+    // same precondition. See `rewrite_apply`.
+    // =======================================================================
+
+    /// A rewriter that inlines (and does not beta-reduce) with the given
+    /// budget.
+    fn inlining_setup(max_inline_depth: usize) -> (TermManager, RewriteContext, UfRewriter) {
+        let rewriter = UfRewriter::with_config(UfRewriterConfig {
+            enable_beta_reduction: false,
+            enable_inlining: true,
+            max_inline_depth,
+            ..UfRewriterConfig::default()
+        });
+        (TermManager::new(), RewriteContext::new(), rewriter)
+    }
+
+    /// Register `f1(p) = f2(p)`, ..., `f{last-1}(p) = f{last}(p)` and
+    /// `f{last}(p) = p + 1`, returning the parameter variable.
+    fn register_definition_chain(
+        manager: &mut TermManager,
+        rewriter: &mut UfRewriter,
+        last: usize,
+    ) {
+        let int_sort = manager.sorts.int_sort;
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", int_sort);
+
+        for index in 1..last {
+            let body = manager.mk_apply(&format!("f{}", index + 1), vec![param_var], int_sort);
+            let name = manager.intern_str(&format!("f{index}"));
+            rewriter.register_definition(name, vec![param], body, int_sort);
+        }
+
+        let one = manager.mk_int(1);
+        let body = manager.mk_add(vec![param_var, one]);
+        let name = manager.intern_str(&format!("f{last}"));
+        rewriter.register_definition(name, vec![param], body, int_sort);
+    }
+
+    /// A budget of zero refuses to inline at all -- the guard fires before
+    /// the first unfold.
+    #[test]
+    fn inline_budget_of_zero_disables_inlining() {
+        let (mut manager, mut ctx, mut rewriter) = inlining_setup(0);
+        register_definition_chain(&mut manager, &mut rewriter, 6);
+
+        let int_sort = manager.sorts.int_sort;
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f1", vec![five], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager);
+        assert!(!result.was_rewritten());
+        assert_eq!(result.term(), apply);
+    }
+
+    /// A budget of one is a single unfold: exactly what the (unfirable)
+    /// guard's predecessor did for every setting.
+    #[test]
+    fn inline_budget_of_one_is_a_single_unfold() {
+        let (mut manager, mut ctx, mut rewriter) = inlining_setup(1);
+        register_definition_chain(&mut manager, &mut rewriter, 6);
+
+        let int_sort = manager.sorts.int_sort;
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f1", vec![five], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager);
+        let expected = manager.mk_apply("f2", vec![five], int_sort);
+        assert_eq!(result.term(), expected);
+    }
+
+    /// The budget fires mid-chain and leaves the remaining call in place;
+    /// the term is still equal to the original by the definitions.
+    #[test]
+    fn inline_budget_stops_mid_chain() {
+        let (mut manager, mut ctx, mut rewriter) = inlining_setup(3);
+        register_definition_chain(&mut manager, &mut rewriter, 6);
+
+        let int_sort = manager.sorts.int_sort;
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f1", vec![five], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager);
+        // Three rounds: f1 -> f2 -> f3 -> f4.
+        let expected = manager.mk_apply("f4", vec![five], int_sort);
+        assert_eq!(result.term(), expected);
+    }
+
+    /// With enough budget the whole chain collapses to the innermost body --
+    /// which is what makes inlining more than beta reduction.
+    #[test]
+    fn a_sufficient_budget_inlines_the_whole_chain() {
+        let (mut manager, mut ctx, mut rewriter) = inlining_setup(20);
+        register_definition_chain(&mut manager, &mut rewriter, 6);
+
+        let int_sort = manager.sorts.int_sort;
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f1", vec![five], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager);
+        let one = manager.mk_int(1);
+        let expected = manager.mk_add(vec![five, one]);
+        assert_eq!(result.term(), expected);
+    }
+
+    /// A self-referential definition would expand forever; the budget is the
+    /// only thing that stops it, and stopping leaves a well-formed term.
+    #[test]
+    fn self_referential_definition_terminates_at_the_budget() {
+        let (mut manager, mut ctx, mut rewriter) = inlining_setup(4);
+        let int_sort = manager.sorts.int_sort;
+
+        // f(p) = f(p) + 1
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", int_sort);
+        let recursive_call = manager.mk_apply("f", vec![param_var], int_sort);
+        let one = manager.mk_int(1);
+        let body = manager.mk_add(vec![recursive_call, one]);
+        let f = manager.intern_str("f");
+        rewriter.register_definition(f, vec![param], body, int_sort);
+
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f", vec![five], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager).term();
+
+        // Four rounds of `f(5) -> f(5) + 1`, so four `+ 1`s wrapped around a
+        // residual call.
+        let mut expected = manager.mk_apply("f", vec![five], int_sort);
+        for _ in 0..4 {
+            expected = manager.mk_add(vec![expected, one]);
+        }
+        assert_eq!(result, expected);
+    }
+
+    /// A body containing a binder stops the nested rounds: round 1 still
+    /// expands the application it was handed, and nothing enters the
+    /// quantifier's scope.
+    #[test]
+    fn inlining_does_not_enter_binder_scopes() {
+        let (mut manager, mut ctx, mut rewriter) = inlining_setup(5);
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        // g(p) = forall y. q(p, y), and f(p) = g(p).
+        let param = manager.intern_str("p");
+        let param_var = manager.mk_var("p", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let predicate = manager.mk_apply("q", vec![param_var, y], bool_sort);
+        let quantified = manager.mk_forall(vec![("y", int_sort)], predicate);
+        let g = manager.intern_str("g");
+        rewriter.register_definition(g, vec![param], quantified, bool_sort);
+
+        let g_call = manager.mk_apply("g", vec![param_var], bool_sort);
+        let f = manager.intern_str("f");
+        rewriter.register_definition(f, vec![param], g_call, bool_sort);
+
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f", vec![five], bool_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager).term();
+
+        // Round 1: f(5) -> g(5). Round 2: g(5) -> forall y. q(5, y).
+        // Round 3 sees a binder and stops.
+        let expected_body = manager.mk_apply("q", vec![five, y], bool_sort);
+        let expected = manager.mk_forall(vec![("y", int_sort)], expected_body);
+        assert_eq!(result, expected);
+    }
+
+    /// With the default configuration beta reduction fires first, so the
+    /// inlining budget is not consulted at all.
+    #[test]
+    fn default_configuration_uses_beta_reduction() {
+        let (mut manager, mut ctx, mut rewriter) = setup();
+        register_definition_chain(&mut manager, &mut rewriter, 6);
+
+        let int_sort = manager.sorts.int_sort;
+        let five = manager.mk_int(5);
+        let apply = manager.mk_apply("f1", vec![five], int_sort);
+
+        let result = rewriter.rewrite(apply, &mut ctx, &mut manager);
+        let expected = manager.mk_apply("f2", vec![five], int_sort);
+        assert_eq!(result.term(), expected);
+        assert_eq!(
+            ctx.stats().rule_applications.get("uf_beta_reduction"),
+            Some(&1)
+        );
+        assert_eq!(ctx.stats().rule_applications.get("uf_inline"), None);
     }
 
     #[test]

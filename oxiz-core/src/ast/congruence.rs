@@ -10,9 +10,209 @@
 //! - Efficient worklist-based propagation
 //! - Disequality reasoning and conflict detection
 
-use crate::ast::{TermId, TermKind, TermManager};
+use crate::ast::traversal::get_children;
+use crate::ast::{RoundingMode, TermId, TermKind, TermManager};
+use crate::interner::Spur;
 #[allow(unused_imports)]
 use crate::prelude::*;
+use core::mem::Discriminant;
+use smallvec::SmallVec;
+
+/// Operator identity of a term, with all child terms erased.
+///
+/// Two terms are congruent exactly when their `OpKey`s are equal and their
+/// argument lists are pairwise equivalent. The key therefore has to capture
+/// *everything* about a term except its children: the `TermKind`
+/// discriminant plus any non-child payload (function symbol, constructor
+/// name, extraction bounds, rounding mode, format widths).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum OpKey {
+    /// Operator fully determined by its `TermKind` discriminant.
+    Plain(Discriminant<TermKind>),
+    /// Uninterpreted function application `f(...)`.
+    Func(Spur),
+    /// Datatype constructor application.
+    Constructor(Spur),
+    /// Datatype tester `is-C`.
+    Tester(Spur),
+    /// Datatype selector.
+    Selector(Spur),
+    /// Bit-vector extraction, which carries its bit range.
+    Extract {
+        /// High bit index.
+        high: u32,
+        /// Low bit index.
+        low: u32,
+    },
+    /// Floating-point operator carrying a rounding mode.
+    Rounded(Discriminant<TermKind>, RoundingMode),
+    /// Floating-point conversion carrying a target format.
+    Format {
+        /// Discriminant of the conversion operator.
+        op: Discriminant<TermKind>,
+        /// Rounding mode of the conversion.
+        rm: RoundingMode,
+        /// Target exponent width (or bit-vector width for `fp.to_?bv`).
+        eb: u32,
+        /// Target significand width (`0` for bit-vector targets).
+        sb: u32,
+    },
+}
+
+/// Congruence signature of a term: its operator identity and its arguments.
+///
+/// Returns `None` for terms that must not participate in congruence closure:
+///
+/// * nullary terms (constants, variables, string/FP literals) — they have no
+///   arguments, so congruence over them degenerates to syntactic identity,
+///   which the hash-consed term manager already provides; and
+/// * binders (`Forall`, `Exists`, `Let`, `Match`) — congruence over a body
+///   that mentions bound variables is unsound, because equality of the
+///   bodies is only meaningful relative to the binding context.
+///
+/// Every `TermKind` variant is listed explicitly so that adding a variant is
+/// a compile error rather than a silently dropped congruence.
+fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>)> {
+    let op = match kind {
+        // Nullary: nothing to be congruent about.
+        TermKind::True
+        | TermKind::False
+        | TermKind::IntConst(_)
+        | TermKind::RealConst(_)
+        | TermKind::BitVecConst { .. }
+        | TermKind::StringLit(_)
+        | TermKind::Var(_)
+        | TermKind::FpLit { .. }
+        | TermKind::FpPlusInfinity { .. }
+        | TermKind::FpMinusInfinity { .. }
+        | TermKind::FpPlusZero { .. }
+        | TermKind::FpMinusZero { .. }
+        | TermKind::FpNaN { .. } => return None,
+
+        // Binders: congruence below a binder is not sound.
+        TermKind::Forall { .. }
+        | TermKind::Exists { .. }
+        | TermKind::Let { .. }
+        | TermKind::Match { .. } => return None,
+
+        // Operators whose identity is exactly their discriminant.
+        TermKind::Not(_)
+        | TermKind::And(_)
+        | TermKind::Or(_)
+        | TermKind::Xor(_, _)
+        | TermKind::Implies(_, _)
+        | TermKind::Ite(_, _, _)
+        | TermKind::Eq(_, _)
+        | TermKind::Distinct(_)
+        | TermKind::Neg(_)
+        | TermKind::Add(_)
+        | TermKind::Sub(_, _)
+        | TermKind::Mul(_)
+        | TermKind::Div(_, _)
+        | TermKind::Mod(_, _)
+        | TermKind::Lt(_, _)
+        | TermKind::Le(_, _)
+        | TermKind::Gt(_, _)
+        | TermKind::Ge(_, _)
+        | TermKind::BvConcat(_, _)
+        | TermKind::BvNot(_)
+        | TermKind::BvAnd(_, _)
+        | TermKind::BvOr(_, _)
+        | TermKind::BvXor(_, _)
+        | TermKind::BvAdd(_, _)
+        | TermKind::BvSub(_, _)
+        | TermKind::BvMul(_, _)
+        | TermKind::BvUdiv(_, _)
+        | TermKind::BvSdiv(_, _)
+        | TermKind::BvUrem(_, _)
+        | TermKind::BvSrem(_, _)
+        | TermKind::BvShl(_, _)
+        | TermKind::BvLshr(_, _)
+        | TermKind::BvAshr(_, _)
+        | TermKind::BvUlt(_, _)
+        | TermKind::BvUle(_, _)
+        | TermKind::BvSlt(_, _)
+        | TermKind::BvSle(_, _)
+        | TermKind::Select(_, _)
+        | TermKind::Store(_, _, _)
+        | TermKind::StrConcat(_, _)
+        | TermKind::StrLen(_)
+        | TermKind::StrSubstr(_, _, _)
+        | TermKind::StrAt(_, _)
+        | TermKind::StrContains(_, _)
+        | TermKind::StrPrefixOf(_, _)
+        | TermKind::StrSuffixOf(_, _)
+        | TermKind::StrIndexOf(_, _, _)
+        | TermKind::StrReplace(_, _, _)
+        | TermKind::StrReplaceAll(_, _, _)
+        | TermKind::StrReplaceRe(_, _, _)
+        | TermKind::StrReplaceReAll(_, _, _)
+        | TermKind::StrToInt(_)
+        | TermKind::IntToStr(_)
+        | TermKind::StrInRe(_, _)
+        | TermKind::StrLt(_, _)
+        | TermKind::StrLe(_, _)
+        | TermKind::StrToCode(_)
+        | TermKind::StrFromCode(_)
+        | TermKind::FpAbs(_)
+        | TermKind::FpNeg(_)
+        | TermKind::FpRem(_, _)
+        | TermKind::FpMin(_, _)
+        | TermKind::FpMax(_, _)
+        | TermKind::FpLeq(_, _)
+        | TermKind::FpLt(_, _)
+        | TermKind::FpGeq(_, _)
+        | TermKind::FpGt(_, _)
+        | TermKind::FpEq(_, _)
+        | TermKind::FpIsNormal(_)
+        | TermKind::FpIsSubnormal(_)
+        | TermKind::FpIsZero(_)
+        | TermKind::FpIsInfinite(_)
+        | TermKind::FpIsNaN(_)
+        | TermKind::FpIsNegative(_)
+        | TermKind::FpIsPositive(_)
+        | TermKind::FpToReal(_) => OpKey::Plain(core::mem::discriminant(kind)),
+
+        TermKind::BvExtract { high, low, .. } => OpKey::Extract {
+            high: *high,
+            low: *low,
+        },
+
+        TermKind::Apply { func, .. } => OpKey::Func(*func),
+        TermKind::DtConstructor { constructor, .. } => OpKey::Constructor(*constructor),
+        TermKind::DtTester { constructor, .. } => OpKey::Tester(*constructor),
+        TermKind::DtSelector { selector, .. } => OpKey::Selector(*selector),
+
+        TermKind::FpSqrt(rm, _)
+        | TermKind::FpRoundToIntegral(rm, _)
+        | TermKind::FpAdd(rm, _, _)
+        | TermKind::FpSub(rm, _, _)
+        | TermKind::FpMul(rm, _, _)
+        | TermKind::FpDiv(rm, _, _)
+        | TermKind::FpFma(rm, _, _, _) => OpKey::Rounded(core::mem::discriminant(kind), *rm),
+
+        TermKind::FpToFp { rm, eb, sb, .. }
+        | TermKind::RealToFp { rm, eb, sb, .. }
+        | TermKind::SBVToFp { rm, eb, sb, .. }
+        | TermKind::UBVToFp { rm, eb, sb, .. } => OpKey::Format {
+            op: core::mem::discriminant(kind),
+            rm: *rm,
+            eb: *eb,
+            sb: *sb,
+        },
+
+        TermKind::FpToSBV { rm, width, .. } | TermKind::FpToUBV { rm, width, .. } => {
+            OpKey::Format {
+                op: core::mem::discriminant(kind),
+                rm: *rm,
+                eb: *width,
+                sb: 0,
+            }
+        }
+    };
+
+    Some((op, get_children(kind)))
+}
 
 /// Explanation for why two terms are equal
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +231,7 @@ enum UndoOp {
     /// Undo a merge operation: restore parent[child] = old_parent
     Merge { child: TermId, old_parent: TermId },
     /// Undo a lookup insertion
-    LookupInsert { key: (TermId, Vec<TermId>) },
+    LookupInsert { key: (OpKey, Vec<TermId>) },
     /// Undo a use list insertion
     UseListInsert { arg: TermId, parent: TermId },
     /// Undo a disequality insertion (only recorded when the pair was newly
@@ -60,8 +260,13 @@ pub struct CongruenceClosure {
     rank: FxHashMap<TermId, usize>,
     /// Explanations for why terms are equal
     explanations: FxHashMap<(TermId, TermId), Explanation>,
-    /// Lookup table for congruence: maps (function, args) to term
-    lookup: FxHashMap<(TermId, Vec<TermId>), TermId>,
+    /// Lookup table for congruence: maps (operator, normalized args) to the
+    /// representative term registered for that signature.
+    ///
+    /// The key deliberately does **not** contain the term itself: a key that
+    /// includes the term can never collide with another term's key, so the
+    /// table could never detect a congruence at all.
+    lookup: FxHashMap<(OpKey, Vec<TermId>), TermId>,
     /// Use list: for each term, which terms use it as an argument
     use_list: FxHashMap<TermId, Vec<TermId>>,
     /// Worklist for pending propagations
@@ -254,144 +459,71 @@ impl CongruenceClosure {
         self.explanations.get(&key).cloned()
     }
 
-    /// Add a term to the congruence closure
+    /// Add a term and all of its subterms to the congruence closure.
+    ///
+    /// Subterms are visited with an explicit worklist (never by recursion),
+    /// so an arbitrarily deep term cannot overflow the stack. Every term with
+    /// a congruence signature — including uninterpreted function
+    /// applications `f(a1..an)` and datatype constructors/selectors/testers —
+    /// is registered in the signature table and in the use-lists of its
+    /// arguments, which is what makes congruence propagation see it at all.
     pub fn add_term(&mut self, term: TermId, manager: &TermManager) {
-        // Initialize the term if not present
-        if let crate::prelude::hash_map::Entry::Vacant(e) = self.parent.entry(term) {
-            e.insert(term);
-            self.rank.insert(term, 0);
-        }
+        let mut stack = vec![term];
+        let mut seen = FxHashSet::default();
 
-        // Get term structure
-        if let Some(t) = manager.get(term) {
-            match &t.kind {
-                // Binary operations
-                TermKind::Add(args)
-                | TermKind::Mul(args)
-                | TermKind::And(args)
-                | TermKind::Or(args)
-                    if !args.is_empty() =>
-                {
-                    // Normalize args by finding representatives
-                    let normalized_args: Vec<_> = args.iter().map(|&a| self.find(a)).collect();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
 
-                    // Create lookup key
-                    let key = (term, normalized_args.clone());
+            // Initialize the term if not present
+            if let crate::prelude::hash_map::Entry::Vacant(e) = self.parent.entry(current) {
+                e.insert(current);
+                self.rank.insert(current, 0);
+            }
 
-                    // Check for congruence
-                    if let Some(&existing) = self.lookup.get(&key) {
-                        if existing != term {
-                            // Found congruent term, add to worklist
-                            self.worklist.push(term);
-                            self.worklist.push(existing);
-                        }
-                    } else {
-                        self.lookup.insert(key.clone(), term);
-                        self.undo_trail.push(UndoOp::LookupInsert { key });
-                    }
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+            let Some((op, args)) = congruence_signature(&t.kind) else {
+                // Nullary terms and binders carry no congruence signature;
+                // they are registered as singleton classes above and that is
+                // all that is required of them.
+                continue;
+            };
 
-                    // Update use lists
-                    for &arg in args {
-                        self.use_list.entry(arg).or_default().push(term);
-                        self.undo_trail
-                            .push(UndoOp::UseListInsert { arg, parent: term });
-                    }
+            // Normalize args by finding representatives
+            let normalized_args: Vec<_> = args.iter().map(|&a| self.find(a)).collect();
+            let key = (op, normalized_args);
+
+            // Check for congruence against an already-registered term with
+            // the same signature.
+            match self.lookup.get(&key).copied() {
+                Some(existing) if existing != current => {
+                    let arg_pairs = self.get_argument_pairs(existing, current, manager);
+                    let _ = self.merge(existing, current, Explanation::Congruence(arg_pairs));
                 }
+                Some(_) => {}
+                None => {
+                    self.lookup.insert(key.clone(), current);
+                    self.undo_trail.push(UndoOp::LookupInsert { key });
+                }
+            }
 
-                TermKind::Eq(lhs, rhs)
-                | TermKind::Lt(lhs, rhs)
-                | TermKind::Le(lhs, rhs)
-                | TermKind::Gt(lhs, rhs)
-                | TermKind::Ge(lhs, rhs)
-                | TermKind::Sub(lhs, rhs)
-                | TermKind::Div(lhs, rhs)
-                | TermKind::Mod(lhs, rhs)
-                | TermKind::Implies(lhs, rhs)
-                | TermKind::Xor(lhs, rhs)
-                | TermKind::BvAnd(lhs, rhs) => {
-                    let args = vec![self.find(*lhs), self.find(*rhs)];
-                    let key = (term, args);
-
-                    if let Some(&existing) = self.lookup.get(&key) {
-                        if existing != term {
-                            self.worklist.push(term);
-                            self.worklist.push(existing);
-                        }
-                    } else {
-                        self.lookup.insert(key.clone(), term);
-                        self.undo_trail.push(UndoOp::LookupInsert { key });
-                    }
-
-                    self.use_list.entry(*lhs).or_default().push(term);
+            // Update use lists and queue the arguments themselves.
+            for &arg in &args {
+                let list = self.use_list.entry(arg).or_default();
+                // Only record an undo entry for a genuinely new use-list
+                // edge: re-adding the same term must not let a pop erase the
+                // edge an outer scope established.
+                if !list.contains(&current) {
+                    list.push(current);
                     self.undo_trail.push(UndoOp::UseListInsert {
-                        arg: *lhs,
-                        parent: term,
-                    });
-                    self.use_list.entry(*rhs).or_default().push(term);
-                    self.undo_trail.push(UndoOp::UseListInsert {
-                        arg: *rhs,
-                        parent: term,
+                        arg,
+                        parent: current,
                     });
                 }
-
-                TermKind::Not(arg) | TermKind::Neg(arg) | TermKind::BvNot(arg) => {
-                    let args = vec![self.find(*arg)];
-                    let key = (term, args);
-
-                    if let Some(&existing) = self.lookup.get(&key) {
-                        if existing != term {
-                            self.worklist.push(term);
-                            self.worklist.push(existing);
-                        }
-                    } else {
-                        self.lookup.insert(key.clone(), term);
-                        self.undo_trail.push(UndoOp::LookupInsert { key });
-                    }
-
-                    self.use_list.entry(*arg).or_default().push(term);
-                    self.undo_trail.push(UndoOp::UseListInsert {
-                        arg: *arg,
-                        parent: term,
-                    });
-                }
-
-                TermKind::Ite(cond, then_branch, else_branch) => {
-                    let args = vec![
-                        self.find(*cond),
-                        self.find(*then_branch),
-                        self.find(*else_branch),
-                    ];
-                    let key = (term, args);
-
-                    if let Some(&existing) = self.lookup.get(&key) {
-                        if existing != term {
-                            self.worklist.push(term);
-                            self.worklist.push(existing);
-                        }
-                    } else {
-                        self.lookup.insert(key.clone(), term);
-                        self.undo_trail.push(UndoOp::LookupInsert { key });
-                    }
-
-                    self.use_list.entry(*cond).or_default().push(term);
-                    self.undo_trail.push(UndoOp::UseListInsert {
-                        arg: *cond,
-                        parent: term,
-                    });
-                    self.use_list.entry(*then_branch).or_default().push(term);
-                    self.undo_trail.push(UndoOp::UseListInsert {
-                        arg: *then_branch,
-                        parent: term,
-                    });
-                    self.use_list.entry(*else_branch).or_default().push(term);
-                    self.undo_trail.push(UndoOp::UseListInsert {
-                        arg: *else_branch,
-                        parent: term,
-                    });
-                }
-
-                // Constants and variables have no arguments
-                _ => {}
+                stack.push(arg);
             }
         }
     }
@@ -529,92 +661,54 @@ impl CongruenceClosure {
         }
     }
 
-    /// Get the pairs of arguments that justify congruence
+    /// Get the pairs of arguments that justify congruence.
+    ///
+    /// Returns an empty vector when the two terms do not share an operator,
+    /// which is the only case in which no argument pair can justify
+    /// anything.
     fn get_argument_pairs(
         &mut self,
         a: TermId,
         b: TermId,
         manager: &TermManager,
     ) -> Vec<(TermId, TermId)> {
-        let term_a = manager.get(a);
-        let term_b = manager.get(b);
-
-        match (term_a, term_b) {
-            (Some(ta), Some(tb)) => match (&ta.kind, &tb.kind) {
-                (TermKind::Add(args_a), TermKind::Add(args_b))
-                | (TermKind::Mul(args_a), TermKind::Mul(args_b))
-                | (TermKind::And(args_a), TermKind::And(args_b))
-                | (TermKind::Or(args_a), TermKind::Or(args_b)) => args_a
-                    .iter()
-                    .zip(args_b.iter())
-                    .map(|(&x, &y)| (x, y))
-                    .collect(),
-
-                (TermKind::Not(a), TermKind::Not(b))
-                | (TermKind::Neg(a), TermKind::Neg(b))
-                | (TermKind::BvNot(a), TermKind::BvNot(b)) => vec![(*a, *b)],
-
-                (TermKind::Eq(a1, a2), TermKind::Eq(b1, b2))
-                | (TermKind::Lt(a1, a2), TermKind::Lt(b1, b2))
-                | (TermKind::Le(a1, a2), TermKind::Le(b1, b2))
-                | (TermKind::Sub(a1, a2), TermKind::Sub(b1, b2)) => {
-                    vec![(*a1, *b1), (*a2, *b2)]
-                }
-
-                (TermKind::Ite(c1, t1, e1), TermKind::Ite(c2, t2, e2)) => {
-                    vec![(*c1, *c2), (*t1, *t2), (*e1, *e2)]
-                }
-
-                _ => Vec::new(),
-            },
-            _ => Vec::new(),
+        let (Some(ta), Some(tb)) = (manager.get(a), manager.get(b)) else {
+            return Vec::new();
+        };
+        let (Some((op_a, args_a)), Some((op_b, args_b))) = (
+            congruence_signature(&ta.kind),
+            congruence_signature(&tb.kind),
+        ) else {
+            return Vec::new();
+        };
+        if op_a != op_b || args_a.len() != args_b.len() {
+            return Vec::new();
         }
+        args_a
+            .iter()
+            .zip(args_b.iter())
+            .map(|(&x, &y)| (x, y))
+            .collect()
     }
 
-    /// Check if two terms are congruent (same function symbol, equivalent arguments)
+    /// Check if two terms are congruent (same operator, equivalent arguments)
     fn are_congruent(&mut self, a: TermId, b: TermId, manager: &TermManager) -> bool {
-        let term_a = manager.get(a);
-        let term_b = manager.get(b);
-
-        match (term_a, term_b) {
-            (Some(ta), Some(tb)) => {
-                // Check if they have the same structure and equivalent arguments
-                match (&ta.kind, &tb.kind) {
-                    (TermKind::Add(args_a), TermKind::Add(args_b))
-                    | (TermKind::Mul(args_a), TermKind::Mul(args_b))
-                    | (TermKind::And(args_a), TermKind::And(args_b))
-                    | (TermKind::Or(args_a), TermKind::Or(args_b)) => {
-                        if args_a.len() != args_b.len() {
-                            return false;
-                        }
-                        args_a
-                            .iter()
-                            .zip(args_b.iter())
-                            .all(|(&a, &b)| self.are_equal(a, b))
-                    }
-
-                    (TermKind::Not(a), TermKind::Not(b))
-                    | (TermKind::Neg(a), TermKind::Neg(b))
-                    | (TermKind::BvNot(a), TermKind::BvNot(b)) => self.are_equal(*a, *b),
-
-                    (TermKind::Eq(a1, a2), TermKind::Eq(b1, b2))
-                    | (TermKind::Lt(a1, a2), TermKind::Lt(b1, b2))
-                    | (TermKind::Le(a1, a2), TermKind::Le(b1, b2))
-                    | (TermKind::Sub(a1, a2), TermKind::Sub(b1, b2)) => {
-                        self.are_equal(*a1, *b1) && self.are_equal(*a2, *b2)
-                    }
-
-                    (TermKind::Ite(c1, t1, e1), TermKind::Ite(c2, t2, e2)) => {
-                        self.are_equal(*c1, *c2)
-                            && self.are_equal(*t1, *t2)
-                            && self.are_equal(*e1, *e2)
-                    }
-
-                    _ => false,
-                }
-            }
-            _ => false,
+        let (Some(ta), Some(tb)) = (manager.get(a), manager.get(b)) else {
+            return false;
+        };
+        let (Some((op_a, args_a)), Some((op_b, args_b))) = (
+            congruence_signature(&ta.kind),
+            congruence_signature(&tb.kind),
+        ) else {
+            return false;
+        };
+        if op_a != op_b || args_a.len() != args_b.len() {
+            return false;
         }
+        args_a
+            .iter()
+            .zip(args_b.iter())
+            .all(|(&x, &y)| self.are_equal(x, y))
     }
 
     /// Get all terms in the same equivalence class as the given term
@@ -816,6 +910,113 @@ mod tests {
         // Try to assert a != b - should create conflict
         let conflict = cc.assert_diseq(a, b);
         assert!(conflict.is_some());
+    }
+
+    #[test]
+    fn test_congruence_over_uninterpreted_apply() {
+        let mut manager = TermManager::new();
+        let mut cc = CongruenceClosure::new();
+
+        let int_sort = manager.sorts.int_sort;
+        let a = manager.mk_var("a", int_sort);
+        let b = manager.mk_var("b", int_sort);
+        let fa = manager.mk_apply("f", [a], int_sort);
+        let fb = manager.mk_apply("f", [b], int_sort);
+
+        cc.add_term(fa, &manager);
+        cc.add_term(fb, &manager);
+
+        // Without a = b, f(a) and f(b) are distinct classes.
+        assert!(!cc.are_equal(fa, fb));
+
+        cc.merge(a, b, Explanation::Given);
+        cc.close(&manager);
+
+        // Congruence: a = b implies f(a) = f(b).
+        assert!(cc.are_equal(fa, fb));
+    }
+
+    #[test]
+    fn test_apply_different_symbols_not_congruent() {
+        let mut manager = TermManager::new();
+        let mut cc = CongruenceClosure::new();
+
+        let int_sort = manager.sorts.int_sort;
+        let a = manager.mk_var("a", int_sort);
+        let b = manager.mk_var("b", int_sort);
+        let fa = manager.mk_apply("f", [a], int_sort);
+        let gb = manager.mk_apply("g", [b], int_sort);
+
+        cc.add_term(fa, &manager);
+        cc.add_term(gb, &manager);
+        cc.merge(a, b, Explanation::Given);
+        cc.close(&manager);
+
+        assert!(!cc.are_equal(fa, gb));
+    }
+
+    #[test]
+    fn test_add_term_registers_subterms() {
+        let mut manager = TermManager::new();
+        let mut cc = CongruenceClosure::new();
+
+        let int_sort = manager.sorts.int_sort;
+        let a = manager.mk_var("a", int_sort);
+        let b = manager.mk_var("b", int_sort);
+        let inner = manager.mk_apply("f", [a, b], int_sort);
+        let outer = manager.mk_apply("g", [inner], int_sort);
+
+        cc.add_term(outer, &manager);
+
+        for t in [outer, inner, a, b] {
+            assert!(cc.parent.contains_key(&t), "subterm not registered");
+        }
+    }
+
+    #[test]
+    fn test_nested_congruence_propagates_upwards() {
+        let mut manager = TermManager::new();
+        let mut cc = CongruenceClosure::new();
+
+        let int_sort = manager.sorts.int_sort;
+        let a = manager.mk_var("a", int_sort);
+        let b = manager.mk_var("b", int_sort);
+        let fa = manager.mk_apply("f", [a], int_sort);
+        let fb = manager.mk_apply("f", [b], int_sort);
+        let gfa = manager.mk_apply("g", [fa], int_sort);
+        let gfb = manager.mk_apply("g", [fb], int_sort);
+
+        cc.add_term(gfa, &manager);
+        cc.add_term(gfb, &manager);
+        cc.merge(a, b, Explanation::Given);
+        cc.close(&manager);
+
+        assert!(cc.are_equal(fa, fb));
+        assert!(cc.are_equal(gfa, gfb));
+    }
+
+    #[test]
+    fn test_add_term_deep_nesting_does_not_overflow() {
+        // A left-nested chain f(f(...f(a)...)) far beyond any recursion
+        // budget: the assertion is simply that `add_term` returns.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let mut term = manager.mk_var("a", int_sort);
+                for _ in 0..60_000 {
+                    term = manager.mk_apply("f", [term], int_sort);
+                }
+
+                let mut cc = CongruenceClosure::new();
+                cc.add_term(term, &manager);
+                cc.num_classes()
+            })
+            .expect("thread spawn should succeed");
+
+        let classes = handle.join().expect("deep add_term must not overflow");
+        assert_eq!(classes, 60_001);
     }
 
     #[test]

@@ -24,6 +24,13 @@ use crate::prelude::*;
 use crate::sort::SortId;
 use core::fmt;
 
+/// Maximum pattern-nesting depth accepted by [`CodeTreeBuilder::compile`].
+///
+/// Compilation descends through mutually recursive operator compilers; the
+/// limit is reported as an honest error rather than silently truncating the
+/// compiled instruction stream.
+pub const MAX_PATTERN_COMPILE_DEPTH: usize = 512;
+
 /// A compiled code tree for pattern matching
 #[derive(Debug, Clone)]
 pub struct CodeTree {
@@ -241,7 +248,7 @@ impl CodeTreeBuilder {
         }
 
         // Compile pattern root
-        let root = self.compile_term(pattern.root, manager)?;
+        let root = self.compile_term(pattern.root, manager, 0)?;
 
         // Add yield instruction
         let yield_idx = self.add_instruction(Instruction {
@@ -250,8 +257,19 @@ impl CodeTreeBuilder {
             alt: None,
         });
 
-        // Link root to yield
-        if let Some(instr) = self.instructions.get_mut(root) {
+        // Link the *end* of the compiled instruction chain to the yield.
+        // Overwriting the root's `next` (as this used to do) discarded the
+        // whole body of the pattern: execution jumped straight from the root
+        // check to `Yield` with no variable bound, so every compiled pattern
+        // reported "no match".
+        let mut tail = root;
+        for _ in 0..self.instructions.len() {
+            match self.instructions.get(tail).and_then(|instr| instr.next) {
+                Some(next) => tail = next,
+                None => break,
+            }
+        }
+        if let Some(instr) = self.instructions.get_mut(tail) {
             instr.next = Some(yield_idx);
         }
 
@@ -263,7 +281,26 @@ impl CodeTreeBuilder {
     }
 
     /// Compile a single term
-    fn compile_term(&mut self, term_id: TermId, manager: &TermManager) -> Result<usize> {
+    /// Compile a single term.
+    ///
+    /// `depth` is the current pattern-nesting depth. Compilation descends
+    /// through the (mutually recursive) operator compilers, so a
+    /// pathologically deep pattern would otherwise exhaust the native
+    /// stack. Because this function has a real error channel, the bound is
+    /// reported as an honest error — the pattern is *not* silently compiled
+    /// into an instruction stream that matches something else.
+    fn compile_term(
+        &mut self,
+        term_id: TermId,
+        manager: &TermManager,
+        depth: usize,
+    ) -> Result<usize> {
+        if depth > MAX_PATTERN_COMPILE_DEPTH {
+            return Err(OxizError::EmatchError(format!(
+                "pattern nesting exceeds {} levels",
+                MAX_PATTERN_COMPILE_DEPTH
+            )));
+        }
         let Some(term) = manager.get(term_id) else {
             return Err(OxizError::EmatchError(format!(
                 "Term {:?} not found",
@@ -316,7 +353,7 @@ impl CodeTreeBuilder {
                     });
 
                     // Compile child pattern
-                    let child_instr = self.compile_term(arg, manager)?;
+                    let child_instr = self.compile_term(arg, manager, depth + 1)?;
 
                     // Ascend back
                     let ascend_idx = self.add_instruction(Instruction {
@@ -343,32 +380,40 @@ impl CodeTreeBuilder {
             }
 
             TermKind::Eq(lhs, rhs) => {
-                self.compile_binary_op(TermKindDiscriminant::Eq, *lhs, *rhs, manager)
+                self.compile_binary_op(TermKindDiscriminant::Eq, *lhs, *rhs, manager, depth)
             }
 
             TermKind::Lt(lhs, rhs) => {
-                self.compile_binary_op(TermKindDiscriminant::Lt, *lhs, *rhs, manager)
+                self.compile_binary_op(TermKindDiscriminant::Lt, *lhs, *rhs, manager, depth)
             }
 
             TermKind::Le(lhs, rhs) => {
-                self.compile_binary_op(TermKindDiscriminant::Le, *lhs, *rhs, manager)
+                self.compile_binary_op(TermKindDiscriminant::Le, *lhs, *rhs, manager, depth)
             }
 
             TermKind::Gt(lhs, rhs) => {
-                self.compile_binary_op(TermKindDiscriminant::Gt, *lhs, *rhs, manager)
+                self.compile_binary_op(TermKindDiscriminant::Gt, *lhs, *rhs, manager, depth)
             }
 
             TermKind::Ge(lhs, rhs) => {
-                self.compile_binary_op(TermKindDiscriminant::Ge, *lhs, *rhs, manager)
+                self.compile_binary_op(TermKindDiscriminant::Ge, *lhs, *rhs, manager, depth)
             }
 
-            TermKind::Add(args) => self.compile_nary_op(TermKindDiscriminant::Add, args, manager),
+            TermKind::Add(args) => {
+                self.compile_nary_op(TermKindDiscriminant::Add, args, manager, depth)
+            }
 
-            TermKind::Mul(args) => self.compile_nary_op(TermKindDiscriminant::Mul, args, manager),
+            TermKind::Mul(args) => {
+                self.compile_nary_op(TermKindDiscriminant::Mul, args, manager, depth)
+            }
 
-            TermKind::And(args) => self.compile_nary_op(TermKindDiscriminant::And, args, manager),
+            TermKind::And(args) => {
+                self.compile_nary_op(TermKindDiscriminant::And, args, manager, depth)
+            }
 
-            TermKind::Or(args) => self.compile_nary_op(TermKindDiscriminant::Or, args, manager),
+            TermKind::Or(args) => {
+                self.compile_nary_op(TermKindDiscriminant::Or, args, manager, depth)
+            }
 
             _ => {
                 // For other terms, just add a compare instruction
@@ -391,6 +436,7 @@ impl CodeTreeBuilder {
         lhs: TermId,
         rhs: TermId,
         manager: &TermManager,
+        depth: usize,
     ) -> Result<usize> {
         // Add compare instruction for the operator
         let compare_idx = self.add_instruction(Instruction {
@@ -405,7 +451,7 @@ impl CodeTreeBuilder {
             next: None,
             alt: None,
         });
-        let left_instr = self.compile_term(lhs, manager)?;
+        let left_instr = self.compile_term(lhs, manager, depth + 1)?;
         let ascend_left = self.add_instruction(Instruction {
             kind: InstructionKind::Ascend,
             next: None,
@@ -418,7 +464,7 @@ impl CodeTreeBuilder {
             next: None,
             alt: None,
         });
-        let right_instr = self.compile_term(rhs, manager)?;
+        let right_instr = self.compile_term(rhs, manager, depth + 1)?;
         let ascend_right = self.add_instruction(Instruction {
             kind: InstructionKind::Ascend,
             next: None,
@@ -454,6 +500,7 @@ impl CodeTreeBuilder {
         op: TermKindDiscriminant,
         args: &[TermId],
         manager: &TermManager,
+        depth: usize,
     ) -> Result<usize> {
         // Add compare and arity check
         let compare_idx = self.add_instruction(Instruction {
@@ -482,7 +529,7 @@ impl CodeTreeBuilder {
                 next: None,
                 alt: None,
             });
-            let child_instr = self.compile_term(arg, manager)?;
+            let child_instr = self.compile_term(arg, manager, depth + 1)?;
             let ascend = self.add_instruction(Instruction {
                 kind: InstructionKind::Ascend,
                 next: None,
@@ -694,22 +741,51 @@ impl CodeTree {
     /// Interpret the instruction stream starting at `ip` with the supplied
     /// resumption state (`current_term`, `bindings`, `term_stack`).
     ///
-    /// `Choice` points are handled by real backtracking: the first
-    /// alternative is explored with a *clone* of the current register state
-    /// (bindings + term stack), so any bindings it makes are discarded if it
-    /// fails; the second alternative then resumes from the unmodified state
-    /// of this frame. This correctly explores both branches and restores
-    /// register state per choice point (TODO-939) — the previous
-    /// `execute_from` stub inspected only a single instruction and silently
-    /// dropped any first-branch match longer than an immediate `Yield`/`Halt`.
+    /// `Choice` points are handled by real backtracking with an explicit
+    /// trail: on reaching a choice the second alternative is pushed onto the
+    /// trail together with a *clone* of the current register state
+    /// (bindings + term stack), and the first alternative continues with the
+    /// current state. A failing branch pops the most recent trail entry and
+    /// resumes it, which explores the alternatives in exactly the order the
+    /// previous recursive implementation did — but with the backtrack stack
+    /// on the heap, so a pattern with many choice points cannot exhaust the
+    /// native stack (each recursive frame cloned two `Vec`s).
     fn run(
         &self,
-        mut ip: usize,
-        mut current_term: TermId,
-        mut bindings: Vec<Option<TermId>>,
-        mut term_stack: Vec<TermId>,
+        ip: usize,
+        current_term: TermId,
+        bindings: Vec<Option<TermId>>,
+        term_stack: Vec<TermId>,
         manager: &TermManager,
     ) -> Result<Option<Vec<TermId>>> {
+        /// Register state to resume when a branch fails.
+        struct Resume {
+            /// Instruction to resume at.
+            ip: usize,
+            /// Term under the cursor.
+            current_term: TermId,
+            /// Variable bindings.
+            bindings: Vec<Option<TermId>>,
+            /// Navigation stack.
+            term_stack: Vec<TermId>,
+        }
+
+        /// Result of executing one instruction.
+        enum Step {
+            /// Continue at this instruction.
+            Goto(usize),
+            /// This branch cannot match; backtrack.
+            Fail,
+            /// Matching finished with this result.
+            Done(Option<Vec<TermId>>),
+        }
+
+        let mut trail: Vec<Resume> = Vec::new();
+        let mut ip = ip;
+        let mut current_term = current_term;
+        let mut bindings = bindings;
+        let mut term_stack = term_stack;
+
         loop {
             let Some(instr) = self.instructions.get(ip) else {
                 return Err(OxizError::EmatchError(format!(
@@ -718,178 +794,200 @@ impl CodeTree {
                 )));
             };
 
-            match &instr.kind {
-                InstructionKind::Compare { expected } => {
-                    let Some(t) = manager.get(current_term) else {
-                        return Ok(None); // Match failed
-                    };
-
-                    let actual = TermKindDiscriminant::from_term(t);
-                    if actual != *expected {
-                        return Ok(None); // Match failed
-                    }
-
-                    ip = instr.next.ok_or_else(|| {
-                        OxizError::EmatchError("Compare has no next instruction".to_string())
-                    })?;
-                }
-
-                InstructionKind::Bind { var_idx, sort } => {
-                    let Some(t) = manager.get(current_term) else {
-                        return Ok(None);
-                    };
-
-                    // Check sort
-                    if t.sort != *sort {
-                        return Ok(None);
-                    }
-
-                    // Check if already bound
-                    if let Some(existing) = bindings[*var_idx] {
-                        if existing != current_term {
-                            return Ok(None); // Inconsistent binding
+            let step = match &instr.kind {
+                InstructionKind::Compare { expected } => match manager.get(current_term) {
+                    None => Step::Fail,
+                    Some(t) => {
+                        if TermKindDiscriminant::from_term(t) == *expected {
+                            Step::Goto(instr.next.ok_or_else(|| {
+                                OxizError::EmatchError(
+                                    "Compare has no next instruction".to_string(),
+                                )
+                            })?)
+                        } else {
+                            Step::Fail
                         }
-                    } else {
-                        bindings[*var_idx] = Some(current_term);
                     }
+                },
 
-                    ip = instr.next.ok_or_else(|| {
-                        OxizError::EmatchError("Bind has no next instruction".to_string())
-                    })?;
-                }
-
-                InstructionKind::Check { property } => {
-                    let Some(t) = manager.get(current_term) else {
-                        return Ok(None);
-                    };
-
-                    let passes = match property {
-                        TermProperty::HasSort(s) => t.sort == *s,
-                        TermProperty::IsGround => {
-                            // Check if term is ground (simplified)
-                            !matches!(t.kind, TermKind::Var(_))
+                InstructionKind::Bind { var_idx, sort } => match manager.get(current_term) {
+                    None => Step::Fail,
+                    Some(t) if t.sort != *sort => Step::Fail,
+                    Some(_) => {
+                        let slot = bindings.get(*var_idx).copied().ok_or_else(|| {
+                            OxizError::EmatchError(format!(
+                                "Bind refers to unknown variable index {}",
+                                var_idx
+                            ))
+                        })?;
+                        // Check if already bound
+                        match slot {
+                            Some(existing) if existing != current_term => Step::Fail,
+                            Some(_) => Step::Goto(instr.next.ok_or_else(|| {
+                                OxizError::EmatchError("Bind has no next instruction".to_string())
+                            })?),
+                            None => {
+                                let next = instr.next.ok_or_else(|| {
+                                    OxizError::EmatchError(
+                                        "Bind has no next instruction".to_string(),
+                                    )
+                                })?;
+                                if let Some(entry) = bindings.get_mut(*var_idx) {
+                                    *entry = Some(current_term);
+                                }
+                                Step::Goto(next)
+                            }
                         }
-                        TermProperty::HasArity(arity) => match &t.kind {
-                            TermKind::Apply { args, .. } => args.len() == *arity,
-                            TermKind::Add(args) | TermKind::Mul(args) => args.len() == *arity,
-                            _ => false,
-                        },
-                        TermProperty::IsConstant => matches!(
-                            t.kind,
-                            TermKind::True
-                                | TermKind::False
-                                | TermKind::IntConst(_)
-                                | TermKind::RealConst(_)
-                        ),
-                    };
-
-                    if !passes {
-                        return Ok(None);
                     }
+                },
 
-                    ip = instr.next.ok_or_else(|| {
-                        OxizError::EmatchError("Check has no next instruction".to_string())
-                    })?;
-                }
+                InstructionKind::Check { property } => match manager.get(current_term) {
+                    None => Step::Fail,
+                    Some(t) => {
+                        let passes = match property {
+                            TermProperty::HasSort(s) => t.sort == *s,
+                            TermProperty::IsGround => {
+                                // Check if term is ground (simplified)
+                                !matches!(t.kind, TermKind::Var(_))
+                            }
+                            TermProperty::HasArity(arity) => match &t.kind {
+                                TermKind::Apply { args, .. } => args.len() == *arity,
+                                TermKind::Add(args) | TermKind::Mul(args) => args.len() == *arity,
+                                _ => false,
+                            },
+                            TermProperty::IsConstant => matches!(
+                                t.kind,
+                                TermKind::True
+                                    | TermKind::False
+                                    | TermKind::IntConst(_)
+                                    | TermKind::RealConst(_)
+                            ),
+                        };
+                        if passes {
+                            Step::Goto(instr.next.ok_or_else(|| {
+                                OxizError::EmatchError("Check has no next instruction".to_string())
+                            })?)
+                        } else {
+                            Step::Fail
+                        }
+                    }
+                },
 
-                InstructionKind::DescendChild { child_idx } => {
-                    let Some(t) = manager.get(current_term) else {
-                        return Ok(None);
-                    };
-
-                    let child = match &t.kind {
-                        TermKind::Apply { args, .. } => args.get(*child_idx).copied(),
-                        TermKind::Eq(lhs, rhs)
-                        | TermKind::Lt(lhs, rhs)
-                        | TermKind::Le(lhs, rhs) => match child_idx {
-                            0 => Some(*lhs),
-                            1 => Some(*rhs),
+                InstructionKind::DescendChild { child_idx } => match manager.get(current_term) {
+                    None => Step::Fail,
+                    Some(t) => {
+                        let child = match &t.kind {
+                            TermKind::Apply { args, .. } => args.get(*child_idx).copied(),
+                            TermKind::Eq(lhs, rhs)
+                            | TermKind::Lt(lhs, rhs)
+                            | TermKind::Le(lhs, rhs) => match child_idx {
+                                0 => Some(*lhs),
+                                1 => Some(*rhs),
+                                _ => None,
+                            },
+                            TermKind::Add(args) | TermKind::Mul(args) => {
+                                args.get(*child_idx).copied()
+                            }
                             _ => None,
-                        },
-                        TermKind::Add(args) | TermKind::Mul(args) => args.get(*child_idx).copied(),
-                        _ => None,
-                    };
+                        };
 
-                    let Some(child_term) = child else {
-                        return Ok(None);
-                    };
-
-                    term_stack.push(current_term);
-                    current_term = child_term;
-
-                    ip = instr.next.ok_or_else(|| {
-                        OxizError::EmatchError("DescendChild has no next instruction".to_string())
-                    })?;
-                }
+                        match child {
+                            None => Step::Fail,
+                            Some(child_term) => {
+                                let next = instr.next.ok_or_else(|| {
+                                    OxizError::EmatchError(
+                                        "DescendChild has no next instruction".to_string(),
+                                    )
+                                })?;
+                                term_stack.push(current_term);
+                                current_term = child_term;
+                                Step::Goto(next)
+                            }
+                        }
+                    }
+                },
 
                 InstructionKind::Ascend => {
+                    let next = instr.next.ok_or_else(|| {
+                        OxizError::EmatchError("Ascend has no next instruction".to_string())
+                    })?;
                     let Some(parent) = term_stack.pop() else {
                         return Err(OxizError::EmatchError(
                             "Cannot ascend: stack empty".to_string(),
                         ));
                     };
-
                     current_term = parent;
-
-                    ip = instr.next.ok_or_else(|| {
-                        OxizError::EmatchError("Ascend has no next instruction".to_string())
-                    })?;
+                    Step::Goto(next)
                 }
 
                 InstructionKind::CheckFunction { func_name, arity } => {
-                    let Some(t) = manager.get(current_term) else {
-                        return Ok(None);
-                    };
-
-                    let matches = match &t.kind {
-                        TermKind::Apply { func, args } => func == func_name && args.len() == *arity,
-                        _ => false,
-                    };
-
-                    if !matches {
-                        return Ok(None);
+                    match manager.get(current_term) {
+                        None => Step::Fail,
+                        Some(t) => {
+                            let matches = match &t.kind {
+                                TermKind::Apply { func, args } => {
+                                    func == func_name && args.len() == *arity
+                                }
+                                _ => false,
+                            };
+                            if matches {
+                                Step::Goto(instr.next.ok_or_else(|| {
+                                    OxizError::EmatchError(
+                                        "CheckFunction has no next instruction".to_string(),
+                                    )
+                                })?)
+                            } else {
+                                Step::Fail
+                            }
+                        }
                     }
-
-                    ip = instr.next.ok_or_else(|| {
-                        OxizError::EmatchError("CheckFunction has no next instruction".to_string())
-                    })?;
                 }
 
                 InstructionKind::Yield { .. } => {
-                    // Success! Return bindings
-                    let result: Option<Vec<TermId>> = bindings.into_iter().collect();
-                    return Ok(result);
+                    // Success only if every pattern variable got bound; an
+                    // incomplete binding set is a failed branch and must let
+                    // an outstanding alternative run, exactly as the
+                    // recursive form's `Ok(None)` did.
+                    match bindings.iter().copied().collect::<Option<Vec<TermId>>>() {
+                        Some(result) => Step::Done(Some(result)),
+                        None => Step::Fail,
+                    }
                 }
 
                 InstructionKind::Choice { first, second } => {
-                    // Explore the first alternative with a *clone* of the
-                    // current register state, so any bindings/navigation it
-                    // performs are discarded if it ultimately fails.
-                    let result1 = self.run(
-                        *first,
+                    // Record the second alternative with a *clone* of the
+                    // current register state, so any bindings/navigation the
+                    // first alternative performs are discarded if it fails.
+                    trail.push(Resume {
+                        ip: *second,
                         current_term,
-                        bindings.clone(),
-                        term_stack.clone(),
-                        manager,
-                    )?;
-                    if result1.is_some() {
-                        return Ok(result1);
-                    }
-
-                    // First alternative failed: resume the second alternative
-                    // from this frame's unmodified state (real backtracking).
-                    ip = *second;
+                        bindings: bindings.clone(),
+                        term_stack: term_stack.clone(),
+                    });
+                    Step::Goto(*first)
                 }
 
                 InstructionKind::MatchAny => {
                     // Match any term (wildcard)
-                    ip = instr.next.ok_or_else(|| {
+                    Step::Goto(instr.next.ok_or_else(|| {
                         OxizError::EmatchError("MatchAny has no next instruction".to_string())
-                    })?;
+                    })?)
                 }
 
-                InstructionKind::Halt => {
-                    return Ok(None);
+                InstructionKind::Halt => Step::Fail,
+            };
+
+            match step {
+                Step::Goto(next) => ip = next,
+                Step::Done(result) => return Ok(result),
+                Step::Fail => {
+                    let Some(resume) = trail.pop() else {
+                        return Ok(None); // Match failed
+                    };
+                    ip = resume.ip;
+                    current_term = resume.current_term;
+                    bindings = resume.bindings;
+                    term_stack = resume.term_stack;
                 }
             }
         }
@@ -1191,5 +1289,71 @@ mod tests {
             vec![b],
             "second branch must bind var 0 to b, unaffected by the first branch"
         );
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+    use crate::ast::TermManager;
+    use crate::ematching::pattern::{PatternCompiler, PatternConfig};
+
+    #[test]
+    fn test_shallow_pattern_still_compiles_and_matches() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let pattern_term = manager.mk_apply("f", [x], int_sort);
+        let a = manager.mk_var("a", int_sort);
+        let target = manager.mk_apply("f", [a], int_sort);
+
+        let x_name = manager.intern_str("x");
+        let mut compiler = PatternCompiler::new(PatternConfig::default());
+        let pattern = compiler
+            .compile(pattern_term, &[(x_name, int_sort)], &manager)
+            .expect("pattern compiles");
+
+        let mut builder = CodeTreeBuilder::new();
+        let tree = builder
+            .compile(&pattern, &manager)
+            .expect("code tree compiles");
+        let bindings = tree
+            .execute(target, &manager)
+            .expect("execution should succeed")
+            .expect("pattern must match");
+        assert_eq!(bindings, vec![a]);
+    }
+
+    #[test]
+    fn test_deep_pattern_is_rejected_honestly() {
+        // Beyond the compile-depth limit the compiler reports an error; it
+        // never emits a truncated instruction stream that would match the
+        // wrong terms.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let x = manager.mk_var("x", int_sort);
+                let mut term = x;
+                for _ in 0..(MAX_PATTERN_COMPILE_DEPTH + 10) {
+                    term = manager.mk_apply("f", [term], int_sort);
+                }
+
+                let x_name = manager.intern_str("x");
+                let mut compiler = PatternCompiler::new(PatternConfig {
+                    max_depth: usize::MAX,
+                    ..PatternConfig::default()
+                });
+                let pattern = compiler
+                    .compile(term, &[(x_name, int_sort)], &manager)
+                    .expect("pattern compiles");
+
+                let mut builder = CodeTreeBuilder::new();
+                builder.compile(&pattern, &manager).is_err()
+            })
+            .expect("thread spawn should succeed");
+
+        assert!(handle.join().expect("compilation must not overflow"));
     }
 }

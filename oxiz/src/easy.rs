@@ -431,6 +431,15 @@ impl EasySolver {
                     width = *width as usize
                 )
             }
+            // The raw string value, matching every sibling arm above: none
+            // of them render an SMT-LIB literal (an SMT-LIB real literal
+            // cannot even spell the `n/d` rational form `RealConst` uses),
+            // they render the plain value. Quoting/escaping this as an
+            // SMT-LIB string literal would be the odd one out here, and
+            // would surprise a caller of this ergonomic, non-SMT-LIB API
+            // who just wants the string back (e.g. `get_model_value` /
+            // callers comparing it to their original input).
+            TermKind::StringLit(s) => s.clone(),
             _ => "?".to_string(),
         }
     }
@@ -654,5 +663,46 @@ mod tests {
         solver.reset();
         solver.int_var("x").assert_gt("x", 0);
         assert!(solver.check_sat().is_sat());
+    }
+
+    // `format_term_value` had no `TermKind::StringLit` arm, so any
+    // String-sorted model value fell through to the `_ => "?"` catch-all:
+    // a caller of this ergonomic API could not read a string result back at
+    // all. It now returns the raw string content, matching every sibling
+    // arm (`True`/`False`/`IntConst`/`RealConst`/`BitVecConst`), none of
+    // which render an SMT-LIB literal either — they render the plain value.
+
+    /// Control: plain ASCII passes through unchanged, with no quoting.
+    #[test]
+    fn test_format_term_value_string_lit_plain_ascii() {
+        let mut solver = EasySolver::new();
+        let sort = solver.tm.sorts.string_sort();
+        let value = solver.format_term_value(&TermKind::StringLit("hello world".to_string()), sort);
+        assert_eq!(value, "hello world");
+    }
+
+    /// A `"`, a `\`, a `\u`-prefixed literal substring, a non-ASCII code
+    /// point, and a control character must all survive verbatim: this is
+    /// the raw value, not an SMT-LIB literal, so none of them are escaped.
+    #[test]
+    fn test_format_term_value_string_lit_special_chars_are_not_smtlib_escaped() {
+        let mut solver = EasySolver::new();
+        let sort = solver.tm.sorts.string_sort();
+        for raw in ["a\"b", "a\\b", "\\u0041", "caf\u{e9}", "line\u{0}break"] {
+            let value = solver.format_term_value(&TermKind::StringLit(raw.to_string()), sort);
+            assert_eq!(value, raw, "expected the raw string back unchanged");
+        }
+    }
+
+    /// End-to-end regression for the defect as originally reported: before
+    /// the fix this returned `"?"` for *any* string value, regardless of
+    /// content.
+    #[test]
+    fn test_format_term_value_string_lit_is_never_a_bare_question_mark() {
+        let mut solver = EasySolver::new();
+        let sort = solver.tm.sorts.string_sort();
+        let value = solver.format_term_value(&TermKind::StringLit(String::new()), sort);
+        assert_ne!(value, "?");
+        assert_eq!(value, "");
     }
 }

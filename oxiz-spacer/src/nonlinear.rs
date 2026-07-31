@@ -227,61 +227,158 @@ impl NonLinearAnalyzer {
         }
     }
 
-    /// Tarjan's strongconnect procedure
+    /// Tarjan's `strongconnect` procedure, iteratively.
+    ///
+    /// The recursion depth of the textbook formulation equals the length of
+    /// the longest simple path in the CHC predicate-dependency graph, whose
+    /// size is decided by the input file (a chain `P1 -> P2 -> … -> Pn`
+    /// gives depth `n`), and `compute_sccs` runs unconditionally from
+    /// `NonLinearAnalyzer::analyze`. The procedure returns `()`, so there is
+    /// no channel through which a depth limit could report having stopped
+    /// early — it would just emit wrong SCCs. It therefore keeps its DFS
+    /// state in an explicit heap stack of frames.
+    ///
+    /// Every `expect` of the old version is gone as well: each frame owns
+    /// its node's index and lowlink, so the "must be present" lookups are
+    /// no longer written at all rather than being asserted.
     fn tarjan_strongconnect(
         &mut self,
-        pred: PredId,
+        root: PredId,
         index: &mut u32,
         stack: &mut Vec<PredId>,
         indices: &mut HashMap<PredId, u32>,
         lowlinks: &mut HashMap<PredId, u32>,
         on_stack: &mut HashSet<PredId>,
     ) {
-        // Set the depth index for pred to the smallest unused index
-        indices.insert(pred, *index);
-        lowlinks.insert(pred, *index);
-        *index += 1;
-        stack.push(pred);
-        on_stack.insert(pred);
+        /// One suspended `strongconnect` activation.
+        struct Frame {
+            /// The node being explored.
+            node: PredId,
+            /// Its successors, in a stable order.
+            successors: Vec<PredId>,
+            /// How many successors have been consumed.
+            next: usize,
+            /// The node's Tarjan lowlink.
+            lowlink: u32,
+            /// The node's Tarjan index.
+            index: u32,
+        }
 
-        // Consider successors of pred
-        // Collect successors to avoid borrow checker issues
-        let successors: Vec<PredId> = self
+        /// What the current frame asks the driver loop to do next.
+        enum Step {
+            /// Start exploring this unvisited successor.
+            Descend(PredId),
+            /// Nothing to do; re-enter the loop.
+            Continue,
+            /// The current frame is exhausted.
+            Finish,
+        }
+
+        let mut frames: Vec<Frame> = Vec::new();
+
+        // `enter` in the recursive version: assign index/lowlink, push onto
+        // the SCC stack.
+        let enter = |node: PredId,
+                     index: &mut u32,
+                     stack: &mut Vec<PredId>,
+                     indices: &mut HashMap<PredId, u32>,
+                     lowlinks: &mut HashMap<PredId, u32>,
+                     on_stack: &mut HashSet<PredId>,
+                     successors: Vec<PredId>|
+         -> Frame {
+            let assigned = *index;
+            indices.insert(node, assigned);
+            lowlinks.insert(node, assigned);
+            *index = index.saturating_add(1);
+            stack.push(node);
+            on_stack.insert(node);
+            Frame {
+                node,
+                successors,
+                next: 0,
+                lowlink: assigned,
+                index: assigned,
+            }
+        };
+
+        let root_successors = self.successors_of(root);
+        frames.push(enter(
+            root,
+            index,
+            stack,
+            indices,
+            lowlinks,
+            on_stack,
+            root_successors,
+        ));
+
+        while !frames.is_empty() {
+            let step = match frames.last_mut() {
+                Some(frame) => match frame.successors.get(frame.next).copied() {
+                    Some(succ) => {
+                        frame.next += 1;
+                        if indices.contains_key(&succ) {
+                            if on_stack.contains(&succ)
+                                && let Some(&succ_index) = indices.get(&succ)
+                            {
+                                frame.lowlink = frame.lowlink.min(succ_index);
+                            }
+                            Step::Continue
+                        } else {
+                            Step::Descend(succ)
+                        }
+                    }
+                    None => Step::Finish,
+                },
+                None => break,
+            };
+
+            match step {
+                Step::Continue => {}
+                Step::Descend(succ) => {
+                    let successors = self.successors_of(succ);
+                    frames.push(enter(
+                        succ, index, stack, indices, lowlinks, on_stack, successors,
+                    ));
+                }
+                Step::Finish => {
+                    let Some(frame) = frames.pop() else {
+                        break;
+                    };
+                    lowlinks.insert(frame.node, frame.lowlink);
+
+                    // Root of an SCC: pop it off the Tarjan stack.
+                    if frame.lowlink == frame.index {
+                        let mut scc = HashSet::new();
+                        while let Some(w) = stack.pop() {
+                            on_stack.remove(&w);
+                            scc.insert(w);
+                            if w == frame.node {
+                                break;
+                            }
+                        }
+                        self.sccs.push(scc);
+                    }
+
+                    // Propagate the lowlink into the caller's frame, which
+                    // is what returning from the recursive call did.
+                    if let Some(parent) = frames.last_mut() {
+                        parent.lowlink = parent.lowlink.min(frame.lowlink);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Successors of `pred` in the dependency graph, in a stable order.
+    fn successors_of(&self, pred: PredId) -> Vec<PredId> {
+        let mut successors: Vec<PredId> = self
             .dependencies
             .get(&pred)
             .map(|s| s.iter().copied().collect())
             .unwrap_or_default();
-
-        for succ in successors {
-            if !indices.contains_key(&succ) {
-                // Successor has not yet been visited; recurse on it
-                self.tarjan_strongconnect(succ, index, stack, indices, lowlinks, on_stack);
-                let succ_lowlink = *lowlinks
-                    .get(&succ)
-                    .expect("lowlink exists for visited node");
-                let pred_lowlink = lowlinks.get(&pred).expect("lowlink exists for predecessor");
-                lowlinks.insert(pred, (*pred_lowlink).min(succ_lowlink));
-            } else if on_stack.contains(&succ) {
-                // Successor is in stack and hence in the current SCC
-                let succ_index = *indices.get(&succ).expect("index exists for visited node");
-                let pred_lowlink = lowlinks.get(&pred).expect("lowlink exists for predecessor");
-                lowlinks.insert(pred, (*pred_lowlink).min(succ_index));
-            }
-        }
-
-        // If pred is a root node, pop the stack and create an SCC
-        if lowlinks.get(&pred) == indices.get(&pred) {
-            let mut scc = HashSet::new();
-            loop {
-                let w = stack.pop().expect("collection validated to be non-empty");
-                on_stack.remove(&w);
-                scc.insert(w);
-                if w == pred {
-                    break;
-                }
-            }
-            self.sccs.push(scc);
-        }
+        successors.sort_unstable();
+        successors
     }
 
     /// Mark rules that are cyclic based on SCC analysis
@@ -459,6 +556,20 @@ mod tests {
     use crate::chc::{ChcSystem, PredicateApp, RuleBody, RuleHead};
     use oxiz_core::TermManager;
 
+    /// Stack size and chain length for the long-chain Tarjan test below.
+    ///
+    /// The two are scaled together on purpose: the DFS depth equals the chain
+    /// length, so what the test actually pins is the *ratio* -- about
+    /// 10 bytes of stack per graph node (128 KiB / 12_500). A natively
+    /// recursive Tarjan needs far more than that per frame and still
+    /// overflows, so the regression keeps every bit of its detection power.
+    /// The pair used to be 1 MiB / 100_000 -- the same 10 bytes -- and was
+    /// scaled down together with the rest of the crate's deep-nesting tests
+    /// to keep the suite's peak memory in check. Never raise `DEEP_DEPTH`
+    /// without raising `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 12_500;
+
     #[test]
     fn test_linear_rule_analysis() {
         let mut terms = TermManager::new();
@@ -562,5 +673,57 @@ mod tests {
         assert_eq!(stats.binary_nonlinear, 1);
         assert_eq!(stats.max_body_preds, 2);
         assert!(!analyzer.is_linear());
+    }
+
+    /// A [`DEEP_DEPTH`]-long predicate chain must not overflow the stack: the
+    /// DFS depth of Tarjan's algorithm equals the chain length, and the chain
+    /// length is decided by the input file.
+    #[test]
+    fn compute_sccs_survives_long_predicate_chain() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut analyzer = NonLinearAnalyzer::new();
+                for i in 0..DEEP_DEPTH {
+                    analyzer
+                        .dependencies
+                        .entry(PredId(i))
+                        .or_default()
+                        .insert(PredId(i + 1));
+                }
+                analyzer.compute_sccs();
+                // Every node is its own trivial SCC; the chain has one more
+                // node than it has edges.
+                assert_eq!(analyzer.sccs.len(), DEEP_DEPTH as usize + 1);
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("long-chain Tarjan must return");
+    }
+
+    /// A three-node cycle is one SCC, and the two nodes hanging off it are
+    /// their own — a semantic pin on the iterative Tarjan.
+    #[test]
+    fn compute_sccs_groups_a_cycle() {
+        let mut analyzer = NonLinearAnalyzer::new();
+        let (a, b, c, d) = (PredId(0), PredId(1), PredId(2), PredId(3));
+        analyzer.dependencies.entry(a).or_default().insert(b);
+        analyzer.dependencies.entry(b).or_default().insert(c);
+        analyzer.dependencies.entry(c).or_default().insert(a);
+        analyzer.dependencies.entry(c).or_default().insert(d);
+        analyzer.compute_sccs();
+
+        let cycle = analyzer
+            .sccs
+            .iter()
+            .find(|scc| scc.len() == 3)
+            .expect("the a->b->c->a cycle must form one SCC");
+        assert!(cycle.contains(&a) && cycle.contains(&b) && cycle.contains(&c));
+        assert!(
+            analyzer
+                .sccs
+                .iter()
+                .any(|scc| scc.len() == 1 && scc.contains(&d)),
+            "`d` is not on the cycle and must be its own SCC"
+        );
     }
 }

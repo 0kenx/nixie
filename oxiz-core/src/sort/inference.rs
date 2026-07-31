@@ -43,12 +43,15 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         TermKind::StrContains(_, _)
         | TermKind::StrPrefixOf(_, _)
         | TermKind::StrSuffixOf(_, _)
-        | TermKind::StrInRe(_, _) => Ok(manager.sorts.bool_sort),
+        | TermKind::StrInRe(_, _)
+        | TermKind::StrLt(_, _)
+        | TermKind::StrLe(_, _) => Ok(manager.sorts.bool_sort),
 
         // String operations that return Int
-        TermKind::StrLen(_) | TermKind::StrToInt(_) | TermKind::StrIndexOf(_, _, _) => {
-            Ok(manager.sorts.int_sort)
-        }
+        TermKind::StrLen(_)
+        | TermKind::StrToInt(_)
+        | TermKind::StrIndexOf(_, _, _)
+        | TermKind::StrToCode(_) => Ok(manager.sorts.int_sort),
 
         // String operations that return String
         TermKind::StrConcat(_, _)
@@ -56,6 +59,9 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         | TermKind::StrSubstr(_, _, _)
         | TermKind::StrReplace(_, _, _)
         | TermKind::StrReplaceAll(_, _, _)
+        | TermKind::StrReplaceRe(_, _, _)
+        | TermKind::StrReplaceReAll(_, _, _)
+        | TermKind::StrFromCode(_)
         | TermKind::IntToStr(_) => Ok(term.sort),
 
         // Arithmetic operations inherit sort from operands
@@ -270,38 +276,78 @@ pub fn check_sort_compatibility(
     }
 }
 
+/// One unit of work for the iterative sort formatter
+enum FormatWork {
+    /// Render this sort next
+    Sort(SortId),
+    /// Emit already-decided text (a separator or a closing paren)
+    Literal(&'static str),
+}
+
 /// Format a sort for error messages
+///
+/// Uses an explicit work stack instead of recursion. `check_sort_compatibility`
+/// is public API and the sort it formats comes from a term whose nesting depth
+/// is not bounded by the parser, so a deeply nested `(Array (Array ...))`
+/// would otherwise overflow the stack while building an *error message*.
 fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
-    if let Some(sort) = sorts.get(sort_id) {
-        match &sort.kind {
-            SortKind::Bool => "Bool".to_string(),
-            SortKind::Int => "Int".to_string(),
-            SortKind::Real => "Real".to_string(),
-            SortKind::String => "String".to_string(),
-            SortKind::BitVec(w) => format!("(_ BitVec {})", w),
-            SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {} {})", eb, sb),
-            SortKind::Array { domain, range } => {
-                let domain_str = format_sort(*domain, sorts);
-                let range_str = format_sort(*range, sorts);
-                format!("(Array {} {})", domain_str, range_str)
-            }
-            SortKind::Uninterpreted(spur) => {
-                format!("Uninterpreted({})", spur.into_inner())
-            }
-            SortKind::Parameter(spur) => {
-                format!("Param({})", spur.into_inner())
-            }
-            SortKind::Parametric { name, args } => {
-                let arg_strs: Vec<_> = args.iter().map(|a| format_sort(*a, sorts)).collect();
-                format!("({} {})", name.into_inner(), arg_strs.join(" "))
-            }
-            SortKind::Datatype(spur) => {
-                format!("Datatype({})", spur.into_inner())
+    let mut out = String::new();
+    let mut stack = vec![FormatWork::Sort(sort_id)];
+
+    while let Some(work) = stack.pop() {
+        match work {
+            FormatWork::Literal(text) => out.push_str(text),
+            FormatWork::Sort(id) => {
+                let Some(sort) = sorts.get(id) else {
+                    out.push_str(&format!("Sort({})", id.0));
+                    continue;
+                };
+                match &sort.kind {
+                    SortKind::Bool => out.push_str("Bool"),
+                    SortKind::Int => out.push_str("Int"),
+                    SortKind::Real => out.push_str("Real"),
+                    SortKind::String => out.push_str("String"),
+                    SortKind::BitVec(w) => out.push_str(&format!("(_ BitVec {})", w)),
+                    SortKind::FloatingPoint { eb, sb } => {
+                        out.push_str(&format!("(_ FloatingPoint {} {})", eb, sb));
+                    }
+                    SortKind::Array { domain, range } => {
+                        // "(Array " <domain> " " <range> ")"
+                        out.push_str("(Array ");
+                        stack.push(FormatWork::Literal(")"));
+                        stack.push(FormatWork::Sort(*range));
+                        stack.push(FormatWork::Literal(" "));
+                        stack.push(FormatWork::Sort(*domain));
+                    }
+                    SortKind::Uninterpreted(spur) => {
+                        out.push_str(&format!("Uninterpreted({})", spur.into_inner()));
+                    }
+                    SortKind::Parameter(spur) => {
+                        out.push_str(&format!("Param({})", spur.into_inner()));
+                    }
+                    SortKind::Parametric { name, args } => {
+                        // "(" <name> (" " <arg>)* ")" — with a lone space for
+                        // an empty argument list, exactly as the previous
+                        // `args.join(" ")` formulation produced.
+                        out.push_str(&format!("({}", name.into_inner()));
+                        stack.push(FormatWork::Literal(")"));
+                        if args.is_empty() {
+                            stack.push(FormatWork::Literal(" "));
+                        }
+                        for arg in args.iter().rev() {
+                            stack.push(FormatWork::Sort(*arg));
+                            stack.push(FormatWork::Literal(" "));
+                        }
+                    }
+                    SortKind::Datatype(spur) => {
+                        out.push_str(&format!("Datatype({})", spur.into_inner()));
+                    }
+                }
             }
         }
-    } else {
-        format!("Sort({})", sort_id.0)
     }
+
+    out
 }
 
 /// Verify that all arguments to an operation have compatible sorts
@@ -456,5 +502,47 @@ mod tests {
 
         let result = check_sort_compatibility(int_sort, bool_sort, &manager.sorts, span);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_format_sort_nested_array() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+        let inner = manager.sorts.array(int_sort, bool_sort);
+        let outer = manager.sorts.array(inner, int_sort);
+
+        assert_eq!(
+            format_sort(outer, &manager.sorts),
+            "(Array (Array Int Bool) Int)"
+        );
+    }
+
+    #[test]
+    fn test_format_sort_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let mut current = int_sort;
+                for _ in 0..50_000 {
+                    current = manager.sorts.array(int_sort, current);
+                }
+                // Formatting an error message must not overflow the stack.
+                let rendered = format_sort(current, &manager.sorts);
+                (
+                    rendered.starts_with("(Array Int (Array Int "),
+                    // The innermost level is `(Array Int Int)`.
+                    rendered.contains("Int Int)"),
+                    rendered.matches("(Array").count(),
+                )
+            })
+            .expect("thread spawn should succeed");
+
+        let (starts, ends, count) = handle.join().expect("deep formatting must not overflow");
+        assert!(starts);
+        assert!(ends);
+        assert_eq!(count, 50_000);
     }
 }

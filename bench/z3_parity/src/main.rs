@@ -4,16 +4,26 @@
 //! to this crate's manifest directory), runs each one through both the OxiZ
 //! solver and a real `z3` binary, and compares the results to measure
 //! correctness parity per logic. A summary table is printed to stdout and
-//! full results are written to `results.json`.
+//! full results are written into this crate's directory, twice:
+//!
+//! - `results.json` - scratch copy of the most recent run, git-ignored.
+//! - `results.<os>-<arch>.json` - the tracked per-environment record, e.g.
+//!   `results.linux-x86_64.json`. One file per platform, so a run on one
+//!   machine can never clobber another platform's recorded verdicts.
+//!
+//! Both files carry identical content: a `schema_version`, a `metadata` header
+//! naming the OxiZ version, the Z3 version actually probed, the OS/arch and
+//! the run timestamp, and the `results` list itself.
 //!
 //! # Usage
 //!
 //! ```text
-//! oxiz-z3-parity [--export-history <DIR>]
+//! oxiz-z3-parity [--export-history <DIR>] [--out <FILE>]
 //! ```
 //!
-//! `--export-history <DIR>` additionally exports a history snapshot of the
-//! run to the given directory.
+//! `--export-history <DIR>` additionally exports a history snapshot of the run
+//! to the given directory. `--out <FILE>` redirects the per-environment record
+//! to `<FILE>`; the scratch `results.json` is written either way.
 
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -24,11 +34,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tabled::{Table, Tabled};
 
-use oxiz_z3_parity::ParityResult;
 use oxiz_z3_parity::comparator::{MatchStatus, compare_results};
 use oxiz_z3_parity::history;
 use oxiz_z3_parity::oxiz_runner::run_oxiz;
 use oxiz_z3_parity::z3_runner::run_z3;
+use oxiz_z3_parity::{
+    ParityReport, ParityResult, SCRATCH_RESULTS_FILE_NAME, env_results_file_name,
+};
 
 #[derive(Debug, Tabled)]
 struct ResultRow {
@@ -50,6 +62,48 @@ struct ResultRow {
     parity: String,
     #[tabled(rename = "Solved %")]
     solved: String,
+}
+
+/// Command-line options, parsed by hand: two optional flags do not justify a
+/// CLI dependency in a benchmark harness.
+#[derive(Debug, Default)]
+struct CliArgs {
+    /// `--export-history <DIR>`: directory to append a history snapshot to.
+    export_history_dir: Option<PathBuf>,
+    /// `--out <FILE>`: override for the per-environment record's path. The
+    /// scratch `results.json` is unaffected.
+    out_path: Option<PathBuf>,
+}
+
+/// Parse the flags this harness understands, leaving anything else alone (the
+/// runner has always tolerated unknown arguments). A known flag missing its
+/// value is an error rather than a silent no-op, so a typo cannot quietly cost
+/// a full benchmark run its output path.
+fn parse_args(args: &[String]) -> Result<CliArgs> {
+    let mut parsed = CliArgs::default();
+    let mut index = 1;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--export-history" => {
+                let value = args
+                    .get(index + 1)
+                    .context("--export-history requires a directory argument")?;
+                parsed.export_history_dir = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--out" => {
+                let value = args
+                    .get(index + 1)
+                    .context("--out requires a file path argument")?;
+                parsed.out_path = Some(PathBuf::from(value));
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+
+    Ok(parsed)
 }
 
 fn discover_benchmarks(base_path: &Path) -> Result<Vec<(String, PathBuf)>> {
@@ -309,23 +363,11 @@ fn main() -> Result<()> {
     println!("{}", "OxiZ vs Z3 Parity Testing Suite".bright_cyan().bold());
     println!("{}\n", "=".repeat(80).bright_cyan());
 
-    // Parse --export-history <dir> flag
     let args: Vec<String> = std::env::args().collect();
-    let export_history_dir: Option<PathBuf> = {
-        let mut dir = None;
-        let mut i = 1;
-        while i < args.len() {
-            if args[i] == "--export-history" && i + 1 < args.len() {
-                dir = Some(PathBuf::from(&args[i + 1]));
-                i += 2;
-            } else {
-                i += 1;
-            }
-        }
-        dir
-    };
+    let cli_args = parse_args(&args)?;
 
-    let benchmark_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benchmarks");
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let benchmark_dir = crate_dir.join("benchmarks");
 
     if !benchmark_dir.exists() {
         anyhow::bail!("Benchmark directory not found: {}", benchmark_dir.display());
@@ -348,17 +390,50 @@ fn main() -> Result<()> {
         })
         .collect();
 
-    // Save results to JSON
-    let results_json = serde_json::to_string_pretty(&results)?;
-    fs::write("results.json", results_json)?;
-    println!("\nResults saved to results.json");
+    // Wrap the run in its metadata header before anything is written: which
+    // Z3 build answered, on which platform, when. Results without that header
+    // cannot be attributed, and an unattributed file silently becomes
+    // "whatever machine ran last".
+    let report = ParityReport::capture(results);
+    let report_json = serde_json::to_string_pretty(&report)?;
+
+    // Both files land next to this crate's manifest rather than in the current
+    // directory, so the tracked record always appears where it belongs no
+    // matter where the harness was invoked from.
+    let scratch_path = crate_dir.join(SCRATCH_RESULTS_FILE_NAME);
+    let env_path = cli_args
+        .out_path
+        .unwrap_or_else(|| crate_dir.join(env_results_file_name()));
+
+    fs::write(&scratch_path, &report_json)
+        .with_context(|| format!("Failed to write {}", scratch_path.display()))?;
+    fs::write(&env_path, &report_json)
+        .with_context(|| format!("Failed to write {}", env_path.display()))?;
+
+    println!(
+        "\nResults saved to {} (scratch, git-ignored)",
+        scratch_path.display()
+    );
+    println!("Per-environment record: {}", env_path.display());
+    println!(
+        "  OxiZ {} | Z3 {} | {}-{} | {}",
+        report.metadata.oxiz_version,
+        report
+            .metadata
+            .z3_version
+            .as_deref()
+            .unwrap_or("<not probed>"),
+        report.metadata.os,
+        report.metadata.arch,
+        report.metadata.generated_at
+    );
 
     // Generate report
-    generate_report(&results);
+    generate_report(&report.results);
 
     // Export history snapshot if requested
-    if let Some(history_dir) = export_history_dir {
-        match history::export_to_history(&results, &history_dir) {
+    if let Some(history_dir) = cli_args.export_history_dir {
+        match history::export_to_history(&report.results, &history_dir) {
             Ok(path) => println!("History snapshot written: {}", path.display()),
             Err(e) => eprintln!("Warning: failed to write history snapshot: {e}"),
         }

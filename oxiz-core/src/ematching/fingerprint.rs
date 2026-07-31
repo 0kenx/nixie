@@ -286,7 +286,10 @@ impl FingerprintCache {
                 high.hash(&mut hasher);
                 low.hash(&mut hasher);
             }
-            TermKind::StrLen(inner) | TermKind::StrToInt(inner) => {
+            TermKind::StrLen(inner)
+            | TermKind::StrToInt(inner)
+            | TermKind::StrToCode(inner)
+            | TermKind::StrFromCode(inner) => {
                 let inner_fp = self.compute(*inner, manager);
                 inner_fp.0.hash(&mut hasher);
             }
@@ -295,7 +298,9 @@ impl FingerprintCache {
             | TermKind::StrContains(lhs, rhs)
             | TermKind::StrPrefixOf(lhs, rhs)
             | TermKind::StrSuffixOf(lhs, rhs)
-            | TermKind::StrInRe(lhs, rhs) => {
+            | TermKind::StrInRe(lhs, rhs)
+            | TermKind::StrLt(lhs, rhs)
+            | TermKind::StrLe(lhs, rhs) => {
                 let lhs_fp = self.compute(*lhs, manager);
                 let rhs_fp = self.compute(*rhs, manager);
                 lhs_fp.0.hash(&mut hasher);
@@ -311,7 +316,9 @@ impl FingerprintCache {
                 start_fp.0.hash(&mut hasher);
                 len_fp.0.hash(&mut hasher);
             }
-            TermKind::StrReplaceAll(s, pattern, replacement) => {
+            TermKind::StrReplaceAll(s, pattern, replacement)
+            | TermKind::StrReplaceRe(s, pattern, replacement)
+            | TermKind::StrReplaceReAll(s, pattern, replacement) => {
                 let s_fp = self.compute(*s, manager);
                 let p_fp = self.compute(*pattern, manager);
                 let r_fp = self.compute(*replacement, manager);

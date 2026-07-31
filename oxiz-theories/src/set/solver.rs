@@ -241,20 +241,111 @@ impl SetExpr {
         vars
     }
 
+    /// Collect every set variable in this expression.
+    ///
+    /// Explicit stack: `SetExpr` nests as deeply as the caller builds it and
+    /// this returns `()`, so a depth cap could only drop variables from the
+    /// answer — and a caller that acts on an incomplete variable set is
+    /// silently wrong rather than merely incomplete.
     fn collect_vars(&self, vars: &mut FxHashSet<SetVarId>) {
-        match self {
-            SetExpr::Var(v) => {
-                vars.insert(*v);
+        let mut stack: Vec<&SetExpr> = vec![self];
+        while let Some(current) = stack.pop() {
+            match current {
+                SetExpr::Var(v) => {
+                    vars.insert(*v);
+                }
+                SetExpr::Union(l, r) | SetExpr::Intersection(l, r) | SetExpr::Difference(l, r) => {
+                    stack.push(r);
+                    stack.push(l);
+                }
+                SetExpr::Complement(e) => stack.push(e),
+                SetExpr::Comprehension { formula, .. } => stack.push(formula),
+                SetExpr::Empty | SetExpr::Universal | SetExpr::Singleton(_) => {}
             }
-            SetExpr::Union(l, r) | SetExpr::Intersection(l, r) | SetExpr::Difference(l, r) => {
-                l.collect_vars(vars);
-                r.collect_vars(vars);
-            }
-            SetExpr::Complement(e) => e.collect_vars(vars),
-            SetExpr::Comprehension { formula, .. } => formula.collect_vars(vars),
-            _ => {}
         }
     }
+}
+
+impl Drop for SetExpr {
+    /// Dismantle the operand tree iteratively.
+    ///
+    /// Compiler-generated drop glue recurses once per nesting level, so an
+    /// expression deep enough to build is deep enough to abort the process at
+    /// scope exit, after it has already been used successfully.
+    fn drop(&mut self) {
+        let mut stack: Vec<SetExpr> = Vec::new();
+        take_set_children(self, &mut stack);
+        while let Some(mut node) = stack.pop() {
+            take_set_children(&mut node, &mut stack);
+        }
+    }
+}
+
+/// Move `expr`'s operands onto `out`, leaving a childless expression behind.
+fn take_set_children(expr: &mut SetExpr, out: &mut Vec<SetExpr>) {
+    /// A childless stand-in left where an operand used to be. Dropping it
+    /// terminates immediately.
+    fn placeholder() -> Box<SetExpr> {
+        Box::new(SetExpr::Empty)
+    }
+    // The operands are swapped out one field at a time: `SetExpr` implements
+    // `Drop`, so its fields cannot be moved out wholesale.
+    match expr {
+        SetExpr::Var(_) | SetExpr::Empty | SetExpr::Universal | SetExpr::Singleton(_) => {}
+        SetExpr::Union(l, r) | SetExpr::Intersection(l, r) | SetExpr::Difference(l, r) => {
+            out.push(*core::mem::replace(l, placeholder()));
+            out.push(*core::mem::replace(r, placeholder()));
+        }
+        SetExpr::Complement(e) => out.push(*core::mem::replace(e, placeholder())),
+        SetExpr::Comprehension { formula, .. } => {
+            out.push(*core::mem::replace(formula, placeholder()));
+        }
+    }
+}
+
+/// How a compound [`SetExpr`] node is constrained once its operands'
+/// variables are known. Each variant carries the auxiliary variable that was
+/// created for the node *before* its operands were extracted.
+enum ExtractBuild {
+    /// The node denotes exactly its single operand (set comprehension).
+    Alias,
+    /// `lhs ∪ rhs`
+    Union(SetVarId),
+    /// `lhs ∩ rhs`
+    Intersection(SetVarId),
+    /// `lhs \\ rhs`
+    Difference(SetVarId),
+    /// `¬inner`
+    Complement(SetVarId),
+}
+
+/// One pending compound node of the iterative [`SetSolver::extract_var`] walk.
+struct ExtractFrame<'e> {
+    /// How to constrain this node.
+    build: ExtractBuild,
+    /// Operands still to extract, reversed so `pop` yields them in order.
+    pending: Vec<&'e SetExpr>,
+    /// Operand variables extracted so far, in operand order.
+    done: Vec<SetVarId>,
+}
+
+impl<'e> ExtractFrame<'e> {
+    /// A frame for a two-operand node, extracted left then right.
+    fn binary(build: ExtractBuild, lhs: &'e SetExpr, rhs: &'e SetExpr) -> Self {
+        Self {
+            build,
+            pending: vec![rhs, lhs],
+            done: Vec::new(),
+        }
+    }
+}
+
+/// What extracting one set expression needs: a variable already, or operands.
+enum ExtractOpened<'e> {
+    /// The expression already denotes this variable.
+    Leaf(SetVarId),
+    /// A compound whose operands must be extracted first.
+    Frame(ExtractFrame<'e>),
 }
 
 /// Set constraint
@@ -690,21 +781,90 @@ impl SetSolver {
     /// to the expression — without ever calling `add_equal_constraint` with the
     /// same complex expression (which would trigger infinite recursion).
     fn extract_var(&mut self, expr: &SetExpr) -> SetResult<SetVarId> {
+        // Explicit stack, not recursion. `SetExpr` nests as deeply as the
+        // caller builds it (it is a `pub` type with `pub` constructors and no
+        // depth-capped parser in front of it), and the recursive version also
+        // deep-cloned the whole remaining subtree at every level, so the walk
+        // was O(N^2) in copying on top of being O(N) in native stack frames.
+        // The auxiliary variable for a compound node is still created *before*
+        // its operands are extracted, exactly as the recursive version did, so
+        // the generated variable names and ids are unchanged.
+        let mut frames: Vec<ExtractFrame<'_>> = match self.open_extract(expr)? {
+            ExtractOpened::Leaf(v) => return Ok(v),
+            ExtractOpened::Frame(f) => vec![f],
+        };
+        // An extracted operand variable travelling back to the frame that
+        // asked for it.
+        let mut carry: Option<SetVarId> = None;
+
+        while !frames.is_empty() {
+            let next = match frames.last_mut() {
+                Some(top) => {
+                    if let Some(v) = carry.take() {
+                        top.done.push(v);
+                    }
+                    top.pending.pop()
+                }
+                // Unreachable: the loop condition just checked non-emptiness.
+                None => break,
+            };
+            match next {
+                Some(child) => match self.open_extract(child)? {
+                    ExtractOpened::Leaf(v) => carry = Some(v),
+                    ExtractOpened::Frame(f) => frames.push(f),
+                },
+                None => match frames.pop() {
+                    Some(frame) => carry = Some(self.finish_extract(frame)?),
+                    // Unreachable for the same reason as above.
+                    None => break,
+                },
+            }
+        }
+
+        match carry {
+            Some(v) => Ok(v),
+            // Unreachable: the root either answered outright above or left its
+            // variable in `carry` when its frame finished. Reported through the
+            // real error channel rather than defaulted to some variable id.
+            None => Err(SetConflict {
+                literals: Vec::new(),
+                reason: "internal: set expression extraction produced no variable".to_string(),
+                proof_steps: Vec::new(),
+            }),
+        }
+    }
+
+    /// Classify one set expression: either it already denotes a variable, or
+    /// it is a compound whose operands must be extracted first.
+    fn open_extract<'e>(&mut self, expr: &'e SetExpr) -> SetResult<ExtractOpened<'e>> {
+        // `Comprehension` denotes exactly its body set (see below), so it is
+        // unwrapped here instead of costing a frame.
+        // Membership axiom for {x | phi(x)}:  x in {y | phi(y)} <=> phi(x).
+        // In this expression language the predicate `phi` is itself a set
+        // expression `formula`, so the comprehension denotes exactly that set:
+        // the comprehension variable is identified with the body set.
+        // Membership constraints then propagate through the body instead of
+        // hitting a fresh, unconstrained variable -- which previously let an
+        // infeasible body be reported `Sat`.
+        let mut expr = expr;
+        while let SetExpr::Comprehension { formula, .. } = expr {
+            expr = &**formula;
+        }
         match expr {
-            SetExpr::Var(v) => Ok(*v),
+            SetExpr::Var(v) => Ok(ExtractOpened::Leaf(*v)),
             SetExpr::Empty => {
                 let var = self.new_set_var(&format!("empty_{}", self.vars.len()), SetSort::IntSet);
                 if let Some(v) = self.get_var_mut(var) {
                     v.set_empty();
                 }
-                Ok(var)
+                Ok(ExtractOpened::Leaf(var))
             }
             SetExpr::Universal => {
                 let var = self.new_set_var(&format!("univ_{}", self.vars.len()), SetSort::IntSet);
                 if let Some(v) = self.get_var_mut(var) {
                     v.is_universal = true;
                 }
-                Ok(var)
+                Ok(ExtractOpened::Leaf(var))
             }
             SetExpr::Singleton(elem) => {
                 let elem_val = *elem;
@@ -715,112 +875,96 @@ impl SetSolver {
                     v.tighten_lower_card(1);
                     v.tighten_upper_card(1);
                 }
-                Ok(var)
+                Ok(ExtractOpened::Leaf(var))
             }
             SetExpr::Union(lhs_expr, rhs_expr) => {
-                // Clone to avoid simultaneous borrow of self
-                let lhs_expr = *lhs_expr.clone();
-                let rhs_expr = *rhs_expr.clone();
                 let aux =
                     self.new_set_var(&format!("aux_union_{}", self.vars.len()), SetSort::IntSet);
-                let lhs_var = self.extract_var(&lhs_expr)?;
-                let rhs_var = self.extract_var(&rhs_expr)?;
-                // aux ⊇ lhs  and  aux ⊇ rhs  (forward propagation of membership)
-                self.propagate_subset(lhs_var, aux)?;
-                self.propagate_subset(rhs_var, aux)?;
-                // aux ⊆ lhs ∪ rhs — approximated by recording the operation
-                // (exact membership tracking happens during propagate())
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
+                Ok(ExtractOpened::Frame(ExtractFrame::binary(
+                    ExtractBuild::Union(aux),
+                    lhs_expr,
+                    rhs_expr,
+                )))
             }
             SetExpr::Intersection(lhs_expr, rhs_expr) => {
-                let lhs_expr = *lhs_expr.clone();
-                let rhs_expr = *rhs_expr.clone();
                 let aux =
                     self.new_set_var(&format!("aux_inter_{}", self.vars.len()), SetSort::IntSet);
-                let lhs_var = self.extract_var(&lhs_expr)?;
-                let rhs_var = self.extract_var(&rhs_expr)?;
-                // aux ⊆ lhs  and  aux ⊆ rhs
-                self.propagate_subset(aux, lhs_var)?;
-                self.propagate_subset(aux, rhs_var)?;
-                // Must-members that are in both operands flow into aux
-                let lhs_must: Vec<u32> = self
-                    .get_var(lhs_var)
-                    .map(|v| v.must_members.iter().copied().collect())
-                    .unwrap_or_default();
-                let rhs_must: FxHashSet<u32> = self
-                    .get_var(rhs_var)
-                    .map(|v| v.must_members.iter().copied().collect())
-                    .unwrap_or_default();
-                for elem in lhs_must {
-                    if rhs_must.contains(&elem)
-                        && let Some(v) = self.get_var_mut(aux)
-                    {
-                        v.add_must_member(elem);
-                    }
-                }
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
+                Ok(ExtractOpened::Frame(ExtractFrame::binary(
+                    ExtractBuild::Intersection(aux),
+                    lhs_expr,
+                    rhs_expr,
+                )))
             }
             SetExpr::Difference(lhs_expr, rhs_expr) => {
-                let lhs_expr = *lhs_expr.clone();
-                let rhs_expr = *rhs_expr.clone();
                 let aux =
                     self.new_set_var(&format!("aux_diff_{}", self.vars.len()), SetSort::IntSet);
-                let lhs_var = self.extract_var(&lhs_expr)?;
-                let rhs_var = self.extract_var(&rhs_expr)?;
-                // aux ⊆ lhs
-                self.propagate_subset(aux, lhs_var)?;
-                // For each must-member of rhs, it must NOT be in aux
-                let rhs_must: Vec<u32> = self
-                    .get_var(rhs_var)
-                    .map(|v| v.must_members.iter().copied().collect())
-                    .unwrap_or_default();
-                for elem in rhs_must {
-                    if let Some(v) = self.get_var_mut(aux) {
-                        v.add_must_not_member(elem);
-                    }
-                }
-                // For must-members of lhs that are definitely not in rhs, add to aux
-                let lhs_must: Vec<u32> = self
-                    .get_var(lhs_var)
-                    .map(|v| v.must_members.iter().copied().collect())
-                    .unwrap_or_default();
-                let rhs_not: FxHashSet<u32> = self
-                    .get_var(rhs_var)
-                    .map(|v| v.must_not_members.iter().copied().collect())
-                    .unwrap_or_default();
-                for elem in lhs_must {
-                    if rhs_not.contains(&elem)
-                        && let Some(v) = self.get_var_mut(aux)
-                    {
-                        v.add_must_member(elem);
-                    }
-                }
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
+                Ok(ExtractOpened::Frame(ExtractFrame::binary(
+                    ExtractBuild::Difference(aux),
+                    lhs_expr,
+                    rhs_expr,
+                )))
             }
             SetExpr::Complement(inner_expr) => {
-                let inner_expr = *inner_expr.clone();
                 let aux =
                     self.new_set_var(&format!("aux_compl_{}", self.vars.len()), SetSort::IntSet);
-                let inner_var = self.extract_var(&inner_expr)?;
-                // x ∈ inner ⟹ x ∉ aux
-                let inner_must: Vec<u32> = self
-                    .get_var(inner_var)
-                    .map(|v| v.must_members.iter().copied().collect())
-                    .unwrap_or_default();
-                for elem in inner_must {
-                    if let Some(v) = self.get_var_mut(aux) {
-                        v.add_must_not_member(elem);
-                    }
+                Ok(ExtractOpened::Frame(ExtractFrame {
+                    build: ExtractBuild::Complement(aux),
+                    pending: vec![&**inner_expr],
+                    done: Vec::new(),
+                }))
+            }
+            // Unwrapped above; listed so the match stays exhaustive and a new
+            // `SetExpr` variant becomes a compile error here.
+            SetExpr::Comprehension { formula, .. } => Ok(ExtractOpened::Frame(ExtractFrame {
+                build: ExtractBuild::Alias,
+                pending: vec![&**formula],
+                done: Vec::new(),
+            })),
+        }
+    }
+
+    /// Constrain a compound node's auxiliary variable now that its operands'
+    /// variables are known.
+    fn finish_extract(&mut self, frame: ExtractFrame<'_>) -> SetResult<SetVarId> {
+        let done = frame.done;
+        match frame.build {
+            ExtractBuild::Alias => match done.into_iter().next_back() {
+                Some(v) => Ok(v),
+                // Unreachable: an `Alias` frame always carries one operand.
+                None => Err(SetConflict {
+                    literals: Vec::new(),
+                    reason: "internal: set comprehension body produced no variable".to_string(),
+                    proof_steps: Vec::new(),
+                }),
+            },
+            ExtractBuild::Union(aux) => {
+                // aux ⊇ operand, for every operand (forward propagation of
+                // membership). aux ⊆ lhs ∪ rhs is approximated by recording the
+                // operation (exact membership tracking happens in propagate()).
+                for operand in done {
+                    self.propagate_subset(operand, aux)?;
                 }
-                // x ∉ inner ⟹ x ∈ aux
-                let inner_not: Vec<u32> = self
-                    .get_var(inner_var)
-                    .map(|v| v.must_not_members.iter().copied().collect())
-                    .unwrap_or_default();
-                for elem in inner_not {
+                self.propagation_queue.push_back(aux);
+                Ok(aux)
+            }
+            ExtractBuild::Intersection(aux) => {
+                // aux ⊆ operand, for every operand.
+                for &operand in &done {
+                    self.propagate_subset(aux, operand)?;
+                }
+                // Must-members present in *every* operand flow into aux.
+                let mut common: Option<FxHashSet<u32>> = None;
+                for &operand in &done {
+                    let members: FxHashSet<u32> = self
+                        .get_var(operand)
+                        .map(|v| v.must_members.iter().copied().collect())
+                        .unwrap_or_default();
+                    common = Some(match common {
+                        Some(acc) => acc.intersection(&members).copied().collect(),
+                        None => members,
+                    });
+                }
+                for elem in common.unwrap_or_default() {
                     if let Some(v) = self.get_var_mut(aux) {
                         v.add_must_member(elem);
                     }
@@ -828,16 +972,68 @@ impl SetSolver {
                 self.propagation_queue.push_back(aux);
                 Ok(aux)
             }
-            SetExpr::Comprehension { formula, .. } => {
-                // Membership axiom for {x | phi(x)}:  x in {y | phi(y)} <=> phi(x).
-                // In this expression language the predicate `phi` is itself a
-                // set expression `formula`, so the comprehension denotes exactly
-                // that set: the comprehension variable is identified with the
-                // body set. Membership constraints then propagate through the
-                // body instead of hitting a fresh, unconstrained variable --
-                // which previously let an infeasible body be reported `Sat`.
-                let body = (**formula).clone();
-                self.extract_var(&body)
+            ExtractBuild::Difference(aux) => {
+                let mut operands = done.into_iter();
+                if let Some(lhs_var) = operands.next() {
+                    // aux ⊆ lhs
+                    self.propagate_subset(aux, lhs_var)?;
+                    let lhs_must: Vec<u32> = self
+                        .get_var(lhs_var)
+                        .map(|v| v.must_members.iter().copied().collect())
+                        .unwrap_or_default();
+                    for rhs_var in operands {
+                        // Every must-member of rhs must NOT be in aux.
+                        let rhs_must: Vec<u32> = self
+                            .get_var(rhs_var)
+                            .map(|v| v.must_members.iter().copied().collect())
+                            .unwrap_or_default();
+                        for elem in rhs_must {
+                            if let Some(v) = self.get_var_mut(aux) {
+                                v.add_must_not_member(elem);
+                            }
+                        }
+                        // Must-members of lhs definitely not in rhs are in aux.
+                        let rhs_not: FxHashSet<u32> = self
+                            .get_var(rhs_var)
+                            .map(|v| v.must_not_members.iter().copied().collect())
+                            .unwrap_or_default();
+                        for &elem in &lhs_must {
+                            if rhs_not.contains(&elem)
+                                && let Some(v) = self.get_var_mut(aux)
+                            {
+                                v.add_must_member(elem);
+                            }
+                        }
+                    }
+                }
+                self.propagation_queue.push_back(aux);
+                Ok(aux)
+            }
+            ExtractBuild::Complement(aux) => {
+                for inner_var in done {
+                    // x ∈ inner ⟹ x ∉ aux
+                    let inner_must: Vec<u32> = self
+                        .get_var(inner_var)
+                        .map(|v| v.must_members.iter().copied().collect())
+                        .unwrap_or_default();
+                    for elem in inner_must {
+                        if let Some(v) = self.get_var_mut(aux) {
+                            v.add_must_not_member(elem);
+                        }
+                    }
+                    // x ∉ inner ⟹ x ∈ aux
+                    let inner_not: Vec<u32> = self
+                        .get_var(inner_var)
+                        .map(|v| v.must_not_members.iter().copied().collect())
+                        .unwrap_or_default();
+                    for elem in inner_not {
+                        if let Some(v) = self.get_var_mut(aux) {
+                            v.add_must_member(elem);
+                        }
+                    }
+                }
+                self.propagation_queue.push_back(aux);
+                Ok(aux)
             }
         }
     }

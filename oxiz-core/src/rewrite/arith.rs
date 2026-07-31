@@ -495,8 +495,12 @@ impl ArithRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> RewriteResult {
-        // x mod 1 → 0   (sound: (mod x 1) = 0 for every x)
-        if self.is_one(rhs, manager) {
+        // x mod 1 → 0 and x mod -1 → 0.
+        //
+        // The Euclidean remainder satisfies `0 <= (mod x n) < abs(n)`, so a
+        // divisor of magnitude 1 leaves no room for anything but 0 — the sign of
+        // the divisor is irrelevant, unlike for `div`.
+        if self.is_one(rhs, manager) || self.is_neg_one(rhs, manager) {
             ctx.stats_mut().record_rule("arith_mod_one");
             return RewriteResult::Rewritten(manager.mk_int(0));
         }

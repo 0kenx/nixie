@@ -4,9 +4,19 @@
 use crate::prelude::*;
 use num_traits::ToPrimitive;
 use oxiz_core::ast::{RoundingMode, TermId, TermKind, TermManager};
-use oxiz_sat::Var;
+use oxiz_sat::{Lit, Var};
+
+use super::types::Polarity;
 
 /// Trail operation for efficient undo
+///
+/// Every piece of solver state that assertion processing derives from the
+/// *current* scope must be undoable, either through one of these operations or
+/// through a snapshot field in [`ContextState`].  State that survives a `pop`
+/// keeps a retracted assertion's fact alive and produces wrong verdicts (a
+/// datatype constructor recorded inside a popped scope used to force a false
+/// `unsat`).  See [`super::Solver::debug_assert_scope_restored`] for the
+/// compile-time reminder that keeps this list in sync with the solver fields.
 #[derive(Debug, Clone)]
 pub(crate) enum TrailOp {
     /// An assertion was added
@@ -27,9 +37,33 @@ pub(crate) enum TrailOp {
     BvTermAdded { term: TermId },
     /// An arithmetic term was added
     ArithTermAdded { term: TermId },
+    /// A datatype variable was pinned to a constructor
+    DtVarConstructorAdded { term: TermId },
+    /// A compound term was marked as fully traversed by `track_theory_vars`
+    TrackedCompoundAdded { term: TermId },
+    /// A ground array-axiom instance was asserted to the SAT core
+    ArrayAxiomInstanceAdded { term: TermId },
+    /// A `div` / `mod` / numeric-`ite` term received its defining axioms
+    ArithDefinedTermAdded { term: TermId },
+    /// A ground datatype-axiom instance was asserted to the SAT core
+    DtAxiomInstanceAdded { term: TermId },
+    /// A Tseitin-memo entry was written by [`super::Solver::encode`].
+    ///
+    /// `previous` carries the value the write displaced (`None` when the term
+    /// had no entry), so `pop` can restore a polarity that was *widened* inside
+    /// the scope instead of dropping the narrower pre-scope encoding along with
+    /// it.  See [`super::Solver::pop`] for why the memo must be retracted
+    /// per entry rather than cleared wholesale.
+    EncodedTermAdded {
+        term: TermId,
+        previous: Option<(Lit, Polarity)>,
+    },
 }
 
 /// State for push/pop with trail-based undo
+///
+/// Holds the scope-dependent state that is cheaper to snapshot wholesale than
+/// to journal operation by operation: monotone counters and sticky flags.
 #[derive(Debug, Clone)]
 pub(crate) struct ContextState {
     pub(crate) num_assertions: usize,
@@ -37,6 +71,131 @@ pub(crate) struct ContextState {
     pub(crate) has_false_assertion: bool,
     /// Trail position at the time of push
     pub(crate) trail_position: usize,
+    /// Number of quantifiers tracked by MBQI at the time of push
+    pub(crate) num_mbqi_quantifiers: usize,
+    /// Number of quantifiers registered with the e-matching engine at push
+    pub(crate) num_ematch_quantifiers: usize,
+    /// `has_quantifiers` flag at the time of push
+    pub(crate) has_quantifiers: bool,
+    /// `has_bv_arith_ops` flag at the time of push
+    pub(crate) has_bv_arith_ops: bool,
+    /// `has_array_ops` flag at the time of push
+    pub(crate) has_array_ops: bool,
+    /// `encode_depth_exceeded` flag at the time of push
+    pub(crate) encode_depth_exceeded: bool,
+    /// `dt_axioms_incomplete` flag at the time of push
+    pub(crate) dt_axioms_incomplete: bool,
+}
+
+#[cfg(debug_assertions)]
+impl super::Solver {
+    /// Debug-build guard: verify that [`super::Solver::pop`] restored every
+    /// piece of scope-dependent state to its push-time value.
+    ///
+    /// The `let Solver { .. }` below is deliberately **exhaustive** (no `..`
+    /// rest pattern): adding a field to the solver stops this file compiling
+    /// until the author classifies it, which is the whole point.  Each field is
+    /// tagged with why it needs no undo, or with the mechanism that undoes it:
+    ///
+    /// - `INVARIANT` — configuration, or a cache keyed by immutable term
+    ///   structure (interning, parse/simplify memos).  Never derived from
+    ///   *which* assertions are active, so it is valid in every scope.
+    /// - `TRAIL` — undone by a [`TrailOp`] replayed above.
+    /// - `SNAPSHOT` — restored from [`ContextState`] and checked below.
+    /// - `SCOPED` — owned by a sub-solver with its own push/pop, or returned to
+    ///   its base state by [`super::Solver::rebase_theory_state`], which `pop`
+    ///   calls (it is also every `check`'s first act).
+    /// - `RESULT` — output of the last `check`, not an input to the next one.
+    ///   Discarded by [`super::Solver::invalidate_results`] at the top of `pop`:
+    ///   a verdict belongs to the assertion stack it was computed on, and an
+    ///   unsat core additionally *indexes* that stack.
+    ///
+    /// `polarities` is the one entry that survives a `pop` by design:
+    /// `collect_polarities` merges monotonically towards `Both`, so a stale
+    /// entry can only make the Tseitin encoder emit *both* implication
+    /// directions — never fewer clauses than the live assertions require.
+    pub(super) fn debug_assert_scope_restored(&self, state: &ContextState) {
+        let super::Solver {
+            config: _,          // INVARIANT: user configuration
+            sat: _,             // SCOPED: SatSolver::push/pop
+            euf: _,             // SCOPED: reset by `rebase_theory_state`
+            arith: _,           // SCOPED: reset by `rebase_theory_state`
+            bv: _,              // SCOPED: reset by `rebase_theory_state`
+            derived_reasons: _, // SCOPED: pruned with the theory scopes it explains, cleared by `rebase_theory_state` with the three solvers
+            #[cfg(feature = "std")]
+                nlsat: _, // SCOPED: NlsatTheory::push/pop
+            mbqi: _,            // SNAPSHOT: num_mbqi_quantifiers
+            ematch_engine: _,   // SNAPSHOT: num_ematch_quantifiers
+            has_quantifiers: _, // SNAPSHOT
+            term_to_var: _,     // TRAIL: VarCreated
+            var_to_term: _,     // SNAPSHOT: num_vars
+            var_to_constraint: _, // TRAIL: ConstraintAdded
+            var_to_parsed_arith: _, // TRAIL: ConstraintAdded
+            logic: _,           // INVARIANT: set before any assertion
+            assertions: _,      // SNAPSHOT: num_assertions
+            named_assertions: _, // TRAIL: NamedAssertionAdded
+            assumption_vars: _, // INVARIANT: never written
+            model: _,           // RESULT: cleared by `invalidate_results`
+            unsat_core: _,      // RESULT: cleared by `invalidate_results`
+            context_stack: _,   // the scope stack itself
+            trail: _,           // the undo journal itself
+            theory_processed_up_to: _, // INVARIANT: never read
+            produce_unsat_cores: _, // INVARIANT: user option
+            has_false_assertion: _, // SNAPSHOT + TRAIL: FalseAssertionSet
+            polarities: _,      // INVARIANT: monotone (see above)
+            polarity_aware: _,  // INVARIANT: user option
+            theory_aware_branching: _, // INVARIANT: user option
+            proof: _,           // RESULT: emptied in place by `invalidate_results` (the
+            // `Option` carries the `:produce-proofs` setting, so it is not taken)
+            simplifier: _,               // INVARIANT: term -> simplified term
+            statistics: _,               // INVARIANT: cumulative counters
+            bv_terms: _,                 // TRAIL: BvTermAdded
+            has_bv_arith_ops: _,         // SNAPSHOT
+            arith_terms: _,              // TRAIL: ArithTermAdded
+            dt_var_constructors: _,      // TRAIL: DtVarConstructorAdded
+            arith_parse_cache: _,        // INVARIANT: keyed by term structure
+            tracked_compound_terms: _,   // TRAIL: TrackedCompoundAdded
+            encoded_terms: _, // TRAIL: EncodedTermAdded (carries the displaced entry, so a polarity widened inside the scope is restored rather than dropped)
+            fp_constraint_cache: _, // INVARIANT: keyed by assertion term
+            encode_depth_exceeded: _, // SNAPSHOT
+            has_array_ops: _, // SNAPSHOT
+            array_axiom_instances: _, // TRAIL: ArrayAxiomInstanceAdded
+            arith_defined_terms: _, // TRAIL: ArithDefinedTermAdded
+            dt_axiom_instances: _, // TRAIL: DtAxiomInstanceAdded
+            dt_axioms_incomplete: _, // SNAPSHOT
+            entailed_int_consts: _, // cleared wholesale by `pop` (see the field doc); empty = re-fold, never stale
+            entailed_int_consts_upto: _, // reset to 0 with the map above
+            #[cfg(test)]
+                mbqi_round_clauses: _, // INVARIANT: test-only event log,
+            // deliberately cumulative across `check`s and scopes (see the field
+            // doc); restoring it would defeat what it measures.
+            last_check: _, // RESULT: cleared by `invalidate_results` (the
+            // cached verdict belongs to the assertion stack it was computed on,
+            // exactly as `model` does)
+            settings_epoch: _, // INVARIANT: monotone — it counts *settings*
+            // mutations, which are not scoped by push/pop; rolling it back would
+            // let a cached verdict from before a `set-option` be matched again
+            // after the pop.
+            next_skolem_id: _, // INVARIANT: monotone — a popped scope's Skolem
+                               // names must never be handed out again, so this counter deliberately
+                               // survives `pop` (re-using an id would alias two distinct witnesses).
+        } = self;
+
+        debug_assert_eq!(self.trail.len(), state.trail_position);
+        debug_assert_eq!(self.assertions.len(), state.num_assertions);
+        debug_assert_eq!(self.var_to_term.len(), state.num_vars);
+        debug_assert_eq!(self.has_false_assertion, state.has_false_assertion);
+        debug_assert_eq!(self.mbqi.num_quantifiers(), state.num_mbqi_quantifiers);
+        debug_assert_eq!(
+            self.ematch_engine.num_quantifiers(),
+            state.num_ematch_quantifiers
+        );
+        debug_assert_eq!(self.has_quantifiers, state.has_quantifiers);
+        debug_assert_eq!(self.has_bv_arith_ops, state.has_bv_arith_ops);
+        debug_assert_eq!(self.has_array_ops, state.has_array_ops);
+        debug_assert_eq!(self.encode_depth_exceeded, state.encode_depth_exceeded);
+        debug_assert_eq!(self.dt_axioms_incomplete, state.dt_axioms_incomplete);
+    }
 }
 
 /// Collector for floating-point constraints to detect early conflicts
@@ -71,95 +230,124 @@ impl FpConstraintCollector {
         Self::default()
     }
 
+    /// Walk `term` and record every FP-relevant fact it contains.
+    ///
+    /// Driven by an explicit heap worklist with a `visited` set instead of
+    /// the original native recursion, which had **neither**: a term built
+    /// through the `TermManager` builder API can nest arbitrarily deep, so
+    /// the recursion could exhaust the native stack (a fatal,
+    /// `catch_unwind`-proof process abort), and without a visited set a
+    /// shared sub-DAG of the hash-consed term graph was re-expanded once per
+    /// path — `2^n` visits for an `n`-level doubling DAG.  A depth cap is not
+    /// an option: the return type is `()`, so a cap could only silently drop
+    /// facts and make [`Self::check_conflicts`] miss a definite conflict.
+    ///
+    /// The visited set is sound here because terms are hash-consed and every
+    /// fact recorded for a term is a pure function of that term: revisiting a
+    /// `TermId` could only append byte-identical duplicate tuples.  All
+    /// [`Self::check_conflicts`] consumers are existential searches, so
+    /// removing duplicates never loses a real conflict; it only stops
+    /// `check_precision_loss_conflict`'s `i < j` pair loop from spuriously
+    /// pairing a duplicate entry with itself.  Children are pushed in reverse
+    /// so pop order reproduces the original left-to-right pre-order for the
+    /// first visit of every term.
+    ///
+    /// This walk is deliberately polarity-blind (it descends through `Not` /
+    /// `Or` / `Implies` and records facts unconditionally), exactly like the
+    /// recursive original; the polarity-aware collector is
+    /// `check_fp::collect_fp_constraints_extended`.
     fn collect(&mut self, term: TermId, manager: &TermManager) {
-        let Some(term_data) = manager.get(term) else {
-            return;
-        };
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![term];
 
-        match &term_data.kind {
-            // FP predicates
-            TermKind::FpIsZero(arg) => {
-                self.is_zero_vars.insert(*arg);
-                self.collect(*arg, manager);
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
             }
-            TermKind::FpIsNegative(arg) => {
-                self.is_negative_vars.insert(*arg);
-                self.collect(*arg, manager);
-            }
-            TermKind::FpIsPositive(arg) => {
-                self.is_positive_vars.insert(*arg);
-                self.collect(*arg, manager);
-            }
-            // FP comparison - less than
-            TermKind::FpLt(lhs, rhs) => {
-                self.fp_lts.push((*lhs, *rhs));
-                self.collect(*lhs, manager);
-                self.collect(*rhs, manager);
-            }
-            // Equality
-            TermKind::Eq(lhs, rhs) => {
-                self.equalities.push((*lhs, *rhs));
-                self.collect(*lhs, manager);
-                self.collect(*rhs, manager);
-            }
-            // FP operations
-            TermKind::FpAdd(rm, lhs, rhs) => {
-                self.fp_adds
-                    .push((TermKind::FpAdd(*rm, *lhs, *rhs), *lhs, *rhs, term));
-                self.collect(*lhs, manager);
-                self.collect(*rhs, manager);
-            }
-            TermKind::FpDiv(rm, lhs, rhs) => {
-                self.fp_divs
-                    .push((TermKind::FpDiv(*rm, *lhs, *rhs), *lhs, *rhs, term));
-                self.collect(*lhs, manager);
-                self.collect(*rhs, manager);
-            }
-            TermKind::FpMul(rm, lhs, rhs) => {
-                self.fp_muls
-                    .push((TermKind::FpMul(*rm, *lhs, *rhs), *lhs, *rhs, term));
-                self.collect(*lhs, manager);
-                self.collect(*rhs, manager);
-            }
-            // FP conversions
-            TermKind::FpToFp { rm: _, arg, eb, sb } => {
-                self.fp_conversions.push((*arg, *eb, *sb, term));
-                self.collect(*arg, manager);
-            }
-            TermKind::RealToFp { rm, arg, eb, sb } => {
-                self.real_to_fp.push((
-                    TermKind::RealToFp {
-                        rm: *rm,
-                        arg: *arg,
-                        eb: *eb,
-                        sb: *sb,
-                    },
-                    *arg,
-                    *eb,
-                    *sb,
-                    term,
-                ));
-                self.collect(*arg, manager);
-            }
-            // Compound terms
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.collect(arg, manager);
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
+
+            match &term_data.kind {
+                // FP predicates
+                TermKind::FpIsZero(arg) => {
+                    self.is_zero_vars.insert(*arg);
+                    stack.push(*arg);
                 }
-            }
-            TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect(arg, manager);
+                TermKind::FpIsNegative(arg) => {
+                    self.is_negative_vars.insert(*arg);
+                    stack.push(*arg);
                 }
+                TermKind::FpIsPositive(arg) => {
+                    self.is_positive_vars.insert(*arg);
+                    stack.push(*arg);
+                }
+                // FP comparison - less than
+                TermKind::FpLt(lhs, rhs) => {
+                    self.fp_lts.push((*lhs, *rhs));
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                // Equality
+                TermKind::Eq(lhs, rhs) => {
+                    self.equalities.push((*lhs, *rhs));
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                // FP operations
+                TermKind::FpAdd(rm, lhs, rhs) => {
+                    self.fp_adds
+                        .push((TermKind::FpAdd(*rm, *lhs, *rhs), *lhs, *rhs, term));
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                TermKind::FpDiv(rm, lhs, rhs) => {
+                    self.fp_divs
+                        .push((TermKind::FpDiv(*rm, *lhs, *rhs), *lhs, *rhs, term));
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                TermKind::FpMul(rm, lhs, rhs) => {
+                    self.fp_muls
+                        .push((TermKind::FpMul(*rm, *lhs, *rhs), *lhs, *rhs, term));
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                // FP conversions
+                TermKind::FpToFp { rm: _, arg, eb, sb } => {
+                    self.fp_conversions.push((*arg, *eb, *sb, term));
+                    stack.push(*arg);
+                }
+                TermKind::RealToFp { rm, arg, eb, sb } => {
+                    self.real_to_fp.push((
+                        TermKind::RealToFp {
+                            rm: *rm,
+                            arg: *arg,
+                            eb: *eb,
+                            sb: *sb,
+                        },
+                        *arg,
+                        *eb,
+                        *sb,
+                        term,
+                    ));
+                    stack.push(*arg);
+                }
+                // Compound terms
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter().rev() {
+                        stack.push(arg);
+                    }
+                }
+                TermKind::Not(inner) => {
+                    stack.push(*inner);
+                }
+                TermKind::Implies(lhs, rhs) => {
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                _ => {}
             }
-            TermKind::Not(inner) => {
-                self.collect(*inner, manager);
-            }
-            TermKind::Implies(lhs, rhs) => {
-                self.collect(*lhs, manager);
-                self.collect(*rhs, manager);
-            }
-            _ => {}
         }
     }
 
@@ -514,5 +702,153 @@ impl FpConstraintCollector {
             }
         }
         None
+    }
+}
+
+/// Regression tests for [`FpConstraintCollector::collect`]'s conversion from
+/// native recursion (no depth guard, no visited set) to an explicit worklist
+/// with a `TermId`-keyed visited set — see `collect`'s doc comment for the
+/// full rationale.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Facts recorded through every polarity-blind descent arm (`Not`,
+    /// `Implies`, `And`), plus the end-to-end conflict pin for the exact
+    /// `+0 + -0` pattern the collector exists to catch.
+    #[test]
+    fn collect_records_facts_and_finds_zero_sign_conflict() {
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let x = manager.mk_var("x", fp_sort);
+        let p = manager.mk_var("p", fp_sort);
+        let n = manager.mk_var("n", fp_sort);
+        let add = manager.mk_fp_add(RoundingMode::RNE, p, n);
+        let eq = manager.mk_eq(x, add);
+
+        let is_zero_x = manager.mk_fp_is_zero(x);
+        let is_neg_x = manager.mk_fp_is_negative(x);
+        let is_zero_p = manager.mk_fp_is_zero(p);
+        let is_pos_p = manager.mk_fp_is_positive(p);
+        let is_zero_n = manager.mk_fp_is_zero(n);
+        let is_neg_n = manager.mk_fp_is_negative(n);
+
+        // Route two of the predicates through `Not` and `Implies` to pin that
+        // the walk is polarity-blind, exactly like the recursive original.
+        let not_wrapped = manager.mk_not(is_pos_p);
+        let implies_wrapped = manager.mk_implies(is_zero_n, is_neg_n);
+
+        let mut collector = FpConstraintCollector::new();
+        for term in [
+            eq,
+            is_zero_x,
+            is_neg_x,
+            is_zero_p,
+            not_wrapped,
+            implies_wrapped,
+        ] {
+            collector.collect(term, &manager);
+        }
+
+        assert_eq!(collector.equalities, vec![(x, add)]);
+        assert_eq!(collector.fp_adds.len(), 1);
+        assert!(collector.is_zero_vars.contains(&x));
+        assert!(collector.is_negative_vars.contains(&x));
+        assert!(
+            collector.is_positive_vars.contains(&p),
+            "the walk descends through `Not` unconditionally (polarity-blind)"
+        );
+        assert!(
+            collector.is_negative_vars.contains(&n),
+            "the walk descends through `Implies` unconditionally"
+        );
+        assert!(
+            collector.check_conflicts(&manager),
+            "isZero(x) + isNegative(x) + x = (+0 + -0) is the collector's canonical conflict"
+        );
+    }
+
+    /// A term reachable along several paths of one formula is recorded once:
+    /// the visited set suppresses byte-identical duplicate tuples (the
+    /// recursive original appended one copy per path).
+    #[test]
+    fn collect_deduplicates_a_term_shared_within_one_formula() {
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let x = manager.mk_var("x", fp_sort);
+        let y = manager.mk_var("y", fp_sort);
+        let eq = manager.mk_eq(x, y);
+        // `mk_and` flattens nested `And`s but keeps duplicate non-`And`
+        // children, so the same `Eq` term arrives twice.
+        let and = manager.mk_and(vec![eq, eq]);
+
+        let mut collector = FpConstraintCollector::new();
+        collector.collect(and, &manager);
+
+        assert_eq!(collector.equalities, vec![(x, y)]);
+    }
+
+    /// The named worst case of the recursion sweep: a doubling DAG
+    /// (`d_{i+1} = fp.add(d_i, d_i)`) made the unmemoized original perform
+    /// `2^60` visits — effectively a hang.  With the visited set the walk is
+    /// linear, records each distinct addition exactly once, and finishes
+    /// immediately.
+    #[test]
+    fn collect_shared_add_dag_is_linear_not_exponential() {
+        const LEVELS: usize = 60;
+
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let mut term = manager.mk_var("leaf", fp_sort);
+        for _ in 0..LEVELS {
+            term = manager.mk_fp_add(RoundingMode::RNE, term, term);
+        }
+
+        let mut collector = FpConstraintCollector::new();
+        collector.collect(term, &manager);
+
+        assert_eq!(
+            collector.fp_adds.len(),
+            LEVELS,
+            "each of the {LEVELS} distinct additions must be recorded exactly once"
+        );
+    }
+
+    /// A `fp.add` chain 12 500 levels deep must be walked on a 128 KiB stack:
+    /// a native stack overflow is a fatal abort `catch_unwind` cannot
+    /// intercept, so returning at all — with the full fact count — is the
+    /// assertion.
+    #[test]
+    fn collect_survives_a_deep_fp_add_chain_on_a_small_stack() {
+        // Stack and depth scale together (1 MiB/100k -> 128 KiB/12.5k): the
+        // ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const STACK_SIZE: usize = 1 << 17; // 128 KiB
+        const DEPTH: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let fp_sort = manager.sorts.float_sort(11, 53);
+                let one = manager.mk_var("one", fp_sort);
+                let mut term = manager.mk_var("acc", fp_sort);
+                for _ in 0..DEPTH {
+                    term = manager.mk_fp_add(RoundingMode::RNE, term, one);
+                }
+
+                let mut collector = FpConstraintCollector::new();
+                collector.collect(term, &manager);
+
+                assert_eq!(
+                    collector.fp_adds.len(),
+                    DEPTH,
+                    "one addition fact per level of a {DEPTH}-deep chain"
+                );
+            })
+            .expect("spawning a 128 KiB-stack thread should succeed");
+
+        handle
+            .join()
+            .expect("the FP collector walk must return on 128 KiB instead of overflowing");
     }
 }

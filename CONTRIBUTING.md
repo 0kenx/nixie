@@ -24,7 +24,7 @@ Before you begin, ensure you have the following tools installed:
 
 | Tool | Minimum Version | Purpose |
 |------|-----------------|---------|
-| **Rust** | 1.75+ (Edition 2024) | Compilation |
+| **Rust** | 1.88+ (Edition 2024) | Compilation |
 | **cargo-clippy** | Latest | Linting |
 | **cargo-fmt** | Latest | Formatting |
 | **cargo-nextest** | Recommended | Fast test runner |
@@ -40,7 +40,7 @@ Before you begin, ensure you have the following tools installed:
 
 2. **Verify your Rust installation:**
    ```bash
-   rustc --version   # Should be 1.75 or higher
+   rustc --version   # Should be 1.88 or higher (the declared `rust-version`)
    cargo --version
    ```
 
@@ -210,7 +210,25 @@ mod tests {
 
 - Use `Result<T, E>` for operations that can fail
 - Define error types using `thiserror`
-- Avoid `unwrap()` and `expect()` except in tests or truly impossible cases
+- Avoid `unwrap()` and `expect()` except in tests or truly impossible cases. `clippy::unwrap_used`
+  is set to `deny` in the workspace lint table, and every member crate is covered — 13 declare it
+  directly in their own `[lints.clippy]`, while `oxiz`, `oxiz-smtcomp`, `oxiz-py` and `oxiz-ml`
+  inherit it via `[lints] workspace = true`. A stray `unwrap()` in production code therefore fails
+  the build rather than merely warning.
+  - When converting a native-recursive walk to an explicit heap stack (to
+    remove a stack-overflow risk), drive the loop from
+    `while let Some(frame) = stack.pop()` (own the frame, push back what
+    still needs resuming) or carry the resume state inside the frame enum
+    itself (e.g. `Expand(T)` / `Combine(T, n)`), so that "the stack emptied
+    but I still expected a frame" is a case the code cannot even express.
+    `expect("just matched via last_mut/last() above")` from a separate
+    peek-then-pop pair is not a "truly impossible case" exemption -- it is
+    exactly the shape this rule exists to rule out, because every future
+    conversion done the same way reproduces it. See
+    `oxiz-nlsat/src/solver/conflict.rs::is_redundant_literal`,
+    `oxiz-theories/src/checking/proof.rs::validate_step`,
+    `oxiz-theories/src/euf/incremental.rs::node_size`, or
+    `oxiz-core/src/ast/manager/query/substitute.rs` for the pattern to copy.
 - Document error conditions in function documentation
 
 ---
@@ -323,7 +341,7 @@ cargo nextest run -- --nocapture
 
 ## Pull Requests
 
-Fork the repository, create a feature branch, and open a PR against `main`. Keep changes focused
+Fork the repository, create a feature branch, and open a PR against `master`. Keep changes focused
 and include tests for new behavior. All of the following must pass:
 
 ```bash
@@ -340,7 +358,9 @@ PRs are merged via squash-and-merge.
 
 ## Architecture Overview
 
-OxiZ is organized as a Cargo workspace with 12 crates:
+OxiZ is organized as a Cargo workspace with 17 members: 15 crates plus the two benchmark
+harnesses under `bench/`. Everything except `oxiz-py` (which needs maturin for Python linking)
+is in `default-members`, so a plain `cargo build` covers the whole tree.
 
 ### Crate Hierarchy
 
@@ -349,6 +369,9 @@ oxiz (meta-crate: unified API)
   |
   +-- oxiz-cli (Command-line interface)
   +-- oxiz-wasm (WebAssembly bindings)
+  +-- oxiz-py (Python bindings via PyO3/maturin)
+  +-- oxiz-smtcomp (SMT-COMP entry package and runners)
+  +-- oxiz-ml (ML-guided heuristics)
   +-- oxiz-opt (MaxSAT/OMT optimization)
   |
   +-- oxiz-solver (CDCL(T) orchestration)

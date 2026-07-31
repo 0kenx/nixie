@@ -579,40 +579,79 @@ impl IntervalEngine {
             return a.clone();
         }
 
-        if n < 0 {
-            // a^(-n) = 1 / a^n
-            let pos_power = self.powi(a, -n);
-            let one_interval = FpInterval::one(a.format);
-            return self.div(&one_interval, &pos_power);
-        }
+        // Magnitude of the exponent, computed without overflow.
+        // `-i32::MIN` overflows, so use the unsigned absolute value directly.
+        let magnitude = n.unsigned_abs();
 
-        // Even vs odd power
-        if n % 2 == 0 {
+        // Even vs odd power (parity is preserved by taking the magnitude).
+        let positive_power = if magnitude.is_multiple_of(2) {
             // Even power: result is always non-negative
             let abs_interval = self.abs(a);
-            let lower_power = self.power_helper(&abs_interval.lower, n as u32);
-            let upper_power = self.power_helper(&abs_interval.upper, n as u32);
+            let lower_power = self.power_helper(&abs_interval.lower, magnitude);
+            let upper_power = self.power_helper(&abs_interval.upper, magnitude);
 
             FpInterval::new(lower_power, upper_power)
         } else {
             // Odd power: preserves sign
-            let lower_power = self.power_helper(&a.lower, n as u32);
-            let upper_power = self.power_helper(&a.upper, n as u32);
+            let lower_power = self.power_helper(&a.lower, magnitude);
+            let upper_power = self.power_helper(&a.upper, magnitude);
 
             FpInterval::new(lower_power, upper_power)
+        };
+
+        if n < 0 {
+            // a^n = 1 / a^|n|
+            let one_interval = FpInterval::one(a.format);
+            self.div(&one_interval, &positive_power)
+        } else {
+            positive_power
         }
     }
 
     /// Helper for computing power
+    ///
+    /// Computes `base^exp` by repeated multiplication, preserving the exact
+    /// left-to-right rounding sequence of the naive loop.
+    ///
+    /// Because `exp` is caller-controlled (and reaches `2^31` for
+    /// `powi(_, i32::MIN)`), the loop short-circuits as soon as the running
+    /// product reaches a fixpoint (`x * base == x`, e.g. `0`, `±inf`, `NaN`,
+    /// `1`) or a period-2 cycle (e.g. `base == -1`). Both cases are exact: the
+    /// remaining multiplications are replayed analytically, not skipped.
     fn power_helper(&mut self, base: &FpValue, exp: u32) -> FpValue {
         if exp == 0 {
             return FpValue::from_f32(1.0);
         }
 
         let mut result = *base;
-        for _ in 1..exp {
-            result = self.upper_engine.mul(&result, base);
+        let mut previous: Option<FpValue> = None;
+        let mut step: u32 = 1;
+
+        while step < exp {
+            let next = self.upper_engine.mul(&result, base);
+            step += 1;
+
+            if next == result {
+                // Fixpoint: every further multiplication is the identity.
+                return next;
+            }
+
+            if let Some(two_back) = previous
+                && next == two_back
+            {
+                // Period-2 cycle between `result` and `next`.
+                let remaining = exp - step;
+                return if remaining.is_multiple_of(2) {
+                    next
+                } else {
+                    result
+                };
+            }
+
+            previous = Some(result);
+            result = next;
         }
+
         result
     }
 
@@ -1032,6 +1071,56 @@ mod tests {
         // [1,2]^3 = [1,8]
         assert!(result.contains(&FpValue::from_f32(1.0)));
         assert!(result.contains(&FpValue::from_f32(8.0)));
+    }
+
+    #[test]
+    fn test_interval_powi_extreme_negative_exponent_terminates() {
+        // `powi(a, i32::MIN)` used to compute `-n` to get the positive
+        // exponent. `-i32::MIN` overflows: in release builds (overflow checks
+        // off) it wraps back to `i32::MIN`, so the negative branch called
+        // itself with the same argument forever. Returning at all is the
+        // assertion; the thread has a deliberately small stack so an
+        // unbounded recursion would show up as an abort, not a slow test.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut engine = IntervalEngine::new();
+
+                let two = FpInterval::new(FpValue::from_f32(2.0), FpValue::from_f32(2.0));
+                // 2^(2^31) overflows to +inf, so 1/that is 0.
+                let result = engine.powi(&two, i32::MIN);
+                assert!(!result.is_empty());
+
+                let one = FpInterval::one(FpFormat::FLOAT32);
+                // 1^(2^31) == 1, so the reciprocal is 1 as well.
+                let unit = engine.powi(&one, i32::MIN);
+                assert!(unit.contains(&FpValue::from_f32(1.0)));
+
+                let minus_one = FpInterval::new(FpValue::from_f32(-1.0), FpValue::from_f32(-1.0));
+                // |i32::MIN| is even, so the sign cancels: (-1)^(2^31) == 1.
+                let alternating = engine.powi(&minus_one, i32::MIN);
+                assert!(alternating.contains(&FpValue::from_f32(1.0)));
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("powi(_, i32::MIN) must terminate instead of recursing forever");
+    }
+
+    #[test]
+    fn test_interval_powi_negative_exponent_matches_reciprocal() {
+        // Semantic pin for the rewritten negative branch: a^-n == 1 / a^n.
+        let mut engine = IntervalEngine::new();
+
+        let a = FpInterval::new(FpValue::from_f32(2.0), FpValue::from_f32(2.0));
+        let negative = engine.powi(&a, -3);
+
+        let positive = engine.powi(&a, 3);
+        let one = FpInterval::one(a.format);
+        let expected = engine.div(&one, &positive);
+
+        assert_eq!(negative.lower, expected.lower);
+        assert_eq!(negative.upper, expected.upper);
     }
 
     #[test]

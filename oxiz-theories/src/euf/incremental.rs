@@ -572,18 +572,115 @@ impl EGraph {
             .cloned()
     }
 
-    /// Compute the size of an E-node (recursively)
+    /// Sentinel returned by [`Self::node_size`] for a node whose expansion is
+    /// unbounded: merging `x` with `f(x)` puts `f(x)` in `x`'s own
+    /// equivalence class, so "the size of `x`'s representative" can become
+    /// self-referential. There is no finite term that `f(x)` denotes in that
+    /// case (fully expanding it would recurse forever), so `usize::MAX` is
+    /// the honest answer rather than a plausible-looking finite number.
+    /// Combined with the saturating arithmetic below, it propagates through
+    /// any node that (directly or transitively) depends on the cycle, and
+    /// [`Self::extract_smallest`]'s `min_by_key` then naturally prefers any
+    /// other, genuinely finite representative of the class.
+    const UNBOUNDED_NODE_SIZE: usize = usize::MAX;
+
+    /// Compute the size of an E-node.
+    ///
+    /// Iterative post-order walk over the E-graph (not native recursion),
+    /// with cycle detection: an E-class already being expanded on the
+    /// current path contributes [`Self::UNBOUNDED_NODE_SIZE`] instead of
+    /// being expanded again. This matters because merging `x` and `f(x)`
+    /// (asserting `x = f(x)`) puts `f(x)` in `x`'s own class, so naive
+    /// recursion through "the first node of `x`'s class" can revisit the
+    /// very node it started from and never terminate — the acyclicity
+    /// assumption that a plain recursive size computation relies on does not
+    /// hold for E-graphs in general. Sizes are memoized per E-class so
+    /// shared structure is evaluated once rather than exponentially, and a
+    /// deep-but-acyclic chain cannot overflow the native stack (the explicit
+    /// work-stack lives on the heap).
     fn node_size(&self, node: &ENode) -> usize {
-        1 + node
-            .children
-            .iter()
-            .map(|&child| {
-                self.get_class(child)
-                    .and_then(|c| c.nodes.first())
-                    .map(|n| self.node_size(n))
-                    .unwrap_or(0)
-            })
-            .sum::<usize>()
+        /// One level of the explicit work-stack, equivalent to one
+        /// still-active recursive call to `node_size` on some node's
+        /// children.
+        struct Frame {
+            /// Children of the node being sized.
+            children: SmallVec<[EClassId; 4]>,
+            /// The E-class this frame is sizing (for `in_progress`/`memo`
+            /// bookkeeping), or `None` for the initial caller-supplied
+            /// node, which need not be its class's chosen representative.
+            class: Option<EClassId>,
+            /// Index of the next child to fold into `acc`.
+            next_child: usize,
+            /// Running `1 + sum(child sizes so far)`.
+            acc: usize,
+        }
+
+        let mut memo: FxHashMap<EClassId, usize> = FxHashMap::default();
+        let mut in_progress: FxHashSet<EClassId> = FxHashSet::default();
+
+        // `top` is the frame currently being sized, owned directly rather
+        // than peeked from `stack` -- `stack` holds only the *suspended*
+        // ancestors waiting for `top` (or one of its descendants) to finish.
+        let mut top = Frame {
+            children: node.children.clone(),
+            class: None,
+            next_child: 0,
+            acc: 1,
+        };
+        let mut stack: Vec<Frame> = Vec::new();
+
+        loop {
+            if top.next_child >= top.children.len() {
+                // All children folded into `top.acc`: this frame's size is
+                // final. Resume whichever frame is waiting below it, or
+                // return directly if none is -- the empty case is not a
+                // failure, it is the answer for the original `node`.
+                if let Some(class) = top.class {
+                    in_progress.remove(&class);
+                    memo.insert(class, top.acc);
+                }
+                let finished_size = top.acc;
+                top = match stack.pop() {
+                    Some(parent) => parent,
+                    None => return finished_size,
+                };
+                top.acc = top.acc.saturating_add(finished_size);
+                continue;
+            }
+
+            let child = top.children[top.next_child];
+            top.next_child += 1;
+            let root = self.find(child);
+
+            if let Some(&cached) = memo.get(&root) {
+                top.acc = top.acc.saturating_add(cached);
+                continue;
+            }
+            if in_progress.contains(&root) {
+                // Back-edge: this child's expansion loops back to a class
+                // that is an ancestor on the current path (the `x = f(x)`
+                // shape). Treat it as unbounded rather than recursing.
+                top.acc = top.acc.saturating_add(Self::UNBOUNDED_NODE_SIZE);
+                continue;
+            }
+            match self.get_class(root).and_then(|c| c.nodes.first()) {
+                Some(repr) => {
+                    in_progress.insert(root);
+                    stack.push(top);
+                    top = Frame {
+                        children: repr.children.clone(),
+                        class: Some(root),
+                        next_child: 0,
+                        acc: 1,
+                    };
+                }
+                None => {
+                    // No nodes in the class (shouldn't normally happen);
+                    // contributes nothing rather than panicking.
+                    top.acc = top.acc.saturating_add(0);
+                }
+            }
+        }
     }
 }
 
@@ -858,5 +955,127 @@ mod tests {
         let class = egraph.get_class(fabc);
         assert!(class.is_some());
         assert_eq!(class.map(|c| c.nodes[0].children.len()), Some(3));
+    }
+
+    // -----------------------------------------------------------------------
+    // `node_size` cycle-safety regression tests (audit: merging `x = f(x)`
+    // puts `f(x)` in `x`'s own class, so naive recursion over "the first node
+    // of a class" can revisit its own starting point forever).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_node_size_cycle_terminates_with_unbounded_sentinel() {
+        let mut egraph = EGraph::new();
+        let x = egraph.add(ENode::leaf(1));
+        let fx = egraph.add(ENode::new(10, [x]));
+
+        // Merge with f(x) as the first argument: with union-by-size ties
+        // going to the first argument, this makes f(x)'s class the winner,
+        // so the merged class's node list starts with the f(x) node itself
+        // -- the shape that makes "recurse into class.nodes.first()" walk
+        // straight back into the node it started from.
+        egraph.merge(fx, x);
+
+        let class = egraph
+            .get_class(x)
+            .expect("merged class must still exist")
+            .clone();
+        assert_eq!(class.nodes.len(), 2, "both x and f(x) share one class");
+
+        // Every node's size must be computable -- this is the assertion:
+        // the call below must return (not hang, not overflow the stack).
+        let sizes: Vec<usize> = class.nodes.iter().map(|n| egraph.node_size(n)).collect();
+
+        // The leaf `x` denotes a genuine finite term of size 1.
+        assert!(
+            sizes.contains(&1),
+            "leaf node x must have finite size 1, got {sizes:?}"
+        );
+        // f(x)'s expansion is circular (it bottoms out back at f(x) itself
+        // through the merged class), so its size must be reported as
+        // unbounded rather than some plausible-looking finite number.
+        assert!(
+            sizes.contains(&usize::MAX),
+            "cyclic f(x) node must be reported as unbounded, got {sizes:?}"
+        );
+
+        // extract_smallest must therefore prefer the finite leaf.
+        let smallest = egraph
+            .extract_smallest(x)
+            .expect("class is non-empty, extract_smallest must return a node");
+        assert_eq!(
+            smallest.op, 1,
+            "extract_smallest must pick the finite leaf, not the cyclic f(x) node"
+        );
+    }
+
+    #[test]
+    fn test_node_size_self_application_cycle() {
+        // An even more direct cycle: merge a leaf with a unary application
+        // of itself to itself conceptually is not expressible directly
+        // (children must already exist), so instead build `x` and `f(x)`
+        // and merge with `x` winning, then confirm the OTHER merge order
+        // (x as winner) is also handled -- f(x)'s size then routes through
+        // x's class, whose first node is the leaf, so this order actually
+        // terminates with a normal finite answer. Both merge orders must
+        // terminate; only the shape in the test above is cyclic.
+        let mut egraph = EGraph::new();
+        let x = egraph.add(ENode::leaf(7));
+        let fx = egraph.add(ENode::new(11, [x]));
+        egraph.merge(x, fx); // x wins (tie -> first argument)
+
+        let class = egraph.get_class(x).expect("class exists").clone();
+        let sizes: Vec<usize> = class.nodes.iter().map(|n| egraph.node_size(n)).collect();
+        // Regardless of which merge order is used, node_size must return
+        // for every node in the class without hanging.
+        assert_eq!(sizes.len(), 2);
+    }
+
+    #[test]
+    fn test_node_size_deep_acyclic_chain_small_stack() {
+        // Build (iteratively -- never recursively) a long chain
+        // f_n(f_{n-1}(...f_1(leaf)...)) and confirm node_size resolves it
+        // correctly from inside a thread with a deliberately small (128 KiB)
+        // stack. A stack overflow aborts the whole process, so "the thread
+        // returned at all" is itself part of the assertion. The stack size and
+        // `depth` are scaled together and only their ratio (~21 bytes per
+        // level) matters -- never raise one without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut egraph = EGraph::new();
+                let depth: u32 = 12_500;
+                let mut current = egraph.add(ENode::leaf(0));
+                for op in 1..=depth {
+                    current = egraph.add(ENode::new(op, [current]));
+                }
+                let smallest = egraph
+                    .extract_smallest(current)
+                    .expect("singleton class must have an extractable node");
+                let size = egraph.node_size(&smallest);
+                assert_eq!(size as u64, depth as u64 + 1);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deep but acyclic chain must not overflow a 128 KiB stack");
+    }
+
+    #[test]
+    fn test_node_size_normal_dag_behaviour_preserved() {
+        // Plain, non-cyclic structures must still compute the same finite
+        // sizes as before the iterative conversion.
+        let mut egraph = EGraph::new();
+        let a = egraph.add(ENode::leaf(1));
+        let b = egraph.add(ENode::leaf(2));
+        let fab = egraph.add(ENode::new(10, [a, b]));
+
+        let class = egraph.get_class(fab).expect("class exists").clone();
+        assert_eq!(egraph.node_size(&class.nodes[0]), 3); // 1 (f) + 1 (a) + 1 (b)
+
+        // Shared substructure: g(f(a,b), f(a,b)) reuses the same child twice.
+        let g = egraph.add(ENode::new(20, [fab, fab]));
+        let gclass = egraph.get_class(g).expect("class exists").clone();
+        assert_eq!(egraph.node_size(&gclass.nodes[0]), 1 + 3 + 3); // 1 (g) + 2*size(f(a,b))
     }
 }

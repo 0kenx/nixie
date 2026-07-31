@@ -30,8 +30,6 @@ pub struct QuantifierRewriter {
     pub elim_unused_vars: bool,
     /// Enable trivial quantifier elimination
     pub elim_trivial: bool,
-    /// Maximum depth for recursive variable collection
-    max_depth: usize,
 }
 
 impl Default for QuantifierRewriter {
@@ -46,7 +44,6 @@ impl QuantifierRewriter {
         Self {
             elim_unused_vars: true,
             elim_trivial: true,
-            max_depth: 100,
         }
     }
 
@@ -55,11 +52,31 @@ impl QuantifierRewriter {
         Self {
             elim_unused_vars: true,
             elim_trivial: true,
-            max_depth: 200,
         }
     }
 
-    /// Collect free variables in a term
+    /// Names occurring free in `term`, excluding anything in `bound`.
+    ///
+    /// Delegates to [`TermManager::free_vars_including_patterns`], the
+    /// pattern-aware free-variable query. This module used to carry a third,
+    /// independent free-variable walk (after `TermManager::free_vars` and
+    /// `ast::traversal::collect_free_vars`, which already delegates to it),
+    /// and that walk under-reported in three separate ways -- each of which
+    /// makes `elim_unused_forall`/`elim_unused_exists` drop a binder for a
+    /// variable that *is* used, turning a bound occurrence into a free one:
+    ///
+    /// * it ignored `Forall`/`Exists` `patterns`, so a variable used only in
+    ///   a trigger looked unused;
+    /// * it bailed out silently past a fixed recursion depth
+    ///   (`max_depth`, since removed), so a deep body looked variable-free;
+    /// * its final `_ => {}` arm silently dropped every kind it did not
+    ///   enumerate -- `Let`, `Match`, all bit-vector, string and
+    ///   floating-point operators, datatype constructors/selectors/testers --
+    ///   so a variable used only under any of those looked unused.
+    ///
+    /// The shared implementation has none of those: it is iterative (no depth
+    /// cap), enumerates leaves and binders explicitly and routes everything
+    /// else through `get_children`, and is `(name, sort)`-aware.
     fn collect_free_vars(
         &self,
         term: TermId,
@@ -67,87 +84,39 @@ impl QuantifierRewriter {
         manager: &TermManager,
     ) -> FxHashSet<Spur> {
         let mut free = FxHashSet::default();
-        self.collect_free_vars_rec(term, bound, &mut free, manager, 0);
+        for var in manager.free_vars_including_patterns(term) {
+            if let Some(TermKind::Var(name)) = manager.get(var).map(|t| &t.kind)
+                && !bound.contains(name)
+            {
+                free.insert(*name);
+            }
+        }
         free
     }
 
-    /// Recursive helper for collecting free variables
-    fn collect_free_vars_rec(
+    /// Names a quantifier's binder list may *not* drop: those occurring in
+    /// its body, plus those occurring in its own trigger patterns.
+    ///
+    /// The patterns are siblings of the body, not subterms of it, so no walk
+    /// of the body alone can see them. Eliminating a variable that a retained
+    /// trigger still mentions would leave that trigger referring to a
+    /// now-unbound name -- a dangling free variable manufactured out of a
+    /// closed formula. Keeping the binder instead preserves the formula
+    /// exactly (an unused-but-bound variable is semantically harmless).
+    fn used_names(
         &self,
-        term: TermId,
-        bound: &FxHashSet<Spur>,
-        free: &mut FxHashSet<Spur>,
+        body: TermId,
+        patterns: &InstPattern,
         manager: &TermManager,
-        depth: usize,
-    ) {
-        if depth > self.max_depth {
-            return;
+    ) -> FxHashSet<Spur> {
+        let bound = FxHashSet::default();
+        let mut used = self.collect_free_vars(body, &bound, manager);
+        for pattern in patterns {
+            for &trigger in pattern {
+                used.extend(self.collect_free_vars(trigger, &bound, manager));
+            }
         }
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::Var(name) if !bound.contains(name) => {
-                free.insert(*name);
-            }
-            TermKind::Forall { vars, body, .. } | TermKind::Exists { vars, body, .. } => {
-                let mut new_bound = bound.clone();
-                for (name, _) in vars {
-                    new_bound.insert(*name);
-                }
-                self.collect_free_vars_rec(*body, &new_bound, free, manager, depth + 1);
-            }
-            TermKind::Not(arg)
-            | TermKind::Neg(arg)
-            | TermKind::FpNeg(arg)
-            | TermKind::FpAbs(arg) => {
-                self.collect_free_vars_rec(*arg, bound, free, manager, depth + 1);
-            }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::Distinct(args) => {
-                for arg in args {
-                    self.collect_free_vars_rec(*arg, bound, free, manager, depth + 1);
-                }
-            }
-            TermKind::Implies(lhs, rhs)
-            | TermKind::Xor(lhs, rhs)
-            | TermKind::Eq(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs)
-            | TermKind::Mod(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs) => {
-                self.collect_free_vars_rec(*lhs, bound, free, manager, depth + 1);
-                self.collect_free_vars_rec(*rhs, bound, free, manager, depth + 1);
-            }
-            TermKind::Ite(cond, then_br, else_br) => {
-                self.collect_free_vars_rec(*cond, bound, free, manager, depth + 1);
-                self.collect_free_vars_rec(*then_br, bound, free, manager, depth + 1);
-                self.collect_free_vars_rec(*else_br, bound, free, manager, depth + 1);
-            }
-            TermKind::Select(arr, idx) => {
-                self.collect_free_vars_rec(*arr, bound, free, manager, depth + 1);
-                self.collect_free_vars_rec(*idx, bound, free, manager, depth + 1);
-            }
-            TermKind::Store(arr, idx, val) => {
-                self.collect_free_vars_rec(*arr, bound, free, manager, depth + 1);
-                self.collect_free_vars_rec(*idx, bound, free, manager, depth + 1);
-                self.collect_free_vars_rec(*val, bound, free, manager, depth + 1);
-            }
-            TermKind::Apply { args, .. } => {
-                for arg in args {
-                    self.collect_free_vars_rec(*arg, bound, free, manager, depth + 1);
-                }
-            }
-            _ => {}
-        }
+        used
     }
 
     /// Helper to create forall term from Spur-based vars
@@ -246,8 +215,7 @@ impl QuantifierRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> Option<RewriteResult> {
-        let bound = FxHashSet::default();
-        let free = self.collect_free_vars(body, &bound, manager);
+        let free = self.used_names(body, patterns, manager);
 
         let used_vars: Vec<(Spur, SortId)> = vars
             .iter()
@@ -319,8 +287,7 @@ impl QuantifierRewriter {
         ctx: &mut RewriteContext,
         manager: &mut TermManager,
     ) -> Option<RewriteResult> {
-        let bound = FxHashSet::default();
-        let free = self.collect_free_vars(body, &bound, manager);
+        let free = self.used_names(body, patterns, manager);
 
         let used_vars: Vec<(Spur, SortId)> = vars
             .iter()
@@ -502,5 +469,40 @@ mod tests {
         let y = manager.intern_str("y");
         assert!(free.contains(&x));
         assert!(free.contains(&y));
+    }
+
+    /// Regression: unused-variable elimination used a free-variable walk
+    /// that ignored the quantifier's own trigger patterns, so a variable
+    /// referenced *only* by a trigger looked unused and its binder was
+    /// dropped -- leaving the retained trigger mentioning a name nothing
+    /// binds any more.
+    #[test]
+    fn elim_unused_keeps_variable_used_only_in_a_trigger() {
+        let (mut manager, mut ctx, mut rewriter) = setup();
+
+        let int_sort = manager.sorts.int_sort;
+        let y_var = manager.mk_var("y", int_sort);
+        let x_var = manager.mk_var("x", int_sort);
+        let zero = manager.mk_int(0);
+        let body = manager.mk_gt(y_var, zero);
+        let trigger = manager.mk_apply("f", [x_var], int_sort);
+
+        // (forall ((x Int) (y Int)) (! (> y 0) :pattern ((f x))))
+        let forall = manager.mk_forall_with_patterns(
+            [("x", int_sort), ("y", int_sort)],
+            body,
+            [vec![trigger]],
+        );
+
+        let result = rewriter.rewrite(forall, &mut ctx, &mut manager);
+        let t = manager.get(result.term()).expect("term");
+        let TermKind::Forall { vars, .. } = &t.kind else {
+            panic!("Expected Forall term, got {:?}", t.kind);
+        };
+        assert_eq!(
+            vars.len(),
+            2,
+            "x is referenced by the trigger, so its binder must be kept"
+        );
     }
 }

@@ -8,6 +8,16 @@ use super::{SetConflict, SetVarId};
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+/// One suspended branch of the iterative combination enumeration.
+struct CombinationFrame {
+    /// Index of the next base element to consider.
+    start: usize,
+    /// Length the shared prefix must be rewound to before this branch runs.
+    prefix_len: usize,
+    /// Element this branch appends to the prefix, if any.
+    include: Option<u32>,
+}
+
 /// Powerset constraint: S2 = P(S1)
 #[derive(Debug, Clone)]
 pub struct PowersetConstraint {
@@ -365,6 +375,14 @@ impl PowersetMembership {
         result
     }
 
+    /// Enumerate every `size`-combination of `base`, in ascending index order
+    ///
+    /// Explicit stack, not recursion: the depth is `base.len()`, i.e. the size
+    /// of a caller-supplied domain, and the function returns nothing -- there
+    /// is no channel on which a depth cap could report that combinations were
+    /// dropped, so a truncated enumeration would silently under-approximate the
+    /// powerset slice. Frames carry the position the shared `current` prefix
+    /// must be rewound to, which reproduces the recursive push/pop exactly.
     fn generate_combinations(
         &self,
         base: &[u32],
@@ -373,21 +391,38 @@ impl PowersetMembership {
         current: &mut Vec<u32>,
         result: &mut Vec<FxHashSet<u32>>,
     ) {
-        if current.len() == size {
-            let subset: FxHashSet<u32> = current.iter().copied().collect();
-            result.push(subset);
-            return;
+        let entry_len = current.len();
+        let mut stack: Vec<CombinationFrame> = vec![CombinationFrame {
+            start,
+            prefix_len: entry_len,
+            include: None,
+        }];
+
+        while let Some(frame) = stack.pop() {
+            current.truncate(frame.prefix_len);
+            if let Some(element) = frame.include {
+                current.push(element);
+            }
+
+            if current.len() == size {
+                let subset: FxHashSet<u32> = current.iter().copied().collect();
+                result.push(subset);
+                continue;
+            }
+
+            let prefix_len = current.len();
+            // Pushed in reverse so the lowest index is explored first, exactly
+            // as the recursive loop did.
+            for (index, &element) in base.iter().enumerate().skip(frame.start).rev() {
+                stack.push(CombinationFrame {
+                    start: index + 1,
+                    prefix_len,
+                    include: Some(element),
+                });
+            }
         }
 
-        if start >= base.len() {
-            return;
-        }
-
-        for i in start..base.len() {
-            current.push(base[i]);
-            self.generate_combinations(base, size, i + 1, current, result);
-            current.pop();
-        }
+        current.truncate(entry_len);
     }
 
     /// Count subsets of a given size (binomial coefficient)
@@ -520,6 +555,45 @@ impl Default for PowersetFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_generate_combinations_exact_enumeration_and_order() {
+        // Semantic pin for the iterative rewrite of `generate_combinations`:
+        // the same combinations in the same ascending-index order.
+        //
+        // There is no matching deep-nesting test because the depth of this
+        // enumeration cannot be raised independently of its cost: the walk
+        // visits every increasing subset of size at most `size`, so reaching
+        // depth d requires 2^d visited nodes. The explicit stack removes the
+        // recursion, but the output itself stays exponential.
+        let checker = PowersetMembership::new((1u32..=4).collect());
+
+        let mut observed: Vec<Vec<u32>> = checker
+            .subsets_of_size(2)
+            .into_iter()
+            .map(|set| {
+                let mut elements: Vec<u32> = set.into_iter().collect();
+                elements.sort_unstable();
+                elements
+            })
+            .collect();
+        observed.sort();
+
+        assert_eq!(
+            observed,
+            vec![
+                vec![1, 2],
+                vec![1, 3],
+                vec![1, 4],
+                vec![2, 3],
+                vec![2, 4],
+                vec![3, 4],
+            ]
+        );
+
+        assert_eq!(checker.subsets_of_size(0), vec![FxHashSet::default()]);
+        assert!(checker.subsets_of_size(9).is_empty());
+    }
 
     #[test]
     fn test_powerset_builder() {

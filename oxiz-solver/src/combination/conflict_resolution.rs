@@ -270,6 +270,37 @@ pub struct ConflictResolver {
 
     /// Theory blame counters.
     theory_blame: FxHashMap<TheoryId, u64>,
+
+    /// Boolean atom representing each equality premise.
+    ///
+    /// [`Explanation::Transitivity`], [`Explanation::Congruence`] and
+    /// [`Explanation::EqualityPropagation`] carry their premises as
+    /// [`Equality`] values, but a reason is a list of [`Literal`]s, and a
+    /// literal names a *term*.  The embedder therefore tells the resolver
+    /// which term is the atom `lhs = rhs` (see
+    /// [`Self::register_equality_atom`]); without that mapping an equality
+    /// premise cannot be named in a learned clause at all, and
+    /// [`Self::get_reason`] says so with an error rather than dropping the
+    /// premise.
+    equality_atoms: FxHashMap<Equality, TermId>,
+}
+
+/// One suspended node of the [`ConflictResolver::is_redundant`] walk.
+struct RedundancyFrame {
+    /// The literal whose reason is being scanned.
+    literal: Literal,
+    /// The literals of that reason.
+    reason: Vec<Literal>,
+    /// Index of the next reason literal to examine.
+    next: usize,
+}
+
+/// Result of classifying one node of the redundancy walk.
+enum RedundancyStep {
+    /// The answer for this node is already known.
+    Done(bool),
+    /// The node has a reason that must be scanned.
+    Descend(RedundancyFrame),
 }
 
 impl ConflictResolver {
@@ -293,7 +324,25 @@ impl ConflictResolver {
             current_level: 0,
             learned_clauses: Vec::new(),
             theory_blame: FxHashMap::default(),
+            equality_atoms: FxHashMap::default(),
         }
+    }
+
+    /// Record the boolean atom that represents the equality `equality`.
+    ///
+    /// Equality-carrying explanations ([`Explanation::Transitivity`],
+    /// [`Explanation::Congruence`], [`Explanation::EqualityPropagation`]) can
+    /// only contribute reason *literals* for equalities registered here.  The
+    /// mapping is a naming table, not trail state: it survives
+    /// [`Self::backtrack`] and is discarded only by [`Self::clear`].
+    pub fn register_equality_atom(&mut self, equality: Equality, atom: TermId) {
+        self.equality_atoms.insert(equality, atom);
+    }
+
+    /// The boolean atom registered for `equality`, if any.
+    #[must_use]
+    pub fn equality_atom(&self, equality: Equality) -> Option<TermId> {
+        self.equality_atoms.get(&equality).copied()
     }
 
     /// Get statistics.
@@ -436,12 +485,27 @@ impl ConflictResolver {
                 break; // Found UIP
             }
 
-            // Find next literal to resolve
-            let resolve_lit = self.find_resolution_literal(&current_clause, level, &seen)?;
+            // Find next literal to resolve.  Running out of candidates is not
+            // a failure: `current_clause` is a resolvent of the conflict and
+            // its reasons at every step, so it is implied by the constraint
+            // set whether or not a UIP was reached.  Stopping here yields a
+            // sound (if weaker) learned clause; the alternative -- resolving
+            // on a literal that has no reason -- would delete it from the
+            // clause and is exactly what makes a learned clause unsound.
+            let Ok(resolve_lit) = self.find_resolution_literal(&current_clause, level, &seen)
+            else {
+                break;
+            };
             seen.insert(resolve_lit);
 
-            // Get reason for this literal
-            let reason = self.get_reason(resolve_lit)?;
+            // Get reason for this literal.  A literal with no reason (a
+            // decision, or one whose explanation names an unnameable premise)
+            // cannot be resolved away: keep it in the clause and look for
+            // another candidate.  `seen` grows every iteration, so the search
+            // still terminates.
+            let Ok(reason) = self.get_reason(resolve_lit) else {
+                continue;
+            };
 
             // Perform resolution
             current_clause.remove(&resolve_lit);
@@ -485,20 +549,131 @@ impl ConflictResolver {
             .map(|(_, level, _)| *level)
     }
 
-    /// Get reason (explanation) for a literal.
+    /// Get reason (explanation) for a literal: the premises that imply it,
+    /// as literals.
+    ///
+    /// An *empty* reason is not a neutral answer here — it states that the
+    /// literal is entailed unconditionally, which makes it resolvable away in
+    /// [`Self::find_uip`] and vacuously redundant in [`Self::is_redundant`],
+    /// i.e. deletable from a learned clause.  Deleting a literal that is in
+    /// fact conditional turns the learned clause into a non-implied one, so
+    /// every kind below either produces its real premises or fails; no kind
+    /// falls through to `Ok(Vec::new())`, and the match is exhaustive so a
+    /// future kind cannot inherit such a fallthrough by default.
+    ///
+    /// Per kind:
+    ///
+    /// * [`Explanation::TheoryPropagation`] and
+    ///   [`Explanation::EqualityPropagation`] carry literal premises
+    ///   directly (`antecedents` / `support`); `EqualityPropagation`
+    ///   additionally carries `equalities`, which are premises just as much
+    ///   as `support` is and are now included instead of discarded.
+    /// * [`Explanation::Transitivity`] and [`Explanation::Congruence`] carry
+    ///   their premises as [`Equality`] values — the chain links and the
+    ///   argument equalities respectively.  They are named through
+    ///   [`Self::register_equality_atom`]; an unregistered equality is an
+    ///   error, never a dropped premise.  (The congruence head `function` is
+    ///   the term the rule concludes about, not a premise.)  An *empty*
+    ///   chain or argument list is a degenerate explanation that proves
+    ///   nothing, and is likewise an error rather than a licence to delete
+    ///   the literal.
+    /// * [`Explanation::Given`] is an input assertion. At level 0 that is
+    ///   genuinely unconditional — the standard CDCL rule that level-0
+    ///   assignments may be removed from a learned clause — so its reason is
+    ///   the empty premise set, stated deliberately and only there.  Above
+    ///   level 0 the same explanation marks a *decision*: it has no premises
+    ///   to resolve on and must stay in the clause, so it is an error.
+    ///
+    /// The equality premises are iterated flatly: unlike
+    /// [`crate::combination::equality_propagation::Explanation`], this
+    /// explanation type is not self-nesting, so there is no sub-explanation
+    /// tree to walk and no stack to keep.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the literal has no reason to resolve on: it is not
+    /// on the trail, it is a decision, or its explanation names a premise
+    /// that cannot be expressed as a literal.  Every caller must treat that
+    /// as "this literal stays" — never as "this literal is free".
     fn get_reason(&self, literal: Literal) -> Result<Vec<Literal>, String> {
-        let position = self
+        let position = *self
             .literal_position
             .get(&literal)
             .ok_or("Literal not in trail")?;
 
-        let (_, _, explanation) = &self.trail[*position];
+        let (_, level, explanation) = self
+            .trail
+            .get(position)
+            .ok_or("Trail position out of range")?;
 
         match explanation {
             Explanation::TheoryPropagation { antecedents, .. } => Ok(antecedents.clone()),
-            Explanation::EqualityPropagation { support, .. } => Ok(support.clone()),
-            _ => Ok(Vec::new()),
+            Explanation::EqualityPropagation {
+                equalities,
+                support,
+            } => {
+                let mut reason = support.clone();
+                reason.extend(self.equality_reason_literals(equalities, "equality propagation")?);
+                Ok(reason)
+            }
+            Explanation::Transitivity { chain } => {
+                if chain.is_empty() {
+                    return Err(
+                        "Transitivity explanation has an empty chain: it proves nothing"
+                            .to_string(),
+                    );
+                }
+                self.equality_reason_literals(chain, "transitivity")
+            }
+            Explanation::Congruence { arg_equalities, .. } => {
+                if arg_equalities.is_empty() {
+                    return Err(
+                        "Congruence explanation has no argument equalities: it proves nothing"
+                            .to_string(),
+                    );
+                }
+                self.equality_reason_literals(arg_equalities, "congruence")
+            }
+            // Input assertion: unconditional at level 0, a decision above it.
+            Explanation::Given => {
+                if *level == 0 {
+                    Ok(Vec::new())
+                } else {
+                    Err(format!(
+                        "Literal on term {} is a decision at level {level}: it has no reason",
+                        literal.term
+                    ))
+                }
+            }
         }
+    }
+
+    /// The reason literals naming a list of equality premises.
+    ///
+    /// `kind` names the explanation for the error message.  An equality with
+    /// no registered atom fails the whole reason: reporting the premises that
+    /// *could* be named would understate the reason and license deleting a
+    /// literal that is not implied by them alone.
+    ///
+    /// The premise "`lhs = rhs` holds" is the positive literal on the
+    /// equality's atom, matching the polarity convention of the `support` and
+    /// `antecedents` lists it joins: reasons record premises as asserted.
+    fn equality_reason_literals(
+        &self,
+        equalities: &[Equality],
+        kind: &str,
+    ) -> Result<Vec<Literal>, String> {
+        let mut literals = Vec::with_capacity(equalities.len());
+        for &equality in equalities {
+            let atom = self.equality_atom(equality).ok_or_else(|| {
+                format!(
+                    "{kind} explanation uses the equality {} = {}, which has no registered atom",
+                    equality.lhs, equality.rhs
+                )
+            })?;
+            literals.push(Literal::positive(atom));
+        }
+        Ok(literals)
     }
 
     /// Minimize conflict clause.
@@ -543,29 +718,103 @@ impl ConflictResolver {
     }
 
     /// Check if a literal is redundant.
+    ///
+    /// A literal is redundant with respect to `clause` when every literal of
+    /// its reason is either already in `clause` or redundant in turn.
+    ///
+    /// The walk runs on an explicit heap stack: its depth is the length of an
+    /// implication chain, bounded only by the size of the trail, and dropping
+    /// a literal that is *not* redundant weakens a learned clause into an
+    /// unsound one, so there is no depth at which giving up quietly would be
+    /// acceptable.
+    ///
+    /// Two corrections to the recursive version, both in the
+    /// "keep the literal" (conservative) direction:
+    ///
+    /// * a literal whose reason cannot be retrieved -- a decision, or one that
+    ///   is not on the trail at all -- is no longer treated as having an empty
+    ///   reason and therefore as vacuously redundant. `get_reason`'s error was
+    ///   discarded by `.ok().unwrap_or_default()`, so such literals were
+    ///   silently deleted from the learned clause;
+    /// * a cycle among reasons no longer recurses forever. Implication graphs
+    ///   are acyclic in a well-formed trail, but the explanations here are
+    ///   supplied by theory solvers, so a literal already being examined is
+    ///   reported as not redundant instead.
     fn is_redundant(
         &self,
         literal: Literal,
         clause: &[Literal],
         redundant: &mut FxHashSet<Literal>,
     ) -> Result<bool, String> {
-        if redundant.contains(&literal) {
-            return Ok(true);
+        let mut in_progress: FxHashSet<Literal> = FxHashSet::default();
+
+        let mut stack: Vec<RedundancyFrame> = Vec::new();
+        match self.enter_redundancy(literal, redundant, &mut in_progress) {
+            RedundancyStep::Done(answer) => return Ok(answer),
+            RedundancyStep::Descend(frame) => stack.push(frame),
         }
 
-        let reason = self.get_reason(literal).ok().unwrap_or_default();
+        while let Some(mut frame) = stack.pop() {
+            let mut descend: Option<RedundancyFrame> = None;
 
-        for &reason_lit in &reason {
-            if !clause.contains(&reason_lit)
-                && !redundant.contains(&reason_lit)
-                && !self.is_redundant(reason_lit, clause, redundant)?
-            {
-                return Ok(false);
+            while frame.next < frame.reason.len() {
+                let reason_lit = frame.reason[frame.next];
+                frame.next += 1;
+
+                if clause.contains(&reason_lit) || redundant.contains(&reason_lit) {
+                    continue;
+                }
+
+                match self.enter_redundancy(reason_lit, redundant, &mut in_progress) {
+                    RedundancyStep::Done(true) => continue,
+                    RedundancyStep::Done(false) => return Ok(false),
+                    RedundancyStep::Descend(child) => {
+                        descend = Some(child);
+                        break;
+                    }
+                }
+            }
+
+            match descend {
+                Some(child) => {
+                    stack.push(frame);
+                    stack.push(child);
+                }
+                // Every literal of this reason is covered: the node is
+                // redundant.
+                None => {
+                    redundant.insert(frame.literal);
+                }
             }
         }
 
-        redundant.insert(literal);
         Ok(true)
+    }
+
+    /// Classify one node of the [`Self::is_redundant`] walk.
+    fn enter_redundancy(
+        &self,
+        literal: Literal,
+        redundant: &FxHashSet<Literal>,
+        in_progress: &mut FxHashSet<Literal>,
+    ) -> RedundancyStep {
+        if redundant.contains(&literal) {
+            return RedundancyStep::Done(true);
+        }
+        if !in_progress.insert(literal) {
+            // Already on the current path: refuse to claim redundancy.
+            return RedundancyStep::Done(false);
+        }
+
+        match self.get_reason(literal) {
+            Ok(reason) => RedundancyStep::Descend(RedundancyFrame {
+                literal,
+                reason,
+                next: 0,
+            }),
+            // No reason on the trail: this literal cannot be resolved away.
+            Err(_) => RedundancyStep::Done(false),
+        }
     }
 
     /// Binary resolution minimization.
@@ -625,6 +874,7 @@ impl ConflictResolver {
         self.current_level = 0;
         self.learned_clauses.clear();
         self.theory_blame.clear();
+        self.equality_atoms.clear();
     }
 
     /// Reset statistics.
@@ -885,5 +1135,337 @@ mod tests {
 
         let level = resolver.compute_backtrack_level(&literals, 2);
         assert!(level.is_ok());
+    }
+
+    /// A reason chain as long as the trail used to be walked recursively.
+    /// Returning at all is the assertion.
+    #[test]
+    fn is_redundant_survives_a_long_reason_chain_on_a_small_stack() {
+        // Stack and chain length scale together (1 MiB/100k -> 128 KiB/12.5k):
+        // the ~10 B-per-frame threshold is the pin, so never raise one alone.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut resolver = ConflictResolver::new();
+                const CHAIN: TermId = 12_500;
+
+                for term in 0..CHAIN {
+                    resolver.add_assignment(
+                        Literal::positive(term),
+                        0,
+                        Explanation::TheoryPropagation {
+                            theory: 0,
+                            antecedents: vec![Literal::positive(term + 1)],
+                        },
+                    );
+                }
+                // The end of the chain has an explanation with no antecedents.
+                resolver.add_assignment(Literal::positive(CHAIN), 0, Explanation::Given);
+
+                let mut redundant = FxHashSet::default();
+                resolver.is_redundant(Literal::positive(0), &[], &mut redundant)
+            })
+            .expect("spawning the worker thread should succeed");
+
+        let verdict = handle
+            .join()
+            .expect("the walk must not overflow")
+            .expect("the walk must not error");
+        assert!(verdict);
+    }
+
+    /// A literal that is not on the trail has no reason, so it cannot be
+    /// resolved away. It used to be reported redundant -- and therefore
+    /// deleted from the learned clause -- because `get_reason`'s error was
+    /// turned into an empty reason.
+    #[test]
+    fn is_redundant_keeps_a_literal_with_no_reason() {
+        let resolver = ConflictResolver::new();
+        let mut redundant = FxHashSet::default();
+
+        let verdict = resolver
+            .is_redundant(Literal::positive(7), &[], &mut redundant)
+            .expect("querying an unknown literal is not an error");
+        assert!(!verdict, "a literal absent from the trail is not redundant");
+        assert!(redundant.is_empty());
+    }
+
+    /// Mutually justifying literals used to recurse until the stack ran out.
+    #[test]
+    fn is_redundant_terminates_on_a_reason_cycle() {
+        let mut resolver = ConflictResolver::new();
+        resolver.add_assignment(
+            Literal::positive(1),
+            0,
+            Explanation::TheoryPropagation {
+                theory: 0,
+                antecedents: vec![Literal::positive(2)],
+            },
+        );
+        resolver.add_assignment(
+            Literal::positive(2),
+            0,
+            Explanation::TheoryPropagation {
+                theory: 0,
+                antecedents: vec![Literal::positive(1)],
+            },
+        );
+
+        let mut redundant = FxHashSet::default();
+        let verdict = resolver
+            .is_redundant(Literal::positive(1), &[], &mut redundant)
+            .expect("a cycle is not an error");
+        assert!(!verdict, "a literal on a reason cycle is not redundant");
+    }
+
+    /// Semantic pin: a literal whose reason is entirely inside the clause is
+    /// redundant, and gets recorded for later queries.
+    #[test]
+    fn is_redundant_accepts_a_reason_covered_by_the_clause() {
+        let mut resolver = ConflictResolver::new();
+        resolver.add_assignment(
+            Literal::positive(1),
+            0,
+            Explanation::TheoryPropagation {
+                theory: 0,
+                antecedents: vec![Literal::positive(2), Literal::positive(3)],
+            },
+        );
+
+        let clause = [Literal::positive(2), Literal::positive(3)];
+        let mut redundant = FxHashSet::default();
+        assert!(
+            resolver
+                .is_redundant(Literal::positive(1), &clause, &mut redundant)
+                .expect("covered reason is not an error")
+        );
+        assert!(redundant.contains(&Literal::positive(1)));
+    }
+
+    // ===== get_reason: one pin per explanation kind =====================
+    //
+    // Every kind used to fall through to `Ok(Vec::new())` unless it was a
+    // theory or equality propagation. An empty reason means "entailed
+    // unconditionally", which licenses deleting the literal from a learned
+    // clause -- so the fallthrough silently produced clauses the constraint
+    // set does not imply.
+
+    /// A theory propagation's reason is its antecedents, verbatim.
+    #[test]
+    fn get_reason_theory_propagation_returns_its_antecedents() {
+        let mut resolver = ConflictResolver::new();
+        resolver.add_assignment(
+            Literal::positive(1),
+            0,
+            Explanation::TheoryPropagation {
+                theory: 3,
+                antecedents: vec![Literal::positive(2), Literal::negative(3)],
+            },
+        );
+
+        let reason = resolver
+            .get_reason(Literal::positive(1))
+            .expect("a theory propagation has a reason");
+        assert_eq!(reason, vec![Literal::positive(2), Literal::negative(3)]);
+    }
+
+    /// An equality propagation's reason is its support *and* its equalities;
+    /// the equalities used to be discarded.
+    #[test]
+    fn get_reason_equality_propagation_includes_its_equalities() {
+        let mut resolver = ConflictResolver::new();
+        let equality = Equality::new(10, 11);
+        resolver.register_equality_atom(equality, 42);
+        resolver.add_assignment(
+            Literal::positive(1),
+            0,
+            Explanation::EqualityPropagation {
+                equalities: vec![equality],
+                support: vec![Literal::negative(5)],
+            },
+        );
+
+        let reason = resolver
+            .get_reason(Literal::positive(1))
+            .expect("an equality propagation has a reason");
+        assert_eq!(reason, vec![Literal::negative(5), Literal::positive(42)]);
+    }
+
+    /// A transitivity explanation's reason is its chain links.
+    #[test]
+    fn get_reason_transitivity_returns_its_chain() {
+        let mut resolver = ConflictResolver::new();
+        let first = Equality::new(1, 2);
+        let second = Equality::new(2, 3);
+        resolver.register_equality_atom(first, 100);
+        resolver.register_equality_atom(second, 101);
+        resolver.add_assignment(
+            Literal::positive(7),
+            0,
+            Explanation::Transitivity {
+                chain: vec![first, second],
+            },
+        );
+
+        let reason = resolver
+            .get_reason(Literal::positive(7))
+            .expect("a transitivity chain is a reason");
+        assert_eq!(reason, vec![Literal::positive(100), Literal::positive(101)]);
+    }
+
+    /// A congruence explanation's reason is its argument equalities (the
+    /// head `function` is what it concludes about, not a premise).
+    #[test]
+    fn get_reason_congruence_returns_its_argument_equalities() {
+        let mut resolver = ConflictResolver::new();
+        let arg = Equality::new(4, 5);
+        resolver.register_equality_atom(arg, 200);
+        resolver.add_assignment(
+            Literal::positive(8),
+            0,
+            Explanation::Congruence {
+                function: 99,
+                arg_equalities: vec![arg],
+            },
+        );
+
+        let reason = resolver
+            .get_reason(Literal::positive(8))
+            .expect("an argument equality is a reason");
+        assert_eq!(reason, vec![Literal::positive(200)]);
+    }
+
+    /// An equality with no registered atom cannot be named in a clause; the
+    /// whole reason fails rather than reporting the premises that can be
+    /// named (which would understate it).
+    #[test]
+    fn get_reason_rejects_an_equality_with_no_registered_atom() {
+        let mut resolver = ConflictResolver::new();
+        let known = Equality::new(1, 2);
+        resolver.register_equality_atom(known, 100);
+        resolver.add_assignment(
+            Literal::positive(7),
+            0,
+            Explanation::Transitivity {
+                chain: vec![known, Equality::new(2, 3)],
+            },
+        );
+
+        assert!(resolver.get_reason(Literal::positive(7)).is_err());
+    }
+
+    /// Degenerate equality explanations prove nothing, and must not be read
+    /// as "no premises needed".
+    #[test]
+    fn get_reason_rejects_degenerate_equality_explanations() {
+        let mut resolver = ConflictResolver::new();
+        resolver.add_assignment(
+            Literal::positive(1),
+            0,
+            Explanation::Transitivity { chain: Vec::new() },
+        );
+        resolver.add_assignment(
+            Literal::positive(2),
+            0,
+            Explanation::Congruence {
+                function: 9,
+                arg_equalities: Vec::new(),
+            },
+        );
+
+        assert!(resolver.get_reason(Literal::positive(1)).is_err());
+        assert!(resolver.get_reason(Literal::positive(2)).is_err());
+    }
+
+    /// A level-0 `Given` is an input assertion: unconditionally entailed, so
+    /// an empty premise set is the correct answer -- the one place this
+    /// function may return one.
+    #[test]
+    fn get_reason_given_at_level_zero_has_no_premises() {
+        let mut resolver = ConflictResolver::new();
+        resolver.add_assignment(Literal::positive(1), 0, Explanation::Given);
+
+        let reason = resolver
+            .get_reason(Literal::positive(1))
+            .expect("a level-0 input assertion is unconditional");
+        assert!(reason.is_empty());
+    }
+
+    /// The same explanation above level 0 marks a *decision*: it has no
+    /// premises to resolve on and must not be deleted from a clause.
+    #[test]
+    fn get_reason_given_above_level_zero_is_a_decision_error() {
+        let mut resolver = ConflictResolver::new();
+        resolver.push_decision_level();
+        resolver.add_assignment(Literal::positive(1), 1, Explanation::Given);
+
+        assert!(resolver.get_reason(Literal::positive(1)).is_err());
+    }
+
+    /// Soundness end to end: a conflict between two decisions used to
+    /// resolve both away and learn the *empty* clause -- an unconditional
+    /// claim of unsatisfiability. Both decisions must survive.
+    #[test]
+    fn analyze_conflict_never_resolves_a_decision_away() {
+        let mut resolver = ConflictResolver::new();
+        resolver.push_decision_level();
+        resolver.add_assignment(Literal::positive(1), 1, Explanation::Given);
+        resolver.add_assignment(Literal::positive(2), 1, Explanation::Given);
+
+        let analysis = resolver
+            .analyze_conflict(TheoryConflict {
+                theory: 0,
+                literals: vec![Literal::positive(1), Literal::positive(2)],
+                explanation: Explanation::Given,
+                level: 1,
+            })
+            .expect("analysis succeeds");
+
+        let learned: FxHashSet<Literal> = analysis.clause.literals.iter().copied().collect();
+        assert!(
+            learned.contains(&Literal::positive(1)) && learned.contains(&Literal::positive(2)),
+            "decisions have no reason and cannot be resolved away: {:?}",
+            analysis.clause.literals
+        );
+    }
+
+    /// A literal justified by a decision is not redundant either.
+    #[test]
+    fn is_redundant_keeps_a_literal_justified_by_a_decision() {
+        let mut resolver = ConflictResolver::new();
+        resolver.push_decision_level();
+        resolver.add_assignment(Literal::positive(1), 1, Explanation::Given);
+        resolver.add_assignment(
+            Literal::positive(2),
+            1,
+            Explanation::TheoryPropagation {
+                theory: 0,
+                antecedents: vec![Literal::positive(1)],
+            },
+        );
+
+        let mut redundant = FxHashSet::default();
+        let verdict = resolver
+            .is_redundant(Literal::positive(2), &[], &mut redundant)
+            .expect("a decision-backed reason is not an error");
+        assert!(!verdict);
+    }
+
+    /// The equality-atom table is a naming table, not trail state: it must
+    /// survive backtracking, or a reason that was expressible before a
+    /// backjump would become an error after it.
+    #[test]
+    fn equality_atoms_survive_backtracking() {
+        let mut resolver = ConflictResolver::new();
+        let equality = Equality::new(1, 2);
+        resolver.register_equality_atom(equality, 55);
+        resolver.push_decision_level();
+        resolver.add_assignment(Literal::positive(9), 1, Explanation::Given);
+
+        resolver.backtrack(0).expect("backtrack to level 0");
+        assert_eq!(resolver.equality_atom(equality), Some(55));
+
+        resolver.clear();
+        assert_eq!(resolver.equality_atom(equality), None);
     }
 }

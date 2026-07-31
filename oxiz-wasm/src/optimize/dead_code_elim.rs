@@ -241,18 +241,22 @@ impl DeadCodeEliminator {
         }
     }
 
-    /// Mark a function and its callees as reachable
+    /// Mark a function and its callees as reachable.
+    ///
+    /// Iterative (explicit heap stack): call-graph depth is a property of the
+    /// analysed module, `-> ()` offers no channel for reporting a truncated
+    /// walk, and this runs on a WASM stack (1 MiB by default) where an overflow
+    /// is an unrecoverable trap rather than a catchable panic.
     fn mark_reachable(&mut self, index: usize) {
-        if self.reachable.contains(&index) {
-            return;
-        }
+        let mut stack = vec![index];
 
-        self.reachable.insert(index);
+        while let Some(current) = stack.pop() {
+            if !self.reachable.insert(current) {
+                continue;
+            }
 
-        if let Some(info) = self.functions.get(&index) {
-            let callees: Vec<_> = info.calls.iter().copied().collect();
-            for callee in callees {
-                self.mark_reachable(callee);
+            if let Some(info) = self.functions.get(&current) {
+                stack.extend(info.calls.iter().copied());
             }
         }
     }
@@ -462,81 +466,95 @@ impl CallGraph {
         dot
     }
 
-    /// Get strongly connected components
+    /// Get strongly connected components.
+    ///
+    /// Iterative Tarjan (explicit heap stack). The recursive formulation
+    /// descended once per edge on the longest simple path in the call graph,
+    /// with `-> ()` and no depth bound, on a WASM stack where an overflow is an
+    /// unrecoverable trap. Callee lookup is also now a hash map built once
+    /// instead of a linear scan per visit, making the pass O(V+E) rather than
+    /// O(V·E). The components returned, and their order, are unchanged.
     pub fn strongly_connected_components(&self) -> Vec<Vec<usize>> {
-        // Tarjan's algorithm
+        let by_index: HashMap<usize, &CallGraphNode> =
+            self.functions.iter().map(|n| (n.index, n)).collect();
+
         let mut components = Vec::new();
-        let mut index_map = HashMap::new();
-        let mut lowlink = HashMap::new();
-        let mut on_stack = HashSet::new();
-        let mut stack = Vec::new();
-        let mut index = 0;
+        let mut index_map: HashMap<usize, usize> = HashMap::new();
+        let mut lowlink: HashMap<usize, usize> = HashMap::new();
+        let mut on_stack: HashSet<usize> = HashSet::new();
+        let mut scc_stack: Vec<usize> = Vec::new();
+        let mut next_index = 0usize;
 
         for node in &self.functions {
-            if !index_map.contains_key(&node.index) {
-                self.strongconnect(
-                    node.index,
-                    &mut index,
-                    &mut index_map,
-                    &mut lowlink,
-                    &mut on_stack,
-                    &mut stack,
-                    &mut components,
-                );
+            if index_map.contains_key(&node.index) {
+                continue;
+            }
+
+            // (vertex, index of the next callee to visit)
+            let mut work: Vec<(usize, usize)> = Vec::new();
+
+            index_map.insert(node.index, next_index);
+            lowlink.insert(node.index, next_index);
+            next_index += 1;
+            scc_stack.push(node.index);
+            on_stack.insert(node.index);
+            work.push((node.index, 0));
+
+            while let Some((v, position)) = work.pop() {
+                let callees: &[usize] = by_index
+                    .get(&v)
+                    .map(|n| n.calls.as_slice())
+                    .unwrap_or_default();
+
+                if let Some(&w) = callees.get(position) {
+                    work.push((v, position + 1));
+
+                    match index_map.entry(w) {
+                        std::collections::hash_map::Entry::Occupied(slot) => {
+                            if on_stack.contains(&w) {
+                                let w_index = *slot.get();
+                                let v_lowlink = *lowlink.get(&v).unwrap_or(&usize::MAX);
+                                lowlink.insert(v, v_lowlink.min(w_index));
+                            }
+                        }
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(next_index);
+                            lowlink.insert(w, next_index);
+                            next_index += 1;
+                            scc_stack.push(w);
+                            on_stack.insert(w);
+                            work.push((w, 0));
+                        }
+                    }
+                    continue;
+                }
+
+                // Every callee of `v` has been processed.
+                if lowlink.get(&v) == index_map.get(&v) {
+                    let mut component = Vec::new();
+                    while let Some(w) = scc_stack.pop() {
+                        on_stack.remove(&w);
+                        component.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    if !component.is_empty() {
+                        components.push(component);
+                    }
+                }
+
+                // Propagate the lowlink back to the caller, as the recursive
+                // formulation did on return.
+                if let Some(&(parent, _)) = work.last() {
+                    let v_lowlink = *lowlink.get(&v).unwrap_or(&usize::MAX);
+                    let parent_lowlink = *lowlink.get(&parent).unwrap_or(&usize::MAX);
+                    lowlink.insert(parent, parent_lowlink.min(v_lowlink));
+                }
             }
         }
 
         components
-    }
-
-    fn strongconnect(
-        &self,
-        v: usize,
-        index: &mut usize,
-        index_map: &mut HashMap<usize, usize>,
-        lowlink: &mut HashMap<usize, usize>,
-        on_stack: &mut HashSet<usize>,
-        stack: &mut Vec<usize>,
-        components: &mut Vec<Vec<usize>>,
-    ) {
-        index_map.insert(v, *index);
-        lowlink.insert(v, *index);
-        *index += 1;
-        stack.push(v);
-        on_stack.insert(v);
-
-        if let Some(node) = self.functions.iter().find(|n| n.index == v) {
-            for &w in &node.calls {
-                if !index_map.contains_key(&w) {
-                    self.strongconnect(w, index, index_map, lowlink, on_stack, stack, components);
-                    let w_lowlink = *lowlink.get(&w).unwrap_or(&usize::MAX);
-                    let v_lowlink = *lowlink.get(&v).unwrap_or(&usize::MAX);
-                    lowlink.insert(v, v_lowlink.min(w_lowlink));
-                } else if on_stack.contains(&w) {
-                    let w_index = *index_map.get(&w).unwrap_or(&usize::MAX);
-                    let v_lowlink = *lowlink.get(&v).unwrap_or(&usize::MAX);
-                    lowlink.insert(v, v_lowlink.min(w_index));
-                }
-            }
-        }
-
-        if lowlink.get(&v) == index_map.get(&v) {
-            let mut component = Vec::new();
-            loop {
-                if let Some(w) = stack.pop() {
-                    on_stack.remove(&w);
-                    component.push(w);
-                    if w == v {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-            if !component.is_empty() {
-                components.push(component);
-            }
-        }
     }
 }
 
@@ -661,5 +679,125 @@ mod tests {
         let dot = graph.to_dot();
         assert!(dot.contains("digraph CallGraph"));
         assert!(dot.contains("main"));
+    }
+
+    /// Stack size for the deep call-graph regression tests. A stack overflow
+    /// aborts the process rather than failing a test, so *returning at all* is
+    /// the assertion; the small stack also approximates the 1 MiB WASM stack
+    /// this code actually runs on, where an overflow is an unrecoverable trap.
+    ///
+    /// What a recursive implementation trips over is the bytes-per-frame budget
+    /// `DEEP_GRAPH_STACK / depth`, not either number alone. So the WASM-native
+    /// pair of 1 MiB and a 200,000-node chain is scaled down by 8, to a 128 KiB
+    /// stack and 25,000-node chains: the same ~5 bytes per frame, at an eighth
+    /// of the graph-building cost. Stack and depth are deliberately tied —
+    /// restoring the longer chains without also restoring the larger stack
+    /// would silently stop every test below from catching a recursive rewrite.
+    const DEEP_GRAPH_STACK: usize = 1 << 17;
+
+    /// Run `body` on a thread with a deliberately small stack.
+    fn on_small_stack<F>(name: &str, body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .name(name.to_string())
+            .stack_size(DEEP_GRAPH_STACK)
+            .spawn(body)
+            .expect("test thread should spawn")
+            .join()
+            .expect("test thread should not panic");
+    }
+
+    #[test]
+    fn mark_reachable_survives_a_deep_call_chain() {
+        on_small_stack("wasm_deep_reachable", || {
+            // Scaled with `DEEP_GRAPH_STACK`; see its doc comment.
+            let depth = 25_000;
+            let mut eliminator = DeadCodeEliminator::new();
+            eliminator.register_function(FunctionInfo::new(0).mark_exported().add_call(1));
+            for index in 1..depth {
+                eliminator.register_function(FunctionInfo::new(index).add_call(index + 1));
+            }
+            eliminator.register_function(FunctionInfo::new(depth));
+
+            eliminator.mark_entry_points();
+            // Every function in the chain is reachable from the export.
+            assert!(eliminator.find_unreachable().is_empty());
+        });
+    }
+
+    #[test]
+    fn strongly_connected_components_survive_a_deep_call_chain() {
+        on_small_stack("wasm_deep_tarjan", || {
+            // Scaled with `DEEP_GRAPH_STACK`; see its doc comment.
+            let depth = 25_000;
+            let mut functions = Vec::with_capacity(depth + 1);
+            for index in 0..depth {
+                functions.push(CallGraphNode {
+                    index,
+                    name: None,
+                    exported: index == 0,
+                    reachable: true,
+                    calls: vec![index + 1],
+                    size_bytes: 1,
+                });
+            }
+            functions.push(CallGraphNode {
+                index: depth,
+                name: None,
+                exported: false,
+                reachable: true,
+                calls: Vec::new(),
+                size_bytes: 1,
+            });
+
+            let graph = CallGraph { functions };
+            let components = graph.strongly_connected_components();
+            // An acyclic chain: every node is its own component.
+            assert_eq!(components.len(), depth + 1);
+            assert!(components.iter().all(|c| c.len() == 1));
+        });
+    }
+
+    #[test]
+    fn strongly_connected_components_still_find_a_cycle() {
+        // Semantic pin: the iterative Tarjan must group a genuine cycle.
+        let functions = vec![
+            CallGraphNode {
+                index: 0,
+                name: None,
+                exported: true,
+                reachable: true,
+                calls: vec![1],
+                size_bytes: 1,
+            },
+            CallGraphNode {
+                index: 1,
+                name: None,
+                exported: false,
+                reachable: true,
+                calls: vec![2],
+                size_bytes: 1,
+            },
+            CallGraphNode {
+                index: 2,
+                name: None,
+                exported: false,
+                reachable: true,
+                calls: vec![1],
+                size_bytes: 1,
+            },
+        ];
+        let graph = CallGraph { functions };
+        let components = graph.strongly_connected_components();
+        assert_eq!(components.len(), 2);
+        let mut cycle = components
+            .iter()
+            .find(|c| c.len() == 2)
+            .cloned()
+            .expect("the 1 <-> 2 cycle should be one component");
+        cycle.sort_unstable();
+        assert_eq!(cycle, vec![1, 2]);
     }
 }

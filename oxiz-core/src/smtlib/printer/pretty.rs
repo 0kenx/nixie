@@ -8,9 +8,42 @@ use crate::prelude::*;
 use crate::sort::SortId;
 use core::fmt::Write;
 
+/// Maximum [`PrettyPrinter::write_term`] recursion depth before printing
+/// degrades to a truncation marker (`...`) instead of descending further.
+///
+/// Same mechanism as `super::basic::MAX_PRINT_DEPTH`, but deliberately a
+/// quarter of its value, because a pretty-print level is *far* more expensive
+/// in native stack than a basic-print level: at every level past
+/// `PrettyConfig::break_depth`, [`PrettyPrinter::should_break`] calls
+/// [`PrettyPrinter::term_width`], which runs a whole nested
+/// `Printer::print_term` walk over that subterm — up to `MAX_PRINT_DEPTH`
+/// (2000) further frames of ~250 bytes each, i.e. about half of a 1 MiB
+/// thread stack, *inside* the deepest pretty frame. Measured directly: with
+/// this constant at 2000, `deeply_nested_term_truncates_instead_of_overflowing`
+/// aborted the test process with `fatal runtime error: stack overflow` on the
+/// 1 MiB stack this workspace's deep-term regressions use; at 512 it passes in
+/// both the `dev` and `release` profiles, leaving the nested basic walk its
+/// full budget with room to spare.
+///
+/// Before this existed, `PrettyPrinter::write_term`'s `depth` parameter was a
+/// *formatting* input only — compared against `config.break_depth` to decide
+/// line breaking — and nothing terminated the recursion at all, so printing a
+/// deep term aborted the process outright.
+const MAX_PRETTY_PRINT_DEPTH: usize = 512;
+
 pub struct PrettyPrinter<'a> {
     manager: &'a TermManager,
     config: PrettyConfig,
+    /// Memo for [`PrettyPrinter::term_width`].
+    ///
+    /// `term_width` re-prints a whole subterm with the basic printer just to
+    /// measure it, and [`PrettyPrinter::should_break`] asks for that
+    /// measurement at every level it descends through — so an unmemoised
+    /// pretty-print costs O(size x depth) basic-print work, and a shared DAG
+    /// node reachable by many paths is re-printed once per path. The measured
+    /// width is a pure function of the `TermId` (the nested basic walk always
+    /// restarts at depth 0), so caching it changes nothing but the cost.
+    width_memo: core::cell::RefCell<FxHashMap<TermId, usize>>,
 }
 
 #[allow(dead_code)]
@@ -21,13 +54,18 @@ impl<'a> PrettyPrinter<'a> {
         Self {
             manager,
             config: PrettyConfig::default(),
+            width_memo: core::cell::RefCell::default(),
         }
     }
 
     /// Create a pretty printer with custom configuration
     #[must_use]
     pub fn with_config(manager: &'a TermManager, config: PrettyConfig) -> Self {
-        Self { manager, config }
+        Self {
+            manager,
+            config,
+            width_memo: core::cell::RefCell::default(),
+        }
     }
 
     /// Get the configuration
@@ -47,8 +85,15 @@ impl<'a> PrettyPrinter<'a> {
 
     /// Estimate the width of a term when printed
     fn term_width(&self, term_id: TermId) -> usize {
+        if let Some(&width) = self.width_memo.borrow().get(&term_id) {
+            return width;
+        }
+        // The borrow above is released before the nested print, which never
+        // re-enters `term_width`, so no borrow can overlap.
         let basic = Printer::new(self.manager);
-        basic.print_term(term_id).len()
+        let width = basic.print_term(term_id).len();
+        self.width_memo.borrow_mut().insert(term_id, width);
+        width
     }
 
     /// Check if a term should be broken across lines
@@ -67,6 +112,16 @@ impl<'a> PrettyPrinter<'a> {
 
     /// Write a term with indentation
     pub fn write_term(&self, w: &mut impl Write, term_id: TermId, indent: usize, depth: usize) {
+        // Every recursive descent below (directly, or through
+        // `write_binary_term` / `write_nary_term` / `write_ternary_term` /
+        // `write_quantifier`, all of which pass `depth + 1` or `depth + 2`)
+        // re-enters here, so this single check bounds the whole mutually
+        // recursive group. See [`MAX_PRETTY_PRINT_DEPTH`].
+        if depth >= MAX_PRETTY_PRINT_DEPTH {
+            let _ = write!(w, "...");
+            return;
+        }
+
         let Some(term) = self.manager.get(term_id) else {
             let _ = write!(w, "?{}", term_id.0);
             return;
@@ -88,15 +143,10 @@ impl<'a> PrettyPrinter<'a> {
                 let _ = write!(w, "{r}");
             }
             TermKind::BitVecConst { value, width } => {
-                let _ = write!(
-                    w,
-                    "#x{:0>width$}",
-                    value,
-                    width = (*width as usize).div_ceil(4)
-                );
+                let _ = write!(w, "{}", super::format_bitvec_literal(value, *width));
             }
             TermKind::StringLit(s) => {
-                let _ = write!(w, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+                let _ = write!(w, "{}", super::format_string_literal(s));
             }
             TermKind::Var(spur) => {
                 let name = self.manager.resolve_str(*spur);
@@ -226,6 +276,46 @@ impl<'a> PrettyPrinter<'a> {
             }
             TermKind::StrInRe(s, re) => {
                 self.write_binary_term(w, "str.in_re", *s, *re, indent, depth, break_here);
+            }
+            TermKind::StrLt(lhs, rhs) => {
+                self.write_binary_term(w, "str.<", *lhs, *rhs, indent, depth, break_here);
+            }
+            TermKind::StrLe(lhs, rhs) => {
+                self.write_binary_term(w, "str.<=", *lhs, *rhs, indent, depth, break_here);
+            }
+            TermKind::StrToCode(s) => {
+                let _ = write!(w, "(str.to_code ");
+                self.write_term(w, *s, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::StrFromCode(n) => {
+                let _ = write!(w, "(str.from_code ");
+                self.write_term(w, *n, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::StrReplaceRe(s, re, to) => {
+                self.write_ternary_term(
+                    w,
+                    "str.replace_re",
+                    *s,
+                    *re,
+                    *to,
+                    indent,
+                    depth,
+                    break_here,
+                );
+            }
+            TermKind::StrReplaceReAll(s, re, to) => {
+                self.write_ternary_term(
+                    w,
+                    "str.replace_re_all",
+                    *s,
+                    *re,
+                    *to,
+                    indent,
+                    depth,
+                    break_here,
+                );
             }
             TermKind::StrSubstr(s, i, n) => {
                 if break_here {
@@ -723,15 +813,22 @@ impl<'a> PrettyPrinter<'a> {
                 let _ = write!(w, ")");
             }
 
-            // Algebraic datatypes
+            // Algebraic datatypes.  A *nullary* constructor is a plain symbol in
+            // SMT-LIB (`nil`, `red`), not a one-element application: `(nil)` is
+            // not a term the grammar accepts, so a model printed with it could
+            // not be fed back to a solver.
             TermKind::DtConstructor { constructor, args } => {
                 let name = self.manager.resolve_str(*constructor);
-                let _ = write!(w, "({name}");
-                for arg in args {
-                    let _ = write!(w, " ");
-                    self.write_term(w, *arg, indent, depth + 1);
+                if args.is_empty() {
+                    let _ = write!(w, "{name}");
+                } else {
+                    let _ = write!(w, "({name}");
+                    for arg in args {
+                        let _ = write!(w, " ");
+                        self.write_term(w, *arg, indent, depth + 1);
+                    }
+                    let _ = write!(w, ")");
                 }
-                let _ = write!(w, ")");
             }
             TermKind::DtTester { constructor, arg } => {
                 let name = self.manager.resolve_str(*constructor);
@@ -776,6 +873,40 @@ impl<'a> PrettyPrinter<'a> {
                 }
                 let _ = write!(w, "))");
             }
+        }
+    }
+
+    /// Write `(op a b c)`, breaking one operand per line when `break_here`.
+    #[allow(clippy::too_many_arguments)]
+    fn write_ternary_term(
+        &self,
+        w: &mut impl Write,
+        op: &str,
+        first: TermId,
+        second: TermId,
+        third: TermId,
+        indent: usize,
+        depth: usize,
+        break_here: bool,
+    ) {
+        if break_here {
+            let inner_indent = indent + self.config.indent_width;
+            let separator = self.indent_string(inner_indent / self.config.indent_width.max(1));
+            let _ = write!(w, "({op}\n{separator}");
+            self.write_term(w, first, inner_indent, depth + 1);
+            let _ = write!(w, "\n{separator}");
+            self.write_term(w, second, inner_indent, depth + 1);
+            let _ = write!(w, "\n{separator}");
+            self.write_term(w, third, inner_indent, depth + 1);
+            let _ = write!(w, ")");
+        } else {
+            let _ = write!(w, "({op} ");
+            self.write_term(w, first, indent, depth + 1);
+            let _ = write!(w, " ");
+            self.write_term(w, second, indent, depth + 1);
+            let _ = write!(w, " ");
+            self.write_term(w, third, indent, depth + 1);
+            let _ = write!(w, ")");
         }
     }
 
@@ -948,5 +1079,105 @@ impl<'a> PrettyPrinter<'a> {
     pub fn print_sort(&self, sort_id: SortId) -> String {
         let basic = Printer::new(self.manager);
         basic.print_sort(sort_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_PRETTY_PRINT_DEPTH, PrettyPrinter};
+    use crate::ast::{TermId, TermKind, TermManager};
+
+    /// Build a chain of `levels` nested `not`s.
+    ///
+    /// Interned directly rather than through `mk_not`, whose double-negation
+    /// simplification would collapse the chain to depth 1.
+    fn nested_nots(manager: &mut TermManager, levels: usize) -> TermId {
+        let mut term = manager.mk_true();
+        let bool_sort = manager.sorts.bool_sort;
+        for _ in 0..levels {
+            term = manager.intern(TermKind::Not(term), bool_sort);
+        }
+        term
+    }
+
+    /// `PrettyPrinter::write_term`'s `depth` parameter used to be a
+    /// *formatting* input only — compared against `config.break_depth` to
+    /// decide line breaking — and nothing terminated the recursion, so
+    /// pretty-printing a deep term aborted the process. It now degrades to
+    /// the same `...` truncation marker the basic printer uses.
+    ///
+    /// The assertion is that the call returns at all on a 1 MiB stack.
+    #[test]
+    fn deeply_nested_term_truncates_instead_of_overflowing() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let term = nested_nots(&mut manager, 100_000);
+                let printer = PrettyPrinter::new(&manager);
+                printer.print_term(term)
+            })
+            .expect("spawn");
+        let printed = handle.join().expect("worker thread must not overflow");
+        assert!(
+            printed.contains("..."),
+            "a term deeper than the print cap must end in the truncation marker"
+        );
+        // One `(not ` per level printed, up to the cap.
+        assert_eq!(printed.matches("(not").count(), MAX_PRETTY_PRINT_DEPTH);
+    }
+
+    /// Semantic pin: a term shallower than the cap prints in full, exactly as
+    /// before the guard was added.
+    #[test]
+    fn shallow_terms_print_in_full() {
+        let mut manager = TermManager::new();
+        let term = nested_nots(&mut manager, 3);
+        let printer = PrettyPrinter::new(&manager);
+        let printed = printer.print_term(term);
+        assert_eq!(printed, "(not (not (not true)))");
+    }
+
+    /// The `term_width` memo must not change what is printed: the same
+    /// printer reused across calls, and a fresh printer per call, agree — on
+    /// a term whose subterms are shared (the same `TermId` reachable from
+    /// several parents), which is exactly the case the memo collapses.
+    #[test]
+    fn width_memo_does_not_change_printed_output_for_shared_subterms() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let x = manager.mk_var("x", bool_sort);
+        let y = manager.mk_var("y", bool_sort);
+        // `shared` is reached from both arms of every level below, so an
+        // unmemoised width walk re-prints it once per path.
+        let shared = manager.mk_and([x, y]);
+        let mut term = shared;
+        for _ in 0..4 {
+            term = manager.mk_or([term, shared]);
+        }
+
+        let reused = PrettyPrinter::new(&manager);
+        let first = reused.print_term(term);
+        let second = reused.print_term(term);
+        let fresh = PrettyPrinter::new(&manager).print_term(term);
+
+        assert_eq!(first, second, "the memo must not perturb a repeated print");
+        assert_eq!(first, fresh, "the memo must not perturb a first print");
+        assert!(first.contains("(and x y)"));
+    }
+
+    /// A deep chain makes `should_break` measure a subterm at every level:
+    /// unmemoised that is O(size x depth) basic-print work, memoised it is
+    /// linear. The assertion is only that the print is correct and returns —
+    /// the memo is a cost fix, not a semantic one.
+    #[test]
+    fn deep_chain_prints_with_one_width_measurement_per_node() {
+        let mut manager = TermManager::new();
+        const LEVELS: usize = 400;
+        let term = nested_nots(&mut manager, LEVELS);
+        let printer = PrettyPrinter::new(&manager);
+        let printed = printer.print_term(term);
+        assert_eq!(printed.matches("(not").count(), LEVELS);
+        assert!(!printed.contains("..."));
     }
 }

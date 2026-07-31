@@ -103,6 +103,13 @@ mod els;
 mod extended_resolution;
 mod gate;
 mod hyper_binary;
+// Debug-net checkers: every production caller sits behind
+// `#[cfg(debug_assertions)]` (see `Solver::debug_check_invariants`), so a
+// release *lib* build has no callers and the module would be pure dead code
+// there. Test builds keep it in both profiles — the invariant tests and the
+// solver tests call the checkers directly.
+#[cfg(any(debug_assertions, test))]
+mod invariants;
 mod literal;
 mod local_search;
 mod lookahead;

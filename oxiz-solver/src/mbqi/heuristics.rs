@@ -310,51 +310,42 @@ impl InstantiationHeuristic {
         score
     }
 
-    /// Calculate body complexity
+    /// Calculate body complexity: the number of distinct nodes reachable
+    /// through the scored connectives (`And`/`Or`, `Not`/`Neg`, comparisons,
+    /// `Apply`); every other kind counts as one leaf.
+    ///
+    /// Explicit-stack walk with a visited set (a pure count, so traversal
+    /// order is irrelevant); no input depth can overflow the call stack. The
+    /// deliberately bounded descent set is part of this heuristic's
+    /// semantics and is unchanged.
     fn body_complexity(&self, term: TermId, manager: &TermManager) -> usize {
-        let mut visited = FxHashSet::default();
-        self.body_complexity_rec(term, manager, &mut visited)
-    }
-
-    fn body_complexity_rec(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) -> usize {
-        if visited.contains(&term) {
-            return 0;
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut complexity = 0usize;
+        let mut work = vec![term];
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+            complexity += 1;
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+            match &t.kind {
+                TermKind::And(args) | TermKind::Or(args) => work.extend(args.iter().copied()),
+                TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                TermKind::Eq(lhs, rhs)
+                | TermKind::Lt(lhs, rhs)
+                | TermKind::Le(lhs, rhs)
+                | TermKind::Gt(lhs, rhs)
+                | TermKind::Ge(lhs, rhs) => {
+                    work.push(*lhs);
+                    work.push(*rhs);
+                }
+                TermKind::Apply { args, .. } => work.extend(args.iter().copied()),
+                _ => {}
+            }
         }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return 1;
-        };
-
-        let children_complexity = match &t.kind {
-            TermKind::And(args) | TermKind::Or(args) => args
-                .iter()
-                .map(|&arg| self.body_complexity_rec(arg, manager, visited))
-                .sum(),
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.body_complexity_rec(*arg, manager, visited)
-            }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs) => {
-                self.body_complexity_rec(*lhs, manager, visited)
-                    + self.body_complexity_rec(*rhs, manager, visited)
-            }
-            TermKind::Apply { args, .. } => args
-                .iter()
-                .map(|&arg| self.body_complexity_rec(arg, manager, visited))
-                .sum(),
-            _ => 0,
-        };
-
-        1 + children_complexity
+        complexity
     }
 
     /// Select patterns for a quantifier
@@ -457,53 +448,43 @@ impl InstantiationHeuristic {
         self.collect_vars_in_pattern(pattern, manager).len()
     }
 
+    /// Collect variable names over the trigger-selection descent set
+    /// (`Apply` args, `Not`/`Neg` -- the shapes triggers are made of).
+    ///
+    /// Explicit-stack walk with a visited set shared across the pattern's
+    /// terms (a set-valued result, so traversal order is irrelevant); no
+    /// input depth can overflow the call stack.
     fn collect_vars_in_pattern(
         &self,
         pattern: &[TermId],
         manager: &TermManager,
     ) -> FxHashSet<Spur> {
         let mut vars = FxHashSet::default();
-        let mut visited = FxHashSet::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work: Vec<TermId> = pattern.to_vec();
 
-        for &term in pattern {
-            self.collect_vars_rec(term, &mut vars, &mut visited, manager);
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            if let TermKind::Var(name) = t.kind {
+                vars.insert(name);
+                continue;
+            }
+
+            match &t.kind {
+                TermKind::Apply { args, .. } => work.extend(args.iter().copied()),
+                TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                _ => {}
+            }
         }
 
         vars
-    }
-
-    fn collect_vars_rec(
-        &self,
-        term: TermId,
-        vars: &mut FxHashSet<Spur>,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if let TermKind::Var(name) = t.kind {
-            vars.insert(name);
-            return;
-        }
-
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    self.collect_vars_rec(arg, vars, visited, manager);
-                }
-            }
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_vars_rec(*arg, vars, visited, manager);
-            }
-            _ => {}
-        }
     }
 
     fn contains_quantified_symbol(
@@ -851,54 +832,45 @@ impl MultiTriggerScorer {
         frequencies.values().filter(|&&count| count >= 2).count()
     }
 
+    /// Collect variable names over the trigger-scoring descent set.
+    ///
+    /// Explicit-stack walk with a visited set (a set-valued result, so
+    /// traversal order is irrelevant); no input depth can overflow the call
+    /// stack. The descent set (`Apply` args, `Not`/`Neg`, `And`/`Or`,
+    /// comparison sides) is the retired recursion's, unchanged.
     fn collect_vars(&self, term: TermId, manager: &TermManager) -> FxHashSet<Spur> {
         let mut vars = FxHashSet::default();
-        let mut visited = FxHashSet::default();
-        self.collect_vars_rec(term, manager, &mut vars, &mut visited);
-        vars
-    }
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work = vec![term];
 
-    fn collect_vars_rec(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        vars: &mut FxHashSet<Spur>,
-        visited: &mut FxHashSet<TermId>,
-    ) {
-        if !visited.insert(term) {
-            return;
-        }
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-        if let TermKind::Var(name) = t.kind {
-            vars.insert(name);
-            return;
-        }
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                for &a in args.iter() {
-                    self.collect_vars_rec(a, manager, vars, visited);
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+            if let TermKind::Var(name) = t.kind {
+                vars.insert(name);
+                continue;
+            }
+            match &t.kind {
+                TermKind::Apply { args, .. } => work.extend(args.iter().copied()),
+                TermKind::Not(a) | TermKind::Neg(a) => work.push(*a),
+                TermKind::And(args) | TermKind::Or(args) => work.extend(args.iter().copied()),
+                TermKind::Eq(l, r)
+                | TermKind::Lt(l, r)
+                | TermKind::Le(l, r)
+                | TermKind::Gt(l, r)
+                | TermKind::Ge(l, r) => {
+                    work.push(*l);
+                    work.push(*r);
                 }
+                _ => {}
             }
-            TermKind::Not(a) | TermKind::Neg(a) => {
-                self.collect_vars_rec(*a, manager, vars, visited);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &a in args {
-                    self.collect_vars_rec(a, manager, vars, visited);
-                }
-            }
-            TermKind::Eq(l, r)
-            | TermKind::Lt(l, r)
-            | TermKind::Le(l, r)
-            | TermKind::Gt(l, r)
-            | TermKind::Ge(l, r) => {
-                self.collect_vars_rec(*l, manager, vars, visited);
-                self.collect_vars_rec(*r, manager, vars, visited);
-            }
-            _ => {}
         }
+
+        vars
     }
 
     /// Return true if the term contains no free variables
@@ -910,6 +882,76 @@ impl MultiTriggerScorer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run `f` on a dedicated 128 KiB stack: overflow aborts the process, so
+    /// returning at all is part of the assertion.
+    ///
+    /// This stack and every depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    /// The three converted walks must survive a 12 500-deep term on a 128 KiB
+    /// stack (the retired recursions overflowed) and produce pinned values.
+    #[test]
+    fn heuristic_walks_survive_deep_terms_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let int_sort = m.sorts.int_sort;
+            let x = m.mk_var("x", int_sort);
+            let mut chain = x;
+            for _ in 0..DEPTH {
+                chain = m.mk_apply("f", [chain], int_sort);
+            }
+
+            let heuristic = InstantiationHeuristic::new(MBQIHeuristics::new());
+            // Every f-application plus the variable leaf counts one.
+            assert_eq!(heuristic.body_complexity(chain, &m), DEPTH + 1);
+
+            let vars = heuristic.collect_vars_in_pattern(&[chain], &m);
+            assert_eq!(vars.len(), 1, "x is reachable through the Apply chain");
+
+            let scorer = MultiTriggerScorer::new(ScorerPolicy::Ranked, 4);
+            let vars = scorer.collect_vars(chain, &m);
+            assert_eq!(vars.len(), 1);
+            assert!(!scorer.is_ground(chain, &m));
+        });
+    }
+
+    /// Pin `body_complexity` on a small mixed term: `Eq` descends both
+    /// sides, `Apply` descends args, everything else is a leaf.
+    #[test]
+    fn body_complexity_pins_semantics() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let y = m.mk_var("y", int_sort);
+        let f_x = m.mk_apply("f", [x], int_sort);
+        let eq = m.mk_eq(f_x, y);
+
+        let heuristic = InstantiationHeuristic::new(MBQIHeuristics::new());
+        // eq + f(x) + x + y = 4 nodes.
+        assert_eq!(heuristic.body_complexity(eq, &m), 4);
+
+        // Shared subterms are counted once (visited set semantics).
+        let shared = m.mk_eq(f_x, f_x);
+        let expected = if shared == m.mk_true() {
+            // mk_eq may fold t = t to true; then the pin is trivial.
+            1
+        } else {
+            3
+        };
+        assert_eq!(heuristic.body_complexity(shared, &m), expected);
+    }
 
     #[test]
     fn test_mbqi_heuristics_creation() {

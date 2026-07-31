@@ -55,7 +55,10 @@ impl ConflictExplanation {
     pub fn format(&self) -> String {
         let mut out = String::new();
 
-        out.push_str(&format!("=== Conflict Explanation (clause #{}) ===\n\n", self.clause_id));
+        out.push_str(&format!(
+            "=== Conflict Explanation (clause #{}) ===\n\n",
+            self.clause_id
+        ));
 
         // Contributing assertions
         out.push_str("Contributing assertions:\n");
@@ -195,6 +198,24 @@ impl ConflictExplainer {
         self.assertion_descriptions[idx] = desc;
     }
 
+    /// Look up the description registered for an assertion index.
+    ///
+    /// Returns `None` when the index was never registered, or was registered
+    /// only as a gap-filling placeholder by a later, higher index (an empty
+    /// description is reported as absent rather than as an empty string, so a
+    /// caller cannot mistake a hole for a genuinely empty label).
+    pub fn assertion_description(&self, index: u32) -> Option<&str> {
+        self.assertion_descriptions
+            .get(index as usize)
+            .filter(|d| !d.is_empty())
+            .map(String::as_str)
+    }
+
+    /// Number of assertion slots registered (including gap placeholders).
+    pub fn num_registered_assertions(&self) -> usize {
+        self.assertion_descriptions.len()
+    }
+
     /// Record a propagation step.
     pub fn record_propagation(&mut self, step: PropagationStep) {
         self.propagation_history.push(step);
@@ -271,15 +292,9 @@ impl ConflictExplainer {
         } else if self.recorded_conflicts.len() == 1 {
             let conflict = &self.recorded_conflicts[0];
             if let Some(ref ti) = conflict.theory_info {
-                format!(
-                    "UNSAT due to {} theory conflict: {}",
-                    ti.theory, ti.reason
-                )
+                format!("UNSAT due to {} theory conflict: {}", ti.theory, ti.reason)
             } else {
-                format!(
-                    "UNSAT due to conflict in clause #{}",
-                    conflict.clause_id
-                )
+                format!("UNSAT due to conflict in clause #{}", conflict.clause_id)
             }
         } else {
             format!(
@@ -472,6 +487,24 @@ mod tests {
         assert!(text.contains("UNSAT Explanation"));
         assert!(text.contains("LRA"));
         assert!(text.contains("linear arithmetic conflict"));
+    }
+
+    #[test]
+    fn test_assertion_descriptions_are_readable() {
+        let mut explainer = ConflictExplainer::new();
+        explainer.register_assertion(0, "x > 0");
+        explainer.register_assertion(3, "y < 0");
+
+        assert_eq!(explainer.assertion_description(0), Some("x > 0"));
+        assert_eq!(explainer.assertion_description(3), Some("y < 0"));
+        // Gap slots created by the resize are holes, not empty labels.
+        assert_eq!(explainer.assertion_description(1), None);
+        assert_eq!(explainer.assertion_description(99), None);
+        assert_eq!(explainer.num_registered_assertions(), 4);
+
+        explainer.clear();
+        assert_eq!(explainer.assertion_description(0), None);
+        assert_eq!(explainer.num_registered_assertions(), 0);
     }
 
     #[test]

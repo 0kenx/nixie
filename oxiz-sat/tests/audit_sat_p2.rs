@@ -73,7 +73,21 @@ fn add_clause_after_solve_detects_conflict() {
 
     // (x0 v x1 v x2) forces x2 = true, but then ¬x2 makes it UNSAT.
     assert!(solver.add_clause([Lit::pos(v(0)), Lit::pos(v(1)), Lit::pos(v(2))]));
-    assert!(solver.add_clause([Lit::neg(v(2))]));
+    // With the fix for `add_clause_after_solve_watches_non_false_literal` above,
+    // this three-literal clause now forces x2 = true *at level 0* (x0 and x1
+    // are permanent level-0 facts, so that is the correct dependency level --
+    // see `Solver::pre_check_effective_unit`), rather than leaving x2
+    // unassigned until some later event happens to touch its watch. So adding
+    // `¬x2` right here directly conflicts with a level-0 assignment, and
+    // `add_clause`'s unit-clause path deterministically reports that
+    // immediately: `false`, mirroring every other "this addition makes the
+    // formula unconditionally UNSAT" case in `add_clause`, rather than
+    // deferring detection to the next `solve()` call.
+    assert!(
+        !solver.add_clause([Lit::neg(v(2))]),
+        "adding ¬x2 must be reported as an immediate level-0 conflict, since \
+         x2 is now correctly forced true at level 0 by the clause above"
+    );
 
     assert_eq!(
         solver.solve(),

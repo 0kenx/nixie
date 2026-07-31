@@ -62,6 +62,15 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
+/// One step of the iterative cycle-detection DFS.
+enum CycleStep {
+    /// Enter a node: check it against the current DFS path, then schedule its
+    /// premises.
+    Enter(crate::proof::ProofNodeId),
+    /// Leave a node: its whole premise subtree is done.
+    Leave(crate::proof::ProofNodeId),
+}
+
 /// Validator for proof formats.
 pub struct FormatValidator {
     /// Allow empty proofs
@@ -148,6 +157,17 @@ impl FormatValidator {
     }
 
     // Helper: Visit node in DFS for cycle detection
+    //
+    // Driven by an explicit stack rather than recursion. The recursion depth
+    // here was the length of the longest premise chain, which grows linearly
+    // with the number of learned clauses in a resolution proof — a realistic
+    // proof from a long solver run overflowed the stack while merely being
+    // *validated*.
+    //
+    // The `Enter`/`Leave` pair reproduces the recursive pre/post order
+    // exactly: `Leave` is scheduled before a node's premises, so it runs only
+    // once every premise subtree is finished, which is where the recursive
+    // form popped `path` and moved the node from `visiting` to `visited`.
     fn visit_node(
         proof: &Proof,
         node_id: crate::proof::ProofNodeId,
@@ -155,33 +175,44 @@ impl FormatValidator {
         visited: &mut FxHashSet<crate::proof::ProofNodeId>,
         path: &mut Vec<String>,
     ) -> ValidationResult<()> {
-        if visiting.contains(&node_id) {
-            // Cycle detected
-            path.push(node_id.to_string());
-            return Err(ValidationError::CircularDependency {
-                steps: path.clone(),
-            });
-        }
+        let mut stack = vec![CycleStep::Enter(node_id)];
 
-        if visited.contains(&node_id) {
-            return Ok(());
-        }
+        while let Some(step) = stack.pop() {
+            match step {
+                CycleStep::Enter(id) => {
+                    if visiting.contains(&id) {
+                        // Cycle detected
+                        path.push(id.to_string());
+                        return Err(ValidationError::CircularDependency {
+                            steps: path.clone(),
+                        });
+                    }
 
-        visiting.insert(node_id);
-        path.push(node_id.to_string());
+                    if visited.contains(&id) {
+                        continue;
+                    }
 
-        // Visit premises
-        if let Some(node) = proof.get_node(node_id)
-            && let crate::proof::ProofStep::Inference { premises, .. } = &node.step
-        {
-            for &premise_id in premises.iter() {
-                Self::visit_node(proof, premise_id, visiting, visited, path)?;
+                    visiting.insert(id);
+                    path.push(id.to_string());
+                    stack.push(CycleStep::Leave(id));
+
+                    // Visit premises, pushed in reverse so they are entered
+                    // left to right.
+                    if let Some(node) = proof.get_node(id)
+                        && let crate::proof::ProofStep::Inference { premises, .. } = &node.step
+                    {
+                        for &premise_id in premises.iter().rev() {
+                            stack.push(CycleStep::Enter(premise_id));
+                        }
+                    }
+                }
+                CycleStep::Leave(id) => {
+                    path.pop();
+                    visiting.remove(&id);
+                    visited.insert(id);
+                }
             }
         }
-
-        path.pop();
-        visiting.remove(&node_id);
-        visited.insert(node_id);
 
         Ok(())
     }
@@ -302,5 +333,88 @@ mod tests {
     fn test_validate_with_invalid_syntax() {
         let validator = FormatValidator::new();
         assert!(validator.validate_conclusion_syntax("(x = y").is_err());
+    }
+
+    /// The stack size and `CHAIN_LEN` are scaled together on purpose: what is
+    /// pinned is the ratio, ~17 bytes per DFS frame, which no real call frame
+    /// fits into. Never raise one without raising the other.
+    #[test]
+    fn test_cycle_check_deep_premise_chain_does_not_overflow() {
+        const CHAIN_LEN: u32 = 7_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                // A resolution-style chain: every step's only premise is the
+                // previous step, so the DFS depth equals the chain length.
+                let mut proof = Proof::new();
+                let mut current = proof.add_axiom("c0");
+                for i in 1..CHAIN_LEN {
+                    current = proof.add_inference("resolve", vec![current], format!("c{i}"));
+                }
+
+                FormatValidator::new().validate_proof(&proof)
+            })
+            .expect("thread spawn should succeed");
+
+        assert!(
+            handle
+                .join()
+                .expect("deep cycle check must not overflow")
+                .is_ok(),
+            "an acyclic chain must validate"
+        );
+    }
+
+    #[test]
+    fn test_cycle_check_shared_premises_are_visited_once() {
+        // A diamond DAG: without the `visited` set this re-expands
+        // exponentially. 60 levels would be 2^60 visits.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut proof = Proof::new();
+                let mut left = proof.add_axiom("l0");
+                let mut right = proof.add_axiom("r0");
+                for i in 1..60u32 {
+                    let next_left =
+                        proof.add_inference("resolve", vec![left, right], format!("l{i}"));
+                    let next_right =
+                        proof.add_inference("resolve", vec![right, left], format!("r{i}"));
+                    left = next_left;
+                    right = next_right;
+                }
+                FormatValidator::new().validate_proof(&proof)
+            })
+            .expect("thread spawn should succeed");
+
+        assert!(handle.join().expect("diamond check must terminate").is_ok());
+    }
+
+    #[test]
+    fn test_cycle_check_still_detects_a_cycle() {
+        use crate::proof::ProofNodeId;
+
+        let mut proof = Proof::new();
+        // p0, then a mutually-referential pair: p1's premise is p2 (a
+        // forward reference that becomes valid once p2 exists) and p2's
+        // premise is p1.
+        let first = proof.add_axiom("a");
+        assert_eq!(first, ProofNodeId(0));
+        let second = proof.add_inference("resolve", vec![ProofNodeId(2)], "b");
+        let third = proof.add_inference("resolve", vec![ProofNodeId(1)], "c");
+        assert_eq!((second, third), (ProofNodeId(1), ProofNodeId(2)));
+
+        let err = FormatValidator::new()
+            .validate_proof(&proof)
+            .expect_err("a cycle must be reported");
+        match err {
+            ValidationError::CircularDependency { steps } => {
+                let mut seen = FxHashSet::default();
+                let repeated = steps.iter().any(|s| !seen.insert(s.clone()));
+                assert!(repeated, "the path must revisit a node: {steps:?}");
+            }
+            other => panic!("expected CircularDependency, got {other:?}"),
+        }
     }
 }

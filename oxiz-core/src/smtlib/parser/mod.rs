@@ -9,7 +9,9 @@ use crate::prelude::*;
 use crate::sort::SortId;
 use num_rational::Rational64;
 
+mod build;
 mod commands;
+mod indexed;
 mod sorts;
 mod terms;
 
@@ -140,6 +142,21 @@ pub struct Parser<'a> {
     /// Datatype constructor names -> (datatype_sort, arity/selector_info)
     /// For nullary constructors (enums), the Vec is empty
     pub(super) dt_constructors: FxHashMap<String, SortId>,
+    /// Datatype selector (accessor) names -> the selector's result sort.
+    ///
+    /// Populated by `declare-datatype(s)`. Without it a selector application
+    /// like `(head l)` has no declaration to resolve against, so it used to
+    /// degrade to a `Bool`-sorted uninterpreted apply (losing its real `Int`
+    /// sort) and would now be rejected outright by the strict undeclared-symbol
+    /// rule.
+    pub(super) dt_selectors: FxHashMap<String, SortId>,
+    /// Datatype *sort* names -> the `SortKind::Datatype` sort they denote.
+    ///
+    /// Registered the moment a `declare-datatype(s)` names a datatype, i.e.
+    /// *before* its constructor group is parsed, so that a recursive field such
+    /// as `(tail Lst)` resolves to the datatype under construction rather than
+    /// to a fresh uninterpreted sort. See `Parser::parse_sort_name`.
+    pub(super) dt_sorts: FxHashMap<String, SortId>,
     /// Whether we are parsing a full SMT-LIB *script* (`parse_script`) rather
     /// than an ad-hoc bare term (`parse_term`).
     ///
@@ -168,6 +185,8 @@ impl<'a> Parser<'a> {
             recovery_mode: false,
             errors: Vec::new(),
             dt_constructors: FxHashMap::default(),
+            dt_selectors: FxHashMap::default(),
+            dt_sorts: FxHashMap::default(),
             script_mode: false,
         }
     }
@@ -267,6 +286,8 @@ impl<'a> Parser<'a> {
             recovery_mode: true,
             errors: Vec::new(),
             dt_constructors: FxHashMap::default(),
+            dt_selectors: FxHashMap::default(),
+            dt_sorts: FxHashMap::default(),
             script_mode: false,
         }
     }

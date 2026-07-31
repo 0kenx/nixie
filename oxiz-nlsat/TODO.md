@@ -1,10 +1,13 @@
 # oxiz-nlsat TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 Reference: Z3's `nlsat/` directory
 
 ## Progress: 100% Complete ✓
+
+### v0.3.1 change
+- [x] Recursion hardening: remaining unguarded recursive term/conflict walks (e.g. `solver::conflict::is_redundant_literal`) converted to explicit heap stacks; verified with a deep-recursion regression test
 
 ## Dependencies
 - **oxiz-core**: Term representation, polynomial constraints
@@ -110,7 +113,7 @@ Reference: Z3's `nlsat/` directory
 - [x] Dynamic variable reordering based on activity
 - [x] Early termination optimization (empty feasible region detection)
 - [x] Projection caching infrastructure for CAD
-- [x] Root atom evaluation (x op root[i](p) constraints)
+- [x] Root atom evaluation (`x op root[i](p)` constraints)
 - [x] Atom deduplication for performance
 - [x] Unsat core extraction for debugging
 - [x] Model extraction for SAT results

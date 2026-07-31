@@ -10,7 +10,7 @@
 //! Reference: <https://chc-comp.github.io>
 
 use crate::chc::{ChcSystem, PredId, PredicateApp, RuleBody, RuleHead};
-use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_core::ast::{TermId, TermManager};
 use oxiz_core::smtlib::{Command, parse_script};
 use oxiz_core::sort::SortId;
 use rustc_hash::FxHashMap;
@@ -334,23 +334,15 @@ impl<'a> ChcCompParser<'a> {
         (predicates, constraint)
     }
 
-    /// Collect conjuncts from a formula (flatten AND)
+    /// Collect conjuncts from a formula (flatten AND).
+    ///
+    /// Walked with an explicit heap stack
+    /// ([`crate::walk::flatten_conjuncts`]): the `And` nesting depth comes
+    /// straight from the parsed CHC-COMP file and is therefore unbounded,
+    /// and the old recursive form additionally re-expanded a shared `And`
+    /// sub-DAG once per path.
     fn collect_conjuncts(&self, term: TermId) -> Vec<TermId> {
-        let Some(term_data) = self.terms.get(term) else {
-            return vec![term];
-        };
-
-        match &term_data.kind {
-            TermKind::And(args) => {
-                // Recursively collect from each conjunct
-                let mut result = Vec::new();
-                for &arg in args.iter() {
-                    result.extend(self.collect_conjuncts(arg));
-                }
-                result
-            }
-            _ => vec![term],
-        }
+        crate::walk::flatten_conjuncts(self.terms, term)
     }
 
     /// Try to extract a predicate application from a term

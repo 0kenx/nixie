@@ -9,6 +9,8 @@ use num_rational::Rational64;
 use smallvec::SmallVec;
 
 use super::TermManager;
+use super::bv_fold;
+use super::str_fold;
 
 /// Canonicalize operand order for commutative binary operators so that
 /// `op(a, b)` and `op(b, a)` hash-cons to the same term.
@@ -463,6 +465,124 @@ impl TermManager {
             TermKind::StrReplaceAll(s, pattern, replacement),
             string_sort,
         )
+    }
+
+    /// `str.replace_re` — replace the leftmost shortest match of a regular
+    /// language.
+    ///
+    /// The regex operand carries the reserved `RegLan` sort (see
+    /// [`Self::reglan_sort`]); the theory compiles it with its Brzozowski
+    /// derivative engine, so no folding happens here (`oxiz-core` deliberately
+    /// hosts no regex matcher — `str.in_re` is left symbolic for the same
+    /// reason).
+    pub fn mk_str_replace_re(&mut self, s: TermId, re: TermId, replacement: TermId) -> TermId {
+        let string_sort = self.sorts.string_sort();
+        self.intern(TermKind::StrReplaceRe(s, re, replacement), string_sort)
+    }
+
+    /// `str.replace_re_all` — replace every shortest non-empty match of a
+    /// regular language, scanning left to right.
+    pub fn mk_str_replace_re_all(&mut self, s: TermId, re: TermId, replacement: TermId) -> TermId {
+        let string_sort = self.sorts.string_sort();
+        self.intern(TermKind::StrReplaceReAll(s, re, replacement), string_sort)
+    }
+
+    /// `str.<` — strict lexicographic order over code points.
+    ///
+    /// Folded on constant operands, and simplified on the three shapes whose
+    /// truth is fixed by the order's structure alone. Reference: Z3's
+    /// `seq_rewriter.cpp` `mk_str_lt`, which applies the same empty-operand
+    /// rules.
+    pub fn mk_str_lt(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        // Irreflexivity. Terms are hash-consed, so equal ids are the same term.
+        if lhs == rhs {
+            return self.mk_false();
+        }
+        if let (Some(a), Some(b)) = (self.string_lit_of(lhs), self.string_lit_of(rhs)) {
+            return if str_fold::str_lt(&a, &b) {
+                self.mk_true()
+            } else {
+                self.mk_false()
+            };
+        }
+        // Nothing is strictly below the empty string, which is the minimum.
+        if self.is_empty_string_lit(rhs) {
+            return self.mk_false();
+        }
+        // `"" < b` iff `b` is not itself empty.
+        if self.is_empty_string_lit(lhs) {
+            let eq = self.mk_eq(lhs, rhs);
+            return self.mk_not(eq);
+        }
+        let bool_sort = self.sorts.bool_sort;
+        self.intern(TermKind::StrLt(lhs, rhs), bool_sort)
+    }
+
+    /// `str.<=` — the reflexive closure of [`Self::mk_str_lt`].
+    pub fn mk_str_le(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if lhs == rhs {
+            return self.mk_true();
+        }
+        if let (Some(a), Some(b)) = (self.string_lit_of(lhs), self.string_lit_of(rhs)) {
+            return if str_fold::str_le(&a, &b) {
+                self.mk_true()
+            } else {
+                self.mk_false()
+            };
+        }
+        // The empty string is below everything.
+        if self.is_empty_string_lit(lhs) {
+            return self.mk_true();
+        }
+        // `a <= ""` iff `a` is itself empty.
+        if self.is_empty_string_lit(rhs) {
+            return self.mk_eq(lhs, rhs);
+        }
+        let bool_sort = self.sorts.bool_sort;
+        self.intern(TermKind::StrLe(lhs, rhs), bool_sort)
+    }
+
+    /// `str.to_code` — the code point of a singleton string, `-1` otherwise.
+    pub fn mk_str_to_code(&mut self, s: TermId) -> TermId {
+        if let Some(value) = self.string_lit_of(s) {
+            return self.mk_int(str_fold::str_to_code(&value));
+        }
+        let int_sort = self.sorts.int_sort;
+        self.intern(TermKind::StrToCode(s), int_sort)
+    }
+
+    /// `str.from_code` — the singleton string for a code point in the
+    /// theory's alphabet, `""` outside it.
+    ///
+    /// A surrogate code point is deliberately left unfolded; see
+    /// [`str_fold::FromCode::Unrepresentable`].
+    pub fn mk_str_from_code(&mut self, n: TermId) -> TermId {
+        if let Some(TermKind::IntConst(value)) = self.get(n).map(|t| t.kind.clone()) {
+            match str_fold::str_from_code(&value) {
+                str_fold::FromCode::Char(c) => {
+                    let mut text = String::new();
+                    text.push(c);
+                    return self.mk_string_lit(&text);
+                }
+                str_fold::FromCode::Empty => return self.mk_string_lit(""),
+                str_fold::FromCode::Unrepresentable => {}
+            }
+        }
+        let string_sort = self.sorts.string_sort();
+        self.intern(TermKind::StrFromCode(n), string_sort)
+    }
+
+    /// The value of `term` when it is a string literal, else `None`.
+    fn string_lit_of(&self, term: TermId) -> Option<String> {
+        match self.get(term).map(|t| &t.kind) {
+            Some(TermKind::StringLit(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    /// Whether `term` is the empty string literal.
+    fn is_empty_string_lit(&self, term: TermId) -> bool {
+        matches!(self.get(term).map(|t| &t.kind), Some(TermKind::StringLit(s)) if s.is_empty())
     }
 
     /// Create a string to integer conversion
@@ -1077,6 +1197,15 @@ impl TermManager {
             "mk_bv_concat: both operands must have a bit-vector sort (lhs_width={lhs_width:?}, rhs_width={rhs_width:?})"
         );
         let width = lhs_width.unwrap_or(32) + rhs_width.unwrap_or(32);
+
+        // Both halves literal: splice them into a single literal.
+        if let (Some(lhs_width), Some(rhs_width)) = (lhs_width, rhs_width)
+            && let Some(lhs_value) = self.bv_const_unsigned(lhs, lhs_width)
+            && let Some(rhs_value) = self.bv_const_unsigned(rhs, rhs_width)
+        {
+            return self.mk_bitvec(bv_fold::bv_concat(&lhs_value, &rhs_value, rhs_width), width);
+        }
+
         let sort = self.sorts.bitvec(width);
         self.intern(TermKind::BvConcat(lhs, rhs), sort)
     }
@@ -1124,6 +1253,13 @@ impl TermManager {
     ///              = u + t                if sign(s) = +, sign(t) = -
     ///              = -u                   if sign(s) = sign(t) = -
     /// ```
+    ///
+    /// Two literal operands are folded directly instead of being expanded
+    /// into that `ite` chain.  The chain would collapse to the same constant
+    /// on its own (every condition becomes literal), but evaluating it here
+    /// keeps the definition of the total zero-divisor case — `bvsmod s 0` is
+    /// `s` — in one auditable place alongside the rest of the division
+    /// family.
     pub fn mk_bv_smod(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let width = self
             .get(lhs)
@@ -1132,6 +1268,9 @@ impl TermManager {
             .unwrap_or(32);
         if width == 0 {
             return self.mk_bv_urem(lhs, rhs);
+        }
+        if let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width) {
+            return self.mk_bitvec(bv_fold::bv_smod(&lhs_value, &rhs_value, width), width);
         }
         let msb = width - 1;
         let msb_s = self.mk_bv_extract(msb, msb, lhs);
@@ -1185,82 +1324,373 @@ impl TermManager {
             .checked_sub(low)
             .and_then(|span| span.checked_add(1))
             .unwrap_or(1);
+
+        // A literal operand yields a literal slice, provided the indices are
+        // in range — malformed indices are left for the parser's sort check
+        // rather than silently folded to a fabricated value.
+        if low <= high
+            && let Some(arg_width) = self.bv_width_of(arg)
+            && high < arg_width
+            && let Some(value) = self.bv_const_unsigned(arg, arg_width)
+        {
+            return self.mk_bitvec(bv_fold::bv_extract(&value, high, low), width);
+        }
+
         let sort = self.sorts.bitvec(width);
         self.intern(TermKind::BvExtract { high, low, arg }, sort)
     }
 
-    /// Create a bit vector NOT
+    /// Create a bit vector NOT.
+    ///
+    /// Folds a literal operand and collapses `bvnot (bvnot t)` to `t`.
     pub fn mk_bv_not(&mut self, arg: TermId) -> TermId {
+        if let Some(width) = self.bv_width_of(arg).filter(|width| *width > 0) {
+            if let Some(value) = self.bv_const_unsigned(arg, width) {
+                return self.mk_bitvec(bv_fold::bv_not(&value, width), width);
+            }
+            // bvnot (bvnot t) -> t: complement is an involution.
+            if let Some(term) = self.get(arg)
+                && let TermKind::BvNot(inner) = term.kind
+            {
+                return inner;
+            }
+        }
+
         let sort = self.get(arg).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvNot(arg), sort)
     }
 
-    /// Create a bit vector AND
+    /// Create a bit vector AND.
+    ///
+    /// Folds two literals and applies `t & t -> t`, `t & 0 -> 0` and
+    /// `t & all-ones -> t`.
     pub fn mk_bv_and(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let (lhs, rhs) = canonical_pair(lhs, rhs);
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            let (lhs_value, rhs_value) = self.bv_operand_consts(lhs, rhs, width);
+            if let (Some(lhs_value), Some(rhs_value)) = (&lhs_value, &rhs_value) {
+                return self.mk_bitvec(bv_fold::bv_and(lhs_value, rhs_value, width), width);
+            }
+            if lhs == rhs {
+                return lhs;
+            }
+            let all_ones = bv_fold::all_ones(width);
+            if let Some(lhs_value) = &lhs_value {
+                if *lhs_value == BigInt::ZERO {
+                    return lhs;
+                }
+                if *lhs_value == all_ones {
+                    return rhs;
+                }
+            }
+            if let Some(rhs_value) = &rhs_value {
+                if *rhs_value == BigInt::ZERO {
+                    return rhs;
+                }
+                if *rhs_value == all_ones {
+                    return lhs;
+                }
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvAnd(lhs, rhs), sort)
     }
 
-    /// Create a bit vector OR
+    /// Create a bit vector OR.
+    ///
+    /// Folds two literals and applies `t | t -> t`, `t | 0 -> t` and
+    /// `t | all-ones -> all-ones`.
     pub fn mk_bv_or(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let (lhs, rhs) = canonical_pair(lhs, rhs);
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            let (lhs_value, rhs_value) = self.bv_operand_consts(lhs, rhs, width);
+            if let (Some(lhs_value), Some(rhs_value)) = (&lhs_value, &rhs_value) {
+                return self.mk_bitvec(bv_fold::bv_or(lhs_value, rhs_value, width), width);
+            }
+            if lhs == rhs {
+                return lhs;
+            }
+            let all_ones = bv_fold::all_ones(width);
+            if let Some(lhs_value) = &lhs_value {
+                if *lhs_value == BigInt::ZERO {
+                    return rhs;
+                }
+                if *lhs_value == all_ones {
+                    return lhs;
+                }
+            }
+            if let Some(rhs_value) = &rhs_value {
+                if *rhs_value == BigInt::ZERO {
+                    return lhs;
+                }
+                if *rhs_value == all_ones {
+                    return rhs;
+                }
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvOr(lhs, rhs), sort)
     }
 
-    /// Create a bit vector addition
+    /// Create a bit vector addition.
+    ///
+    /// Folds two literals and applies `t + 0 -> t`.
     pub fn mk_bv_add(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let (lhs, rhs) = canonical_pair(lhs, rhs);
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            let (lhs_value, rhs_value) = self.bv_operand_consts(lhs, rhs, width);
+            if let (Some(lhs_value), Some(rhs_value)) = (&lhs_value, &rhs_value) {
+                return self.mk_bitvec(bv_fold::bv_add(lhs_value, rhs_value, width), width);
+            }
+            if lhs_value.is_some_and(|value| value == BigInt::ZERO) {
+                return rhs;
+            }
+            if rhs_value.is_some_and(|value| value == BigInt::ZERO) {
+                return lhs;
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvAdd(lhs, rhs), sort)
     }
 
-    /// Create a bit vector subtraction
+    /// Create a bit vector subtraction.
+    ///
+    /// Folds two literals and applies `t - t -> 0` and `t - 0 -> t`.
     pub fn mk_bv_sub(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            if let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width) {
+                return self.mk_bitvec(bv_fold::bv_sub(&lhs_value, &rhs_value, width), width);
+            }
+            if lhs == rhs {
+                return self.mk_bitvec(0i64, width);
+            }
+            if self
+                .bv_const_unsigned(rhs, width)
+                .is_some_and(|value| value == BigInt::ZERO)
+            {
+                return lhs;
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvSub(lhs, rhs), sort)
     }
 
-    /// Create a bit vector multiplication
+    /// Create a bit vector multiplication.
+    ///
+    /// Folds two literals and applies `t * 0 -> 0` and `t * 1 -> t`.
     pub fn mk_bv_mul(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let (lhs, rhs) = canonical_pair(lhs, rhs);
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            let (lhs_value, rhs_value) = self.bv_operand_consts(lhs, rhs, width);
+            if let (Some(lhs_value), Some(rhs_value)) = (&lhs_value, &rhs_value) {
+                return self.mk_bitvec(bv_fold::bv_mul(lhs_value, rhs_value, width), width);
+            }
+            let one = BigInt::from(1u8);
+            if let Some(lhs_value) = &lhs_value {
+                if *lhs_value == BigInt::ZERO {
+                    return lhs;
+                }
+                if *lhs_value == one {
+                    return rhs;
+                }
+            }
+            if let Some(rhs_value) = &rhs_value {
+                if *rhs_value == BigInt::ZERO {
+                    return rhs;
+                }
+                if *rhs_value == one {
+                    return lhs;
+                }
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvMul(lhs, rhs), sort)
     }
 
+    /// Width of `term` when it is bit-vector sorted.
+    fn bv_width_of(&self, term: TermId) -> Option<u32> {
+        let sort = self.get(term)?.sort;
+        self.sorts.get(sort)?.bitvec_width()
+    }
+
+    /// Value of `term` when it is a bit-vector literal, normalised into the
+    /// unsigned range `[0, 2^width)`.
+    fn bv_const_unsigned(&self, term: TermId, width: u32) -> Option<BigInt> {
+        let TermKind::BitVecConst { value, .. } = &self.get(term)?.kind else {
+            return None;
+        };
+        Some(bv_fold::bv_wrap_unsigned(value, width))
+    }
+
+    /// Both operands' values, when both are bit-vector literals.
+    fn bv_const_pair(&self, lhs: TermId, rhs: TermId, width: u32) -> Option<(BigInt, BigInt)> {
+        Some((
+            self.bv_const_unsigned(lhs, width)?,
+            self.bv_const_unsigned(rhs, width)?,
+        ))
+    }
+
+    /// Each operand's value, or `None` where it is not a literal.
+    ///
+    /// Normalising a literal allocates, so the identity rules below take both
+    /// values once from here instead of re-reading each operand per rule.
+    fn bv_operand_consts(
+        &self,
+        lhs: TermId,
+        rhs: TermId,
+        width: u32,
+    ) -> (Option<BigInt>, Option<BigInt>) {
+        (
+            self.bv_const_unsigned(lhs, width),
+            self.bv_const_unsigned(rhs, width),
+        )
+    }
+
+    /// The common width of a binary bit-vector operator's operands, when it is
+    /// a usable (non-degenerate) bit-vector width.
+    ///
+    /// Constant folding is skipped for width `0`, which is not a legal
+    /// SMT-LIB bit-vector sort and therefore never carries a meaningful value.
+    fn bv_binop_width(&self, lhs: TermId, rhs: TermId) -> Option<u32> {
+        self.bv_width_of(lhs)
+            .or_else(|| self.bv_width_of(rhs))
+            .filter(|width| *width > 0)
+    }
+
+    /// Decide a bit-vector comparison that holds (or fails) for *every*
+    /// assignment, returning the constant truth value it folds to.
+    ///
+    /// Reference: Z3's `bv_rewriter.cpp`, which folds exactly these atoms.
+    /// Without them, an assertion like `(bvult x #b00000000)` — false for every
+    /// `x`, since nothing is unsigned-less-than zero — survives as an
+    /// unconstrained boolean atom and the solver answers a spurious `sat`.
+    ///
+    /// The rules, for width `w` with `MAX_U = 2^w - 1`, `MIN_S = -2^(w-1)` and
+    /// `MAX_S = 2^(w-1) - 1`:
+    ///
+    /// * `t <u t`, `t <s t` → `false`; `t <=u t`, `t <=s t` → `true`.
+    /// * `t <u 0`, `MAX_U <u t`, `t <s MIN_S`, `MAX_S <s t` → `false`.
+    /// * `0 <=u t`, `t <=u MAX_U`, `MIN_S <=s t`, `t <=s MAX_S` → `true`.
+    /// * both operands literal → evaluate directly.
+    ///
+    /// `signed` selects the two's-complement order, `strict` selects `<` over
+    /// `<=`.  Returns `None` when the atom is not decidable syntactically.
+    fn fold_bv_compare(
+        &self,
+        lhs: TermId,
+        rhs: TermId,
+        signed: bool,
+        strict: bool,
+    ) -> Option<bool> {
+        let width = self.bv_width_of(lhs).or_else(|| self.bv_width_of(rhs))?;
+        if width == 0 {
+            return None;
+        }
+
+        // Both orders are total and reflexive, so `t < t` is false and
+        // `t <= t` is true for any term — hash-consing makes the syntactic
+        // identity check exact.
+        if lhs == rhs {
+            return Some(!strict);
+        }
+
+        // Reinterpret an unsigned literal under the selected order.
+        let in_order = |v: BigInt| -> BigInt {
+            if signed && v >= (BigInt::from(1u8) << (width - 1) as usize) {
+                v - (BigInt::from(1u8) << width as usize)
+            } else {
+                v
+            }
+        };
+        let lhs_const = self.bv_const_unsigned(lhs, width).map(&in_order);
+        let rhs_const = self.bv_const_unsigned(rhs, width).map(&in_order);
+
+        if let (Some(l), Some(r)) = (&lhs_const, &rhs_const) {
+            return Some(if strict { l < r } else { l <= r });
+        }
+
+        let (min_value, max_value) = if signed {
+            (
+                -(BigInt::from(1u8) << (width - 1) as usize),
+                (BigInt::from(1u8) << (width - 1) as usize) - 1,
+            )
+        } else {
+            (BigInt::ZERO, (BigInt::from(1u8) << width as usize) - 1)
+        };
+
+        if let Some(r) = &rhs_const {
+            // `t < MIN` is unsatisfiable; `t <= MAX` is a tautology.
+            if strict && *r == min_value {
+                return Some(false);
+            }
+            if !strict && *r == max_value {
+                return Some(true);
+            }
+        }
+        if let Some(l) = &lhs_const {
+            // `MAX < t` is unsatisfiable; `MIN <= t` is a tautology.
+            if strict && *l == max_value {
+                return Some(false);
+            }
+            if !strict && *l == min_value {
+                return Some(true);
+            }
+        }
+
+        None
+    }
+
     /// Create a bit vector unsigned less-than
     pub fn mk_bv_ult(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(value) = self.fold_bv_compare(lhs, rhs, false, true) {
+            return self.mk_bool(value);
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::BvUlt(lhs, rhs), sort)
     }
 
     /// Create a bit vector signed less-than
     pub fn mk_bv_slt(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(value) = self.fold_bv_compare(lhs, rhs, true, true) {
+            return self.mk_bool(value);
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::BvSlt(lhs, rhs), sort)
     }
 
     /// Create a bit vector unsigned less-than-or-equal
     pub fn mk_bv_ule(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(value) = self.fold_bv_compare(lhs, rhs, false, false) {
+            return self.mk_bool(value);
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::BvUle(lhs, rhs), sort)
     }
 
     /// Create a bit vector signed less-than-or-equal
     pub fn mk_bv_sle(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(value) = self.fold_bv_compare(lhs, rhs, true, false) {
+            return self.mk_bool(value);
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::BvSle(lhs, rhs), sort)
     }
 
-    /// Create a bit vector negation (two's complement)
-    /// Implemented as 0 - arg
+    /// Create a bit vector negation (two's complement).
+    ///
+    /// Lowered to `0 - arg` through [`Self::mk_bv_sub`], so a literal operand
+    /// is folded by the same rule that folds subtraction.
     pub fn mk_bv_neg(&mut self, arg: TermId) -> TermId {
         // Get the width from the argument's sort
         let sort = self.get(arg).map_or(self.sorts.bool_sort, |t| t.sort);
@@ -1270,59 +1700,189 @@ impl TermManager {
             .and_then(|s| s.bitvec_width())
             .unwrap_or(32);
         let zero = self.mk_bitvec(0i64, width);
-        self.intern(TermKind::BvSub(zero, arg), sort)
+        self.mk_bv_sub(zero, arg)
     }
 
-    /// Create an unsigned bit vector division
+    /// Create an unsigned bit vector division.
+    ///
+    /// Folds two literals, including the **total** division-by-zero case
+    /// `(bvudiv s (_ bv0 m))` = all ones.
     pub fn mk_bv_udiv(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
+        {
+            return self.mk_bitvec(bv_fold::bv_udiv(&lhs_value, &rhs_value, width), width);
+        }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvUdiv(lhs, rhs), sort)
     }
 
-    /// Create a signed bit vector division
+    /// Create a signed bit vector division.
+    ///
+    /// Folds two literals, including the **total** division-by-zero case
+    /// `(bvsdiv s (_ bv0 m))` = `-1` for non-negative `s` and `1` otherwise.
     pub fn mk_bv_sdiv(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
+        {
+            return self.mk_bitvec(bv_fold::bv_sdiv(&lhs_value, &rhs_value, width), width);
+        }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvSdiv(lhs, rhs), sort)
     }
 
-    /// Create an unsigned bit vector remainder
+    /// Create an unsigned bit vector remainder.
+    ///
+    /// Folds two literals, including the **total** remainder-by-zero case
+    /// `(bvurem s (_ bv0 m))` = `s`.
     pub fn mk_bv_urem(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
+        {
+            return self.mk_bitvec(bv_fold::bv_urem(&lhs_value, &rhs_value, width), width);
+        }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvUrem(lhs, rhs), sort)
     }
 
-    /// Create a signed bit vector remainder
+    /// Create a signed bit vector remainder.
+    ///
+    /// Folds two literals, including the **total** remainder-by-zero case
+    /// `(bvsrem s (_ bv0 m))` = `s`.
     pub fn mk_bv_srem(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
+        {
+            return self.mk_bitvec(bv_fold::bv_srem(&lhs_value, &rhs_value, width), width);
+        }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvSrem(lhs, rhs), sort)
     }
 
-    /// Create a bit vector XOR
+    /// Create a bit vector XOR.
+    ///
+    /// Folds two literals and applies `t ^ t -> 0` and `t ^ 0 -> t`.
     pub fn mk_bv_xor(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let (lhs, rhs) = canonical_pair(lhs, rhs);
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            let (lhs_value, rhs_value) = self.bv_operand_consts(lhs, rhs, width);
+            if let (Some(lhs_value), Some(rhs_value)) = (&lhs_value, &rhs_value) {
+                return self.mk_bitvec(bv_fold::bv_xor(lhs_value, rhs_value, width), width);
+            }
+            if lhs == rhs {
+                return self.mk_bitvec(0i64, width);
+            }
+            if lhs_value.is_some_and(|value| value == BigInt::ZERO) {
+                return rhs;
+            }
+            if rhs_value.is_some_and(|value| value == BigInt::ZERO) {
+                return lhs;
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvXor(lhs, rhs), sort)
     }
 
-    /// Create a bit vector shift left
+    /// Create a bit vector shift left.
+    ///
+    /// Folds two literals; a shift distance of at least the width discards
+    /// every bit, so `t << k` is `0` for any `t` once `k >= width`.
     pub fn mk_bv_shl(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            match self.fold_bv_shift(lhs, rhs, width, bv_fold::bv_shl) {
+                ShiftFold::Value(value) => return self.mk_bitvec(value, width),
+                ShiftFold::Identity => return lhs,
+                ShiftFold::None => {}
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvShl(lhs, rhs), sort)
     }
 
-    /// Create a bit vector logical shift right
+    /// Create a bit vector logical shift right.
+    ///
+    /// Folds two literals; a shift distance of at least the width discards
+    /// every bit, so `t >>u k` is `0` for any `t` once `k >= width`.
     pub fn mk_bv_lshr(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            match self.fold_bv_shift(lhs, rhs, width, bv_fold::bv_lshr) {
+                ShiftFold::Value(value) => return self.mk_bitvec(value, width),
+                ShiftFold::Identity => return lhs,
+                ShiftFold::None => {}
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvLshr(lhs, rhs), sort)
     }
 
-    /// Create a bit vector arithmetic shift right
+    /// Create a bit vector arithmetic shift right.
+    ///
+    /// Folds two literals.  Unlike the other two shifts, an over-wide
+    /// distance does *not* fold on its own: `t >>s k` for `k >= width` is
+    /// all-ones or zero depending on `t`'s sign bit, so it is only decidable
+    /// when `t` is also literal.
     pub fn mk_bv_ashr(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(width) = self.bv_binop_width(lhs, rhs) {
+            if let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width) {
+                let folded = bv_fold::bv_ashr(&lhs_value, &rhs_value, width);
+                return self.mk_bitvec(folded, width);
+            }
+            // t >>s 0 -> t.
+            if self
+                .bv_const_unsigned(rhs, width)
+                .is_some_and(|amount| amount == BigInt::ZERO)
+            {
+                return lhs;
+            }
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvAshr(lhs, rhs), sort)
     }
+
+    /// Shared folding for `bvshl` and `bvlshr`, whose results agree on the
+    /// two operand-independent cases: shifting by `0` is the identity, and
+    /// shifting by at least the width yields `0` regardless of the value.
+    ///
+    /// `fold_const` is the matching evaluator from
+    /// [`super::bv_fold`] — an ordinary Rust function pointer chosen at the
+    /// call site, not any form of dynamic evaluation.
+    fn fold_bv_shift(
+        &self,
+        lhs: TermId,
+        rhs: TermId,
+        width: u32,
+        fold_const: fn(&BigInt, &BigInt, u32) -> BigInt,
+    ) -> ShiftFold {
+        let Some(amount) = self.bv_const_unsigned(rhs, width) else {
+            return ShiftFold::None;
+        };
+        if let Some(value) = self.bv_const_unsigned(lhs, width) {
+            return ShiftFold::Value(fold_const(&value, &amount, width));
+        }
+        if amount == BigInt::ZERO {
+            return ShiftFold::Identity;
+        }
+        if amount >= BigInt::from(width) {
+            return ShiftFold::Value(BigInt::ZERO);
+        }
+        ShiftFold::None
+    }
+}
+
+/// Outcome of folding a `bvshl` / `bvlshr` whose shift distance is literal.
+enum ShiftFold {
+    /// The whole shift evaluates to this literal value.
+    Value(BigInt),
+    /// The shift is the identity on its left operand (a zero distance).
+    Identity,
+    /// Nothing can be decided syntactically.
+    None,
 }

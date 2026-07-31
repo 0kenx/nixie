@@ -21,6 +21,22 @@ pub enum VisualizationFormat {
     Json,
 }
 
+/// Work item for the iterative JSON writer.
+#[derive(Debug)]
+enum JsonFrame {
+    /// Render the node's object body at the given indent/depth.
+    Node {
+        /// Node to render.
+        id: ProofNodeId,
+        /// Indentation level for the node's keys.
+        indent: usize,
+        /// Distance from the visualization root (for `max_depth`).
+        depth: usize,
+    },
+    /// Emit a pre-rendered structural line (brace, bracket, separator).
+    Literal(String),
+}
+
 /// Proof visualizer.
 #[derive(Debug)]
 pub struct ProofVisualizer {
@@ -95,6 +111,11 @@ impl ProofVisualizer {
         Ok(())
     }
 
+    /// Emit the DOT node/edge lines for the sub-DAG rooted at `node_id`.
+    ///
+    /// Iterative (explicit heap stack): proof DAGs are routinely far deeper than
+    /// the call stack can accommodate, and the `max_depth` cap is `None` by
+    /// default so it cannot be relied on as a bound.
     fn write_dot_nodes<W: Write>(
         &self,
         proof: &Proof,
@@ -103,19 +124,33 @@ impl ProofVisualizer {
         visited: &mut HashSet<ProofNodeId>,
         depth: usize,
     ) -> io::Result<()> {
-        if visited.contains(&node_id) {
-            return Ok(());
-        }
-        if let Some(max_depth) = self.max_depth
-            && depth >= max_depth
-        {
-            return Ok(());
-        }
+        // (node, node it is a premise of, depth)
+        let mut stack: Vec<(ProofNodeId, Option<ProofNodeId>, usize)> =
+            vec![(node_id, None, depth)];
 
-        visited.insert(node_id);
+        while let Some((current, parent, current_depth)) = stack.pop() {
+            // The edge is written before the child is expanded, and regardless
+            // of whether the child turns out to be already-visited or capped.
+            if let Some(parent_id) = parent {
+                writeln!(writer, "  {} -> {};", current.0, parent_id.0)?;
+            }
 
-        if let Some(node) = proof.get_node(node_id) {
-            let label = self.format_node_label(node);
+            if visited.contains(&current) {
+                continue;
+            }
+            if let Some(max_depth) = self.max_depth
+                && current_depth >= max_depth
+            {
+                continue;
+            }
+
+            visited.insert(current);
+
+            let Some(node) = proof.get_node(current) else {
+                continue;
+            };
+
+            let label = escape_dot_label(&self.format_node_label(node));
             let color = match &node.step {
                 ProofStep::Axiom { .. } => "lightblue",
                 ProofStep::Inference { .. } => "lightgreen",
@@ -124,15 +159,17 @@ impl ProofVisualizer {
             writeln!(
                 writer,
                 "  {} [label=\"{}\", fillcolor={}, style=filled];",
-                node_id.0, label, color
+                current.0, label, color
             )?;
 
-            // Write edges to premises
+            // Write edges to premises, leftmost first (hence reversed pushes)
             if let ProofStep::Inference { premises, .. } = &node.step {
-                for &premise_id in premises {
-                    writeln!(writer, "  {} -> {};", premise_id.0, node_id.0)?;
-                    self.write_dot_nodes(proof, premise_id, writer, visited, depth + 1)?;
-                }
+                stack.extend(
+                    premises
+                        .iter()
+                        .rev()
+                        .map(|&premise_id| (premise_id, Some(current), current_depth + 1)),
+                );
             }
         }
 
@@ -140,48 +177,64 @@ impl ProofVisualizer {
     }
 
     /// Visualize proof as ASCII tree.
+    ///
+    /// This is a *tree* rendering: a premise shared by several inferences is
+    /// printed once under each of them, exactly as the recursive version did.
+    /// On a heavily shared proof DAG that output is exponentially large — use
+    /// [`VisualizationFormat::Dot`], which renders the DAG itself, instead.
     fn visualize_ascii_tree<W: Write>(&self, proof: &Proof, writer: &mut W) -> io::Result<()> {
-        if let Some(root) = proof.root_node() {
-            self.write_ascii_node(proof, root, writer, "", true, 0)?;
+        if let Some(root) = proof.root() {
+            self.write_ascii_node(proof, root, writer, String::new(), true, 0)?;
         }
         Ok(())
     }
 
+    /// Iterative (explicit heap stack) ASCII-tree rendering.
     fn write_ascii_node<W: Write>(
         &self,
         proof: &Proof,
-        node: &ProofNode,
+        node_id: ProofNodeId,
         writer: &mut W,
-        prefix: &str,
+        prefix: String,
         is_last: bool,
         depth: usize,
     ) -> io::Result<()> {
-        if let Some(max_depth) = self.max_depth
-            && depth >= max_depth
-        {
-            return Ok(());
-        }
+        // (node, prefix for that node's own line, is_last, depth)
+        let mut stack: Vec<(ProofNodeId, String, bool, usize)> =
+            vec![(node_id, prefix, is_last, depth)];
 
-        let connector = if is_last { "└─" } else { "├─" };
-        let label = self.format_node_label(node);
+        while let Some((current, current_prefix, current_is_last, current_depth)) = stack.pop() {
+            if let Some(max_depth) = self.max_depth
+                && current_depth >= max_depth
+            {
+                continue;
+            }
 
-        writeln!(writer, "{}{} {}", prefix, connector, label)?;
+            let Some(node) = proof.get_node(current) else {
+                continue;
+            };
 
-        if let ProofStep::Inference { premises, .. } = &node.step {
-            let new_prefix = format!("{}{}  ", prefix, if is_last { " " } else { "│" });
+            let connector = if current_is_last { "└─" } else { "├─" };
+            let label = self.format_node_label(node);
 
-            for (i, &premise_id) in premises.iter().enumerate() {
-                if let Some(premise_node) = proof.get_node(premise_id) {
-                    let is_last_premise = i == premises.len() - 1;
-                    self.write_ascii_node(
-                        proof,
-                        premise_node,
-                        writer,
-                        &new_prefix,
-                        is_last_premise,
-                        depth + 1,
-                    )?;
-                }
+            writeln!(writer, "{}{} {}", current_prefix, connector, label)?;
+
+            if let ProofStep::Inference { premises, .. } = &node.step {
+                let new_prefix = format!(
+                    "{}{}  ",
+                    current_prefix,
+                    if current_is_last { " " } else { "│" }
+                );
+
+                let last_index = premises.len().saturating_sub(1);
+                stack.extend(premises.iter().enumerate().rev().map(|(i, &premise_id)| {
+                    (
+                        premise_id,
+                        new_prefix.clone(),
+                        i == last_index,
+                        current_depth + 1,
+                    )
+                }));
             }
         }
 
@@ -189,37 +242,50 @@ impl ProofVisualizer {
     }
 
     /// Visualize proof as indented text.
+    ///
+    /// Like the ASCII tree, this is a tree rendering and repeats shared premises.
     fn visualize_indented<W: Write>(&self, proof: &Proof, writer: &mut W) -> io::Result<()> {
-        if let Some(root) = proof.root_node() {
+        if let Some(root) = proof.root() {
             self.write_indented_node(proof, root, writer, 0, 0)?;
         }
         Ok(())
     }
 
+    /// Iterative (explicit heap stack) indented-text rendering.
     fn write_indented_node<W: Write>(
         &self,
         proof: &Proof,
-        node: &ProofNode,
+        node_id: ProofNodeId,
         writer: &mut W,
         indent: usize,
         depth: usize,
     ) -> io::Result<()> {
-        if let Some(max_depth) = self.max_depth
-            && depth >= max_depth
-        {
-            return Ok(());
-        }
+        // (node, indent level, depth)
+        let mut stack: Vec<(ProofNodeId, usize, usize)> = vec![(node_id, indent, depth)];
 
-        let indent_str = "  ".repeat(indent);
-        let label = self.format_node_label(node);
+        while let Some((current, current_indent, current_depth)) = stack.pop() {
+            if let Some(max_depth) = self.max_depth
+                && current_depth >= max_depth
+            {
+                continue;
+            }
 
-        writeln!(writer, "{}{}", indent_str, label)?;
+            let Some(node) = proof.get_node(current) else {
+                continue;
+            };
 
-        if let ProofStep::Inference { premises, .. } = &node.step {
-            for &premise_id in premises {
-                if let Some(premise_node) = proof.get_node(premise_id) {
-                    self.write_indented_node(proof, premise_node, writer, indent + 1, depth + 1)?;
-                }
+            let indent_str = "  ".repeat(current_indent);
+            let label = self.format_node_label(node);
+
+            writeln!(writer, "{}{}", indent_str, label)?;
+
+            if let ProofStep::Inference { premises, .. } = &node.step {
+                stack.extend(
+                    premises
+                        .iter()
+                        .rev()
+                        .map(|&premise_id| (premise_id, current_indent + 1, current_depth + 1)),
+                );
             }
         }
 
@@ -234,7 +300,7 @@ impl ProofVisualizer {
         writeln!(writer, "  \"depth\": {},", proof.depth())?;
         writeln!(writer, "  \"root\": {{")?;
 
-        if let Some(root) = proof.root_node() {
+        if let Some(root) = proof.root() {
             self.write_json_node(proof, root, writer, 2, 0)?;
         }
 
@@ -243,71 +309,106 @@ impl ProofVisualizer {
         Ok(())
     }
 
+    /// Iterative (explicit heap stack) JSON rendering.
+    ///
+    /// Depth truncation and dangling premises are both reported *in* the JSON
+    /// rather than by silently emitting a partial object: a node cut off by
+    /// `max_depth` becomes `{"truncated": true}`, and the trailing-comma
+    /// bookkeeping counts only the premises actually emitted, so the output is
+    /// always parseable.
     fn write_json_node<W: Write>(
         &self,
         proof: &Proof,
-        node: &ProofNode,
+        node_id: ProofNodeId,
         writer: &mut W,
         indent: usize,
         depth: usize,
     ) -> io::Result<()> {
-        if let Some(max_depth) = self.max_depth
-            && depth >= max_depth
-        {
-            return Ok(());
-        }
+        let mut stack = vec![JsonFrame::Node {
+            id: node_id,
+            indent,
+            depth,
+        }];
 
-        let indent_str = "  ".repeat(indent);
+        while let Some(frame) = stack.pop() {
+            let (current, current_indent, current_depth) = match frame {
+                JsonFrame::Literal(line) => {
+                    writeln!(writer, "{}", line)?;
+                    continue;
+                }
+                JsonFrame::Node { id, indent, depth } => (id, indent, depth),
+            };
 
-        if self.show_ids {
-            writeln!(writer, "{}\"id\": \"{}\",", indent_str, node.id)?;
-        }
+            let indent_str = "  ".repeat(current_indent);
 
-        match &node.step {
-            ProofStep::Axiom { conclusion } => {
-                writeln!(writer, "{}\"type\": \"axiom\",", indent_str)?;
-                writeln!(
-                    writer,
-                    "{}\"conclusion\": \"{}\"",
-                    indent_str,
-                    escape_json(conclusion)
-                )?;
+            if let Some(max_depth) = self.max_depth
+                && current_depth >= max_depth
+            {
+                writeln!(writer, "{}\"truncated\": true", indent_str)?;
+                continue;
             }
-            ProofStep::Inference {
-                rule,
-                premises,
-                conclusion,
-                ..
-            } => {
-                writeln!(writer, "{}\"type\": \"inference\",", indent_str)?;
-                writeln!(writer, "{}\"rule\": \"{}\",", indent_str, escape_json(rule))?;
-                writeln!(
-                    writer,
-                    "{}\"conclusion\": \"{}\",",
-                    indent_str,
-                    escape_json(conclusion)
-                )?;
 
-                if !premises.is_empty() {
-                    writeln!(writer, "{}\"premises\": [", indent_str)?;
-                    for (i, &premise_id) in premises.iter().enumerate() {
-                        if let Some(premise_node) = proof.get_node(premise_id) {
-                            writeln!(writer, "{}  {{", indent_str)?;
-                            self.write_json_node(
-                                proof,
-                                premise_node,
-                                writer,
-                                indent + 2,
-                                depth + 1,
-                            )?;
-                            if i < premises.len() - 1 {
-                                writeln!(writer, "{}  }},", indent_str)?;
+            let Some(node) = proof.get_node(current) else {
+                writeln!(writer, "{}\"missing\": true", indent_str)?;
+                continue;
+            };
+
+            if self.show_ids {
+                writeln!(writer, "{}\"id\": \"{}\",", indent_str, node.id)?;
+            }
+
+            match &node.step {
+                ProofStep::Axiom { conclusion } => {
+                    writeln!(writer, "{}\"type\": \"axiom\",", indent_str)?;
+                    writeln!(
+                        writer,
+                        "{}\"conclusion\": \"{}\"",
+                        indent_str,
+                        escape_json(conclusion)
+                    )?;
+                }
+                ProofStep::Inference {
+                    rule,
+                    premises,
+                    conclusion,
+                    ..
+                } => {
+                    writeln!(writer, "{}\"type\": \"inference\",", indent_str)?;
+                    writeln!(writer, "{}\"rule\": \"{}\",", indent_str, escape_json(rule))?;
+                    writeln!(
+                        writer,
+                        "{}\"conclusion\": \"{}\",",
+                        indent_str,
+                        escape_json(conclusion)
+                    )?;
+
+                    // Only premises that resolve to a node are emitted, and the
+                    // comma bookkeeping is over that emitted set.
+                    let present: Vec<ProofNodeId> = premises
+                        .iter()
+                        .copied()
+                        .filter(|&id| proof.get_node(id).is_some())
+                        .collect();
+
+                    if !present.is_empty() {
+                        writeln!(writer, "{}\"premises\": [", indent_str)?;
+                        let last_index = present.len().saturating_sub(1);
+                        stack.push(JsonFrame::Literal(format!("{}]", indent_str)));
+                        for (i, &premise_id) in present.iter().enumerate().rev() {
+                            let close = if i < last_index {
+                                format!("{}  }},", indent_str)
                             } else {
-                                writeln!(writer, "{}  }}", indent_str)?;
-                            }
+                                format!("{}  }}", indent_str)
+                            };
+                            stack.push(JsonFrame::Literal(close));
+                            stack.push(JsonFrame::Node {
+                                id: premise_id,
+                                indent: current_indent + 2,
+                                depth: current_depth + 1,
+                            });
+                            stack.push(JsonFrame::Literal(format!("{}  {{", indent_str)));
                         }
                     }
-                    writeln!(writer, "{}]", indent_str)?;
                 }
             }
         }
@@ -364,6 +465,19 @@ fn escape_json(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
+/// Escape a string for use inside a double-quoted DOT (Graphviz) label.
+///
+/// A DOT quoted string ends at the first unescaped `"`, and `\` is itself
+/// the escape introducer that would otherwise change the meaning of the
+/// character after it. `write_dot_nodes` embeds free-form proof text (a
+/// conclusion or a rule name, neither validated against DOT's grammar)
+/// directly into `label="..."`; without this, a `"` in that text ended the
+/// attribute early and corrupted the rest of the graph description (and any
+/// premises/edges written after it).
+fn escape_dot_label(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +517,91 @@ mod tests {
         assert!(dot.contains("digraph Proof"));
         assert!(dot.contains("axiom"));
         assert!(dot.contains("test"));
+    }
+
+    /// Direct unit test of the DOT label escaper: `\` and `"` are escaped
+    /// (they are DOT's own escape introducer and quoted-string terminator);
+    /// non-ASCII and control characters are left alone since they are not
+    /// special to DOT's quoted-string grammar.
+    #[test]
+    fn test_escape_dot_label() {
+        assert_eq!(escape_dot_label("hello"), "hello");
+        assert_eq!(escape_dot_label("a\"b"), "a\\\"b");
+        assert_eq!(escape_dot_label("a\\b"), "a\\\\b");
+        assert_eq!(escape_dot_label("caf\u{e9}"), "caf\u{e9}");
+        assert_eq!(escape_dot_label("a\u{0}b"), "a\u{0}b");
+    }
+
+    /// Regression: `write_dot_nodes` used to interpolate the node label
+    /// (built from the free-form conclusion/rule text) straight into
+    /// `label="..."` with no escaping at all, so a `"` in a conclusion ended
+    /// the DOT attribute early and corrupted the rest of the graph
+    /// (dangling text, unbalanced brackets, or a truncated file depending on
+    /// what followed). Every `label="..."` attribute must now be a properly
+    /// terminated, balanced quoted string even when the conclusion contains
+    /// a quote and a backslash.
+    #[test]
+    fn test_visualize_dot_conclusion_with_quote_and_backslash_is_escaped() {
+        let mut proof = Proof::new();
+        proof.add_axiom("has \"quote\" and \\backslash");
+        let viz = ProofVisualizer::new();
+
+        let mut output = Vec::new();
+        viz.visualize(&proof, VisualizationFormat::Dot, &mut output)
+            .expect("test operation should succeed");
+        let dot = String::from_utf8(output).expect("test operation should succeed");
+
+        assert!(
+            dot.contains(r#"\"quote\""#),
+            "the quote must be escaped, not raw, in: {dot}"
+        );
+        assert!(
+            dot.contains(r"\\backslash"),
+            "the backslash must be escaped, not raw, in: {dot}"
+        );
+
+        // Every `label="..."` attribute must terminate at an *unescaped*
+        // quote before the line ends (i.e. escaping did not leave a bare
+        // `"` that ends the attribute early).
+        for line in dot.lines().filter(|l| l.contains("label=\"")) {
+            let after_label = line
+                .split_once("label=\"")
+                .expect("filtered line contains label=\"")
+                .1;
+            let mut chars = after_label.chars();
+            let mut terminated = false;
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    chars.next(); // escaped character: does not terminate.
+                    continue;
+                }
+                if c == '"' {
+                    terminated = true;
+                    break;
+                }
+            }
+            assert!(
+                terminated,
+                "label attribute never reaches an unescaped closing quote in: {line}"
+            );
+        }
+    }
+
+    /// Control: a conclusion with no special characters renders in the DOT
+    /// label completely unchanged.
+    #[test]
+    fn test_visualize_dot_plain_conclusion_unchanged() {
+        let mut proof = Proof::new();
+        proof.add_axiom("plain conclusion with no special chars");
+        let viz = ProofVisualizer::new();
+
+        let mut output = Vec::new();
+        viz.visualize(&proof, VisualizationFormat::Dot, &mut output)
+            .expect("test operation should succeed");
+        let dot = String::from_utf8(output).expect("test operation should succeed");
+
+        assert!(dot.contains("plain conclusion with no special chars"));
+        assert!(!dot.contains('\\'), "no character here needed escaping");
     }
 
     #[test]
@@ -459,6 +658,40 @@ mod tests {
         assert_eq!(escape_json("hello\"world"), "hello\\\"world");
         assert_eq!(escape_json("line1\nline2"), "line1\\nline2");
         assert_eq!(escape_json("path\\to\\file"), "path\\\\to\\\\file");
+        // Non-ASCII passes through raw (valid inside a JSON string as-is);
+        // a control character below 0x20 is not one of the five characters
+        // `escape_json` special-cases, so it also passes through unescaped
+        // here -- JSON's grammar technically requires *some* escape for
+        // control characters, but that gap is pre-existing and out of scope
+        // for this fix (this test exists to pin current behaviour, not
+        // claim strict JSON conformance).
+        assert_eq!(escape_json("caf\u{e9}"), "caf\u{e9}");
+    }
+
+    /// Confirmation (not a fix): `visualize_json` already routes `rule` and
+    /// `conclusion` through `escape_json` (unlike the DOT path, which did
+    /// not route its label through any escaper at all). A `"` in a
+    /// conclusion must not break the surrounding `"conclusion": "..."` JSON
+    /// string value.
+    #[test]
+    fn test_visualize_json_conclusion_with_quote_is_escaped() {
+        let mut proof = Proof::new();
+        proof.add_axiom("has \"quote\" inside");
+        let viz = ProofVisualizer::new();
+
+        let mut output = Vec::new();
+        viz.visualize(&proof, VisualizationFormat::Json, &mut output)
+            .expect("test operation should succeed");
+        let json = String::from_utf8(output).expect("test operation should succeed");
+
+        assert!(
+            json.contains(r#"has \"quote\" inside"#),
+            "the quote must be escaped, not raw, in: {json}"
+        );
+        assert!(
+            !json.contains("\"conclusion\": \"has \"quote\""),
+            "a raw quote must not end the conclusion string value early in: {json}"
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ pub mod skolemization;
 mod solver;
 
 pub use context::Context;
-pub use nelson_oppen::{NelsonOppenCombiner, NelsonOppenStats, TheoryId};
+pub use nelson_oppen::{NelsonOppenCombiner, NelsonOppenStats, TermTheory, TheoryId};
 pub use optimization::{Objective, ObjectiveKind, OptimizationResult, Optimizer, ParetoPoint};
 #[cfg(feature = "std")]
 pub use oxiz_proof::replay::VerificationResult;
@@ -132,3 +132,10 @@ pub mod mbqi;
 // Z3 API compatibility layer (std-only)
 #[cfg(feature = "std")]
 pub mod z3_compat;
+
+// Debugging support: state snapshots / DOT graphs, event tracing, conflict and
+// UNSAT explanation, and model minimization.
+pub mod debug;
+
+// Read-only structural invariant checks over the solver's own bookkeeping.
+pub mod invariants;

@@ -48,3 +48,6 @@ serde_json = { workspace = true }
 #
 # For SIMD optimizations, use:
 #    RUSTFLAGS="-C target-cpu=native" cargo build --release
+
+[lints.clippy]
+unwrap_used = "deny"

@@ -4,6 +4,79 @@ use super::*;
 use smallvec::SmallVec;
 
 impl Solver {
+    /// Install the consequence of a freshly learned clause on the trail.
+    ///
+    /// This is the single place where a learned clause's asserting literal gets
+    /// assigned, and it is where chronological backtracking's central invariant
+    /// lives: **a propagated literal's decision level is the maximum level over
+    /// the other literals of its reason clause, not the level the search happens
+    /// to sit at.**
+    ///
+    /// Without chronological backtracking those two coincide, because a backjump
+    /// always lands exactly on the assertion level. With it the solver
+    /// deliberately stops above the assertion level and keeps the intervening
+    /// decisions, so recording the current level instead would claim the literal
+    /// depends on decisions it does not depend on. That is not merely imprecise:
+    /// a **unit** learned clause is a consequence of the formula alone and must
+    /// be pinned at level 0, and recording it at the post-backtrack level both
+    /// loses it on the next rollback and plants a second reason-less literal
+    /// inside a decision level, which breaks the termination invariant of the
+    /// 1-UIP walk in [`Solver::analyze`] and lets it emit clauses that are
+    /// stronger than what resolution derives — a direct route to a false `unsat`.
+    ///
+    /// The clause is asserted only when it really is unit under the
+    /// post-backtrack assignment. A degenerate analysis result (two literals at
+    /// the top level, which the theory-propagation path can still produce) is
+    /// therefore added to the database but not propagated, rather than
+    /// overwriting a live trail entry.
+    ///
+    /// Reference: Z3's `sat_solver.cpp` (`assign_core` / `propagate_clause`
+    /// compute the same `assign_level`).
+    pub(super) fn assert_learned_clause(&mut self, lits: &[Lit], clause_id: ClauseId) {
+        let Some(&asserting) = lits.first() else {
+            return;
+        };
+
+        if self.trail.is_assigned(asserting.var()) {
+            // Already satisfied is fine — nothing to install. Already *falsified*
+            // is not: every caller backtracks to a level strictly below the
+            // asserting literal's own before getting here (`analyze` and
+            // `analyze_theory_conflict` both assert that invariant, and
+            // `analyze_theory_asserting_lemma` picks an unassigned literal for
+            // index 0), so the literal must be free. If it ever were false the
+            // silent return would drop a refutation on the floor: a unit lemma is
+            // stored without watches, and a longer clause gets both of its watches
+            // pinned on literals that are already false, whose watch events have
+            // been and gone. Either way nothing re-examines the clause and the
+            // search can go on to report `Sat` over a trail that falsifies it.
+            debug_assert!(
+                !self.trail.lit_value(asserting).is_false(),
+                "learned clause {lits:?} is already falsified at its asserting literal \
+                 (level {}, search at level {}); returning silently would drop the refutation",
+                self.trail.level(asserting.var()),
+                self.trail.decision_level()
+            );
+            return;
+        }
+
+        if lits.len() == 1 {
+            self.trail.assign_unit_fact(asserting);
+            return;
+        }
+
+        let mut level = 0;
+        for &lit in &lits[1..] {
+            if !self.trail.lit_value(lit).is_false() {
+                // Not actually unit — do not fabricate a propagation.
+                return;
+            }
+            level = level.max(self.trail.level(lit.var()));
+        }
+
+        self.trail
+            .assign_propagation_at(asserting, clause_id, level);
+    }
+
     /// Compute LBD (Literal Block Distance) of a clause
     /// LBD is the number of distinct decision levels in the clause
     pub(super) fn compute_lbd(&mut self, lits: &[Lit]) -> u32 {
@@ -40,7 +113,7 @@ impl Solver {
             self.stats.unit_clauses += 1;
             self.learned_clause_ids.push(clause_id);
 
-            self.trail.assign_decision(learnt_clause[0]);
+            self.assert_learned_clause(&learnt_clause, clause_id);
         } else if learnt_clause.len() == 2 {
             // Binary learned clause - add to binary implication graph
             let lbd = self.compute_lbd(&learnt_clause);
@@ -52,6 +125,7 @@ impl Solver {
             if let Some(clause) = self.clauses.get_mut(clause_id) {
                 clause.lbd = lbd;
             }
+            self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
 
@@ -67,7 +141,7 @@ impl Solver {
             self.watches
                 .add(lit1.negate(), Watcher::new(clause_id, lit0));
 
-            self.trail.assign_propagation(learnt_clause[0], clause_id);
+            self.assert_learned_clause(&learnt_clause, clause_id);
         } else {
             let lbd = self.compute_lbd(&learnt_clause);
             self.stats.total_lbd += lbd as u64;
@@ -77,6 +151,7 @@ impl Solver {
             if let Some(clause) = self.clauses.get_mut(clause_id) {
                 clause.lbd = lbd;
             }
+            self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
 
@@ -87,7 +162,7 @@ impl Solver {
             self.watches
                 .add(lit1.negate(), Watcher::new(clause_id, lit0));
 
-            self.trail.assign_propagation(learnt_clause[0], clause_id);
+            self.assert_learned_clause(&learnt_clause, clause_id);
 
             // On-the-fly subsumption: check if this new clause subsumes existing clauses
             if learnt_clause.len() <= 5 && lbd <= 3 {
@@ -151,6 +226,35 @@ impl Solver {
             clause_lits.push(lit.negate());
         }
 
+        // Pick the second watch the way `Solver::add_clause` does, instead of
+        // blindly taking `clause_lits[1]`.
+        //
+        // `propagated_lit` stays at index 0: the caller assigns it immediately,
+        // so it is the only literal here that is not already false and is by
+        // construction the best watch. Every other literal is the negation of a
+        // theory reason literal and is therefore false *right now* — and, being
+        // an existing assignment, already behind the propagation head. Watching
+        // whichever of them happens to come first can leave the clause watched on
+        // a literal falsified long ago, whose watch event has already been and
+        // gone; that watch can never fire again, so the clause can be silently
+        // falsified and a later `solve()` reports `Sat` on a model violating it.
+        //
+        // `watch_rank` instead picks the literal that is *last* to become false
+        // (a true literal, else an unassigned one, else the false literal at the
+        // highest decision level), which is MiniSat's `attachClause` invariant:
+        // the clause can then only become fully false through a watched literal,
+        // and that always re-examines it. This mirrors the identical fix already
+        // documented in `add_clause`.
+        if clause_lits.len() >= 2 {
+            let mut second = 1;
+            for i in 2..clause_lits.len() {
+                if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[second]) {
+                    second = i;
+                }
+            }
+            clause_lits.swap(1, second);
+        }
+
         let clause_id = self.clauses.add_learned(clause_lits.iter().copied());
 
         // Set up watches
@@ -161,6 +265,24 @@ impl Solver {
                 .add(lit0.negate(), Watcher::new(clause_id, lit1));
             self.watches
                 .add(lit1.negate(), Watcher::new(clause_id, lit0));
+
+            // Every other `add_learned` call site computes and stores an LBD for
+            // its clause (see `Solver::compute_lbd`'s call sites in `solve` and
+            // `learn_clause`); this one used to be the odd one out, leaving
+            // `clause.lbd` at `Clause::learned`'s default of 0 forever. That is
+            // not just a missing statistic: `Clause::record_usage` promotes a
+            // clause straight to the rarely-deleted `Core` tier once
+            // `lbd <= 2`, so a stuck LBD of 0 gave every theory reason clause an
+            // artificially easy path into permanent retention regardless of its
+            // actual quality. Computed here, before `propagated_lit` is assigned
+            // by the caller, matching the timing every other call site uses
+            // (LBD is computed while the asserting/propagated literal is still
+            // unassigned).
+            let lbd = self.compute_lbd(&clause_lits);
+            if let Some(clause) = self.clauses.get_mut(clause_id) {
+                clause.lbd = lbd;
+            }
+            self.debug_check_learned_clause_lbd(clause_id);
         }
 
         clause_id
@@ -283,11 +405,13 @@ impl Solver {
 
         if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
             self.reduce_clause_database();
+            self.debug_check_invariants("after clause database reduction");
             self.conflicts_since_deletion = 0;
         }
 
         if self.stats.conflicts >= self.restart_threshold {
             self.restart();
+            self.debug_check_restart_consistency();
         }
     }
 
@@ -297,16 +421,21 @@ impl Solver {
 
         if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
             self.reduce_clause_database();
+            self.debug_check_invariants("after clause database reduction (assumptions)");
             self.conflicts_since_deletion = 0;
         }
 
         if self.stats.conflicts >= self.restart_threshold {
-            // Limited restart - don't backtrack past assumptions
+            // Limited restart - don't backtrack past assumptions, so unlike
+            // `Solver::restart` this does NOT land at decision level 0;
+            // `debug_check_restart_consistency` (which asserts exactly that)
+            // does not apply here.
             self.backtrack(min_level);
             self.stats.restarts += 1;
             self.luby_index += 1;
             self.restart_threshold =
                 self.stats.conflicts + self.config.restart_interval * Self::luby(self.luby_index);
+            self.debug_check_invariants("after limited restart (assumptions)");
         }
     }
 
@@ -331,6 +460,192 @@ impl Solver {
                     LBool::False
                 };
             }
+        }
+    }
+
+    /// Safety net for the purely Boolean entry points: check that the model just
+    /// saved actually satisfies the clause database.
+    ///
+    /// A false `Unsat` merely fails to solve; a false `Sat` hands every
+    /// downstream consumer an assignment they will trust. Verifying the finished
+    /// model is one linear pass, so in debug builds — which covers every test and
+    /// CI run — this converts such corruption into a loud, precisely localised
+    /// failure instead of a silently wrong answer. It compiles to nothing in
+    /// release, so the shipped hot path is unaffected.
+    ///
+    /// Deliberately **not** called from `solve_with_theory`; that path has its own
+    /// narrower guard, [`Solver::debug_verify_model_input`]. There the database
+    /// also holds lemmas injected through `TheoryCallback` (see
+    /// [`Solver::add_theory_reason_clause`]) whose validity and lifetime this
+    /// crate does not control: the theory retracts its context through
+    /// `on_backtrack` without the Boolean core retracting the corresponding
+    /// lemma, so a final model may legitimately falsify one. Asserting on those
+    /// would make `oxiz-sat` fail on behalf of a component it cannot police.
+    pub(super) fn debug_verify_model(&self) {
+        #[cfg(debug_assertions)]
+        if let Some(id) = self.find_model_violation(true) {
+            let lits = self.clauses.get(id).map(|c| c.lits.clone());
+            panic!(
+                "solve() reported Sat with a model that violates clause {id:?} ({lits:?}); \
+                 the search accepted an assignment that does not satisfy the database"
+            );
+        }
+    }
+
+    /// Safety net for the CDCL(T) entry point [`Solver::solve_with_theory`].
+    ///
+    /// The full check above cannot be used there, but the reason it cannot —
+    /// `TheoryCallback`-injected lemmas whose validity `oxiz-sat` does not own —
+    /// applies only to *learned* clauses: theory reason clauses and theory lemmas
+    /// all enter through `ClauseDb::add_learned`, as do the resolvents that 1-UIP
+    /// analysis derives over them. **Original** clauses are a different matter
+    /// entirely. They arrived through `add_clause` from the caller, they are the
+    /// Boolean abstraction the caller asked to be satisfied, and nothing but
+    /// `pop` retracts them. A `Sat` answer that falsifies one is a bug in this
+    /// crate no matter what the theory did, so restricting the scan to them gives
+    /// a guard that is both meaningful and impossible to trip on the theory's
+    /// behalf.
+    ///
+    /// That is precisely the class the propagation-fixpoint bug produced: an
+    /// original ternary clause with all three literals falsified by level-0 facts
+    /// while `final_check` answered `Sat`.
+    pub(super) fn debug_verify_model_input(&self) {
+        #[cfg(debug_assertions)]
+        if let Some(id) = self.find_model_violation(false) {
+            let lits = self.clauses.get(id).map(|c| c.lits.clone());
+            panic!(
+                "solve_with_theory() reported Sat with a model that violates ORIGINAL clause \
+                 {id:?} ({lits:?}); the CDCL(T) search accepted an assignment that does not \
+                 satisfy the input formula's Boolean abstraction"
+            );
+        }
+    }
+
+    /// Find a live, *enforced* clause that the saved model does not satisfy.
+    ///
+    /// The scope is deliberately "everything the two-watched-literal scheme is
+    /// responsible for": non-deleted clauses of at least two literals. A model
+    /// falsifying one of those means propagation failed to fire on a watch, which
+    /// is a soundness bug whether the clause is original or learned. Callers that
+    /// cannot vouch for learned clauses pass `include_learned == false`.
+    ///
+    /// Unit clauses are excluded because the database is not what enforces them.
+    /// `add_clause` never stores a unit at all — it assigns the literal at level
+    /// 0 — and the copies that learned units leave behind carry no watches; their
+    /// force comes solely from that level-0 trail assignment. An incremental
+    /// caller that retracts the assignment (`pop`, `restore_to_trail_size`)
+    /// without also dropping the record leaves a lemma the formula no longer
+    /// entails, which a later model may legitimately falsify.
+    ///
+    /// Clauses retired by inprocessing are skipped for a similar reason: they are
+    /// re-satisfied by model reconstruction rather than by the assignment, and
+    /// their literals need not even be in the model's variable range.
+    #[cfg(debug_assertions)]
+    fn find_model_violation(&self, include_learned: bool) -> Option<ClauseId> {
+        self.clauses.iter_ids().find(|&id| {
+            self.clauses.get(id).is_some_and(|clause| {
+                (include_learned || !clause.learned)
+                    && clause.lits.len() >= 2
+                    && !clause
+                        .lits
+                        .iter()
+                        .any(|lit| match self.model.get(lit.var().index()) {
+                            Some(LBool::True) => lit.is_pos(),
+                            Some(LBool::False) => !lit.is_pos(),
+                            _ => false,
+                        })
+            })
+        })
+    }
+
+    /// Release build: compiles away entirely.
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    pub(super) fn debug_check_invariants(&self, _context: &str) {}
+
+    /// Debug-only structural/soundness net over the whole CDCL data model:
+    /// clause well-formedness, trail/assignment consistency, decision-level
+    /// bookkeeping, static learned-clause LBD bounds, live reason clauses, and
+    /// implication-graph acyclicity. See `crate::invariants` for exactly what
+    /// each check covers and why the checks this sweep deliberately does
+    /// *not* run are situational instead (only meaningful right after a
+    /// specific event, such as a conflict or a restart). Compiles to nothing
+    /// in release builds.
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_check_invariants(&self, context: &str) {
+        if let Err(msg) = crate::invariants::check_all_sat_invariants(self) {
+            panic!("SAT solver invariant violated ({context}): {msg}");
+        }
+    }
+
+    /// Release build: compiles away entirely.
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    pub(super) fn debug_check_fixpoint_invariants(&self, _context: &str) {}
+
+    /// Debug-only net for the two invariants that only hold once
+    /// `propagate()` has reached a fixpoint (returned `None`): no live clause
+    /// has both watched literals false while unsatisfied
+    /// (`crate::invariants::check_watched_literals`), and no live clause is a
+    /// hanging unit (`crate::invariants::check_unit_propagation_complete`).
+    /// Call this only at a fixpoint — mid-scan both are routinely and
+    /// harmlessly violated. Compiles to nothing in release builds.
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_check_fixpoint_invariants(&self, context: &str) {
+        if let Err(msg) = crate::invariants::check_watched_literals(self) {
+            panic!("SAT solver invariant violated at a propagation fixpoint ({context}): {msg}");
+        }
+        if let Err(msg) = crate::invariants::check_unit_propagation_complete(self) {
+            panic!("SAT solver invariant violated at a propagation fixpoint ({context}): {msg}");
+        }
+    }
+
+    /// Release build: compiles away entirely.
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    pub(super) fn debug_check_conflict_clause(&self, _conflict: ClauseId) {}
+
+    /// Debug-only net: the clause `propagate()` just reported as a conflict
+    /// is fully assigned and fully falsified. Call this right where
+    /// `propagate()` returns `Some(conflict)`, before any backtrack changes
+    /// the trail. Compiles to nothing in release builds.
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_check_conflict_clause(&self, conflict: ClauseId) {
+        if let Err(msg) = crate::invariants::check_conflict_clause(self, conflict) {
+            panic!("SAT solver invariant violated at conflict detection: {msg}");
+        }
+    }
+
+    /// Release build: compiles away entirely.
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    pub(super) fn debug_check_restart_consistency(&self) {}
+
+    /// Debug-only net: right after a restart, the decision level is 0 and
+    /// every trail entry is a level-0 fact. Compiles to nothing in release
+    /// builds.
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_check_restart_consistency(&self) {
+        if let Err(msg) = crate::invariants::check_restart_consistency(self) {
+            panic!("SAT solver invariant violated after restart: {msg}");
+        }
+    }
+
+    /// Release build: compiles away entirely.
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    pub(super) fn debug_check_learned_clause_lbd(&self, _clause_id: ClauseId) {}
+
+    /// Debug-only net: a freshly learned clause's stored LBD matches
+    /// recomputing it right now. Only sound to call in the instant right
+    /// after `clause_id` was learned and its `lbd` field set — see
+    /// `crate::invariants::check_learned_clause_lbd`'s doc comment for why
+    /// this cannot be a standing, whole-database invariant. Compiles to
+    /// nothing in release builds.
+    #[cfg(debug_assertions)]
+    pub(super) fn debug_check_learned_clause_lbd(&self, clause_id: ClauseId) {
+        if let Err(msg) = crate::invariants::check_learned_clause_lbd(self, clause_id) {
+            panic!("SAT solver invariant violated for freshly learned clause: {msg}");
         }
     }
 

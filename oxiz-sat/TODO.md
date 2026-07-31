@@ -1,6 +1,6 @@
 # oxiz-sat TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 Reference: Z3's `sat/` directory
 
@@ -494,6 +494,12 @@ These advanced features could push beyond Z3 and modern SAT solvers:
 - [x] Push/pop incremental solving
 - [x] Unit propagation
 - [x] Conflict detection
+
+## Changes in v0.3.1 (2026-07-31)
+
+- [x] Hyper-binary-resolution clauses now registered in the learned/assertion ledgers, so they are correctly reclaimed by clause-DB reduction, `forget`, and `pop` instead of persisting unboundedly across repeated push/pop+check cycles
+- [x] `invariants` module test-gating hardening
+- [x] `clippy::unwrap_used` denied crate-wide, clean in both dev and release profiles
 
 ## Changes in v0.2.3 (2026-06-09)
 

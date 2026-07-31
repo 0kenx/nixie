@@ -127,6 +127,11 @@ impl Solver {
             if !self.array_axiom_instances.insert(inst) {
                 continue;
             }
+            // Journal the instance so a `pop` retracts the dedup entry together
+            // with the lemma clause the SAT core drops: keeping the entry would
+            // silently suppress an axiom a later scope still needs.
+            self.trail
+                .push(super::trail::TrailOp::ArrayAxiomInstanceAdded { term: inst });
             let lit = self.encode(inst, manager);
             let _ = self.sat.add_clause([lit]);
             added = true;
@@ -149,50 +154,59 @@ struct ArrayStructure {
     read_indices: FxHashMap<TermId, Vec<TermId>>,
 }
 
-/// Recursively gather array structure from `term`.  `visited` prevents
-/// re-descending shared sub-terms of the interned DAG.
+/// Gather array structure from `term`.  `visited` prevents re-descending
+/// shared sub-terms of the interned DAG.
+///
+/// Iterative (explicit work stack), so nesting depth is bounded by memory
+/// rather than by the native call stack — this walk has no error channel, so a
+/// depth cap could only silently drop array structure and with it the
+/// read-over-write / extensionality lemmas that make the answer sound.
+/// Children are pushed in reverse, which reproduces the recursive pre-order
+/// exactly and with it the order of `selects`, `eq_pairs` and `read_indices`.
 fn collect_array_structure(
     term: TermId,
     manager: &TermManager,
     visited: &mut FxHashSet<TermId>,
     out: &mut ArrayStructure,
 ) {
-    if !visited.insert(term) {
-        return;
-    }
-    let Some(data) = manager.get(term) else {
-        return;
-    };
-    match &data.kind {
-        TermKind::Select(array, index) => {
-            out.selects.push((term, *array, *index));
-            let entry = out.read_indices.entry(*array).or_default();
-            if !entry.contains(index) {
-                entry.push(*index);
+    let mut stack: Vec<TermId> = vec![term];
+    while let Some(term) = stack.pop() {
+        if !visited.insert(term) {
+            continue;
+        }
+        let Some(data) = manager.get(term) else {
+            continue;
+        };
+        match &data.kind {
+            TermKind::Select(array, index) => {
+                out.selects.push((term, *array, *index));
+                let entry = out.read_indices.entry(*array).or_default();
+                if !entry.contains(index) {
+                    entry.push(*index);
+                }
+                stack.push(*index);
+                stack.push(*array);
             }
-            collect_array_structure(*array, manager, visited, out);
-            collect_array_structure(*index, manager, visited, out);
-        }
-        TermKind::Store(base, index, value) => {
-            collect_array_structure(*base, manager, visited, out);
-            collect_array_structure(*index, manager, visited, out);
-            collect_array_structure(*value, manager, visited, out);
-        }
-        TermKind::Eq(lhs, rhs) => {
-            // Record an array-sorted equality atom (either polarity: the
-            // extensionality / congruence lemmas are valid regardless).
-            if lhs != rhs && is_array_sorted(*lhs, manager) && is_array_sorted(*rhs, manager) {
-                out.eq_pairs.push((*lhs, *rhs));
+            TermKind::Store(base, index, value) => {
+                stack.push(*value);
+                stack.push(*index);
+                stack.push(*base);
             }
-            // Record a `var = store(...)` alias for alias-aware read-over-write.
-            record_alias(*lhs, *rhs, manager, &mut out.aliases);
-            record_alias(*rhs, *lhs, manager, &mut out.aliases);
-            collect_array_structure(*lhs, manager, visited, out);
-            collect_array_structure(*rhs, manager, visited, out);
-        }
-        _ => {
-            for child in term_children(&data.kind) {
-                collect_array_structure(child, manager, visited, out);
+            TermKind::Eq(lhs, rhs) => {
+                // Record an array-sorted equality atom (either polarity: the
+                // extensionality / congruence lemmas are valid regardless).
+                if lhs != rhs && is_array_sorted(*lhs, manager) && is_array_sorted(*rhs, manager) {
+                    out.eq_pairs.push((*lhs, *rhs));
+                }
+                // Record a `var = store(...)` alias for alias-aware
+                // read-over-write.
+                record_alias(*lhs, *rhs, manager, &mut out.aliases);
+                record_alias(*rhs, *lhs, manager, &mut out.aliases);
+                stack.push(*rhs);
+                stack.push(*lhs);
+            }
+            _ => {
+                stack.extend(term_children(&data.kind).into_iter().rev());
             }
         }
     }
@@ -384,5 +398,108 @@ fn term_children(kind: &TermKind) -> Vec<TermId> {
         TermKind::Ite(c, t, e) => vec![*c, *t, *e],
         TermKind::Apply { args, .. } => args.to_vec(),
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod s8_iterative_tests {
+    use super::*;
+    use oxiz_core::ast::TermManager;
+
+    /// Nesting depth that would overflow the native stack under the previous
+    /// recursive walk; the assertion is simply that the call **returns**.
+    ///
+    /// This depth and [`SMALL_STACK`] were scaled down together by a factor
+    /// of 8 (from 60 000 on 1 MiB).  What the test pins is the ~17 bytes of
+    /// stack available per level — far under any native frame — not the
+    /// absolute depth, and the smaller pair costs a fraction of the memory
+    /// the interner has to keep live.  Never raise one without the other.
+    const DEEP: usize = 7_500;
+
+    /// Worker stack for the deep-nesting test; see [`DEEP`].
+    const SMALL_STACK: usize = 1 << 17;
+
+    /// Build `store(store(...store(a, i, v)..., i, v), i, v)`, `depth` levels.
+    fn deep_store_chain(tm: &mut TermManager, depth: usize) -> (TermId, TermId) {
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let base = tm.mk_var("a", array_sort);
+        let idx = tm.mk_int(num_bigint::BigInt::from(1));
+        let val = tm.mk_int(num_bigint::BigInt::from(7));
+        let mut current = base;
+        for _ in 0..depth {
+            current = tm.mk_store(current, idx, val);
+        }
+        (current, idx)
+    }
+
+    #[test]
+    fn s8_collect_array_structure_deep_store_chain_returns() {
+        // A 128 KiB stack: the recursive version could not survive `DEEP`
+        // frames, so returning at all is the proof of the conversion.
+        let handle = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let (deep, idx) = deep_store_chain(&mut tm, DEEP);
+                let select = tm.mk_select(deep, idx);
+                let mut visited = FxHashSet::default();
+                let mut out = ArrayStructure::default();
+                collect_array_structure(select, &tm, &mut visited, &mut out);
+                out.selects.len()
+            })
+            .expect("spawn deep-nesting worker");
+        assert_eq!(handle.join().ok(), Some(1));
+    }
+
+    /// A doubling DAG: without the `visited` set this would expand
+    /// exponentially instead of completing immediately.
+    #[test]
+    fn s8_collect_array_structure_shared_dag_completes() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let mut current = tm.mk_var("x", int_sort);
+        for _ in 0..55 {
+            current = tm.mk_add(vec![current, current]);
+        }
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        collect_array_structure(current, &tm, &mut visited, &mut out);
+        assert!(out.selects.is_empty());
+    }
+
+    /// Semantic pin: the walk still records selects, read indices, array
+    /// equalities and `var = store(..)` aliases, in the recursive order.
+    #[test]
+    fn s8_collect_array_structure_records_same_structure() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let a = tm.mk_var("a", array_sort);
+        let b = tm.mk_var("b", array_sort);
+        let i = tm.mk_int(num_bigint::BigInt::from(1));
+        let j = tm.mk_int(num_bigint::BigInt::from(2));
+        let v = tm.mk_int(num_bigint::BigInt::from(9));
+        let store_a = tm.mk_store(a, i, v);
+        let alias = tm.mk_eq(b, store_a);
+        let sel_i = tm.mk_select(a, i);
+        let sel_j = tm.mk_select(a, j);
+        let sel_eq = tm.mk_eq(sel_i, sel_j);
+        let both = tm.mk_and(vec![alias, sel_eq]);
+
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        collect_array_structure(both, &tm, &mut visited, &mut out);
+
+        // `b = store(a, i, v)` is recorded as an alias and as an array-sorted
+        // equality pair; the two selects are recorded left to right.
+        assert_eq!(out.aliases.get(&b), Some(&store_a));
+        assert_eq!(out.eq_pairs, vec![(b, store_a)]);
+        assert_eq!(
+            out.selects,
+            vec![(sel_i, a, i), (sel_j, a, j)],
+            "select order must match the recursive pre-order"
+        );
+        assert_eq!(out.read_indices.get(&a), Some(&vec![i, j]));
     }
 }

@@ -122,10 +122,26 @@ pub struct BarrettParams {
 }
 
 impl BarrettParams {
-    /// Compute Barrett parameters for a divisor
+    /// Widest bit-vector for which a Barrett reciprocal is defined.
+    ///
+    /// The reciprocal is held in a `u128` and needs `2^(2*width)`, so it stops
+    /// existing at `width = 64`: `1u128 << 128` aborts in debug builds and
+    /// yields a garbage multiplier in release ones.  Beyond this width the
+    /// parameters are honestly unavailable and the caller encodes the plain
+    /// restoring divider instead.
+    pub const MAX_WIDTH: usize = 63;
+
+    /// Compute Barrett parameters for a divisor.
+    ///
+    /// Returns `None` for a zero divisor, a zero width, and for any width above
+    /// [`Self::MAX_WIDTH`]: the reciprocal `floor(2^(2*width) / divisor)`
+    /// is not representable then, and computing it would shift a `u128` by
+    /// `2*width >= 128` bits — an abort in debug builds and a silently wrong
+    /// multiplier in release ones.  Callers treat `None` as "this optimization
+    /// does not apply" and encode the division the ordinary way.
     #[must_use]
     pub fn new(divisor: u64, width: usize) -> Option<Self> {
-        if divisor == 0 {
+        if divisor == 0 || width == 0 || width > Self::MAX_WIDTH {
             return None;
         }
 
@@ -142,16 +158,26 @@ impl BarrettParams {
     }
 
     /// Compute quotient using Barrett reduction
+    ///
+    /// A `dividend` too large for the width these parameters were built for
+    /// would overflow the `dividend * m` product; that case falls back to the
+    /// exact quotient rather than wrapping to a wrong one.
     #[must_use]
     pub fn divide(&self, dividend: u64) -> u64 {
         // q = (dividend * m) >> shift
-        let product = (dividend as u128) * self.m;
+        let Some(product) = (dividend as u128).checked_mul(self.m) else {
+            return dividend.checked_div(self.divisor).unwrap_or(u64::MAX);
+        };
         let q = (product >> self.shift) as u64;
 
         // May need correction
         let remainder = dividend.wrapping_sub(q.wrapping_mul(self.divisor));
 
-        if remainder >= self.divisor { q + 1 } else { q }
+        if remainder >= self.divisor {
+            q.wrapping_add(1)
+        } else {
+            q
+        }
     }
 
     /// Compute remainder using Barrett reduction
@@ -178,11 +204,26 @@ pub struct MontgomeryParams {
 }
 
 impl MontgomeryParams {
-    /// Compute Montgomery parameters for a modulus
+    /// Widest bit-vector for which Montgomery parameters are defined.
+    ///
+    /// `R = 2^width` and the inverse of the modulus modulo `R` are held in a
+    /// `u64`, which `1u128 << width` cannot produce once `width >= 64` — in
+    /// debug builds that shift aborts, in release ones it wraps and every later
+    /// multiplication is silently wrong.
+    pub const MAX_WIDTH: usize = 63;
+
+    /// Compute Montgomery parameters for a modulus.
+    ///
+    /// Returns `None` for an even or zero modulus (Montgomery arithmetic needs
+    /// `gcd(modulus, R) = 1`), for a zero width, and for any width above
+    /// [`Self::MAX_WIDTH`].
     #[must_use]
     pub fn new(modulus: u64, width: usize) -> Option<Self> {
         if modulus == 0 || (modulus & 1) == 0 {
             // Montgomery only works for odd moduli
+            return None;
+        }
+        if width == 0 || width > Self::MAX_WIDTH {
             return None;
         }
 
@@ -298,6 +339,11 @@ impl Default for DivisionOptimizer {
 }
 
 impl DivisionOptimizer {
+    /// Widest bit-vector for which a complete `2^width`-row truth table is
+    /// built.  Beyond this the table is both astronomically large and, past 64
+    /// bits, not even enumerable in a `u64`, so the restoring divider is used.
+    const MAX_TRUTH_TABLE_WIDTH: usize = 6;
+
     /// Create a new division optimizer
     #[must_use]
     pub fn new(config: DivisionConfig) -> Self {
@@ -480,7 +526,7 @@ impl DivisionOptimizer {
         let width = dividend.len();
 
         // For very small widths, we can build a complete truth table
-        if width <= 6 {
+        if width <= Self::MAX_TRUTH_TABLE_WIDTH {
             return self.encode_udiv_truth_table(dividend, divisor, aig);
         }
 
@@ -497,7 +543,7 @@ impl DivisionOptimizer {
     ) -> Vec<AigEdge> {
         let width = dividend.len();
 
-        if width <= 6 {
+        if width <= Self::MAX_TRUTH_TABLE_WIDTH {
             return self.encode_urem_truth_table(dividend, divisor, aig);
         }
 
@@ -505,6 +551,11 @@ impl DivisionOptimizer {
     }
 
     /// Encode division using complete truth table (for small bit-widths)
+    ///
+    /// The table has `2^width` rows, so it is only built for a width the
+    /// callers have already bounded by [`Self::MAX_TRUTH_TABLE_WIDTH`]; a wider
+    /// vector falls back to the restoring divider instead of shifting `1` by a
+    /// width the shift cannot express.
     fn encode_udiv_truth_table(
         &mut self,
         dividend: &[AigEdge],
@@ -512,7 +563,10 @@ impl DivisionOptimizer {
         aig: &mut AigCircuit,
     ) -> Vec<AigEdge> {
         let width = dividend.len();
-        let num_inputs = 1 << width;
+        if width > Self::MAX_TRUTH_TABLE_WIDTH {
+            return self.encode_udiv_standard(dividend, divisor, aig);
+        }
+        let num_inputs = 1u64 << width;
 
         // Build truth table for each output bit
         let mut result_bits = Vec::with_capacity(width);
@@ -522,9 +576,8 @@ impl DivisionOptimizer {
 
             // For each input pattern where this output bit should be 1
             for input_val in 0u64..num_inputs {
-                let quotient = input_val
-                    .checked_div(divisor)
-                    .unwrap_or((1u64 << width) - 1);
+                // `(bvudiv x 0)` is all ones at this width (SMT-LIB).
+                let quotient = input_val.checked_div(divisor).unwrap_or(num_inputs - 1);
 
                 let output_bit = (quotient >> bit_pos) & 1;
 
@@ -554,6 +607,9 @@ impl DivisionOptimizer {
     }
 
     /// Encode remainder using truth table
+    ///
+    /// Bounded by [`Self::MAX_TRUTH_TABLE_WIDTH`] exactly as
+    /// [`Self::encode_udiv_truth_table`] is.
     fn encode_urem_truth_table(
         &mut self,
         dividend: &[AigEdge],
@@ -561,7 +617,10 @@ impl DivisionOptimizer {
         aig: &mut AigCircuit,
     ) -> Vec<AigEdge> {
         let width = dividend.len();
-        let num_inputs = 1 << width;
+        if width > Self::MAX_TRUTH_TABLE_WIDTH {
+            return self.encode_urem_standard(dividend, divisor, aig);
+        }
+        let num_inputs = 1u64 << width;
 
         let mut result_bits = Vec::with_capacity(width);
 
@@ -605,7 +664,13 @@ impl DivisionOptimizer {
         let mut result = aig.true_edge();
 
         for (i, &input) in inputs.iter().enumerate() {
-            let bit = (value >> i) & 1;
+            // Bit `i` of a `u64` is `0` for every `i >= 64` — that is the value
+            // of the bit, not a fallback, and reading it with a shift would
+            // abort in debug builds.
+            let bit = value
+                .checked_shr(u32::try_from(i).unwrap_or(u32::MAX))
+                .unwrap_or(0)
+                & 1;
 
             let literal = if bit == 1 { input } else { aig.not(input) };
 
@@ -613,6 +678,21 @@ impl DivisionOptimizer {
         }
 
         result
+    }
+
+    /// Cache the Barrett parameters for `(divisor, width)` if they exist.
+    ///
+    /// A width beyond [`BarrettParams::MAX_WIDTH`] (or a zero divisor) has no
+    /// Barrett reciprocal; the circuit below is the ordinary restoring divider
+    /// either way, so the absence is recorded by simply not caching anything
+    /// rather than by aborting on a missing precomputation.
+    fn cache_barrett_params(&mut self, divisor: u64, width: usize) {
+        if self.barrett_cache.contains_key(&(divisor, width)) {
+            return;
+        }
+        if let Some(params) = BarrettParams::new(divisor, width) {
+            self.barrett_cache.insert((divisor, width), params);
+        }
     }
 
     /// Encode division using Barrett reduction
@@ -625,10 +705,7 @@ impl DivisionOptimizer {
         let width = dividend.len();
 
         // Get or compute Barrett parameters
-        let _params = self
-            .barrett_cache
-            .entry((divisor, width))
-            .or_insert_with(|| BarrettParams::new(divisor, width).expect("Valid divisor"));
+        self.cache_barrett_params(divisor, width);
 
         // Encode: q ≈ (dividend * m) >> (2 * width)
         // We need to implement high-precision multiplication
@@ -648,10 +725,7 @@ impl DivisionOptimizer {
         let width = dividend.len();
 
         // Get or compute Barrett parameters
-        let _params = self
-            .barrett_cache
-            .entry((divisor, width))
-            .or_insert_with(|| BarrettParams::new(divisor, width).expect("Valid divisor"));
+        self.cache_barrett_params(divisor, width);
 
         // Encode: r = dividend - q * divisor
         // where q = (dividend * m) >> (2 * width)
@@ -1019,6 +1093,83 @@ mod tests {
         assert!(config.use_montgomery);
         assert!(config.optimize_power_of_two);
         assert_eq!(config.max_table_divisor, 16);
+    }
+
+    /// Barrett precomputation must refuse widths whose `2^(2*width)`
+    /// numerator does not exist in a `u128`.
+    ///
+    /// `1u128 << (2 * width)` aborted in debug builds and produced a garbage
+    /// reciprocal in release ones from width 64 upward, so the parameters are
+    /// now honestly unavailable and the caller encodes the plain divider.
+    #[test]
+    fn barrett_params_none_for_wide_widths() {
+        assert!(BarrettParams::new(7, 64).is_none());
+        assert!(BarrettParams::new(7, 65).is_none());
+        assert!(BarrettParams::new(7, 128).is_none());
+        assert!(BarrettParams::new(7, 0).is_none());
+        assert!(BarrettParams::new(0, 32).is_none());
+        // The widest width that still has a reciprocal keeps working.
+        assert!(BarrettParams::new(7, 63).is_some());
+    }
+
+    /// Barrett division stays exact at the widest supported width, including
+    /// for a dividend whose product with the reciprocal would overflow.
+    #[test]
+    fn barrett_divide_is_exact_at_max_width() {
+        let params = BarrettParams::new(7, 63).expect("width 63 is supported");
+        for dividend in [0u64, 1, 6, 7, 8, 1_000_003, u64::MAX] {
+            assert_eq!(params.divide(dividend), dividend / 7, "dividend {dividend}");
+            assert_eq!(params.modulo(dividend), dividend % 7, "dividend {dividend}");
+        }
+    }
+
+    /// Montgomery precomputation must refuse widths whose `R = 2^width` does
+    /// not fit the `u64` inverse it needs.
+    #[test]
+    fn montgomery_params_none_for_wide_widths() {
+        assert!(MontgomeryParams::new(7, 64).is_none());
+        assert!(MontgomeryParams::new(7, 65).is_none());
+        assert!(MontgomeryParams::new(7, 128).is_none());
+        assert!(MontgomeryParams::new(7, 0).is_none());
+        assert!(MontgomeryParams::new(7, 63).is_some());
+    }
+
+    /// Montgomery multiplication still round-trips at the widest supported
+    /// width, so the guard did not cost a working configuration.
+    #[test]
+    fn montgomery_round_trips_at_max_width() {
+        let params = MontgomeryParams::new(11, 63).expect("width 63 is supported");
+        let a_mont = params.to_montgomery(7);
+        assert_eq!(params.from_montgomery(a_mont), 7);
+    }
+
+    /// The optimizer's cached-parameter accessors report the same absence
+    /// rather than aborting inside the cache-filling closure.
+    #[test]
+    fn optimizer_param_cache_reports_wide_widths_as_absent() {
+        let mut opt = DivisionOptimizer::new(DivisionConfig::default());
+        assert!(opt.get_barrett_params(7, 128).is_none());
+        assert!(opt.get_montgomery_params(7, 128).is_none());
+        assert!(opt.get_barrett_params(7, 32).is_some());
+        assert!(opt.get_montgomery_params(7, 32).is_some());
+    }
+
+    /// Encoding a division at a width with no Barrett reciprocal must still
+    /// produce a circuit — the abort was inside `or_insert_with`, on a path
+    /// that only ever fell back to the standard divider anyway.
+    #[test]
+    fn encode_udiv_at_width_64_does_not_abort() {
+        let mut opt = DivisionOptimizer::new(DivisionConfig::default());
+        let mut aig = AigCircuit::new();
+        let dividend = aig.constant_bitvector(100, 64);
+
+        // Divisor above `max_table_divisor` and not a power of two: the Barrett
+        // path, which is where the precomputation used to be forced.
+        let result = opt.optimize_udiv_const(&dividend, 17, &mut aig);
+        assert_eq!(result.len(), 64);
+
+        let result = opt.optimize_urem_const(&dividend, 17, &mut aig);
+        assert_eq!(result.len(), 64);
     }
 
     #[test]

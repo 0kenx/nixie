@@ -248,6 +248,50 @@ mod tests {
         assert_eq!(LeanExporter::escape_string("hello"), "hello");
         assert_eq!(LeanExporter::escape_string("a\\b"), "a\\\\b");
         assert_eq!(LeanExporter::escape_string("a\"b"), "a\\\"b");
+        // Non-ASCII and control characters are neither `"` nor `\`, so they
+        // pass through unchanged: Lean string literals accept raw UTF-8, and
+        // only `"`/`\` are special to them.
+        assert_eq!(LeanExporter::escape_string("caf\u{e9}"), "caf\u{e9}");
+        assert_eq!(LeanExporter::escape_string("a\u{0}b"), "a\u{0}b");
+    }
+
+    /// Confirmation (not a fix): a `"` in a conclusion could break the
+    /// `"..."` Lean string literal `conclusion_to_prop` wraps every
+    /// proposition in, but every conclusion already routes through
+    /// `escape_string` first, turning `"` into `\"`. This pins that the
+    /// *whole* export pipeline keeps that string literal balanced.
+    #[test]
+    fn test_export_proof_conclusion_with_quote_keeps_string_literal_balanced() {
+        let mut proof = Proof::new();
+        proof.add_axiom("has \"quote\" inside");
+
+        let lean_code = export_to_lean(&proof);
+        assert!(
+            lean_code.contains("\\\"quote\\\""),
+            "the quote must be escaped, not raw, in: {lean_code}"
+        );
+        for line in lean_code.lines().filter(|l| l.contains("PropOf \"")) {
+            let after = line
+                .split_once("PropOf \"")
+                .expect("filtered line matches")
+                .1;
+            let mut chars = after.chars();
+            let mut terminated = false;
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    chars.next();
+                    continue;
+                }
+                if c == '"' {
+                    terminated = true;
+                    break;
+                }
+            }
+            assert!(
+                terminated,
+                "the PropOf string literal never reaches an unescaped closing quote in: {line}"
+            );
+        }
     }
 
     #[test]

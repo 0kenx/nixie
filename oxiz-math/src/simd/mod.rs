@@ -2,15 +2,26 @@
 //!
 //! Provides vectorized implementations of common mathematical operations
 //! using Rust's portable SIMD support.
+//!
+//! # `no_std`
+//!
+//! The integer kernels ([`polynomial_simd`], [`vector_ops`]) build without
+//! `std`. The floating-point kernels ([`matrix_simd`], [`simplex_simd`])
+//! require `num_traits::Float`, which is only available with `std`, so they
+//! are gated behind the `std` feature rather than being silently reduced to
+//! a stub.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+#[cfg(feature = "std")]
 pub mod matrix_simd;
 pub mod polynomial_simd;
+#[cfg(feature = "std")]
 pub mod simplex_simd;
 pub mod vector_ops;
 
+#[cfg(feature = "std")]
 pub use matrix_simd::{
     simd_determinant, simd_lu_decomposition, simd_lu_solve, simd_matrix_inverse, simd_matrix_mul,
     simd_matrix_vec_mul as matrix_vec_mul_enhanced, simd_qr_decomposition, transpose,
@@ -19,6 +30,7 @@ pub use polynomial_simd::{
     poly_add_coeffs, poly_dot_product, poly_eval_horner_i64, poly_mul_scalar, poly_sub_coeffs,
     simd_poly_add, simd_poly_eval, simd_poly_mul,
 };
+#[cfg(feature = "std")]
 pub use simplex_simd::{
     SimplexError, SimplexSolution, SimplexTableau, simd_dual_simplex, simd_simplex_solve,
 };

@@ -26,8 +26,9 @@ FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 WORKDIR /workspace
 
 # Pure-Rust build: no native linker deps beyond the default toolchain.
-# ca-certificates is kept so `cargo` can reach crates.io over HTTPS
-# when the local Cargo.lock references registry packages.
+# ca-certificates is kept because `cargo` must reach crates.io over
+# HTTPS to resolve and fetch every dependency: this repo ships no
+# committed lockfile, so resolution happens here at build time.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -36,7 +37,12 @@ RUN apt-get update && \
 # Cargo.toml must be present for cargo to resolve the workspace even
 # when building a single package; `oxiz-py` is included for that reason
 # (it is not built by this Dockerfile).
-COPY Cargo.toml Cargo.lock ./
+#
+# Cargo.lock is deliberately NOT copied: it is git-ignored as of 0.3.1,
+# so dependencies are resolved fresh at build time. A caller who wants a
+# byte-reproducible build should bind-mount or COPY their own lockfile
+# and add `--locked` to the cargo build below.
+COPY Cargo.toml ./
 COPY oxiz ./oxiz
 COPY oxiz-core ./oxiz-core
 COPY oxiz-math ./oxiz-math

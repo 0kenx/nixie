@@ -76,13 +76,16 @@ print_info "Updating package.json..."
 sed -i.bak "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" package.json
 rm package.json.bak
 
-# Update workspace Cargo.lock
-print_info "Updating Cargo.lock..."
+# Refresh the local workspace Cargo.lock so a subsequent build picks up the
+# new version. The lockfile itself is NOT committed: as of the .gitignore
+# policy change, the root Cargo.lock is git-ignored and untracked, so it must
+# not be passed to `git add` (that would abort this script under `set -e`).
+print_info "Updating local Cargo.lock..."
 cargo update -p oxiz-wasm
 
 # Create commit
 print_info "Creating commit..."
-git add Cargo.toml package.json ../Cargo.lock
+git add Cargo.toml package.json
 git commit -m "Bump oxiz-wasm version to $NEW_VERSION"
 
 print_info "Version bumped successfully!"

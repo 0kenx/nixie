@@ -56,6 +56,14 @@ impl IsolatingInterval {
     }
 }
 
+/// Safety-net bisection-depth ceiling for [`RootIsolator::isolate_in_interval`].
+///
+/// This is independent of [`IsolationConfig::max_iterations`] (which bounds
+/// the *refinement* of an already-isolated single-root interval, not the
+/// isolation search itself). See [`IsolationStats::incomplete`] for why this
+/// is a pure safety net rather than a correctness-affecting parameter.
+const MAX_ROOT_ISOLATION_DEPTH: u32 = 4096;
+
 /// Configuration for root isolation.
 #[derive(Debug, Clone)]
 pub struct IsolationConfig {
@@ -91,6 +99,20 @@ pub struct IsolationStats {
     pub sign_evaluations: u64,
     /// Roots isolated.
     pub roots_isolated: u64,
+    /// Set to `true` if bisection ever hit `MAX_ROOT_ISOLATION_DEPTH`
+    /// before narrowing a sub-interval down to exactly one root.
+    ///
+    /// With a correct Sturm sequence and exact rational bisection this
+    /// should never happen for any well-formed polynomial: distinct real
+    /// roots always have a positive minimum pairwise separation, so repeated
+    /// bisection is mathematically guaranteed to isolate each one eventually.
+    /// A `true` value therefore indicates a pathological input or an
+    /// upstream bug (e.g. an incorrect Sturm sequence), and it also means
+    /// [`RootIsolator::isolate_roots`]'s returned list may be missing one or
+    /// more roots for the affected sub-interval -- this flag is what makes
+    /// that condition visible instead of it being a silently-incomplete
+    /// result.
+    pub incomplete: bool,
 }
 
 /// Interval refinement method.
@@ -267,37 +289,80 @@ impl RootIsolator {
     }
 
     /// Isolate roots in a given interval.
+    ///
+    /// Iterative (explicit work-stack) rather than recursive, with
+    /// [`MAX_ROOT_ISOLATION_DEPTH`] as a defensive bisection-depth ceiling:
+    /// see [`IsolationStats::incomplete`] for why this bound should never
+    /// actually be hit for a well-formed polynomial, and
+    /// [`crate::polynomial::root_isolation`]'s sibling implementation of the
+    /// same algorithm, or `oxiz-nlsat`'s `SturmSequence::isolate_in_interval_bounded`
+    /// (same algorithm again, over a different `Polynomial` type), for the
+    /// same defensive pattern applied elsewhere in this workspace.
     fn isolate_in_interval(
         &mut self,
         lower: BigRational,
         upper: BigRational,
     ) -> Vec<IsolatingInterval> {
-        let num_roots = self.count_roots(&lower, &upper);
+        self.isolate_in_interval_bounded(lower, upper, MAX_ROOT_ISOLATION_DEPTH)
+    }
 
-        if num_roots == 0 {
-            return Vec::new();
+    /// [`Self::isolate_in_interval`] with an explicit depth ceiling, so
+    /// tests can force the [`IsolationStats::incomplete`] path
+    /// deterministically without needing a pathological polynomial that
+    /// requires thousands of bisection levels.
+    fn isolate_in_interval_bounded(
+        &mut self,
+        lower: BigRational,
+        upper: BigRational,
+        max_depth: u32,
+    ) -> Vec<IsolatingInterval> {
+        let mut results = Vec::new();
+        // Each work item is a sub-interval still to resolve, paired with
+        // its remaining bisection-depth budget (decremented per level, like
+        // a recursion-depth parameter would be, but living on the heap
+        // instead of the native call stack).
+        let mut work: Vec<(BigRational, BigRational, u32)> = vec![(lower, upper, max_depth)];
+
+        while let Some((lo, hi, depth)) = work.pop() {
+            let num_roots = self.count_roots(&lo, &hi);
+
+            if num_roots == 0 {
+                continue;
+            }
+
+            if num_roots == 1 {
+                // Single root in interval
+                let sign_lower = self.eval_sign(&lo);
+                let sign_upper = self.eval_sign(&hi);
+
+                self.stats.roots_isolated += 1;
+
+                results.push(IsolatingInterval::new(lo, hi, sign_lower, sign_upper));
+                continue;
+            }
+
+            if depth == 0 {
+                // Defensive-only fallback (see `IsolationStats::incomplete`):
+                // dropping this sub-range rather than recursing forever or
+                // fabricating a single interval that falsely claims to
+                // isolate multiple roots. Recorded so callers can detect it.
+                self.stats.incomplete = true;
+                continue;
+            }
+
+            // Multiple roots: bisect. Push the right half first so the
+            // left half (pushed last) is popped -- and fully drained,
+            // including everything it in turn pushes -- before the right
+            // half is touched, reproducing the original recursion's
+            // left-to-right result order.
+            self.stats.bisection_steps += 1;
+
+            let mid = (&lo + &hi) / BigRational::from(BigInt::from(2));
+            work.push((mid.clone(), hi, depth - 1));
+            work.push((lo, mid, depth - 1));
         }
 
-        if num_roots == 1 {
-            // Single root in interval
-            let sign_lower = self.eval_sign(&lower);
-            let sign_upper = self.eval_sign(&upper);
-
-            self.stats.roots_isolated += 1;
-
-            return vec![IsolatingInterval::new(lower, upper, sign_lower, sign_upper)];
-        }
-
-        // Multiple roots: bisect
-        self.stats.bisection_steps += 1;
-
-        let mid = (&lower + &upper) / BigRational::from(BigInt::from(2));
-
-        let mut left = self.isolate_in_interval(lower, mid.clone());
-        let mut right = self.isolate_in_interval(mid, upper);
-
-        left.append(&mut right);
-        left
+        results
     }
 
     /// Evaluate sign of polynomial at a point (-1, 0, or 1).
@@ -465,5 +530,103 @@ mod tests {
 
         assert!(isolator.stats().roots_isolated > 0);
         assert!(isolator.stats().sign_evaluations > 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // `isolate_in_interval` bisection-depth regression tests (audit: no
+    // bound at all on the bisection recursion; `oxiz-nlsat`'s sibling
+    // implementation of the same algorithm already carries a 4096-level
+    // safety net).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_isolate_roots_multiple_roots_via_bisection_behaviour_preserved() {
+        // x^2 - 2 has two real roots (±sqrt(2)); the Cauchy bound brackets
+        // both in one interval, so isolate_roots must bisect to separate
+        // them. This exact path (isolate_in_interval's num_roots > 1
+        // branch) had no prior test coverage in this file.
+        let poly = Polynomial::new(vec![rat(-2), rat(0), rat(1)]);
+        let mut isolator = RootIsolator::default_config(poly);
+        let intervals = isolator.isolate_roots();
+
+        assert_eq!(intervals.len(), 2, "x^2 - 2 has exactly two real roots");
+        assert!(intervals[0].lower <= intervals[0].upper);
+        assert!(intervals[1].lower <= intervals[1].upper);
+        // The two isolating intervals must be disjoint (one entirely below
+        // the other), in either order.
+        assert!(
+            intervals[0].upper <= intervals[1].lower || intervals[1].upper <= intervals[0].lower,
+            "isolating intervals must not overlap: {:?}",
+            intervals
+        );
+        assert!(
+            !isolator.stats().incomplete,
+            "a normal, well-separated polynomial must never hit the depth cap"
+        );
+        assert_eq!(isolator.stats().roots_isolated, 2);
+    }
+
+    #[test]
+    fn test_isolate_in_interval_bounded_depth_cap_is_visible_not_silent() {
+        // x^3 - x = x(x-1)(x+1) has three real roots. With a bisection
+        // budget too small to separate all three, the search must stop and
+        // record `stats.incomplete = true` -- never hang, never fabricate a
+        // merged interval that falsely claims to isolate multiple roots.
+        let poly = Polynomial::new(vec![rat(0), rat(-1), rat(0), rat(1)]);
+        let mut isolator = RootIsolator::default_config(poly);
+        let (lower, upper) = isolator.root_bounds();
+
+        let results = isolator.isolate_in_interval_bounded(lower, upper, 1);
+
+        assert!(
+            isolator.stats().incomplete,
+            "an insufficient depth budget must be recorded as incomplete"
+        );
+        assert!(
+            results.len() < 3,
+            "a truncated search must not fabricate all three roots, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_isolate_in_interval_bounded_sufficient_depth_never_marks_incomplete() {
+        // The same cubic with a depth budget known to be sufficient (the
+        // default MAX_ROOT_ISOLATION_DEPTH) must isolate all three roots
+        // and never set `incomplete`.
+        let poly = Polynomial::new(vec![rat(0), rat(-1), rat(0), rat(1)]);
+        let mut isolator = RootIsolator::default_config(poly);
+        let intervals = isolator.isolate_roots();
+
+        assert_eq!(intervals.len(), 3);
+        assert!(!isolator.stats().incomplete);
+    }
+
+    #[test]
+    fn test_isolate_roots_deep_bisection_small_stack() {
+        // Two real roots 2^-2000 apart force many bisection levels (well
+        // under MAX_ROOT_ISOLATION_DEPTH, so this is a *deep-but-finite*
+        // case, not the depth-cap path) from inside a thread with a
+        // deliberately small (1 MiB) stack. A stack overflow aborts the
+        // whole process, so "the thread returned at all" is itself part of
+        // the assertion.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut den = BigInt::from(1u32);
+                for _ in 0..2000 {
+                    den *= 2;
+                }
+                let eps = BigRational::new(BigInt::from(1), den);
+                // p(x) = x*(x - eps) = x^2 - eps*x
+                let poly = Polynomial::new(vec![rat(0), -eps, rat(1)]);
+                let mut isolator = RootIsolator::default_config(poly);
+                let intervals = isolator.isolate_roots();
+                assert_eq!(intervals.len(), 2);
+                assert!(!isolator.stats().incomplete);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deep-but-finite bisection must not overflow a 1 MiB stack");
     }
 }

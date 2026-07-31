@@ -1,6 +1,6 @@
 # oxiz-opt TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness/hardening pass (recursive term-walks converted to explicit stacks, exhaustive error handling, clippy::unwrap_used denied)
 
 
 ## Progress: ~100% Complete
@@ -221,8 +221,8 @@ All major features implemented. Only one optional enhancement remains (blocked b
 
 ## Performance & Quality Metrics
 
-- **Test Coverage**: 279 passing tests (0 failures, 3 skipped)
-  - Unit tests: 272+
+- **Test Coverage**: 346 passing tests (0 failures)
+  - Unit tests: 330+
   - Property-based tests: 7+ (Weight operations)
 - **Clippy Status**: Clean (0 warnings) - all targets including examples and benchmarks
 - **Build Status**: Clean (0 warnings)

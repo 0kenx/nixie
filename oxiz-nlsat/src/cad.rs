@@ -780,13 +780,24 @@ impl SturmSequence {
 
     /// Isolate roots within an interval using exact-rational bisection.
     ///
-    /// Recurses until every returned interval contains exactly one root
+    /// Bisects until every returned interval contains exactly one root
     /// (`expected_roots == 1`), with `depth` acting purely as a defensive
-    /// recursion-depth ceiling (see [`Self::isolate_roots`]). There is
-    /// deliberately NO width-based early-out: any such threshold would
-    /// (unsoundly) merge together distinct roots closer together than it,
-    /// breaking the "one root per interval" contract that callers rely on
-    /// for root-index lookups.
+    /// budget ceiling (see [`Self::isolate_roots`]). There is deliberately
+    /// NO width-based early-out: any such threshold would (unsoundly) merge
+    /// together distinct roots closer together than it, breaking the "one
+    /// root per interval" contract that callers rely on for root-index
+    /// lookups.
+    ///
+    /// Implemented with an explicit heap work-stack rather than native
+    /// recursion: each level owns two `BigRational` bounds plus bisection
+    /// temporaries, so `MAX_ROOT_ISOLATION_DEPTH` levels of native frames
+    /// would consume on the order of a mebibyte — enough to overflow a
+    /// small worker-thread stack *before* the depth ceiling can fire. The
+    /// heap stack makes the ceiling the only thing that can stop the walk.
+    ///
+    /// Emission order is identical to the former recursion (depth-first,
+    /// left sub-interval before right, hence ascending) because the right
+    /// half is pushed first and therefore popped last.
     fn isolate_in_interval_bounded(
         &self,
         lo: BigRational,
@@ -794,51 +805,54 @@ impl SturmSequence {
         expected_roots: u32,
         depth: u32,
     ) -> Vec<(BigRational, BigRational)> {
-        if expected_roots == 0 {
-            return Vec::new();
-        }
-
-        if expected_roots == 1 {
-            return vec![(lo, hi)];
-        }
-
-        if depth == 0 {
-            // Defensive-only fallback: with a correct Sturm chain and
-            // exact rational bisection, `MAX_ROOT_ISOLATION_DEPTH` should
-            // never actually be exhausted while `expected_roots > 1` (see
-            // `isolate_roots`). Reaching this branch indicates either a
-            // pathologically ill-conditioned input or a bug upstream
-            // (e.g. an incorrect root count); rather than panicking or
-            // fabricating a single interval that falsely claims to
-            // isolate multiple roots, return no intervals for this
-            // sub-range so callers observe a short result (already-handled
-            // by downstream root-index lookups) instead of a wrong one.
-            return Vec::new();
-        }
-
-        // Bisect
-        let mid = (&lo + &hi) / BigRational::from_integer(2.into());
-
-        // Count roots in each half
-        // count_roots_in(a, b) gives roots in (a, b] per Sturm's theorem
-        let roots_left = self.count_roots_in(&lo, &mid);
-
-        // For the right half, we need roots in (mid, hi]
-        let roots_right = self.count_roots_in(&mid, &hi);
-
         let mut result = Vec::new();
+        let mut work: Vec<(BigRational, BigRational, u32, u32)> =
+            vec![(lo, hi, expected_roots, depth)];
 
-        if roots_left > 0 {
-            result.extend(self.isolate_in_interval_bounded(
-                lo.clone(),
-                mid.clone(),
-                roots_left,
-                depth - 1,
-            ));
-        }
+        while let Some((lo, hi, expected_roots, depth)) = work.pop() {
+            if expected_roots == 0 {
+                continue;
+            }
 
-        if roots_right > 0 {
-            result.extend(self.isolate_in_interval_bounded(mid, hi, roots_right, depth - 1));
+            if expected_roots == 1 {
+                result.push((lo, hi));
+                continue;
+            }
+
+            if depth == 0 {
+                // Defensive-only fallback: with a correct Sturm chain and
+                // exact rational bisection, `MAX_ROOT_ISOLATION_DEPTH`
+                // should never actually be exhausted while
+                // `expected_roots > 1` (see `isolate_roots`). Reaching this
+                // branch indicates either a pathologically ill-conditioned
+                // input or a bug upstream (e.g. an incorrect root count);
+                // rather than panicking or fabricating a single interval
+                // that falsely claims to isolate multiple roots, drop this
+                // sub-range so callers observe a short result
+                // (already-handled by downstream root-index lookups)
+                // instead of a wrong one.
+                continue;
+            }
+
+            // Bisect
+            let mid = (&lo + &hi) / BigRational::from_integer(2.into());
+
+            // Count roots in each half.
+            // count_roots_in(a, b) gives roots in (a, b] per Sturm's theorem
+            let roots_left = self.count_roots_in(&lo, &mid);
+
+            // For the right half, we need roots in (mid, hi]
+            let roots_right = self.count_roots_in(&mid, &hi);
+
+            // Push right before left so that left is processed first,
+            // preserving the ascending output order of the recursive form.
+            if roots_right > 0 {
+                work.push((mid.clone(), hi, roots_right, depth - 1));
+            }
+
+            if roots_left > 0 {
+                work.push((lo, mid, roots_left, depth - 1));
+            }
         }
 
         result
@@ -1486,6 +1500,36 @@ mod tests {
     /// (`x = 0` and `x = 1/2_000_000`) separated by `5e-7` -- closer
     /// together than that removed cutoff -- and checks they are still
     /// isolated into two disjoint intervals.
+    /// Regression test for the audit finding that the bisection recursion
+    /// could exhaust a small thread stack *before* `MAX_ROOT_ISOLATION_DEPTH`
+    /// could fire: each level owned two `BigRational` bounds plus bisection
+    /// temporaries, so 4096 levels was on the order of a mebibyte.
+    ///
+    /// Two roots separated by `2^-2000` force ~2000 bisection levels. Run on
+    /// a 1 MiB stack, the assertion is that the call *returns* (a stack
+    /// overflow aborts the process) with both roots still isolated.
+    #[test]
+    fn test_sturm_sequence_deep_bisection_on_small_stack() {
+        let worker = std::thread::Builder::new().stack_size(1 << 20).spawn(|| {
+            let x = Polynomial::from_var(0);
+            let separation = BigRational::new(1.into(), num_bigint::BigInt::from(1u8) << 2000);
+            let factor2 = Polynomial::sub(&x, &Polynomial::constant(separation));
+            let poly = Polynomial::mul(&x, &factor2);
+
+            let sturm = SturmSequence::new(&poly, 0);
+            let intervals = sturm.isolate_roots();
+            (sturm.count_roots(), intervals)
+        });
+        let (count, intervals) = match worker.map(std::thread::JoinHandle::join) {
+            Ok(Ok(result)) => result,
+            _ => panic!("deep-bisection worker thread did not complete"),
+        };
+        assert_eq!(count, 2);
+        assert_eq!(intervals.len(), 2, "got {intervals:?}");
+        // Emission order is ascending, as in the recursive form.
+        assert!(intervals[0].1 <= intervals[1].0);
+    }
+
     #[test]
     fn test_sturm_sequence_isolates_roots_closer_than_legacy_epsilon() {
         let x = Polynomial::from_var(0);

@@ -172,13 +172,69 @@ impl<'a> Printer<'a> {
             ModelValue::Int(n) => n.to_string(),
             ModelValue::Real(r) => r.to_string(),
             ModelValue::BitVec { value, width } => {
-                format!(
-                    "#x{:0>width$x}",
-                    value,
-                    width = (*width as usize).div_ceil(4)
-                )
+                // `BigInt::from(BigUint)` is exact at any width, so a
+                // 128-bit (or wider) value prints at its full declared
+                // width instead of being narrowed to its low 64 bits.
+                super::format_bitvec_literal(&num_bigint::BigInt::from(value.clone()), *width)
             }
             ModelValue::Uninterpreted { sort, id } => format!("uninterp_{}_{}", sort.0, id),
         }
+    }
+}
+
+#[cfg(test)]
+mod wide_bitvec_tests {
+    use crate::ast::TermManager;
+    use crate::ast::model::{Model, ModelValue};
+    use crate::smtlib::printer::basic::Printer;
+    use num_bigint::BigUint;
+    use num_traits::One;
+
+    /// A 128-bit value prints at its full declared width, not narrowed to the
+    /// low 64 bits it happens to share with a much smaller value.
+    #[test]
+    fn wide_bitvec_value_prints_at_full_width() {
+        let mut manager = TermManager::new();
+        let bv128 = manager.sorts.bitvec(128);
+        let x = manager.mk_var("x", bv128);
+
+        let mut model = Model::new();
+        // 2^64 + 5: low 64 bits are `5`, which is what a `u64` payload kept.
+        model.assign_bitvec_big(x, (BigUint::one() << 64u32) + BigUint::from(5u32), 128);
+
+        let printer = Printer::new(&manager);
+        let output = printer.print_model(&model);
+
+        assert!(output.contains("(define-fun x () (_ BitVec 128) "));
+        // 128 bits is 32 hex digits, and the `1` sits in digit 16 from the end.
+        assert!(
+            output.contains("#x00000000000000010000000000000005"),
+            "wide value was narrowed: {output}"
+        );
+    }
+
+    /// A width that is not a multiple of 4 prints in binary, zero-padded to
+    /// the full declared width.
+    #[test]
+    fn wide_non_nibble_width_prints_zero_padded_binary() {
+        let manager = TermManager::new();
+        let printer = Printer::new(&manager);
+        let value = ModelValue::from_bitvec_bits(BigUint::one() << 70u32, 71);
+        let repr = printer.model_value_repr(&value);
+
+        assert_eq!(repr.len(), 2 + 71);
+        assert!(repr.starts_with("#b1"));
+        assert_eq!(repr.matches('1').count(), 1);
+    }
+
+    /// The sort annotation follows the declared width, not the value's own
+    /// bit length.
+    #[test]
+    fn wide_bitvec_sort_annotation_uses_declared_width() {
+        let manager = TermManager::new();
+        let printer = Printer::new(&manager);
+        let value = ModelValue::from_bitvec_bits(BigUint::from(1u32), 256);
+        assert_eq!(printer.model_value_sort(&value), "(_ BitVec 256)");
+        assert_eq!(printer.model_value_repr(&value).len(), 2 + 64);
     }
 }

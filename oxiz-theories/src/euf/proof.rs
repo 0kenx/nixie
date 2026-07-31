@@ -57,19 +57,34 @@ pub enum ProofStep {
 impl ProofStep {
     /// Extract the left and right terms from a proof
     pub fn terms(&self) -> (TermId, TermId) {
-        match self {
-            ProofStep::Given { left, right, .. } => (*left, *right),
-            ProofStep::Refl { term } => (*term, *term),
-            ProofStep::Symm { proof } => {
-                let (l, r) = proof.terms();
-                (r, l)
+        (self.endpoint(false), self.endpoint(true))
+    }
+
+    /// Follow the proof to one of its two endpoints.
+    ///
+    /// A plain loop rather than recursion: `Symm`/`Trans`/`Cong` nesting is
+    /// the proof's own depth, which is caller-controlled through the public
+    /// constructors, and the return type is `TermId` — a depth cap could only
+    /// name the wrong term as the equality's endpoint.
+    fn endpoint(&self, want_right: bool) -> TermId {
+        let mut node = self;
+        let mut want_right = want_right;
+        loop {
+            match node {
+                ProofStep::Given { left, right, .. } => {
+                    return if want_right { *right } else { *left };
+                }
+                ProofStep::Refl { term } => return *term,
+                ProofStep::Symm { proof } => {
+                    // a = b becomes b = a: the endpoints swap.
+                    node = proof;
+                    want_right = !want_right;
+                }
+                ProofStep::Trans { left, right } => {
+                    node = if want_right { right } else { left };
+                }
+                ProofStep::Cong { func, .. } => return *func, // Simplified
             }
-            ProofStep::Trans { left, right } => {
-                let (l, _) = left.terms();
-                let (_, r) = right.terms();
-                (l, r)
-            }
-            ProofStep::Cong { func, .. } => (*func, *func), // Simplified
         }
     }
 
@@ -80,65 +95,139 @@ impl ProofStep {
         reasons
     }
 
+    /// Explicit stack, not recursion; sub-proofs are pushed in reverse so the
+    /// reasons come out in the same order the recursive descent produced.
     fn collect_reasons(&self, reasons: &mut Vec<u32>) {
-        match self {
-            ProofStep::Given { reason, .. } => {
-                reasons.push(*reason);
-            }
-            ProofStep::Refl { .. } => {}
-            ProofStep::Symm { proof } => {
-                proof.collect_reasons(reasons);
-            }
-            ProofStep::Trans { left, right } => {
-                left.collect_reasons(reasons);
-                right.collect_reasons(reasons);
-            }
-            ProofStep::Cong { arg_proofs, .. } => {
-                for proof in arg_proofs {
-                    proof.collect_reasons(reasons);
+        let mut stack: Vec<&ProofStep> = vec![self];
+        while let Some(node) = stack.pop() {
+            match node {
+                ProofStep::Given { reason, .. } => reasons.push(*reason),
+                ProofStep::Refl { .. } => {}
+                ProofStep::Symm { proof } => stack.push(proof),
+                ProofStep::Trans { left, right } => {
+                    stack.push(right);
+                    stack.push(left);
                 }
+                ProofStep::Cong { arg_proofs, .. } => stack.extend(arg_proofs.iter().rev()),
             }
         }
     }
 
     /// Compute the size of the proof (number of steps)
+    ///
+    /// Explicit stack: the count has no error channel, so a depth cap could
+    /// only report a proof as smaller than it is.
     #[must_use]
     pub fn size(&self) -> usize {
-        match self {
-            ProofStep::Given { .. } | ProofStep::Refl { .. } => 1,
-            ProofStep::Symm { proof } => 1 + proof.size(),
-            ProofStep::Trans { left, right } => 1 + left.size() + right.size(),
-            ProofStep::Cong { arg_proofs, .. } => {
-                1 + arg_proofs.iter().map(ProofStep::size).sum::<usize>()
+        let mut total = 0usize;
+        let mut stack: Vec<&ProofStep> = vec![self];
+        while let Some(node) = stack.pop() {
+            total += 1;
+            match node {
+                ProofStep::Given { .. } | ProofStep::Refl { .. } => {}
+                ProofStep::Symm { proof } => stack.push(proof),
+                ProofStep::Trans { left, right } => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+                ProofStep::Cong { arg_proofs, .. } => stack.extend(arg_proofs.iter()),
             }
+        }
+        total
+    }
+}
+
+/// One item of [`ProofStep`]'s iterative `Display` output.
+enum ProofToken<'a> {
+    /// A sub-proof still to be rendered.
+    Node(&'a ProofStep),
+    /// Literal text to emit at this point.
+    Text(&'static str),
+}
+
+impl fmt::Display for ProofStep {
+    /// Explicit output stack, not recursion: `fmt` is reached from `{}` in
+    /// error and log messages, where a second stack overflow is least
+    /// recoverable, and the proof's depth is caller-controlled.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut stack: Vec<ProofToken<'_>> = vec![ProofToken::Node(self)];
+        while let Some(item) = stack.pop() {
+            let node = match item {
+                ProofToken::Text(text) => {
+                    f.write_str(text)?;
+                    continue;
+                }
+                ProofToken::Node(node) => node,
+            };
+            match node {
+                ProofStep::Given {
+                    left,
+                    right,
+                    reason,
+                } => write!(f, "Given({:?} = {:?}, reason={})", left, right, reason)?,
+                ProofStep::Refl { term } => write!(f, "Refl({:?})", term)?,
+                ProofStep::Symm { proof } => {
+                    write!(f, "Symm(")?;
+                    stack.push(ProofToken::Text(")"));
+                    stack.push(ProofToken::Node(proof));
+                }
+                ProofStep::Trans { left, right } => {
+                    write!(f, "Trans(")?;
+                    stack.push(ProofToken::Text(")"));
+                    stack.push(ProofToken::Node(right));
+                    stack.push(ProofToken::Text(", "));
+                    stack.push(ProofToken::Node(left));
+                }
+                ProofStep::Cong { func, arg_proofs } => {
+                    write!(f, "Cong({:?}, [", func)?;
+                    stack.push(ProofToken::Text("])"));
+                    for (i, proof) in arg_proofs.iter().enumerate().rev() {
+                        stack.push(ProofToken::Node(proof));
+                        if i > 0 {
+                            stack.push(ProofToken::Text(", "));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ProofStep {
+    /// Dismantle the sub-proof tree iteratively.
+    ///
+    /// Compiler-generated drop glue recurses once per proof level, so a proof
+    /// deep enough to build is deep enough to abort the process at scope exit,
+    /// after it has already been used successfully.
+    fn drop(&mut self) {
+        let mut stack: Vec<ProofStep> = Vec::new();
+        take_proof_children(self, &mut stack);
+        while let Some(mut node) = stack.pop() {
+            take_proof_children(&mut node, &mut stack);
         }
     }
 }
 
-impl fmt::Display for ProofStep {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProofStep::Given {
-                left,
-                right,
-                reason,
-            } => {
-                write!(f, "Given({:?} = {:?}, reason={})", left, right, reason)
-            }
-            ProofStep::Refl { term } => write!(f, "Refl({:?})", term),
-            ProofStep::Symm { proof } => write!(f, "Symm({})", proof),
-            ProofStep::Trans { left, right } => write!(f, "Trans({}, {})", left, right),
-            ProofStep::Cong { func, arg_proofs } => {
-                write!(f, "Cong({:?}, [", func)?;
-                for (i, proof) in arg_proofs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", proof)?;
-                }
-                write!(f, "])")
-            }
+/// Move `step`'s sub-proofs onto `out`, leaving a childless step behind.
+fn take_proof_children(step: &mut ProofStep, out: &mut Vec<ProofStep>) {
+    /// A childless stand-in left where a sub-proof used to be. It is dropped
+    /// immediately and never observed.
+    fn placeholder() -> Box<ProofStep> {
+        Box::new(ProofStep::Refl {
+            term: TermId::new(0),
+        })
+    }
+    // Sub-proofs are swapped out one field at a time: `ProofStep` implements
+    // `Drop`, so its fields cannot be moved out wholesale.
+    match step {
+        ProofStep::Given { .. } | ProofStep::Refl { .. } => {}
+        ProofStep::Symm { proof } => out.push(*core::mem::replace(proof, placeholder())),
+        ProofStep::Trans { left, right } => {
+            out.push(*core::mem::replace(left, placeholder()));
+            out.push(*core::mem::replace(right, placeholder()));
         }
+        ProofStep::Cong { arg_proofs, .. } => out.append(arg_proofs),
     }
 }
 

@@ -92,6 +92,8 @@ pub struct SharedTermsManager {
     terms: FxHashMap<TermId, SharedTermInfo>,
     /// Equality classes (union-find).
     parent: FxHashMap<TermId, TermId>,
+    /// Union-by-rank ranks for [`Self::parent`]; a missing entry means rank 0.
+    rank: FxHashMap<TermId, u32>,
     /// Pending equalities to propagate.
     pending_equalities: Vec<Equality>,
     /// Theories subscribed to each term.
@@ -107,6 +109,7 @@ impl SharedTermsManager {
             config,
             terms: FxHashMap::default(),
             parent: FxHashMap::default(),
+            rank: FxHashMap::default(),
             pending_equalities: Vec::new(),
             subscriptions: FxHashMap::default(),
             stats: SharedTermsStats::default(),
@@ -162,8 +165,20 @@ impl SharedTermsManager {
             return; // Already equal
         }
 
-        // Union: make lhs_rep point to rhs_rep
-        self.parent.insert(lhs_rep, rhs_rep);
+        // Union by rank: hang the shallower tree under the deeper one. With
+        // the path compression in `find` this keeps the structure near-flat;
+        // the previous always-lhs-under-rhs union could build an O(N) chain
+        // (e.g. asserting 1=2, 2=3, 3=4, ... in order).
+        let lhs_rank = self.rank.get(&lhs_rep).copied().unwrap_or(0);
+        let rhs_rank = self.rank.get(&rhs_rep).copied().unwrap_or(0);
+        if lhs_rank < rhs_rank {
+            self.parent.insert(lhs_rep, rhs_rep);
+        } else if lhs_rank > rhs_rank {
+            self.parent.insert(rhs_rep, lhs_rep);
+        } else {
+            self.parent.insert(rhs_rep, lhs_rep);
+            self.rank.insert(lhs_rep, lhs_rank + 1);
+        }
 
         // Queue equality for propagation
         let equality = Equality::new(lhs, rhs);
@@ -177,16 +192,28 @@ impl SharedTermsManager {
     }
 
     /// Find representative of equivalence class (with path compression).
+    ///
+    /// Iterative two-pass find: pass one walks to the root, pass two re-points
+    /// every node on the collected path at it. The return type is a bare
+    /// `TermId` with no error channel, so this walk must never be depth-capped
+    /// -- a cap could only report two equal terms as distinct.
     fn find(&mut self, term: TermId) -> TermId {
-        if let Some(&parent) = self.parent.get(&term)
-            && parent != term
-        {
-            let root = self.find(parent);
-            self.parent.insert(term, root); // Path compression
-            return root;
+        let mut path: Vec<TermId> = Vec::new();
+        let mut current = term;
+        while let Some(&parent) = self.parent.get(&current) {
+            if parent == current {
+                break;
+            }
+            path.push(current);
+            current = parent;
         }
 
-        term
+        let root = current;
+        for node in path {
+            self.parent.insert(node, root);
+        }
+
+        root
     }
 
     /// Check if two terms are in the same equivalence class.
@@ -225,6 +252,7 @@ impl SharedTermsManager {
     pub fn reset(&mut self) {
         self.terms.clear();
         self.parent.clear();
+        self.rank.clear();
         self.pending_equalities.clear();
         self.subscriptions.clear();
         self.stats = SharedTermsStats::default();
@@ -285,5 +313,50 @@ mod tests {
 
         manager.flush_equalities();
         assert_eq!(manager.get_pending_equalities().len(), 0);
+    }
+
+    /// `find` used to recurse once per link of the union-find chain, so a
+    /// chain built by asserting 1=2, 2=3, ... overflowed. Returning is the
+    /// assertion.
+    #[test]
+    fn find_survives_a_long_equality_chain_on_a_small_stack() {
+        // Stack and chain length scale together (1 MiB/100k -> 128 KiB/12.5k):
+        // the ~10 B-per-frame threshold is the pin, so never raise one alone.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut manager = SharedTermsManager::default_config();
+                const CHAIN: u32 = 12_500;
+
+                for id in 0..CHAIN {
+                    manager.assert_equality(term(id), term(id + 1));
+                }
+
+                manager.are_equal(term(0), term(CHAIN))
+            })
+            .expect("spawning the worker thread should succeed");
+
+        assert!(handle.join().expect("the walk must not overflow"));
+    }
+
+    /// Path compression rewrites the whole walked path, and union by rank
+    /// keeps the tree from degenerating in the first place.
+    #[test]
+    fn find_compresses_and_union_uses_rank() {
+        let mut manager = SharedTermsManager::default_config();
+        for id in 0..8 {
+            manager.assert_equality(term(id), term(id + 1));
+        }
+
+        let root = manager.find(term(0));
+        for id in 0..=8 {
+            assert_eq!(
+                manager.parent.get(&term(id)).copied().unwrap_or(term(id)),
+                root,
+                "term {id} was not compressed"
+            );
+        }
+        // Nine terms merged pairwise never build a rank above one.
+        assert_eq!(manager.rank.get(&root).copied().unwrap_or(0), 1);
     }
 }

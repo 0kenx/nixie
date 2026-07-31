@@ -109,86 +109,209 @@ pub fn solve_membership(
 /// *non-ground* (mentions a string variable, e.g. `(str.to_re x)` with `x` a
 /// variable), in which case the theory must fall back to `Unknown`.
 pub fn compile_regex(manager: &TermManager, term: TermId) -> Option<Arc<Regex>> {
+    // The walk is an explicit post-order stack, not recursion: regex nesting
+    // (`(re.* (re.* (re.++ …)))`, `re.comp`, `re.inter`, `re.diff`, `re.loop`)
+    // is entirely input-controlled and this is reached from `check_sat` via the
+    // `StrInRe` evaluator arm. A shared sub-regex is compiled once and reused
+    // (`memo`), so a `let`-shared regex DAG cannot re-expand exponentially.
+    let mut memo: FxHashMap<TermId, Arc<Regex>> = FxHashMap::default();
+    let mut frames: Vec<CompileFrame> = match open_regex(manager, term)? {
+        CompileOpened::Leaf(r) => {
+            return Some(r);
+        }
+        CompileOpened::Frame(f) => vec![f],
+    };
+    let mut carry: Option<Arc<Regex>> = None;
+
+    while !frames.is_empty() {
+        let next = match frames.last_mut() {
+            Some(top) => {
+                if let Some(r) = carry.take() {
+                    top.done.push(r);
+                }
+                top.pending.pop()
+            }
+            // Unreachable: the loop condition just checked non-emptiness.
+            None => break,
+        };
+        match next {
+            Some(child) => {
+                if let Some(hit) = memo.get(&child) {
+                    carry = Some(hit.clone());
+                    continue;
+                }
+                match open_regex(manager, child)? {
+                    CompileOpened::Leaf(r) => {
+                        memo.insert(child, r.clone());
+                        carry = Some(r);
+                    }
+                    CompileOpened::Frame(f) => frames.push(f),
+                }
+            }
+            None => match frames.pop() {
+                Some(frame) => {
+                    let key = frame.term;
+                    let built = frame.finish();
+                    memo.insert(key, built.clone());
+                    carry = Some(built);
+                }
+                // Unreachable for the same reason as above.
+                None => break,
+            },
+        }
+    }
+
+    carry
+}
+
+/// How a regex operator is rebuilt once its operands are compiled.
+///
+/// Every variant consumes the whole operand vector, so no arm has to assert
+/// that a particular operand is present.
+enum CompileBuild {
+    /// `re.++`
+    Concat,
+    /// `re.union`
+    Union,
+    /// `re.inter`
+    Inter,
+    /// `re.*`; `Regex::union` of a single operand is that operand.
+    Star,
+    /// `re.+`
+    Plus,
+    /// `re.opt`
+    Opt,
+    /// `re.comp`
+    Comp,
+    /// `re.diff a b` = `a ∩ ¬b`: the last operand is complemented.
+    Diff,
+    /// `re.^` / `re.loop` with the already-decoded bounds.
+    Loop(u32, Option<u32>),
+}
+
+/// One pending operator of the iterative regex compilation.
+struct CompileFrame {
+    /// The term this frame compiles; also its memo key.
+    term: TermId,
+    /// How to rebuild it.
+    build: CompileBuild,
+    /// Operand terms still to compile, reversed so `pop` yields them in order.
+    pending: Vec<TermId>,
+    /// Operands compiled so far, in operand order.
+    done: Vec<Arc<Regex>>,
+}
+
+impl CompileFrame {
+    /// Build this operator's regex from its compiled operands.
+    fn finish(self) -> Arc<Regex> {
+        match self.build {
+            CompileBuild::Concat => Regex::concat(self.done),
+            CompileBuild::Union => Regex::union(self.done),
+            CompileBuild::Inter => Regex::inter(self.done),
+            CompileBuild::Star => Regex::star(Regex::union(self.done)),
+            CompileBuild::Plus => Regex::plus(Regex::union(self.done)),
+            CompileBuild::Opt => Regex::option(Regex::union(self.done)),
+            CompileBuild::Comp => Regex::complement(Regex::union(self.done)),
+            CompileBuild::Diff => {
+                let mut parts = self.done;
+                if let Some(last) = parts.pop() {
+                    parts.push(Regex::complement(last));
+                }
+                Regex::inter(parts)
+            }
+            CompileBuild::Loop(lo, hi) => Regex::loop_bounded(Regex::union(self.done), lo, hi),
+        }
+    }
+}
+
+/// What compiling one regex term needs: an answer already, or its operands.
+enum CompileOpened {
+    /// A nullary operator or a ground literal.
+    Leaf(Arc<Regex>),
+    /// An operator whose regex operands must be compiled first.
+    Frame(CompileFrame),
+}
+
+/// Classify one regex term. `None` means "not a recognised, ground regex
+/// operator", exactly as the recursive version's `?` did.
+fn open_regex(manager: &TermManager, term: TermId) -> Option<CompileOpened> {
     let kind = &manager.get(term)?.kind;
     let TermKind::Apply { func, args } = kind else {
         return None;
     };
     let name = manager.resolve_str(*func);
+    let leaf = |r: Arc<Regex>| Some(CompileOpened::Leaf(r));
+    let frame = |build: CompileBuild, pending: Vec<TermId>| {
+        Some(CompileOpened::Frame(CompileFrame {
+            term,
+            build,
+            pending,
+            done: Vec::new(),
+        }))
+    };
     match name {
-        "re.none" => Some(Regex::none()),
-        "re.all" => Some(Regex::all()),
-        "re.allchar" => Some(Regex::all_char()),
+        "re.none" => leaf(Regex::none()),
+        "re.all" => leaf(Regex::all()),
+        "re.allchar" => leaf(Regex::all_char()),
         "str.to_re" => {
             let s = const_string(manager, *args.first()?)?;
-            Some(Regex::literal(&s))
+            leaf(Regex::literal(&s))
         }
-        "re.++" => {
-            let parts = compile_all(manager, args)?;
-            Some(Regex::concat(parts))
-        }
-        "re.union" => {
-            let parts = compile_all(manager, args)?;
-            Some(Regex::union(parts))
-        }
-        "re.inter" => {
-            let parts = compile_all(manager, args)?;
-            Some(Regex::inter(parts))
-        }
-        "re.*" => Some(Regex::star(compile_regex(manager, *args.first()?)?)),
-        "re.+" => Some(Regex::plus(compile_regex(manager, *args.first()?)?)),
-        "re.opt" => Some(Regex::option(compile_regex(manager, *args.first()?)?)),
-        "re.comp" => Some(Regex::complement(compile_regex(manager, *args.first()?)?)),
-        "re.diff" => {
-            let a = compile_regex(manager, *args.first()?)?;
-            let b = compile_regex(manager, *args.get(1)?)?;
-            Some(Regex::inter(vec![a, Regex::complement(b)]))
-        }
+        "re.++" => frame(CompileBuild::Concat, args.iter().rev().copied().collect()),
+        "re.union" => frame(CompileBuild::Union, args.iter().rev().copied().collect()),
+        "re.inter" => frame(CompileBuild::Inter, args.iter().rev().copied().collect()),
+        "re.*" => frame(CompileBuild::Star, vec![*args.first()?]),
+        "re.+" => frame(CompileBuild::Plus, vec![*args.first()?]),
+        "re.opt" => frame(CompileBuild::Opt, vec![*args.first()?]),
+        "re.comp" => frame(CompileBuild::Comp, vec![*args.first()?]),
+        "re.diff" => frame(CompileBuild::Diff, vec![*args.get(1)?, *args.first()?]),
         "re.range" => {
             // Both operands must be single-character string literals; per
             // SMT-LIB, any non-singleton literal denotes the empty language.
             let lo = const_string(manager, *args.first()?)?;
             let hi = const_string(manager, *args.get(1)?)?;
             match (single_char(&lo), single_char(&hi)) {
-                (Some(l), Some(h)) => Some(Regex::range(l, h)),
-                _ => Some(Regex::none()),
+                (Some(l), Some(h)) => leaf(Regex::range(l, h)),
+                _ => leaf(Regex::none()),
             }
         }
         "re.^" => {
             // Encoded as [Int(n), re].
             let n = const_u32(manager, *args.first()?)?;
-            let re = compile_regex(manager, *args.get(1)?)?;
-            Some(Regex::loop_bounded(re, n, Some(n)))
+            frame(CompileBuild::Loop(n, Some(n)), vec![*args.get(1)?])
         }
         "re.loop" => {
             // Encoded as [Int(lo), Int(hi), re].
             let lo = const_u32(manager, *args.first()?)?;
             let hi = const_u32(manager, *args.get(1)?)?;
-            let re = compile_regex(manager, *args.get(2)?)?;
-            Some(Regex::loop_bounded(re, lo, Some(hi)))
+            frame(CompileBuild::Loop(lo, Some(hi)), vec![*args.get(2)?])
         }
         _ => None,
     }
-}
-
-/// Compile every element of `args`, short-circuiting to `None` if any is
-/// non-ground / unrecognised.
-fn compile_all(manager: &TermManager, args: &[TermId]) -> Option<Vec<Arc<Regex>>> {
-    args.iter().map(|a| compile_regex(manager, *a)).collect()
 }
 
 /// Fold a ground string subterm into its concrete value. Handles string
 /// literals and constant concatenations; returns `None` for anything involving
 /// a variable or a non-string-constructing operator.
+///
+/// Iterative: an n-ary `(str.++ …)` application folds into that many nested
+/// binary `StrConcat` nodes, so the spine depth is the operand count and is
+/// input-controlled. The right operand is pushed first so the pops run left to
+/// right, which is the order the concatenation needs.
 fn const_string(manager: &TermManager, term: TermId) -> Option<String> {
-    match &manager.get(term)?.kind {
-        TermKind::StringLit(s) => Some(s.clone()),
-        TermKind::StrConcat(a, b) => {
-            let mut s = const_string(manager, *a)?;
-            s.push_str(&const_string(manager, *b)?);
-            Some(s)
+    let mut worklist = vec![term];
+    let mut out = String::new();
+    while let Some(current) = worklist.pop() {
+        match &manager.get(current)?.kind {
+            TermKind::StringLit(s) => out.push_str(s),
+            TermKind::StrConcat(a, b) => {
+                worklist.push(*b);
+                worklist.push(*a);
+            }
+            _ => return None,
         }
-        _ => None,
     }
+    Some(out)
 }
 
 /// Decode a ground non-negative integer constant to `u32`.
@@ -312,34 +435,47 @@ fn build_alphabet(regex: &Arc<Regex>) -> (Vec<char>, bool) {
     (alphabet, !has_unicode_class)
 }
 
-/// Recursively collect every character/range atom that appears in `regex`.
+/// Collect every character/range atom that appears in `regex`.
+///
+/// Explicit stack plus a pointer-keyed visited set: the operand structure is an
+/// `Arc`-shared DAG, so the recursive version re-walked every shared node once
+/// per path reaching it (exponential), and it returned `()` — no channel a
+/// depth limit could have used. Skipping an already-visited node is
+/// unobservable: a repeat contributes only duplicate endpoints, which the
+/// caller deduplicates anyway, and duplicate ranges, which only feed a
+/// containment test.
 fn collect_atoms(
     regex: &Arc<Regex>,
     endpoints: &mut Vec<char>,
     ranges: &mut Vec<(char, char)>,
     has_unicode_class: &mut bool,
 ) {
-    match &regex.op {
-        RegexOp::Char(c) => endpoints.push(*c),
-        RegexOp::Range(lo, hi) => {
-            endpoints.push(*lo);
-            endpoints.push(*hi);
-            ranges.push((*lo, *hi));
+    let mut stack: Vec<Arc<Regex>> = vec![regex.clone()];
+    let mut visited: FxHashSet<*const Regex> = FxHashSet::default();
+    while let Some(node) = stack.pop() {
+        if !visited.insert(Arc::as_ptr(&node)) {
+            continue;
         }
-        RegexOp::UnicodeClass(_) => *has_unicode_class = true,
-        RegexOp::Concat(parts) | RegexOp::Union(parts) | RegexOp::Inter(parts) => {
-            for p in parts {
-                collect_atoms(p, endpoints, ranges, has_unicode_class);
+        match &node.op {
+            RegexOp::Char(c) => endpoints.push(*c),
+            RegexOp::Range(lo, hi) => {
+                endpoints.push(*lo);
+                endpoints.push(*hi);
+                ranges.push((*lo, *hi));
             }
+            RegexOp::UnicodeClass(_) => *has_unicode_class = true,
+            RegexOp::Concat(parts) | RegexOp::Union(parts) | RegexOp::Inter(parts) => {
+                // Reversed so the pops visit operands left to right, the order
+                // the recursive descent used.
+                stack.extend(parts.iter().rev().cloned());
+            }
+            RegexOp::Complement(inner)
+            | RegexOp::Star(inner)
+            | RegexOp::Plus(inner)
+            | RegexOp::Option(inner)
+            | RegexOp::Loop(inner, _, _) => stack.push(inner.clone()),
+            RegexOp::Epsilon | RegexOp::None | RegexOp::All | RegexOp::AllChar => {}
         }
-        RegexOp::Complement(inner)
-        | RegexOp::Star(inner)
-        | RegexOp::Plus(inner)
-        | RegexOp::Option(inner)
-        | RegexOp::Loop(inner, _, _) => {
-            collect_atoms(inner, endpoints, ranges, has_unicode_class);
-        }
-        RegexOp::Epsilon | RegexOp::None | RegexOp::All | RegexOp::AllChar => {}
     }
 }
 
@@ -374,6 +510,137 @@ fn pick_fresh(explicit: &FxHashSet<char>, ranges: &[(char, char)]) -> Option<cha
         }
     }
     None
+}
+
+/// Which `str.replace_re*` operator is being evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceReMode {
+    /// `str.replace_re`: replace the *shortest leftmost* match — including an
+    /// empty one — and stop.
+    First,
+    /// `str.replace_re_all`: replace, left to right, every shortest
+    /// **non-empty** match.
+    All,
+}
+
+/// Derivative steps [`replace_re`] may take over one whole input before it
+/// concedes that it cannot evaluate the term.
+///
+/// The scan is quadratic in the input length (one restart per start position)
+/// and a single derivative can grow the regex, so an unbounded run on an
+/// adversarial input would not terminate in useful time.  Exceeding the budget
+/// yields `None`, which the caller turns into an honest `unknown` — never into
+/// a value.
+const MAX_REPLACE_RE_STEPS: usize = 1 << 20;
+
+/// The length (in characters) of the shortest match of `regex` starting at
+/// `chars[from..]`, or `None` when nothing matches there.
+///
+/// `min_len` is the smallest match length considered: `0` admits the empty
+/// match, `1` excludes it.  The scan walks Brzozowski derivatives one
+/// character at a time, so the *first* accepting state it reaches is the
+/// shortest match by construction.
+///
+/// `budget` is decremented once per derivative step; running out is reported
+/// as `Err(())` so the caller can distinguish "no match here" from "gave up".
+fn shortest_match_at(
+    regex: &Arc<Regex>,
+    chars: &[char],
+    from: usize,
+    min_len: usize,
+    budget: &mut usize,
+) -> Result<Option<usize>, ()> {
+    let mut state = regex.clone();
+    if min_len == 0 && state.is_nullable() {
+        return Ok(Some(0));
+    }
+    for (offset, &c) in chars[from..].iter().enumerate() {
+        if *budget == 0 {
+            return Err(());
+        }
+        *budget -= 1;
+        state = state.derivative(c);
+        // A syntactically empty language has no extension; bail out early.
+        if state.is_empty() {
+            return Ok(None);
+        }
+        let len = offset + 1;
+        if len >= min_len && state.is_nullable() {
+            return Ok(Some(len));
+        }
+    }
+    Ok(None)
+}
+
+/// SMT-LIB `str.replace_re` / `str.replace_re_all`.
+///
+/// From the Unicode Strings theory:
+///
+/// * `(str.replace_re s r t)` is "the string obtained by replacing the
+///   shortest leftmost match of `r` in `s`, if any, by `t`.  Note that if the
+///   language of `r` contains the empty string, the result is to prepend `t`
+///   to `s`" — the empty match at position 0 *is* the shortest leftmost match,
+///   so no special case is needed beyond admitting length-0 matches.
+/// * `(str.replace_re_all s r t)` is "the string obtained by replacing,
+///   left-to-right, each shortest **non-empty** match of `r` in `s` by `t`".
+///   Empty matches are excluded here — otherwise the rewrite would not
+///   terminate — so a position with only an empty match simply contributes its
+///   own character and the scan advances by one.
+///
+/// Reference: Z3 declares both operators in `seq_decl_plugin.cpp` but its
+/// `seq_rewriter.cpp` folds neither (`mk_seq_replace_re*` return `BR_FAILED`),
+/// so the SMT-LIB theory definition is the authority for these rules.
+///
+/// `None` means the internal derivative-step budget ran out; the
+/// caller must report `unknown` rather than substitute a value.
+#[must_use]
+pub fn replace_re(
+    s: &str,
+    regex: &Arc<Regex>,
+    replacement: &str,
+    mode: ReplaceReMode,
+) -> Option<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut budget = MAX_REPLACE_RE_STEPS;
+    let mut out = String::new();
+    let mut i = 0usize;
+
+    match mode {
+        ReplaceReMode::First => {
+            // `i == chars.len()` is still a candidate start position: a
+            // nullable regex matches the empty string there. (It also matches
+            // at position 0, so in practice the loop returns much earlier —
+            // but the bound keeps the scan total.)
+            while i <= chars.len() {
+                if let Some(len) = shortest_match_at(regex, &chars, i, 0, &mut budget).ok()? {
+                    out.push_str(replacement);
+                    out.extend(chars[i + len..].iter());
+                    return Some(out);
+                }
+                if i == chars.len() {
+                    break;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            Some(out)
+        }
+        ReplaceReMode::All => {
+            while i < chars.len() {
+                match shortest_match_at(regex, &chars, i, 1, &mut budget).ok()? {
+                    Some(len) => {
+                        out.push_str(replacement);
+                        i += len;
+                    }
+                    None => {
+                        out.push(chars[i]);
+                        i += 1;
+                    }
+                }
+            }
+            Some(out)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -504,6 +771,91 @@ mod tests {
         assert_eq!(
             search_word(&re, 0, None, 4000, 4096),
             WordSearch::Found(String::new())
+        );
+    }
+
+    /// Exact values for `str.replace_re` (shortest **leftmost** match, empty
+    /// match included) and `str.replace_re_all` (every shortest **non-empty**
+    /// match, left to right).
+    fn first(s: &str, re: &Arc<Regex>, t: &str) -> String {
+        replace_re(s, re, t, ReplaceReMode::First).expect("within the derivative budget")
+    }
+
+    fn all(s: &str, re: &Arc<Regex>, t: &str) -> String {
+        replace_re(s, re, t, ReplaceReMode::All).expect("within the derivative budget")
+    }
+
+    #[test]
+    fn replace_re_takes_the_leftmost_shortest_match() {
+        let b = Regex::literal("b");
+        assert_eq!(first("abcabc", &b, "X"), "aXcabc");
+        assert_eq!(all("abcabc", &b, "X"), "aXcaXc");
+
+        // Leftmost wins over shortest: the match at position 1 is chosen even
+        // though "bc" and "b" both start there — then the shortest of those.
+        let bc_or_b = Regex::union(vec![Regex::literal("bc"), Regex::literal("b")]);
+        assert_eq!(first("abcabc", &bc_or_b, "X"), "aXcabc");
+    }
+
+    #[test]
+    fn replace_re_handles_an_empty_matching_regex() {
+        // "if the language of r contains the empty string, the result is to
+        // prepend t to s" — because the empty match at position 0 *is* the
+        // shortest leftmost match.
+        let epsilon = Regex::literal("");
+        assert_eq!(first("abc", &epsilon, "X"), "Xabc");
+        assert_eq!(first("", &epsilon, "X"), "X");
+        // `replace_re_all` only ever replaces non-empty matches.
+        assert_eq!(all("abc", &epsilon, "X"), "abc");
+        assert_eq!(all("", &epsilon, "X"), "");
+
+        let a_star = Regex::star(Regex::literal("a"));
+        assert_eq!(first("aaa", &a_star, "X"), "Xaaa");
+        assert_eq!(first("", &a_star, "X"), "X");
+        assert_eq!(all("aaa", &a_star, "X"), "XXX");
+
+        // A union with `""` in it: the empty alternative is skipped by `_all`,
+        // taken by the first-match form.
+        let eps_or_b = Regex::union(vec![Regex::literal(""), Regex::literal("b")]);
+        assert_eq!(first("abc", &eps_or_b, "X"), "Xabc");
+        assert_eq!(all("abc", &eps_or_b, "X"), "aXc");
+    }
+
+    #[test]
+    fn replace_re_without_a_match_is_the_identity() {
+        let z = Regex::literal("z");
+        assert_eq!(first("abc", &z, "X"), "abc");
+        assert_eq!(all("abc", &z, "X"), "abc");
+        let none = Regex::none();
+        assert_eq!(first("abc", &none, "X"), "abc");
+        assert_eq!(all("abc", &none, "X"), "abc");
+        assert_eq!(first("", &none, "X"), "");
+    }
+
+    #[test]
+    fn replace_re_non_nullable_matches_are_consumed_whole() {
+        let a_plus = Regex::plus(Regex::literal("a"));
+        assert_eq!(first("aaab", &a_plus, "X"), "Xaab");
+        assert_eq!(all("aaab", &a_plus, "X"), "XXXb");
+
+        // A two-character non-nullable match advances the scan by two.
+        let ab = Regex::literal("ab");
+        assert_eq!(all("ababc", &ab, "X"), "XXc");
+
+        assert_eq!(all("abc", &Regex::all_char(), "X"), "XXX");
+        assert_eq!(first("abc", &Regex::all(), "X"), "Xabc");
+    }
+
+    #[test]
+    fn replace_re_is_code_point_aware() {
+        // A non-ASCII pattern and subject: positions are counted in `char`s,
+        // never in UTF-8 bytes.
+        let e_acute = Regex::literal("é");
+        assert_eq!(first("aéb", &e_acute, "X"), "aXb");
+        assert_eq!(all("éaé", &e_acute, "X"), "XaX");
+        assert_eq!(
+            all("abc", &Regex::range('a', 'b'), "\u{2ffff}"),
+            "\u{2ffff}\u{2ffff}c"
         );
     }
 }

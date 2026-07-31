@@ -5,7 +5,7 @@ use super::simplex::{LinExpr, Simplex, VarId};
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
 use num_rational::Rational64;
-use num_traits::{One, Signed};
+use num_traits::{One, Signed, Zero};
 use oxiz_core::ast::TermId;
 use oxiz_core::error::Result;
 
@@ -470,8 +470,18 @@ impl ArithSolver {
                     dval.real
                 }
             } else {
-                // For reals, just return the real part
-                self.simplex.value(var)
+                // For reals, the raw real part is NOT a model: a variable
+                // sitting at a strict bound is stored as `r ± δ`, so returning
+                // `r` alone reports a witness that violates the very constraint
+                // that created it (e.g. `x > 0` would report `x = 0`).
+                // Substitute a concrete positive δ₀ that keeps every bound
+                // satisfied (see `Simplex::delta_instantiation`).
+                let dval = self.simplex.delta_value(var);
+                if dval.delta.is_zero() {
+                    dval.real
+                } else {
+                    dval.real + dval.delta * self.simplex.delta_instantiation()
+                }
             }
         })
     }
@@ -849,10 +859,27 @@ impl Theory for ArithSolver {
                 }
             }
             Err(reasons) => {
-                let terms: Vec<_> = reasons
-                    .iter()
-                    .filter_map(|&r| self.reasons.get(r as usize).copied())
-                    .collect();
+                // `reasons` and the simplex constraints that carry these ids are
+                // pushed and popped together, so every id must resolve.  A miss
+                // would silently shrink the core — and a conflict explanation
+                // that loses one of its causes is not weaker, it is wrong — so
+                // assert it loudly and, in release, fall back to the full set of
+                // known reasons rather than a truncated one.
+                let mut terms: Vec<TermId> = Vec::with_capacity(reasons.len());
+                for &r in &reasons {
+                    match self.reasons.get(r as usize).copied() {
+                        Some(term) => terms.push(term),
+                        None => {
+                            debug_assert!(
+                                false,
+                                "simplex reported reason id {r} with no recorded term \
+                                 (only {} known): the conflict core would lose a cause",
+                                self.reasons.len()
+                            );
+                            return Ok(TheoryResult::Unsat(self.full_unsat_core()));
+                        }
+                    }
+                }
                 return Ok(TheoryResult::Unsat(terms));
             }
         }
@@ -1657,6 +1684,48 @@ mod tests {
         assert_ne!(
             vc, vb2,
             "recycled var index {vc} collided with re-interned truncated term"
+        );
+    }
+
+    /// Regression (GitHub issue #12): in LRA the assignment for a variable
+    /// pinned at a *strict* bound is a delta-rational `r ± δ`.  `value()` must
+    /// instantiate `δ` with a concrete positive rational, otherwise it reports
+    /// `x = 0` for `x > 0` — a witness that violates the asserted constraint.
+    #[test]
+    fn regression_lra_strict_bound_model_instantiates_delta() {
+        let mut solver = ArithSolver::lra();
+        let x = TermId::new(1);
+        let reason = TermId::new(100);
+
+        // x > 0
+        solver.assert_gt(&[(x, Rational64::one())], Rational64::zero(), reason);
+        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
+
+        let value = solver.value(x).expect("x must have a model value");
+        assert!(
+            value > Rational64::zero(),
+            "model x = {value} violates x > 0"
+        );
+    }
+
+    /// Both ends of a strict range must be respected simultaneously: the
+    /// instantiated delta has to keep `0 < x < 1/2` genuinely inside the range.
+    #[test]
+    fn regression_lra_strict_range_model_inside_bounds() {
+        let mut solver = ArithSolver::lra();
+        let x = TermId::new(1);
+        let lo = TermId::new(100);
+        let hi = TermId::new(101);
+        let half = Rational64::new(1, 2);
+
+        solver.assert_gt(&[(x, Rational64::one())], Rational64::zero(), lo);
+        solver.assert_lt(&[(x, Rational64::one())], half, hi);
+        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
+
+        let value = solver.value(x).expect("x must have a model value");
+        assert!(
+            value > Rational64::zero() && value < half,
+            "model x = {value} is outside the strict range (0, 1/2)"
         );
     }
 }

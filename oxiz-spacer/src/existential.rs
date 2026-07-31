@@ -223,65 +223,88 @@ impl ExistentialProjector {
 
     /// Syntactic projection: drop literals containing existential variables
     ///
-    /// This is a sound over-approximation - the result may be weaker than necessary
-    /// but is guaranteed to be an over-approximation.
+    /// This is a sound over-approximation - the result may be weaker than
+    /// necessary but is guaranteed to be an over-approximation.
+    ///
+    /// The disjunction case descends into every disjunct, so the recursion
+    /// depth used to equal the `Or`-nesting depth of parsed input; it is an
+    /// explicit work stack now. The old code also swallowed a failed
+    /// sub-projection with `unwrap_or_else(|_| mk_true())`, turning an
+    /// error into a silent `true`; errors propagate with `?` instead.
     fn syntactic_projection(
         terms: &mut TermManager,
         formula: TermId,
         existential_vars: &[(String, SortId)],
     ) -> ExistentialResult<TermId> {
-        // Enhanced implementation: analyze formula and drop conjuncts with existentials
         use oxiz_core::TermKind;
 
-        // Get formula structure
-        let Some(term) = terms.get(formula) else {
-            return Ok(terms.mk_true());
-        };
+        /// One step of the explicit projection stack.
+        enum Work {
+            /// Project this subformula.
+            Eval(TermId),
+            /// Combine the top `n` results into a disjunction.
+            Disjoin(usize),
+        }
 
-        match &term.kind.clone() {
-            TermKind::And(args) => {
-                // For conjunctions, keep only literals without existentials
-                let args_vec: Vec<TermId> = args.to_vec();
-                let projected_args: Vec<TermId> = args_vec
-                    .into_iter()
-                    .filter(|&arg| !Self::contains_existential(arg, terms, existential_vars))
-                    .collect();
+        let mut work: Vec<Work> = vec![Work::Eval(formula)];
+        let mut values: Vec<TermId> = Vec::new();
 
-                // Build result
-                if projected_args.is_empty() {
-                    // All literals contained existentials - return True
-                    Ok(terms.mk_true())
-                } else if projected_args.len() == 1 {
-                    Ok(projected_args[0])
-                } else {
-                    Ok(terms.mk_and(projected_args))
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Eval(current) => {
+                    let Some(kind) = terms.get(current).map(|t| t.kind.clone()) else {
+                        // Unknown subformula: `true` over-approximates anything.
+                        let top = terms.mk_true();
+                        values.push(top);
+                        continue;
+                    };
+
+                    match kind {
+                        TermKind::And(args) => {
+                            // Keep only conjuncts free of existentials.
+                            let projected: Vec<TermId> = args
+                                .iter()
+                                .copied()
+                                .filter(|&arg| {
+                                    !Self::contains_existential(arg, terms, existential_vars)
+                                })
+                                .collect();
+                            let combined = match projected.as_slice() {
+                                [] => terms.mk_true(),
+                                [only] => *only,
+                                _ => terms.mk_and(projected),
+                            };
+                            values.push(combined);
+                        }
+                        TermKind::Or(args) => {
+                            work.push(Work::Disjoin(args.len()));
+                            for &arg in args.iter().rev() {
+                                work.push(Work::Eval(arg));
+                            }
+                        }
+                        _ => {
+                            // Atomic formula: keep it unless it mentions an
+                            // existential, in which case project it to `true`.
+                            if Self::contains_existential(current, terms, existential_vars) {
+                                let top = terms.mk_true();
+                                values.push(top);
+                            } else {
+                                values.push(current);
+                            }
+                        }
+                    }
                 }
-            }
-            TermKind::Or(args) => {
-                // For disjunctions, we must be more conservative
-                // Project each disjunct separately and combine
-                let args_vec: Vec<TermId> = args.to_vec();
-                let projected_args: Vec<TermId> = args_vec
-                    .into_iter()
-                    .map(|arg| {
-                        Self::syntactic_projection(terms, arg, existential_vars)
-                            .unwrap_or_else(|_| terms.mk_true())
-                    })
-                    .collect();
-
-                Ok(terms.mk_or(projected_args))
-            }
-            _ => {
-                // Atomic formula
-                if Self::contains_existential(formula, terms, existential_vars) {
-                    // Contains existentials - project out to True
-                    Ok(terms.mk_true())
-                } else {
-                    // No existentials - keep as is
-                    Ok(formula)
+                Work::Disjoin(count) => {
+                    let args = values.split_off(values.len().saturating_sub(count));
+                    let combined = terms.mk_or(args);
+                    values.push(combined);
                 }
             }
         }
+
+        // Exactly one value is produced for the root; the fallback covers no
+        // structurally reachable case, and `true` remains a sound answer.
+        Ok(values.pop().unwrap_or_else(|| terms.mk_true()))
     }
 
     /// Check if a term contains any existential variables
@@ -300,11 +323,41 @@ impl ExistentialProjector {
             .map(|(name, _)| name.as_str())
             .collect();
 
-        // Recursively check if term contains any existential variable
+        // Check if term contains any existential variable
         Self::contains_existential_rec(term, terms, &existential_names)
     }
 
-    /// Recursive helper for checking existential occurrence
+    /// Helper for checking existential occurrence.
+    ///
+    /// This detector is **conservative in one direction only**: answering
+    /// "yes, it may contain an existential" merely projects a conjunct away
+    /// (a sound over-approximation), whereas answering "no" for a term that
+    /// *does* mention an existential variable keeps that variable in the
+    /// projected formula — an unsound result, because Spacer then treats a
+    /// formula still quantified over Y as if it were over X alone.
+    ///
+    /// Two defects made the old recursive version answer "no" wrongly:
+    ///
+    /// * its `match` ended in `_ => false`, so an existential occurring
+    ///   under any kind it did not enumerate — `Ite`, `Implies`, `Xor`,
+    ///   `Distinct`, `Neg`, `Select`/`Store`, `Apply`, every bitvector and
+    ///   string operation, a quantifier body, a `Let` body — was reported
+    ///   as absent;
+    /// * a dangling `TermId` also answered `false`, i.e. "definitely no
+    ///   existential", when nothing at all is known about it.
+    ///
+    /// Both are fixed here: descent is via
+    /// [`oxiz_core::ast::traversal::get_children`] (exhaustive over
+    /// `TermKind`, so a new variant is a compile error there rather than a
+    /// silent `false` here), and an unknown id answers `true` — the
+    /// conservative direction. Descending into quantifier bodies without
+    /// tracking shadowing is likewise conservative: a *bound* variable that
+    /// happens to share a name is reported as an occurrence, which can only
+    /// over-project.
+    ///
+    /// The walk is iterative with a `visited` set (see [`crate::walk`]): the
+    /// old form both overflowed the stack on deeply nested input and
+    /// re-expanded shared subterms exponentially.
     fn contains_existential_rec(
         term: TermId,
         terms: &TermManager,
@@ -312,38 +365,14 @@ impl ExistentialProjector {
     ) -> bool {
         use oxiz_core::TermKind;
 
-        let Some(t) = terms.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::Var(name_spur) => {
-                // Check if this variable is existential
-                let var_name = terms.resolve_str(*name_spur);
-                existential_names.contains(var_name)
+        crate::walk::any_node(terms, term, |_, kind| match kind {
+            Some(TermKind::Var(name_spur)) => {
+                existential_names.contains(terms.resolve_str(*name_spur))
             }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => {
-                // Check any subterm
-                args.iter()
-                    .any(|&arg| Self::contains_existential_rec(arg, terms, existential_names))
-            }
-            TermKind::Not(arg) => Self::contains_existential_rec(*arg, terms, existential_names),
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => {
-                Self::contains_existential_rec(*a, terms, existential_names)
-                    || Self::contains_existential_rec(*b, terms, existential_names)
-            }
-            _ => false, // Constants, true, false don't contain variables
-        }
+            Some(_) => false,
+            // Unknown term: assume the worst rather than claim it is clean.
+            None => true,
+        })
     }
 
     /// Compute model-based projection
@@ -376,249 +405,226 @@ impl ExistentialProjector {
         Ok(simplified)
     }
 
-    /// Apply a substitution to a term
+    /// Apply a substitution to a term.
+    ///
+    /// Delegates to [`TermManager::substitute`], which rewrites *every*
+    /// [`oxiz_core::TermKind`] variant (its `match` has no catch-all arm)
+    /// with an explicit heap stack and a memo table.
+    ///
+    /// The previous hand-written walk rebuilt only `And`/`Or`/`Not`/`Eq`/
+    /// `Le`/`Lt` and returned the term untouched under a `_ => term`
+    /// fallthrough. Model-based projection therefore left existential
+    /// variables *unsubstituted* whenever they occurred under any other
+    /// operator — `Add`, `Sub`, `Mul`, `Ge`, `Gt`, `Ite`, `Implies`,
+    /// `Select`/`Store`, `Apply`, a bitvector operation — so `mbp` returned
+    /// a formula still mentioning the variables it was asked to eliminate.
+    /// It also had no memo, so a shared DAG was re-expanded into fresh
+    /// nodes exponentially, and no depth bound, so deep input overflowed
+    /// the stack.
     fn apply_substitution(
         terms: &mut TermManager,
         term: TermId,
         subst: &HashMap<TermId, TermId>,
     ) -> TermId {
-        use oxiz_core::TermKind;
+        let mapping: rustc_hash::FxHashMap<TermId, TermId> =
+            subst.iter().map(|(&k, &v)| (k, v)).collect();
+        terms.substitute(term, &mapping)
+    }
 
-        // Check if this term should be substituted
-        if let Some(&replacement) = subst.get(&term) {
-            return replacement;
+    /// Simplify ground (variable-free) formulas.
+    ///
+    /// Bottom-up constant folding over the Boolean/comparison skeleton of
+    /// `term`. The set of kinds descended into is exactly the set the prior
+    /// recursive version descended into (`Not`, `And`, `Or`, `Eq`, `Lt`,
+    /// `Le`, `Gt`, `Ge`); every other kind is a leaf that is returned
+    /// unchanged, which is an *identity* rewrite and therefore semantics
+    /// preserving, not a silent default. The folding rules are likewise
+    /// carried over verbatim.
+    ///
+    /// What changes is only the mechanism: an explicit heap stack with a
+    /// memo table keyed on [`TermId`] replaces native recursion, so a
+    /// formula whose `And`/`Or` nesting comes from parsed input can no
+    /// longer overflow the process stack, and a shared DAG is folded once
+    /// per distinct node instead of once per path (the old form rebuilt
+    /// fresh nodes exponentially).
+    fn simplify_ground(terms: &mut TermManager, term: TermId) -> TermId {
+        let mut memo: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
+        let mut stack: Vec<(TermId, bool)> = vec![(term, false)];
+
+        while let Some((current, expanded)) = stack.pop() {
+            if memo.contains_key(&current) {
+                continue;
+            }
+            let Some(kind) = terms.get(current).map(|t| t.kind.clone()) else {
+                memo.insert(current, current);
+                continue;
+            };
+            let Some(children) = Self::simplify_children(&kind) else {
+                // Leaf for this rewrite: constants, variables, and every
+                // operator the fold has no rule for, all map to themselves.
+                memo.insert(current, current);
+                continue;
+            };
+
+            if expanded {
+                let folded: Vec<TermId> = children
+                    .iter()
+                    .map(|child| memo.get(child).copied().unwrap_or(*child))
+                    .collect();
+                let result = Self::fold_simplified(terms, &kind, &folded);
+                memo.insert(current, result);
+            } else {
+                stack.push((current, true));
+                for child in children {
+                    if !memo.contains_key(&child) {
+                        stack.push((child, false));
+                    }
+                }
+            }
         }
 
-        // Recursively apply to subterms
-        let Some(t) = terms.get(term) else {
-            return term;
-        };
+        memo.get(&term).copied().unwrap_or(term)
+    }
 
-        match &t.kind.clone() {
-            TermKind::And(args) => {
-                let new_args: Vec<TermId> = args
-                    .iter()
-                    .map(|&arg| Self::apply_substitution(terms, arg, subst))
-                    .collect();
-                terms.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<TermId> = args
-                    .iter()
-                    .map(|&arg| Self::apply_substitution(terms, arg, subst))
-                    .collect();
-                terms.mk_or(new_args)
-            }
-            TermKind::Not(arg) => {
-                let new_arg = Self::apply_substitution(terms, *arg, subst);
-                terms.mk_not(new_arg)
-            }
-            TermKind::Eq(a, b) => {
-                let new_a = Self::apply_substitution(terms, *a, subst);
-                let new_b = Self::apply_substitution(terms, *b, subst);
-                terms.mk_eq(new_a, new_b)
-            }
-            TermKind::Le(a, b) => {
-                let new_a = Self::apply_substitution(terms, *a, subst);
-                let new_b = Self::apply_substitution(terms, *b, subst);
-                terms.mk_le(new_a, new_b)
-            }
-            TermKind::Lt(a, b) => {
-                let new_a = Self::apply_substitution(terms, *a, subst);
-                let new_b = Self::apply_substitution(terms, *b, subst);
-                terms.mk_lt(new_a, new_b)
-            }
-            _ => term, // Other terms remain unchanged
+    /// The subterms [`Self::simplify_ground`] recurses into, or `None` when
+    /// the kind is a leaf of that rewrite.
+    fn simplify_children(kind: &oxiz_core::TermKind) -> Option<Vec<TermId>> {
+        use oxiz_core::TermKind;
+
+        match kind {
+            TermKind::Not(arg) => Some(vec![*arg]),
+            TermKind::And(args) | TermKind::Or(args) => Some(args.to_vec()),
+            TermKind::Eq(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Ge(a, b) => Some(vec![*a, *b]),
+            _ => None,
         }
     }
 
-    /// Simplify ground (variable-free) formulas
-    fn simplify_ground(terms: &mut TermManager, term: TermId) -> TermId {
+    /// Rebuild one node of [`Self::simplify_ground`] from its already
+    /// simplified children, applying the same constant-folding rules the
+    /// recursive implementation applied.
+    fn fold_simplified(
+        terms: &mut TermManager,
+        kind: &oxiz_core::TermKind,
+        folded: &[TermId],
+    ) -> TermId {
         use oxiz_core::TermKind;
 
-        // Recursively simplify ground formulas
-        let Some(t) = terms.get(term) else {
-            return term;
-        };
-
-        match &t.kind.clone() {
-            // Boolean constants - already simplified
-            TermKind::True | TermKind::False => term,
-
-            // Boolean operations on ground terms
-            TermKind::Not(arg) => {
-                let simplified_arg = Self::simplify_ground(terms, *arg);
-                if let Some(arg_term) = terms.get(simplified_arg) {
-                    match &arg_term.kind {
-                        TermKind::True => terms.mk_false(),
-                        TermKind::False => terms.mk_true(),
-                        _ => terms.mk_not(simplified_arg),
-                    }
-                } else {
-                    terms.mk_not(simplified_arg)
+        match kind {
+            TermKind::Not(_) => {
+                let Some(&arg) = folded.first() else {
+                    return terms.mk_true();
+                };
+                match terms.get(arg).map(|t| &t.kind) {
+                    Some(TermKind::True) => terms.mk_false(),
+                    Some(TermKind::False) => terms.mk_true(),
+                    _ => terms.mk_not(arg),
                 }
             }
-
-            TermKind::And(args) => {
-                let simplified_args: Vec<TermId> = args
-                    .iter()
-                    .map(|&arg| Self::simplify_ground(terms, arg))
-                    .collect();
-
-                // If any arg is false, return false
-                if simplified_args
+            TermKind::And(_) => {
+                if folded
                     .iter()
                     .any(|&arg| matches!(terms.get(arg).map(|t| &t.kind), Some(TermKind::False)))
                 {
                     return terms.mk_false();
                 }
-
-                // Filter out true values
-                let non_true_args: Vec<TermId> = simplified_args
-                    .into_iter()
+                let kept: Vec<TermId> = folded
+                    .iter()
+                    .copied()
                     .filter(|&arg| !matches!(terms.get(arg).map(|t| &t.kind), Some(TermKind::True)))
                     .collect();
-
-                match non_true_args.len() {
-                    0 => terms.mk_true(),
-                    1 => non_true_args[0],
-                    _ => terms.mk_and(non_true_args),
+                match kept.as_slice() {
+                    [] => terms.mk_true(),
+                    [only] => *only,
+                    _ => terms.mk_and(kept),
                 }
             }
-
-            TermKind::Or(args) => {
-                let simplified_args: Vec<TermId> = args
-                    .iter()
-                    .map(|&arg| Self::simplify_ground(terms, arg))
-                    .collect();
-
-                // If any arg is true, return true
-                if simplified_args
+            TermKind::Or(_) => {
+                if folded
                     .iter()
                     .any(|&arg| matches!(terms.get(arg).map(|t| &t.kind), Some(TermKind::True)))
                 {
                     return terms.mk_true();
                 }
-
-                // Filter out false values
-                let non_false_args: Vec<TermId> = simplified_args
-                    .into_iter()
+                let kept: Vec<TermId> = folded
+                    .iter()
+                    .copied()
                     .filter(|&arg| {
                         !matches!(terms.get(arg).map(|t| &t.kind), Some(TermKind::False))
                     })
                     .collect();
-
-                match non_false_args.len() {
-                    0 => terms.mk_false(),
-                    1 => non_false_args[0],
-                    _ => terms.mk_or(non_false_args),
+                match kept.as_slice() {
+                    [] => terms.mk_false(),
+                    [only] => *only,
+                    _ => terms.mk_or(kept),
                 }
             }
-
-            // Arithmetic comparisons on constants
-            TermKind::Eq(a, b) => {
-                let simplified_a = Self::simplify_ground(terms, *a);
-                let simplified_b = Self::simplify_ground(terms, *b);
-
-                // Check if both are integer constants
-                if let (Some(a_term), Some(b_term)) =
-                    (terms.get(simplified_a), terms.get(simplified_b))
-                {
-                    match (&a_term.kind, &b_term.kind) {
-                        (TermKind::IntConst(a_val), TermKind::IntConst(b_val)) => {
-                            if a_val == b_val {
-                                terms.mk_true()
-                            } else {
-                                terms.mk_false()
-                            }
-                        }
-                        (TermKind::True, TermKind::True) | (TermKind::False, TermKind::False) => {
-                            terms.mk_true()
-                        }
-                        (TermKind::True, TermKind::False) | (TermKind::False, TermKind::True) => {
-                            terms.mk_false()
-                        }
-                        _ => terms.mk_eq(simplified_a, simplified_b),
-                    }
-                } else {
-                    terms.mk_eq(simplified_a, simplified_b)
-                }
-            }
-
-            TermKind::Lt(a, b) => {
-                let simplified_a = Self::simplify_ground(terms, *a);
-                let simplified_b = Self::simplify_ground(terms, *b);
-
-                if let (Some(a_term), Some(b_term)) =
-                    (terms.get(simplified_a), terms.get(simplified_b))
-                {
-                    if let (TermKind::IntConst(a_val), TermKind::IntConst(b_val)) =
-                        (&a_term.kind, &b_term.kind)
-                    {
-                        if a_val < b_val {
-                            terms.mk_true()
-                        } else {
-                            terms.mk_false()
-                        }
-                    } else {
-                        terms.mk_lt(simplified_a, simplified_b)
-                    }
-                } else {
-                    terms.mk_lt(simplified_a, simplified_b)
-                }
-            }
-
-            TermKind::Le(_, _) | TermKind::Gt(_, _) | TermKind::Ge(_, _) => {
-                // Extract values and kind before recursive calls
-                let (a, b, kind_tag) = match &t.kind {
-                    TermKind::Le(a, b) => (*a, *b, 0),
-                    TermKind::Gt(a, b) => (*a, *b, 1),
-                    TermKind::Ge(a, b) => (*a, *b, 2),
-                    _ => unreachable!(),
+            TermKind::Eq(_, _)
+            | TermKind::Lt(_, _)
+            | TermKind::Le(_, _)
+            | TermKind::Gt(_, _)
+            | TermKind::Ge(_, _) => {
+                let (Some(&lhs), Some(&rhs)) = (folded.first(), folded.get(1)) else {
+                    return terms.mk_true();
                 };
-
-                let simplified_a = Self::simplify_ground(terms, a);
-                let simplified_b = Self::simplify_ground(terms, b);
-
-                if let (Some(a_term), Some(b_term)) =
-                    (terms.get(simplified_a), terms.get(simplified_b))
-                {
-                    if let (TermKind::IntConst(a_val), TermKind::IntConst(b_val)) =
-                        (&a_term.kind, &b_term.kind)
-                    {
-                        let result = match kind_tag {
-                            0 => a_val <= b_val, // Le
-                            1 => a_val > b_val,  // Gt
-                            2 => a_val >= b_val, // Ge
-                            _ => unreachable!(),
-                        };
-                        if result {
-                            terms.mk_true()
-                        } else {
-                            terms.mk_false()
-                        }
-                    } else {
-                        // Not constants, rebuild the term
-                        match kind_tag {
-                            0 => terms.mk_le(simplified_a, simplified_b),
-                            1 => terms.mk_gt(simplified_a, simplified_b),
-                            2 => terms.mk_ge(simplified_a, simplified_b),
-                            _ => unreachable!(),
-                        }
-                    }
-                } else {
-                    match kind_tag {
-                        0 => terms.mk_le(simplified_a, simplified_b),
-                        1 => terms.mk_gt(simplified_a, simplified_b),
-                        2 => terms.mk_ge(simplified_a, simplified_b),
-                        _ => unreachable!(),
-                    }
+                if let Some(value) = Self::fold_comparison(terms, kind, lhs, rhs) {
+                    return terms.mk_bool(value);
+                }
+                match kind {
+                    TermKind::Eq(_, _) => terms.mk_eq(lhs, rhs),
+                    TermKind::Lt(_, _) => terms.mk_lt(lhs, rhs),
+                    TermKind::Le(_, _) => terms.mk_le(lhs, rhs),
+                    TermKind::Gt(_, _) => terms.mk_gt(lhs, rhs),
+                    // The outer `match` restricts this arm to the five
+                    // comparison kinds, and the four above are handled.
+                    _ => terms.mk_ge(lhs, rhs),
                 }
             }
-
-            // For other terms, return as-is (constants, variables, etc.)
-            _ => term,
+            // `simplify_children` returns `None` for every other kind, so
+            // no other kind ever reaches this rebuild step.
+            _ => folded.first().copied().unwrap_or_else(|| terms.mk_true()),
         }
+    }
+
+    /// Evaluate a comparison whose operands folded to constants, or `None`
+    /// when it cannot be decided syntactically.
+    fn fold_comparison(
+        terms: &TermManager,
+        kind: &oxiz_core::TermKind,
+        lhs: TermId,
+        rhs: TermId,
+    ) -> Option<bool> {
+        use oxiz_core::TermKind;
+
+        let lhs_kind = &terms.get(lhs)?.kind;
+        let rhs_kind = &terms.get(rhs)?.kind;
+
+        if let (TermKind::IntConst(a), TermKind::IntConst(b)) = (lhs_kind, rhs_kind) {
+            return Some(match kind {
+                TermKind::Eq(_, _) => a == b,
+                TermKind::Lt(_, _) => a < b,
+                TermKind::Le(_, _) => a <= b,
+                TermKind::Gt(_, _) => a > b,
+                TermKind::Ge(_, _) => a >= b,
+                _ => return None,
+            });
+        }
+
+        // Boolean equality between the two constants.
+        if matches!(kind, TermKind::Eq(_, _)) {
+            return match (lhs_kind, rhs_kind) {
+                (TermKind::True, TermKind::True) | (TermKind::False, TermKind::False) => Some(true),
+                (TermKind::True, TermKind::False) | (TermKind::False, TermKind::True) => {
+                    Some(false)
+                }
+                _ => None,
+            };
+        }
+
+        None
     }
 }
 
@@ -821,6 +827,20 @@ impl Default for ExistentialHandler {
 mod tests {
     use super::*;
 
+    /// Stack size and nesting depth shared by the deep-recursion tests below.
+    ///
+    /// The two are scaled together on purpose: what these tests actually pin
+    /// is the *ratio* -- about 21 bytes of stack per nesting level
+    /// (128 KiB / 6_250). A natively recursive projection needs far more than
+    /// that per frame and still overflows, so the regression keeps every bit
+    /// of its detection power. The pair used to be 1 MiB / 50_000 -- the same
+    /// 21 bytes -- but `mk_and`/`mk_or` flatten their arguments, so a chain
+    /// built with `acc = mk_or([acc, lit])` is quadratic, and 50_000 levels
+    /// cost tens of GB of live terms. Never raise `DEEP_DEPTH` without
+    /// raising `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 6_250;
+
     #[test]
     fn test_skolem_context_fresh_names() {
         let mut ctx = SkolemContext::new();
@@ -980,5 +1000,137 @@ mod tests {
             "the Skolem variable must be added to the transformed rule's \
              declared variables"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Unbounded-recursion / conservativeness regressions.
+    // -----------------------------------------------------------------------
+
+    /// `contains_existential` must answer "yes" for an existential hidden
+    /// under an operator the old enumeration did not descend into. Answering
+    /// "no" there let the projector keep a conjunct still quantified over Y.
+    #[test]
+    fn contains_existential_sees_through_every_operator() {
+        let mut terms = TermManager::new();
+        let int_sort = terms.sorts.int_sort;
+        let bool_sort = terms.sorts.bool_sort;
+        let y = terms.mk_var("y", int_sort);
+        let x = terms.mk_var("x", int_sort);
+        let zero = terms.mk_int(0);
+        let existentials = [("y".to_string(), int_sort)];
+
+        // `Ite(c, y, 0)`: old code returned `false` (no `Ite` arm).
+        let cond = terms.mk_var("c", bool_sort);
+        let ite = terms.mk_ite(cond, y, zero);
+        assert!(
+            ExistentialProjector::contains_existential(ite, &terms, &existentials),
+            "existential under Ite must be detected"
+        );
+
+        // `Implies(x = 0, y = 0)`.
+        let x_eq = terms.mk_eq(x, zero);
+        let y_eq = terms.mk_eq(y, zero);
+        let implies = terms.mk_implies(x_eq, y_eq);
+        assert!(
+            ExistentialProjector::contains_existential(implies, &terms, &existentials),
+            "existential under Implies must be detected"
+        );
+
+        // Negative polarity: a formula over `x` only must answer "no".
+        assert!(
+            !ExistentialProjector::contains_existential(x_eq, &terms, &existentials),
+            "a formula free of existentials must not be reported as containing one"
+        );
+    }
+
+    /// Deep `Or` nesting must not overflow the stack during projection.
+    #[test]
+    fn syntactic_projection_survives_deep_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut terms = TermManager::new();
+                let int_sort = terms.sorts.int_sort;
+                let x = terms.mk_var("x", int_sort);
+                let zero = terms.mk_int(0);
+                let atom = terms.mk_eq(x, zero);
+                let mut formula = atom;
+                for i in 0..DEEP_DEPTH {
+                    let lit = terms.mk_var(&format!("v{i}"), terms.sorts.bool_sort);
+                    formula = terms.mk_or([formula, lit]);
+                }
+                let existentials = [("y".to_string(), int_sort)];
+                let projected = ExistentialProjector::project(&mut terms, formula, &existentials);
+                assert!(projected.is_ok(), "deep projection must return");
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep projection must not overflow");
+    }
+
+    /// `mbp` must substitute existential variables wherever they occur, not
+    /// only under the six operators the old walk rebuilt, and must survive
+    /// deep nesting.
+    #[test]
+    fn mbp_substitutes_under_arithmetic_and_survives_depth() {
+        let mut terms = TermManager::new();
+        let int_sort = terms.sorts.int_sort;
+        let x = terms.mk_var("x", int_sort);
+        let y = terms.mk_var("y", int_sort);
+        let five = terms.mk_int(5);
+        // `x + y >= 0` -- `y` sits under `Add`, which the old walk skipped.
+        let sum = terms.mk_add([x, y]);
+        let zero = terms.mk_int(0);
+        let formula = terms.mk_ge(sum, zero);
+
+        let mut model = HashMap::new();
+        model.insert(y, five);
+        let projected = ExistentialProjector::mbp(&mut terms, formula, &model, &[y])
+            .expect("mbp should succeed");
+
+        let names = std::collections::HashSet::from(["y"]);
+        assert!(
+            !ExistentialProjector::contains_existential_rec(projected, &terms, &names),
+            "`y` must be gone from the projected formula"
+        );
+    }
+
+    /// Ground folding must produce the same answers as before and must not
+    /// recurse natively.
+    #[test]
+    fn simplify_ground_folds_constants_and_survives_depth() {
+        let mut terms = TermManager::new();
+        let one = terms.mk_int(1);
+        let two = terms.mk_int(2);
+        let lt = terms.mk_lt(one, two);
+        let folded = ExistentialProjector::simplify_ground(&mut terms, lt);
+        assert_eq!(
+            terms.get(folded).map(|t| t.kind.clone()),
+            Some(oxiz_core::TermKind::True),
+            "1 < 2 must fold to true"
+        );
+
+        let ge = terms.mk_ge(one, two);
+        let folded = ExistentialProjector::simplify_ground(&mut terms, ge);
+        assert_eq!(
+            terms.get(folded).map(|t| t.kind.clone()),
+            Some(oxiz_core::TermKind::False),
+            "1 >= 2 must fold to false"
+        );
+
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut terms = TermManager::new();
+                let bool_sort = terms.sorts.bool_sort;
+                let mut formula = terms.mk_var("b0", bool_sort);
+                for i in 1..DEEP_DEPTH {
+                    let lit = terms.mk_var(&format!("b{i}"), bool_sort);
+                    formula = terms.mk_and([formula, lit]);
+                }
+                let folded = ExistentialProjector::simplify_ground(&mut terms, formula);
+                assert!(terms.get(folded).is_some(), "deep fold must return a term");
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep simplify_ground must return");
     }
 }

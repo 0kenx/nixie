@@ -299,6 +299,15 @@ pub struct CheckerConfig {
     pub allow_cycles: bool,
 }
 
+/// Work item for the iterative theory-step dependency walk.
+#[derive(Debug, Clone, Copy)]
+enum StepFrame {
+    /// The step's premises have not been scheduled yet.
+    Enter(TheoryStepId),
+    /// All premises of the step have been validated.
+    Exit(TheoryStepId),
+}
+
 /// Proof checker for verifying proof derivations
 #[derive(Debug, Default)]
 pub struct ProofChecker {
@@ -369,56 +378,79 @@ impl ProofChecker {
         }
     }
 
-    /// Check a single theory proof step
+    /// Check a single theory proof step, and (unless cycles are allowed) every
+    /// step it transitively depends on.
+    ///
+    /// Iterative (explicit heap stack): untrusted theory proofs from an
+    /// external prover drive this directly, and their dependency chains are
+    /// bounded only by the file. The `Enter`/`Exit` split keeps the original
+    /// ordering — premises are validated before the rule and conclusion checks
+    /// of the step that uses them — and the `in_progress`/`validated` sets keep
+    /// the walk linear in the number of steps.
     fn check_theory_step(
         &mut self,
         proof: &TheoryProof,
         step_id: TheoryStepId,
     ) -> Result<(), CheckError> {
-        // Cycle detection
-        if !self.config.allow_cycles {
-            if self.in_progress.contains(&step_id.0) {
-                return Err(CheckError::CyclicDependency);
+        let allow_cycles = self.config.allow_cycles;
+        let mut stack = vec![StepFrame::Enter(step_id)];
+
+        while let Some(frame) = stack.pop() {
+            match frame {
+                StepFrame::Enter(id) => {
+                    // Cycle detection
+                    if !allow_cycles {
+                        if self.in_progress.contains(&id.0) {
+                            return Err(CheckError::CyclicDependency);
+                        }
+                        if self.validated.contains(&id.0) {
+                            continue;
+                        }
+                        self.in_progress.insert(id.0);
+                    }
+
+                    let step = proof.get_step(id).ok_or(CheckError::MissingPremise(id.0))?;
+
+                    stack.push(StepFrame::Exit(id));
+
+                    if allow_cycles {
+                        // No descent: only check that the premises exist.
+                        for premise_id in &step.premises {
+                            if proof.get_step(*premise_id).is_none() {
+                                return Err(CheckError::MissingPremise(premise_id.0));
+                            }
+                        }
+                    } else {
+                        // Descending into a premise reports a missing step with
+                        // exactly the same error the inline check produced.
+                        stack.extend(step.premises.iter().rev().copied().map(StepFrame::Enter));
+                    }
+                }
+                StepFrame::Exit(id) => {
+                    let step = proof.get_step(id).ok_or(CheckError::MissingPremise(id.0))?;
+
+                    // Check rule-specific requirements
+                    self.check_theory_rule(&step.rule, step.premises.len(), step.args.len())?;
+
+                    // Check the semantic content of the conclusion, if requested.
+                    if self.config.verify_conclusions {
+                        let premise_terms: Vec<&ProofTerm> = step
+                            .premises
+                            .iter()
+                            .filter_map(|premise_id| {
+                                proof.get_step(*premise_id).map(|s| &s.conclusion)
+                            })
+                            .collect();
+                        verify_theory_conclusion(&step.rule, &premise_terms, &step.conclusion)?;
+                    }
+
+                    // Mark as validated
+                    if !allow_cycles {
+                        self.in_progress.remove(&id.0);
+                        self.validated.insert(id.0);
+                    }
+                }
             }
-            if self.validated.contains(&step_id.0) {
-                return Ok(());
-            }
-            self.in_progress.insert(step_id.0);
-        }
-
-        let step = proof
-            .get_step(step_id)
-            .ok_or(CheckError::MissingPremise(step_id.0))?;
-
-        // Check premises exist
-        for premise_id in &step.premises {
-            if proof.get_step(*premise_id).is_none() {
-                return Err(CheckError::MissingPremise(premise_id.0));
-            }
-
-            // Recursively check premises
-            if !self.config.allow_cycles {
-                self.check_theory_step(proof, *premise_id)?;
-            }
-        }
-
-        // Check rule-specific requirements
-        self.check_theory_rule(&step.rule, step.premises.len(), step.args.len())?;
-
-        // Check the semantic content of the conclusion, if requested.
-        if self.config.verify_conclusions {
-            let premise_terms: Vec<&ProofTerm> = step
-                .premises
-                .iter()
-                .filter_map(|id| proof.get_step(*id).map(|s| &s.conclusion))
-                .collect();
-            verify_theory_conclusion(&step.rule, &premise_terms, &step.conclusion)?;
-        }
-
-        // Mark as validated
-        if !self.config.allow_cycles {
-            self.in_progress.remove(&step_id.0);
-            self.validated.insert(step_id.0);
         }
 
         Ok(())
@@ -684,11 +716,34 @@ impl Checkable for AletheProof {
 // or fail.
 
 /// A minimal parsed s-expression: either an atom or a parenthesized list.
+///
+/// # Depth invariant
+///
+/// Every `SExpr` in this crate is at most [`MAX_SEXPR_DEPTH`] levels deep.
+/// The type is private to this module and [`parse_sexpr`] (via
+/// [`parse_sexpr_rec`], which enforces the bound) is its *only* construction
+/// path -- [`as_binary`] and [`as_call`] merely borrow subterms, and nothing
+/// here builds a node by hand or nests one parsed value inside another. That is
+/// what makes the derives below safe: `Drop`, `Debug`, `Clone`, `PartialEq` and
+/// `Hash` are all compiler-generated recursive walks, so any new construction
+/// path must either respect the same bound or come with hand-written iterative
+/// impls.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum SExpr {
     Atom(String),
     List(Vec<SExpr>),
 }
+
+/// Maximum nesting accepted by [`parse_sexpr`].
+///
+/// The parser itself is iterative, so this is not a stack guard for the parse:
+/// it bounds the *depth of the resulting tree*, which is still walked
+/// recursively by the compiler-generated `Drop`, `Debug`, `Hash` and `PartialEq`
+/// impls of [`SExpr`]. Conclusion strings reach this parser from externally
+/// supplied proof files, so the bound is enforced through the parser's existing
+/// error channel rather than left to whichever of those walks runs first.
+/// Matches `MAX_PARSE_DEPTH` in oxiz-core's SMT-LIB term parser.
+const MAX_SEXPR_DEPTH: usize = 1024;
 
 /// Parse a single s-expression from `input`, requiring the whole string
 /// (modulo surrounding whitespace) to be consumed.
@@ -712,41 +767,64 @@ fn skip_ws(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
     }
 }
 
+/// Parse one s-expression, leaving the iterator positioned after it.
+///
+/// Iterative: nesting here comes straight from an untrusted proof file, so the
+/// open lists live on an explicit heap stack (`open`) instead of the call stack.
+/// Depth is still bounded by [`MAX_SEXPR_DEPTH`] because the produced [`SExpr`]
+/// tree is walked recursively by its derived impls — see that constant.
 fn parse_sexpr_rec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<SExpr, String> {
-    skip_ws(chars);
-    match chars.peek() {
-        Some('(') => {
-            chars.next();
-            let mut items = Vec::new();
-            loop {
-                skip_ws(chars);
-                match chars.peek() {
-                    Some(')') => {
-                        chars.next();
+    let mut open: Vec<Vec<SExpr>> = Vec::new();
+
+    loop {
+        skip_ws(chars);
+
+        let value = match chars.peek() {
+            Some('(') => {
+                chars.next();
+                if open.len() >= MAX_SEXPR_DEPTH {
+                    return Err(format!(
+                        "s-expression nesting exceeds the maximum supported depth of \
+                         {MAX_SEXPR_DEPTH}"
+                    ));
+                }
+                open.push(Vec::new());
+                continue;
+            }
+            Some(')') => {
+                let Some(items) = open.pop() else {
+                    return Err("unexpected ')'".to_string());
+                };
+                chars.next();
+                SExpr::List(items)
+            }
+            Some(_) => {
+                let mut atom = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_whitespace() || c == '(' || c == ')' {
                         break;
                     }
-                    Some(_) => items.push(parse_sexpr_rec(chars)?),
-                    None => return Err("unexpected end of input inside a list".to_string()),
+                    atom.push(c);
+                    chars.next();
                 }
-            }
-            Ok(SExpr::List(items))
-        }
-        Some(')') => Err("unexpected ')'".to_string()),
-        Some(_) => {
-            let mut atom = String::new();
-            while let Some(&c) = chars.peek() {
-                if c.is_whitespace() || c == '(' || c == ')' {
-                    break;
+                if atom.is_empty() {
+                    return Err("empty atom".to_string());
                 }
-                atom.push(c);
-                chars.next();
+                SExpr::Atom(atom)
             }
-            if atom.is_empty() {
-                return Err("empty atom".to_string());
+            None => {
+                return Err(if open.is_empty() {
+                    "unexpected end of input".to_string()
+                } else {
+                    "unexpected end of input inside a list".to_string()
+                });
             }
-            Ok(SExpr::Atom(atom))
+        };
+
+        match open.last_mut() {
+            Some(items) => items.push(value),
+            None => return Ok(value),
         }
-        None => Err("unexpected end of input".to_string()),
     }
 }
 

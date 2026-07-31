@@ -14,7 +14,6 @@ use num_bigint::BigInt;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::interner::Spur;
 use oxiz_core::sort::SortId;
-use smallvec::SmallVec;
 
 use super::counterexample::CounterExampleGenerator;
 use super::model_completion::CompletedModel;
@@ -143,100 +142,81 @@ impl InstantiationPattern {
     fn collect_pattern_candidates(term: TermId, manager: &TermManager) -> Vec<TermId> {
         let mut candidates = Vec::new();
         let mut visited = FxHashSet::default();
-        Self::collect_candidates_rec(term, &mut candidates, &mut visited, manager);
+        Self::collect_candidates_iterative(term, &mut candidates, &mut visited, manager);
         candidates
     }
 
-    fn collect_candidates_rec(
+    /// Iteratively collect pattern candidates from a term.
+    ///
+    /// Pre-order over the deliberately bounded descent set (`Apply` args,
+    /// `And`/`Or` args, `Eq`/`Lt`/`Le` sides -- the shapes candidates are
+    /// drawn from; other kinds are intentionally not candidate sources), with
+    /// an explicit heap stack instead of native recursion so that no input
+    /// depth can overflow the call stack. Children are pushed in reverse so
+    /// they are visited left-to-right, preserving the recursive walk's
+    /// candidate order exactly.
+    fn collect_candidates_iterative(
         term: TermId,
         candidates: &mut Vec<TermId>,
         visited: &mut FxHashSet<TermId>,
         manager: &TermManager,
     ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
+        let mut work = vec![term];
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
 
-        let Some(t) = manager.get(term) else {
-            return;
-        };
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
 
-        // Function applications are good pattern candidates
-        if matches!(t.kind, TermKind::Apply { .. }) {
-            candidates.push(term);
-        }
+            // Function applications are good pattern candidates
+            if matches!(t.kind, TermKind::Apply { .. }) {
+                candidates.push(t_id);
+            }
 
-        // Recurse into children
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    Self::collect_candidates_rec(arg, candidates, visited, manager);
+            match &t.kind {
+                TermKind::Apply { args, .. } => {
+                    for &arg in args.iter().rev() {
+                        work.push(arg);
+                    }
                 }
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    Self::collect_candidates_rec(arg, candidates, visited, manager);
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter().rev() {
+                        work.push(arg);
+                    }
                 }
+                TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) | TermKind::Le(lhs, rhs) => {
+                    work.push(*rhs);
+                    work.push(*lhs);
+                }
+                _ => {}
             }
-            TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) | TermKind::Le(lhs, rhs) => {
-                Self::collect_candidates_rec(*lhs, candidates, visited, manager);
-                Self::collect_candidates_rec(*rhs, candidates, visited, manager);
-            }
-            _ => {}
         }
     }
 
-    /// Collect variables in the pattern
+    /// Collect the variables a matcher must bind for this pattern: the free
+    /// variables of the pattern terms.
+    ///
+    /// Delegates to [`utils::free_vars`](crate::mbqi::macros::utils::free_vars)
+    /// (the exhaustive, binder-aware, explicit-stack walk in `oxiz-core`).
+    /// This used to be a local recursive walk that descended only
+    /// `Apply`/`Not`/`Neg`/`And`/`Or` and silently dropped everything else,
+    /// so a variable sitting under `Eq`, `Ite`, any arithmetic, bit-vector,
+    /// array or string operator was never collected: `num_vars` came out
+    /// wrong, variable-bearing candidates were discarded by
+    /// `generate_patterns` (`num_vars > 0` filter), and a matcher driven by
+    /// this set would leave those variables unbound. A variable bound by a
+    /// nested binder inside the pattern is correctly *not* collected -- it is
+    /// not matchable from outside.
     fn collect_vars(&mut self, manager: &TermManager) {
         self.vars.clear();
-        let mut visited = FxHashSet::default();
-
-        // Collect terms first to avoid borrow checker issues
-        let terms: Vec<_> = self.terms.to_vec();
-        for term in terms {
-            self.collect_vars_rec(term, &mut visited, manager);
+        for &term in &self.terms {
+            self.vars
+                .extend(crate::mbqi::macros::utils::free_vars(term, manager));
         }
-
         self.num_vars = self.vars.len();
-    }
-
-    fn collect_vars_rec(
-        &mut self,
-        term: TermId,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if let TermKind::Var(name) = t.kind {
-            self.vars.insert(name);
-        }
-
-        // Recurse into children
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    self.collect_vars_rec(arg, visited, manager);
-                }
-            }
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_vars_rec(*arg, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_vars_rec(arg, visited, manager);
-                }
-            }
-            _ => {}
-        }
     }
 
     /// Calculate pattern quality
@@ -339,6 +319,14 @@ impl QuantifierInstantiator {
     ) -> Vec<Instantiation> {
         self.stats.num_instantiation_attempts += 1;
 
+        // Universal quantifiers only: for an existential, body[t/x] is not
+        // entailed by (exists x. body), so emitting it as a lemma
+        // over-constrains the solver and can flip SAT to UNSAT (same
+        // rationale as the is_universal gate in mbqi::integration).
+        if !quantifier.is_universal {
+            return Vec::new();
+        }
+
         // Depth-bound guard: skip entirely if this quantifier has already been
         // instantiated to the maximum allowed depth.
         if !self.depth_allows(quantifier.term) {
@@ -386,6 +374,11 @@ impl QuantifierInstantiator {
         model: &CompletedModel,
         manager: &mut TermManager,
     ) -> Vec<Instantiation> {
+        // Universal quantifiers only (see `instantiate_from_model`).
+        if !quantifier.is_universal {
+            return Vec::new();
+        }
+
         // Depth-bound guard
         if !self.depth_allows(quantifier.term) {
             return Vec::new();
@@ -424,165 +417,92 @@ impl QuantifierInstantiator {
         instantiations
     }
 
-    /// Apply substitution to a term
+    /// Substitute a quantifier's bound variables in `term`, by variable name.
+    ///
+    /// Delegates to [`utils::substitute`](crate::mbqi::macros::utils::substitute),
+    /// the one shared implementation for this crate, which resolves the
+    /// name-keyed map against the term's actual free occurrences and hands the
+    /// result to [`TermManager::substitute`].
+    ///
+    /// This used to be a local recursive walk with a memo table and a
+    /// `TermKind` whitelist that ended in `_ => term`, so every kind outside
+    /// the whitelist was returned **unchanged** -- the whitelist covered 12 kinds, so
+    /// `Xor`, `Distinct`, `Implies`, `Ite`, `Sub`/`Div`/`Mod`/`Neg`,
+    /// `Gt`/`Ge`, every bit-vector, string, floating-point and datatype
+    /// operator, and every binder fell through. A
+    /// bound variable sitting anywhere under such a kind therefore survived
+    /// into the "ground instance", which is then not an instance at all: the
+    /// engine reported a substitution it had not performed. Four
+    /// near-identical copies of that walk existed in this module (here, and in
+    /// `instantiation`, `counterexample`, `lazy_instantiation`,
+    /// `conflict_driven`); they are all now this one call, because a duplicate
+    /// that has diverged four times will diverge again.
+    ///
+    /// The shared routine additionally descends into
+    /// `Forall`/`Exists`/`Let`/`Match` bodies, bindings, cases and trigger
+    /// patterns with capture-avoiding alpha-renaming, and walks with an
+    /// explicit heap stack rather than native recursion.
+    ///
+    /// [`TermManager::substitute`]: oxiz_core::ast::TermManager::substitute
     fn apply_substitution(
         &self,
         term: TermId,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
     ) -> TermId {
-        let mut cache = FxHashMap::default();
-        self.apply_substitution_cached(term, subst, manager, &mut cache)
+        crate::mbqi::macros::utils::substitute(term, subst, manager)
     }
 
-    fn apply_substitution_cached(
-        &self,
-        term: TermId,
-        subst: &FxHashMap<Spur, TermId>,
-        manager: &mut TermManager,
-        cache: &mut FxHashMap<TermId, TermId>,
-    ) -> TermId {
-        if let Some(&cached) = cache.get(&term) {
-            return cached;
-        }
-
-        let Some(t) = manager.get(term).cloned() else {
-            return term;
-        };
-
-        let result = match &t.kind {
-            TermKind::Var(name) => subst.get(name).copied().unwrap_or(term),
-            TermKind::Not(arg) => {
-                let new_arg = self.apply_substitution_cached(*arg, subst, manager, cache);
-                manager.mk_not(new_arg)
-            }
-            TermKind::And(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_and(new_args)
-            }
-            TermKind::Or(args) => {
-                let new_args: Vec<_> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_or(new_args)
-            }
-            TermKind::Eq(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_eq(new_lhs, new_rhs)
-            }
-            TermKind::Lt(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_lt(new_lhs, new_rhs)
-            }
-            TermKind::Le(lhs, rhs) => {
-                let new_lhs = self.apply_substitution_cached(*lhs, subst, manager, cache);
-                let new_rhs = self.apply_substitution_cached(*rhs, subst, manager, cache);
-                manager.mk_le(new_lhs, new_rhs)
-            }
-            TermKind::Add(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_add(new_args)
-            }
-            TermKind::Mul(args) => {
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_mul(new_args)
-            }
-            TermKind::Apply { func, args } => {
-                let func_name = manager.resolve_str(*func).to_string();
-                let new_args: SmallVec<[TermId; 4]> = args
-                    .iter()
-                    .map(|&a| self.apply_substitution_cached(a, subst, manager, cache))
-                    .collect();
-                manager.mk_apply(&func_name, new_args, t.sort)
-            }
-            TermKind::Select(array, index) => {
-                let new_array = self.apply_substitution_cached(*array, subst, manager, cache);
-                let new_index = self.apply_substitution_cached(*index, subst, manager, cache);
-                manager.mk_select(new_array, new_index)
-            }
-            TermKind::Store(array, index, value) => {
-                let new_array = self.apply_substitution_cached(*array, subst, manager, cache);
-                let new_index = self.apply_substitution_cached(*index, subst, manager, cache);
-                let new_value = self.apply_substitution_cached(*value, subst, manager, cache);
-                manager.mk_store(new_array, new_index, new_value)
-            }
-            // Constants and other terms (Implies, Gt, Ge, Sub, Div, Mod,
-            // Neg, Ite) are not traversed here. The MBQIIntegration layer
-            // re-applies substitution for instantiation engine results using
-            // its own complete implementation.
-            _ => term,
-        };
-
-        cache.insert(term, result);
-        result
-    }
-
-    /// Extract relevant terms from conflict clause
+    /// Extract relevant terms from a conflict clause.
+    ///
+    /// Explicit-stack pre-order walk (children pushed in reverse so they are
+    /// visited left-to-right, preserving the retired recursion's collection
+    /// order); the descent set (`Not`/`Neg`, `And`/`Or`, `Eq`/`Lt` sides,
+    /// `Apply` args) is the deliberately bounded shape this heuristic draws
+    /// witness values from, unchanged.
     fn extract_relevant_terms(&self, conflict: &[TermId], manager: &TermManager) -> Vec<TermId> {
         let mut terms = Vec::new();
-        let mut visited = FxHashSet::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work: Vec<TermId> = Vec::new();
 
-        for &term in conflict {
-            self.extract_relevant_terms_rec(term, &mut terms, &mut visited, manager);
+        for &root in conflict {
+            work.push(root);
+            while let Some(t_id) = work.pop() {
+                if !visited.insert(t_id) {
+                    continue;
+                }
+
+                let Some(t) = manager.get(t_id) else {
+                    continue;
+                };
+
+                // Collect ground terms
+                if self.is_ground_value(t_id, manager) {
+                    terms.push(t_id);
+                }
+
+                match &t.kind {
+                    TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                    TermKind::And(args) | TermKind::Or(args) => {
+                        for &arg in args.iter().rev() {
+                            work.push(arg);
+                        }
+                    }
+                    TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) => {
+                        work.push(*rhs);
+                        work.push(*lhs);
+                    }
+                    TermKind::Apply { args, .. } => {
+                        for &arg in args.iter().rev() {
+                            work.push(arg);
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
         terms
-    }
-
-    fn extract_relevant_terms_rec(
-        &self,
-        term: TermId,
-        terms: &mut Vec<TermId>,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        // Collect ground terms
-        if self.is_ground_value(term, manager) {
-            terms.push(term);
-        }
-
-        // Recurse into children
-        match &t.kind {
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.extract_relevant_terms_rec(*arg, terms, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.extract_relevant_terms_rec(arg, terms, visited, manager);
-                }
-            }
-            TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) => {
-                self.extract_relevant_terms_rec(*lhs, terms, visited, manager);
-                self.extract_relevant_terms_rec(*rhs, terms, visited, manager);
-            }
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    self.extract_relevant_terms_rec(arg, terms, visited, manager);
-                }
-            }
-            _ => {}
-        }
     }
 
     /// Check if a term is a ground value
@@ -748,13 +668,25 @@ impl InstantiationEngine {
         }
     }
 
-    /// Generate instantiations for a quantifier
+    /// Generate instantiations for a quantifier.
+    ///
+    /// **Universal quantifiers only.** For an existential, `body[t/x]` is not
+    /// entailed by `(exists x. body)`: asserting an arbitrary instance as a
+    /// lemma over-constrains the solver and can flip SAT to UNSAT. The
+    /// integration layer already refuses to route existentials here
+    /// (`mbqi::integration` gates every call on `is_universal`); this check
+    /// closes the same hole on the public API, where nothing else guards the
+    /// pattern-based and enumerative strategies below.
     pub fn instantiate(
         &mut self,
         quantifier: &QuantifiedFormula,
         model: &CompletedModel,
         manager: &mut TermManager,
     ) -> Vec<Instantiation> {
+        if !quantifier.is_universal {
+            return Vec::new();
+        }
+
         let mut instantiations = Vec::new();
 
         // Strategy 1: Model-based instantiation
@@ -854,15 +786,15 @@ impl PatternMatcher {
         Vec::new()
     }
 
+    /// See [`QuantifierInstantiator::apply_substitution`]; both are the same
+    /// call into [`utils::substitute`](crate::mbqi::macros::utils::substitute).
     fn apply_substitution(
         &self,
         term: TermId,
         subst: &FxHashMap<Spur, TermId>,
         manager: &mut TermManager,
     ) -> TermId {
-        // Reuse implementation from QuantifierInstantiator
-        let instantiator = QuantifierInstantiator::new();
-        instantiator.apply_substitution(term, subst, manager)
+        crate::mbqi::macros::utils::substitute(term, subst, manager)
     }
 
     fn clear_cache(&mut self) {
@@ -902,9 +834,8 @@ impl EnumerativeInstantiator {
                 }
             }
 
-            let instantiator = QuantifierInstantiator::new();
             let ground_body =
-                instantiator.apply_substitution(quantifier.body, &assignment, manager);
+                crate::mbqi::macros::utils::substitute(quantifier.body, &assignment, manager);
 
             let inst = Instantiation::with_reason(
                 quantifier.term,
@@ -1020,6 +951,270 @@ pub struct EngineStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===== Substitution regression tests =====
+    //
+    // `apply_substitution` used to be a local recursive walk whose `TermKind`
+    // whitelist ended in `_ => term`, so a bound variable under any unlisted
+    // kind survived into the supposedly ground instance. All four copies in
+    // this module now delegate to `crate::mbqi::macros::utils::substitute`.
+
+    /// Every instantiation the public [`InstantiationEngine::instantiate`]
+    /// emits must actually be an instance: ground, with the bound variable
+    /// replaced by the recorded witness.
+    ///
+    /// This is the reproduction at the public boundary. For
+    /// `(forall ((x Bool)) (xor x (not x)))` the engine used to return two
+    /// instantiations -- one for `x := true`, one for `x := false` -- whose
+    /// `result` was the *quantifier body itself*, still containing `x` free,
+    /// because `Xor` was outside `apply_substitution`'s whitelist. Since a
+    /// declared constant and a bound variable share the `TermKind::Var`
+    /// representation, that lemma silently constrains whatever global constant
+    /// happens to be named `x`. `MBQIIntegration` feeds these results straight
+    /// into `all_instantiations` with no groundedness guard of its own.
+    #[test]
+    fn instantiation_engine_emits_only_real_instances() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let not_x = m.mk_not(x);
+        let body = m.mk_xor(x, not_x);
+        let q_term = m.mk_forall([("x", bool_sort)], body);
+        let x_name = match m.get(x).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("x is a variable"),
+        };
+        let qf = QuantifiedFormula::new(
+            q_term,
+            core::iter::once((x_name, bool_sort)).collect(),
+            body,
+            true,
+        );
+
+        let model = CompletedModel::new();
+        let mut engine = InstantiationEngine::new();
+        let insts = engine.instantiate(&qf, &model, &mut m);
+
+        assert!(
+            !insts.is_empty(),
+            "the Bool domain is enumerated, so instances are expected"
+        );
+        for inst in &insts {
+            let free = m.free_vars_including_patterns(inst.result);
+            assert!(
+                free.is_empty(),
+                "instantiation {:?} left {free:?} free -- not an instance",
+                inst.substitution
+            );
+        }
+    }
+
+    /// The engine must refuse to instantiate an existential quantifier:
+    /// `body[t/x]` is not entailed by `(exists x. body)`. The identical
+    /// setup with `is_universal = true` (the test above) produces
+    /// instantiations, so the empty result here is the gate, not a vacuity.
+    #[test]
+    fn instantiation_engine_refuses_existential_quantifiers() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let x = m.mk_var("x", bool_sort);
+        let not_x = m.mk_not(x);
+        let body = m.mk_xor(x, not_x);
+        let q_term = m.mk_exists([("x", bool_sort)], body);
+        let x_name = match m.get(x).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("x is a variable"),
+        };
+        let qf = QuantifiedFormula::new(
+            q_term,
+            core::iter::once((x_name, bool_sort)).collect(),
+            body,
+            false,
+        );
+
+        let model = CompletedModel::new();
+        let mut engine = InstantiationEngine::new();
+        let insts = engine.instantiate(&qf, &model, &mut m);
+        assert!(
+            insts.is_empty(),
+            "an existential must never be instantiated, got {insts:?}"
+        );
+
+        // The lower-level instantiators are public API too and carry the
+        // same gate.
+        let mut instantiator = QuantifierInstantiator::new();
+        assert!(
+            instantiator
+                .instantiate_from_model(&qf, &model, &mut m)
+                .is_empty()
+        );
+        assert!(
+            instantiator
+                .instantiate_from_conflict(&qf, &[], &model, &mut m)
+                .is_empty()
+        );
+    }
+
+    /// `InstantiationPattern::collect_vars` used to descend only
+    /// `Apply`/`Not`/`Neg`/`And`/`Or` and silently drop every other kind, so
+    /// variables under `Eq`, `Distinct`, bit-vector or arithmetic operators
+    /// were never counted and the variable-bearing pattern was discarded.
+    #[test]
+    fn pattern_collect_vars_sees_all_kinds_and_respects_binders() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let bool_sort = m.sorts.bool_sort;
+        let bv8 = m.sorts.bitvec(8);
+
+        let i = m.mk_var("i", int_sort);
+        let b = m.mk_var("b", bv8);
+        let two = m.mk_int(2);
+        let ones = m.mk_bitvec(1, 8);
+
+        // Both kinds were outside the old whitelist.
+        let distinct = m.mk_distinct([i, two]);
+        let bv_lt = m.mk_bv_ult(b, ones);
+
+        let mut pattern = InstantiationPattern::new(vec![distinct, bv_lt]);
+        pattern.collect_vars(&m);
+        assert_eq!(
+            pattern.num_vars, 2,
+            "i (under Distinct) and b (under BvUlt) must both be collected"
+        );
+
+        // A variable bound by a nested binder is not matchable from outside
+        // and must not be collected; the free y must be.
+        let z = m.mk_var("z", int_sort);
+        let y = m.mk_var("y", int_sort);
+        let p = m.mk_apply("P", [z, y], bool_sort);
+        let nested = m.mk_forall([("z", int_sort)], p);
+        let mut pattern = InstantiationPattern::new(vec![nested]);
+        pattern.collect_vars(&m);
+        let y_name = match m.get(y).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("y is a variable"),
+        };
+        assert_eq!(pattern.num_vars, 1);
+        assert!(pattern.vars.contains(&y_name));
+    }
+
+    /// Run `f` on a dedicated 128 KiB stack: overflow aborts the process, so
+    /// returning at all is part of the assertion.
+    ///
+    /// This stack and every depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    /// The candidate and relevant-term collectors must survive 12 500-deep
+    /// terms on a tiny stack (the old recursion overflowed).
+    #[test]
+    fn collectors_survive_deep_terms_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let int_sort = m.sorts.int_sort;
+            let x = m.mk_var("x", int_sort);
+            let mut chain = x;
+            for _ in 0..DEPTH {
+                chain = m.mk_apply("f", [chain], int_sort);
+            }
+
+            let candidates = InstantiationPattern::collect_pattern_candidates(chain, &m);
+            assert_eq!(
+                candidates.len(),
+                DEPTH,
+                "every f-application is a candidate"
+            );
+
+            let instantiator = QuantifierInstantiator::new();
+            let relevant = instantiator.extract_relevant_terms(&[chain], &m);
+            // No ground values anywhere in the chain (x is a variable).
+            assert!(relevant.is_empty());
+        });
+    }
+
+    /// Candidate collection order is pre-order left-to-right; pinned so the
+    /// iterative conversion is proven behavior-preserving.
+    #[test]
+    fn candidate_collection_preserves_preorder() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let g_x = m.mk_apply("g", [x], int_sort);
+        let h_x = m.mk_apply("h", [x], int_sort);
+        let f = m.mk_apply("f", [g_x, h_x], int_sort);
+
+        let candidates = InstantiationPattern::collect_pattern_candidates(f, &m);
+        assert_eq!(candidates, vec![f, g_x, h_x]);
+    }
+
+    /// A body whose only variable occurrence sits under a kind the old
+    /// whitelist missed must still be substituted.
+    #[test]
+    fn substitution_reaches_kinds_outside_the_old_whitelist() {
+        let mut m = TermManager::new();
+        let bool_sort = m.sorts.bool_sort;
+        let int_sort = m.sorts.int_sort;
+        let bv8 = m.sorts.bitvec(8);
+
+        let p = m.mk_var("p", bool_sort);
+        let i = m.mk_var("i", int_sort);
+        let b = m.mk_var("b", bv8);
+
+        let p_name = match m.get(p).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("p is a variable"),
+        };
+        let i_name = match m.get(i).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("i is a variable"),
+        };
+        let b_name = match m.get(b).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("b is a variable"),
+        };
+
+        let truth = m.mk_true();
+        let two = m.mk_int(2);
+        let ones = m.mk_bitvec(1, 8);
+
+        // Every one of these was returned unchanged by the old walk.
+        let xor = m.mk_xor(p, truth);
+        let distinct = m.mk_distinct([i, two]);
+        let bv_lt = m.mk_bv_ult(b, ones);
+        let implies = m.mk_implies(p, truth);
+        let nested = m.mk_forall([("z", int_sort)], distinct);
+
+        let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+        subst.insert(p_name, truth);
+        subst.insert(i_name, two);
+        subst.insert(b_name, ones);
+
+        let subject = QuantifierInstantiator::new();
+        for (label, term) in [
+            ("xor", xor),
+            ("distinct", distinct),
+            ("bvult", bv_lt),
+            ("implies", implies),
+            ("nested forall", nested),
+        ] {
+            let result = subject.apply_substitution(term, &subst, &mut m);
+            let free = m.free_vars_including_patterns(result);
+            assert!(
+                free.is_empty(),
+                "{label}: substitution left free variables {free:?} in the result"
+            );
+        }
+    }
     use oxiz_core::interner::Key;
 
     #[test]

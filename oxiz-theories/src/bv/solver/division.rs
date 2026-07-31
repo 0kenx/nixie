@@ -23,14 +23,15 @@ use smallvec::SmallVec;
 impl BvSolver {
     /// Unsigned division: result = a / b (unsigned)
     /// If b = 0, result is all 1s (SMT-LIB semantics)
-    pub fn bv_udiv(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
+    pub fn bv_udiv(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             // Check if divisor is zero
             let b_is_zero = self.sat.new_var();
@@ -102,19 +103,23 @@ impl BvSolver {
             for i in 0..width {
                 self.encode_mux(r.bits[i], b_is_zero, all_ones[i], quot_bits[i]);
             }
+            true
+        } else {
+            false
         }
     }
 
     /// Unsigned remainder: result = a % b (unsigned)
     /// If b = 0, result = a (SMT-LIB semantics)
-    pub fn bv_urem(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
+    pub fn bv_urem(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             // Check if divisor is zero
             let b_is_zero = self.sat.new_var();
@@ -179,19 +184,23 @@ impl BvSolver {
             for i in 0..width {
                 self.encode_mux(r.bits[i], b_is_zero, va.bits[i], rem_bits[i]);
             }
+            true
+        } else {
+            false
         }
     }
 
     /// Signed division: result = a / b (signed, two's complement)
     /// If b = 0, result = all 1s (SMT-LIB semantics)
-    pub fn bv_sdiv(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
+    pub fn bv_sdiv(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             // Check if divisor is zero
             let b_is_zero = self.sat.new_var();
@@ -304,32 +313,48 @@ impl BvSolver {
                 self.encode_mux(signed_quot[i], result_sign, neg_quot[i], quot_abs[i]);
             }
 
-            // All 1s for division by zero result
-            let mut all_ones: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..width {
-                let one = self.sat.new_var();
-                self.sat.add_clause([Lit::pos(one)]); // Force to 1
-                all_ones.push(one);
-            }
+            // Divide-by-zero value, which — unlike `bvudiv` — is *not* simply
+            // all-ones: unfolding the SMT-LIB definition of `bvsdiv` at `t = 0`
+            // gives `bvudiv s 0 = -1` for a non-negative `s`, but
+            // `bvneg (bvudiv (bvneg s) 0) = bvneg(-1) = 1` for a negative one.
+            // (Reference: Z3's `bv_rewriter::mk_bv_sdiv_core`, whose `hi_div0`
+            // branch builds `(ite (bvslt x 0) 1 #xff..f)`.)  Pinning the result
+            // to all-ones for both signs made `(bvsdiv x #x0)` unable to take
+            // the value `1`, refuting satisfiable formulas — the constant
+            // folder in `bv_fold::bv_sdiv` already had the sign split, so the
+            // two disagreed whenever the dividend stayed symbolic.
+            //
+            // Both candidate values share bit 0 = 1 and differ only above it,
+            // where `-1` is all-ones and `1` is all-zeros; so bit 0 is a pinned
+            // true and every higher bit is `not sign_a`.
+            let one_bit = self.sat.new_var();
+            self.sat.add_clause([Lit::pos(one_bit)]);
+            let not_sign_a = self.sat.new_var();
+            self.encode_not(not_sign_a, sign_a);
 
-            // result = b_is_zero ? all_ones : signed_quot
+            // result = b_is_zero ? (sign_a ? 1 : -1) : signed_quot
             for i in 0..width {
-                self.encode_mux(r.bits[i], b_is_zero, all_ones[i], signed_quot[i]);
+                let div_zero_bit = if i == 0 { one_bit } else { not_sign_a };
+                self.encode_mux(r.bits[i], b_is_zero, div_zero_bit, signed_quot[i]);
             }
+            true
+        } else {
+            false
         }
     }
 
     /// Signed remainder: result = a % b (signed)
     /// Sign of result matches sign of dividend a
     /// If b = 0, result = a (SMT-LIB semantics)
-    pub fn bv_srem(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
+    pub fn bv_srem(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             let width = va.width as usize;
-            let r = self.new_bv(result, va.width).clone();
+            if width == 0 {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             // Check if divisor is zero
             let b_is_zero = self.sat.new_var();
@@ -442,6 +467,9 @@ impl BvSolver {
             for i in 0..width {
                 self.encode_mux(r.bits[i], b_is_zero, va.bits[i], signed_rem[i]);
             }
+            true
+        } else {
+            false
         }
     }
 }

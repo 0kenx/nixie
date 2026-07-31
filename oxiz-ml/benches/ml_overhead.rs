@@ -1,5 +1,9 @@
 //! Benchmark ML overhead on solving
 
+// Benches are test-class code: panicking on broken setup is the desired
+// failure mode, but clippy has no allow-unwrap-in-benches analogue to the
+// allow-unwrap-in-tests knob that covers the test targets.
+#![allow(clippy::unwrap_used)]
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxiz_ml::branching::BranchingLearner;
 use oxiz_ml::restarts::{RestartFeatures, RestartPolicyLearner};

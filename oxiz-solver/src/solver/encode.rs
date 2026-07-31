@@ -5,6 +5,7 @@ use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::{One, ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_core::sort::SortId;
 use oxiz_sat::{Lit, Var};
 use smallvec::SmallVec;
 
@@ -13,6 +14,14 @@ use super::trail::TrailOp;
 use super::types::{
     ArithConstraintType, Constraint, NamedAssertion, ParsedArithConstraint, Polarity, UnsatCore,
 };
+
+mod exists_skolem;
+pub(crate) mod finite_expand;
+mod skolem_candidates;
+mod track_theory_vars;
+
+#[cfg(test)]
+mod tests;
 
 impl Solver {
     pub(super) fn get_or_create_var(&mut self, term: TermId) -> Var {
@@ -31,212 +40,97 @@ impl Solver {
         var
     }
 
-    /// Track theory variables in a term for model extraction.
-    /// Recursively scans a term to find Int/Real/BV variables and registers them.
+    /// Remember that assertion `index` was `term`, under `name` if the caller
+    /// gave one.
     ///
-    /// Compound terms that have already been fully traversed are recorded in
-    /// `tracked_compound_terms` to avoid redundant O(depth) re-walks when the
-    /// same sub-expression appears in multiple parent constraints.
-    pub(super) fn track_theory_vars(&mut self, term_id: TermId, manager: &TermManager) {
-        let Some(term) = manager.get(term_id) else {
+    /// # Why this is unconditional
+    ///
+    /// It used to be gated on `produce_unsat_cores`, which made unsat-core
+    /// production silently order-dependent: a session that asserted first and
+    /// set `:produce-unsat-cores` afterwards got `unsat` and an *empty* core,
+    /// because the names were never written down — and nothing along the way
+    /// reported that the option had arrived too late to be honoured.
+    ///
+    /// The gate belongs on *producing* a core, where it still is
+    /// (`Solver::build_unsat_core`, `Solver::build_unsat_core_trivial_false`
+    /// and `Solver::minimize_unsat_core` all check the flag), not on
+    /// remembering what the caller asserted.  What it saved
+    /// was one `Vec` push and one trail entry per assertion — the SAT-level work
+    /// of core tracking was never behind this branch — so nothing is paid for
+    /// the sessions that never ask for a core beyond the assertion names they
+    /// themselves supplied.
+    ///
+    /// `named_assertions` is only ever searched by `index` (never assumed dense
+    /// or aligned with `assertions`), so filling it in for every assertion
+    /// changes no lookup.
+    fn record_assertion_identity(&mut self, term: TermId, name: Option<String>, index: usize) {
+        let na_index = self.named_assertions.len();
+        self.named_assertions.push(NamedAssertion {
+            term,
+            name,
+            index: index as u32,
+        });
+        self.trail
+            .push(TrailOp::NamedAssertionAdded { index: na_index });
+    }
+
+    /// Record `term`'s Tseitin encoding in [`Solver::encoded_terms`], journalling
+    /// the write so [`Solver::pop`] can take back exactly the entries whose
+    /// defining clauses the matching `sat.pop()` retracts.
+    ///
+    /// The journal entry carries the displaced value, which is what makes the
+    /// retraction *precise* rather than destructive: an entry widened from
+    /// `Positive` to `Both` inside a scope has only the extra implication
+    /// direction retracted with that scope, so `pop` must put the narrower
+    /// pre-scope coverage back rather than forget the term altogether.
+    ///
+    /// A write that changes nothing is not journalled — re-encoding a term at
+    /// the coverage it already has emits duplicate clauses but no new memo
+    /// state, and a trail entry for it would only make `pop` do redundant work.
+    fn memoize_encoding(&mut self, term: TermId, lit: Lit, polarity: Polarity) {
+        let previous = self.encoded_terms.insert(term, (lit, polarity));
+        if previous == Some((lit, polarity)) {
             return;
-        };
-
-        match &term.kind {
-            TermKind::Var(_) => {
-                // Found a variable - check its sort and track appropriately
-                let is_int = term.sort == manager.sorts.int_sort;
-                let is_real = term.sort == manager.sorts.real_sort;
-
-                if is_int || is_real {
-                    if !self.arith_terms.contains(&term_id) {
-                        self.arith_terms.insert(term_id);
-                        self.trail.push(TrailOp::ArithTermAdded { term: term_id });
-                        self.arith.intern(term_id);
-                    }
-                } else if let Some(sort) = manager.sorts.get(term.sort)
-                    && sort.is_bitvec()
-                    && !self.bv_terms.contains(&term_id)
-                {
-                    self.bv_terms.insert(term_id);
-                    self.trail.push(TrailOp::BvTermAdded { term: term_id });
-                    if let Some(width) = sort.bitvec_width() {
-                        self.bv.new_bv(term_id, width);
-                    }
-                    // Also intern in ArithSolver for BV comparison constraints
-                    // (BV comparisons are handled as bounded integer arithmetic)
-                    self.arith.intern(term_id);
-                }
-            }
-            // Recursively scan compound terms.
-            // Guard: if this compound node was already fully traversed, skip it.
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                if self.tracked_compound_terms.contains(&term_id) {
-                    return;
-                }
-                self.tracked_compound_terms.insert(term_id);
-                // Collect args to avoid re-borrowing `self` during iteration
-                let args_vec: SmallVec<[TermId; 8]> = args.iter().copied().collect();
-                for arg in args_vec {
-                    self.track_theory_vars(arg, manager);
-                }
-            }
-            TermKind::Sub(lhs, rhs)
-            | TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::BvAdd(lhs, rhs)
-            | TermKind::BvSub(lhs, rhs)
-            | TermKind::BvMul(lhs, rhs)
-            | TermKind::BvAnd(lhs, rhs)
-            | TermKind::BvOr(lhs, rhs)
-            | TermKind::BvXor(lhs, rhs)
-            | TermKind::BvUlt(lhs, rhs)
-            | TermKind::BvUle(lhs, rhs)
-            | TermKind::BvSlt(lhs, rhs)
-            | TermKind::BvSle(lhs, rhs)
-            // Shifts and concatenation: recurse so leaf operands are tracked
-            // (and thus get model values for counterexamples).
-            | TermKind::BvShl(lhs, rhs)
-            | TermKind::BvLshr(lhs, rhs)
-            | TermKind::BvAshr(lhs, rhs)
-            | TermKind::BvConcat(lhs, rhs) => {
-                if self.tracked_compound_terms.contains(&term_id) {
-                    return;
-                }
-                self.tracked_compound_terms.insert(term_id);
-                let (l, r) = (*lhs, *rhs);
-                self.track_theory_vars(l, manager);
-                self.track_theory_vars(r, manager);
-            }
-            // Bit extraction: recurse into the single source operand.
-            TermKind::BvExtract { arg, .. } => {
-                if self.tracked_compound_terms.contains(&term_id) {
-                    return;
-                }
-                self.tracked_compound_terms.insert(term_id);
-                let a = *arg;
-                self.track_theory_vars(a, manager);
-            }
-            // BV arithmetic operations (division/remainder)
-            // These need the has_bv_arith_ops flag for conflict detection
-            TermKind::BvUdiv(lhs, rhs)
-            | TermKind::BvSdiv(lhs, rhs)
-            | TermKind::BvUrem(lhs, rhs)
-            | TermKind::BvSrem(lhs, rhs) => {
-                if self.tracked_compound_terms.contains(&term_id) {
-                    return;
-                }
-                self.tracked_compound_terms.insert(term_id);
-                self.has_bv_arith_ops = true;
-                let (l, r) = (*lhs, *rhs);
-                self.track_theory_vars(l, manager);
-                self.track_theory_vars(r, manager);
-            }
-            TermKind::Neg(arg) | TermKind::Not(arg) | TermKind::BvNot(arg) => {
-                if self.tracked_compound_terms.contains(&term_id) {
-                    return;
-                }
-                self.tracked_compound_terms.insert(term_id);
-                let a = *arg;
-                self.track_theory_vars(a, manager);
-            }
-            TermKind::Ite(cond, then_br, else_br) => {
-                if self.tracked_compound_terms.contains(&term_id) {
-                    return;
-                }
-                self.tracked_compound_terms.insert(term_id);
-                let (c, t, e) = (*cond, *then_br, *else_br);
-                self.track_theory_vars(c, manager);
-                self.track_theory_vars(t, manager);
-                self.track_theory_vars(e, manager);
-            }
-            // Uninterpreted function application: if the sort is numeric (Int or
-            // Real), treat the whole application as an opaque arithmetic variable.
-            // This supports the UFLIA / UFLRA combination: `f(k)` appearing in
-            // `(> (f k) 10)` must be tracked so that its model value is extracted
-            // and available to the MBQI counterexample generator.
-            //
-            // We do NOT recurse into the arguments here -- argument terms are
-            // arithmetic values passed to an opaque symbol, not arithmetic
-            // variables in their own right within this constraint.  (They will be
-            // tracked separately when they appear in other constraints.)
-            //
-            // RESTRICTION: skip Apply terms that have an argument which is itself
-            // an Apply term that is already in `arith_terms` (i.e. already has a
-            // numeric model value in the arithmetic solver).  When `f(g(a))` is
-            // added to arith AND `g(a)` also has an arith model value `v`, the
-            // arith solver treats `f(g(a))` as independent from `f(v)`, leading
-            // to theory combination conflicts with EUF (which knows via congruence
-            // that `f(g(a)) = f(v)`).
-            //
-            // In contrast, terms like `f(sk(x))` where `sk(x)` is a fresh Skolem
-            // constant (NOT in arith_terms) are safe to add because there are no
-            // contradictory EUF congruence facts to violate.
-            TermKind::Apply { args, .. } => {
-                let is_int = term.sort == manager.sorts.int_sort;
-                let is_real = term.sort == manager.sorts.real_sort;
-                if is_int || is_real {
-                    // Check: is any argument a *non-Skolem* Apply term that is
-                    // already in arith?  When f(g(a)) is added to arith AND g(a)
-                    // has an arith model value v, EUF applies congruence to derive
-                    // f(g(a)) = f(v), conflicting with arith's independent
-                    // assignment to f(g(a)).  Skolem-generated Apply terms (whose
-                    // function names start with "sk!") are fresh constants created
-                    // during quantifier Skolemization; EUF has no equality facts
-                    // about them so no congruence conflict can arise.
-                    let has_conflicting_apply_arg = args.iter().any(|&arg| {
-                        manager.get(arg).is_some_and(|a| {
-                            if let TermKind::Apply {
-                                func,
-                                args: inner_args,
-                                ..
-                            } = &a.kind
-                            {
-                                if inner_args.is_empty() {
-                                    return false;
-                                }
-                                let fname = manager.resolve_str(*func);
-                                let is_skolem = fname.starts_with("sk!");
-                                !is_skolem && self.arith_terms.contains(&arg)
-                            } else {
-                                false
-                            }
-                        })
-                    });
-                    if !has_conflicting_apply_arg && !self.arith_terms.contains(&term_id) {
-                        self.arith_terms.insert(term_id);
-                        self.trail.push(TrailOp::ArithTermAdded { term: term_id });
-                        self.arith.intern(term_id);
-                    }
-                }
-            }
-
-            // Array select with numeric sort: `(select a i) : Int/Real` is an
-            // opaque arithmetic variable -- the array theory handles equality
-            // propagation for equal indices, while arithmetic sees the result as
-            // an unconstrained integer/real.  We register it here so that
-            // constraints like `(> (select a 0) 7)` are tracked by the arithmetic
-            // solver and model values are extracted correctly.
-            TermKind::Select(_, _) => {
-                self.has_array_ops = true;
-                let is_int = term.sort == manager.sorts.int_sort;
-                let is_real = term.sort == manager.sorts.real_sort;
-                if (is_int || is_real) && !self.arith_terms.contains(&term_id) {
-                    self.arith_terms.insert(term_id);
-                    self.trail.push(TrailOp::ArithTermAdded { term: term_id });
-                    self.arith.intern(term_id);
-                }
-            }
-
-            // Constants and other leaf terms - nothing to track
-            _ => {}
         }
+        self.trail
+            .push(TrailOp::EncodedTermAdded { term, previous });
+    }
+
+    /// Attach a theory constraint to `var`, journalling the write only when
+    /// this scope is the one that introduced it.
+    ///
+    /// The encoder is re-entrant across assertion scopes: a term first encoded
+    /// at an outer level keeps its SAT variable (`get_or_create_var` hits the
+    /// cache), so asserting it again inside a `push` re-runs this code for a
+    /// variable the outer scope already owns.  Journalling that repeat write
+    /// would make the matching `pop` delete a constraint that is still active,
+    /// leaving the atom without any theory meaning — the solver then loses the
+    /// refutation that depends on it (`(or (= x 1) (= x 2)) ∧ (= x 5)` stopped
+    /// being provably `unsat` after such a scope).  Recording only the first
+    /// write keeps the trail entry paired with the scope that owns the fact.
+    pub(super) fn record_constraint(&mut self, var: Var, constraint: Constraint) {
+        if self.var_to_constraint.insert(var, constraint).is_none() {
+            self.trail.push(TrailOp::ConstraintAdded { var });
+        }
+    }
+
+    /// Register a compound Int/Real-sorted term as an opaque arithmetic atom.
+    ///
+    /// Used for `div`, `mod` and conditional values: the linear solver cannot
+    /// express them as a combination of their operands, so each gets its own
+    /// theory variable (and hence a model value), and its semantics arrive
+    /// separately as the ground axioms asserted by
+    /// [`Solver::instantiate_arith_axioms`].  Non-numeric terms are ignored.
+    fn register_arith_atom(&mut self, term_id: TermId, sort: SortId, manager: &TermManager) {
+        if sort != manager.sorts.int_sort && sort != manager.sorts.real_sort {
+            return;
+        }
+        if self.arith_terms.contains(&term_id) {
+            return;
+        }
+        self.arith_terms.insert(term_id);
+        self.trail.push(TrailOp::ArithTermAdded { term: term_id });
+        self.arith.intern(term_id);
     }
 
     /// Parse an arithmetic comparison and extract linear expression.
@@ -299,9 +193,36 @@ impl Solver {
         Some(result)
     }
 
-    /// Extract linear terms recursively from an arithmetic expression
-    /// Returns None if the term is not linear
-    #[allow(clippy::only_used_in_recursion)]
+    /// Extract linear terms from an arithmetic expression.
+    /// Returns None if the term is not linear.
+    ///
+    /// # Explicit stack, not native recursion
+    ///
+    /// The walk uses an explicit work-stack.  The recursive version's frames
+    /// stacked *on top of* [`Solver::encode_depth`]'s at the leaf (the encoder
+    /// calls [`Solver::parse_arith_comparison`] from a comparison arm), so the
+    /// true worst-case native stack was `encode_depth × cap + this walk × its
+    /// own depth` — the encoder's depth cap never bounded it.  Worse, the
+    /// encoder does not descend into arithmetic operands at all: a single
+    /// shallow atom `(< deep-arith-chain 0)` reached this walk with the whole
+    /// chain, and `parse_arith_comparison` is also called from theory paths
+    /// (e.g. `TermKind::Eq`) on MBQI instantiation results that never pass the
+    /// assert-time depth gate.  A stack overflow here is a fatal process abort
+    /// no `Result` can report, and a depth cap would be dishonest: `None`
+    /// means "not linear", so a capped deep-but-linear chain would silently
+    /// drop the atom's theory meaning and gate the whole problem to `Unknown`.
+    ///
+    /// Only the `Mul` arm carries resume state: a product is linear iff at
+    /// most one factor is non-constant, so each factor is evaluated into a
+    /// *fresh* accumulation context and classified when it completes.  The
+    /// suspended parent context travels inside the `Mul` frame itself, which
+    /// makes the "stack empty at finalize" case unrepresentable — no `pop().
+    /// expect(..)` is needed anywhere.
+    ///
+    /// On failure the caller's buffers are untouched (the recursive version
+    /// left partial writes behind); the only caller,
+    /// [`Solver::parse_arith_comparison`], discards the buffers on `None`, so
+    /// this is unobservable.
     pub(super) fn extract_linear_terms(
         &self,
         term_id: TermId,
@@ -310,197 +231,276 @@ impl Solver {
         constant: &mut Rational64,
         manager: &TermManager,
     ) -> Option<()> {
-        let term = manager.get(term_id)?;
-
-        match &term.kind {
-            // Integer constant
-            TermKind::IntConst(n) => {
-                if let Some(val) = n.to_i64() {
-                    *constant += scale * Rational64::from_integer(val);
-                    Some(())
-                } else {
-                    // BigInt too large, skip for now
-                    None
+        /// One linear-accumulation context: the `(term, coefficient)` pairs
+        /// and folded constant of the sub-expression currently being walked.
+        struct Level {
+            terms: SmallVec<[(TermId, Rational64); 4]>,
+            constant: Rational64,
+        }
+        impl Level {
+            fn new() -> Self {
+                Level {
+                    terms: SmallVec::new(),
+                    constant: Rational64::zero(),
                 }
             }
+        }
+        /// Resume state for one `Mul` node.  A product is linear iff at most
+        /// one factor is non-constant; each factor is evaluated into a fresh
+        /// [`Level`] and classified here when it completes.  The factor must
+        /// be linear-as-a-whole (exactly one variable term, no additive
+        /// constant) for the product to remain linear.
+        struct MulFrame {
+            args: SmallVec<[TermId; 4]>,
+            /// Index of the next factor to evaluate; factors `..next-1` have
+            /// been classified already, factor `next-1` (if `next > 0`) is the
+            /// one whose result is sitting in the current level.
+            next: usize,
+            const_product: Rational64,
+            /// The single non-constant factor seen so far, e.g. `x`, `(- x)`,
+            /// `(* 2 x)`.  A second one makes the product nonlinear.
+            var_factor: Option<(TermId, Rational64)>,
+            /// The scale the whole product contributes at.
+            scale: Rational64,
+            /// The suspended accumulation context of the `Mul`'s parent,
+            /// restored when the product finalizes.
+            parent: Level,
+        }
+        enum Work {
+            /// Fold `term` into the current level at the given scale.
+            Visit(TermId, Rational64),
+            /// Classify the factor that just finished (when `next > 0`) and
+            /// either evaluate the next factor or finalize the product.
+            Mul(MulFrame),
+        }
 
-            // Rational constant
-            TermKind::RealConst(r) => {
-                *constant += scale * *r;
-                Some(())
-            }
+        let mut cur = Level::new();
+        let mut work: Vec<Work> = vec![Work::Visit(term_id, scale)];
 
-            // Bitvector constant - treat as integer
-            TermKind::BitVecConst { value, .. } => {
-                if let Some(val) = value.to_i64() {
-                    *constant += scale * Rational64::from_integer(val);
-                    Some(())
-                } else {
-                    // BigInt too large, skip for now
-                    None
-                }
-            }
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Visit(id, sc) => {
+                    let term = manager.get(id)?;
+                    match &term.kind {
+                        // Integer constant
+                        TermKind::IntConst(n) => {
+                            // BigInt too large for i64 -> not linear (honest
+                            // reject; the atom stays gated).
+                            let val = n.to_i64()?;
+                            cur.constant += sc * Rational64::from_integer(val);
+                        }
 
-            // Variable (or bitvector variable - treat as integer variable)
-            TermKind::Var(_) => {
-                terms.push((term_id, scale));
-                Some(())
-            }
+                        // Rational constant
+                        TermKind::RealConst(r) => {
+                            cur.constant += sc * *r;
+                        }
 
-            // Uninterpreted function application whose sort is numeric -- treat
-            // as an opaque arithmetic variable.  This is the UFLIA / UFLRA case:
-            // e.g. `f(k)` in `(> (f k) 10)` where `f : Int -> Int`.  By
-            // representing `f(k)` as an arithmetic variable we ensure that
-            //   (a) the arithmetic solver tracks it and assigns it a model value,
-            //   (b) the constraint `f(k) > 10` is handled consistently with any
-            //       later instantiation that produces `f(k) <= 10`.
-            //
-            // Restriction: only treat flat Apply terms (all args atomic) as
-            // arithmetic variables.  Nested applications like `f(f(k))` are
-            // handled by the EUF solver; including them in arith would require
-            // full Nelson-Oppen equality propagation to avoid spurious UNSAT.
-            TermKind::Apply { args, .. } => {
-                let sort = term.sort;
-                let is_numeric = sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
-                if is_numeric {
-                    // Skip if any argument is a *non-Skolem* Apply term that is
-                    // already in arith_terms.  This mirrors the restriction in
-                    // `track_theory_vars` and avoids EUF/arith congruence conflicts.
-                    // Skolem Apply terms (prefix "sk!") are safe because EUF has no
-                    // equality facts about fresh Skolem symbols.
-                    let has_conflicting_apply_arg = args.iter().any(|&arg| {
-                        manager.get(arg).is_some_and(|a| {
-                            if let TermKind::Apply {
-                                func,
-                                args: inner_args,
-                                ..
-                            } = &a.kind
-                            {
-                                if inner_args.is_empty() {
-                                    return false;
-                                }
-                                let fname = manager.resolve_str(*func);
-                                let is_skolem = fname.starts_with("sk!");
-                                !is_skolem && self.arith_terms.contains(&arg)
-                            } else {
-                                false
+                        // Bitvector constant - treat as integer
+                        TermKind::BitVecConst { value, .. } => {
+                            let val = value.to_i64()?;
+                            cur.constant += sc * Rational64::from_integer(val);
+                        }
+
+                        // Variable (or bitvector variable - treat as integer variable)
+                        TermKind::Var(_) => {
+                            cur.terms.push((id, sc));
+                        }
+
+                        // Uninterpreted function application whose sort is numeric -- treat
+                        // as an opaque arithmetic variable.  This is the UFLIA / UFLRA case:
+                        // e.g. `f(k)` in `(> (f k) 10)` where `f : Int -> Int`.  By
+                        // representing `f(k)` as an arithmetic variable we ensure that
+                        //   (a) the arithmetic solver tracks it and assigns it a model value,
+                        //   (b) the constraint `f(k) > 10` is handled consistently with any
+                        //       later instantiation that produces `f(k) <= 10`.
+                        //
+                        // Nested applications (`f(f(k))`) are opaque arithmetic variables
+                        // exactly like flat ones.  Excluding them — the mirror of the old
+                        // restriction in `track_theory_vars` — did not make the solver
+                        // conservative, it made it *wrong*: failing the linear parse leaves
+                        // the whole atom without a theory meaning, so it survives as a free
+                        // boolean and the solver reports `sat` for formulas it never
+                        // satisfied.  The Nelson-Oppen equality propagation the exclusion
+                        // was waiting for is now in place and explained
+                        // (`TheoryManager::assert_explained_equality`).
+                        TermKind::Apply { .. } => {
+                            let sort = term.sort;
+                            let is_numeric =
+                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
+                            if !is_numeric {
+                                // Non-numeric Apply (e.g. uninterpreted predicate) -- not linear.
+                                return None;
                             }
-                        })
-                    });
-                    if !has_conflicting_apply_arg {
-                        terms.push((term_id, scale));
-                        Some(())
-                    } else {
-                        // Non-Skolem nested Apply in arith -- cannot safely represent.
-                        None
+                            cur.terms.push((id, sc));
+                        }
+
+                        // Array select with numeric sort: treat `(select a i) : Int/Real` as
+                        // an opaque arithmetic atom with the given scale coefficient.  This
+                        // allows expressions such as `(+ (select a 0) (select a 1))` to be
+                        // parsed as linear arithmetic sums.
+                        TermKind::Select(_, _) => {
+                            let sort = term.sort;
+                            let is_numeric =
+                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
+                            if !is_numeric {
+                                // Select of non-numeric sort (e.g. Bool array) -- not linear.
+                                return None;
+                            }
+                            cur.terms.push((id, sc));
+                        }
+
+                        // Datatype accessor with numeric sort: `(head l) : Int` is an opaque
+                        // arithmetic atom, exactly like `(select a i)`.  Without this the
+                        // linear parse of `(= (head l) 10)` failed, no constraint reached the
+                        // tableau, and `(= (head l) 10) ∧ (= (head l) 11)` was answered `sat`
+                        // — the accessor is one ground term and cannot hold two values.
+                        // `dt_axioms` supplies the rest of the accessor's meaning; here it
+                        // only has to be *a* variable so that two occurrences agree.
+                        TermKind::DtSelector { .. } => {
+                            let sort = term.sort;
+                            let is_numeric =
+                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
+                            if !is_numeric {
+                                // Accessor of a non-numeric field -- not a linear atom.
+                                return None;
+                            }
+                            cur.terms.push((id, sc));
+                        }
+
+                        // Addition: fold every operand at the same scale.
+                        // Children are pushed in reverse so they pop (and hence
+                        // append to `cur.terms`) left-to-right, exactly like the
+                        // recursive descent did.
+                        TermKind::Add(args) => {
+                            for &arg in args.iter().rev() {
+                                work.push(Work::Visit(arg, sc));
+                            }
+                        }
+
+                        // Subtraction
+                        TermKind::Sub(lhs, rhs) => {
+                            work.push(Work::Visit(*rhs, -sc));
+                            work.push(Work::Visit(*lhs, sc));
+                        }
+
+                        // Negation
+                        TermKind::Neg(arg) => {
+                            work.push(Work::Visit(*arg, -sc));
+                        }
+
+                        // Multiplication of linear terms.  Suspend the current
+                        // context inside the frame; each factor is evaluated
+                        // into a fresh one (matching the recursive version's
+                        // per-factor `sub_terms`/`sub_constant` buffers).
+                        TermKind::Mul(args) => {
+                            work.push(Work::Mul(MulFrame {
+                                args: args.iter().copied().collect(),
+                                next: 0,
+                                const_product: Rational64::one(),
+                                var_factor: None,
+                                scale: sc,
+                                parent: core::mem::replace(&mut cur, Level::new()),
+                            }));
+                        }
+
+                        // Integer `div`/`mod` and Int/Real-sorted `ite`: opaque arithmetic
+                        // atoms.  Their meaning is not expressible as a linear combination
+                        // of their operands, so the linear solver gets a variable and the
+                        // *definition* arrives separately as ground axioms — see
+                        // [`Solver::instantiate_arith_axioms`].  Until those axioms are
+                        // asserted the term stays in nobody's theory, which is exactly what
+                        // the honesty gate in `encode_guards` watches for.
+                        //
+                        // Real-sorted `Div` is deliberately excluded: `(/ x y)` is exact
+                        // rational division, whose defining identity `x = y * (x / y)` is
+                        // nonlinear, so it keeps failing the parse and stays gated.
+                        TermKind::Mod(_, _) if term.sort == manager.sorts.int_sort => {
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Div(_, _) if term.sort == manager.sorts.int_sort => {
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Ite(_, _, _)
+                            if term.sort == manager.sorts.int_sort
+                                || term.sort == manager.sorts.real_sort =>
+                        {
+                            cur.terms.push((id, sc));
+                        }
+
+                        // Not linear.  The catch-all is the honest reject
+                        // channel here — "shape the linear solver cannot
+                        // represent" — so a future `TermKind` variant fails
+                        // the parse (and the atom stays gated) rather than
+                        // being mis-folded.
+                        _ => return None,
                     }
-                } else {
-                    // Non-numeric Apply (e.g. uninterpreted predicate) -- not linear.
-                    None
                 }
-            }
-
-            // Array select with numeric sort: treat `(select a i) : Int/Real` as
-            // an opaque arithmetic atom with the given scale coefficient.  This
-            // allows expressions such as `(+ (select a 0) (select a 1))` to be
-            // parsed as linear arithmetic sums.
-            TermKind::Select(_, _) => {
-                let sort = term.sort;
-                let is_numeric = sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
-                if is_numeric {
-                    terms.push((term_id, scale));
-                    Some(())
-                } else {
-                    // Select of non-numeric sort (e.g. Bool array) -- not linear.
-                    None
-                }
-            }
-
-            // Addition
-            TermKind::Add(args) => {
-                for &arg in args {
-                    self.extract_linear_terms(arg, scale, terms, constant, manager)?;
-                }
-                Some(())
-            }
-
-            // Subtraction
-            TermKind::Sub(lhs, rhs) => {
-                self.extract_linear_terms(*lhs, scale, terms, constant, manager)?;
-                self.extract_linear_terms(*rhs, -scale, terms, constant, manager)?;
-                Some(())
-            }
-
-            // Negation
-            TermKind::Neg(arg) => self.extract_linear_terms(*arg, -scale, terms, constant, manager),
-
-            // Multiplication of linear terms.  A product is linear iff at most one
-            // factor is non-constant.  Each factor may itself be a nested
-            // expression that reduces to a pure constant (e.g. `(- 3.0)`,
-            // `(+ 1 2)`) or to a single scaled variable (e.g. `(- x)`).
-            TermKind::Mul(args) => {
-                let mut const_product = Rational64::one();
-                // The single non-constant factor, if any, represented as a sum of
-                // (variable, coefficient) pairs.  The factor must be linear-as-a-whole
-                // (exactly one variable term, no additive constant) for the product
-                // to remain linear.
-                let mut var_factor: Option<(TermId, Rational64)> = None;
-
-                for &arg in args {
-                    let mut sub_terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-                    let mut sub_constant = Rational64::zero();
-                    self.extract_linear_terms(
-                        arg,
-                        Rational64::one(),
-                        &mut sub_terms,
-                        &mut sub_constant,
-                        manager,
-                    )?;
-
-                    if sub_terms.is_empty() {
-                        // Pure constant factor — absorb into product.
-                        const_product *= sub_constant;
-                    } else if sub_terms.len() == 1 && sub_constant.is_zero() {
-                        // Exactly one scaled variable with no additive constant,
-                        // e.g. `x`, `(- x)`, `(* 2 x)`.  Record as the variable
-                        // factor; if we already have one, the product is nonlinear.
-                        if var_factor.is_some() {
+                Work::Mul(mut frame) => {
+                    if frame.next > 0 {
+                        // Classify the factor whose evaluation just completed
+                        // into the current (per-factor) level.
+                        if cur.terms.is_empty() {
+                            // Pure constant factor — absorb into product.
+                            frame.const_product *= cur.constant;
+                        } else if cur.terms.len() == 1 && cur.constant.is_zero() {
+                            // Exactly one scaled variable with no additive constant,
+                            // e.g. `x`, `(- x)`, `(* 2 x)`.  Record as the variable
+                            // factor; if we already have one, the product is nonlinear.
+                            if frame.var_factor.is_some() {
+                                return None;
+                            }
+                            frame.var_factor = Some(cur.terms[0]);
+                        } else {
+                            // Either multi-variable (e.g. `(+ x y)`), or a linear
+                            // expression with a constant offset (e.g. `(+ 1 x)`).
+                            // Multiplying such a factor by another variable yields a
+                            // nonlinear product.
                             return None;
                         }
-                        var_factor = Some(sub_terms[0]);
+                    }
+                    if frame.next < frame.args.len() {
+                        let arg = frame.args[frame.next];
+                        frame.next += 1;
+                        cur = Level::new();
+                        work.push(Work::Mul(frame));
+                        work.push(Work::Visit(arg, Rational64::one()));
                     } else {
-                        // Either multi-variable (e.g. `(+ x y)`), or a linear
-                        // expression with a constant offset (e.g. `(+ 1 x)`).
-                        // Multiplying such a factor by another variable yields a
-                        // nonlinear product.
-                        return None;
-                    }
-                }
-
-                let new_scale = scale * const_product;
-                match var_factor {
-                    Some((v, coef)) => {
-                        terms.push((v, new_scale * coef));
-                        Some(())
-                    }
-                    None => {
-                        *constant += new_scale;
-                        Some(())
+                        // All factors classified: restore the parent context
+                        // and contribute the product to it.
+                        let new_scale = frame.scale * frame.const_product;
+                        cur = frame.parent;
+                        match frame.var_factor {
+                            Some((v, coef)) => cur.terms.push((v, new_scale * coef)),
+                            None => cur.constant += new_scale,
+                        }
                     }
                 }
             }
-
-            // Not linear
-            _ => None,
         }
+
+        // The work stack is empty, so every `Mul` frame has finalized and
+        // `cur` is the root-level context again.  Only now touch the caller's
+        // buffers, preserving the recursive version's append order.
+        for pair in cur.terms {
+            terms.push(pair);
+        }
+        *constant += cur.constant;
+        Some(())
     }
 
     /// Assert a term
+    ///
+    /// Strengthening the assertion stack invalidates the last verdict: a model
+    /// found before this call need not satisfy `term`, so serving it afterwards
+    /// would report a "model" of a formula it falsifies.  See
+    /// `Solver::invalidate_results` (private) for the rule and for why the unsat
+    /// core goes with it.
     pub fn assert(&mut self, term: TermId, manager: &mut TermManager) {
         let index = self.assertions.len();
         self.assertions.push(term);
         self.trail.push(TrailOp::AssertionAdded { index });
         self.invalidate_fp_cache();
+        self.invalidate_results();
 
         // Check if this is a boolean constant first
         if let Some(t) = manager.get(term) {
@@ -511,30 +511,12 @@ impl Solver {
                         self.has_false_assertion = true;
                         self.trail.push(TrailOp::FalseAssertionSet);
                     }
-                    if self.produce_unsat_cores {
-                        let na_index = self.named_assertions.len();
-                        self.named_assertions.push(NamedAssertion {
-                            term,
-                            name: None,
-                            index: index as u32,
-                        });
-                        self.trail
-                            .push(TrailOp::NamedAssertionAdded { index: na_index });
-                    }
+                    self.record_assertion_identity(term, None, index);
                     return;
                 }
                 TermKind::True => {
                     // True is always satisfied, no need to encode
-                    if self.produce_unsat_cores {
-                        let na_index = self.named_assertions.len();
-                        self.named_assertions.push(NamedAssertion {
-                            term,
-                            name: None,
-                            index: index as u32,
-                        });
-                        self.trail
-                            .push(TrailOp::NamedAssertionAdded { index: na_index });
-                    }
+                    self.record_assertion_identity(term, None, index);
                     return;
                 }
                 _ => {}
@@ -550,25 +532,27 @@ impl Solver {
         // than crashing the process.
         if self.term_exceeds_encode_depth(term, manager) {
             self.encode_depth_exceeded = true;
-            if self.produce_unsat_cores {
-                let na_index = self.named_assertions.len();
-                self.named_assertions.push(NamedAssertion {
-                    term,
-                    name: None,
-                    index: index as u32,
-                });
-                self.trail
-                    .push(TrailOp::NamedAssertionAdded { index: na_index });
-            }
+            self.record_assertion_identity(term, None, index);
             return;
         }
 
         // Apply simplification if enabled
-        let term_to_encode = if self.config.simplify {
+        let simplified = if self.config.simplify {
             self.simplifier.simplify(term, manager)
         } else {
             term
         };
+
+        // Replace bounded-integer quantifiers by their exactly equivalent
+        // ground expansion so the ground solver decides them directly.
+        let expanded = self
+            .finite_expand_assertion(simplified, manager)
+            .unwrap_or(simplified);
+
+        // Replace the existentials this assertion states unconditionally by
+        // their Skolemization, so the ground solver *searches* for a witness
+        // instead of MBQI guessing one.
+        let term_to_encode = self.skolemize_asserted_existentials(expanded, manager);
 
         // Check again if simplification produced a constant
         if let Some(t) = manager.get(term_to_encode) {
@@ -606,6 +590,8 @@ impl Solver {
                         }
                     } else {
                         self.dt_var_constructors.insert(var_term, constructor);
+                        self.trail
+                            .push(TrailOp::DtVarConstructorAdded { term: var_term });
                     }
                 }
             }
@@ -615,6 +601,9 @@ impl Solver {
         if self.polarity_aware {
             self.collect_polarities(term_to_encode, Polarity::Positive, manager);
         }
+
+        // Hand MBQI only the quantifiers this assertion actually entails.
+        self.register_asserted_quantifiers(term_to_encode, manager);
 
         // Encode the assertion immediately
         let lit = self.encode(term_to_encode, manager);
@@ -626,24 +615,18 @@ impl Solver {
         // the ArithSolver may not enforce disequalities correctly.
         self.add_arith_diseq_split(term_to_encode, manager);
 
-        if self.produce_unsat_cores {
-            let na_index = self.named_assertions.len();
-            self.named_assertions.push(NamedAssertion {
-                term,
-                name: None,
-                index: index as u32,
-            });
-            self.trail
-                .push(TrailOp::NamedAssertionAdded { index: na_index });
-        }
+        self.record_assertion_identity(term, None, index);
     }
 
     /// Assert a named term (for unsat core tracking)
+    ///
+    /// Invalidates the last verdict for the same reason as [`Solver::assert`].
     pub fn assert_named(&mut self, term: TermId, name: &str, manager: &mut TermManager) {
         let index = self.assertions.len();
         self.assertions.push(term);
         self.trail.push(TrailOp::AssertionAdded { index });
         self.invalidate_fp_cache();
+        self.invalidate_results();
 
         // Check if this is a boolean constant first
         if let Some(t) = manager.get(term) {
@@ -654,30 +637,12 @@ impl Solver {
                         self.has_false_assertion = true;
                         self.trail.push(TrailOp::FalseAssertionSet);
                     }
-                    if self.produce_unsat_cores {
-                        let na_index = self.named_assertions.len();
-                        self.named_assertions.push(NamedAssertion {
-                            term,
-                            name: Some(name.to_string()),
-                            index: index as u32,
-                        });
-                        self.trail
-                            .push(TrailOp::NamedAssertionAdded { index: na_index });
-                    }
+                    self.record_assertion_identity(term, Some(name.to_string()), index);
                     return;
                 }
                 TermKind::True => {
                     // True is always satisfied, no need to encode
-                    if self.produce_unsat_cores {
-                        let na_index = self.named_assertions.len();
-                        self.named_assertions.push(NamedAssertion {
-                            term,
-                            name: Some(name.to_string()),
-                            index: index as u32,
-                        });
-                        self.trail
-                            .push(TrailOp::NamedAssertionAdded { index: na_index });
-                    }
+                    self.record_assertion_identity(term, Some(name.to_string()), index);
                     return;
                 }
                 _ => {}
@@ -689,41 +654,34 @@ impl Solver {
         // encoding so `check` answers `Unknown` instead of overflowing.
         if self.term_exceeds_encode_depth(term, manager) {
             self.encode_depth_exceeded = true;
-            if self.produce_unsat_cores {
-                let na_index = self.named_assertions.len();
-                self.named_assertions.push(NamedAssertion {
-                    term,
-                    name: Some(name.to_string()),
-                    index: index as u32,
-                });
-                self.trail
-                    .push(TrailOp::NamedAssertionAdded { index: na_index });
-            }
+            self.record_assertion_identity(term, Some(name.to_string()), index);
             return;
         }
 
+        // Replace bounded-integer quantifiers by their exactly equivalent
+        // ground expansion so the ground solver decides them directly.
+        let expanded = self.finite_expand_assertion(term, manager).unwrap_or(term);
+
+        // Replace the existentials this assertion states unconditionally by
+        // their Skolemization (see `assert`).
+        let term_to_encode = self.skolemize_asserted_existentials(expanded, manager);
+
         // Collect polarity information if polarity-aware encoding is enabled
         if self.polarity_aware {
-            self.collect_polarities(term, Polarity::Positive, manager);
+            self.collect_polarities(term_to_encode, Polarity::Positive, manager);
         }
 
+        // Hand MBQI only the quantifiers this assertion actually entails.
+        self.register_asserted_quantifiers(term_to_encode, manager);
+
         // Encode the assertion immediately
-        let lit = self.encode(term, manager);
+        let lit = self.encode(term_to_encode, manager);
         self.sat.add_clause([lit]);
 
         // Eagerly add arith diseq split for Not(Eq(a,b)) assertions
-        self.add_arith_diseq_split(term, manager);
+        self.add_arith_diseq_split(term_to_encode, manager);
 
-        if self.produce_unsat_cores {
-            let na_index = self.named_assertions.len();
-            self.named_assertions.push(NamedAssertion {
-                term,
-                name: Some(name.to_string()),
-                index: index as u32,
-            });
-            self.trail
-                .push(TrailOp::NamedAssertionAdded { index: na_index });
-        }
+        self.record_assertion_identity(term, Some(name.to_string()), index);
     }
 
     /// Get the unsat core (after check() returned Unsat)
@@ -732,33 +690,320 @@ impl Solver {
         self.unsat_core.as_ref()
     }
 
+    /// Rewrite every bounded-integer quantifier of `term` into its exactly
+    /// equivalent finite conjunction / disjunction, or `None` when nothing in
+    /// `term` qualifies.
+    ///
+    /// The rewrite is an equivalence, not a strengthening (see
+    /// [`finite_expand`]): the whole substituted body — guard included — is
+    /// emitted for every point of the interval, and the interval provably
+    /// contains the entire region where the guard (`forall`) or the body
+    /// (`exists`) can be true.  So the expanded assertion is interchangeable
+    /// with the original at any polarity, and the quantifier disappears
+    /// altogether instead of being handed to MBQI.  That is exactly what lets
+    /// the *ground* array / arithmetic solver decide it, which is how an
+    /// `(exists ((i Int)) (and (<= 0 i) (<= i 9) (= (select a i) v)))` over a
+    /// pinned array finds its witness.
+    ///
+    /// A quantifier that does not fit the fragment is left untouched and keeps
+    /// its normal MBQI path, so declining costs completeness only.
+    /// Replace the existentials `term` asserts unconditionally by their
+    /// Skolemization, returning `term` unchanged when it has none.
+    ///
+    /// See [`exists_skolem`] for why the rewrite is an equisatisfiability
+    /// (never a strengthening) and why it is confined to the positive
+    /// top-level conjunct spine.
+    fn skolemize_asserted_existentials(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+    ) -> TermId {
+        let mut next_id = self.next_skolem_id;
+        let rewritten = exists_skolem::skolemize_asserted_existentials(term, manager, &mut next_id);
+        self.next_skolem_id = next_id;
+        rewritten.unwrap_or(term)
+    }
+
+    fn finite_expand_assertion(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        let budget = self.config.finite_expansion_budget;
+        if budget == 0 || !finite_expand::contains_quantifier(term, manager) {
+            return None;
+        }
+        self.refresh_entailed_int_constants(manager);
+        let entailed = core::mem::take(&mut self.entailed_int_consts);
+        let expanded = finite_expand::expand_finite_quantifiers(term, manager, budget, &entailed);
+        self.entailed_int_consts = entailed;
+        expanded
+    }
+
+    /// Bring [`Solver::entailed_int_consts`] up to date with the assertion
+    /// stack: for every term some **top-level** assertion pins to an integer
+    /// literal, record the value every model must give it.
+    ///
+    /// Each assertion's top-level `And` spine is walked, because a conjunct of
+    /// an unconditionally asserted conjunction is itself unconditionally
+    /// asserted.  Nothing below a disjunction, negation, implication or
+    /// quantifier is collected — those equalities are conditional and would not
+    /// hold in every model, so using one as a quantifier bound could expand
+    /// over the wrong interval.
+    ///
+    /// Only the assertions added since the last call are folded in, and `pop`
+    /// resets both the map and the watermark (see [`Solver::pop`]), so the map
+    /// is always exactly "consequences of the live assertion set" and the total
+    /// scanning cost stays linear in the number of assertions.
+    ///
+    /// This is what lets `(assert (= n 5))` make `(< i n)` a *concrete* bound
+    /// for [`Solver::finite_expand_assertion`]; without it a symbolic bound
+    /// would leave the quantifier unexpanded.
+    fn refresh_entailed_int_constants(&mut self, manager: &TermManager) {
+        if self.entailed_int_consts_upto >= self.assertions.len() {
+            return;
+        }
+        let mut entailed = core::mem::take(&mut self.entailed_int_consts);
+        let int_sort = manager.sorts.int_sort;
+        let mut stack: Vec<TermId> = Vec::new();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+
+        for &assertion in &self.assertions[self.entailed_int_consts_upto..] {
+            stack.push(assertion);
+            while let Some(current) = stack.pop() {
+                if !visited.insert(current) {
+                    continue;
+                }
+                let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
+                    continue;
+                };
+                match kind {
+                    TermKind::And(args) => stack.extend(args.iter().copied()),
+                    TermKind::Eq(lhs, rhs) => {
+                        let pinned = match (
+                            manager.get(lhs).map(|t| t.kind.clone()),
+                            manager.get(rhs).map(|t| t.kind.clone()),
+                        ) {
+                            (Some(TermKind::IntConst(value)), _) => Some((rhs, value)),
+                            (_, Some(TermKind::IntConst(value))) => Some((lhs, value)),
+                            _ => None,
+                        };
+                        if let Some((symbol, value)) = pinned
+                            && manager.get(symbol).is_some_and(|t| t.sort == int_sort)
+                        {
+                            entailed.entry(symbol).or_insert(value);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.entailed_int_consts = entailed;
+        self.entailed_int_consts_upto = self.assertions.len();
+    }
+
+    /// Register with MBQI and the E-matching engine every quantifier that the
+    /// assertion `term` asserts **unconditionally**.
+    ///
+    /// MBQI turns a registered universal into ground instances that it adds to
+    /// the SAT core as hard unit clauses — and, when an instance evaluates to
+    /// `false`, as the empty clause — so a quantifier the assertion set does not
+    /// entail must never be registered. `(not (forall ((x Int)) (P x)))` is
+    /// `∃x. ¬P(x)`, not a universal fact; registering it refuted the satisfiable
+    /// `(not (forall ((x Int)) (P x))) ∧ (not (P 5))`. The same held for a
+    /// quantifier inside a disjunct, an implication, an `ite` branch, or a
+    /// Bool-sorted equality's operand.
+    ///
+    /// [`Solver::encode`] cannot make this call: it is the Tseitin transform and
+    /// visits every sub-term at every polarity. So the decision is made here, on
+    /// the asserted spine, with [`super::term_walk::asserted_children`] — the
+    /// shared definition of "unconditionally asserted" also used by the
+    /// `check_*.rs` definite-conflict collectors.
+    ///
+    /// Skipping a non-entailed quantifier costs only completeness: `check`
+    /// still sees `has_quantifiers`, so it answers `Unknown` rather than
+    /// guessing.
+    fn register_asserted_quantifiers(&mut self, term: TermId, manager: &mut TermManager) {
+        let mut stack: Vec<(TermId, bool)> = vec![(term, true)];
+        let mut visited: FxHashSet<(TermId, bool)> = FxHashSet::default();
+
+        while let Some((current, positive)) = stack.pop() {
+            if !visited.insert((current, positive)) {
+                continue;
+            }
+            let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
+                continue;
+            };
+            if positive {
+                match &kind {
+                    TermKind::Forall { patterns, body, .. } => {
+                        let triggers: Vec<TermId> =
+                            patterns.iter().flat_map(|p| p.iter().copied()).collect();
+                        self.register_asserted_forall(current, *body, triggers, manager);
+                    }
+                    TermKind::Exists { patterns, .. } => {
+                        let triggers: Vec<TermId> =
+                            patterns.iter().flat_map(|p| p.iter().copied()).collect();
+                        self.mbqi.add_quantifier(current, manager);
+                        for trigger in triggers {
+                            self.mbqi.collect_ground_terms(trigger, manager);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            stack.extend(super::term_walk::asserted_children(&kind, positive));
+        }
+    }
+
+    /// Register one unconditionally asserted universal, Skolemizing a nested
+    /// existential body (`∀x. ∃y. φ(x,y)` → `∀x. φ(x, sk(x))`) first so that
+    /// MBQI sees a plain universal.
+    fn register_asserted_forall(
+        &mut self,
+        term: TermId,
+        body: TermId,
+        triggers: Vec<TermId>,
+        manager: &mut TermManager,
+    ) {
+        let body_is_exists = manager
+            .get(body)
+            .is_some_and(|t| matches!(t.kind, TermKind::Exists { .. }));
+
+        if body_is_exists {
+            #[cfg(feature = "std")]
+            {
+                // Seeded from the solver-wide counter: a fresh context always
+                // starts at `sk!0` / `skf!0`, so two Skolemized quantifiers
+                // would otherwise share one witness symbol — a strengthening
+                // that can turn `sat` into `unsat`.
+                let mut sk_ctx =
+                    crate::skolemization::SkolemizationContext::with_first_id(self.next_skolem_id);
+                let skolem_result = sk_ctx.skolemize(manager, term);
+                self.next_skolem_id = sk_ctx.skolem_count();
+                if let Ok(skolemized) = skolem_result {
+                    self.mbqi.add_quantifier(skolemized, manager);
+                    let _ = self.ematch_engine.register_quantifier(skolemized, manager);
+
+                    // Also collect Skolem function application terms from the
+                    // Skolemized body as MBQI candidates.  These terms (e.g.
+                    // sk(x)) must appear in the candidate pool so that other
+                    // universal quantifiers can be instantiated with them.
+                    self.collect_skolem_candidates(skolemized, manager);
+                } else {
+                    // Skolemization failed — fall back to original
+                    self.mbqi.add_quantifier(term, manager);
+                    let _ = self.ematch_engine.register_quantifier(term, manager);
+                }
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                self.mbqi.add_quantifier(term, manager);
+                let _ = self.ematch_engine.register_quantifier(term, manager);
+            }
+        } else {
+            self.mbqi.add_quantifier(term, manager);
+            // Register with E-matching engine for trigger-based instantiation
+            let _ = self.ematch_engine.register_quantifier(term, manager);
+        }
+
+        // Collect ground terms from patterns as candidates
+        for trigger in triggers {
+            self.mbqi.collect_ground_terms(trigger, manager);
+        }
+    }
+
     /// Encode a term into SAT clauses using Tseitin transformation.
     ///
     /// Thin wrapper over [`Solver::encode_depth`] that starts the recursion at
     /// depth 0.  The depth counter guards against native-stack overflow on
-    /// adversarially deep formulas (see [`ENCODE_DEPTH_LIMIT`]).
+    /// adversarially deep formulas (see [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT)).
     pub(super) fn encode(&mut self, term: TermId, manager: &mut TermManager) -> Lit {
         self.encode_depth(term, manager, 0)
     }
 
-    /// Depth-tracked recursive Tseitin encoder.
+    /// Depth-tracked recursive Tseitin encoder: memo check, depth guard, then
+    /// the arm dispatch in [`Solver::encode_depth_uncached`].
     ///
-    /// When the structural recursion exceeds [`ENCODE_DEPTH_LIMIT`] we stop
+    /// # Memoisation (`Solver::encoded_terms`)
+    ///
+    /// Each term's clauses are emitted at most once per polarity coverage:
+    /// without the memo, a shared sub-term of the hash-consed DAG was
+    /// re-descended once per *edge*, which is `2^n` re-encodes and `2^n`
+    /// duplicate clauses on a doubling DAG (each level referencing the
+    /// previous twice) — a hang at roughly depth 40.  The assert-time
+    /// pre-check `term_exceeds_encode_depth` cannot catch that input: it
+    /// measures depth and deliberately prunes shared nodes.
+    ///
+    /// A cached entry is only reused when the polarity it was encoded under
+    /// covers the polarity the current occurrence needs (see the field doc on
+    /// [`Solver::encoded_terms`]): `And`/`Or` under `polarity_aware` emit only
+    /// one implication direction, every other arm is polarity-independent.  On
+    /// a widening miss the term is re-encoded, which appends the missing
+    /// direction; re-emitting the direction that already exists only
+    /// duplicates clauses and cannot change the encoded semantics.
+    ///
+    /// The memo is consulted *before* the depth guard: a hit means the term's
+    /// full encoding already exists in the SAT core, so returning it is always
+    /// complete, whereas the pre-memo code would have set
+    /// [`Solver::encode_depth_exceeded`] even for an already-encoded term.
+    ///
+    /// # Depth guard
+    ///
+    /// When the structural recursion exceeds [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT) we stop
     /// descending, set [`Solver::encode_depth_exceeded`], and return a fresh
     /// literal for the sub-term.  The truncated encoding is deliberately
     /// incomplete: `check` observes the flag and answers `Unknown` rather than
     /// crashing the process with a stack overflow or trusting a partial model.
+    /// Nothing is memoised on this path — the term was *not* encoded, and a
+    /// later shallower occurrence must still get a real encoding.
     pub(super) fn encode_depth(
         &mut self,
         term: TermId,
         manager: &mut TermManager,
         depth: u32,
     ) -> Lit {
+        // The polarity the And/Or arms would emit clauses under right now.
+        // This must be the same lookup those arms perform; the map is not
+        // mutated while an encode is in flight, so the two reads agree.
+        let needed = if self.polarity_aware {
+            self.polarities
+                .get(&term)
+                .copied()
+                .unwrap_or(Polarity::Both)
+        } else {
+            Polarity::Both
+        };
+        if let Some(&(lit, cached)) = self.encoded_terms.get(&term) {
+            if cached == Polarity::Both || cached == needed {
+                return lit;
+            }
+        }
         if depth > super::ENCODE_DEPTH_LIMIT {
             self.encode_depth_exceeded = true;
             let var = self.get_or_create_var(term);
             return Lit::pos(var);
         }
+        let lit = self.encode_depth_uncached(term, manager, depth);
+        // The And/Or arms have already inserted their entry with the polarity
+        // they actually used; every other arm's clause set is
+        // polarity-independent, so `Both` is the correct coverage for it.
+        if !self.encoded_terms.contains_key(&term) {
+            self.memoize_encoding(term, lit, Polarity::Both);
+        }
+        lit
+    }
+
+    /// The arm dispatch of the Tseitin encoder.  Only called by
+    /// [`Solver::encode_depth`], which owns the memo lookup and the depth
+    /// guard; recursive descent goes back through `encode_depth` so every
+    /// sub-term gets both.
+    fn encode_depth_uncached(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+        depth: u32,
+    ) -> Lit {
         // Clone the term data to avoid borrowing issues
         let Some(t) = manager.get(term).cloned() else {
             let var = self.get_or_create_var(term);
@@ -842,6 +1087,12 @@ impl Solver {
                     self.sat.add_clause(clause);
                 }
 
+                // Record the polarity these clauses were emitted under; a later
+                // occurrence needing the other direction must re-encode (see
+                // `encode_depth`).  An overwriting write (not `or_insert`) so a
+                // widening re-encode upgrades a previously narrower entry.
+                self.memoize_encoding(term, result, polarity);
+
                 result
             }
             TermKind::Or(args) => {
@@ -878,6 +1129,9 @@ impl Solver {
                         self.sat.add_clause([arg.negate(), result]);
                     }
                 }
+
+                // Same polarity bookkeeping as the `And` arm above.
+                self.memoize_encoding(term, result, polarity);
 
                 result
             }
@@ -976,9 +1230,7 @@ impl Solver {
                     // Theory equality: create a fresh boolean variable
                     // Store the constraint for theory propagation
                     let var = self.get_or_create_var(term);
-                    self.var_to_constraint
-                        .insert(var, Constraint::Eq(*lhs, *rhs));
-                    self.trail.push(TrailOp::ConstraintAdded { var });
+                    self.record_constraint(var, Constraint::Eq(*lhs, *rhs));
 
                     // Track theory variables for model extraction
                     self.track_theory_vars(*lhs, manager);
@@ -1072,9 +1324,7 @@ impl Solver {
             TermKind::Lt(lhs, rhs) => {
                 // Arithmetic predicate: lhs < rhs
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Lt(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Lt(*lhs, *rhs));
                 // Parse and store linear constraint for ArithSolver
                 if let Some(parsed) =
                     self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Lt, term, manager)
@@ -1089,9 +1339,7 @@ impl Solver {
             TermKind::Le(lhs, rhs) => {
                 // Arithmetic predicate: lhs <= rhs
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Le(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Le(*lhs, *rhs));
                 // Parse and store linear constraint for ArithSolver
                 if let Some(parsed) =
                     self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Le, term, manager)
@@ -1106,9 +1354,7 @@ impl Solver {
             TermKind::Gt(lhs, rhs) => {
                 // Arithmetic predicate: lhs > rhs
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Gt(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Gt(*lhs, *rhs));
                 // Parse and store linear constraint for ArithSolver
                 if let Some(parsed) =
                     self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Gt, term, manager)
@@ -1123,9 +1369,7 @@ impl Solver {
             TermKind::Ge(lhs, rhs) => {
                 // Arithmetic predicate: lhs >= rhs
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Ge(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Ge(*lhs, *rhs));
                 // Parse and store linear constraint for ArithSolver
                 if let Some(parsed) =
                     self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Ge, term, manager)
@@ -1166,9 +1410,7 @@ impl Solver {
             TermKind::BvUlt(lhs, rhs) => {
                 // Bitvector unsigned less-than: treat as integer comparison
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Lt(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Lt(*lhs, *rhs));
                 // Parse as arithmetic constraint (bitvector as bounded integer)
                 if let Some(parsed) =
                     self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Lt, term, manager)
@@ -1183,9 +1425,7 @@ impl Solver {
             TermKind::BvUle(lhs, rhs) => {
                 // Bitvector unsigned less-than-or-equal: treat as integer comparison
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Le(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Le(*lhs, *rhs));
                 if let Some(parsed) =
                     self.parse_arith_comparison(*lhs, *rhs, ArithConstraintType::Le, term, manager)
                 {
@@ -1212,9 +1452,7 @@ impl Solver {
                 // x = 9, but the unsigned arith parse derives x < 0 ∧ x > 4).
                 // Signed BV comparisons therefore stay purely in the BV solver.
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Lt(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Lt(*lhs, *rhs));
                 // Track theory variables for model extraction
                 self.track_theory_vars(*lhs, manager);
                 self.track_theory_vars(*rhs, manager);
@@ -1230,9 +1468,7 @@ impl Solver {
                 // producing spurious UNSAT.  Signed BV comparisons stay purely
                 // in the BV solver.
                 let var = self.get_or_create_var(term);
-                self.var_to_constraint
-                    .insert(var, Constraint::Le(*lhs, *rhs));
-                self.trail.push(TrailOp::ConstraintAdded { var });
+                self.record_constraint(var, Constraint::Le(*lhs, *rhs));
                 // Track theory variables for model extraction
                 self.track_theory_vars(*lhs, manager);
                 self.track_theory_vars(*rhs, manager);
@@ -1253,85 +1489,20 @@ impl Solver {
                 // to congruent applications (e.g., t(m)=true, t(co)=false,
                 // but m=co implies t(m)=t(co)).
                 if t.sort == manager.sorts.bool_sort {
-                    self.var_to_constraint
-                        .insert(var, Constraint::BoolApp(term));
-                    self.trail.push(TrailOp::ConstraintAdded { var });
+                    self.record_constraint(var, Constraint::BoolApp(term));
                 }
                 Lit::pos(var)
             }
-            TermKind::Forall {
-                patterns,
-                body,
-                vars,
-            } => {
-                // Universal quantifiers: register with MBQI
+            // Quantifiers are *registered* with MBQI / E-matching by
+            // `register_asserted_quantifiers`, which runs on the asserted spine
+            // before this encoder does.  This pass is the Tseitin transform and
+            // is polarity-blind by construction, so it must not decide which
+            // quantifiers are facts: MBQI turns a registered universal into
+            // ground unit clauses, and registering one that sits behind a
+            // polarity boundary refuted satisfiable formulas such as
+            // `(not (forall ((x Int)) (P x))) ∧ (not (P 5))`.
+            TermKind::Forall { .. } | TermKind::Exists { .. } => {
                 self.has_quantifiers = true;
-
-                // Check if body is Exists — if so, Skolemize the nested existential.
-                // This handles the Forall-Exists pattern: ∀x. ∃y. φ(x,y) → ∀x. φ(x, f(x))
-                let body_id = *body;
-                let _vars_clone = vars.clone();
-                let patterns_clone = patterns.clone();
-                let body_is_exists = manager
-                    .get(body_id)
-                    .map(|t| matches!(t.kind, TermKind::Exists { .. }))
-                    .unwrap_or(false);
-
-                if body_is_exists {
-                    // Skolemize: ∀x. ∃y. φ(x,y) → ∀x. φ(x, sk(x))
-                    // This eliminates the nested existential so MBQI can handle
-                    // the resulting universal quantifier directly.
-                    #[cfg(feature = "std")]
-                    {
-                        let mut sk_ctx = crate::skolemization::SkolemizationContext::new();
-                        if let Ok(skolemized) = sk_ctx.skolemize(manager, term) {
-                            // Register the Skolemized version with MBQI
-                            self.mbqi.add_quantifier(skolemized, manager);
-                            // Register with E-matching engine
-                            let _ = self.ematch_engine.register_quantifier(skolemized, manager);
-
-                            // Also collect Skolem function application terms from the
-                            // Skolemized body as MBQI candidates.  These terms (e.g.
-                            // sk(x)) must appear in the candidate pool so that other
-                            // universal quantifiers can be instantiated with them.
-                            self.collect_skolem_candidates(skolemized, manager);
-                        } else {
-                            // Skolemization failed — fall back to original
-                            self.mbqi.add_quantifier(term, manager);
-                            let _ = self.ematch_engine.register_quantifier(term, manager);
-                        }
-                    }
-                    #[cfg(not(feature = "std"))]
-                    {
-                        self.mbqi.add_quantifier(term, manager);
-                        let _ = self.ematch_engine.register_quantifier(term, manager);
-                    }
-                } else {
-                    self.mbqi.add_quantifier(term, manager);
-                    // Register with E-matching engine for trigger-based instantiation
-                    let _ = self.ematch_engine.register_quantifier(term, manager);
-                }
-
-                // Collect ground terms from patterns as candidates
-                for pattern in &patterns_clone {
-                    for &trigger in pattern {
-                        self.mbqi.collect_ground_terms(trigger, manager);
-                    }
-                }
-                // Create a boolean variable for the quantifier
-                let var = self.get_or_create_var(term);
-                Lit::pos(var)
-            }
-            TermKind::Exists { patterns, .. } => {
-                // Existential quantifiers: register with MBQI for tracking
-                self.has_quantifiers = true;
-                self.mbqi.add_quantifier(term, manager);
-                // Collect ground terms from patterns
-                for pattern in patterns {
-                    for &trigger in pattern {
-                        self.mbqi.collect_ground_terms(trigger, manager);
-                    }
-                }
                 // Create a boolean variable for the quantifier
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
@@ -1344,8 +1515,12 @@ impl Solver {
             | TermKind::StrAt(_, _)
             | TermKind::StrReplace(_, _, _)
             | TermKind::StrReplaceAll(_, _, _)
+            | TermKind::StrReplaceRe(_, _, _)
+            | TermKind::StrReplaceReAll(_, _, _)
             | TermKind::StrToInt(_)
             | TermKind::IntToStr(_)
+            | TermKind::StrToCode(_)
+            | TermKind::StrFromCode(_)
             | TermKind::StrInRe(_, _) => {
                 // String terms - theory solver handles these
                 let var = self.get_or_create_var(term);
@@ -1354,6 +1529,8 @@ impl Solver {
             TermKind::StrContains(_, _)
             | TermKind::StrPrefixOf(_, _)
             | TermKind::StrSuffixOf(_, _)
+            | TermKind::StrLt(_, _)
+            | TermKind::StrLe(_, _)
             | TermKind::StrIndexOf(_, _, _) => {
                 // String predicates - theory atoms
                 let var = self.get_or_create_var(term);
@@ -1433,86 +1610,6 @@ impl Solver {
         }
     }
 
-    /// Walk a (possibly Skolemized) quantifier term and collect Apply terms
-    /// whose function name starts with "sk" as MBQI instantiation candidates.
-    ///
-    /// These Skolem function applications (e.g. `sk!0(x)`) must be in the
-    /// candidate pool so that MBQI can instantiate other universal quantifiers
-    /// with Skolem terms, enabling cross-quantifier contradictions.
-    fn collect_skolem_candidates(&mut self, term: TermId, manager: &TermManager) {
-        let mut visited = FxHashSet::default();
-        self.collect_skolem_candidates_rec(term, manager, &mut visited);
-    }
-
-    fn collect_skolem_candidates_rec(
-        &mut self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) {
-        if !visited.insert(term) {
-            return;
-        }
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-        match &t.kind {
-            TermKind::Apply { func, args } => {
-                let fname = manager.resolve_str(*func);
-                if fname.starts_with("sk") || fname.starts_with("skf") {
-                    // Register the whole application as a candidate
-                    self.mbqi.add_candidate(term, t.sort);
-                }
-                for &arg in args.iter() {
-                    self.collect_skolem_candidates_rec(arg, manager, visited);
-                }
-            }
-            TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => {
-                self.collect_skolem_candidates_rec(*body, manager, visited);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &a in args {
-                    self.collect_skolem_candidates_rec(a, manager, visited);
-                }
-            }
-            TermKind::Not(a) | TermKind::Neg(a) => {
-                self.collect_skolem_candidates_rec(*a, manager, visited);
-            }
-            TermKind::Implies(a, b)
-            | TermKind::Eq(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => {
-                self.collect_skolem_candidates_rec(*a, manager, visited);
-                self.collect_skolem_candidates_rec(*b, manager, visited);
-            }
-            TermKind::Add(args) | TermKind::Mul(args) => {
-                for &a in args.iter() {
-                    self.collect_skolem_candidates_rec(a, manager, visited);
-                }
-            }
-            TermKind::Ite(c, t_br, e) => {
-                self.collect_skolem_candidates_rec(*c, manager, visited);
-                self.collect_skolem_candidates_rec(*t_br, manager, visited);
-                self.collect_skolem_candidates_rec(*e, manager, visited);
-            }
-            TermKind::Select(a, i) => {
-                self.collect_skolem_candidates_rec(*a, manager, visited);
-                self.collect_skolem_candidates_rec(*i, manager, visited);
-            }
-            TermKind::Store(a, i, v) => {
-                self.collect_skolem_candidates_rec(*a, manager, visited);
-                self.collect_skolem_candidates_rec(*i, manager, visited);
-                self.collect_skolem_candidates_rec(*v, manager, visited);
-            }
-            _ => {}
-        }
-    }
-
     /// Scan all Constraint::Eq entries in var_to_constraint that are currently
     /// assigned False by the SAT model and add arithmetic splits `(lhs < rhs)
     /// OR (lhs > rhs)` for each.  This ensures ArithSolver knows about
@@ -1553,13 +1650,115 @@ impl Solver {
         }
     }
 
-    /// When a MBQI instantiation result is `(not (= a b))` where a and b have
-    /// Int sort, add the arithmetic split `(a < b) OR (a > b)` as a SAT clause.
-    /// This ensures the ArithSolver knows about the disequality and doesn't
-    /// assign both a and b to equal values.
+    /// Add the arithmetic trichotomy clause `(a = b) OR (a < b) OR (a > b)` for
+    /// an Int/Real operand pair, so that a disequality forced by the Boolean
+    /// structure reaches the `ArithSolver` as a strict ordering constraint.
+    ///
+    /// No-op for non-numeric operands (EUF/BV disequalities are handled by their
+    /// own theory).  The clause is valid for every total order, hence safe to
+    /// add unconditionally; the three literals reuse the atoms `encode` already
+    /// created, so nothing new is asserted about the problem.
+    fn add_arith_trichotomy_clause(&mut self, lhs: TermId, rhs: TermId, manager: &mut TermManager) {
+        let is_numeric = manager
+            .get(lhs)
+            .is_some_and(|t| t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort);
+        if !is_numeric {
+            return;
+        }
+        let eq_term = manager.mk_eq(lhs, rhs);
+        // `mk_eq` folds a syntactically identical pair to `true`; the clause is
+        // then trivially satisfied and carries no information.
+        if manager
+            .get(eq_term)
+            .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False))
+        {
+            return;
+        }
+        let lt_term = manager.mk_lt(lhs, rhs);
+        let gt_term = manager.mk_gt(lhs, rhs);
+        let eq_lit = self.encode(eq_term, manager);
+        let lt_lit = self.encode(lt_term, manager);
+        let gt_lit = self.encode(gt_term, manager);
+        self.sat.add_clause([eq_lit, lt_lit, gt_lit]);
+    }
+
+    /// Walk a term and give every arithmetic disequality source —
+    /// `Not(Eq(a, b))` and `Distinct(a, b, ...)` — the trichotomy clause
+    /// `(a = b) OR (a < b) OR (a > b)`, so the ArithSolver knows about the
+    /// disequality and doesn't assign both sides equal values.
+    ///
+    /// The clause is a *tautology* over a totally ordered sort, so it can be
+    /// added regardless of the Boolean context the disequality sits in.  When
+    /// the context forces `a = b` to false (an asserted `not (= a b)` or a
+    /// pairwise disequality of an asserted `distinct`), unit propagation leaves
+    /// `(a < b) OR (a > b)` and the `ArithSolver` receives a genuine strict
+    /// ordering constraint instead of silently ignoring the disequality.
+    ///
+    /// Emitting the *unguarded* split `(a < b) OR (a > b)` instead would be
+    /// unsound: for `(or p (not (= x 0)))` it forces `x != 0` even when the
+    /// formula is satisfied through `p`.
+    ///
+    /// The walk is an explicit-stack DFS preorder (children left-to-right),
+    /// never native recursion: it runs on MBQI instantiation results, which
+    /// are produced *during* `check` and never pass the assert-time
+    /// `term_exceeds_encode_depth` gate, and instantiation can compose depth
+    /// round over round — so the reachable depth is input-controlled and the
+    /// `()` return type leaves no honest way to cap it.  The visited set
+    /// bounds re-expansion of shared DAG nodes (work), not chain depth.
     pub(super) fn add_arith_diseq_split(&mut self, term: TermId, manager: &mut TermManager) {
-        let mut visited = FxHashSet::default();
-        self.add_arith_diseq_split_recursive(term, manager, &mut visited);
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![term];
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+
+            let Some(t) = manager.get(current).cloned() else {
+                continue;
+            };
+
+            match &t.kind {
+                TermKind::Not(inner) => {
+                    let inner_id = *inner;
+                    if let Some(inner_t) = manager.get(inner_id).cloned()
+                        && let TermKind::Eq(lhs, rhs) = &inner_t.kind
+                    {
+                        self.add_arith_trichotomy_clause(*lhs, *rhs, manager);
+                    }
+                    // Also descend into the inner term.
+                    stack.push(inner_id);
+                }
+                TermKind::Distinct(args) => {
+                    // `distinct` expands to pairwise disequalities in `encode`; the
+                    // theory layer only learns about each pair through the strict
+                    // ordering atoms introduced here.
+                    let args_clone: Vec<TermId> = args.iter().copied().collect();
+                    for i in 0..args_clone.len() {
+                        for j in (i + 1)..args_clone.len() {
+                            self.add_arith_trichotomy_clause(args_clone[i], args_clone[j], manager);
+                        }
+                    }
+                }
+                TermKind::And(args) | TermKind::Or(args) => {
+                    // Reverse push so children pop — and their clauses are
+                    // emitted — left-to-right, as the recursive DFS did.
+                    for &arg in args.iter().rev() {
+                        stack.push(arg);
+                    }
+                }
+                TermKind::Implies(_, rhs) => {
+                    // Descend into the consequent -- that's where the disequality
+                    // typically lives in quantifier instantiation lemmas
+                    stack.push(*rhs);
+                }
+                TermKind::Ite(_, then_br, else_br) => {
+                    stack.push(*else_br);
+                    stack.push(*then_br);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Add trichotomy clauses `Eq(a,b) OR Lt(a,b) OR Gt(a,b)` for every
@@ -1571,151 +1770,72 @@ impl Solver {
     ///
     /// Only called for MBQI instantiation results, not for all assertions,
     /// to avoid blowing up the clause database on non-quantified problems.
-    pub(super) fn add_arith_eq_trichotomy(&mut self, term: TermId, manager: &mut TermManager) {
-        let mut visited = FxHashSet::default();
-        self.add_arith_eq_trichotomy_recursive(term, manager, &mut visited);
-    }
-
-    fn add_arith_eq_trichotomy_recursive(
-        &mut self,
-        term: TermId,
-        manager: &mut TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) {
-        if !visited.insert(term) {
-            return;
-        }
-
-        let Some(t) = manager.get(term).cloned() else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::Eq(lhs, rhs) => {
-                let lhs_is_numeric = manager.get(*lhs).is_some_and(|lt| {
-                    lt.sort == manager.sorts.int_sort || lt.sort == manager.sorts.real_sort
-                });
-                // Only add trichotomy when at least one side is an
-                // uninterpreted function application (Apply). This is the
-                // pattern that appears in injectivity / congruence axioms
-                // where f(a)=f(b) needs to be split into f(a)<f(b) or
-                // f(a)>f(b) when the equality is false.
-                // Avoid Select terms -- the array theory handles those.
-                let lhs_is_apply = manager
-                    .get(*lhs)
-                    .is_some_and(|lt| matches!(lt.kind, TermKind::Apply { .. }));
-                let rhs_is_apply = manager
-                    .get(*rhs)
-                    .is_some_and(|rt| matches!(rt.kind, TermKind::Apply { .. }));
-                if lhs_is_numeric && (lhs_is_apply || rhs_is_apply) {
-                    let (l, r) = (*lhs, *rhs);
-                    // Add trichotomy: Eq(a,b) OR Lt(a,b) OR Gt(a,b)
-                    let eq_var = self.get_or_create_var(term);
-                    let eq_lit = Lit::pos(eq_var);
-                    let lt_term = manager.mk_lt(l, r);
-                    let gt_term = manager.mk_gt(l, r);
-                    let lt_lit = self.encode(lt_term, manager);
-                    let gt_lit = self.encode(gt_term, manager);
-                    self.sat.add_clause([eq_lit, lt_lit, gt_lit]);
-                }
-            }
-            TermKind::Not(arg) => {
-                self.add_arith_eq_trichotomy_recursive(*arg, manager, visited);
-            }
-            TermKind::And(args) => {
-                let args_clone: Vec<TermId> = args.iter().copied().collect();
-                for arg in args_clone {
-                    self.add_arith_eq_trichotomy_recursive(arg, manager, visited);
-                }
-            }
-            TermKind::Or(args) => {
-                let args_clone: Vec<TermId> = args.iter().copied().collect();
-                for arg in args_clone {
-                    self.add_arith_eq_trichotomy_recursive(arg, manager, visited);
-                }
-            }
-            TermKind::Implies(lhs, rhs) => {
-                let (l, r) = (*lhs, *rhs);
-                self.add_arith_eq_trichotomy_recursive(l, manager, visited);
-                self.add_arith_eq_trichotomy_recursive(r, manager, visited);
-            }
-            TermKind::Ite(_, then_br, else_br) => {
-                let (t, e) = (*then_br, *else_br);
-                self.add_arith_eq_trichotomy_recursive(t, manager, visited);
-                self.add_arith_eq_trichotomy_recursive(e, manager, visited);
-            }
-            _ => {}
-        }
-    }
-
-    /// Recursively walk a term to find all `Not(Eq(a, b))` sub-terms with
-    /// arithmetic sorts and add the split `(a < b) OR (a > b)` for each.
     ///
-    /// This handles MBQI instantiation results that are implications like
-    /// `(=> guard (not (= a b)))` where the disequality is nested inside
-    /// the formula rather than at the top level.
-    fn add_arith_diseq_split_recursive(
-        &mut self,
-        term: TermId,
-        manager: &mut TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) {
-        if !visited.insert(term) {
-            return;
-        }
+    /// Explicit-stack DFS preorder for the same reason as
+    /// [`Solver::add_arith_diseq_split`]: instantiation results never pass the
+    /// assert-time depth gate, and `()` has no honest cap channel.
+    pub(super) fn add_arith_eq_trichotomy(&mut self, term: TermId, manager: &mut TermManager) {
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = vec![term];
 
-        let Some(t) = manager.get(term).cloned() else {
-            return;
-        };
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
 
-        match &t.kind {
-            TermKind::Not(inner) => {
-                let inner_id = *inner;
-                if let Some(inner_t) = manager.get(inner_id).cloned() {
-                    if let TermKind::Eq(lhs, rhs) = &inner_t.kind {
-                        let lhs_is_numeric = manager.get(*lhs).is_some_and(|lt| {
-                            lt.sort == manager.sorts.int_sort || lt.sort == manager.sorts.real_sort
-                        });
-                        if lhs_is_numeric {
-                            let (l, r) = (*lhs, *rhs);
-                            // Build Lt(lhs, rhs) and Gt(lhs, rhs)
-                            let lt_term = manager.mk_lt(l, r);
-                            let gt_term = manager.mk_gt(l, r);
+            let Some(t) = manager.get(current).cloned() else {
+                continue;
+            };
 
-                            // Encode both and add the disjunction
-                            let lt_lit = self.encode(lt_term, manager);
-                            let gt_lit = self.encode(gt_term, manager);
-                            self.sat.add_clause([lt_lit, gt_lit]);
-                        }
+            match &t.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    let lhs_is_numeric = manager.get(*lhs).is_some_and(|lt| {
+                        lt.sort == manager.sorts.int_sort || lt.sort == manager.sorts.real_sort
+                    });
+                    // Only add trichotomy when at least one side is an
+                    // uninterpreted function application (Apply). This is the
+                    // pattern that appears in injectivity / congruence axioms
+                    // where f(a)=f(b) needs to be split into f(a)<f(b) or
+                    // f(a)>f(b) when the equality is false.
+                    // Avoid Select terms -- the array theory handles those.
+                    let lhs_is_apply = manager
+                        .get(*lhs)
+                        .is_some_and(|lt| matches!(lt.kind, TermKind::Apply { .. }));
+                    let rhs_is_apply = manager
+                        .get(*rhs)
+                        .is_some_and(|rt| matches!(rt.kind, TermKind::Apply { .. }));
+                    if lhs_is_numeric && (lhs_is_apply || rhs_is_apply) {
+                        let (l, r) = (*lhs, *rhs);
+                        // Add trichotomy: Eq(a,b) OR Lt(a,b) OR Gt(a,b)
+                        let eq_var = self.get_or_create_var(current);
+                        let eq_lit = Lit::pos(eq_var);
+                        let lt_term = manager.mk_lt(l, r);
+                        let gt_term = manager.mk_gt(l, r);
+                        let lt_lit = self.encode(lt_term, manager);
+                        let gt_lit = self.encode(gt_term, manager);
+                        self.sat.add_clause([eq_lit, lt_lit, gt_lit]);
                     }
                 }
-                // Also recurse into the inner term
-                self.add_arith_diseq_split_recursive(inner_id, manager, visited);
-            }
-            TermKind::And(args) => {
-                let args_clone: Vec<TermId> = args.iter().copied().collect();
-                for arg in args_clone {
-                    self.add_arith_diseq_split_recursive(arg, manager, visited);
+                TermKind::Not(arg) => {
+                    stack.push(*arg);
                 }
-            }
-            TermKind::Or(args) => {
-                let args_clone: Vec<TermId> = args.iter().copied().collect();
-                for arg in args_clone {
-                    self.add_arith_diseq_split_recursive(arg, manager, visited);
+                TermKind::And(args) | TermKind::Or(args) => {
+                    // Reverse push so children pop left-to-right, preserving
+                    // the recursive version's clause-emission order.
+                    for &arg in args.iter().rev() {
+                        stack.push(arg);
+                    }
                 }
+                TermKind::Implies(lhs, rhs) => {
+                    stack.push(*rhs);
+                    stack.push(*lhs);
+                }
+                TermKind::Ite(_, then_br, else_br) => {
+                    stack.push(*else_br);
+                    stack.push(*then_br);
+                }
+                _ => {}
             }
-            TermKind::Implies(_, rhs) => {
-                // Recurse into the consequent -- that's where the disequality
-                // typically lives in quantifier instantiation lemmas
-                let rhs_id = *rhs;
-                self.add_arith_diseq_split_recursive(rhs_id, manager, visited);
-            }
-            TermKind::Ite(_, then_br, else_br) => {
-                let (t, e) = (*then_br, *else_br);
-                self.add_arith_diseq_split_recursive(t, manager, visited);
-                self.add_arith_diseq_split_recursive(e, manager, visited);
-            }
-            _ => {}
         }
     }
 }

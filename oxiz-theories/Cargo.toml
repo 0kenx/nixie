@@ -54,3 +54,6 @@ harness = false
 [[bench]]
 name = "euf_benchmarks"
 harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

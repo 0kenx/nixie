@@ -5,7 +5,8 @@
 //! `main.rs`/`processor.rs`/`format.rs` comments at each fix site for the
 //! full rationale.
 
-use std::env;
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -37,20 +38,20 @@ fn assert_prompt(elapsed: std::time::Duration, budget: std::time::Duration, labe
     }
 }
 
-/// Generate a unique temp file path for a `.smt2` script.
-fn temp_smt2_path(label: &str) -> PathBuf {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("time went backwards")
-        .as_nanos();
-    env::temp_dir().join(format!("audit_sweep_frontends_{label}_{nanos}.smt2"))
+/// Generate a unique temp file path for a `.smt2` script, without creating
+/// it yet (used when only the *name* -- e.g. to derive a sibling output
+/// path -- is needed).
+///
+/// See `tests/common/mod.rs` for why this is collision-proof by
+/// construction (pid + per-process counter) rather than timestamp-based.
+fn temp_smt2_path(label: &str) -> common::TempPath {
+    common::TempPath::reserve(&format!("audit_sweep_frontends_{label}"), "smt2")
 }
 
-fn write_temp_smt2(label: &str, content: &str) -> PathBuf {
-    let path = temp_smt2_path(label);
-    fs::write(&path, content).expect("failed to write temp smt2 file");
-    path
+/// Create a unique temp `.smt2` script. Cleans up on `Drop` (including on
+/// panic).
+fn write_temp_smt2(label: &str, content: &str) -> common::TempPath {
+    common::TempPath::write(&format!("audit_sweep_frontends_{label}"), "smt2", content)
 }
 
 /// Build a pigeonhole-principle CNF (as SMT-LIB2) with `holes` holes and
@@ -433,13 +434,7 @@ fn threads_routes_through_portfolio() {
 /// without re-solving.
 #[test]
 fn checkpoint_and_resume_round_trip() {
-    let checkpoint_dir = env::temp_dir().join(format!(
-        "audit_sweep_ckpt_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time went backwards")
-            .as_nanos()
-    ));
+    let checkpoint_dir = common::TempDirPath::reserve("audit_sweep_ckpt");
     let script = write_temp_smt2(
         "checkpoint_solve",
         "(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n",
@@ -501,13 +496,7 @@ fn ml_tactic_selection_recommends_and_solves() {
 
     // Redirect the persisted ML model to a temp file so the test never writes
     // to the developer's real config dir.
-    let model_path = env::temp_dir().join(format!(
-        "oxiz_ml_model_{}.json",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time went backwards")
-            .as_nanos()
-    ));
+    let model_path = common::TempPath::reserve("oxiz_ml_model", "json");
 
     let output = Command::new(oxiz_bin())
         .env("OXIZ_ML_MODEL", &model_path)

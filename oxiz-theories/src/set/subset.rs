@@ -208,87 +208,141 @@ impl SubsetGraph {
     }
 
     /// Find strongly connected components (equivalence classes)
+    ///
+    /// Iterative Tarjan: the recursion depth of the textbook formulation equals
+    /// the longest subset chain, which is input-controlled. An explicit frame
+    /// stack keeps the exact SCC semantics without a depth limit (truncating
+    /// would be unsound — `SubsetPropagator` would merge the wrong variables).
     pub fn find_scc(&self) -> Vec<Vec<SetVarId>> {
-        let mut index = 0;
-        let mut stack = Vec::new();
-        let mut indices = FxHashMap::default();
-        let mut lowlinks = FxHashMap::default();
-        let mut on_stack = FxHashSet::default();
+        let mut index = 0usize;
+        let mut tarjan_stack: Vec<SetVarId> = Vec::new();
+        let mut indices: FxHashMap<SetVarId, usize> = FxHashMap::default();
+        let mut lowlinks: FxHashMap<SetVarId, usize> = FxHashMap::default();
+        let mut on_stack: FxHashSet<SetVarId> = FxHashSet::default();
         let mut sccs = Vec::new();
 
-        for &v in self.successors.keys() {
-            if !indices.contains_key(&v) {
-                self.strongconnect(
-                    v,
-                    &mut index,
-                    &mut stack,
-                    &mut indices,
-                    &mut lowlinks,
-                    &mut on_stack,
-                    &mut sccs,
-                );
+        for &root in self.successors.keys() {
+            if indices.contains_key(&root) {
+                continue;
             }
+            self.strongconnect(
+                root,
+                &mut index,
+                &mut tarjan_stack,
+                &mut indices,
+                &mut lowlinks,
+                &mut on_stack,
+                &mut sccs,
+            );
         }
 
         sccs
     }
 
+    /// One iterative Tarjan DFS rooted at `root`
     #[allow(clippy::too_many_arguments)]
     fn strongconnect(
         &self,
-        v: SetVarId,
+        root: SetVarId,
         index: &mut usize,
-        stack: &mut Vec<SetVarId>,
+        tarjan_stack: &mut Vec<SetVarId>,
         indices: &mut FxHashMap<SetVarId, usize>,
         lowlinks: &mut FxHashMap<SetVarId, usize>,
         on_stack: &mut FxHashSet<SetVarId>,
         sccs: &mut Vec<Vec<SetVarId>>,
     ) {
-        indices.insert(v, *index);
-        lowlinks.insert(v, *index);
-        *index += 1;
-        stack.push(v);
-        on_stack.insert(v);
-
-        if let Some(succs) = self.successors.get(&v) {
-            for &w in succs {
-                if !indices.contains_key(&w) {
-                    self.strongconnect(w, index, stack, indices, lowlinks, on_stack, sccs);
-                    let w_lowlink = lowlinks[&w];
-                    let v_lowlink = lowlinks
-                        .get_mut(&v)
-                        .expect("v must be in lowlinks after insertion at line 248");
-                    *v_lowlink = (*v_lowlink).min(w_lowlink);
-                } else if on_stack.contains(&w) {
-                    let w_index = indices[&w];
-                    let v_lowlink = lowlinks
-                        .get_mut(&v)
-                        .expect("v must be in lowlinks after insertion at line 248");
-                    *v_lowlink = (*v_lowlink).min(w_index);
-                }
-            }
+        // Each frame is one activation of the recursive `strongconnect`:
+        // the node, its successor list, and how far the loop has advanced.
+        struct Frame {
+            node: SetVarId,
+            successors: Vec<SetVarId>,
+            cursor: usize,
         }
 
-        if lowlinks[&v] == indices[&v] {
-            let mut scc = Vec::new();
-            loop {
-                let w = stack
-                    .pop()
-                    .expect("Stack cannot be empty in SCC extraction: v was pushed at line 250");
-                on_stack.remove(&w);
-                scc.push(w);
-                if w == v {
-                    break;
+        let visit = |node: SetVarId,
+                     index: &mut usize,
+                     tarjan_stack: &mut Vec<SetVarId>,
+                     indices: &mut FxHashMap<SetVarId, usize>,
+                     lowlinks: &mut FxHashMap<SetVarId, usize>,
+                     on_stack: &mut FxHashSet<SetVarId>|
+         -> Frame {
+            indices.insert(node, *index);
+            lowlinks.insert(node, *index);
+            *index += 1;
+            tarjan_stack.push(node);
+            on_stack.insert(node);
+            Frame {
+                node,
+                successors: self
+                    .successors
+                    .get(&node)
+                    .map(|succs| succs.iter().copied().collect())
+                    .unwrap_or_default(),
+                cursor: 0,
+            }
+        };
+
+        let mut frames: Vec<Frame> = vec![visit(
+            root,
+            index,
+            tarjan_stack,
+            indices,
+            lowlinks,
+            on_stack,
+        )];
+
+        while let Some(frame) = frames.last_mut() {
+            if frame.cursor < frame.successors.len() {
+                let w = frame.successors[frame.cursor];
+                frame.cursor += 1;
+                let v = frame.node;
+
+                match indices.get(&w).copied() {
+                    None => {
+                        // Recursive call: push a new activation for `w`.
+                        let child = visit(w, index, tarjan_stack, indices, lowlinks, on_stack);
+                        frames.push(child);
+                    }
+                    Some(w_index) => {
+                        if on_stack.contains(&w) {
+                            let v_lowlink = lowlinks.entry(v).or_insert(w_index);
+                            *v_lowlink = (*v_lowlink).min(w_index);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Successor loop exhausted: this is the post-order part of the
+            // recursive function (root check + SCC extraction).
+            let v = frame.node;
+            let v_index = indices.get(&v).copied().unwrap_or(0);
+            let v_lowlink = lowlinks.get(&v).copied().unwrap_or(v_index);
+            frames.pop();
+
+            if v_lowlink == v_index {
+                let mut scc = Vec::new();
+                while let Some(w) = tarjan_stack.pop() {
+                    on_stack.remove(&w);
+                    scc.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let is_self_loop = scc
+                    .first()
+                    .is_some_and(|&s| self.successors.get(&s).is_some_and(|t| t.contains(&s)));
+                if scc.len() > 1 || (scc.len() == 1 && is_self_loop) {
+                    sccs.push(scc);
                 }
             }
-            if scc.len() > 1
-                || (scc.len() == 1
-                    && self
-                        .successors
-                        .get(&scc[0])
-                        .is_some_and(|s| s.contains(&scc[0])))
-            {
-                sccs.push(scc);
+
+            // Propagate the lowlink into the parent activation, mirroring
+            // `v_lowlink = min(v_lowlink, w_lowlink)` after the recursive call.
+            if let Some(parent) = frames.last() {
+                let parent_node = parent.node;
+                let parent_lowlink = lowlinks.entry(parent_node).or_insert(v_lowlink);
+                *parent_lowlink = (*parent_lowlink).min(v_lowlink);
             }
         }
     }
@@ -677,6 +731,90 @@ mod tests {
         let sccs = graph.find_scc();
         assert_eq!(sccs.len(), 1);
         assert_eq!(sccs[0].len(), 3);
+    }
+
+    #[test]
+    fn test_subset_graph_scc_deep_chain_small_stack() {
+        // A long subset chain closed into one cycle: every variable is in the
+        // same equivalence class, so the correct answer is a single SCC
+        // containing all of them. Recursive Tarjan nests once per chain link,
+        // and truncating the search would split the class -- `SubsetPropagator`
+        // would then merge the wrong variables. Run on a deliberately small
+        // (128 KiB) stack: a stack overflow aborts the process, so "the thread
+        // returned at all" is itself part of the assertion. The stack size and
+        // `depth` are scaled together and only their ratio (~21 bytes per
+        // level) matters -- never raise one without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth: u32 = 12_500;
+                let mut graph = SubsetGraph::new();
+                // Built directly rather than through `add_edge`, whose cycle
+                // check is a full BFS per edge (quadratic at this size).
+                for i in 0..depth {
+                    graph
+                        .successors
+                        .entry(SetVarId(i))
+                        .or_default()
+                        .insert(SetVarId(i + 1));
+                    graph
+                        .predecessors
+                        .entry(SetVarId(i + 1))
+                        .or_default()
+                        .insert(SetVarId(i));
+                }
+                // Close the cycle so the whole chain is one component.
+                graph
+                    .successors
+                    .entry(SetVarId(depth))
+                    .or_default()
+                    .insert(SetVarId(0));
+                graph
+                    .predecessors
+                    .entry(SetVarId(0))
+                    .or_default()
+                    .insert(SetVarId(depth));
+
+                let sccs = graph.find_scc();
+                assert_eq!(sccs.len(), 1);
+                assert_eq!(sccs[0].len() as u32, depth + 1);
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a deep subset chain must not overflow a 128 KiB stack");
+    }
+
+    #[test]
+    fn test_subset_graph_scc_separates_components() {
+        // Semantic pin for the iterative Tarjan: two disjoint cycles plus a
+        // trivial (non-self-looping) node must yield exactly the two cycles.
+        let mut graph = SubsetGraph::new();
+        graph.add_edge(SetVarId(0), SetVarId(1));
+        graph.add_edge(SetVarId(1), SetVarId(0));
+        graph.add_edge(SetVarId(2), SetVarId(3));
+        graph.add_edge(SetVarId(3), SetVarId(4));
+        graph.add_edge(SetVarId(4), SetVarId(2));
+        graph.add_edge(SetVarId(5), SetVarId(0));
+
+        let mut sizes: Vec<usize> = graph.find_scc().iter().map(Vec::len).collect();
+        sizes.sort_unstable();
+        assert_eq!(sizes, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_subset_graph_scc_self_loop() {
+        // A single node with a self edge is a component; without the edge it
+        // is not reported at all.
+        let mut graph = SubsetGraph::new();
+        graph.add_edge(SetVarId(7), SetVarId(7));
+        let sccs = graph.find_scc();
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0], vec![SetVarId(7)]);
+
+        let mut plain = SubsetGraph::new();
+        plain.add_edge(SetVarId(8), SetVarId(9));
+        assert!(plain.find_scc().is_empty());
     }
 
     #[test]

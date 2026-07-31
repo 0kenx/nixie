@@ -44,7 +44,11 @@ impl Solver {
 
                 let value = self.trail.lit_value(implied_lit);
                 if value.is_false() {
-                    // Conflict in binary clause
+                    // Conflict in binary clause. `lit`'s remaining implication
+                    // edges (and its whole watch list) have not been examined,
+                    // so put it back on the queue before bailing out — see
+                    // `Trail::requeue_last_propagated`.
+                    self.trail.requeue_last_propagated();
                     return Some(clause_id);
                 } else if !value.is_defined() {
                     // Propagate
@@ -133,6 +137,11 @@ impl Solver {
             *self.watches.get_mut(lit) = watches;
 
             if let Some(conflict) = conflict_found {
+                // The watch list was abandoned mid-scan, so `lit` is only
+                // partially propagated. Re-queue it so the invariant "everything
+                // before the head is fully propagated" survives the abort — see
+                // `Trail::requeue_last_propagated`.
+                self.trail.requeue_last_propagated();
                 return Some(conflict);
             }
         }
@@ -199,12 +208,67 @@ impl Solver {
             if !self.has_binary_implication(other_lit.negate(), implied) {
                 // Learn this binary clause on-the-fly
                 let clause_id = self.clauses.add_learned(binary_clause_lits.iter().copied());
+
+                // Register the clause in the two ledgers that make a learned
+                // clause retractable, exactly as the main CDCL loop's 1-UIP
+                // learning step does — see `Solver::solve` in `solver/mod.rs`,
+                // which pushes to `learned_clause_ids` *and* to the current
+                // assertion level's list in both its unit and its general
+                // branch.  (`Solver::learn_clause` in `solver/learn.rs`, used
+                // by the alternative search drivers in `search_ext.rs`, records
+                // only the first of the two; the two-ledger form is the one
+                // that keeps `pop` able to take the clause back, so it is the
+                // one copied here.)
+                //
+                // This site used to write to neither ledger, and an
+                // unregistered learned clause is invisible to every mechanism
+                // that is supposed to be able to take a learned clause back:
+                //
+                // * `learned_clause_count()` reports `learned_clause_ids.len()`,
+                //   so callers computing "originals" as
+                //   `num_clauses() - learned_clause_count()` counted these as
+                //   *original* clauses — the whole reported symptom of task #28
+                //   ("repeated check-sat grows the original clause database").
+                // * `forget_learned_since` splits `learned_clause_ids`, so the
+                //   bit-vector theory's incremental safety net (see its doc
+                //   comment) could not forget them.
+                // * `pop` removes only the ids listed for the popped assertion
+                //   level, so they outlived the assertion scope they were
+                //   derived in.  That last one is not merely accounting: the
+                //   resolution that produces `other_lit | implied` discharges
+                //   the reason clause's remaining literals because they are
+                //   false *at level 0*, and level-0 facts here are only
+                //   level-0 for the current assertion scope — `add_clause`
+                //   installs a unit as a level-0 trail assignment and `pop`
+                //   rolls the trail back.  A surviving hyper-binary clause
+                //   whose level-0 premises have just been retracted is no
+                //   longer implied by the remaining constraints.
+                self.learned_clause_ids.push(clause_id);
+                if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                    current_level_clauses.push(clause_id);
+                }
+
                 // Add correct implications: ~A -> B and ~B -> A for clause (A | B)
                 self.binary_graph
                     .add(other_lit.negate(), implied, clause_id);
                 self.binary_graph
                     .add(implied.negate(), other_lit, clause_id);
                 self.stats.learned_clauses += 1;
+
+                // Every other `add_learned` call site computes and stores an LBD
+                // (see `Solver::compute_lbd`'s call sites in `solve` and
+                // `learn_clause`); this on-the-fly path used to be an exception,
+                // leaving `clause.lbd` at `Clause::learned`'s default of 0
+                // forever. `Clause::record_usage` promotes a clause straight to
+                // the rarely-deleted `Core` tier once `lbd <= 2`, so a stuck LBD
+                // of 0 gave every hyper-binary-resolution clause an artificially
+                // easy path into permanent retention regardless of its actual
+                // quality.
+                let lbd = self.compute_lbd(&binary_clause_lits);
+                if let Some(clause) = self.clauses.get_mut(clause_id) {
+                    clause.lbd = lbd;
+                }
+                self.debug_check_learned_clause_lbd(clause_id);
             }
         }
     }

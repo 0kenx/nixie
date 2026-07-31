@@ -611,21 +611,81 @@ impl Default for XorManager {
     }
 }
 
+/// Smallest XOR arity a [`XorDetector`] can recognize.
+///
+/// The CNF encoding of an XOR over `n` variables consists of `2^(n-1)`
+/// clauses. `n == 0` makes that exponent underflow, and `n == 1` describes a
+/// unit clause rather than an XOR, so 2 is the smallest meaningful arity.
+pub const MIN_XOR_SIZE: usize = 2;
+
+/// Largest XOR arity a [`XorDetector`] can recognize.
+///
+/// `2^(n-1)` must be a representable clause count, so `n - 1` has to stay
+/// below the width of `usize`; 32 keeps `1usize << (n - 1)` well-defined on
+/// 32-bit targets as well. An XOR over 32 variables already implies 2^31
+/// clauses, far beyond anything a detector will encounter.
+pub const MAX_XOR_SIZE: usize = 32;
+
 /// XOR clause detector
 pub struct XorDetector {
-    /// Minimum XOR size to detect
+    /// Minimum XOR size to detect, always within
+    /// `MIN_XOR_SIZE..=MAX_XOR_SIZE`
     min_xor_size: usize,
-    /// Maximum XOR size to detect
+    /// Maximum XOR size to detect, always within
+    /// `MIN_XOR_SIZE..=MAX_XOR_SIZE`
     max_xor_size: usize,
 }
 
 impl XorDetector {
-    /// Create a new XOR detector
+    /// Create a new XOR detector, clamping the sizes to the supported range
+    ///
+    /// Sizes outside `MIN_XOR_SIZE..=MAX_XOR_SIZE` are clamped rather than
+    /// accepted verbatim: a size of 0 used to underflow `size - 1` and a size
+    /// above 64 used to overflow the `1 << (size - 1)` shift, both reachable
+    /// from this public constructor. Use [`XorDetector::try_new`] when the
+    /// caller wants the out-of-range request reported instead of adjusted.
     pub fn new(min_size: usize, max_size: usize) -> Self {
         Self {
+            min_xor_size: min_size.clamp(MIN_XOR_SIZE, MAX_XOR_SIZE),
+            max_xor_size: max_size.clamp(MIN_XOR_SIZE, MAX_XOR_SIZE),
+        }
+    }
+
+    /// Create a new XOR detector, rejecting unsupported sizes
+    ///
+    /// Returns `None` when either bound falls outside
+    /// `MIN_XOR_SIZE..=MAX_XOR_SIZE`, or when `min_size > max_size` (which
+    /// would silently detect nothing at all).
+    pub fn try_new(min_size: usize, max_size: usize) -> Option<Self> {
+        let supported = MIN_XOR_SIZE..=MAX_XOR_SIZE;
+        if !supported.contains(&min_size) || !supported.contains(&max_size) || min_size > max_size {
+            return None;
+        }
+        Some(Self {
             min_xor_size: min_size,
             max_xor_size: max_size,
+        })
+    }
+
+    /// The smallest XOR arity this detector looks for
+    pub fn min_size(&self) -> usize {
+        self.min_xor_size
+    }
+
+    /// The largest XOR arity this detector looks for
+    pub fn max_size(&self) -> usize {
+        self.max_xor_size
+    }
+
+    /// Number of clauses a CNF encoding of an `size`-ary XOR must have
+    ///
+    /// `None` for a size this detector does not support, which is what keeps
+    /// the `1 << (size - 1)` shift below in range.
+    fn expected_clause_count(size: usize) -> Option<usize> {
+        if !(MIN_XOR_SIZE..=MAX_XOR_SIZE).contains(&size) {
+            return None;
         }
+        Some(1usize << (size - 1))
     }
 
     /// Detect XOR constraints from clauses
@@ -663,6 +723,12 @@ impl XorDetector {
     ) -> Vec<XorConstraint> {
         let mut result = Vec::new();
 
+        // Sizes outside the supported range have no valid encoding to look
+        // for; `size == 0` in particular used to underflow `size - 1` below.
+        let Some(expected_clauses) = Self::expected_clause_count(size) else {
+            return result;
+        };
+
         // Group clauses by their variables (ignoring polarity)
         let mut clause_groups: HashMap<Vec<Var>, Vec<(Vec<bool>, ClauseId)>> = HashMap::new();
 
@@ -698,14 +764,14 @@ impl XorDetector {
 
         // Check if clause groups form XOR constraints
         for (vars, polarity_groups) in clause_groups {
-            if polarity_groups.len() != (1 << (size - 1)) {
+            if polarity_groups.len() != expected_clauses {
                 continue;
             }
 
             // Verify this is a valid XOR encoding
-            if self.is_valid_xor_encoding(&polarity_groups, size) {
-                // Determine RHS from the polarity pattern
-                let rhs = self.compute_xor_rhs(&polarity_groups);
+            if self.is_valid_xor_encoding(&polarity_groups, size)
+                && let Some(rhs) = Self::compute_xor_rhs(&polarity_groups)
+            {
                 let mut xor = XorConstraint::new(vars, rhs);
                 xor.source_clauses = polarity_groups.iter().map(|(_, id)| *id).collect();
                 result.push(xor);
@@ -721,8 +787,12 @@ impl XorDetector {
         polarity_groups: &[(Vec<bool>, ClauseId)],
         size: usize,
     ) -> bool {
-        // For a valid XOR encoding, we need exactly 2^(n-1) clauses
-        if polarity_groups.len() != (1 << (size - 1)) {
+        // For a valid XOR encoding, we need exactly 2^(n-1) clauses. An
+        // unsupported size has no such count, so nothing can be valid at it.
+        let Some(expected_clauses) = Self::expected_clause_count(size) else {
+            return false;
+        };
+        if polarity_groups.len() != expected_clauses {
             return false;
         }
 
@@ -736,10 +806,12 @@ impl XorDetector {
 
         // For a valid XOR encoding, all clauses should have the same parity
         // of negative literals (all even or all odd)
-        let first_neg_count = polarity_groups[0].0.iter().filter(|&&p| !p).count();
-        let first_parity = first_neg_count % 2;
+        let Some((first_polarities, rest)) = polarity_groups.split_first() else {
+            return false;
+        };
+        let first_parity = first_polarities.0.iter().filter(|&&p| !p).count() % 2;
 
-        for (polarities, _) in &polarity_groups[1..] {
+        for (polarities, _) in rest {
             let neg_count = polarities.iter().filter(|&&p| !p).count();
             if neg_count % 2 != first_parity {
                 return false;
@@ -750,7 +822,9 @@ impl XorDetector {
     }
 
     /// Compute XOR RHS from polarity groups
-    fn compute_xor_rhs(&self, polarity_groups: &[(Vec<bool>, ClauseId)]) -> bool {
+    ///
+    /// `None` for an empty group list, which encodes no XOR at all.
+    fn compute_xor_rhs(polarity_groups: &[(Vec<bool>, ClauseId)]) -> Option<bool> {
         // A CNF encoding of x1 ⊕ ... ⊕ xn = c consists of clauses whose
         // negative-literal parity equals `1 - c` (every falsifying assignment
         // has parity c, so each clause forbids one parity-`1-c` assignment).
@@ -759,9 +833,9 @@ impl XorDetector {
         //
         // If all clauses have an even number of negatives, RHS = true (c = 1).
         // If all clauses have an odd number of negatives, RHS = false (c = 0).
-        let (pols, _) = &polarity_groups[0];
+        let (pols, _) = polarity_groups.first()?;
         let neg_count = pols.iter().filter(|&&p| !p).count();
-        neg_count % 2 == 0
+        Some(neg_count % 2 == 0)
     }
 }
 
@@ -1371,6 +1445,77 @@ mod tests {
             !xors[0].rhs,
             "odd-negative-parity encoding must decode to RHS = 0"
         );
+    }
+
+    #[test]
+    fn test_xor_detector_size_zero_is_clamped_not_underflowed() {
+        // `new(0, ..)` used to reach `1 << (0 - 1)`: a `usize` underflow, then
+        // a shift far past the width of the type.
+        let detector = XorDetector::new(0, 4);
+        assert_eq!(detector.min_size(), MIN_XOR_SIZE);
+        assert_eq!(detector.max_size(), 4);
+
+        let clauses = vec![
+            (vec![Lit::pos(Var(0)), Lit::pos(Var(1))], ClauseId(0)),
+            (vec![Lit::neg(Var(0)), Lit::neg(Var(1))], ClauseId(1)),
+        ];
+        // Still finds the 2-ary XOR, and finds it without panicking.
+        assert_eq!(detector.detect_xor(&clauses).len(), 1);
+    }
+
+    #[test]
+    fn test_xor_detector_size_beyond_64_is_clamped_not_overflowed() {
+        // `new(.., 65)` used to reach `1 << 64`, a shift overflow.
+        let detector = XorDetector::new(2, 65);
+        assert_eq!(detector.min_size(), 2);
+        assert_eq!(detector.max_size(), MAX_XOR_SIZE);
+
+        let clauses = vec![
+            (vec![Lit::pos(Var(0)), Lit::pos(Var(1))], ClauseId(0)),
+            (vec![Lit::neg(Var(0)), Lit::neg(Var(1))], ClauseId(1)),
+        ];
+        assert_eq!(detector.detect_xor(&clauses).len(), 1);
+    }
+
+    #[test]
+    fn test_xor_detector_empty_range_detects_nothing() {
+        // `min > max` after clamping: an empty search range, not a panic.
+        let detector = XorDetector::new(usize::MAX, 0);
+        assert_eq!(detector.min_size(), MAX_XOR_SIZE);
+        assert_eq!(detector.max_size(), MIN_XOR_SIZE);
+        assert!(detector.detect_xor(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_xor_detector_try_new_rejects_unsupported_sizes() {
+        assert!(XorDetector::try_new(0, 4).is_none(), "0 is below MIN");
+        assert!(
+            XorDetector::try_new(1, 4).is_none(),
+            "1 is not an XOR arity"
+        );
+        assert!(XorDetector::try_new(2, 65).is_none(), "65 is above MAX");
+        assert!(
+            XorDetector::try_new(4, 2).is_none(),
+            "min must not exceed max"
+        );
+
+        let detector = XorDetector::try_new(2, 4).expect("2..=4 is supported");
+        assert_eq!((detector.min_size(), detector.max_size()), (2, 4));
+    }
+
+    #[test]
+    fn test_expected_clause_count_range() {
+        assert_eq!(XorDetector::expected_clause_count(0), None);
+        assert_eq!(XorDetector::expected_clause_count(1), None);
+        assert_eq!(XorDetector::expected_clause_count(2), Some(2));
+        assert_eq!(XorDetector::expected_clause_count(3), Some(4));
+        assert_eq!(
+            XorDetector::expected_clause_count(MAX_XOR_SIZE),
+            Some(1usize << (MAX_XOR_SIZE - 1))
+        );
+        assert_eq!(XorDetector::expected_clause_count(MAX_XOR_SIZE + 1), None);
+        assert_eq!(XorDetector::expected_clause_count(65), None);
+        assert_eq!(XorDetector::expected_clause_count(usize::MAX), None);
     }
 
     #[test]

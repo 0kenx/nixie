@@ -11,7 +11,9 @@ use crate::sort::{SortId, SortManager};
 use portable_atomic::{AtomicU32, Ordering};
 
 mod builder;
+pub mod bv_fold;
 mod query;
+pub mod str_fold;
 
 /// Statistics for garbage collection
 #[derive(Debug, Clone, Default)]

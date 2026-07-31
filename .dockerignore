@@ -15,3 +15,8 @@ oxiz-wasm/pkg/
 oxiz-wasm/target/
 bench/logs/
 **/.DS_Store
+# The root Cargo.lock is git-ignored as of 0.3.1 and the builder stage no
+# longer copies it; excluding it here keeps a stale local lockfile from
+# silently entering the build context. Root-only by design: per-crate
+# lockfiles such as bench/z3_parity/Cargo.lock are untouched.
+/Cargo.lock

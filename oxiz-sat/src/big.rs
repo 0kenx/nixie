@@ -219,59 +219,128 @@ impl BinaryImplicationGraph {
         sccs.into_iter().filter(|scc| scc.len() > 1).collect()
     }
 
-    /// Tarjan's SCC algorithm helper
+    /// Tarjan's SCC algorithm helper.
+    ///
+    /// Runs on an explicit heap stack rather than native recursion: the
+    /// depth of the DFS is the length of the longest simple path in the
+    /// binary implication graph, i.e. one per binary clause, entirely
+    /// attacker-controlled (a 100k-link implication chain
+    /// `(¬a₁∨a₂)(¬a₂∨a₃)…` is trivial to write). The function returns
+    /// `Vec<Vec<Lit>>` through `sccs` with no error channel, so a depth cap
+    /// could only silently omit equivalences.
+    ///
+    /// The rewrite also removes three `expect()`s that the recursive form
+    /// needed: the `on_stack ⇒ index.is_some()` and "stack non-empty during
+    /// SCC formation" invariants are now expressed as `if let` / `while
+    /// let` bindings that cannot be written wrongly.
     #[allow(clippy::too_many_arguments)]
     fn tarjan_scc(
         &self,
         lit_idx: usize,
-        index: &mut Vec<Option<usize>>,
-        lowlink: &mut Vec<usize>,
-        on_stack: &mut Vec<bool>,
+        index: &mut [Option<usize>],
+        lowlink: &mut [usize],
+        on_stack: &mut [bool],
         stack: &mut Vec<usize>,
         sccs: &mut Vec<Vec<Lit>>,
         current_index: &mut usize,
     ) {
+        /// One suspended node of the walk: `succs` is its successor list
+        /// snapshotted on entry (the adjacency structure is a `HashSet`,
+        /// which has no positional index) and `next` is how far through
+        /// that list the walk had got when it descended into a child.
+        struct Frame {
+            node: usize,
+            succs: Vec<usize>,
+            next: usize,
+        }
+
+        // Mirror of the recursive prologue, for the root and for every node
+        // the walk descends into.
+        let successors = |node: usize| -> Vec<usize> {
+            self.implications.get(node).map_or_else(Vec::new, |set| {
+                set.iter().map(|implied| implied.code() as usize).collect()
+            })
+        };
+
         index[lit_idx] = Some(*current_index);
         lowlink[lit_idx] = *current_index;
         *current_index += 1;
         stack.push(lit_idx);
         on_stack[lit_idx] = true;
 
-        // Consider successors
-        if lit_idx < self.implications.len() {
-            for &implied in &self.implications[lit_idx] {
-                let impl_idx = implied.code() as usize;
+        let mut frames = vec![Frame {
+            node: lit_idx,
+            succs: successors(lit_idx),
+            next: 0,
+        }];
 
-                if index[impl_idx].is_none() {
-                    self.tarjan_scc(
-                        impl_idx,
-                        index,
-                        lowlink,
-                        on_stack,
-                        stack,
-                        sccs,
-                        current_index,
-                    );
-                    lowlink[lit_idx] = lowlink[lit_idx].min(lowlink[impl_idx]);
-                } else if on_stack[impl_idx] {
-                    lowlink[lit_idx] = lowlink[lit_idx]
-                        .min(index[impl_idx].expect("index set when on_stack is true"));
+        while let Some(mut frame) = frames.pop() {
+            let node = frame.node;
+            let mut descended = false;
+
+            while frame.next < frame.succs.len() {
+                let impl_idx = frame.succs[frame.next];
+                frame.next += 1;
+
+                // `add_implication` grows the adjacency vectors for both
+                // endpoints, so every successor is in range; the guard only
+                // keeps a malformed graph from indexing out of bounds.
+                if impl_idx >= index.len() {
+                    continue;
+                }
+
+                match index[impl_idx] {
+                    // Unvisited successor: descend, resuming `frame`
+                    // afterwards (the post-descent `lowlink` update is done
+                    // by the child when it finishes, see below).
+                    None => {
+                        index[impl_idx] = Some(*current_index);
+                        lowlink[impl_idx] = *current_index;
+                        *current_index += 1;
+                        stack.push(impl_idx);
+                        on_stack[impl_idx] = true;
+                        let succs = successors(impl_idx);
+                        frames.push(frame);
+                        frames.push(Frame {
+                            node: impl_idx,
+                            succs,
+                            next: 0,
+                        });
+                        descended = true;
+                        break;
+                    }
+                    Some(child_index) => {
+                        if on_stack[impl_idx] {
+                            lowlink[node] = lowlink[node].min(child_index);
+                        }
+                    }
                 }
             }
-        }
 
-        // If lit_idx is a root node, pop the stack to form an SCC
-        if lowlink[lit_idx] == index[lit_idx].expect("index set for lit_idx in SCC") {
-            let mut scc = Vec::new();
-            loop {
-                let node = stack.pop().expect("stack non-empty in SCC formation");
-                on_stack[node] = false;
-                scc.push(Lit::from_code(node as u32));
-                if node == lit_idx {
-                    break;
-                }
+            if descended {
+                continue;
             }
-            sccs.push(scc);
+
+            // All successors of `node` are done. If it is an SCC root, pop
+            // the component off the shared Tarjan stack.
+            if index[node] == Some(lowlink[node]) {
+                let mut scc = Vec::new();
+                while let Some(popped) = stack.pop() {
+                    on_stack[popped] = false;
+                    scc.push(Lit::from_code(popped as u32));
+                    if popped == node {
+                        break;
+                    }
+                }
+                sccs.push(scc);
+            }
+
+            // Propagate this node's lowlink into its (suspended) parent —
+            // the `lowlink[parent] = min(lowlink[parent], lowlink[child])`
+            // step that followed the recursive call.
+            if let Some(parent) = frames.last() {
+                lowlink[parent.node] = lowlink[parent.node].min(lowlink[node]);
+            }
         }
     }
 
@@ -345,6 +414,44 @@ mod tests {
     fn test_big_creation() {
         let big = BinaryImplicationGraph::new(10);
         assert_eq!(big.stats().binary_clauses_analyzed, 0);
+    }
+
+    /// A 100_000-link implication chain `a₁ ⇒ a₂ ⇒ … ⇒ a₁₀₀₀₀₀`, i.e. the
+    /// graph produced by 100_000 binary clauses, run on a 1 MiB stack.
+    /// Tarjan's DFS visits the whole chain in one descent; the recursive
+    /// form aborted the process here. Returning at all is the assertion.
+    #[test]
+    fn test_find_sccs_deep_chain_does_not_overflow() {
+        let worker = std::thread::Builder::new().stack_size(1 << 20).spawn(|| {
+            const CHAIN: u32 = 100_000;
+            let mut big = BinaryImplicationGraph::new(CHAIN as usize + 1);
+            for i in 0..CHAIN {
+                big.add_implication(Lit::pos(Var::new(i)), Lit::pos(Var::new(i + 1)));
+            }
+            // A chain is acyclic, so every SCC is a singleton and
+            // `find_sccs` (which filters those out) returns nothing.
+            big.find_sccs().len()
+        });
+        let non_trivial_sccs = match worker.map(std::thread::JoinHandle::join) {
+            Ok(Ok(count)) => count,
+            _ => panic!("deep-chain SCC worker thread did not complete"),
+        };
+        assert_eq!(non_trivial_sccs, 0);
+    }
+
+    /// A long implication *cycle* must still be reported as a single SCC
+    /// after the iterative rewrite — the component-popping half of the
+    /// algorithm is the part most easily broken by the conversion.
+    #[test]
+    fn test_find_sccs_long_cycle_is_one_component() {
+        const RING: u32 = 5_000;
+        let mut big = BinaryImplicationGraph::new(RING as usize);
+        for i in 0..RING {
+            big.add_implication(Lit::pos(Var::new(i)), Lit::pos(Var::new((i + 1) % RING)));
+        }
+        let sccs = big.find_sccs();
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0].len(), RING as usize);
     }
 
     #[test]

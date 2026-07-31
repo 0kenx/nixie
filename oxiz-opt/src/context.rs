@@ -8,9 +8,12 @@
 //!
 //! Reference: Z3's `opt/opt_context.cpp`
 
+mod model_eval;
+
 use crate::maxsat::{MaxSatConfig, MaxSatError, MaxSatResult, Weight};
 use crate::objective::{Objective, ObjectiveId, ObjectiveKind};
 use crate::pareto::ParetoConfig;
+use model_eval::model_eval_bool;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::ToPrimitive;
@@ -253,156 +256,6 @@ fn term_id_to_model_value(val: TermId, tm: &TermManager) -> Option<ModelValue> {
             Some(ModelValue::Rational(big_r))
         }
         TermKind::BitVecConst { value, width } => Some(ModelValue::BitVec(*width, value.clone())),
-        _ => None,
-    }
-}
-
-/// Recursively evaluate a boolean-valued term against a stored model.
-///
-/// The model maps *leaf* terms (variables / atoms the solver assigned) to
-/// concrete [`ModelValue`]s. A soft constraint term, however, may be an
-/// arbitrary boolean expression such as `(not p)`, `(and p q)`, or an
-/// arithmetic atom like `(<= x 3)` — none of which appear directly as a model
-/// key. Evaluating only by direct lookup (the historical behavior) therefore
-/// reported every compound soft term as unsatisfied, over-counting the cost.
-/// This walks the term structure, looking leaves up in the model.
-///
-/// Returns `None` when the value cannot be determined from the model.
-fn model_eval_bool(
-    term: TermId,
-    model: &FxHashMap<TermId, ModelValue>,
-    tm: &TermManager,
-) -> Option<bool> {
-    // A direct model entry always wins (leaf assignment).
-    if let Some(ModelValue::Bool(b)) = model.get(&term) {
-        return Some(*b);
-    }
-
-    let t = tm.get(term)?;
-    match &t.kind {
-        TermKind::True => Some(true),
-        TermKind::False => Some(false),
-        TermKind::Not(a) => model_eval_bool(*a, model, tm).map(|b| !b),
-        TermKind::And(args) => {
-            let mut all_true = true;
-            for &a in args {
-                match model_eval_bool(a, model, tm) {
-                    Some(true) => {}
-                    Some(false) => return Some(false),
-                    None => all_true = false,
-                }
-            }
-            if all_true { Some(true) } else { None }
-        }
-        TermKind::Or(args) => {
-            let mut any_unknown = false;
-            for &a in args {
-                match model_eval_bool(a, model, tm) {
-                    Some(true) => return Some(true),
-                    Some(false) => {}
-                    None => any_unknown = true,
-                }
-            }
-            if any_unknown { None } else { Some(false) }
-        }
-        TermKind::Xor(a, b) => {
-            Some(model_eval_bool(*a, model, tm)? ^ model_eval_bool(*b, model, tm)?)
-        }
-        TermKind::Implies(a, b) => match model_eval_bool(*a, model, tm) {
-            Some(false) => Some(true),
-            Some(true) => model_eval_bool(*b, model, tm),
-            None => match model_eval_bool(*b, model, tm) {
-                Some(true) => Some(true),
-                _ => None,
-            },
-        },
-        TermKind::Ite(c, then_t, else_t) => match model_eval_bool(*c, model, tm)? {
-            true => model_eval_bool(*then_t, model, tm),
-            false => model_eval_bool(*else_t, model, tm),
-        },
-        TermKind::Eq(a, b) => {
-            // Try boolean equality first, then numeric equality.
-            if let (Some(ba), Some(bb)) = (
-                model_eval_bool(*a, model, tm),
-                model_eval_bool(*b, model, tm),
-            ) {
-                return Some(ba == bb);
-            }
-            let na = model_eval_num(*a, model, tm)?;
-            let nb = model_eval_num(*b, model, tm)?;
-            Some(na == nb)
-        }
-        TermKind::Distinct(args) => {
-            let mut vals = Vec::with_capacity(args.len());
-            for &a in args {
-                vals.push(model_eval_num(a, model, tm)?);
-            }
-            for i in 0..vals.len() {
-                for j in (i + 1)..vals.len() {
-                    if vals[i] == vals[j] {
-                        return Some(false);
-                    }
-                }
-            }
-            Some(true)
-        }
-        TermKind::Lt(a, b) => Some(model_eval_num(*a, model, tm)? < model_eval_num(*b, model, tm)?),
-        TermKind::Le(a, b) => {
-            Some(model_eval_num(*a, model, tm)? <= model_eval_num(*b, model, tm)?)
-        }
-        TermKind::Gt(a, b) => Some(model_eval_num(*a, model, tm)? > model_eval_num(*b, model, tm)?),
-        TermKind::Ge(a, b) => {
-            Some(model_eval_num(*a, model, tm)? >= model_eval_num(*b, model, tm)?)
-        }
-        _ => None,
-    }
-}
-
-/// Recursively evaluate a numeric (integer/real) term against a stored model.
-///
-/// Returns `None` when the term uses an operation this lightweight evaluator
-/// does not model exactly (e.g. integer division / modulo), so callers stay
-/// conservative rather than fabricating a value.
-fn model_eval_num(
-    term: TermId,
-    model: &FxHashMap<TermId, ModelValue>,
-    tm: &TermManager,
-) -> Option<BigRational> {
-    if let Some(mv) = model.get(&term) {
-        return match mv {
-            ModelValue::Int(n) => Some(BigRational::from(n.clone())),
-            ModelValue::Rational(r) => Some(r.clone()),
-            ModelValue::BitVec(_, n) => Some(BigRational::from(n.clone())),
-            ModelValue::Bool(_) => None,
-        };
-    }
-
-    let t = tm.get(term)?;
-    match &t.kind {
-        TermKind::IntConst(n) => Some(BigRational::from(n.clone())),
-        TermKind::RealConst(r) => Some(BigRational::new(
-            BigInt::from(*r.numer()),
-            BigInt::from(*r.denom()),
-        )),
-        TermKind::BitVecConst { value, .. } => Some(BigRational::from(value.clone())),
-        TermKind::Neg(a) => Some(-model_eval_num(*a, model, tm)?),
-        TermKind::Add(args) => {
-            let mut acc = BigRational::from(BigInt::from(0));
-            for &a in args {
-                acc += model_eval_num(a, model, tm)?;
-            }
-            Some(acc)
-        }
-        TermKind::Sub(a, b) => {
-            Some(model_eval_num(*a, model, tm)? - model_eval_num(*b, model, tm)?)
-        }
-        TermKind::Mul(args) => {
-            let mut acc = BigRational::from(BigInt::from(1));
-            for &a in args {
-                acc *= model_eval_num(a, model, tm)?;
-            }
-            Some(acc)
-        }
         _ => None,
     }
 }

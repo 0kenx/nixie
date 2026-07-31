@@ -192,28 +192,38 @@ impl FieldExtension {
     /// Extended Euclidean algorithm for polynomials.
     ///
     /// Returns (gcd, s, t) such that s*a + t*b = gcd(a, b).
+    ///
+    /// Iterative rather than recursive: the recursion was one level per
+    /// Euclidean division step, i.e. O(degree) deep on an attacker-supplied
+    /// polynomial, carrying three `Vec<BigRational>`s per frame — and the
+    /// `(Vec, Vec, Vec)` return type has no channel through which a depth
+    /// cap could report giving up. This is the standard forward
+    /// accumulation of the same recurrence (`s ← old_s − q·s`), so it
+    /// produces the same Bézout coefficients.
     fn extended_gcd(
         &self,
         a: &[BigRational],
         b: &[BigRational],
     ) -> (Vec<BigRational>, Vec<BigRational>, Vec<BigRational>) {
-        if b.is_empty() || b.iter().all(|c| c.is_zero()) {
-            return (
-                a.to_vec(),
-                vec![BigRational::one()],
-                vec![BigRational::zero()],
-            );
+        let mut old_r = a.to_vec();
+        let mut r = b.to_vec();
+        let mut old_s = vec![BigRational::one()];
+        let mut s = vec![BigRational::zero()];
+        let mut old_t = vec![BigRational::zero()];
+        let mut t = vec![BigRational::one()];
+
+        while !(r.is_empty() || r.iter().all(|c| c.is_zero())) {
+            let (q, next_r) = self.poly_div(&old_r, &r);
+
+            let next_s = self.poly_sub(&old_s, &self.poly_mult(&q, &s));
+            let next_t = self.poly_sub(&old_t, &self.poly_mult(&q, &t));
+
+            old_r = core::mem::replace(&mut r, next_r);
+            old_s = core::mem::replace(&mut s, next_s);
+            old_t = core::mem::replace(&mut t, next_t);
         }
 
-        let (q, r) = self.poly_div(a, b);
-        let (gcd, s1, t1) = self.extended_gcd(b, &r);
-
-        // s = t1
-        // t = s1 - q * t1
-        let q_t1 = self.poly_mult(&q, &t1);
-        let t = self.poly_sub(&s1, &q_t1);
-
-        (gcd, t1, t)
+        (old_r, old_s, old_t)
     }
 
     /// Polynomial division: returns (quotient, remainder).

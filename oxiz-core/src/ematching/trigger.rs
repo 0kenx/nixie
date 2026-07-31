@@ -25,6 +25,30 @@ use crate::sort::SortId;
 use core::fmt;
 use smallvec::SmallVec;
 
+/// Sub-terms a trigger walk descends into.
+///
+/// This is the exhaustive [`crate::ast::traversal::get_children`] with one
+/// deliberate exception: nested binders are opaque. A `forall`/`exists`/
+/// `let`/`match` below the quantifier being analyzed may rebind the same
+/// name, so a `Var` found under it is *not* an occurrence of the outer bound
+/// variable and terms below it are not valid trigger material for the outer
+/// quantifier.
+///
+/// Every other kind is descended into. The previous per-kind lists ended in
+/// a silent catch-all, so array, string, bit-vector, floating-point,
+/// datatype, `ite`, `not` and `implies` sub-terms were invisible: a bound
+/// variable occurring only under one of them was reported as absent, and the
+/// enclosing term was dropped as "ground" — losing the trigger entirely.
+fn trigger_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
+    match kind {
+        TermKind::Forall { .. }
+        | TermKind::Exists { .. }
+        | TermKind::Let { .. }
+        | TermKind::Match { .. } => SmallVec::new(),
+        other => crate::ast::traversal::get_children(other),
+    }
+}
+
 /// A trigger for quantifier instantiation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trigger {
@@ -246,7 +270,12 @@ impl TriggerGenerator {
         Ok(candidates)
     }
 
-    /// Recursive helper for collecting candidates
+    /// Iterative helper for collecting candidates.
+    ///
+    /// Pre-order walk with an explicit stack and a visited set (children are
+    /// pushed in reverse so they are processed left-to-right, preserving the
+    /// candidate order of the recursive form). Terms below a nested binder
+    /// are not descended into — see [`trigger_children`].
     fn collect_candidates_recursive(
         &self,
         term: TermId,
@@ -254,67 +283,52 @@ impl TriggerGenerator {
         candidates: &mut Vec<TermId>,
         manager: &TermManager,
     ) -> Result<()> {
-        let Some(t) = manager.get(term) else {
-            return Ok(());
-        };
+        let mut stack = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        // Check if this term contains any bound variables
-        if !self.contains_bound_var_quick(term, var_names, manager)? {
-            return Ok(()); // Skip ground terms
-        }
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
 
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                // Function application is a good candidate
-                if self.is_good_candidate(term, var_names, manager)? {
-                    candidates.push(term);
-                }
+            // Skip ground terms: nothing below them can mention a bound
+            // variable either.
+            if !self.contains_bound_var_quick(current, var_names, manager)? {
+                continue;
+            }
 
-                // Recurse into arguments
-                for &arg in args.iter() {
-                    self.collect_candidates_recursive(arg, var_names, candidates, manager)?;
-                }
+            // Only an *uninterpreted* head is proposable as a pattern; every
+            // other kind is merely traversed through.
+            //
+            // A trigger is matched against the e-graph, so its head symbol
+            // decides how many terms it can fire on.  An interpreted head —
+            // `=`, `<`, `<=`, `>`, `>=`, and arithmetic generally — is shared
+            // by every atom of the whole problem, so a pattern like the guard
+            // `x <= y` of `∀x y. x ≤ y ⇒ f(x) ≤ f(y)` matches *every*
+            // inequality in the e-graph, including the ones its own instances
+            // introduce.  That is a matching loop: each round instantiates the
+            // axiom over every arithmetic atom present and creates more, and
+            // the instance set grows without bound.  Z3 rejects such patterns
+            // for the same reason (`pattern_inference`: a pattern's head must
+            // not be an interpreted symbol); `select` is admitted because it
+            // is the array theory's *application* form, keyed by the array
+            // term, not a global relation.
+            //
+            // This restriction used to be masked rather than enforced: the
+            // walk that reaches candidates bailed out at `Implies` and
+            // `Select` (see `contains_bound_var_quick`), so a comparison under
+            // a `⇒` guard — the usual place one appears — was never reached.
+            // Now that the walk is exhaustive, the rule has to be stated.
+            let proposable = matches!(&t.kind, TermKind::Apply { .. } | TermKind::Select(_, _));
+            if proposable && self.is_good_candidate(current, var_names, manager)? {
+                candidates.push(current);
             }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs) => {
-                // Arithmetic/equality predicates can be candidates
-                if self.is_good_candidate(term, var_names, manager)? {
-                    candidates.push(term);
-                }
 
-                self.collect_candidates_recursive(*lhs, var_names, candidates, manager)?;
-                self.collect_candidates_recursive(*rhs, var_names, candidates, manager)?;
-            }
-            TermKind::Select(arr, _) => {
-                // Array select is a good candidate
-                if self.is_good_candidate(term, var_names, manager)? {
-                    candidates.push(term);
-                }
-
-                self.collect_candidates_recursive(*arr, var_names, candidates, manager)?;
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                // Recurse into boolean connectives
-                for &arg in args.iter() {
-                    self.collect_candidates_recursive(arg, var_names, candidates, manager)?;
-                }
-            }
-            TermKind::Not(inner) => {
-                self.collect_candidates_recursive(*inner, var_names, candidates, manager)?;
-            }
-            TermKind::Implies(lhs, rhs) => {
-                self.collect_candidates_recursive(*lhs, var_names, candidates, manager)?;
-                self.collect_candidates_recursive(*rhs, var_names, candidates, manager)?;
-            }
-            TermKind::Ite(c, t_br, e_br) => {
-                self.collect_candidates_recursive(*c, var_names, candidates, manager)?;
-                self.collect_candidates_recursive(*t_br, var_names, candidates, manager)?;
-                self.collect_candidates_recursive(*e_br, var_names, candidates, manager)?;
-            }
-            _ => {}
+            let children = trigger_children(&t.kind);
+            stack.extend(children.iter().rev().copied());
         }
 
         Ok(())
@@ -349,7 +363,10 @@ impl TriggerGenerator {
             // Function applications are good candidates
             TermKind::Apply { .. } => Ok(true),
 
-            // Predicates can be good candidates
+            // Predicates satisfy the *shape* requirements of a pattern, but an
+            // interpreted head makes them match every atom in the e-graph.
+            // `collect_candidates_recursive` therefore never offers one — see
+            // the head restriction there for why.
             TermKind::Eq(_, _)
             | TermKind::Lt(_, _)
             | TermKind::Le(_, _)
@@ -371,49 +388,40 @@ impl TriggerGenerator {
         }
     }
 
-    /// Quick check if term contains bound variables
+    /// Quick check if term contains bound variables.
+    ///
+    /// Iterative with a visited set. This predicate is evaluated at *every*
+    /// node of [`Self::collect_candidates_recursive`], so on a hash-consed
+    /// DAG the old unmemoized recursion re-expanded shared sub-terms as a
+    /// tree — a body built as `x1 = f(x0, x0); x2 = f(x1, x1); …` turned
+    /// trigger generation into an exponential hang at assert time. It also
+    /// recursed once per level of nesting with no bound.
     fn contains_bound_var_quick(
         &self,
         term: TermId,
         var_names: &FxHashSet<Spur>,
         manager: &TermManager,
     ) -> Result<bool> {
-        let Some(t) = manager.get(term) else {
-            return Ok(false);
-        };
+        let mut stack = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        match &t.kind {
-            TermKind::Var(name) => Ok(var_names.contains(name)),
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    if self.contains_bound_var_quick(arg, var_names, manager)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
             }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => Ok(self
-                .contains_bound_var_quick(*lhs, var_names, manager)?
-                || self.contains_bound_var_quick(*rhs, var_names, manager)?),
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                for &arg in args.iter() {
-                    if self.contains_bound_var_quick(arg, var_names, manager)? {
-                        return Ok(true);
-                    }
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+            if let TermKind::Var(name) = &t.kind {
+                if var_names.contains(name) {
+                    return Ok(true);
                 }
-                Ok(false)
+                continue;
             }
-            _ => Ok(false),
+            stack.extend(trigger_children(&t.kind));
         }
+
+        Ok(false)
     }
 
     /// Select best triggers from candidates
@@ -564,7 +572,12 @@ impl TriggerGenerator {
         self.collect_vars_recursive(pattern, &var_names, covered, manager)
     }
 
-    /// Recursive helper for collecting variables
+    /// Iterative helper for collecting the bound variables a pattern covers.
+    ///
+    /// Explicit stack plus a visited set, descending through every kind (see
+    /// [`trigger_children`]). Under-reporting coverage here made a perfectly
+    /// good trigger look like it left variables uncovered, which downgrades
+    /// it to [`TriggerQuality::Unusable`] and discards it.
     fn collect_vars_recursive(
         &self,
         term: TermId,
@@ -572,124 +585,121 @@ impl TriggerGenerator {
         covered: &mut FxHashSet<Spur>,
         manager: &TermManager,
     ) -> Result<()> {
-        let Some(t) = manager.get(term) else {
-            return Ok(());
-        };
+        let mut stack = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        match &t.kind {
-            TermKind::Var(name) if var_names.contains(name) => {
-                covered.insert(*name);
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
             }
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    self.collect_vars_recursive(arg, var_names, covered, manager)?;
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+            if let TermKind::Var(name) = &t.kind {
+                if var_names.contains(name) {
+                    covered.insert(*name);
                 }
+                continue;
             }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs)
-            | TermKind::Sub(lhs, rhs)
-            | TermKind::Div(lhs, rhs) => {
-                self.collect_vars_recursive(*lhs, var_names, covered, manager)?;
-                self.collect_vars_recursive(*rhs, var_names, covered, manager)?;
-            }
-            TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::And(args)
-            | TermKind::Or(args) => {
-                for &arg in args.iter() {
-                    self.collect_vars_recursive(arg, var_names, covered, manager)?;
-                }
-            }
-            TermKind::Not(inner) | TermKind::Neg(inner) => {
-                self.collect_vars_recursive(*inner, var_names, covered, manager)?;
-            }
-            TermKind::Select(arr, idx) => {
-                self.collect_vars_recursive(*arr, var_names, covered, manager)?;
-                self.collect_vars_recursive(*idx, var_names, covered, manager)?;
-            }
-            TermKind::Store(arr, idx, val) => {
-                self.collect_vars_recursive(*arr, var_names, covered, manager)?;
-                self.collect_vars_recursive(*idx, var_names, covered, manager)?;
-                self.collect_vars_recursive(*val, var_names, covered, manager)?;
-            }
-            TermKind::Ite(c, t_br, e_br) => {
-                self.collect_vars_recursive(*c, var_names, covered, manager)?;
-                self.collect_vars_recursive(*t_br, var_names, covered, manager)?;
-                self.collect_vars_recursive(*e_br, var_names, covered, manager)?;
-            }
-            _ => {}
+            stack.extend(trigger_children(&t.kind));
         }
 
         Ok(())
     }
 
-    /// Estimate matching cost of a pattern
+    /// Estimate matching cost of a pattern.
+    ///
+    /// Iterative bottom-up fold with a memo, so a shared sub-term is
+    /// evaluated once instead of once per path (the recursive form was
+    /// exponential on a DAG). The cost of each *occurrence* still
+    /// contributes, so the value is exactly what the recursion produced;
+    /// the accumulation saturates instead of overflowing.
     fn estimate_cost(&self, pattern: TermId, manager: &TermManager) -> Result<u32> {
-        let Some(t) = manager.get(pattern) else {
-            return Ok(100);
-        };
+        let mut memo: FxHashMap<TermId, u32> = FxHashMap::default();
+        for current in Self::postorder(pattern, manager) {
+            let Some(t) = manager.get(current) else {
+                memo.insert(current, 100);
+                continue;
+            };
+            let child_cost = |id: &TermId, memo: &FxHashMap<TermId, u32>| -> u32 {
+                memo.get(id).copied().unwrap_or(1)
+            };
+            let cost = match &t.kind {
+                TermKind::Var(_) => 10,
+                TermKind::Apply { args, .. } => args
+                    .iter()
+                    .fold(5u32, |acc, a| acc.saturating_add(child_cost(a, &memo))),
+                TermKind::Eq(lhs, rhs)
+                | TermKind::Lt(lhs, rhs)
+                | TermKind::Le(lhs, rhs)
+                | TermKind::Gt(lhs, rhs)
+                | TermKind::Ge(lhs, rhs) => 3u32
+                    .saturating_add(child_cost(lhs, &memo))
+                    .saturating_add(child_cost(rhs, &memo)),
+                TermKind::Select(arr, idx) => 4u32
+                    .saturating_add(child_cost(arr, &memo))
+                    .saturating_add(child_cost(idx, &memo)),
+                // Any other kind is charged as an opaque unit, exactly as
+                // before: this is a cost heuristic, not an analysis result.
+                _ => 1,
+            };
+            memo.insert(current, cost);
+        }
 
-        let base_cost = match &t.kind {
-            TermKind::Var(_) => 10,
-            TermKind::Apply { args, .. } => {
-                let mut cost = 5;
-                for &arg in args.iter() {
-                    cost += self.estimate_cost(arg, manager)?;
-                }
-                cost
-            }
-            TermKind::Eq(lhs, rhs)
-            | TermKind::Lt(lhs, rhs)
-            | TermKind::Le(lhs, rhs)
-            | TermKind::Gt(lhs, rhs)
-            | TermKind::Ge(lhs, rhs) => {
-                3 + self.estimate_cost(*lhs, manager)? + self.estimate_cost(*rhs, manager)?
-            }
-            TermKind::Select(arr, idx) => {
-                4 + self.estimate_cost(*arr, manager)? + self.estimate_cost(*idx, manager)?
-            }
-            _ => 1,
-        };
-
-        Ok(base_cost)
+        Ok(memo.get(&pattern).copied().unwrap_or(100))
     }
 
-    /// Compute depth of a term
+    /// Compute depth of a term.
+    ///
+    /// Iterative bottom-up fold with a memo. Depth is now measured through
+    /// *every* operand rather than only through function applications,
+    /// equalities, `<` and `select`: under-reporting the depth of a term let
+    /// arbitrarily deep patterns pass the `max_depth` filter that exists
+    /// precisely to reject them.
     fn compute_depth(&self, term: TermId, manager: &TermManager) -> Result<usize> {
-        let Some(t) = manager.get(term) else {
-            return Ok(0);
-        };
+        let mut memo: FxHashMap<TermId, usize> = FxHashMap::default();
+        for current in Self::postorder(term, manager) {
+            let Some(t) = manager.get(current) else {
+                memo.insert(current, 0);
+                continue;
+            };
+            let child_depth = trigger_children(&t.kind)
+                .iter()
+                .map(|c| memo.get(c).copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            memo.insert(current, child_depth + 1);
+        }
 
-        let child_depth = match &t.kind {
-            TermKind::Var(_)
-            | TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. }
-            | TermKind::StringLit(_) => 0,
-            TermKind::Apply { args, .. } => {
-                let mut max = 0;
-                for &arg in args.iter() {
-                    let d = self.compute_depth(arg, manager)?;
-                    if d > max {
-                        max = d;
+        Ok(memo.get(&term).copied().unwrap_or(0))
+    }
+
+    /// Children-before-parents listing of the sub-terms of `root`, computed
+    /// with an explicit stack. Shared sub-terms appear exactly once.
+    fn postorder(root: TermId, manager: &TermManager) -> Vec<TermId> {
+        let mut order = Vec::new();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack = vec![(root, false)];
+
+        while let Some((current, expanded)) = stack.pop() {
+            if expanded {
+                order.push(current);
+                continue;
+            }
+            if !visited.insert(current) {
+                continue;
+            }
+            stack.push((current, true));
+            if let Some(t) = manager.get(current) {
+                for child in trigger_children(&t.kind) {
+                    if !visited.contains(&child) {
+                        stack.push((child, false));
                     }
                 }
-                max
             }
-            TermKind::Eq(lhs, rhs) | TermKind::Lt(lhs, rhs) | TermKind::Select(lhs, rhs) => {
-                let d1 = self.compute_depth(*lhs, manager)?;
-                let d2 = self.compute_depth(*rhs, manager)?;
-                d1.max(d2)
-            }
-            _ => 0,
-        };
+        }
 
-        Ok(child_depth + 1)
+        order
     }
 
     /// Assess trigger quality
@@ -946,5 +956,134 @@ mod tests {
             .compute_depth(g_fx, &manager)
             .expect("test operation should succeed");
         assert_eq!(depth3, 3);
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+    use crate::ast::TermManager;
+
+    #[test]
+    fn test_bound_var_seen_under_array_select() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+        let arr = manager.mk_var("a", array_sort);
+        let x = manager.mk_var("x", int_sort);
+        let sel = manager.mk_select(arr, x);
+
+        let x_name = manager.intern_str("x");
+        let var_names: FxHashSet<Spur> = [x_name].into_iter().collect();
+        let generator = TriggerGenerator::new_default();
+
+        assert!(
+            generator
+                .contains_bound_var_quick(sel, &var_names, &manager)
+                .expect("walk should succeed"),
+            "bound variable below `select` was reported as absent"
+        );
+
+        let mut covered = FxHashSet::default();
+        generator
+            .collect_vars_recursive(sel, &var_names, &mut covered, &manager)
+            .expect("walk should succeed");
+        assert!(covered.contains(&x_name));
+    }
+
+    /// A pattern's head must be uninterpreted.  For `∀x y. x ≤ y ⇒ f(x) ≤ f(y)`
+    /// the only admissible candidates are `f(x)` and `f(y)`: the guard `x ≤ y`
+    /// and the consequent `f(x) ≤ f(y)` are headed by `≤`, an interpreted
+    /// relation shared by every arithmetic atom in the problem, so using either
+    /// as a trigger makes the axiom fire on every inequality in the e-graph —
+    /// including the ones its own instances add.  That matching loop turned the
+    /// UFLIA / UFLRA / AUFLIA `sat`-certification benchmarks from a
+    /// millisecond `sat` into an unbounded instantiation run.
+    #[test]
+    fn test_interpreted_heads_are_not_trigger_candidates() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let fx = manager.mk_apply("f", [x], int_sort);
+        let fy = manager.mk_apply("f", [y], int_sort);
+        let guard = manager.mk_le(x, y);
+        let consequent = manager.mk_le(fx, fy);
+        let body = manager.mk_implies(guard, consequent);
+
+        let x_name = manager.intern_str("x");
+        let y_name = manager.intern_str("y");
+        let vars = [(x_name, int_sort), (y_name, int_sort)];
+
+        let generator = TriggerGenerator::new_default();
+        let candidates = generator
+            .collect_candidates(body, &vars, &manager)
+            .expect("candidate collection should succeed");
+
+        assert!(
+            candidates.contains(&fx) && candidates.contains(&fy),
+            "the uninterpreted applications must still be offered: {candidates:?}"
+        );
+        assert!(
+            !candidates.contains(&guard) && !candidates.contains(&consequent),
+            "a comparison must never be offered as a trigger head: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_contains_bound_var_shared_dag_is_fast() {
+        // 55 doubling levels: exponential without a visited set.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let y = manager.mk_var("y", int_sort);
+        let mut level = manager.mk_apply("f", [y, y], int_sort);
+        for _ in 0..55 {
+            level = manager.mk_apply("f", [level, level], int_sort);
+        }
+
+        let x_name = manager.intern_str("x");
+        let var_names: FxHashSet<Spur> = [x_name].into_iter().collect();
+        let generator = TriggerGenerator::new_default();
+        assert!(
+            !generator
+                .contains_bound_var_quick(level, &var_names, &manager)
+                .expect("walk should succeed")
+        );
+    }
+
+    #[test]
+    fn test_trigger_walks_deep_nesting_do_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let x = manager.mk_var("x", int_sort);
+                let mut term = x;
+                for _ in 0..60_000 {
+                    term = manager.mk_apply("f", [term], int_sort);
+                }
+
+                let x_name = manager.intern_str("x");
+                let var_names: FxHashSet<Spur> = [x_name].into_iter().collect();
+                let generator = TriggerGenerator::new_default();
+
+                let contains = generator
+                    .contains_bound_var_quick(term, &var_names, &manager)
+                    .expect("walk should succeed");
+                let depth = generator
+                    .compute_depth(term, &manager)
+                    .expect("walk should succeed");
+                let cost = generator
+                    .estimate_cost(term, &manager)
+                    .expect("walk should succeed");
+                (contains, depth, cost)
+            })
+            .expect("thread spawn should succeed");
+
+        let (contains, depth, cost) = handle.join().expect("deep walks must not overflow");
+        assert!(contains);
+        assert_eq!(depth, 60_001);
+        assert!(cost > 0);
     }
 }

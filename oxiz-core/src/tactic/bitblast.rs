@@ -87,35 +87,63 @@ impl<'a> BitBlastTactic<'a> {
         }
     }
 
-    /// Check if a term contains any BitVector subterms
+    /// Check if a term contains any BitVector subterms.
+    ///
+    /// Iterative (explicit heap stack plus a `visited` set): the term DAG's
+    /// depth follows the input formula, and a `-> bool` walk has no error
+    /// channel with which to report a depth cut-off, so recursing here could
+    /// only fail by overflowing the native stack. The `visited` set also stops
+    /// a shared sub-DAG from being re-expanded once per incoming edge — the
+    /// original recursion re-walked it every time, which is exponential on the
+    /// classic `let`-free doubling DAG.
+    ///
+    /// The answer is unchanged: a node contributes `true` exactly when it is
+    /// itself a BitVector term, and otherwise the result is the disjunction
+    /// over the same per-variant child sets the recursive version used.
     fn contains_bv_term(&self, term_id: TermId) -> bool {
         use crate::ast::TermKind;
 
-        if self.is_bv_term(term_id) {
-            return true;
-        }
+        let mut stack = vec![term_id];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
 
-        if let Some(term) = self.manager.get(term_id) {
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+
+            if self.is_bv_term(current) {
+                return true;
+            }
+
+            let Some(term) = self.manager.get(current) else {
+                continue;
+            };
+
             match &term.kind {
                 TermKind::True
                 | TermKind::False
                 | TermKind::IntConst(_)
                 | TermKind::RealConst(_)
                 | TermKind::BitVecConst { .. }
-                | TermKind::Var(_) => self.is_bv_sort(term.sort),
-                TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => {
-                    self.contains_bv_term(*a)
+                | TermKind::Var(_) => {
+                    if self.is_bv_sort(term.sort) {
+                        return true;
+                    }
                 }
-                TermKind::BvExtract { arg, .. } => self.contains_bv_term(*arg),
+                TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => stack.push(*a),
+                TermKind::BvExtract { arg, .. } => stack.push(*arg),
                 TermKind::And(args)
                 | TermKind::Or(args)
                 | TermKind::Add(args)
                 | TermKind::Mul(args)
-                | TermKind::Distinct(args) => args.iter().any(|&a| self.contains_bv_term(a)),
+                | TermKind::Distinct(args) => stack.extend(args.iter().copied()),
+                // String constructs whose operands cannot carry BV content.
                 TermKind::StringLit(_)
                 | TermKind::StrLen(_)
                 | TermKind::StrToInt(_)
-                | TermKind::IntToStr(_) => false,
+                | TermKind::IntToStr(_)
+                | TermKind::StrToCode(_)
+                | TermKind::StrFromCode(_) => {}
                 TermKind::Implies(a, b)
                 | TermKind::Xor(a, b)
                 | TermKind::Eq(a, b)
@@ -133,6 +161,8 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::StrPrefixOf(a, b)
                 | TermKind::StrSuffixOf(a, b)
                 | TermKind::StrInRe(a, b)
+                | TermKind::StrLt(a, b)
+                | TermKind::StrLe(a, b)
                 | TermKind::BvConcat(a, b)
                 | TermKind::BvAnd(a, b)
                 | TermKind::BvOr(a, b)
@@ -150,32 +180,35 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::BvUlt(a, b)
                 | TermKind::BvUle(a, b)
                 | TermKind::BvSlt(a, b)
-                | TermKind::BvSle(a, b) => self.contains_bv_term(*a) || self.contains_bv_term(*b),
+                | TermKind::BvSle(a, b) => {
+                    stack.push(*a);
+                    stack.push(*b);
+                }
                 TermKind::Ite(c, t, e)
                 | TermKind::Store(c, t, e)
                 | TermKind::StrSubstr(c, t, e)
                 | TermKind::StrIndexOf(c, t, e)
                 | TermKind::StrReplace(c, t, e)
-                | TermKind::StrReplaceAll(c, t, e) => {
-                    self.contains_bv_term(*c)
-                        || self.contains_bv_term(*t)
-                        || self.contains_bv_term(*e)
+                | TermKind::StrReplaceAll(c, t, e)
+                | TermKind::StrReplaceRe(c, t, e)
+                | TermKind::StrReplaceReAll(c, t, e) => {
+                    stack.push(*c);
+                    stack.push(*t);
+                    stack.push(*e);
                 }
-                TermKind::Apply { args, .. } => args.iter().any(|&a| self.contains_bv_term(a)),
-                TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => {
-                    self.contains_bv_term(*body)
-                }
+                TermKind::Apply { args, .. } => stack.extend(args.iter().copied()),
+                TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => stack.push(*body),
                 TermKind::Let { bindings, body } => {
-                    bindings.iter().any(|(_, t)| self.contains_bv_term(*t))
-                        || self.contains_bv_term(*body)
+                    stack.extend(bindings.iter().map(|(_, t)| *t));
+                    stack.push(*body);
                 }
-                // Floating-point operations don't contain BV terms
+                // Floating-point literals don't contain BV terms
                 TermKind::FpLit { .. }
                 | TermKind::FpPlusInfinity { .. }
                 | TermKind::FpMinusInfinity { .. }
                 | TermKind::FpPlusZero { .. }
                 | TermKind::FpMinusZero { .. }
-                | TermKind::FpNaN { .. } => false,
+                | TermKind::FpNaN { .. } => {}
                 TermKind::FpAbs(a)
                 | TermKind::FpNeg(a)
                 | TermKind::FpSqrt(_, a)
@@ -187,7 +220,7 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::FpIsNaN(a)
                 | TermKind::FpIsNegative(a)
                 | TermKind::FpIsPositive(a)
-                | TermKind::FpToReal(a) => self.contains_bv_term(*a),
+                | TermKind::FpToReal(a) => stack.push(*a),
                 TermKind::FpAdd(_, a, b)
                 | TermKind::FpSub(_, a, b)
                 | TermKind::FpMul(_, a, b)
@@ -199,34 +232,35 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::FpLt(a, b)
                 | TermKind::FpGeq(a, b)
                 | TermKind::FpGt(a, b)
-                | TermKind::FpEq(a, b) => self.contains_bv_term(*a) || self.contains_bv_term(*b),
+                | TermKind::FpEq(a, b) => {
+                    stack.push(*a);
+                    stack.push(*b);
+                }
                 TermKind::FpFma(_, a, b, c) => {
-                    self.contains_bv_term(*a)
-                        || self.contains_bv_term(*b)
-                        || self.contains_bv_term(*c)
+                    stack.push(*a);
+                    stack.push(*b);
+                    stack.push(*c);
                 }
                 TermKind::FpToFp { arg, .. }
                 | TermKind::FpToSBV { arg, .. }
                 | TermKind::FpToUBV { arg, .. }
                 | TermKind::RealToFp { arg, .. }
                 | TermKind::SBVToFp { arg, .. }
-                | TermKind::UBVToFp { arg, .. } => self.contains_bv_term(*arg),
+                | TermKind::UBVToFp { arg, .. } => stack.push(*arg),
                 // Algebraic datatypes
-                TermKind::DtConstructor { args, .. } => {
-                    args.iter().any(|&a| self.contains_bv_term(a))
-                }
+                TermKind::DtConstructor { args, .. } => stack.extend(args.iter().copied()),
                 TermKind::DtTester { arg, .. } | TermKind::DtSelector { arg, .. } => {
-                    self.contains_bv_term(*arg)
+                    stack.push(*arg);
                 }
                 // Match expressions
                 TermKind::Match { scrutinee, cases } => {
-                    self.contains_bv_term(*scrutinee)
-                        || cases.iter().any(|c| self.contains_bv_term(c.body))
+                    stack.push(*scrutinee);
+                    stack.extend(cases.iter().map(|c| c.body));
                 }
             }
-        } else {
-            false
         }
+
+        false
     }
 
     /// Check whether a goal contains any BitVector terms.
@@ -1137,7 +1171,7 @@ impl Default for BitBlaster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::TermManager;
+    use crate::ast::{TermKind, TermManager};
 
     #[test]
     fn test_bit_blast_not_applicable_empty() {
@@ -1201,6 +1235,22 @@ mod tests {
         assert!(matches!(result, TacticResult::NotApplicable));
     }
 
+    /// Build a bit-vector operation node **without** the term manager's
+    /// constant folding.
+    ///
+    /// Every `mk_bv_*` constructor evaluates literal operands directly, so
+    /// building e.g. `bvadd #x3 #x5` through the public API yields the literal
+    /// `#x8` and the blaster would never see an adder to expand.  The tests
+    /// below exist precisely to check the generated *circuits*, so they intern
+    /// the raw node and let the blaster expand it over the operands' pinned
+    /// constant bits -- the blasted result still folds to `true`, so the
+    /// assertion checks the circuit's answer rather than merely that some term
+    /// was produced.
+    fn raw_bv_op(manager: &mut TermManager, kind: TermKind, width: u32) -> TermId {
+        let sort = manager.sorts.bitvec(width);
+        manager.intern_term(kind, sort)
+    }
+
     /// Blast `eq` (expected to compare two constant bit-vector
     /// expressions) and assert the whole thing reduces (via the term
     /// manager's built-in constant folding) all the way down to `true`,
@@ -1223,7 +1273,7 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(3u64, 4);
         let b = manager.mk_bitvec(5u64, 4);
-        let sum = manager.mk_bv_add(a, b);
+        let sum = raw_bv_op(&mut manager, TermKind::BvAdd(a, b), 4);
         let expected = manager.mk_bitvec(8u64, 4); // 3 + 5 = 8
         let eq = manager.mk_eq(sum, expected);
         assert_blasts_to_true(&mut manager, eq);
@@ -1234,7 +1284,7 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(3u64, 4);
         let b = manager.mk_bitvec(5u64, 4);
-        let diff = manager.mk_bv_sub(a, b);
+        let diff = raw_bv_op(&mut manager, TermKind::BvSub(a, b), 4);
         let expected = manager.mk_bitvec(14u64, 4); // 3 - 5 = -2 = 14 (mod 16)
         let eq = manager.mk_eq(diff, expected);
         assert_blasts_to_true(&mut manager, eq);
@@ -1245,7 +1295,7 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(6u64, 5);
         let b = manager.mk_bitvec(5u64, 5);
-        let prod = manager.mk_bv_mul(a, b);
+        let prod = raw_bv_op(&mut manager, TermKind::BvMul(a, b), 5);
         let expected = manager.mk_bitvec(30u64, 5);
         let eq = manager.mk_eq(prod, expected);
         assert_blasts_to_true(&mut manager, eq);
@@ -1256,8 +1306,8 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(7u64, 4);
         let b = manager.mk_bitvec(2u64, 4);
-        let q = manager.mk_bv_udiv(a, b);
-        let r = manager.mk_bv_urem(a, b);
+        let q = raw_bv_op(&mut manager, TermKind::BvUdiv(a, b), 4);
+        let r = raw_bv_op(&mut manager, TermKind::BvUrem(a, b), 4);
         let expected_q = manager.mk_bitvec(3u64, 4);
         let expected_r = manager.mk_bitvec(1u64, 4);
         let eq_q = manager.mk_eq(q, expected_q);
@@ -1271,7 +1321,7 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(7u64, 4);
         let zero = manager.mk_bitvec(0u64, 4);
-        let q = manager.mk_bv_udiv(a, zero);
+        let q = raw_bv_op(&mut manager, TermKind::BvUdiv(a, zero), 4);
         let all_ones = manager.mk_bitvec(0xFu64, 4);
         let eq = manager.mk_eq(q, all_ones);
         assert_blasts_to_true(&mut manager, eq);
@@ -1284,8 +1334,8 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(9u64, 4);
         let b = manager.mk_bitvec(2u64, 4);
-        let q = manager.mk_bv_sdiv(a, b);
-        let r = manager.mk_bv_srem(a, b);
+        let q = raw_bv_op(&mut manager, TermKind::BvSdiv(a, b), 4);
+        let r = raw_bv_op(&mut manager, TermKind::BvSrem(a, b), 4);
         let expected_q = manager.mk_bitvec(13u64, 4);
         let expected_r = manager.mk_bitvec(15u64, 4);
         let eq_q = manager.mk_eq(q, expected_q);
@@ -1299,13 +1349,13 @@ mod tests {
         let mut manager = TermManager::new();
         let a = manager.mk_bitvec(0b0011u64, 4);
         let one = manager.mk_bitvec(1u64, 4);
-        let shifted_by_1 = manager.mk_bv_shl(a, one);
+        let shifted_by_1 = raw_bv_op(&mut manager, TermKind::BvShl(a, one), 4);
         let expected = manager.mk_bitvec(0b0110u64, 4);
         let eq1 = manager.mk_eq(shifted_by_1, expected);
 
         // Shifting by >= width must yield zero, not garbage.
         let width = manager.mk_bitvec(4u64, 4);
-        let shifted_overflow = manager.mk_bv_shl(a, width);
+        let shifted_overflow = raw_bv_op(&mut manager, TermKind::BvShl(a, width), 4);
         let zero = manager.mk_bitvec(0u64, 4);
         let eq2 = manager.mk_eq(shifted_overflow, zero);
 
@@ -1319,7 +1369,7 @@ mod tests {
         // -8 (1000b) arithmetic-shifted right by 1 = -4 (1100b).
         let a = manager.mk_bitvec(0b1000u64, 4);
         let one = manager.mk_bitvec(1u64, 4);
-        let shifted = manager.mk_bv_ashr(a, one);
+        let shifted = raw_bv_op(&mut manager, TermKind::BvAshr(a, one), 4);
         let expected = manager.mk_bitvec(0b1100u64, 4);
         let eq = manager.mk_eq(shifted, expected);
         assert_blasts_to_true(&mut manager, eq);
@@ -1328,22 +1378,118 @@ mod tests {
     #[test]
     fn test_blast_comparisons_are_correct() {
         let mut manager = TermManager::new();
-        // Unsigned: 3 < 5.
+        // The operands are wrapped in an *unfolded* `bvadd` (see `raw_bv_op`)
+        // so the comparison survives `mk_bv_ult` / `mk_bv_slt`'s constant
+        // folding (issue #17) and actually reaches the comparator circuits
+        // under test.  Each `bvadd` still evaluates to a constant once blasted,
+        // so the goal folds all the way to `true` and the assertion checks the
+        // circuit's answer, not merely that some term was produced.
+        let zero = manager.mk_bitvec(0u64, 4);
+        let one = manager.mk_bitvec(1u64, 4);
+        let two = manager.mk_bitvec(2u64, 4);
         let three = manager.mk_bitvec(3u64, 4);
-        let five = manager.mk_bitvec(5u64, 4);
-        let ult = manager.mk_bv_ult(three, five);
+        let fourteen = manager.mk_bitvec(0b1110u64, 4);
+
+        // Unsigned: 3 < 5.
+        let lhs_three = raw_bv_op(&mut manager, TermKind::BvAdd(one, two), 4); // 3
+        let rhs_five = raw_bv_op(&mut manager, TermKind::BvAdd(two, three), 4); // 5
+        let ult = manager.mk_bv_ult(lhs_three, rhs_five);
 
         // Signed: -1 (1111b) < 1, even though unsigned 15 > 1.
-        let minus_one = manager.mk_bitvec(0b1111u64, 4);
-        let one = manager.mk_bitvec(1u64, 4);
-        let slt = manager.mk_bv_slt(minus_one, one);
+        let minus_one = raw_bv_op(&mut manager, TermKind::BvAdd(fourteen, one), 4); // 1111b
+        let plus_one = raw_bv_op(&mut manager, TermKind::BvAdd(zero, one), 4); // 0001b
+        let slt = manager.mk_bv_slt(minus_one, plus_one);
         let not_ult_for_same = {
-            let ult2 = manager.mk_bv_ult(minus_one, one);
+            let ult2 = manager.mk_bv_ult(minus_one, plus_one);
             manager.mk_not(ult2) // unsigned: 15 < 1 is false
         };
 
         let all = manager.mk_and([ult, slt, not_ult_for_same]);
         assert_blasts_to_true(&mut manager, all);
+    }
+
+    /// Run `body` on a worker thread with a deliberately small (1 MiB) stack,
+    /// so that a recursive walk over a deep term would abort the process
+    /// instead of silently getting away with a large main-thread stack.
+    fn run_with_small_stack<F>(body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(body)
+            .expect("thread spawn should succeed")
+            .join()
+            .expect("deep-nesting walk must not overflow the stack");
+    }
+
+    #[test]
+    fn test_contains_bv_term_handles_deeply_nested_terms() {
+        run_with_small_stack(|| {
+            const DEPTH: usize = 50_000;
+
+            let mut manager = TermManager::new();
+            let bv8 = manager.sorts.bitvec(8);
+            let bool_sort = manager.sorts.bool_sort;
+            let a = manager.mk_var("a", bv8);
+            let b = manager.mk_var("b", bv8);
+
+            // A Bool-sorted term that does contain BitVector content, buried
+            // under 50k negations. `intern_term` is used so the chain survives
+            // `mk_not`'s double-negation folding.
+            let mut current = manager.mk_bv_ult(a, b);
+            for _ in 0..DEPTH {
+                current = manager.intern_term(TermKind::Not(current), bool_sort);
+            }
+
+            let tactic = BitBlastTactic::new(&manager);
+            assert!(tactic.contains_bv_term(current));
+        });
+    }
+
+    #[test]
+    fn test_contains_bv_term_does_not_re_expand_shared_subterms() {
+        run_with_small_stack(|| {
+            // A doubling DAG: without a `visited` set this is 2^40 visits.
+            const LEVELS: usize = 40;
+
+            let mut manager = TermManager::new();
+            let bool_sort = manager.sorts.bool_sort;
+            let int_sort = manager.sorts.int_sort;
+            let x = manager.mk_var("x", int_sort);
+            let one = manager.mk_int(1);
+
+            let mut current = manager.mk_lt(x, one);
+            for _ in 0..LEVELS {
+                current =
+                    manager.intern_term(TermKind::And(vec![current, current].into()), bool_sort);
+            }
+
+            let tactic = BitBlastTactic::new(&manager);
+            assert!(!tactic.contains_bv_term(current));
+        });
+    }
+
+    #[test]
+    fn test_contains_bv_term_semantics_are_unchanged() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bv8 = manager.sorts.bitvec(8);
+
+        let x = manager.mk_var("x", int_sort);
+        let ten = manager.mk_int(10);
+        let int_only = manager.mk_lt(x, ten);
+
+        let a = manager.mk_var("a", bv8);
+        let b = manager.mk_var("b", bv8);
+        let with_bv = manager.mk_bv_ult(a, b);
+        let nested = manager.mk_and([int_only, with_bv]);
+
+        let tactic = BitBlastTactic::new(&manager);
+        assert!(!tactic.contains_bv_term(int_only));
+        assert!(tactic.contains_bv_term(with_bv));
+        assert!(tactic.contains_bv_term(nested));
+        assert!(tactic.contains_bv_term(a));
     }
 
     #[test]

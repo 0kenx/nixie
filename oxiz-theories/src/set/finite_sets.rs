@@ -5,6 +5,16 @@
 #![allow(dead_code)]
 
 use super::{SetConflict, SetVar, SetVarId};
+
+/// One suspended branch of the iterative subset enumeration.
+struct SubsetFrame {
+    /// Index of the next candidate to decide on.
+    start: usize,
+    /// Length the shared prefix must be rewound to before this branch runs.
+    prefix_len: usize,
+    /// Candidate this branch appends to the prefix, if any.
+    include: Option<u32>,
+}
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -367,6 +377,14 @@ impl FiniteSetEnumerator {
         self.generate_subsets_rec(candidates, size, 0, &mut Vec::new(), must, results);
     }
 
+    /// Enumerate every `size`-subset of `candidates`, include-branch first
+    ///
+    /// Explicit stack, not recursion: the depth is `candidates.len()`, i.e. the
+    /// size of a caller-supplied domain, and the function returns nothing --
+    /// there is no channel on which a depth cap could report that subsets were
+    /// dropped, so a truncated enumeration would silently under-approximate the
+    /// model set. Frames carry the position the shared `current` prefix must be
+    /// rewound to, which reproduces the recursive push/pop exactly.
     fn generate_subsets_rec(
         &self,
         candidates: &[u32],
@@ -376,24 +394,46 @@ impl FiniteSetEnumerator {
         must: &FxHashSet<u32>,
         results: &mut Vec<EnumSet>,
     ) {
-        if current.len() == size {
-            let mut elements = must.clone();
-            elements.extend(current.iter());
-            results.push(EnumSet::from_elements(elements));
-            return;
+        let entry_len = current.len();
+        let mut stack: Vec<SubsetFrame> = vec![SubsetFrame {
+            start,
+            prefix_len: entry_len,
+            include: None,
+        }];
+
+        while let Some(frame) = stack.pop() {
+            current.truncate(frame.prefix_len);
+            if let Some(element) = frame.include {
+                current.push(element);
+            }
+
+            if current.len() == size {
+                let mut elements = must.clone();
+                elements.extend(current.iter());
+                results.push(EnumSet::from_elements(elements));
+                continue;
+            }
+
+            let Some(&candidate) = candidates.get(frame.start) else {
+                continue;
+            };
+
+            let prefix_len = current.len();
+            // Pushed in reverse: the include branch is explored first, exactly
+            // as the recursive version did.
+            stack.push(SubsetFrame {
+                start: frame.start + 1,
+                prefix_len,
+                include: None,
+            });
+            stack.push(SubsetFrame {
+                start: frame.start + 1,
+                prefix_len,
+                include: Some(candidate),
+            });
         }
 
-        if start >= candidates.len() {
-            return;
-        }
-
-        // Include candidates[start]
-        current.push(candidates[start]);
-        self.generate_subsets_rec(candidates, size, start + 1, current, must, results);
-        current.pop();
-
-        // Exclude candidates[start]
-        self.generate_subsets_rec(candidates, size, start + 1, current, must, results);
+        current.truncate(entry_len);
     }
 
     /// Check if an enumerated set satisfies all constraints
@@ -512,6 +552,62 @@ impl SetModelGenerator {
 mod tests {
     use super::super::SetSort;
     use super::*;
+
+    #[test]
+    fn test_generate_subsets_deep_candidate_list_small_stack() {
+        // The include/exclude recursion nests once per candidate, i.e. once per
+        // element of a caller-supplied domain, and returns nothing -- there is
+        // no channel on which a depth cap could report dropped subsets. With
+        // `size == 1` the enumeration is linear (one singleton per candidate)
+        // while the exclude spine is as deep as the domain, which isolates the
+        // depth from the inherent 2^n blow-up. Run on a deliberately small
+        // (128 KiB) stack: a stack overflow aborts the process, so "the thread
+        // returned at all" is part of the assertion. The stack size and `count`
+        // are scaled together and only their ratio (~21 bytes per level)
+        // matters -- never raise one without the other.
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let count: u32 = 12_500;
+                let candidates: Vec<u32> = (0..count).collect();
+                let enumerator = FiniteSetEnumerator::new(SetEnumConfig::default());
+                let must = FxHashSet::default();
+                let mut results = Vec::new();
+
+                enumerator.generate_subsets(&candidates, 1, &must, &mut results);
+
+                assert_eq!(results.len() as u32, count);
+                // Include-before-exclude order: singleton {0} comes first.
+                assert!(results[0].contains(0));
+            })
+            .expect("spawning a thread with an explicit stack size must succeed");
+        handle
+            .join()
+            .expect("a large candidate list must not overflow a 128 KiB stack");
+    }
+
+    #[test]
+    fn test_generate_subsets_exact_enumeration_and_order() {
+        // Semantic pin for the iterative rewrite: same subsets, same order,
+        // and the mandatory members are merged into every result.
+        let enumerator = FiniteSetEnumerator::new(SetEnumConfig::default());
+        let candidates = vec![1u32, 2, 3];
+        let mut must = FxHashSet::default();
+        must.insert(9u32);
+        let mut results = Vec::new();
+
+        enumerator.generate_subsets(&candidates, 2, &must, &mut results);
+
+        let observed: Vec<Vec<u32>> = results
+            .iter()
+            .map(|set| {
+                let mut elements: Vec<u32> = set.elements.iter().copied().collect();
+                elements.sort_unstable();
+                elements
+            })
+            .collect();
+        assert_eq!(observed, vec![vec![1, 2, 9], vec![1, 3, 9], vec![2, 3, 9]]);
+    }
 
     #[test]
     fn test_enum_set_empty() {

@@ -44,7 +44,7 @@ use super::aig::{AigCircuit, AigEdge, AigNode, NodeId};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use oxiz_core::ast::TermId;
-use oxiz_core::error::Result;
+use oxiz_core::error::{OxizError, Result};
 use oxiz_sat::{Lit, Solver as SatSolver, Var};
 use smallvec::SmallVec;
 
@@ -250,31 +250,82 @@ impl AigCut {
     }
 
     /// Evaluate a node given input assignments
+    ///
+    /// Explicit stack with a memo, not recursion. The AIG below a cut root is a
+    /// *DAG*: the recursive version had a read-only `assignment` and no memo of
+    /// internal nodes, so every shared node was re-expanded once per path
+    /// reaching it (exponential), and its depth was the whole cut cone's. It
+    /// returns `bool`, so a depth cap could only produce a wrong truth table.
     fn evaluate_node(
         &self,
         node: NodeId,
         aig: &AigCircuit,
         assignment: &FxHashMap<NodeId, bool>,
     ) -> bool {
-        if let Some(&val) = assignment.get(&node) {
-            return val;
+        /// Value of an edge from an already-evaluated node.
+        fn edge_value(edge: AigEdge, memo: &FxHashMap<NodeId, bool>) -> bool {
+            let val = memo.get(&edge.node()).copied().unwrap_or(false);
+            if edge.is_inverted() { !val } else { val }
         }
 
-        match aig.get_node(node) {
-            Some(AigNode::False) => false,
-            Some(AigNode::True) => true,
-            Some(AigNode::Input(_)) => assignment.get(&node).copied().unwrap_or(false),
-            Some(AigNode::And(left, right)) => {
-                let left_val = self.evaluate_edge(*left, aig, assignment);
-                let right_val = self.evaluate_edge(*right, aig, assignment);
-                left_val && right_val
+        let mut memo: FxHashMap<NodeId, bool> = FxHashMap::default();
+        // Nodes whose operands have been queued but whose value is not in
+        // `memo` yet. Re-entering one means the circuit has a cycle, which an
+        // AIG must not have; it is cut here (as `false`, the same value a
+        // missing node has always evaluated to) so the walk terminates instead
+        // of spinning forever.
+        let mut expanding: FxHashSet<NodeId> = FxHashSet::default();
+        // `true` marks a node whose operands have already been queued.
+        let mut stack: Vec<(NodeId, bool)> = vec![(node, false)];
+        while let Some((current, expanded)) = stack.pop() {
+            if memo.contains_key(&current) {
+                continue;
             }
-            None => false,
+            if !expanded && expanding.contains(&current) {
+                memo.insert(current, false);
+                continue;
+            }
+            if let Some(&val) = assignment.get(&current) {
+                memo.insert(current, val);
+                continue;
+            }
+            match aig.get_node(current) {
+                Some(AigNode::False) => {
+                    memo.insert(current, false);
+                }
+                Some(AigNode::True) => {
+                    memo.insert(current, true);
+                }
+                Some(AigNode::Input(_)) => {
+                    memo.insert(current, assignment.get(&current).copied().unwrap_or(false));
+                }
+                Some(AigNode::And(left, right)) => {
+                    let (left, right) = (*left, *right);
+                    if expanded {
+                        let value = edge_value(left, &memo) && edge_value(right, &memo);
+                        memo.insert(current, value);
+                    } else {
+                        expanding.insert(current);
+                        stack.push((current, true));
+                        stack.push((right.node(), false));
+                        stack.push((left.node(), false));
+                    }
+                }
+                // A node the circuit does not have evaluates to `false`, as it
+                // did before.
+                None => {
+                    memo.insert(current, false);
+                }
+            }
         }
+        memo.get(&node).copied().unwrap_or(false)
     }
 
     /// Evaluate an edge (considering inversion)
-    fn evaluate_edge(
+    ///
+    /// No longer part of a mutual recursion with `Self::evaluate_node`:
+    /// that walk is iterative and resolves its own operand edges internally.
+    pub fn evaluate_edge(
         &self,
         edge: AigEdge,
         aig: &AigCircuit,
@@ -777,29 +828,62 @@ impl AdvancedBitBlaster {
     }
 
     /// Compute cuts for an AIG node
+    ///
+    /// Explicit stack, not recursion: the AIG's depth is the bit-blasted
+    /// problem's depth, which the input controls. The per-node memo
+    /// (`self.cuts`) is unchanged, and so is the order in which nodes are
+    /// finished (operands first, left before right), so the cut sets and the
+    /// `cuts_computed` statistic are identical.
     pub fn compute_cuts(&mut self, node: NodeId) -> Result<Vec<AigCut>> {
-        if let Some(cuts) = self.cuts.get(&node) {
-            return Ok(cuts.clone());
-        }
+        // `true` marks a node whose operands have already been queued.
+        let mut stack: Vec<(NodeId, bool)> = vec![(node, false)];
+        // Nodes queued for a second visit; re-entering one before it finished
+        // would mean the AIG has a cycle, which it must not.
+        let mut expanding: FxHashSet<NodeId> = FxHashSet::default();
 
-        let mut cuts = vec![AigCut::trivial(node)];
+        while let Some((current, expanded)) = stack.pop() {
+            if self.cuts.contains_key(&current) {
+                continue;
+            }
 
-        // Extract nodes before recursive calls to avoid borrow checker issues
-        let child_nodes = if let Some(AigNode::And(left, right)) = self.aig.get_node(node) {
-            Some((left.node(), right.node()))
-        } else {
-            None
-        };
+            // Extract operands before touching `self` mutably.
+            let child_nodes = match self.aig.get_node(current) {
+                Some(AigNode::And(left, right)) => Some((left.node(), right.node())),
+                _ => None,
+            };
 
-        if let Some((left_node, right_node)) = child_nodes {
-            // Get cuts for left and right children
-            let left_cuts = self.compute_cuts(left_node)?;
-            let right_cuts = self.compute_cuts(right_node)?;
+            let Some((left_node, right_node)) = child_nodes else {
+                self.cuts.insert(current, vec![AigCut::trivial(current)]);
+                continue;
+            };
 
+            if !expanded {
+                if !expanding.insert(current) {
+                    // Cyclic AIG: give this node its trivial cut rather than
+                    // spinning forever.
+                    self.cuts.insert(current, vec![AigCut::trivial(current)]);
+                    continue;
+                }
+                stack.push((current, true));
+                stack.push((right_node, false));
+                stack.push((left_node, false));
+                continue;
+            }
+
+            let (Some(left_cuts), Some(right_cuts)) =
+                (self.cuts.get(&left_node), self.cuts.get(&right_node))
+            else {
+                return Err(OxizError::Internal(
+                    "internal: AIG operand cuts missing after expansion".to_string(),
+                ));
+            };
+
+            let mut cuts = vec![AigCut::trivial(current)];
             // Merge cuts from children
-            for lcut in &left_cuts {
-                for rcut in &right_cuts {
-                    if let Some(merged) = AigCut::merge(lcut, rcut, node, self.config.max_cut_size)
+            for lcut in left_cuts {
+                for rcut in right_cuts {
+                    if let Some(merged) =
+                        AigCut::merge(lcut, rcut, current, self.config.max_cut_size)
                     {
                         cuts.push(merged);
                     }
@@ -819,10 +903,16 @@ impl AdvancedBitBlaster {
             }
 
             self.stats.cuts_computed += cuts.len();
+            self.cuts.insert(current, cuts);
         }
 
-        self.cuts.insert(node, cuts.clone());
-        Ok(cuts)
+        match self.cuts.get(&node) {
+            Some(cuts) => Ok(cuts.clone()),
+            // Unreachable: every popped node inserts its cut set.
+            None => Err(OxizError::Internal(
+                "internal: AIG cut computation produced no cuts".to_string(),
+            )),
+        }
     }
 
     /// Perform cut-based optimization on the AIG
@@ -890,114 +980,178 @@ impl AdvancedBitBlaster {
     }
 
     /// Encode a node with positive polarity (PG encoding)
+    ///
+    /// Explicit stack, not recursion: the AIG's depth is input-controlled. The
+    /// memo (`node_to_var`) is still written *before* the operands are
+    /// visited, so variable numbering — and therefore the emitted CNF — is
+    /// byte-for-byte what the recursive version produced.
     fn encode_pg_positive(&mut self, node: NodeId, sat: &mut SatSolver) -> Result<Var> {
-        if let Some(&var) = self.node_to_var.get(&node) {
-            return Ok(var);
-        }
+        // `true` marks a node whose operands have already been queued.
+        let mut stack: Vec<(NodeId, bool)> = vec![(node, false)];
+        while let Some((current, expanded)) = stack.pop() {
+            if expanded {
+                self.emit_pg_positive_clauses(current, sat)?;
+                continue;
+            }
+            if self.node_to_var.contains_key(&current) {
+                continue;
+            }
+            let var = sat.new_var();
+            self.node_to_var.insert(current, var);
+            self.stats.vars_created += 1;
 
-        let var = sat.new_var();
-        self.node_to_var.insert(node, var);
-        self.stats.vars_created += 1;
-
-        // Extract node data before recursive calls to avoid borrow checker issues
-        let node_type = self.aig.get_node(node).cloned();
-
-        if let Some(node_type) = node_type {
-            match node_type {
-                AigNode::False => {
-                    sat.add_clause([Lit::neg(var)]);
-                    self.stats.clauses_generated += 1;
-                }
-                AigNode::True => {
-                    sat.add_clause([Lit::pos(var)]);
-                    self.stats.clauses_generated += 1;
-                }
-                AigNode::Input(_) => {
-                    // No clauses needed for inputs
-                }
-                AigNode::And(left, right) => {
-                    // For positive polarity: var => (left AND right)
-                    // Which is: ~var OR (left AND right)
-                    // CNF: (~var OR left) AND (~var OR right)
-
-                    let left_var = self.encode_pg_positive(left.node(), sat)?;
-                    let right_var = self.encode_pg_positive(right.node(), sat)?;
-
-                    let left_lit = if left.is_inverted() {
-                        Lit::neg(left_var)
-                    } else {
-                        Lit::pos(left_var)
-                    };
-
-                    let right_lit = if right.is_inverted() {
-                        Lit::neg(right_var)
-                    } else {
-                        Lit::pos(right_var)
-                    };
-
-                    sat.add_clause([Lit::neg(var), left_lit]);
-                    sat.add_clause([Lit::neg(var), right_lit]);
-                    self.stats.clauses_generated += 2;
+            // Extract node data before touching the SAT solver again.
+            let node_type = self.aig.get_node(current).cloned();
+            if let Some(node_type) = node_type {
+                match node_type {
+                    AigNode::False => {
+                        sat.add_clause([Lit::neg(var)]);
+                        self.stats.clauses_generated += 1;
+                    }
+                    AigNode::True => {
+                        sat.add_clause([Lit::pos(var)]);
+                        self.stats.clauses_generated += 1;
+                    }
+                    AigNode::Input(_) => {
+                        // No clauses needed for inputs
+                    }
+                    AigNode::And(left, right) => {
+                        // The node's own clauses need its operands' variables,
+                        // so they are emitted on the second visit.
+                        stack.push((current, true));
+                        stack.push((right.node(), false));
+                        stack.push((left.node(), false));
+                    }
                 }
             }
         }
 
-        Ok(var)
+        match self.node_to_var.get(&node) {
+            Some(&var) => Ok(var),
+            // Unreachable: the root always gets a variable above.
+            None => Err(OxizError::Internal(
+                "internal: PG encoding produced no variable for the root".to_string(),
+            )),
+        }
+    }
+
+    /// Emit the positive-polarity clauses of an `And` node whose operands have
+    /// already been encoded: `var => (left AND right)`, i.e.
+    /// `(~var OR left) AND (~var OR right)`.
+    fn emit_pg_positive_clauses(&mut self, node: NodeId, sat: &mut SatSolver) -> Result<()> {
+        let Some(AigNode::And(left, right)) = self.aig.get_node(node).cloned() else {
+            return Ok(());
+        };
+        let (Some(&var), Some(&left_var), Some(&right_var)) = (
+            self.node_to_var.get(&node),
+            self.node_to_var.get(&left.node()),
+            self.node_to_var.get(&right.node()),
+        ) else {
+            return Err(OxizError::Internal(
+                "internal: PG encoding lost an operand variable".to_string(),
+            ));
+        };
+
+        let left_lit = if left.is_inverted() {
+            Lit::neg(left_var)
+        } else {
+            Lit::pos(left_var)
+        };
+        let right_lit = if right.is_inverted() {
+            Lit::neg(right_var)
+        } else {
+            Lit::pos(right_var)
+        };
+
+        sat.add_clause([Lit::neg(var), left_lit]);
+        sat.add_clause([Lit::neg(var), right_lit]);
+        self.stats.clauses_generated += 2;
+        Ok(())
     }
 
     /// Encode a node with negative polarity (PG encoding)
+    ///
+    /// Iterative for the same reason, and with the same variable-numbering
+    /// guarantee, as [`Self::encode_pg_positive`].
     fn encode_pg_negative(&mut self, node: NodeId, sat: &mut SatSolver) -> Result<Var> {
-        if let Some(&var) = self.node_to_var.get(&node) {
-            return Ok(var);
-        }
+        // `true` marks a node whose operands have already been queued.
+        let mut stack: Vec<(NodeId, bool)> = vec![(node, false)];
+        while let Some((current, expanded)) = stack.pop() {
+            if expanded {
+                self.emit_pg_negative_clauses(current, sat)?;
+                continue;
+            }
+            if self.node_to_var.contains_key(&current) {
+                continue;
+            }
+            let var = sat.new_var();
+            self.node_to_var.insert(current, var);
+            self.stats.vars_created += 1;
 
-        let var = sat.new_var();
-        self.node_to_var.insert(node, var);
-        self.stats.vars_created += 1;
-
-        // Extract node data before recursive calls to avoid borrow checker issues
-        let node_type = self.aig.get_node(node).cloned();
-
-        if let Some(node_type) = node_type {
-            match node_type {
-                AigNode::False => {
-                    sat.add_clause([Lit::neg(var)]);
-                    self.stats.clauses_generated += 1;
-                }
-                AigNode::True => {
-                    sat.add_clause([Lit::pos(var)]);
-                    self.stats.clauses_generated += 1;
-                }
-                AigNode::Input(_) => {
-                    // No clauses needed
-                }
-                AigNode::And(left, right) => {
-                    // For negative polarity: (left AND right) => var
-                    // Which is: ~(left AND right) OR var
-                    // CNF: ~left OR ~right OR var
-
-                    let left_var = self.encode_pg_negative(left.node(), sat)?;
-                    let right_var = self.encode_pg_negative(right.node(), sat)?;
-
-                    let left_lit = if left.is_inverted() {
-                        Lit::pos(left_var)
-                    } else {
-                        Lit::neg(left_var)
-                    };
-
-                    let right_lit = if right.is_inverted() {
-                        Lit::pos(right_var)
-                    } else {
-                        Lit::neg(right_var)
-                    };
-
-                    sat.add_clause([left_lit, right_lit, Lit::pos(var)]);
-                    self.stats.clauses_generated += 1;
+            // Extract node data before touching the SAT solver again.
+            let node_type = self.aig.get_node(current).cloned();
+            if let Some(node_type) = node_type {
+                match node_type {
+                    AigNode::False => {
+                        sat.add_clause([Lit::neg(var)]);
+                        self.stats.clauses_generated += 1;
+                    }
+                    AigNode::True => {
+                        sat.add_clause([Lit::pos(var)]);
+                        self.stats.clauses_generated += 1;
+                    }
+                    AigNode::Input(_) => {
+                        // No clauses needed
+                    }
+                    AigNode::And(left, right) => {
+                        stack.push((current, true));
+                        stack.push((right.node(), false));
+                        stack.push((left.node(), false));
+                    }
                 }
             }
         }
 
-        Ok(var)
+        match self.node_to_var.get(&node) {
+            Some(&var) => Ok(var),
+            // Unreachable: the root always gets a variable above.
+            None => Err(OxizError::Internal(
+                "internal: PG encoding produced no variable for the root".to_string(),
+            )),
+        }
+    }
+
+    /// Emit the negative-polarity clause of an `And` node whose operands have
+    /// already been encoded: `(left AND right) => var`, i.e.
+    /// `~left OR ~right OR var`.
+    fn emit_pg_negative_clauses(&mut self, node: NodeId, sat: &mut SatSolver) -> Result<()> {
+        let Some(AigNode::And(left, right)) = self.aig.get_node(node).cloned() else {
+            return Ok(());
+        };
+        let (Some(&var), Some(&left_var), Some(&right_var)) = (
+            self.node_to_var.get(&node),
+            self.node_to_var.get(&left.node()),
+            self.node_to_var.get(&right.node()),
+        ) else {
+            return Err(OxizError::Internal(
+                "internal: PG encoding lost an operand variable".to_string(),
+            ));
+        };
+
+        let left_lit = if left.is_inverted() {
+            Lit::pos(left_var)
+        } else {
+            Lit::neg(left_var)
+        };
+        let right_lit = if right.is_inverted() {
+            Lit::pos(right_var)
+        } else {
+            Lit::neg(right_var)
+        };
+
+        sat.add_clause([left_lit, right_lit, Lit::pos(var)]);
+        self.stats.clauses_generated += 1;
+        Ok(())
     }
 
     /// Get the SAT variable for an AIG edge

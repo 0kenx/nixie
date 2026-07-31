@@ -122,124 +122,161 @@ impl Translator<'_> {
 
     /// Translate a term id from the source arena into the destination arena,
     /// returning `None` for any kind outside the supported fragment.
-    fn term(&mut self, dest: &mut TermManager, t: TermId) -> Option<TermId> {
-        if let Some(&cached) = self.memo.get(&t) {
-            return Some(cached);
+    ///
+    /// Walked with an explicit heap stack. The previous form recursed once
+    /// per nesting level (mutually with `terms`); the memo made it linear in
+    /// DAG size but did nothing about depth, and the return type is
+    /// `Option<TermId>` whose `None` already means "outside the supported
+    /// fragment" — so a depth cap could not be distinguished from that and
+    /// would silently drop a translatable rule instead of translating it.
+    fn term(&mut self, dest: &mut TermManager, root: TermId) -> Option<TermId> {
+        let mut stack: Vec<(TermId, bool)> = vec![(root, false)];
+
+        while let Some((current, expanded)) = stack.pop() {
+            if self.memo.contains_key(&current) {
+                continue;
+            }
+
+            let kind = self.src.get(current)?.kind.clone();
+            // `None` here means the kind is outside the fragment; the whole
+            // translation fails closed, exactly as before.
+            let children = Self::translatable_children(&kind)?;
+
+            if expanded {
+                let mut mapped = Vec::with_capacity(children.len());
+                for child in &children {
+                    mapped.push(self.memo.get(child).copied()?);
+                }
+                let out = self.rebuild(dest, current, &kind, &mapped)?;
+                self.memo.insert(current, out);
+            } else {
+                stack.push((current, true));
+                for child in children {
+                    if !self.memo.contains_key(&child) {
+                        stack.push((child, false));
+                    }
+                }
+            }
         }
 
-        let kind = self.src.get(t)?.kind.clone();
-        let out = match kind {
-            TermKind::True => dest.mk_true(),
-            TermKind::False => dest.mk_false(),
-            TermKind::IntConst(v) => dest.mk_int(v),
-            TermKind::RealConst(r) => dest.mk_real(r),
-            TermKind::Var(spur) => {
-                let name = self.src.resolve_str(spur).to_string();
-                let sort = self.sort(dest, self.src.get(t)?.sort)?;
-                dest.mk_var(&name, sort)
-            }
-            TermKind::Not(a) => {
-                let a = self.term(dest, a)?;
-                dest.mk_not(a)
-            }
-            TermKind::And(args) => {
-                let v = self.terms(dest, &args)?;
-                dest.mk_and(v)
-            }
-            TermKind::Or(args) => {
-                let v = self.terms(dest, &args)?;
-                dest.mk_or(v)
-            }
-            TermKind::Xor(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_xor(a, b)
-            }
-            TermKind::Implies(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_implies(a, b)
-            }
-            TermKind::Ite(c, t1, e) => {
-                let c = self.term(dest, c)?;
-                let t1 = self.term(dest, t1)?;
-                let e = self.term(dest, e)?;
-                dest.mk_ite(c, t1, e)
-            }
-            TermKind::Eq(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_eq(a, b)
-            }
-            TermKind::Distinct(args) => {
-                let v = self.terms(dest, &args)?;
-                dest.mk_distinct(v)
-            }
-            TermKind::Neg(a) => {
-                let a = self.term(dest, a)?;
-                dest.mk_neg(a)
-            }
-            TermKind::Add(args) => {
-                let v = self.terms(dest, &args)?;
-                dest.mk_add(v)
-            }
-            TermKind::Sub(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_sub(a, b)
-            }
-            TermKind::Mul(args) => {
-                let v = self.terms(dest, &args)?;
-                dest.mk_mul(v)
-            }
-            TermKind::Div(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_div(a, b)
-            }
-            TermKind::Mod(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_mod(a, b)
-            }
-            TermKind::Lt(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_lt(a, b)
-            }
-            TermKind::Le(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_le(a, b)
-            }
-            TermKind::Gt(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_gt(a, b)
-            }
-            TermKind::Ge(a, b) => {
-                let a = self.term(dest, a)?;
-                let b = self.term(dest, b)?;
-                dest.mk_ge(a, b)
-            }
-            // Anything else (bit-vectors, arrays, strings, floating-point,
-            // uninterpreted functions, quantifiers) is outside the fragment
-            // this translator (and the Spacer engine) handles soundly.
-            _ => return None,
-        };
-
-        self.memo.insert(t, out);
-        Some(out)
+        self.memo.get(&root).copied()
     }
 
-    /// Translate a slice of terms, short-circuiting to `None` if any element
-    /// is untranslatable.
-    fn terms(&mut self, dest: &mut TermManager, args: &[TermId]) -> Option<Vec<TermId>> {
-        let mut out = Vec::with_capacity(args.len());
-        for &a in args {
-            out.push(self.term(dest, a)?);
+    /// The subterms of a translatable kind, or `None` when the kind is
+    /// outside the fragment Spacer reasons about soundly (bit-vectors,
+    /// arrays, strings, floating-point, uninterpreted functions,
+    /// quantifiers).
+    fn translatable_children(kind: &TermKind) -> Option<Vec<TermId>> {
+        match kind {
+            TermKind::True
+            | TermKind::False
+            | TermKind::IntConst(_)
+            | TermKind::RealConst(_)
+            | TermKind::Var(_) => Some(Vec::new()),
+            TermKind::Not(a) | TermKind::Neg(a) => Some(vec![*a]),
+            TermKind::And(args)
+            | TermKind::Or(args)
+            | TermKind::Distinct(args)
+            | TermKind::Add(args)
+            | TermKind::Mul(args) => Some(args.to_vec()),
+            TermKind::Xor(a, b)
+            | TermKind::Implies(a, b)
+            | TermKind::Eq(a, b)
+            | TermKind::Sub(a, b)
+            | TermKind::Div(a, b)
+            | TermKind::Mod(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Ge(a, b) => Some(vec![*a, *b]),
+            TermKind::Ite(c, t, e) => Some(vec![*c, *t, *e]),
+            _ => None,
         }
-        Some(out)
+    }
+
+    /// Rebuild one already-translated node in `dest`.
+    ///
+    /// `mapped` holds the destination ids of the children
+    /// [`Self::translatable_children`] reported, in the same order.
+    fn rebuild(
+        &self,
+        dest: &mut TermManager,
+        source: TermId,
+        kind: &TermKind,
+        mapped: &[TermId],
+    ) -> Option<TermId> {
+        // Helpers keep the arity assumptions in one place: `translatable_children`
+        // decided how many children each kind has, so a mismatch here would be
+        // an internal inconsistency, reported as `None` rather than a panic.
+        let unary = || mapped.first().copied();
+        let binary = || Some((mapped.first().copied()?, mapped.get(1).copied()?));
+
+        Some(match kind {
+            TermKind::True => dest.mk_true(),
+            TermKind::False => dest.mk_false(),
+            TermKind::IntConst(v) => dest.mk_int(v.clone()),
+            TermKind::RealConst(r) => dest.mk_real(*r),
+            TermKind::Var(spur) => {
+                let name = self.src.resolve_str(*spur).to_string();
+                let sort = self.sort(dest, self.src.get(source)?.sort)?;
+                dest.mk_var(&name, sort)
+            }
+            TermKind::Not(_) => dest.mk_not(unary()?),
+            TermKind::Neg(_) => dest.mk_neg(unary()?),
+            TermKind::And(_) => dest.mk_and(mapped.to_vec()),
+            TermKind::Or(_) => dest.mk_or(mapped.to_vec()),
+            TermKind::Distinct(_) => dest.mk_distinct(mapped.to_vec()),
+            TermKind::Add(_) => dest.mk_add(mapped.to_vec()),
+            TermKind::Mul(_) => dest.mk_mul(mapped.to_vec()),
+            TermKind::Xor(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_xor(a, b)
+            }
+            TermKind::Implies(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_implies(a, b)
+            }
+            TermKind::Eq(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_eq(a, b)
+            }
+            TermKind::Sub(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_sub(a, b)
+            }
+            TermKind::Div(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_div(a, b)
+            }
+            TermKind::Mod(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_mod(a, b)
+            }
+            TermKind::Lt(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_lt(a, b)
+            }
+            TermKind::Le(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_le(a, b)
+            }
+            TermKind::Gt(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_gt(a, b)
+            }
+            TermKind::Ge(_, _) => {
+                let (a, b) = binary()?;
+                dest.mk_ge(a, b)
+            }
+            TermKind::Ite(_, _, _) => {
+                let cond = mapped.first().copied()?;
+                let then_branch = mapped.get(1).copied()?;
+                let else_branch = mapped.get(2).copied()?;
+                dest.mk_ite(cond, then_branch, else_branch)
+            }
+            // `translatable_children` already refused every other kind.
+            _ => return None,
+        })
     }
 }
 
@@ -247,6 +284,20 @@ impl Translator<'_> {
 mod tests {
     use super::*;
     use crate::chc::PredicateApp;
+
+    /// Stack size and nesting depth for the deep-recursion test below.
+    ///
+    /// The two are scaled together on purpose: what the test actually pins is
+    /// the *ratio* -- about 21 bytes of stack per nesting level
+    /// (128 KiB / 6_250). A natively recursive translation needs far more
+    /// than that per frame and still overflows, so the regression keeps every
+    /// bit of its detection power. The pair used to be 1 MiB / 50_000 -- the
+    /// same 21 bytes -- but `mk_and` flattens its arguments, so a chain built
+    /// with `acc = mk_and([acc, atom])` is quadratic, and 50_000 levels cost
+    /// tens of GB of live terms. Never raise `DEEP_DEPTH` without raising
+    /// `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 6_250;
 
     #[test]
     fn test_translate_preserves_structure_and_ids() {
@@ -319,5 +370,58 @@ mod tests {
             translate_system(&terms, &system).is_none(),
             "bit-vector sorts must make translation fail closed"
         );
+    }
+
+    /// Deeply nested terms must translate without overflowing the stack.
+    #[test]
+    fn translate_survives_deep_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut src = TermManager::new();
+                let mut system = ChcSystem::new();
+                let int_sort = src.sorts.int_sort;
+                let inv = system.declare_predicate("Inv", [int_sort]);
+
+                let x = src.mk_var("x", int_sort);
+                let zero = src.mk_int(0);
+                let mut constraint = src.mk_eq(x, zero);
+                for i in 0..DEEP_DEPTH {
+                    let k = src.mk_int(i);
+                    let atom = src.mk_ge(x, k);
+                    constraint = src.mk_and([constraint, atom]);
+                }
+                system.add_init_rule([("x".to_string(), int_sort)], constraint, inv, [x]);
+
+                let translated = translate_system(&src, &system);
+                assert!(
+                    translated.is_some(),
+                    "a deeply nested but fully supported system must translate"
+                );
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep translation must return");
+    }
+
+    /// Structural sharing keeps translation linear in DAG size: a 60-level
+    /// doubling DAG would be 2^60 tree nodes without the memo.
+    #[test]
+    fn translate_is_linear_on_shared_dag() {
+        let mut src = TermManager::new();
+        let mut system = ChcSystem::new();
+        let int_sort = src.sorts.int_sort;
+        let inv = system.declare_predicate("Inv", [int_sort]);
+
+        let x = src.mk_var("x", int_sort);
+        let one = src.mk_int(1);
+        let mut shared = src.mk_add([x, one]);
+        for _ in 0..60 {
+            shared = src.mk_add([shared, shared]);
+        }
+        let zero = src.mk_int(0);
+        let constraint = src.mk_ge(shared, zero);
+        system.add_init_rule([("x".to_string(), int_sort)], constraint, inv, [x]);
+
+        assert!(translate_system(&src, &system).is_some());
     }
 }

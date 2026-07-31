@@ -1,6 +1,6 @@
 # oxiz-math
 
-[![Version](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/cool-japan/oxiz)
+[![Version](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/cool-japan/oxiz)
 [![Status](https://img.shields.io/badge/status-stable-green)]()
 
 Mathematical foundations for the OxiZ SMT solver.
@@ -28,15 +28,19 @@ use oxiz_math::polynomial::Polynomial;
 use oxiz_math::interval::Interval;
 ```
 
-## Status (v0.3.0)
+## Status (v0.3.1)
 
 | Metric | Value |
 |:-------|:------|
-| Tests | 679 passing |
-| Rust LoC | 30,748 (60 files) |
-| Public API items | 1,036 |
+| Tests | 753 passing |
+| Rust LoC | 28,968 (78 files) |
+| Public API items | 1,070 |
 | `todo!`/`unimplemented!` | 0 |
 | Status | Stable |
+
+0.3.1: multivariate polynomial GCD in `polynomial` now uses a real primitive
+polynomial-remainder-sequence (PRS) algorithm with pseudo-division, replacing
+the earlier stub.
 
 ## Design Principles
 

@@ -47,18 +47,45 @@ impl Solver {
                 }
             }
         }
-        None
+
+        // An exhausted heap is *not* proof that every variable is assigned.
+        // All three heuristics consume their candidates destructively
+        // (`pop_max` / `select`), so any variable unassigned by a rollback that
+        // failed to re-insert it disappears from the search entirely.
+        //
+        // Both search loops read `None` as "all variables assigned - SAT" and
+        // hand the trail straight to `save_model`, so a drained heap used to
+        // surface as a `Sat` verdict over a *partial* assignment: the model kept
+        // `Undef` entries for the lost variables and falsified clauses that
+        // nothing had ever decided. Conceding only when the assignment really is
+        // total makes `None` mean what its callers assume it means. With the
+        // heaps kept in repair by `backtrack`, this scan is a fallback that
+        // essentially never runs.
+        (0..self.num_vars)
+            .map(|i| Var::new(i as u32))
+            .find(|&var| !self.trail.is_assigned(var))
+            .inspect(|&var| {
+                if self.config.use_lrb_branching {
+                    self.lrb.on_assign(var);
+                }
+            })
     }
 
-    /// Backtrack with phase saving
-    pub(super) fn backtrack_with_phase_saving(&mut self, level: u32) {
+    /// Backtrack with phase saving.
+    ///
+    /// Returns the trail index at which the rolled-back region started (see
+    /// [`Trail::backtrack_to_with_callback`]). Callers holding a cursor into the
+    /// trail must clamp it to this value, not to the trail length: under
+    /// chronological backtracking, literals that survive the rollback are
+    /// re-appended above this index and have to be reprocessed.
+    pub(super) fn backtrack_with_phase_saving(&mut self, level: u32) -> usize {
         // Collect variables that will be unassigned
         let mut unassigned_vars = Vec::new();
 
         // Save phases before backtracking
         let phase = &mut self.phase;
         let lrb = &mut self.lrb;
-        self.trail.backtrack_to_with_callback(level, |lit| {
+        let boundary = self.trail.backtrack_to_with_callback(level, |lit| {
             let var = lit.var();
             if var.index() < phase.len() {
                 phase[var.index()] = lit.is_pos();
@@ -77,11 +104,45 @@ impl Solver {
                 self.chb.insert(var);
             }
         }
+
+        boundary
     }
 
-    /// Backtrack to a given level without saving phases
-    pub(super) fn backtrack(&mut self, level: u32) {
-        self.trail.backtrack_to(level);
+    /// Backtrack to a given level without saving phases.
+    ///
+    /// Returns the rollback boundary, exactly like
+    /// [`Self::backtrack_with_phase_saving`]; the only difference between the
+    /// two is that this one does not record the discarded polarities.
+    ///
+    /// In particular it must still hand the freed variables back to the decision
+    /// heaps. `pick_branch_var` pops candidates *destructively*, so a variable
+    /// unassigned without being re-inserted is lost to the search for good.
+    /// `solve_with_assumptions` ends every probe on this path, so each probe used
+    /// to drain the heaps a little further; once they ran dry the next probe had
+    /// nothing left to branch on and reported `Sat` over a partial assignment —
+    /// a model with `Undef` entries that falsified clauses the search had never
+    /// even looked at. The vivification and distillation probes in
+    /// `learn.rs` unwind through here too, with the same consequence.
+    pub(super) fn backtrack(&mut self, level: u32) -> usize {
+        let mut unassigned_vars = Vec::new();
+
+        let lrb = &mut self.lrb;
+        let boundary = self.trail.backtrack_to_with_callback(level, |lit| {
+            let var = lit.var();
+            lrb.unassign(var);
+            unassigned_vars.push(var);
+        });
+
+        for var in unassigned_vars {
+            if !self.vsids.contains(var) {
+                self.vsids.insert(var);
+            }
+            if !self.chb.contains(var) {
+                self.chb.insert(var);
+            }
+        }
+
+        boundary
     }
 
     /// Compute the Luby sequence value for index i (1-indexed: luby(1)=1, luby(2)=1, ...)

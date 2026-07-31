@@ -38,9 +38,8 @@ impl<'a> AckermannizeTactic<'a> {
     /// binding of `x`, so collapsing it into one ground variable (and adding
     /// ground congruence constraints) is unsound.
     ///
-    /// We therefore track the set of binder names in scope (`bound`) while
-    /// descending. An application whose arguments reference any in-scope bound
-    /// variable is **not** collected; instead its function symbol is recorded
+    /// An application whose arguments reference any quantifier-bound variable
+    /// is therefore **not** collected; instead its function symbol is recorded
     /// in `tainted`. The caller then drops *every* application of a tainted
     /// symbol — even its ground occurrences — because Ackermannizing only some
     /// occurrences of `f` while leaving quantified ones as real `f` would
@@ -48,12 +47,51 @@ impl<'a> AckermannizeTactic<'a> {
     /// `v_a = f(a)` is absent), again unsoundly. If nothing survives, the
     /// tactic is `NotApplicable`.
     ///
+    /// # Why `bound_names` is goal-global rather than scope-tracked
+    ///
+    /// This used to carry a `bound: &mut Vec<Spur>` push/truncate scope stack
+    /// so that a name only counted as bound *within* its binder. Combined
+    /// with the `visited` memo — which is keyed on `TermId` alone and shared
+    /// across the whole goal — that was unsound: because terms are
+    /// hash-consed, a subterm `f(x)` occurring both at the top level and
+    /// inside `(forall ((x Int)) ...)` is one single `TermId`. Whichever
+    /// occurrence was reached first won; if that was the top-level one, the
+    /// walk recorded `f(x)` as a ground application and `visited` then
+    /// suppressed the quantified occurrence that would have tainted `f`. The
+    /// rewrite step replaces terms by `TermId`, so `f(x)` inside the binder
+    /// was replaced by the ground fresh variable too — exactly the unsoundness
+    /// the taint mechanism exists to prevent.
+    ///
+    /// `bound_names` is now the set of *every* name bound by *any*
+    /// quantifier anywhere in the goal (see
+    /// [`Self::collect_bound_names`]). That is a deliberate
+    /// over-approximation: a symbol applied to a free variable that merely
+    /// happens to share a name with some unrelated binder elsewhere is
+    /// tainted and left alone. Over-tainting only makes the tactic decline to
+    /// eliminate a symbol (incompleteness, reported honestly as
+    /// `NotApplicable`), whereas under-tainting corrupts the formula — and it
+    /// makes the scope-insensitive `visited` memo correct by construction,
+    /// since "does this term reference a bound name" no longer depends on the
+    /// path by which the term was reached.
+    ///
+    /// # Iterative walk
+    ///
+    /// The descent uses an explicit heap stack: the return type is `()`, so a
+    /// depth cap could only silently stop collecting applications partway
+    /// through — leaving some occurrences of `f` Ackermannized and others
+    /// not, which is precisely the decoupling described above. Children come
+    /// from [`crate::ast::traversal::get_children`], which matches `TermKind`
+    /// exhaustively; the previous hand-written match ended in `_ => {}` and so
+    /// never descended into `Str*`, `Fp*`, `DtConstructor`/`DtSelector`/
+    /// `DtTester` or `Match` nodes, silently missing every application nested
+    /// under one of those.
+    ///
     /// Reference: Z3's `ackermannize_bv_tactic` / `ackr_helper` only collect
     /// ground applications.
     fn collect_func_apps(
         &self,
         term_id: TermId,
-        bound: &mut Vec<crate::interner::Spur>,
+        bound_names: &crate::prelude::FxHashSet<crate::interner::Spur>,
         apps: &mut Vec<(
             crate::interner::Spur,
             smallvec::SmallVec<[TermId; 4]>,
@@ -63,107 +101,70 @@ impl<'a> AckermannizeTactic<'a> {
         visited: &mut crate::prelude::FxHashSet<TermId>,
     ) {
         use crate::ast::TermKind;
+        use crate::ast::traversal::get_children;
 
-        if visited.contains(&term_id) {
-            return;
-        }
-        visited.insert(term_id);
-
-        if let Some(term) = self.manager.get(term_id) {
-            match &term.kind {
-                TermKind::Apply { func, args } => {
-                    let refs_bound = !bound.is_empty()
-                        && args.iter().any(|&a| self.references_bound_var(a, bound));
-                    if refs_bound {
-                        // Quantified occurrence: exclude this symbol entirely.
-                        tainted.insert(*func);
-                    } else {
-                        apps.push((*func, args.clone(), term_id));
-                    }
-                    for &arg in args {
-                        self.collect_func_apps(arg, bound, apps, tainted, visited);
-                    }
-                }
-                TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => {
-                    self.collect_func_apps(*a, bound, apps, tainted, visited);
-                }
-                TermKind::BvExtract { arg, .. } => {
-                    self.collect_func_apps(*arg, bound, apps, tainted, visited);
-                }
-                TermKind::And(args)
-                | TermKind::Or(args)
-                | TermKind::Add(args)
-                | TermKind::Mul(args)
-                | TermKind::Distinct(args) => {
-                    for &arg in args {
-                        self.collect_func_apps(arg, bound, apps, tainted, visited);
-                    }
-                }
-                TermKind::Implies(a, b)
-                | TermKind::Xor(a, b)
-                | TermKind::Eq(a, b)
-                | TermKind::Sub(a, b)
-                | TermKind::Div(a, b)
-                | TermKind::Mod(a, b)
-                | TermKind::Lt(a, b)
-                | TermKind::Le(a, b)
-                | TermKind::Gt(a, b)
-                | TermKind::Ge(a, b)
-                | TermKind::Select(a, b)
-                | TermKind::BvConcat(a, b)
-                | TermKind::BvAnd(a, b)
-                | TermKind::BvOr(a, b)
-                | TermKind::BvXor(a, b)
-                | TermKind::BvAdd(a, b)
-                | TermKind::BvSub(a, b)
-                | TermKind::BvMul(a, b)
-                | TermKind::BvUdiv(a, b)
-                | TermKind::BvSdiv(a, b)
-                | TermKind::BvUrem(a, b)
-                | TermKind::BvSrem(a, b)
-                | TermKind::BvShl(a, b)
-                | TermKind::BvLshr(a, b)
-                | TermKind::BvAshr(a, b)
-                | TermKind::BvUlt(a, b)
-                | TermKind::BvUle(a, b)
-                | TermKind::BvSlt(a, b)
-                | TermKind::BvSle(a, b) => {
-                    self.collect_func_apps(*a, bound, apps, tainted, visited);
-                    self.collect_func_apps(*b, bound, apps, tainted, visited);
-                }
-                TermKind::Ite(c, t, e) | TermKind::Store(c, t, e) => {
-                    self.collect_func_apps(*c, bound, apps, tainted, visited);
-                    self.collect_func_apps(*t, bound, apps, tainted, visited);
-                    self.collect_func_apps(*e, bound, apps, tainted, visited);
-                }
-                TermKind::Forall { vars, body, .. } | TermKind::Exists { vars, body, .. } => {
-                    let pushed = vars.len();
-                    for (name, _) in vars.iter() {
-                        bound.push(*name);
-                    }
-                    let body = *body;
-                    self.collect_func_apps(body, bound, apps, tainted, visited);
-                    bound.truncate(bound.len() - pushed);
-                }
-                TermKind::Let { bindings, body } => {
-                    let bindings = bindings.clone();
-                    let body = *body;
-                    for (_, t) in &bindings {
-                        self.collect_func_apps(*t, bound, apps, tainted, visited);
-                    }
-                    self.collect_func_apps(body, bound, apps, tainted, visited);
-                }
-                // Constants and variables don't contain function applications
-                _ => {}
+        let mut stack = vec![term_id];
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
             }
+            let Some(term) = self.manager.get(id) else {
+                continue;
+            };
+            if let TermKind::Apply { func, args } = &term.kind {
+                let refs_bound = !bound_names.is_empty()
+                    && args
+                        .iter()
+                        .any(|&a| self.references_bound_var(a, bound_names));
+                if refs_bound {
+                    // Quantified occurrence: exclude this symbol entirely.
+                    tainted.insert(*func);
+                } else {
+                    apps.push((*func, args.clone(), id));
+                }
+            }
+            stack.extend(get_children(&term.kind));
         }
     }
 
-    /// Whether `term` references any variable name in `bound` (the set of
-    /// quantifier-bound names currently in scope). Used to detect
-    /// applications that depend on bound variables — see
-    /// [`Self::collect_func_apps`].
-    fn references_bound_var(&self, term: TermId, bound: &[crate::interner::Spur]) -> bool {
+    /// Every variable name bound by any `Forall`/`Exists` anywhere in
+    /// `roots`' term DAGs.
+    ///
+    /// See [`Self::collect_func_apps`] for why the taint test uses this
+    /// goal-global set instead of a lexical scope stack.
+    fn collect_bound_names(
+        &self,
+        roots: &[TermId],
+    ) -> crate::prelude::FxHashSet<crate::interner::Spur> {
+        use crate::ast::TermKind;
+        use crate::ast::traversal::get_children;
+
+        let mut names = crate::prelude::FxHashSet::default();
+        let mut visited: crate::prelude::FxHashSet<TermId> = crate::prelude::FxHashSet::default();
+        let mut stack: Vec<TermId> = roots.to_vec();
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(term) = self.manager.get(id) else {
+                continue;
+            };
+            if let TermKind::Forall { vars, .. } | TermKind::Exists { vars, .. } = &term.kind {
+                names.extend(vars.iter().map(|(name, _)| *name));
+            }
+            stack.extend(get_children(&term.kind));
+        }
+        names
+    }
+
+    /// Whether `term` references any variable name in `bound` (every name
+    /// bound by any quantifier in the goal). Used to detect applications that
+    /// depend on bound variables — see [`Self::collect_func_apps`].
+    fn references_bound_var(
+        &self,
+        term: TermId,
+        bound: &crate::prelude::FxHashSet<crate::interner::Spur>,
+    ) -> bool {
         use crate::ast::TermKind;
         use crate::ast::traversal::collect_subterms;
 
@@ -207,13 +208,13 @@ impl<'a> AckermannizeTactic<'a> {
             TermId,
         )> = Vec::new();
         let mut tainted: FxHashSet<crate::interner::Spur> = FxHashSet::default();
-        let mut bound: Vec<crate::interner::Spur> = Vec::new();
+        let bound_names = self.collect_bound_names(&goal.assertions);
         let mut visited = FxHashSet::default();
 
         for &assertion in &goal.assertions {
             self.collect_func_apps(
                 assertion,
-                &mut bound,
+                &bound_names,
                 &mut all_apps,
                 &mut tainted,
                 &mut visited,
@@ -366,5 +367,142 @@ impl Tactic for StatelessAckermannizeTactic {
     fn description(&self) -> &str {
         "Eliminates uninterpreted functions by adding functional consistency constraints \
          (requires a TermManager; the manager-free path is NotApplicable)"
+    }
+}
+
+#[cfg(test)]
+mod group_c1_tests {
+    use super::*;
+    use crate::ast::{TermKind, TermManager};
+
+    /// Regression: `collect_func_apps`' hand-written match ended in `_ => {}`,
+    /// so it never descended into `Str*`/`Fp*`/`Dt*`/`Match` nodes. An
+    /// application of `f` hidden under one of those was neither collected nor
+    /// able to taint `f`, so the *other* occurrences of `f` were
+    /// Ackermannized while that one stayed a real `f` -- exactly the
+    /// decoupling `collect_func_apps`' own doc comment says is unsound.
+    #[test]
+    fn applications_under_a_datatype_constructor_are_seen() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+
+        let a = manager.mk_int(1);
+        let f_a = manager.mk_apply("f", [a], int_sort);
+        // Bury f(1) under a datatype constructor, which the old walk skipped.
+        let wrapped = manager.mk_dt_constructor("mk", [f_a], int_sort);
+        let b = manager.mk_int(2);
+        let f_b = manager.mk_apply("f", [b], int_sort);
+        let eq = manager.mk_eq(wrapped, f_b);
+
+        let tactic = AckermannizeTactic::new(&mut manager);
+        let bound = tactic.collect_bound_names(&[eq]);
+        let mut apps = Vec::new();
+        let mut tainted = crate::prelude::FxHashSet::default();
+        let mut visited = crate::prelude::FxHashSet::default();
+        tactic.collect_func_apps(eq, &bound, &mut apps, &mut tainted, &mut visited);
+
+        assert_eq!(
+            apps.len(),
+            2,
+            "both f-applications must be collected, including the one under \
+             the constructor: {apps:?}"
+        );
+    }
+
+    /// Regression: taint used to be computed against a lexical scope stack
+    /// while `visited` was keyed on `TermId` alone. Because terms are
+    /// hash-consed, `f(x)` occurring both free and under `forall x` is one
+    /// `TermId`; whichever occurrence was reached first won, so the
+    /// quantified one could be suppressed and `f` never tainted. Taint is now
+    /// goal-global, which over-approximates safely.
+    #[test]
+    fn a_shared_application_under_a_binder_taints_its_symbol() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        let x = manager.mk_var("x", int_sort);
+        let f_x = manager.mk_apply("f", [x], int_sort);
+        let zero = manager.mk_int(0);
+        let free_use = manager.mk_eq(f_x, zero);
+        let quantified_use = manager.mk_forall([("x", int_sort)], free_use);
+        let p = manager.mk_apply("P", [x], bool_sort);
+        let _ = p;
+
+        // The free use is listed first so it is reached before the binder.
+        let goal = Goal::new(vec![free_use, quantified_use]);
+        let mut tactic = AckermannizeTactic::new(&mut manager);
+        let result = tactic
+            .apply_mut(&goal)
+            .expect("test operation should succeed");
+
+        assert!(
+            matches!(result, TacticResult::NotApplicable),
+            "f has a quantifier-bound-argument occurrence, so nothing may be \
+             Ackermannized; got {result:?}"
+        );
+    }
+
+    /// `collect_func_apps` walks with an explicit heap stack: a term far
+    /// deeper than any native stack could hold must return rather than abort.
+    #[test]
+    fn collect_func_apps_survives_a_deep_chain_on_a_tiny_stack() {
+        const DEPTH: usize = 60_000;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let mut chain = manager.mk_int(0);
+                for _ in 0..DEPTH {
+                    chain = manager.mk_apply("f", [chain], int_sort);
+                }
+
+                let tactic = AckermannizeTactic::new(&mut manager);
+                let bound = tactic.collect_bound_names(&[chain]);
+                let mut apps = Vec::new();
+                let mut tainted = crate::prelude::FxHashSet::default();
+                let mut visited = crate::prelude::FxHashSet::default();
+                tactic.collect_func_apps(chain, &bound, &mut apps, &mut tainted, &mut visited);
+                apps.len()
+            })
+            .expect("test thread must spawn");
+
+        assert_eq!(handle.join().ok(), Some(DEPTH));
+    }
+
+    /// Sanity pin: a purely ground goal still Ackermannizes.
+    #[test]
+    fn ground_applications_are_still_eliminated() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+
+        let a = manager.mk_int(1);
+        let b = manager.mk_int(2);
+        let f_a = manager.mk_apply("f", [a], int_sort);
+        let f_b = manager.mk_apply("f", [b], int_sort);
+        let eq = manager.mk_eq(f_a, f_b);
+
+        let goal = Goal::new(vec![eq]);
+        let mut tactic = AckermannizeTactic::new(&mut manager);
+        let result = tactic
+            .apply_mut(&goal)
+            .expect("test operation should succeed");
+        let TacticResult::SubGoals(goals) = result else {
+            panic!("expected ground applications to be eliminated, got {result:?}");
+        };
+        // No `Apply` node may survive in the transformed assertions.
+        for &assertion in &goals[0].assertions {
+            for sub in crate::ast::traversal::collect_subterms(assertion, tactic.manager) {
+                assert!(
+                    !matches!(
+                        tactic.manager.get(sub).map(|t| &t.kind),
+                        Some(TermKind::Apply { .. })
+                    ),
+                    "an uninterpreted application survived Ackermannization"
+                );
+            }
+        }
     }
 }

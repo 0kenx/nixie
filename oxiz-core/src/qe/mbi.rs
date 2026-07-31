@@ -49,6 +49,16 @@ use std::collections::{HashMap, HashSet};
 /// an unvalidated result.
 pub const MAX_VALIDATION_VARS: usize = 20;
 
+/// Work item of the iterative propositional evaluator.
+#[derive(Debug, Clone, Copy)]
+enum EvalStep {
+    /// Visit a term: memoize it if it is a leaf, otherwise schedule its
+    /// operands and a follow-up [`EvalStep::Combine`].
+    Enter(TermId),
+    /// Combine already-evaluated operands into this term's value.
+    Combine(TermId),
+}
+
 /// Configuration for MBI
 #[derive(Debug, Clone)]
 pub struct MbiConfig {
@@ -298,77 +308,153 @@ impl MbiSolver {
         assign: &HashMap<TermId, bool>,
         manager: &TermManager,
     ) -> Option<bool> {
-        let t = manager.get(term)?;
-        match &t.kind {
-            TermKind::True => Some(true),
-            TermKind::False => Some(false),
-            TermKind::Var(_) => assign.get(&term).copied(),
-            TermKind::Not(a) => Some(!self.eval_bool(*a, assign, manager)?),
-            TermKind::And(args) => {
-                let mut acc = true;
-                for &a in args.iter() {
-                    acc &= self.eval_bool(a, assign, manager)?;
+        // Explicit stack, plus a per-call memo keyed on `TermId`. The
+        // assignment is fixed for the duration of the call and no binder is
+        // ever entered (binders are outside the supported fragment), so the
+        // memo is sound; without it a shared DAG is re-expanded as a tree.
+        let mut memo: HashMap<TermId, bool> = HashMap::new();
+        let mut stack = vec![EvalStep::Enter(term)];
+
+        while let Some(step) = stack.pop() {
+            match step {
+                EvalStep::Enter(id) => {
+                    if memo.contains_key(&id) {
+                        continue;
+                    }
+                    let t = manager.get(id)?;
+                    match &t.kind {
+                        TermKind::True => {
+                            memo.insert(id, true);
+                        }
+                        TermKind::False => {
+                            memo.insert(id, false);
+                        }
+                        TermKind::Var(_) => {
+                            let value = assign.get(&id).copied()?;
+                            memo.insert(id, value);
+                        }
+                        TermKind::Not(a) => {
+                            stack.push(EvalStep::Combine(id));
+                            stack.push(EvalStep::Enter(*a));
+                        }
+                        TermKind::And(args) | TermKind::Or(args) => {
+                            stack.push(EvalStep::Combine(id));
+                            for &a in args.iter() {
+                                stack.push(EvalStep::Enter(a));
+                            }
+                        }
+                        TermKind::Implies(a, b) | TermKind::Xor(a, b) | TermKind::Eq(a, b) => {
+                            stack.push(EvalStep::Combine(id));
+                            stack.push(EvalStep::Enter(*a));
+                            stack.push(EvalStep::Enter(*b));
+                        }
+                        TermKind::Ite(c, _, _) => {
+                            // Only the taken branch is ever evaluated, so an
+                            // unsupported branch on the untaken side must not
+                            // turn the whole evaluation into `None`.
+                            stack.push(EvalStep::Combine(id));
+                            stack.push(EvalStep::Enter(*c));
+                        }
+                        // Anything outside the propositional fragment is not
+                        // evaluable here; report it honestly rather than
+                        // defaulting to a Boolean value.
+                        _ => return None,
+                    }
                 }
-                Some(acc)
-            }
-            TermKind::Or(args) => {
-                let mut acc = false;
-                for &a in args.iter() {
-                    acc |= self.eval_bool(a, assign, manager)?;
+                EvalStep::Combine(id) => {
+                    let t = manager.get(id)?;
+                    let value = match &t.kind {
+                        TermKind::Not(a) => !memo.get(a).copied()?,
+                        TermKind::And(args) => {
+                            let mut acc = true;
+                            for a in args.iter() {
+                                acc &= memo.get(a).copied()?;
+                            }
+                            acc
+                        }
+                        TermKind::Or(args) => {
+                            let mut acc = false;
+                            for a in args.iter() {
+                                acc |= memo.get(a).copied()?;
+                            }
+                            acc
+                        }
+                        TermKind::Implies(a, b) => {
+                            !memo.get(a).copied()? || memo.get(b).copied()?
+                        }
+                        TermKind::Xor(a, b) => memo.get(a).copied()? ^ memo.get(b).copied()?,
+                        TermKind::Eq(a, b) => memo.get(a).copied()? == memo.get(b).copied()?,
+                        TermKind::Ite(c, then_b, else_b) => {
+                            let branch = if memo.get(c).copied()? {
+                                *then_b
+                            } else {
+                                *else_b
+                            };
+                            match memo.get(&branch).copied() {
+                                Some(value) => value,
+                                None => {
+                                    // Branch not evaluated yet: schedule it
+                                    // and revisit this node afterwards.
+                                    stack.push(EvalStep::Combine(id));
+                                    stack.push(EvalStep::Enter(branch));
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => return None,
+                    };
+                    memo.insert(id, value);
                 }
-                Some(acc)
             }
-            TermKind::Implies(a, b) => {
-                let a = self.eval_bool(*a, assign, manager)?;
-                let b = self.eval_bool(*b, assign, manager)?;
-                Some(!a || b)
-            }
-            TermKind::Xor(a, b) => {
-                let a = self.eval_bool(*a, assign, manager)?;
-                let b = self.eval_bool(*b, assign, manager)?;
-                Some(a ^ b)
-            }
-            TermKind::Eq(a, b) => {
-                let a = self.eval_bool(*a, assign, manager)?;
-                let b = self.eval_bool(*b, assign, manager)?;
-                Some(a == b)
-            }
-            TermKind::Ite(c, then_b, else_b) => {
-                if self.eval_bool(*c, assign, manager)? {
-                    self.eval_bool(*then_b, assign, manager)
-                } else {
-                    self.eval_bool(*else_b, assign, manager)
-                }
-            }
-            _ => None,
         }
+
+        memo.get(&term).copied()
     }
 
     /// Check whether `term` lies entirely within the supported propositional
     /// fragment (Boolean variables and Boolean connectives).
     fn is_boolean_formula(&self, term: TermId, manager: &TermManager) -> bool {
-        let t = match manager.get(term) {
-            Some(t) => t,
-            None => return false,
-        };
+        // Explicit stack plus a visited set: the recursive form both
+        // overflowed on deep formulas and re-expanded shared subterms
+        // exponentially. Every node must be in the fragment, so a single
+        // failure is decisive and the traversal order is irrelevant.
         let bool_sort = manager.sorts.bool_sort;
-        match &t.kind {
-            TermKind::True | TermKind::False => true,
-            TermKind::Var(_) => t.sort == bool_sort,
-            TermKind::Not(a) => self.is_boolean_formula(*a, manager),
-            TermKind::And(args) | TermKind::Or(args) => {
-                args.iter().all(|&a| self.is_boolean_formula(a, manager))
+        let mut stack = vec![term];
+        let mut visited: HashSet<TermId> = HashSet::new();
+
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
             }
-            TermKind::Implies(a, b) | TermKind::Xor(a, b) | TermKind::Eq(a, b) => {
-                self.is_boolean_formula(*a, manager) && self.is_boolean_formula(*b, manager)
+            let Some(t) = manager.get(id) else {
+                return false;
+            };
+            match &t.kind {
+                TermKind::True | TermKind::False => {}
+                TermKind::Var(_) => {
+                    if t.sort != bool_sort {
+                        return false;
+                    }
+                }
+                TermKind::Not(a) => stack.push(*a),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    stack.extend(args.iter().copied());
+                }
+                TermKind::Implies(a, b) | TermKind::Xor(a, b) | TermKind::Eq(a, b) => {
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+                TermKind::Ite(c, then_b, else_b) => {
+                    stack.push(*c);
+                    stack.push(*then_b);
+                    stack.push(*else_b);
+                }
+                // Everything else is outside the propositional fragment.
+                _ => return false,
             }
-            TermKind::Ite(c, then_b, else_b) => {
-                self.is_boolean_formula(*c, manager)
-                    && self.is_boolean_formula(*then_b, manager)
-                    && self.is_boolean_formula(*else_b, manager)
-            }
-            _ => false,
         }
+
+        true
     }
 
     /// Collect the variables occurring in a formula.
@@ -392,37 +478,14 @@ impl MbiSolver {
                 TermKind::Var(_) => {
                     vars.insert(term);
                 }
-                TermKind::Not(a) | TermKind::Neg(a) => {
-                    worklist.push(*a);
-                }
-                TermKind::And(args)
-                | TermKind::Or(args)
-                | TermKind::Add(args)
-                | TermKind::Mul(args) => {
-                    for arg in args.iter() {
-                        worklist.push(*arg);
-                    }
-                }
-                TermKind::Xor(a, b)
-                | TermKind::Implies(a, b)
-                | TermKind::Eq(a, b)
-                | TermKind::Sub(a, b)
-                | TermKind::Lt(a, b)
-                | TermKind::Le(a, b)
-                | TermKind::Gt(a, b)
-                | TermKind::Ge(a, b) => {
-                    worklist.push(*a);
-                    worklist.push(*b);
-                }
-                TermKind::Ite(a, b, c) => {
-                    worklist.push(*a);
-                    worklist.push(*b);
-                    worklist.push(*c);
-                }
-                TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => {
-                    worklist.push(*body);
-                }
-                _ => {}
+                // Descend through *every* other kind via the exhaustive
+                // child accessor. The previous per-kind list silently
+                // dropped the children of function applications, array,
+                // string, bit-vector and floating-point operations, `let`
+                // and `match` — so variables under them were never reported,
+                // and the caller (interpolant validation) then quantified
+                // over an incomplete variable set.
+                other => worklist.extend(crate::ast::traversal::get_children(other)),
             }
         }
 
@@ -769,5 +832,101 @@ mod tests {
         let x = m.mk_var("x", bool_sort);
         let mut solver = MbiSolver::new();
         assert!(solver.tree_interpolate(x, &[x], &mut m).is_none());
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+    use crate::ast::TermManager;
+
+    #[test]
+    fn test_collect_variables_sees_apply_arguments() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let fx = manager.mk_apply("f", [x], int_sort);
+        let zero = manager.mk_int(0);
+        let formula = manager.mk_gt(fx, zero);
+
+        let solver = MbiSolver::new();
+        let vars = solver.collect_variables(formula, &manager);
+        assert!(vars.contains(&x), "variable under an application was lost");
+    }
+
+    #[test]
+    fn test_eval_bool_shared_dag_is_fast() {
+        // 55 levels of a two-strand DAG: without memoization this is 2^55
+        // evaluations.
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let p = manager.mk_var("p", bool_sort);
+        let q = manager.mk_var("q", bool_sort);
+        let (mut a, mut b) = (p, q);
+        for _ in 0..55 {
+            let next_a = manager.mk_implies(a, b);
+            let next_b = manager.mk_implies(b, a);
+            a = next_a;
+            b = next_b;
+        }
+
+        let solver = MbiSolver::new();
+        let mut assign = HashMap::new();
+        assign.insert(p, true);
+        assign.insert(q, false);
+        assert!(solver.eval_bool(a, &assign, &manager).is_some());
+        assert!(solver.is_boolean_formula(a, &manager));
+    }
+
+    #[test]
+    fn test_eval_bool_ite_does_not_evaluate_untaken_branch() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let int_sort = manager.sorts.int_sort;
+        let p = manager.mk_var("p", bool_sort);
+        let q = manager.mk_var("q", bool_sort);
+        // The else-branch is outside the propositional fragment.
+        let x = manager.mk_var("x", int_sort);
+        let zero = manager.mk_int(0);
+        let unsupported = manager.mk_gt(x, zero);
+        let ite = manager.mk_ite(p, q, unsupported);
+
+        let solver = MbiSolver::new();
+        let mut assign = HashMap::new();
+        assign.insert(p, true);
+        assign.insert(q, false);
+        assert_eq!(solver.eval_bool(ite, &assign, &manager), Some(false));
+
+        // Taking the unsupported branch is reported honestly.
+        assign.insert(p, false);
+        assert_eq!(solver.eval_bool(ite, &assign, &manager), None);
+    }
+
+    #[test]
+    fn test_eval_bool_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let bool_sort = manager.sorts.bool_sort;
+                let p = manager.mk_var("p", bool_sort);
+                let mut formula = p;
+                for _ in 0..60_000 {
+                    formula = manager.mk_not(formula);
+                }
+
+                let solver = MbiSolver::new();
+                let mut assign = HashMap::new();
+                assign.insert(p, true);
+                let value = solver.eval_bool(formula, &assign, &manager);
+                let is_bool = solver.is_boolean_formula(formula, &manager);
+                (value, is_bool)
+            })
+            .expect("thread spawn should succeed");
+
+        let (value, is_bool) = handle.join().expect("deep evaluation must not overflow");
+        // 60_000 negations is an even number of negations.
+        assert_eq!(value, Some(true));
+        assert!(is_bool);
     }
 }

@@ -8,10 +8,10 @@ This document invites researchers, developers, and the broader formal methods co
 
 OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Satisfiability Modulo Theories) solver. It is developed as part of the COOLJAPAN open-source ecosystem and is designed to match — and ultimately surpass — the capabilities of state-of-the-art solvers such as Z3, while offering the safety, reproducibility, and ergonomics that Rust uniquely provides.
 
-**Key facts about OxiZ (v0.3.0):**
+**Key facts about OxiZ (v0.3.1):**
 
-- Honest, non-fabricated parity against a real `z3` binary across **19 SMT-LIB logic families** (168 benchmark instances, `bench/z3_parity`): **154 Correct, 0 Wrong, 12 Inconclusive (`Unknown`), 2 Timeout, 0 Error** — zero soundness disagreements on all 154 decisive comparisons, but not "100% parity" overall (16 of 19 logic families are individually at 100%; `UFLIA`/`UFLRA`/`AUFLIA` are not); see [`README.md`](../README.md#z3-parity-quickstart-suite-results-honest-comparator-️) for the full per-logic breakdown and known gaps
-- **8,119 unit tests** passing, 8 skipped (`cargo nextest run --workspace --all-features`) across all crates
+- Honest, non-fabricated parity against a real `z3` 4.15.4 binary across **19 SMT-LIB logic families** (168 benchmark instances, `bench/z3_parity`): **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite under the honest comparator (`Unknown` never counts as a match). All 19 logic families are at 100% of this differential parity suite — a claim scoped to the suite, not a blanket "100% Z3 compatibility"; see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) for the full per-logic breakdown and known gaps
+- **9,668 unit tests** passing, 8 skipped (`cargo nextest run --workspace --all-features`) across all crates, plus 110 doc-tests
 - Zero unsafe C/C++ dependencies — pure Rust from end to end
 - Proof-producing: generates DRAT, Alethe, LFSC, Coq, Lean, and Isabelle certificates
 - Supports Craig interpolation and Spacer/PDR for model checking workloads
@@ -25,22 +25,22 @@ OxiZ is actively developed at: [https://github.com/cool-japan/oxiz](https://gith
 
 ### 1. Broad logic coverage — 19 divisions implemented, honest per-division status
 
-OxiZ has implementations across the following SMT-LIB logic families. Status reflects real, measured results from `bench/z3_parity` (a real `z3` binary, honest comparator — `Unknown` never counts as a match) as of this writing, not an aspirational "all ready" claim:
+OxiZ has implementations across the following SMT-LIB logic families. Status reflects real, measured results from `bench/z3_parity` (a real `z3` binary, honest comparator — `Unknown` never counts as a match) as of v0.3.1, not an aspirational "all ready" claim:
 
 | Division | Status |
 |----------|--------|
 | QF_LIA   | ✅ Ready (16/16 Correct) |
 | QF_LRA   | ✅ Ready (16/16 Correct) |
 | QF_BV    | ✅ Ready (15/15 Correct) |
-| QF_S     | ✅ Ready (10/10 Correct — new ground string decision procedure this release, up from 3/10) |
-| QF_FP    | ✅ Ready (10/10 Correct — new concrete FP model finder + `div128` bugfix this release, up from 4/10) |
+| QF_S     | ✅ Ready (10/10 Correct — ground string decision procedure) |
+| QF_FP    | ✅ Ready (10/10 Correct — concrete FP model finder) |
 | QF_DT    | ✅ Ready (10/10 Correct) |
 | QF_A     | ✅ Ready (10/10 Correct) |
 | QF_NIA   | ✅ Ready (1/1 Correct on the parity suite; broader NIA branch-and-bound has known scoping gaps, see `TODO.md`) |
 | QF_NRA   | 🔶 Alpha (irrational-root isolation still open; not yet part of the parity suite) |
-| UFLIA    | 🔶 Partial (14/20 decisively Correct via a new MBQI SAT certifier; remainder honest `Unknown`/`Timeout`) |
-| UFLRA    | 🔶 Partial (5/10 decisively Correct via the same certifier) |
-| AUFLIA   | 🔶 Partial (7/10 decisively Correct via the same certifier) |
+| UFLIA    | ✅ Ready (20/20 Correct — Skolem witness synthesis + CEGAR on top of the MBQI SAT certifier) |
+| UFLRA    | ✅ Ready (10/10 Correct — symbolic model certification over the Reals + quasi-macro detection) |
+| AUFLIA   | ✅ Ready (10/10 Correct — finite-range quantifier expansion) |
 | AUFLIRA  | ✅ Ready (5/5 Correct) |
 | QF_ALIA  | ✅ Ready (5/5 Correct) |
 | QF_AUFBV | ✅ Ready (5/5 Correct) |
@@ -49,7 +49,7 @@ OxiZ has implementations across the following SMT-LIB logic families. Status ref
 | QF_IDL   | ⬜ Not yet part of `bench/z3_parity` — no measured data to report |
 | QF_RDL   | ⬜ Not yet part of `bench/z3_parity` — no measured data to report |
 
-Aggregate result across the 168 benchmarks that make up the measured divisions above: **154 Correct, 0 Wrong, 12 Inconclusive, 2 Timeout, 0 Error** — 16 of 19 divisions are individually at 100% (not an overall "100% parity" claim; `UFLIA`/`UFLRA`/`AUFLIA` remain below 100%) — see [`README.md`](../README.md#z3-parity-quickstart-suite-results-honest-comparator-️) and `bench/z3_parity/results.json` for the authoritative, per-benchmark breakdown.
+Aggregate result across the 168 benchmarks that make up the measured divisions above: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** — all 19 measured divisions are individually at 100% of this suite (which is a statement about the differential parity suite, not a blanket "100% Z3 compatibility" claim; `QF_NRA`, `QF_IDL` and `QF_RDL` are not part of it) — see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) and the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`) for the authoritative, per-benchmark breakdown. "Authoritative" has a precise meaning here: every tracked snapshot must agree on the verdict of every benchmark (`oxiz_result`, `z3_result`, `match_status`) and may differ only in the machine-dependent timings, a rule enforced on every `cargo test` by `bench/z3_parity/tests/cross_env_verdict_agreement.rs`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of one local run and carries no such guarantee. The z3 version is part of the evidence: the recorded baseline is z3 4.15.4, and a snapshot measured against a different z3 cannot be compared verdict-for-verdict with one that was not.
 
 ### 2. Pure Rust: safety, reproducibility, and auditability
 

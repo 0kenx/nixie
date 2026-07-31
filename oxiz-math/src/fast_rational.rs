@@ -19,16 +19,18 @@
 //!   equal and hashes the same regardless of representation.
 //! - `Ord` is a total order consistent with rational ordering.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
+use core::cmp::Ordering;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::ops::{
+    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign,
+};
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
-use std::cmp::Ordering;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::{
-    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign,
-};
 
 /// A rational number that uses `i64/i64` for small values and falls back to `BigRational`.
 ///
@@ -70,7 +72,7 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
     loop {
         b >>= b.trailing_zeros();
         if a > b {
-            std::mem::swap(&mut a, &mut b);
+            core::mem::swap(&mut a, &mut b);
         }
         b -= a;
         if b == 0 {
@@ -87,10 +89,19 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
 impl FastRational {
     /// Create a new `Small` rational, normalizing sign and reducing to lowest terms.
     ///
+    /// A non-zero `den` is a caller obligation. It is checked by a
+    /// `debug_assert!`, so the check is compiled out in release builds; passing
+    /// `den == 0` there is not a trap and not undefined behaviour, it simply
+    /// yields a malformed `Small` whose denominator stays `0` and which poisons
+    /// every later operation on the value.
+    ///
+    /// This is about the *denominator argument* of this constructor. It says
+    /// nothing about dividing *by* zero: [`Div`] for `FastRational` rejects a
+    /// zero divisor with a panic in every build profile.
+    ///
     /// # Panics
     ///
-    /// Panics (debug-only) if `den == 0`. In release builds, division by zero
-    /// is undefined and will produce garbage.
+    /// Panics in debug builds if `den == 0`.
     #[inline]
     pub fn new_small(num: i64, den: i64) -> Self {
         debug_assert!(den != 0, "FastRational: denominator must not be zero");
@@ -744,7 +755,9 @@ impl Div for FastRational {
     ///
     /// # Panics
     ///
-    /// Panics if the divisor is zero.
+    /// Panics if the divisor is zero. Unlike the `den == 0` check in
+    /// [`FastRational::new_small`], this one is unconditional: it holds in
+    /// release builds too.
     #[inline]
     fn div(self, rhs: FastRational) -> Self::Output {
         (&self).div(&rhs)

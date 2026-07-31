@@ -1,405 +1,526 @@
-//! Runtime invariant checks for the CDCL(T) solver
+//! Structural invariant checks for the CDCL(T) SMT solver.
 //!
-//! These invariants are checked during solver execution to ensure
-//! correctness and catch bugs early.
+//! This module is a read-only structural net over [`Solver`]'s bookkeeping:
+//! the term <-> SAT-variable mapping, the theory-constraint side tables, the
+//! Tseitin encoding memo, the push/pop context stack, and the assertion /
+//! unsat-core registries. Every function here is pure, never mutates the
+//! solver, and returns `Err(String)` describing the first violation found or
+//! `Ok(())`.
+//!
+//! # Why this module was rewritten from scratch
+//!
+//! An earlier version of this file was never compiled (it was not declared in
+//! `lib.rs`) and had drifted onto an API that this crate never had:
+//! `Solver::trail_size()`, `Solver::get_trail_entry()`, `Solver::status()`,
+//! `SolverStatus`, `Assignment`, `Solver::get_arith_theory()`,
+//! `Solver::check_theory_model_validity()` — none of those exist. Several of
+//! its checks were also nonsense against *any* API: it tested
+//! `solver.trail_size() < 0` and `entry.decision_level < 0` on values that
+//! were compared against `usize` elsewhere in the same function, i.e. they
+//! could never fire. Rather than resurrect dead assertions, this file checks
+//! properties that the *current* data model actually guarantees, mirroring
+//! `oxiz_sat::invariants`.
+//!
+//! # Deliberately absent: CDCL-trail and model-validity checks
+//!
+//! Unlike the SAT core, this crate does not own an assignment trail or a
+//! decision level — those live inside [`oxiz_sat::Solver`] and are already
+//! covered by `oxiz_sat::invariants`. The `Solver::trail` field here is an
+//! *undo journal* for `push`/`pop`, not a CDCL trail, so the only meaningful
+//! invariants over it are the context-stack ones below.
+//!
+//! Model validity is likewise not checked here: verifying that a model
+//! satisfies the assertions requires evaluating terms under a
+//! `TermManager`, which the solver already does behind its own soundness
+//! gate (`Solver::model_refutes_assertions`). Duplicating a weaker version of
+//! that check here would add a second, less accurate answer to the same
+//! question.
+//!
+//! Reference: Z3's `smt/smt_context_inv.cpp`.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
-use crate::*;
+use crate::solver::Solver;
 
-/// Invariant: Trail consistency
+/// Runs every structural invariant in this module, returning the first
+/// violation found.
 ///
-/// Ensures that all assignments on the trail are consistent with
-/// the current decision level and clause database.
-pub fn check_trail_consistency(solver: &Solver) -> Result<(), String> {
-    // Check that trail size is non-negative
-    if solver.trail_size() < 0 {
-        return Err("Trail size is negative".to_string());
-    }
-
-    // Check that all trail entries have valid decision levels
-    for i in 0..solver.trail_size() as usize {
-        let entry = solver.get_trail_entry(i)?;
-
-        if entry.decision_level > solver.decision_level() as usize {
-            return Err(format!(
-                "Trail entry {} has decision level {} > current level {}",
-                i,
-                entry.decision_level,
-                solver.decision_level()
-            ));
-        }
-
-        if entry.decision_level < 0 {
-            return Err(format!(
-                "Trail entry {} has negative decision level {}",
-                i, entry.decision_level
-            ));
-        }
-    }
-
-    // Check that decision levels are monotonic on the trail
-    let mut last_level = 0;
-    for i in 0..solver.trail_size() as usize {
-        let entry = solver.get_trail_entry(i)?;
-
-        if entry.decision_level < last_level {
-            return Err(format!(
-                "Trail entry {} has decision level {} < previous {}",
-                i, entry.decision_level, last_level
-            ));
-        }
-
-        last_level = entry.decision_level;
-    }
-
+/// Cheap enough to call after any solver API entry point in a debug build:
+/// the cost is linear in the number of encoded terms and assertions, with no
+/// term traversal and no allocation beyond one variable-index set.
+///
+/// # Errors
+///
+/// Returns a human-readable description of the first violated invariant.
+pub fn check_all_invariants(solver: &Solver) -> Result<(), String> {
+    check_var_term_mapping(solver)?;
+    check_side_table_vars(solver)?;
+    check_encoded_terms(solver)?;
+    check_context_stack(solver)?;
+    check_assertion_registry(solver)?;
+    check_unsat_core(solver)?;
     Ok(())
 }
 
-/// Invariant: Decision level consistency
+/// The term -> SAT-variable map and the variable -> term vector agree, and
+/// the mapping is injective.
 ///
-/// Ensures that the current decision level matches the trail structure.
-pub fn check_decision_level_consistency(solver: &Solver) -> Result<(), String> {
-    let level = solver.decision_level();
+/// `Solver::get_or_create_var` allocates a fresh SAT variable per term and
+/// writes both directions, and `Solver::pop` retracts the forward entry
+/// (`TrailOp::VarCreated`) together with truncating the reverse vector to its
+/// push-time length, so the two must stay in lockstep. A stale forward entry
+/// surviving a `pop` would hand a later scope a SAT variable whose defining
+/// clauses have already been retracted.
+///
+/// Note that the reverse direction is intentionally *not* required to be
+/// total: `get_or_create_var` pads `var_to_term` with a placeholder whenever
+/// the SAT core hands out a variable index above the current length, so an
+/// index with no live term is legitimate.
+///
+/// # Errors
+///
+/// Returns a description of the first inconsistent or duplicated mapping.
+pub fn check_var_term_mapping(solver: &Solver) -> Result<(), String> {
+    let mut seen: FxHashSet<usize> = FxHashSet::default();
+    for (&term, &var) in &solver.term_to_var {
+        let idx = var.index();
+        if idx >= solver.var_to_term.len() {
+            return Err(format!(
+                "term {term:?} maps to SAT variable {idx} but var_to_term only has {} entries",
+                solver.var_to_term.len()
+            ));
+        }
+        if solver.var_to_term[idx] != term {
+            return Err(format!(
+                "term {term:?} maps to SAT variable {idx}, but var_to_term[{idx}] is {:?}",
+                solver.var_to_term[idx]
+            ));
+        }
+        if !seen.insert(idx) {
+            return Err(format!(
+                "SAT variable {idx} is the image of more than one term (term_to_var is not injective)"
+            ));
+        }
+    }
+    Ok(())
+}
 
-    // Decision level should be non-negative
-    if level < 0 {
-        return Err(format!("Decision level is negative: {}", level));
+/// Every SAT variable used as a key in a theory side table is a variable the
+/// solver actually owns.
+///
+/// `var_to_constraint` and `var_to_parsed_arith` are retracted together by
+/// `TrailOp::ConstraintAdded`; an entry naming a variable past the end of
+/// `var_to_term` would mean a constraint outlived the scope that created its
+/// variable, which feeds a retracted inequality back to the arithmetic
+/// solver.
+///
+/// # Errors
+///
+/// Returns a description of the first out-of-range side-table key.
+pub fn check_side_table_vars(solver: &Solver) -> Result<(), String> {
+    let num_vars = solver.var_to_term.len();
+    for var in solver.var_to_constraint.keys() {
+        if var.index() >= num_vars {
+            return Err(format!(
+                "var_to_constraint holds SAT variable {} but the solver only has {num_vars} variables",
+                var.index()
+            ));
+        }
+    }
+    for var in solver.var_to_parsed_arith.keys() {
+        if var.index() >= num_vars {
+            return Err(format!(
+                "var_to_parsed_arith holds SAT variable {} but the solver only has {num_vars} variables",
+                var.index()
+            ));
+        }
+    }
+    // A parsed linear constraint is only ever recorded alongside a
+    // `Constraint` for the same variable, so the arithmetic map is a subset.
+    for var in solver.var_to_parsed_arith.keys() {
+        if !solver.var_to_constraint.contains_key(var) {
+            return Err(format!(
+                "SAT variable {} has a parsed arithmetic constraint but no Constraint entry",
+                var.index()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every literal cached in the Tseitin memo names a live SAT variable.
+///
+/// `Solver::pop` retracts `encoded_terms` entry by entry, keeping the ones
+/// written at an outer level because their backing clauses survive the scope.
+/// A term's SAT variable is always created no later than its memo entry is
+/// written, so a surviving entry must name a variable that also predates the
+/// push and therefore survives `var_to_term.truncate`.  An entry pointing past
+/// the end of `var_to_term` means the memo outlived a retraction it should
+/// have been undone by.
+///
+/// # Errors
+///
+/// Returns a description of the first memo entry naming an unknown variable.
+pub fn check_encoded_terms(solver: &Solver) -> Result<(), String> {
+    let num_vars = solver.var_to_term.len();
+    for (&term, &(lit, _polarity)) in &solver.encoded_terms {
+        if lit.var().index() >= num_vars {
+            return Err(format!(
+                "encoded_terms maps {term:?} to a literal over SAT variable {} but the solver only has {num_vars} variables",
+                lit.var().index()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The push/pop context stack is a monotone chain of snapshots bounded by the
+/// current state.
+///
+/// Each `push` records the *current* lengths, so going outwards-in the
+/// recorded lengths can only grow, and the outermost recorded length can
+/// never exceed what the solver holds now. A violation means a `pop` failed
+/// to restore some length (leaking a retracted assertion into an outer
+/// scope), or that a snapshot was taken out of order.
+///
+/// # Errors
+///
+/// Returns a description of the first non-monotone or out-of-range snapshot.
+pub fn check_context_stack(solver: &Solver) -> Result<(), String> {
+    let mut prev_assertions = 0usize;
+    let mut prev_vars = 0usize;
+    let mut prev_trail = 0usize;
+
+    for (depth, state) in solver.context_stack.iter().enumerate() {
+        if state.num_assertions < prev_assertions {
+            return Err(format!(
+                "context level {depth} snapshots {} assertions, fewer than the enclosing level's {prev_assertions}",
+                state.num_assertions
+            ));
+        }
+        if state.num_vars < prev_vars {
+            return Err(format!(
+                "context level {depth} snapshots {} SAT variables, fewer than the enclosing level's {prev_vars}",
+                state.num_vars
+            ));
+        }
+        if state.trail_position < prev_trail {
+            return Err(format!(
+                "context level {depth} snapshots undo-trail position {}, before the enclosing level's {prev_trail}",
+                state.trail_position
+            ));
+        }
+        prev_assertions = state.num_assertions;
+        prev_vars = state.num_vars;
+        prev_trail = state.trail_position;
     }
 
-    // Decision level should not exceed trail size
-    if level > solver.trail_size() {
+    if prev_assertions > solver.assertions.len() {
         return Err(format!(
-            "Decision level {} exceeds trail size {}",
-            level,
-            solver.trail_size()
+            "innermost context snapshots {prev_assertions} assertions but the solver now holds {}",
+            solver.assertions.len()
         ));
     }
+    if prev_vars > solver.var_to_term.len() {
+        return Err(format!(
+            "innermost context snapshots {prev_vars} SAT variables but the solver now holds {}",
+            solver.var_to_term.len()
+        ));
+    }
+    if prev_trail > solver.trail.len() {
+        return Err(format!(
+            "innermost context snapshots undo-trail position {prev_trail} but the trail is only {} long",
+            solver.trail.len()
+        ));
+    }
+    Ok(())
+}
 
-    // Each decision level should have at least one trail entry
-    // (except level 0 which may be empty)
-    if level > 0 {
-        let has_entries_at_level = (0..solver.trail_size() as usize)
-            .any(|i| solver.get_trail_entry(i).ok().map(|e| e.decision_level) == Some(level as usize));
-
-        if !has_entries_at_level {
+/// Named-assertion bookkeeping points at assertions that still exist.
+///
+/// The registry is append-only within a scope and truncated by
+/// `TrailOp::NamedAssertionAdded` on `pop`, with each entry's `index` field
+/// being the position of the assertion it tracks. A dangling index would make
+/// an unsat core name an assertion the user already retracted.
+///
+/// # Errors
+///
+/// Returns a description of the first dangling or duplicated entry.
+pub fn check_assertion_registry(solver: &Solver) -> Result<(), String> {
+    let num_assertions = solver.assertions.len();
+    let mut seen: FxHashSet<u32> = FxHashSet::default();
+    for (position, named) in solver.named_assertions.iter().enumerate() {
+        if named.index as usize >= num_assertions {
             return Err(format!(
-                "Decision level {} has no trail entries",
-                level
+                "named assertion at position {position} tracks assertion #{} but only {num_assertions} assertions exist",
+                named.index
+            ));
+        }
+        if !seen.insert(named.index) {
+            return Err(format!(
+                "assertion #{} is tracked by more than one named-assertion entry",
+                named.index
             ));
         }
     }
-
     Ok(())
 }
 
-/// Invariant: Clause database consistency
+/// A produced unsat core references real assertions and carries no more names
+/// than indices.
 ///
-/// Ensures that all clauses in the database are well-formed.
-pub fn check_clause_database_consistency(solver: &Solver) -> Result<(), String> {
-    let num_clauses = solver.num_clauses();
-
-    // Number of clauses should be non-negative
-    if num_clauses < 0 {
-        return Err(format!("Number of clauses is negative: {}", num_clauses));
-    }
-
-    // Check each clause
-    for i in 0..num_clauses as usize {
-        let clause = solver.get_clause(i)?;
-
-        // Clause should not be empty (empty clause means UNSAT)
-        if clause.literals.is_empty() {
-            // This is okay if solver is in UNSAT state
-            if !matches!(solver.status(), SolverStatus::Unsat) {
-                return Err(format!("Empty clause {} in non-UNSAT state", i));
-            }
-        }
-
-        // Check for tautologies (p ∨ ¬p)
-        for j in 0..clause.literals.len() {
-            for k in (j + 1)..clause.literals.len() {
-                let lit_j = clause.literals[j];
-                let lit_k = clause.literals[k];
-
-                // Check if they're opposite literals
-                if lit_j.var() == lit_k.var() && lit_j.is_negated() != lit_k.is_negated() {
-                    return Err(format!(
-                        "Clause {} contains tautology: {:?} and {:?}",
-                        i, lit_j, lit_k
-                    ));
-                }
-            }
-        }
-
-        // Check for duplicate literals
-        for j in 0..clause.literals.len() {
-            for k in (j + 1)..clause.literals.len() {
-                if clause.literals[j] == clause.literals[k] {
-                    return Err(format!(
-                        "Clause {} contains duplicate literal: {:?}",
-                        i, clause.literals[j]
-                    ));
-                }
-            }
-        }
-
-        // Learned clauses should have proper LBD scores
-        if clause.is_learned {
-            if clause.lbd == 0 {
-                return Err(format!("Learned clause {} has zero LBD", i));
-            }
-
-            if clause.lbd as usize > clause.literals.len() {
-                return Err(format!(
-                    "Learned clause {} has LBD {} > clause length {}",
-                    i,
-                    clause.lbd,
-                    clause.literals.len()
-                ));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Invariant: Variable assignment consistency
+/// `Solver::build_unsat_core` pushes one index per tracked assertion but only
+/// pushes a name for the entries that actually have one, so `names` is a
+/// (possibly shorter) companion of `indices` rather than a parallel array.
 ///
-/// Ensures that variable assignments are consistent across the solver state.
-pub fn check_variable_assignment_consistency(solver: &Solver) -> Result<(), String> {
-    let num_vars = solver.num_variables();
-
-    for var_id in 0..num_vars {
-        let assignment = solver.get_assignment(var_id)?;
-
-        match assignment {
-            Assignment::Unassigned => {
-                // Unassigned variables should not appear on the trail at current level
-                // (they may appear at lower levels due to backtracking)
-            }
-            Assignment::True | Assignment::False => {
-                // Assigned variables should appear exactly once on the trail
-                let mut count = 0;
-                for i in 0..solver.trail_size() as usize {
-                    let entry = solver.get_trail_entry(i)?;
-                    if entry.var_id == var_id {
-                        count += 1;
-
-                        // Check that the assignment matches
-                        let expected = matches!(assignment, Assignment::True);
-                        if entry.value != expected {
-                            return Err(format!(
-                                "Variable {} has assignment {:?} but trail entry has {}",
-                                var_id, assignment, entry.value
-                            ));
-                        }
-                    }
-                }
-
-                if count == 0 {
-                    return Err(format!(
-                        "Variable {} is assigned {:?} but not on trail",
-                        var_id, assignment
-                    ));
-                }
-
-                if count > 1 {
-                    return Err(format!(
-                        "Variable {} appears {} times on trail",
-                        var_id, count
-                    ));
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Invariant: Theory solver consistency
+/// # Errors
 ///
-/// Ensures that theory solvers maintain proper invariants.
-pub fn check_theory_solver_consistency(solver: &Solver) -> Result<(), String> {
-    // Check arithmetic theory consistency
-    if let Some(arith_solver) = solver.get_arith_theory() {
-        // Bounds should be consistent
-        for var_id in 0..arith_solver.num_vars() {
-            let lower = arith_solver.get_lower_bound(var_id)?;
-            let upper = arith_solver.get_upper_bound(var_id)?;
-
-            if let (Some(lb), Some(ub)) = (lower, upper) {
-                if lb > ub {
-                    return Err(format!(
-                        "Arithmetic variable {} has lower bound {} > upper bound {}",
-                        var_id, lb, ub
-                    ));
-                }
-            }
-
-            // If variable is assigned, it should satisfy bounds
-            if let Some(value) = arith_solver.get_value(var_id)? {
-                if let Some(lb) = lower {
-                    if value < lb {
-                        return Err(format!(
-                            "Arithmetic variable {} has value {} < lower bound {}",
-                            var_id, value, lb
-                        ));
-                    }
-                }
-
-                if let Some(ub) = upper {
-                    if value > ub {
-                        return Err(format!(
-                            "Arithmetic variable {} has value {} > upper bound {}",
-                            var_id, value, ub
-                        ));
-                    }
-                }
-            }
+/// Returns a description of the first malformed core entry.
+pub fn check_unsat_core(solver: &Solver) -> Result<(), String> {
+    let Some(core) = solver.unsat_core.as_ref() else {
+        return Ok(());
+    };
+    let num_assertions = solver.assertions.len();
+    let mut seen: FxHashSet<u32> = FxHashSet::default();
+    for &index in &core.indices {
+        if index as usize >= num_assertions {
+            return Err(format!(
+                "unsat core references assertion #{index} but only {num_assertions} assertions exist"
+            ));
         }
-
-        // Tableau should be consistent (for simplex-based solvers)
-        if arith_solver.uses_tableau() {
-            arith_solver.check_tableau_consistency()?;
+        if !seen.insert(index) {
+            return Err(format!("unsat core lists assertion #{index} twice"));
         }
     }
-
-    // Check equality graph consistency
-    if let Some(eq_solver) = solver.get_equality_theory() {
-        // All nodes in the same equivalence class should have the same representative
-        for node_id in 0..eq_solver.num_nodes() {
-            let rep1 = eq_solver.find(node_id)?;
-            let rep2 = eq_solver.find(rep1)?;
-
-            if rep1 != rep2 {
-                return Err(format!(
-                    "Equality node {} has inconsistent representative chain: {} -> {}",
-                    node_id, rep1, rep2
-                ));
-            }
-        }
-
-        // Congruence closure should be maintained
-        eq_solver.check_congruence_closure()?;
+    if core.names.len() > core.indices.len() {
+        return Err(format!(
+            "unsat core carries {} names for only {} indices",
+            core.names.len(),
+            core.indices.len()
+        ));
     }
-
     Ok(())
 }
 
-/// Invariant: Model validity
-///
-/// If solver is in SAT state, the model should satisfy all clauses.
-pub fn check_model_validity(solver: &Solver, tm: &TermManager) -> Result<(), String> {
-    if !matches!(solver.status(), SolverStatus::Sat) {
-        return Ok(()); // Only check in SAT state
-    }
+impl Solver {
+    /// Release build: compiles away entirely.
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    pub fn debug_check_invariants(&self, _context: &str) {}
 
-    let model = solver.get_model(tm);
-
-    // Check that all asserted clauses are satisfied
-    for i in 0..solver.num_clauses() as usize {
-        let clause = solver.get_clause(i)?;
-
-        if clause.is_learned {
-            continue; // Only check original clauses
-        }
-
-        let mut satisfied = false;
-        for &lit in &clause.literals {
-            let var_value = model.eval(lit.to_term(tm), tm)?;
-
-            let lit_satisfied = if lit.is_negated() {
-                var_value == tm.mk_bool(false)
-            } else {
-                var_value == tm.mk_bool(true)
-            };
-
-            if lit_satisfied {
-                satisfied = true;
-                break;
-            }
-        }
-
-        if !satisfied {
-            return Err(format!("Clause {} is not satisfied by model", i));
+    /// Debug-build structural self-check: runs [`check_all_invariants`] and
+    /// panics with `context` if any of them is violated.
+    ///
+    /// This is the hook to place next to any solver state transition you want
+    /// guarded; it costs nothing in release builds because the whole body is
+    /// compiled out.
+    ///
+    /// # Panics
+    ///
+    /// Panics (debug builds only) if any structural invariant is violated.
+    #[cfg(debug_assertions)]
+    pub fn debug_check_invariants(&self, context: &str) {
+        if let Err(msg) = check_all_invariants(self) {
+            panic!("SMT solver invariant violated ({context}): {msg}");
         }
     }
-
-    // Check that all theory constraints are satisfied
-    solver.check_theory_model_validity(tm)?;
-
-    Ok(())
 }
 
-/// Master invariant checker
-///
-/// Runs all invariant checks and returns the first error found.
-pub fn check_all_invariants(solver: &Solver, tm: &TermManager) -> Result<(), String> {
-    check_trail_consistency(solver)?;
-    check_decision_level_consistency(solver)?;
-    check_clause_database_consistency(solver)?;
-    check_variable_assignment_consistency(solver)?;
-    check_theory_solver_consistency(solver)?;
-    check_model_validity(solver, tm)?;
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod invariant_tests {
+#[cfg(all(test, feature = "std"))]
+mod tests {
     use super::*;
+    use crate::SolverResult;
+    use num_bigint::BigInt;
+    use oxiz_core::ast::TermManager;
 
     #[test]
-    fn test_empty_solver_invariants() {
+    fn fresh_solver_satisfies_all_invariants() {
         let solver = Solver::new();
-        let tm = TermManager::new();
-
-        assert!(check_all_invariants(&solver, &tm).is_ok());
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+        solver.debug_check_invariants("fresh");
     }
 
     #[test]
-    fn test_simple_sat_invariants() {
+    fn boolean_sat_run_satisfies_all_invariants() {
+        let mut solver = Solver::new();
+        let mut tm = TermManager::new();
+
+        let p = tm.mk_var("p", tm.sorts.bool_sort);
+        let q = tm.mk_var("q", tm.sorts.bool_sort);
+        let formula = tm.mk_and(vec![p, q]);
+        solver.assert(formula, &mut tm);
+
+        assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+        solver.debug_check_invariants("after sat check");
+    }
+
+    #[test]
+    fn unsat_run_with_cores_satisfies_all_invariants() {
+        let mut solver = Solver::new();
+        solver.set_produce_unsat_cores(true);
+        let mut tm = TermManager::new();
+
+        let p = tm.mk_var("p", tm.sorts.bool_sort);
+        let not_p = tm.mk_not(p);
+        solver.assert(p, &mut tm);
+        solver.assert(not_p, &mut tm);
+
+        assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+    }
+
+    #[test]
+    fn arithmetic_run_satisfies_all_invariants() {
+        let mut solver = Solver::new();
+        let mut tm = TermManager::new();
+        solver.set_logic("QF_LIA");
+
+        let x = tm.mk_var("x", tm.sorts.int_sort);
+        let five = tm.mk_int(BigInt::from(5));
+        let ten = tm.mk_int(BigInt::from(10));
+        let lower = tm.mk_ge(x, five);
+        let upper = tm.mk_le(x, ten);
+        solver.assert(lower, &mut tm);
+        solver.assert(upper, &mut tm);
+
+        assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+    }
+
+    #[test]
+    fn push_pop_round_trip_satisfies_all_invariants() {
         let mut solver = Solver::new();
         let mut tm = TermManager::new();
 
         let p = tm.mk_var("p", tm.sorts.bool_sort);
         solver.assert(p, &mut tm);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
 
-        let result = solver.check(&mut tm);
-        assert!(matches!(result, SolverResult::Sat));
+        for _ in 0..8 {
+            solver.push();
+            let q = tm.mk_var("q", tm.sorts.bool_sort);
+            let both = tm.mk_and(vec![p, q]);
+            solver.assert(both, &mut tm);
+            assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+            assert_eq!(check_all_invariants(&solver), Ok(()));
+        }
 
-        assert!(check_all_invariants(&solver, &tm).is_ok());
+        for _ in 0..8 {
+            solver.pop();
+            assert_eq!(check_all_invariants(&solver), Ok(()));
+        }
+
+        assert_eq!(solver.context_level(), 0);
+        assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+    }
+
+    /// Exercises the in-loop hooks on the array-axiom refinement path: a
+    /// read-over-write candidate model is refuted, the SAT trail is dropped to
+    /// root and the theory solvers are reset, and the search is replayed.  The
+    /// term/variable tables survive that reset untouched and must still agree.
+    #[test]
+    fn array_refinement_run_satisfies_all_invariants() {
+        let mut solver = Solver::new();
+        let mut tm = TermManager::new();
+        solver.set_logic("QF_ALIA");
+
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let a = tm.mk_var("a", array_sort);
+        let i = tm.mk_var("i", int_sort);
+        let five = tm.mk_int(BigInt::from(5));
+        let stored = tm.mk_store(a, i, five);
+        let read_back = tm.mk_select(stored, i);
+        let axiom = tm.mk_eq(read_back, five);
+        solver.assert(axiom, &mut tm);
+
+        // Whatever the verdict, every structural invariant must hold at the
+        // end of a search that took the refinement path.
+        let _ = solver.check(&mut tm);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+    }
+
+    /// Exercises the MBQI round-boundary hook: each round encodes fresh
+    /// instantiation lemmas, allocating SAT variables and extending the
+    /// Tseitin memo mid-search.
+    #[test]
+    fn quantified_run_satisfies_all_invariants() {
+        let mut solver = Solver::new();
+        let mut tm = TermManager::new();
+
+        let int_sort = tm.sorts.int_sort;
+        let x = tm.mk_var("x", int_sort);
+        let zero = tm.mk_int(BigInt::from(0));
+        let fx = tm.mk_apply("f", [x], int_sort);
+        let body = tm.mk_ge(fx, zero);
+        let forall = tm.mk_forall([("x", int_sort)], body);
+        solver.assert(forall, &mut tm);
+
+        let k = tm.mk_var("k", int_sort);
+        let fk = tm.mk_apply("f", [k], int_sort);
+        let neg_one = tm.mk_int(BigInt::from(-1));
+        let contradiction = tm.mk_eq(fk, neg_one);
+        solver.assert(contradiction, &mut tm);
+
+        let _ = solver.check(&mut tm);
+        assert_eq!(check_all_invariants(&solver), Ok(()));
     }
 
     #[test]
-    fn test_simple_unsat_invariants() {
+    fn reset_satisfies_all_invariants() {
         let mut solver = Solver::new();
         let mut tm = TermManager::new();
 
         let p = tm.mk_var("p", tm.sorts.bool_sort);
         solver.assert(p, &mut tm);
-        solver.assert(tm.mk_not(p), &mut tm);
+        assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 
-        let result = solver.check(&mut tm);
-        assert!(matches!(result, SolverResult::Unsat));
-
-        // Some invariants may not hold in UNSAT state
-        // (e.g., empty clause is allowed)
+        solver.reset();
+        assert_eq!(check_all_invariants(&solver), Ok(()));
     }
 
     #[test]
-    fn test_backtrack_invariants() {
+    fn context_stack_check_rejects_a_non_monotone_snapshot() {
+        // Build a solver with two nested scopes, then corrupt the outer
+        // snapshot so that it claims more assertions than the inner one.
         let mut solver = Solver::new();
         let mut tm = TermManager::new();
 
         let p = tm.mk_var("p", tm.sorts.bool_sort);
-
+        let q = tm.mk_var("q", tm.sorts.bool_sort);
+        solver.assert(p, &mut tm);
         solver.push();
-        solver.assert(p, &mut tm);
-        assert!(check_all_invariants(&solver, &tm).is_ok());
+        solver.assert(q, &mut tm);
+        solver.push();
+        assert_eq!(check_all_invariants(&solver), Ok(()));
+        assert_eq!(solver.context_stack.len(), 2);
+        assert!(solver.context_stack[0].num_assertions >= 1);
 
-        solver.pop();
-        assert!(check_all_invariants(&solver, &tm).is_ok());
+        let inner = solver.context_stack.len() - 1;
+        solver.context_stack[inner].num_assertions = 0;
+        let err = check_context_stack(&solver).expect_err("corrupted stack must be rejected");
+        assert!(err.contains("fewer than the enclosing level"), "{err}");
+    }
+
+    #[test]
+    fn unsat_core_check_rejects_a_dangling_index() {
+        let mut solver = Solver::new();
+        solver.set_produce_unsat_cores(true);
+        let mut tm = TermManager::new();
+
+        let p = tm.mk_var("p", tm.sorts.bool_sort);
+        let not_p = tm.mk_not(p);
+        solver.assert(p, &mut tm);
+        solver.assert(not_p, &mut tm);
+        assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+
+        let dangling = solver.assertions.len() as u32 + 7;
+        if let Some(core) = solver.unsat_core.as_mut() {
+            core.indices.push(dangling);
+        }
+        let err = check_unsat_core(&solver).expect_err("dangling core index must be rejected");
+        assert!(err.contains("only"), "{err}");
     }
 }

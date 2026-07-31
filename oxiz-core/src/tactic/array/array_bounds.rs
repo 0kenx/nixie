@@ -208,46 +208,69 @@ impl ArrayBoundsTactic {
     }
 
     /// Simplify array select operation.
+    ///
+    /// Iterative: a `select` over a chain of `store`s is peeled with a loop
+    /// rather than by recursing once per chain link. The chain's length is set
+    /// by the input formula and this function has no error channel with which
+    /// to report a depth cut-off, so recursing could only fail by overflowing
+    /// the native stack.
+    ///
+    /// The peel now stops at the first store whose index is *not* provably
+    /// distinct from the selected index. The previous version kept descending
+    /// past such a store, which is unsound: for `select(store(A, i, v), j)`
+    /// with `i`, `j` unknown, descending into `A` and finding `store(B, j, w)`
+    /// returned `w`, even though the correct value is `v` whenever `i = j`.
     fn simplify_select(&mut self, array: TermId, index: TermId, original: TermId) -> TermId {
-        // Check if array is a store operation
-        if let Some(array_term) = self.manager.get(array)
-            && let TermKind::Store(base_array, store_index, store_value) = &array_term.kind
-        {
-            // select(store(arr, i, v), j)
-            // If i = j, return v
-            // If i != j, return select(arr, j)
+        let mut current_array = array;
+        // The term that `select(current_array, index)` is known to equal. It
+        // starts as the caller's term and is re-synthesised after each peel,
+        // so it stays a faithful stand-in for the original select.
+        let mut current_select = original;
 
-            if index == *store_index {
-                // Indices are equal
+        while let Some((base_array, store_index, store_value)) = self
+            .manager
+            .get(current_array)
+            .and_then(|term| match &term.kind {
+                TermKind::Store(base_array, store_index, store_value) => {
+                    Some((*base_array, *store_index, *store_value))
+                }
+                _ => None,
+            })
+        {
+            // select(store(arr, i, v), j) = v when i = j.
+            if index == store_index {
                 self.stats.store_select_simplified += 1;
-                return *store_value;
+                return store_value;
             }
 
-            // Check if indices are provably different (both integer constants with distinct values).
-            let base_array_id = *base_array;
-            let store_index_id = *store_index;
+            // Check if indices are provably different (both integer constants
+            // with distinct values).
             let provably_different = match (
-                self.manager.get(store_index_id).map(|t| t.kind.clone()),
+                self.manager.get(store_index).map(|t| t.kind.clone()),
                 self.manager.get(index).map(|t| t.kind.clone()),
             ) {
                 (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => a != b,
                 _ => false,
             };
-            if provably_different {
-                // select(store(A, i, v), j) = select(A, j) when i != j
-                self.stats.store_select_simplified += 1;
-                let new_select = self.manager.mk_select(base_array_id, index);
-                return self.simplify_select(base_array_id, index, new_select);
+
+            if !provably_different {
+                // The indices may alias: this store's value could be the
+                // answer, so no further peeling is sound.
+                return current_select;
             }
-            return self.simplify_select(base_array_id, index, original);
+
+            // select(store(A, i, v), j) = select(A, j) when i != j.
+            self.stats.store_select_simplified += 1;
+            current_select = self.manager.mk_select(base_array, index);
+            current_array = base_array;
         }
 
         // Propagate index bounds
         if self.config.propagate_index_bounds {
-            self.propagate_index_bounds(array, index);
+            self.propagate_index_bounds(current_array, index);
         }
 
-        original
+        current_select
     }
 
     /// Simplify array store operation.
@@ -405,6 +428,95 @@ mod tests {
         assert!(config.propagate_index_bounds);
         assert!(config.propagate_value_bounds);
         assert!(config.simplify_store_select);
+    }
+
+    /// Run `body` on a worker thread with a deliberately small (1 MiB) stack,
+    /// so a recursive peel over a deep store chain would abort instead of
+    /// getting away with the main thread's much larger stack.
+    fn run_with_small_stack<F>(body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(body)
+            .expect("thread spawn should succeed")
+            .join()
+            .expect("deep-nesting walk must not overflow the stack");
+    }
+
+    #[test]
+    fn test_simplify_select_peels_deep_store_chain_iteratively() {
+        run_with_small_stack(|| {
+            const CHAIN: usize = 50_000;
+
+            let mut manager = TermManager::default();
+            let int_sort = manager.sorts.int_sort;
+            let array_sort = manager.sorts.array(int_sort, int_sort);
+            let base = manager.mk_var("a", array_sort);
+
+            // store(...store(a, 1, 1)..., CHAIN, CHAIN): every index is a
+            // distinct integer constant, and none of them is 0.
+            let mut array = base;
+            for i in 1..=CHAIN {
+                let index = manager.mk_int(i as i64);
+                let value = manager.mk_int((i * 2) as i64);
+                array = manager.mk_store(array, index, value);
+            }
+
+            let probe = manager.mk_int(0);
+            let selected = manager.mk_select(array, probe);
+
+            let mut tactic = ArrayBoundsTactic::default_config(manager);
+            let simplified = tactic.apply(selected);
+
+            // The whole chain is provably disjoint from index 0, so the peel
+            // bottoms out at `select(a, 0)`.
+            assert_ne!(simplified, selected);
+            assert_eq!(tactic.stats().store_select_simplified as usize, CHAIN);
+        });
+    }
+
+    #[test]
+    fn test_simplify_select_same_index_returns_stored_value() {
+        let mut manager = TermManager::default();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+        let base = manager.mk_var("a", array_sort);
+        let index = manager.mk_var("i", int_sort);
+        let value = manager.mk_int(42);
+
+        let stored = manager.mk_store(base, index, value);
+        let selected = manager.mk_select(stored, index);
+
+        let mut tactic = ArrayBoundsTactic::default_config(manager);
+        assert_eq!(tactic.apply(selected), value);
+    }
+
+    #[test]
+    fn test_simplify_select_stops_at_possibly_aliasing_index() {
+        // select(store(store(a, j, v2), i, v1), j) with `i` and `j` unrelated
+        // variables must NOT be peeled down to `v2`: if `i = j` the answer is
+        // `v1`. The previous recursive version descended past the unknown
+        // outer index and returned `v2`, which is unsound.
+        let mut manager = TermManager::default();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+        let base = manager.mk_var("a", array_sort);
+        let i = manager.mk_var("i", int_sort);
+        let j = manager.mk_var("j", int_sort);
+        let v1 = manager.mk_int(1);
+        let v2 = manager.mk_int(2);
+
+        let inner = manager.mk_store(base, j, v2);
+        let outer = manager.mk_store(inner, i, v1);
+        let selected = manager.mk_select(outer, j);
+
+        let mut tactic = ArrayBoundsTactic::default_config(manager);
+        let simplified = tactic.apply(selected);
+
+        assert_ne!(simplified, v2);
+        assert_eq!(simplified, selected);
     }
 
     #[test]

@@ -15,6 +15,24 @@ impl Solver {
     /// 3. On conflict: analyze and learn
     /// 4. Decision
     /// 5. Final theory check when all vars assigned
+    ///
+    /// # Propagation fixpoint invariant
+    ///
+    /// Every conflict handler here ends by rejoining the **outer** `'search`
+    /// loop, whose first act is `propagate()`. That is what makes step 4/5 sound:
+    /// a decision, and above all the `final_check`/`save_model` step that answers
+    /// `Sat`, may only run once Boolean propagation has reached a fixpoint over
+    /// the *whole* clause database.
+    ///
+    /// Handling a conflict inside the theory loop and rejoining that inner loop
+    /// instead — which is what the theory-conflict branches used to do — skips
+    /// BCP: the learned clause's asserting literal (for a unit lemma, a fresh
+    /// level-0 fact) is appended to the trail but never propagated. If the theory
+    /// conflict happens to resolve the *last* unassigned variable, `pick_branch_var`
+    /// then reports "all assigned", `final_check` sees a theory-consistent atom
+    /// assignment and answers `Sat` — over a trail on which an **original** clause
+    /// is already falsified by level-0 facts alone. The instance is `Unsat` and
+    /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
         if self.trivially_unsat {
             return SolverResult::Unsat;
@@ -30,7 +48,7 @@ impl Solver {
         // duplicate theory constraints that would cause spurious UNSAT.
         let mut theory_processed: usize = 0;
 
-        loop {
+        'search: loop {
             // Resource budget / interrupt check: honor a configured conflict
             // limit or an external interrupt by returning Unknown.
             if self.should_stop_search() {
@@ -58,9 +76,13 @@ impl Solver {
                 }
 
                 theory.on_backtrack(backtrack_level);
-                self.backtrack_with_phase_saving(backtrack_level);
-                // After backtrack, the trail may be shorter; update processed count
-                theory_processed = theory_processed.min(self.trail.assignments().len());
+                // Clamp the theory cursor to the rollback boundary, not to the
+                // trail length: chronological backtracking re-appends the
+                // literals that survive the rollback above that boundary, and
+                // the theory — which was just told to unwind to
+                // `backtrack_level` — has to see them again.
+                let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                theory_processed = theory_processed.min(boundary);
                 self.learn_clause(learnt_clause);
 
                 self.vsids.decay();
@@ -112,15 +134,18 @@ impl Solver {
                     }
 
                     theory.on_backtrack(backtrack_level);
-                    self.backtrack_with_phase_saving(backtrack_level);
-                    // After backtrack, update theory_processed to trail length
-                    theory_processed = theory_processed.min(self.trail.assignments().len());
+                    let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                    theory_processed = theory_processed.min(boundary);
                     self.learn_clause(learnt_clause);
 
                     self.vsids.decay();
                     self.clauses.decay_activity(self.config.clause_decay);
                     self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
-                    continue;
+                    // Rejoin the outer loop, NOT this one: the clause just learned
+                    // put its asserting literal on the trail unpropagated, and only
+                    // `'search`'s leading `propagate()` closes that gap. See the
+                    // propagation-fixpoint invariant on `solve_with_theory`.
+                    continue 'search;
                 }
 
                 // Handle theory propagations
@@ -153,19 +178,31 @@ impl Solver {
                         }
 
                         theory.on_backtrack(backtrack_level);
-                        self.backtrack_with_phase_saving(backtrack_level);
-                        // After backtrack, the trail is shorter; update processed count
-                        theory_processed = theory_processed.min(self.trail.assignments().len());
+                        let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                        theory_processed = theory_processed.min(boundary);
                         self.learn_clause(learnt_clause);
 
                         self.vsids.decay();
                         self.clauses.decay_activity(self.config.clause_decay);
                         self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
+                        // Same reason as the theory-conflict branch above: the
+                        // learned clause left an unpropagated asserting literal.
+                        continue 'search;
                     }
                     continue;
                 }
 
                 break;
+            }
+
+            // The theory loop is quiescent. Boolean propagation must be at a
+            // fixpoint before a decision is taken and, critically, before
+            // `final_check` is allowed to answer `Sat` over this trail. Every path
+            // that assigns without propagating rejoins `'search` above, so this
+            // guard is the belt to that braces — one comparison, and it makes the
+            // invariant hold no matter how the branches above are later edited.
+            if self.trail.has_pending_propagation() {
+                continue 'search;
             }
 
             // Try to decide
@@ -191,6 +228,7 @@ impl Solver {
                 match theory.final_check() {
                     TheoryCheckResult::Sat => {
                         self.save_model();
+                        self.debug_verify_model_input();
                         return SolverResult::Sat;
                     }
                     TheoryCheckResult::Conflict(conflict_lits) => {
@@ -211,9 +249,8 @@ impl Solver {
                         }
 
                         theory.on_backtrack(backtrack_level);
-                        self.backtrack_with_phase_saving(backtrack_level);
-                        // After backtrack, update theory_processed
-                        theory_processed = theory_processed.min(self.trail.assignments().len());
+                        let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                        theory_processed = theory_processed.min(boundary);
                         self.learn_clause(learnt_clause);
 
                         self.vsids.decay();
@@ -260,7 +297,13 @@ impl Solver {
         let level_after = self.trail.decision_level();
         if level_after < level_before {
             theory.on_backtrack(level_after);
-            *theory_processed = (*theory_processed).min(self.trail.assignments().len());
+            // The restart backtracked inside `handle_clause_deletion_and_restart`,
+            // so the rollback boundary is not returned here. The propagation head
+            // is rewound to that boundary by every rollback, so it is a safe (never
+            // too large) stand-in — important under chronological backtracking,
+            // where literals surviving the rollback are re-appended above the
+            // boundary and must be re-sent to the theory.
+            *theory_processed = (*theory_processed).min(self.trail.propagation_head());
         }
     }
 }

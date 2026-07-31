@@ -7,7 +7,10 @@
 //! - **Conflict Explanation**: Human-readable UNSAT and conflict explanations
 //! - **Model Minimization**: Finding minimal satisfying models
 //!
-//! All functionality is feature-gated behind the `debug` feature.
+//! Everything here is inert data plumbing: nothing in this module is invoked
+//! by the solving path, so it costs nothing unless an embedder (or a
+//! `#[cfg(debug_assertions)]` hook such as
+//! [`crate::Solver::debug_check_invariants`]) reaches for it.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -17,7 +20,15 @@ pub mod model_min;
 pub mod trace;
 pub mod visualize;
 
-pub use explain::{ConflictExplainer, ConflictExplanation, UnsatExplanation};
-pub use model_min::{ModelMinResult, ModelMinimizer as DebugModelMinimizer};
-pub use trace::{SolverTracer, TraceConfig, TraceEvent};
-pub use visualize::{ImplicationGraphDot, SolverStateSnapshot};
+pub use explain::{
+    ConflictExplainer, ConflictExplanation, PropagationStep, TheoryConflictInfo, UnsatExplanation,
+};
+pub use model_min::{
+    MinStats, ModelAssignment, ModelMinResult, ModelMinimizer as DebugModelMinimizer,
+    SatisfactionChecker,
+};
+pub use trace::{SolverTracer, TraceConfig, TraceEvent, TraceFilter};
+pub use visualize::{
+    ActiveConflict, ImplicationGraphDot, SolverStateSnapshot, StatsSnapshot, TheorySolverState,
+    TrailDecision, VarAssignment,
+};

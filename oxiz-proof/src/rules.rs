@@ -289,7 +289,21 @@ impl UnitPropagationValidator {
 
 /// A tiny propositional formula, parsed from the `¬`/`∧`/`∨` textual notation
 /// used by this crate's CNF transformation validators.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Depth invariant
+///
+/// There is deliberately no bound on how deep a `Formula` may be:
+/// [`parse_formula`] is iterative and adds one nesting level per leading `¬` in
+/// its (untrusted, caller-supplied) input, so depth is attacker-controlled and
+/// rejecting deep input would just turn a validator verdict into `Unchecked`.
+/// Every walk over this type is therefore iterative -- [`parse_formula`],
+/// [`Clone`], [`Drop`], [`fmt::Display`] and [`formula_equiv`].
+///
+/// `PartialEq`/`Eq` are deliberately *not* derived: the derived comparison is
+/// recursive, and [`formula_equiv`] is the iterative comparison this module
+/// actually uses. Only the derived [`fmt::Debug`] is still recursive; it is
+/// used solely for diagnostics on small values.
+#[derive(Debug)]
 enum Formula {
     Atom(String),
     Not(Box<Formula>),
@@ -297,32 +311,185 @@ enum Formula {
     Or(Vec<Formula>),
 }
 
-impl fmt::Display for Formula {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Atom(s) => write!(f, "{s}"),
-            Self::Not(inner) => write!(f, "¬{inner}"),
-            Self::And(xs) => {
-                write!(f, "(")?;
-                for (i, x) in xs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ∧ ")?;
-                    }
-                    write!(f, "{x}")?;
+impl Drop for Formula {
+    /// Iterative drop.
+    ///
+    /// [`parse_formula`] is iterative, so it happily builds a `¬`-chain one
+    /// level deep per input character. The compiler-generated recursive
+    /// `drop_in_place` would then overflow the stack when that formula goes out
+    /// of scope — after the validator has already returned its verdict, which
+    /// makes it a process abort with no diagnostic at all. Each node is
+    /// dismantled into a shallow shell before being released, so the drop that
+    /// runs for real is never more than a couple of levels deep.
+    fn drop(&mut self) {
+        /// Detach a node's children, leaving a shell that drops trivially.
+        fn dismantle(node: &mut Formula, out: &mut Vec<Formula>) {
+            match node {
+                Formula::Atom(_) => {}
+                Formula::Not(inner) => {
+                    out.push(std::mem::replace(
+                        inner.as_mut(),
+                        Formula::Atom(String::new()),
+                    ));
                 }
-                write!(f, ")")
-            }
-            Self::Or(xs) => {
-                write!(f, "(")?;
-                for (i, x) in xs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ∨ ")?;
-                    }
-                    write!(f, "{x}")?;
-                }
-                write!(f, ")")
+                Formula::And(xs) | Formula::Or(xs) => out.append(xs),
             }
         }
+
+        let mut pending = Vec::new();
+        dismantle(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            dismantle(&mut node, &mut pending);
+        }
+    }
+}
+
+/// One in-progress node in the iterative [`Clone`] impl for [`Formula`].
+enum FormulaCloneFrame<'a> {
+    /// A `¬` whose operand is being cloned.
+    Not,
+    /// An `∧`/`∨` whose operands are being cloned.
+    List {
+        /// `true` for `And`, `false` for `Or`.
+        is_and: bool,
+        /// Operands still to be cloned, in source order.
+        rest: std::slice::Iter<'a, Formula>,
+        /// Operands cloned so far, in source order.
+        done: Vec<Formula>,
+    },
+}
+
+impl Clone for Formula {
+    /// Iterative clone.
+    ///
+    /// The CNF validators clone whole subformulas while building the formula
+    /// they expect (`validate_demorgan_and`, `validate_distributivity`, ...),
+    /// and a `Formula` gains one nesting level per leading `¬` in its untrusted
+    /// input, so the derived recursive `Clone` could overflow the stack on
+    /// exactly the input these validators exist to reject. The result is
+    /// structurally identical.
+    fn clone(&self) -> Self {
+        /// Rebuild a finished `∧`/`∨` node.
+        fn finish(is_and: bool, parts: Vec<Formula>) -> Formula {
+            if is_and {
+                Formula::And(parts)
+            } else {
+                Formula::Or(parts)
+            }
+        }
+
+        let mut stack: Vec<FormulaCloneFrame<'_>> = Vec::new();
+        let mut node: &Formula = self;
+
+        loop {
+            // Descend to the next leaf, opening a frame per compound node.
+            let mut value = 'descend: loop {
+                match node {
+                    Self::Atom(s) => break 'descend Self::Atom(s.clone()),
+                    Self::Not(inner) => {
+                        stack.push(FormulaCloneFrame::Not);
+                        node = inner.as_ref();
+                        continue 'descend;
+                    }
+                    Self::And(parts) | Self::Or(parts) => {
+                        let is_and = matches!(node, Self::And(_));
+                        let mut rest = parts.iter();
+                        match rest.next() {
+                            Some(first) => {
+                                stack.push(FormulaCloneFrame::List {
+                                    is_and,
+                                    rest,
+                                    done: Vec::new(),
+                                });
+                                node = first;
+                                continue 'descend;
+                            }
+                            None => break 'descend finish(is_and, Vec::new()),
+                        }
+                    }
+                }
+            };
+
+            // Unwind: hand the cloned operand to its parent frame.
+            loop {
+                let Some(frame) = stack.pop() else {
+                    return value;
+                };
+                match frame {
+                    FormulaCloneFrame::Not => value = Self::Not(Box::new(value)),
+                    FormulaCloneFrame::List {
+                        is_and,
+                        mut rest,
+                        mut done,
+                    } => {
+                        done.push(value);
+                        match rest.next() {
+                            Some(next) => {
+                                node = next;
+                                stack.push(FormulaCloneFrame::List { is_and, rest, done });
+                                break;
+                            }
+                            None => value = finish(is_and, done),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Work item for the iterative [`fmt::Display`] impl for [`Formula`].
+enum FormulaFmtTask<'a> {
+    /// Render this subformula.
+    Node(&'a Formula),
+    /// Emit a structural token verbatim.
+    Text(&'static str),
+}
+
+impl fmt::Display for Formula {
+    /// Iterative (explicit heap stack) rendering.
+    ///
+    /// `Formula` is parsed from untrusted text where `¬` nesting costs one level
+    /// per character, so rendering it recursively would overflow on exactly the
+    /// inputs the CNF validators are meant to reject. Output is byte-identical
+    /// to the recursive formulation.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut stack = vec![FormulaFmtTask::Node(self)];
+
+        while let Some(task) = stack.pop() {
+            let node = match task {
+                FormulaFmtTask::Text(text) => {
+                    f.write_str(text)?;
+                    continue;
+                }
+                FormulaFmtTask::Node(node) => node,
+            };
+
+            match node {
+                Self::Atom(s) => write!(f, "{s}")?,
+                Self::Not(inner) => {
+                    f.write_str("¬")?;
+                    stack.push(FormulaFmtTask::Node(inner));
+                }
+                Self::And(xs) | Self::Or(xs) => {
+                    let separator = if matches!(node, Self::And(_)) {
+                        " ∧ "
+                    } else {
+                        " ∨ "
+                    };
+                    f.write_str("(")?;
+                    stack.push(FormulaFmtTask::Text(")"));
+                    for (i, x) in xs.iter().enumerate().rev() {
+                        stack.push(FormulaFmtTask::Node(x));
+                        if i > 0 {
+                            stack.push(FormulaFmtTask::Text(separator));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -348,55 +515,99 @@ fn skip_ws(chars: &[char], pos: &mut usize) {
     }
 }
 
+/// Pending construction while [`parse_formula_tokens`] descends.
+enum ParseFrame {
+    /// A `¬` awaiting its operand.
+    Negation,
+    /// An open `(` group: the parts read so far and the operator seen (if any).
+    Group {
+        /// Operands parsed so far.
+        parts: Vec<Formula>,
+        /// The single connective used inside this group.
+        op: Option<char>,
+    },
+}
+
+/// Parse one formula token, leaving `pos` just past it.
+///
+/// Iterative: `¬¬¬…` and `(((…)))` in untrusted validator input each cost one
+/// call frame per character in the recursive formulation. The pending `¬`s and
+/// open groups live on an explicit heap stack instead; `None` still means
+/// exactly "this minimal parser does not understand the input".
 fn parse_formula_tokens(chars: &[char], pos: &mut usize) -> Option<Formula> {
-    skip_ws(chars, pos);
-    if *pos >= chars.len() {
-        return None;
-    }
-    match chars[*pos] {
-        '¬' => {
-            *pos += 1;
-            let inner = parse_formula_tokens(chars, pos)?;
-            Some(Formula::Not(Box::new(inner)))
-        }
-        '(' => {
-            *pos += 1;
-            let mut parts = vec![parse_formula_tokens(chars, pos)?];
-            let mut op: Option<char> = None;
-            loop {
-                skip_ws(chars, pos);
-                if *pos < chars.len() && (chars[*pos] == '∧' || chars[*pos] == '∨') {
-                    let this_op = chars[*pos];
-                    match op {
-                        Some(existing) if existing != this_op => return None,
-                        _ => op = Some(this_op),
-                    }
-                    *pos += 1;
-                    parts.push(parse_formula_tokens(chars, pos)?);
-                } else {
-                    break;
-                }
-            }
+    let mut stack: Vec<ParseFrame> = Vec::new();
+
+    'descend: loop {
+        // Consume prefix operators until an atom or a closing group yields a value.
+        let mut value = loop {
             skip_ws(chars, pos);
-            if *pos >= chars.len() || chars[*pos] != ')' {
+            if *pos >= chars.len() {
                 return None;
             }
-            *pos += 1;
-            match op {
-                None => parts.into_iter().next(),
-                Some('∧') => Some(Formula::And(parts)),
-                Some('∨') => Some(Formula::Or(parts)),
-                _ => None,
+            match chars[*pos] {
+                '¬' => {
+                    *pos += 1;
+                    stack.push(ParseFrame::Negation);
+                }
+                '(' => {
+                    *pos += 1;
+                    stack.push(ParseFrame::Group {
+                        parts: Vec::new(),
+                        op: None,
+                    });
+                }
+                c if c.is_alphanumeric() || c == '_' => {
+                    let start = *pos;
+                    while *pos < chars.len()
+                        && (chars[*pos].is_alphanumeric() || chars[*pos] == '_')
+                    {
+                        *pos += 1;
+                    }
+                    break Formula::Atom(chars[start..*pos].iter().collect());
+                }
+                _ => return None,
+            }
+        };
+
+        // Fold the completed value into the enclosing pending frames.
+        loop {
+            match stack.last_mut() {
+                None => return Some(value),
+                Some(ParseFrame::Negation) => {
+                    stack.pop();
+                    value = Formula::Not(Box::new(value));
+                }
+                Some(ParseFrame::Group { parts, op }) => {
+                    parts.push(value);
+
+                    skip_ws(chars, pos);
+                    if *pos < chars.len() && (chars[*pos] == '∧' || chars[*pos] == '∨') {
+                        let this_op = chars[*pos];
+                        match *op {
+                            Some(existing) if existing != this_op => return None,
+                            _ => *op = Some(this_op),
+                        }
+                        *pos += 1;
+                        continue 'descend;
+                    }
+
+                    if *pos >= chars.len() || chars[*pos] != ')' {
+                        return None;
+                    }
+                    *pos += 1;
+
+                    let Some(ParseFrame::Group { parts, op }) = stack.pop() else {
+                        return None;
+                    };
+                    value = match op {
+                        None => parts.into_iter().next()?,
+                        Some('∧') => Formula::And(parts),
+                        Some('∨') => Formula::Or(parts),
+                        _ => return None,
+                    };
+                }
             }
         }
-        c if c.is_alphanumeric() || c == '_' => {
-            let start = *pos;
-            while *pos < chars.len() && (chars[*pos].is_alphanumeric() || chars[*pos] == '_') {
-                *pos += 1;
-            }
-            Some(Formula::Atom(chars[start..*pos].iter().collect()))
-        }
-        _ => None,
     }
 }
 
@@ -404,34 +615,109 @@ fn parse_formula_tokens(chars: &[char], pos: &mut usize) -> Option<Formula> {
 /// treating the argument lists of `And`/`Or` as multisets rather than
 /// sequences). This is a syntactic check, not a full semantic equivalence
 /// (e.g. it will not recognize `A` as equivalent to `A ∧ A`).
-fn formula_equiv(a: &Formula, b: &Formula) -> bool {
-    match (a, b) {
-        (Formula::Atom(x), Formula::Atom(y)) => x == y,
-        (Formula::Not(x), Formula::Not(y)) => formula_equiv(x, y),
-        (Formula::And(xs), Formula::And(ys)) | (Formula::Or(xs), Formula::Or(ys)) => {
-            multiset_equiv(xs, ys)
-        }
-        _ => false,
-    }
+/// Work item for the iterative [`formula_equiv`] machine.
+enum EquivFrame<'a> {
+    /// Compare two subformulas.
+    Compare(&'a Formula, &'a Formula),
+    /// Greedy first-fit multiset matching, resumable mid-search.
+    Match {
+        /// Left-hand operand list.
+        xs: &'a [Formula],
+        /// Right-hand operand list.
+        ys: &'a [Formula],
+        /// Which entries of `ys` are already matched.
+        used: Vec<bool>,
+        /// Index of the `xs` entry currently being matched.
+        xi: usize,
+        /// Candidate index in `ys` being tried for `xs[xi]`.
+        yi: usize,
+        /// Whether a `Compare(xs[xi], ys[yi])` result is pending.
+        probing: bool,
+    },
 }
 
-fn multiset_equiv(xs: &[Formula], ys: &[Formula]) -> bool {
-    if xs.len() != ys.len() {
-        return false;
+/// Iterative (explicit heap stack) equivalence check.
+///
+/// `-> bool` has no error channel, so a depth cap here could only produce a
+/// silently wrong "equivalent"/"not equivalent" verdict on a proof-rule check.
+/// The greedy first-fit matching of the recursive `multiset_equiv` is preserved
+/// exactly, with its search position carried in the `Match` frame.
+fn formula_equiv(a: &Formula, b: &Formula) -> bool {
+    let mut stack = vec![EquivFrame::Compare(a, b)];
+    // Result of the most recently completed frame.
+    let mut result = false;
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            EquivFrame::Compare(x, y) => match (x, y) {
+                (Formula::Atom(p), Formula::Atom(q)) => result = p == q,
+                (Formula::Not(p), Formula::Not(q)) => stack.push(EquivFrame::Compare(p, q)),
+                (Formula::And(xs), Formula::And(ys)) | (Formula::Or(xs), Formula::Or(ys)) => {
+                    if xs.len() == ys.len() {
+                        stack.push(EquivFrame::Match {
+                            xs,
+                            ys,
+                            used: vec![false; ys.len()],
+                            xi: 0,
+                            yi: 0,
+                            probing: false,
+                        });
+                    } else {
+                        result = false;
+                    }
+                }
+                _ => result = false,
+            },
+            EquivFrame::Match {
+                xs,
+                ys,
+                mut used,
+                mut xi,
+                mut yi,
+                probing,
+            } => {
+                if probing {
+                    if result {
+                        if let Some(slot) = used.get_mut(yi) {
+                            *slot = true;
+                        }
+                        // The recursive version restarted its scan from 0 for
+                        // each new x, so do the same here.
+                        xi += 1;
+                        yi = 0;
+                    } else {
+                        yi += 1;
+                    }
+                }
+
+                if xi >= xs.len() {
+                    result = true;
+                    continue;
+                }
+                while yi < ys.len() && used.get(yi).copied().unwrap_or(true) {
+                    yi += 1;
+                }
+                if yi >= ys.len() {
+                    result = false;
+                    continue;
+                }
+
+                let x_item = &xs[xi];
+                let y_item = &ys[yi];
+                stack.push(EquivFrame::Match {
+                    xs,
+                    ys,
+                    used,
+                    xi,
+                    yi,
+                    probing: true,
+                });
+                stack.push(EquivFrame::Compare(x_item, y_item));
+            }
+        }
     }
-    let mut used = vec![false; ys.len()];
-    for x in xs {
-        let Some(slot) = used
-            .iter()
-            .enumerate()
-            .find(|(i, used)| !**used && formula_equiv(x, &ys[*i]))
-            .map(|(i, _)| i)
-        else {
-            return false;
-        };
-        used[slot] = true;
-    }
-    true
+
+    result
 }
 
 /// CNF transformation validator
@@ -951,19 +1237,45 @@ impl UnionFind {
         }
     }
 
+    /// Find the representative of `x`, compressing the path on the way back.
+    ///
+    /// Iterative: `union` inserts without rank, so a chain can grow linearly in
+    /// the number of terms, and the first `find` over such a chain recursed once
+    /// per link with a `String` clone in every frame. `-> String` gives a depth
+    /// cap nowhere to report a truncated walk, and a truncated walk here means a
+    /// wrong congruence verdict.
     fn find(&mut self, x: &str) -> String {
         if !self.parent.contains_key(x) {
             self.parent.insert(x.to_string(), x.to_string());
             return x.to_string();
         }
-        let p = self.parent.get(x).cloned().unwrap_or_else(|| x.to_string());
-        if p == x {
-            x.to_string()
-        } else {
-            let root = self.find(&p);
-            self.parent.insert(x.to_string(), root.clone());
-            root
+
+        // Walk to the root, remembering the nodes passed through.
+        let mut path: Vec<String> = Vec::new();
+        let mut current = x.to_string();
+        loop {
+            let parent = match self.parent.get(&current) {
+                Some(parent) => parent.clone(),
+                None => {
+                    // Matches the recursive version, which materialized a
+                    // self-parent entry for any node it reached.
+                    self.parent.insert(current.clone(), current.clone());
+                    current.clone()
+                }
+            };
+            if parent == current {
+                break;
+            }
+            path.push(current);
+            current = parent;
         }
+
+        // Path compression: every node on the path now points straight at the root.
+        for node in path {
+            self.parent.insert(node, current.clone());
+        }
+
+        current
     }
 
     fn union(&mut self, a: &str, b: &str) {
@@ -1315,5 +1627,70 @@ mod tests {
     fn test_transitivity_wrong_conclusion_is_invalid() {
         let v = TheoryLemmaValidator::validate_transitivity("a = b", "b = c", "a = d");
         assert!(v.is_invalid(), "{v:?}");
+    }
+
+    /// `Formula` is parsed from untrusted text where each leading `¬` costs one
+    /// nesting level, and the CNF validators clone whole subformulas while
+    /// building the formula they expect. `Clone` used to be a compiler-generated
+    /// recursive walk.
+    ///
+    /// Running on a deliberately small (128 KiB) stack: returning at all is the
+    /// proof. The `Drop`s at the end of the closure are part of the test.
+    ///
+    /// The stack size and `DEPTH` are scaled together on purpose: what is
+    /// pinned is the ratio, ~21 bytes per frame, which no real call frame fits
+    /// into. Never raise one without raising the other.
+    #[test]
+    fn test_deep_formula_clone_does_not_overflow() {
+        const DEPTH: usize = 6_250;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let text = format!("{}a", "¬".repeat(DEPTH));
+                let formula = parse_formula(&text).expect("negation chain should parse");
+
+                let copy = formula.clone();
+                assert!(formula_equiv(&copy, &formula));
+
+                // Cloning through a `Vec<Formula>` (as the validators do) must
+                // be iterative too.
+                let wrapped = Formula::And(vec![formula]);
+                let wrapped_copy = wrapped.clone();
+                assert!(formula_equiv(&wrapped_copy, &wrapped));
+
+                // The clone must render identically to the original.
+                assert_eq!(copy.to_string(), text);
+            })
+            .expect("thread spawn should succeed");
+
+        handle.join().expect("worker thread should not panic");
+    }
+
+    /// The hand-written `Clone` must reproduce every variant exactly.
+    #[test]
+    fn test_formula_clone_covers_every_variant() {
+        let samples = [
+            "a",
+            "¬a",
+            "¬¬a",
+            "(a ∧ b)",
+            "(a ∨ b)",
+            "¬(a ∧ b)",
+            "((a ∨ b) ∧ (¬c ∨ d))",
+        ];
+
+        for text in samples {
+            let formula = parse_formula(text).unwrap_or_else(|| panic!("{text:?} should parse"));
+            let copy = formula.clone();
+            assert!(formula_equiv(&copy, &formula), "{text:?}");
+            assert_eq!(copy.to_string(), formula.to_string(), "{text:?}");
+        }
+
+        // Empty operand lists survive the round trip.
+        let empty_and = Formula::And(Vec::new());
+        assert!(formula_equiv(&empty_and.clone(), &empty_and));
+        let empty_or = Formula::Or(Vec::new());
+        assert!(formula_equiv(&empty_or.clone(), &empty_or));
     }
 }

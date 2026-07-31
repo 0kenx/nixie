@@ -46,12 +46,234 @@ pub enum RegexOp {
 }
 
 /// A compiled regular expression
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// # Structural hashing is cached, not recomputed
+///
+/// `Regex` nodes are shared through `Arc`, so the value a user sees as a
+/// *tree* is physically a *DAG*. A derived `Hash`/`PartialEq` walks that DAG
+/// as if it were a tree and therefore re-visits every shared node once per
+/// path that reaches it — exponential in the amount of sharing, on a type that
+/// is used as a `FxHashMap` key on the `check_sat` path
+/// (`DerivativeCache`). Neither `Hash` nor `PartialEq` has an error channel,
+/// so that could not be capped, only removed.
+///
+/// Each node therefore caches the structural hash of its own subtree,
+/// computed once at construction from its children's cached hashes (O(arity),
+/// never a walk). [`Hash`] writes that one `u64`; [`PartialEq`] rejects on it
+/// before doing any structural work and otherwise compares with an explicit
+/// stack. The cache is a pure function of `op`, so equal values still hash
+/// equally — the `Hash`/`Eq` contract is preserved.
+#[derive(Debug, Clone)]
 pub struct Regex {
     /// The operation
     pub op: RegexOp,
     /// Cached nullable status
     nullable: bool,
+    /// Cached structural hash of this node's whole subtree.
+    subtree_hash: u64,
+}
+
+/// Structural-equality rank of an operation; injective over the variants, and
+/// the primary key of both [`regex_op_cmp`] and [`subtree_hash_of`].
+fn op_rank(op: &RegexOp) -> u8 {
+    match op {
+        RegexOp::Epsilon => 0,
+        RegexOp::None => 1,
+        RegexOp::All => 2,
+        RegexOp::AllChar => 3,
+        RegexOp::Char(_) => 4,
+        RegexOp::Range(..) => 5,
+        RegexOp::UnicodeClass(_) => 6,
+        RegexOp::Concat(_) => 7,
+        RegexOp::Union(_) => 8,
+        RegexOp::Inter(_) => 9,
+        RegexOp::Complement(_) => 10,
+        RegexOp::Star(_) => 11,
+        RegexOp::Plus(_) => 12,
+        RegexOp::Option(_) => 13,
+        RegexOp::Loop(..) => 14,
+    }
+}
+
+/// Compute a node's structural hash from its own payload plus its children's
+/// already-cached hashes. Cost is O(arity); it never descends.
+fn subtree_hash_of(op: &RegexOp) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    op_rank(op).hash(&mut hasher);
+    match op {
+        RegexOp::Epsilon | RegexOp::None | RegexOp::All | RegexOp::AllChar => {}
+        RegexOp::Char(c) => c.hash(&mut hasher),
+        RegexOp::Range(lo, hi) => {
+            lo.hash(&mut hasher);
+            hi.hash(&mut hasher);
+        }
+        RegexOp::UnicodeClass(cat) => (*cat as u32).hash(&mut hasher),
+        RegexOp::Concat(parts) | RegexOp::Union(parts) | RegexOp::Inter(parts) => {
+            parts.len().hash(&mut hasher);
+            for p in parts {
+                p.subtree_hash.hash(&mut hasher);
+            }
+        }
+        RegexOp::Complement(r) | RegexOp::Star(r) | RegexOp::Plus(r) | RegexOp::Option(r) => {
+            r.subtree_hash.hash(&mut hasher);
+        }
+        RegexOp::Loop(r, lo, hi) => {
+            r.subtree_hash.hash(&mut hasher);
+            lo.hash(&mut hasher);
+            hi.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+impl Hash for Regex {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // O(1): the subtree hash was folded in at construction time.
+        state.write_u64(self.subtree_hash);
+    }
+}
+
+impl PartialEq for Regex {
+    fn eq(&self, other: &Self) -> bool {
+        if self.subtree_hash != other.subtree_hash {
+            return false;
+        }
+        // Explicit stack, not recursion: the operand tree is as deep as the
+        // input regex (and grows further with every Brzozowski derivative
+        // step), and `eq` has no channel through which a depth limit could be
+        // reported.
+        let mut stack: Vec<(&RegexOp, &RegexOp)> = vec![(&self.op, &other.op)];
+        while let Some((a, b)) = stack.pop() {
+            if op_rank(a) != op_rank(b) {
+                return false;
+            }
+            match (a, b) {
+                (RegexOp::Epsilon, _)
+                | (RegexOp::None, _)
+                | (RegexOp::All, _)
+                | (RegexOp::AllChar, _) => {}
+                (RegexOp::Char(x), RegexOp::Char(y)) => {
+                    if x != y {
+                        return false;
+                    }
+                }
+                (RegexOp::Range(x1, x2), RegexOp::Range(y1, y2)) => {
+                    if (x1, x2) != (y1, y2) {
+                        return false;
+                    }
+                }
+                (RegexOp::UnicodeClass(x), RegexOp::UnicodeClass(y)) => {
+                    if x != y {
+                        return false;
+                    }
+                }
+                (RegexOp::Concat(x), RegexOp::Concat(y))
+                | (RegexOp::Union(x), RegexOp::Union(y))
+                | (RegexOp::Inter(x), RegexOp::Inter(y)) => {
+                    if !push_pairs(x, y, &mut stack) {
+                        return false;
+                    }
+                }
+                (RegexOp::Complement(x), RegexOp::Complement(y))
+                | (RegexOp::Star(x), RegexOp::Star(y))
+                | (RegexOp::Plus(x), RegexOp::Plus(y))
+                | (RegexOp::Option(x), RegexOp::Option(y)) => {
+                    if !push_pair(x, y, &mut stack) {
+                        return false;
+                    }
+                }
+                (RegexOp::Loop(x, xlo, xhi), RegexOp::Loop(y, ylo, yhi)) => {
+                    if (xlo, xhi) != (ylo, yhi) || !push_pair(x, y, &mut stack) {
+                        return false;
+                    }
+                }
+                // `op_rank` is injective and was checked equal above, so the
+                // two sides are always the same variant here.
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for Regex {}
+
+/// Queue one child pair for structural comparison, short-circuiting on
+/// pointer identity (shared subterm) and on the cached subtree hash.
+/// Returns `false` when the pair is already known to differ.
+fn push_pair<'a>(
+    x: &'a Arc<Regex>,
+    y: &'a Arc<Regex>,
+    stack: &mut Vec<(&'a RegexOp, &'a RegexOp)>,
+) -> bool {
+    if Arc::ptr_eq(x, y) {
+        return true;
+    }
+    if x.subtree_hash != y.subtree_hash {
+        return false;
+    }
+    stack.push((&x.op, &y.op));
+    true
+}
+
+/// [`push_pair`] over two operand lists; `false` if the lengths differ or any
+/// pair is already known to differ.
+fn push_pairs<'a>(
+    xs: &'a [Arc<Regex>],
+    ys: &'a [Arc<Regex>],
+    stack: &mut Vec<(&'a RegexOp, &'a RegexOp)>,
+) -> bool {
+    if xs.len() != ys.len() {
+        return false;
+    }
+    for (x, y) in xs.iter().zip(ys.iter()) {
+        if !push_pair(x, y, stack) {
+            return false;
+        }
+    }
+    true
+}
+
+impl Drop for Regex {
+    /// Dismantle the operand DAG iteratively.
+    ///
+    /// Compiler-generated drop glue recurses once per nesting level, so a
+    /// regex deep enough to build is deep enough to abort the process at scope
+    /// exit — after the value has already been used successfully. Children are
+    /// moved onto an explicit stack and only descended into when this was the
+    /// last `Arc` referencing them; a node reached this way has had its
+    /// operands taken already, so the nested `drop` the stack triggers is a
+    /// leaf drop and terminates immediately.
+    fn drop(&mut self) {
+        let mut stack: Vec<Arc<Regex>> = Vec::new();
+        take_children(&mut self.op, &mut stack);
+        while let Some(node) = stack.pop() {
+            if let Ok(mut owned) = Arc::try_unwrap(node) {
+                take_children(&mut owned.op, &mut stack);
+            }
+        }
+    }
+}
+
+/// Move `op`'s operands onto `out`, leaving a childless operation behind.
+fn take_children(op: &mut RegexOp, out: &mut Vec<Arc<Regex>>) {
+    match core::mem::replace(op, RegexOp::None) {
+        RegexOp::Epsilon
+        | RegexOp::None
+        | RegexOp::All
+        | RegexOp::AllChar
+        | RegexOp::Char(_)
+        | RegexOp::Range(..)
+        | RegexOp::UnicodeClass(_) => {}
+        RegexOp::Concat(parts) | RegexOp::Union(parts) | RegexOp::Inter(parts) => {
+            out.extend(parts);
+        }
+        RegexOp::Complement(r)
+        | RegexOp::Star(r)
+        | RegexOp::Plus(r)
+        | RegexOp::Option(r)
+        | RegexOp::Loop(r, _, _) => out.push(r),
+    }
 }
 
 /// Deterministic total order over `RegexOp`, used to canonicalize the
@@ -73,52 +295,102 @@ pub struct Regex {
 /// `UnicodeCategory` is a plain fieldless enum, so its discriminant (via
 /// `as u32`) already gives it a real total order without needing to modify
 /// that module.
+/// The comparator was three mutually recursive functions
+/// (`regex_op_cmp` ↔ `regex_cmp` ↔ `regex_vec_cmp`) descending once per
+/// nesting level, invoked O(n log n) times by the `sort_by` in
+/// [`Regex::union`]/[`Regex::inter`] — i.e. on every `re.union`/`re.inter`
+/// compile *and* on every derivative that rebuilds one. It returns `Ordering`,
+/// which has no channel for "too deep", and a truncated comparison is not a
+/// degraded answer: it breaks the total order `sort_by` requires. It is now a
+/// single explicit-stack traversal.
 fn regex_op_cmp(a: &RegexOp, b: &RegexOp) -> Ordering {
-    fn rank(op: &RegexOp) -> u8 {
-        match op {
-            RegexOp::Epsilon => 0,
-            RegexOp::None => 1,
-            RegexOp::All => 2,
-            RegexOp::AllChar => 3,
-            RegexOp::Char(_) => 4,
-            RegexOp::Range(..) => 5,
-            RegexOp::UnicodeClass(_) => 6,
-            RegexOp::Concat(_) => 7,
-            RegexOp::Union(_) => 8,
-            RegexOp::Inter(_) => 9,
-            RegexOp::Complement(_) => 10,
-            RegexOp::Star(_) => 11,
-            RegexOp::Plus(_) => 12,
-            RegexOp::Option(_) => 13,
-            RegexOp::Loop(..) => 14,
+    /// One pending unit of the depth-first, left-to-right comparison.
+    enum CmpStep<'a> {
+        /// Compare these two operations.
+        Pair(&'a RegexOp, &'a RegexOp),
+        /// A tie-break already decided by the parent, consulted only after
+        /// everything pushed above it has compared `Equal`.
+        Fixed(Ordering),
+    }
+
+    let mut stack: Vec<CmpStep<'_>> = vec![CmpStep::Pair(a, b)];
+    while let Some(step) = stack.pop() {
+        let (x, y) = match step {
+            CmpStep::Fixed(ord) => {
+                if ord.is_eq() {
+                    continue;
+                }
+                return ord;
+            }
+            CmpStep::Pair(x, y) => (x, y),
+        };
+
+        let (rx, ry) = (op_rank(x), op_rank(y));
+        if rx != ry {
+            return rx.cmp(&ry);
+        }
+
+        match (x, y) {
+            (RegexOp::Epsilon, _)
+            | (RegexOp::None, _)
+            | (RegexOp::All, _)
+            | (RegexOp::AllChar, _) => {}
+            (RegexOp::Char(p), RegexOp::Char(q)) if p != q => return p.cmp(q),
+            (RegexOp::Char(_), RegexOp::Char(_)) => {}
+            (RegexOp::Range(p1, p2), RegexOp::Range(q1, q2)) => {
+                let ord = (p1, p2).cmp(&(q1, q2));
+                if !ord.is_eq() {
+                    return ord;
+                }
+            }
+            (RegexOp::UnicodeClass(p), RegexOp::UnicodeClass(q)) => {
+                let ord = (*p as u32).cmp(&(*q as u32));
+                if !ord.is_eq() {
+                    return ord;
+                }
+            }
+            (RegexOp::Concat(p), RegexOp::Concat(q))
+            | (RegexOp::Union(p), RegexOp::Union(q))
+            | (RegexOp::Inter(p), RegexOp::Inter(q)) => {
+                // Lexicographic by length, then element-wise: the operands are
+                // pushed in reverse so they pop left to right, and anything a
+                // child expands into lands above its siblings.
+                let ord = p.len().cmp(&q.len());
+                if !ord.is_eq() {
+                    return ord;
+                }
+                for (pi, qi) in p.iter().zip(q.iter()).rev() {
+                    if !Arc::ptr_eq(pi, qi) {
+                        stack.push(CmpStep::Pair(&pi.op, &qi.op));
+                    }
+                }
+            }
+            (RegexOp::Complement(p), RegexOp::Complement(q))
+            | (RegexOp::Star(p), RegexOp::Star(q))
+            | (RegexOp::Plus(p), RegexOp::Plus(q))
+            | (RegexOp::Option(p), RegexOp::Option(q))
+                if !Arc::ptr_eq(p, q) =>
+            {
+                stack.push(CmpStep::Pair(&p.op, &q.op));
+            }
+            (RegexOp::Complement(_), RegexOp::Complement(_))
+            | (RegexOp::Star(_), RegexOp::Star(_))
+            | (RegexOp::Plus(_), RegexOp::Plus(_))
+            | (RegexOp::Option(_), RegexOp::Option(_)) => {}
+            (RegexOp::Loop(p, plo, phi), RegexOp::Loop(q, qlo, qhi)) => {
+                // The bounds break the tie only if the bodies compare equal,
+                // so they go on the stack *below* the body comparison.
+                stack.push(CmpStep::Fixed(plo.cmp(qlo).then_with(|| phi.cmp(qhi))));
+                if !Arc::ptr_eq(p, q) {
+                    stack.push(CmpStep::Pair(&p.op, &q.op));
+                }
+            }
+            // `op_rank` is injective and was checked equal above, so the two
+            // sides are always the same variant here.
+            _ => {}
         }
     }
-
-    let (ra, rb) = (rank(a), rank(b));
-    if ra != rb {
-        return ra.cmp(&rb);
-    }
-
-    match (a, b) {
-        (RegexOp::Char(x), RegexOp::Char(y)) => x.cmp(y),
-        (RegexOp::Range(x1, x2), RegexOp::Range(y1, y2)) => (x1, x2).cmp(&(y1, y2)),
-        (RegexOp::UnicodeClass(x), RegexOp::UnicodeClass(y)) => (*x as u32).cmp(&(*y as u32)),
-        (RegexOp::Concat(x), RegexOp::Concat(y))
-        | (RegexOp::Union(x), RegexOp::Union(y))
-        | (RegexOp::Inter(x), RegexOp::Inter(y)) => regex_vec_cmp(x, y),
-        (RegexOp::Complement(x), RegexOp::Complement(y))
-        | (RegexOp::Star(x), RegexOp::Star(y))
-        | (RegexOp::Plus(x), RegexOp::Plus(y))
-        | (RegexOp::Option(x), RegexOp::Option(y)) => regex_cmp(x, y),
-        (RegexOp::Loop(x, xlo, xhi), RegexOp::Loop(y, ylo, yhi)) => regex_cmp(x, y)
-            .then_with(|| xlo.cmp(ylo))
-            .then_with(|| xhi.cmp(yhi)),
-        // Same rank implies the same variant (`rank` is injective), so
-        // every other combination is unreachable; fall back to `Equal`
-        // rather than panicking; still a valid (if imprecise for an
-        // impossible case) total order.
-        _ => Ordering::Equal,
-    }
+    Ordering::Equal
 }
 
 /// Total order over `Regex`, delegating to [`regex_op_cmp`] (the cached
@@ -127,57 +399,42 @@ fn regex_cmp(a: &Regex, b: &Regex) -> Ordering {
     regex_op_cmp(&a.op, &b.op)
 }
 
-/// Total order over a list of sub-regexes (`Concat`/`Union`/`Inter`
-/// operands), comparing lexicographically by length then element-wise.
-fn regex_vec_cmp(a: &[Arc<Regex>], b: &[Arc<Regex>]) -> Ordering {
-    a.len().cmp(&b.len()).then_with(|| {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| regex_cmp(x, y))
-            .find(|o| !o.is_eq())
-            .unwrap_or(Ordering::Equal)
-    })
-}
-
 impl Regex {
+    /// Build a node, folding in its cached structural hash. Every constructor
+    /// goes through here so `subtree_hash` can never fall out of sync with
+    /// `op`.
+    fn make(op: RegexOp, nullable: bool) -> Arc<Self> {
+        let subtree_hash = subtree_hash_of(&op);
+        Arc::new(Self {
+            op,
+            nullable,
+            subtree_hash,
+        })
+    }
+
     /// Create epsilon (empty string)
     pub fn epsilon() -> Arc<Self> {
-        Arc::new(Self {
-            op: RegexOp::Epsilon,
-            nullable: true,
-        })
+        Self::make(RegexOp::Epsilon, true)
     }
 
     /// Create empty language (no matches)
     pub fn none() -> Arc<Self> {
-        Arc::new(Self {
-            op: RegexOp::None,
-            nullable: false,
-        })
+        Self::make(RegexOp::None, false)
     }
 
     /// Create regex matching all strings
     pub fn all() -> Arc<Self> {
-        Arc::new(Self {
-            op: RegexOp::All,
-            nullable: true,
-        })
+        Self::make(RegexOp::All, true)
     }
 
     /// Create regex matching any single character
     pub fn all_char() -> Arc<Self> {
-        Arc::new(Self {
-            op: RegexOp::AllChar,
-            nullable: false,
-        })
+        Self::make(RegexOp::AllChar, false)
     }
 
     /// Create a single character regex
     pub fn char(c: char) -> Arc<Self> {
-        Arc::new(Self {
-            op: RegexOp::Char(c),
-            nullable: false,
-        })
+        Self::make(RegexOp::Char(c), false)
     }
 
     /// Create a character range [lo-hi]
@@ -185,10 +442,7 @@ impl Regex {
         if lo > hi {
             return Self::none();
         }
-        Arc::new(Self {
-            op: RegexOp::Range(lo, hi),
-            nullable: false,
-        })
+        Self::make(RegexOp::Range(lo, hi), false)
     }
 
     /// Create a string literal regex
@@ -212,20 +466,17 @@ impl Regex {
                 _ => flat.push(p),
             }
         }
+        if flat.len() == 1 {
+            // `pop` on a length-1 vec always yields the element; the fallback
+            // exists so the impossible case is not written as an `expect`, and
+            // returns exactly what the empty case returns.
+            return flat.pop().unwrap_or_else(Self::epsilon);
+        }
         if flat.is_empty() {
             return Self::epsilon();
         }
-        if flat.len() == 1 {
-            return flat
-                .into_iter()
-                .next()
-                .expect("flat has exactly one element");
-        }
         let nullable = flat.iter().all(|r| r.nullable);
-        Arc::new(Self {
-            op: RegexOp::Concat(flat),
-            nullable,
-        })
+        Self::make(RegexOp::Concat(flat), nullable)
     }
 
     /// Create union of regexes
@@ -240,23 +491,18 @@ impl Regex {
                 _ => flat.push(p),
             }
         }
+        if flat.len() == 1 {
+            // See `concat`: total `pop`, no `expect`, empty-case fallback.
+            return flat.pop().unwrap_or_else(Self::none);
+        }
         if flat.is_empty() {
             return Self::none();
         }
-        if flat.len() == 1 {
-            return flat
-                .into_iter()
-                .next()
-                .expect("flat has exactly one element");
-        }
         // Deduplicate
-        flat.sort_by(|a, b| regex_op_cmp(&a.op, &b.op));
+        flat.sort_by(|a, b| regex_cmp(a, b));
         flat.dedup();
         let nullable = flat.iter().any(|r| r.nullable);
-        Arc::new(Self {
-            op: RegexOp::Union(flat),
-            nullable,
-        })
+        Self::make(RegexOp::Union(flat), nullable)
     }
 
     /// Create intersection of regexes
@@ -270,22 +516,17 @@ impl Regex {
                 _ => flat.push(p),
             }
         }
+        if flat.len() == 1 {
+            // See `concat`: total `pop`, no `expect`, empty-case fallback.
+            return flat.pop().unwrap_or_else(Self::all);
+        }
         if flat.is_empty() {
             return Self::all();
         }
-        if flat.len() == 1 {
-            return flat
-                .into_iter()
-                .next()
-                .expect("flat has exactly one element");
-        }
-        flat.sort_by(|a, b| regex_op_cmp(&a.op, &b.op));
+        flat.sort_by(|a, b| regex_cmp(a, b));
         flat.dedup();
         let nullable = flat.iter().all(|r| r.nullable);
-        Arc::new(Self {
-            op: RegexOp::Inter(flat),
-            nullable,
-        })
+        Self::make(RegexOp::Inter(flat), nullable)
     }
 
     /// Create complement of a regex
@@ -294,10 +535,10 @@ impl Regex {
             RegexOp::None => Self::all(),
             RegexOp::All => Self::none(),
             RegexOp::Complement(inner) => inner.clone(),
-            _ => Arc::new(Self {
-                op: RegexOp::Complement(r.clone()),
-                nullable: !r.nullable,
-            }),
+            _ => {
+                let nullable = !r.nullable;
+                Self::make(RegexOp::Complement(r.clone()), nullable)
+            }
         }
     }
 
@@ -306,10 +547,7 @@ impl Regex {
         match &r.op {
             RegexOp::Epsilon | RegexOp::None => Self::epsilon(),
             RegexOp::Star(_) | RegexOp::All => r,
-            _ => Arc::new(Self {
-                op: RegexOp::Star(r),
-                nullable: true,
-            }),
+            _ => Self::make(RegexOp::Star(r), true),
         }
     }
 
@@ -319,10 +557,10 @@ impl Regex {
             RegexOp::Epsilon => Self::epsilon(),
             RegexOp::None => Self::none(),
             RegexOp::Star(_) | RegexOp::Plus(_) => r,
-            _ => Arc::new(Self {
-                op: RegexOp::Plus(r.clone()),
-                nullable: r.nullable,
-            }),
+            _ => {
+                let nullable = r.nullable;
+                Self::make(RegexOp::Plus(r.clone()), nullable)
+            }
         }
     }
 
@@ -333,10 +571,7 @@ impl Regex {
         }
         match &r.op {
             RegexOp::None => Self::epsilon(),
-            _ => Arc::new(Self {
-                op: RegexOp::Option(r),
-                nullable: true,
-            }),
+            _ => Self::make(RegexOp::Option(r), true),
         }
     }
 
@@ -357,10 +592,7 @@ impl Regex {
             return Self::epsilon();
         }
         let nullable = min == 0 || r.nullable;
-        Arc::new(Self {
-            op: RegexOp::Loop(r, min, max),
-            nullable,
-        })
+        Self::make(RegexOp::Loop(r, min, max), nullable)
     }
 
     /// Check if regex accepts the empty string
@@ -382,77 +614,19 @@ impl Regex {
     }
 
     /// Compute Brzozowski derivative with respect to a character
+    ///
+    /// The walk is an explicit post-order stack rather than recursion. Depth
+    /// here is the *input regex's* nesting depth, which every derivative step
+    /// preserves or grows, and this is called O(states × alphabet) times by
+    /// `regex_membership::search_word` and once per input character by
+    /// [`Regex::matches`]. The return type is `Arc<Regex>` — no error channel —
+    /// so a depth cap could only fabricate a wrong language.
     pub fn derivative(&self, c: char) -> Arc<Regex> {
-        match &self.op {
-            RegexOp::Epsilon | RegexOp::None => Self::none(),
-            RegexOp::All => Self::all(),
-            RegexOp::AllChar => Self::epsilon(),
-            RegexOp::Char(ch) => {
-                if *ch == c {
-                    Self::epsilon()
-                } else {
-                    Self::none()
-                }
-            }
-            RegexOp::Range(lo, hi) => {
-                if c >= *lo && c <= *hi {
-                    Self::epsilon()
-                } else {
-                    Self::none()
-                }
-            }
-            RegexOp::UnicodeClass(cat) => {
-                if cat.contains(c) {
-                    Self::epsilon()
-                } else {
-                    Self::none()
-                }
-            }
-            RegexOp::Concat(parts) => {
-                // D(r1 r2 ... rn) = D(r1) r2 ... rn  +  (if nullable(r1)) D(r2) r3 ... rn + ...
-                let mut result: Vec<Arc<Regex>> = Vec::new();
-                for (i, part) in parts.iter().enumerate() {
-                    let d = part.derivative(c);
-                    if !d.is_empty() {
-                        let mut suffix: Vec<Arc<Regex>> = vec![d];
-                        suffix.extend(parts[i + 1..].iter().cloned());
-                        result.push(Self::concat(suffix));
-                    }
-                    if !part.nullable {
-                        break;
-                    }
-                }
-                Self::union(result)
-            }
-            RegexOp::Union(parts) => {
-                let derivs: Vec<Arc<Regex>> = parts.iter().map(|p| p.derivative(c)).collect();
-                Self::union(derivs)
-            }
-            RegexOp::Inter(parts) => {
-                let derivs: Vec<Arc<Regex>> = parts.iter().map(|p| p.derivative(c)).collect();
-                Self::inter(derivs)
-            }
-            RegexOp::Complement(inner) => Self::complement(inner.derivative(c)),
-            RegexOp::Star(inner) => {
-                // D(r*) = D(r) r*
-                let d = inner.derivative(c);
-                Self::concat(vec![d, Arc::new(self.clone())])
-            }
-            RegexOp::Plus(inner) => {
-                // D(r+) = D(r) r*
-                let d = inner.derivative(c);
-                Self::concat(vec![d, Self::star(inner.clone())])
-            }
-            RegexOp::Option(inner) => inner.derivative(c),
-            RegexOp::Loop(inner, min, max) => {
-                // D(r{m,n}) = D(r) r{max(0, m-1), n-1}
-                let d = inner.derivative(c);
-                let new_min = min.saturating_sub(1);
-                let new_max = max.map(|m| m.saturating_sub(1));
-                let rest = Self::loop_bounded(inner.clone(), new_min, new_max);
-                Self::concat(vec![d, rest])
-            }
-        }
+        // One shallow clone of the root: `Star` needs the node itself as an
+        // operand, and the iterative walk carries `Arc`s from there down.
+        // Cloning a node copies its `op` (a vector of `Arc` handles), not its
+        // subtree.
+        derivative_of(Arc::new(self.clone()), c)
     }
 
     /// Check if a string matches this regex
@@ -466,6 +640,211 @@ impl Regex {
         }
         current.is_nullable()
     }
+}
+
+/// How a node's result is rebuilt once its operands' derivatives are known.
+///
+/// Every variant consumes the whole operand-result vector, so none of them can
+/// be written in a form that needs to assert an element is present.
+enum DerivBuild {
+    /// `D(r1 … rn)`: the full operand list plus the prefix of indices whose
+    /// derivatives were actually taken (the recursive version stopped at the
+    /// first non-nullable operand, and so does this).
+    Concat {
+        /// The concatenation's operands.
+        parts: Vec<Arc<Regex>>,
+        /// Indices of the operands whose derivative was requested, in order.
+        taken: Vec<usize>,
+    },
+    /// `D(r1 + … + rn) = D(r1) + … + D(rn)`.
+    Union,
+    /// `D(r1 ∩ … ∩ rn) = D(r1) ∩ … ∩ D(rn)`.
+    Inter,
+    /// `D(¬r) = ¬D(r)`; `Regex::union` of the single result is that result.
+    Complement,
+    /// `D(r*) = D(r) r*`, carrying the star node itself as the suffix.
+    Suffix(Arc<Regex>),
+}
+
+/// One pending node of the iterative derivative walk.
+struct DerivFrame {
+    /// How to rebuild this node.
+    build: DerivBuild,
+    /// Operands still to be differentiated, reversed so `pop` yields them
+    /// left to right.
+    pending: Vec<Arc<Regex>>,
+    /// Operand derivatives collected so far, in operand order.
+    done: Vec<Arc<Regex>>,
+}
+
+impl DerivFrame {
+    /// Rebuild this node from its operands' derivatives.
+    fn finish(self) -> Arc<Regex> {
+        match self.build {
+            DerivBuild::Concat { parts, taken } => {
+                let mut result: Vec<Arc<Regex>> = Vec::new();
+                for (d, &i) in self.done.iter().zip(taken.iter()) {
+                    if !d.is_empty() {
+                        let mut suffix: Vec<Arc<Regex>> = vec![d.clone()];
+                        suffix.extend(parts[i + 1..].iter().cloned());
+                        result.push(Regex::concat(suffix));
+                    }
+                }
+                Regex::union(result)
+            }
+            DerivBuild::Union => Regex::union(self.done),
+            DerivBuild::Inter => Regex::inter(self.done),
+            DerivBuild::Complement => Regex::complement(Regex::union(self.done)),
+            DerivBuild::Suffix(rest) => {
+                let mut parts = self.done;
+                parts.push(rest);
+                Regex::concat(parts)
+            }
+        }
+    }
+}
+
+/// What differentiating one node needs: an answer already, or its operands.
+enum DerivOpened {
+    /// The derivative is known without looking at any operand.
+    Leaf(Arc<Regex>),
+    /// The operands must be differentiated first.
+    Frame(DerivFrame),
+}
+
+/// Decide what `node`'s derivative w.r.t. `c` needs.
+fn open_derivative(node: Arc<Regex>, c: char) -> DerivOpened {
+    // `D(r?) = D(r)`: unwrap `Option` chains here rather than through a frame,
+    // so an `(re.opt (re.opt …))` tower costs no stack at all.
+    let mut node = node;
+    while let RegexOp::Option(inner) = &node.op {
+        let inner = inner.clone();
+        node = inner;
+    }
+
+    let leaf = |r: Arc<Regex>| DerivOpened::Leaf(r);
+    match &node.op {
+        RegexOp::Epsilon | RegexOp::None => leaf(Regex::none()),
+        RegexOp::All => leaf(Regex::all()),
+        RegexOp::AllChar => leaf(Regex::epsilon()),
+        RegexOp::Char(ch) => leaf(if *ch == c {
+            Regex::epsilon()
+        } else {
+            Regex::none()
+        }),
+        RegexOp::Range(lo, hi) => leaf(if c >= *lo && c <= *hi {
+            Regex::epsilon()
+        } else {
+            Regex::none()
+        }),
+        RegexOp::UnicodeClass(cat) => leaf(if cat.contains(c) {
+            Regex::epsilon()
+        } else {
+            Regex::none()
+        }),
+        RegexOp::Concat(parts) => {
+            let mut taken: Vec<usize> = Vec::new();
+            for (i, part) in parts.iter().enumerate() {
+                taken.push(i);
+                if !part.nullable {
+                    break;
+                }
+            }
+            let pending: Vec<Arc<Regex>> = taken.iter().rev().map(|&i| parts[i].clone()).collect();
+            DerivOpened::Frame(DerivFrame {
+                build: DerivBuild::Concat {
+                    parts: parts.clone(),
+                    taken,
+                },
+                pending,
+                done: Vec::new(),
+            })
+        }
+        RegexOp::Union(parts) => DerivOpened::Frame(DerivFrame {
+            build: DerivBuild::Union,
+            pending: parts.iter().rev().cloned().collect(),
+            done: Vec::new(),
+        }),
+        RegexOp::Inter(parts) => DerivOpened::Frame(DerivFrame {
+            build: DerivBuild::Inter,
+            pending: parts.iter().rev().cloned().collect(),
+            done: Vec::new(),
+        }),
+        RegexOp::Complement(inner) => DerivOpened::Frame(DerivFrame {
+            build: DerivBuild::Complement,
+            pending: vec![inner.clone()],
+            done: Vec::new(),
+        }),
+        RegexOp::Star(inner) => DerivOpened::Frame(DerivFrame {
+            // D(r*) = D(r) r*
+            build: DerivBuild::Suffix(node.clone()),
+            pending: vec![inner.clone()],
+            done: Vec::new(),
+        }),
+        RegexOp::Plus(inner) => DerivOpened::Frame(DerivFrame {
+            // D(r+) = D(r) r*
+            build: DerivBuild::Suffix(Regex::star(inner.clone())),
+            pending: vec![inner.clone()],
+            done: Vec::new(),
+        }),
+        RegexOp::Loop(inner, min, max) => DerivOpened::Frame(DerivFrame {
+            // D(r{m,n}) = D(r) r{max(0, m-1), n-1}
+            build: DerivBuild::Suffix(Regex::loop_bounded(
+                inner.clone(),
+                min.saturating_sub(1),
+                max.map(|m| m.saturating_sub(1)),
+            )),
+            pending: vec![inner.clone()],
+            done: Vec::new(),
+        }),
+        // `Option` was unwrapped above, so it cannot reach here; listing it
+        // keeps the match exhaustive without a catch-all, so a new operator
+        // becomes a compile error rather than a silently wrong derivative.
+        RegexOp::Option(inner) => DerivOpened::Frame(DerivFrame {
+            build: DerivBuild::Union,
+            pending: vec![inner.clone()],
+            done: Vec::new(),
+        }),
+    }
+}
+
+/// Explicit-stack driver behind [`Regex::derivative`].
+fn derivative_of(root: Arc<Regex>, c: char) -> Arc<Regex> {
+    let mut frames: Vec<DerivFrame> = match open_derivative(root, c) {
+        DerivOpened::Leaf(r) => return r,
+        DerivOpened::Frame(f) => vec![f],
+    };
+    // A finished operand derivative travelling back to the frame that asked
+    // for it.
+    let mut carry: Option<Arc<Regex>> = None;
+
+    while !frames.is_empty() {
+        let next = match frames.last_mut() {
+            Some(top) => {
+                if let Some(d) = carry.take() {
+                    top.done.push(d);
+                }
+                top.pending.pop()
+            }
+            // Unreachable: the loop condition just checked non-emptiness.
+            None => break,
+        };
+        match next {
+            Some(child) => match open_derivative(child, c) {
+                DerivOpened::Leaf(r) => carry = Some(r),
+                DerivOpened::Frame(f) => frames.push(f),
+            },
+            None => match frames.pop() {
+                Some(frame) => carry = Some(frame.finish()),
+                // Unreachable for the same reason as above.
+                None => break,
+            },
+        }
+    }
+
+    // The root frame's `finish` result is the last value handed back, and the
+    // root is only a frame when `open_derivative` did not answer outright.
+    carry.unwrap_or_else(Regex::none)
 }
 
 /// A regex derivative cache for efficient repeated derivative computation
@@ -532,8 +911,15 @@ pub struct RegexAutomaton {
     states: Vec<AutomatonState>,
     /// Transition table: state_id -> [(char_range, target_state_id)]
     transitions: Vec<SmallVec<[(char, char, u32); 8]>>,
-    /// Regex to state ID mapping
-    regex_to_state: FxHashMap<u64, u32>,
+    /// Regex to state ID mapping.
+    ///
+    /// Keyed by the regex *value*, not by a bare `u64` hash: a bare hash as
+    /// the key has no equality check behind it, so two different regexes that
+    /// collide silently become the same DFA state and the automaton then
+    /// accepts the wrong language. (Same defect, same fix as
+    /// [`DerivativeCache`].) With the cached subtree hash on [`Regex`] this
+    /// costs no more than the hash-keyed version did.
+    regex_to_state: FxHashMap<Regex, u32>,
     /// Initial state ID
     initial: u32,
     /// Derivative cache
@@ -546,12 +932,8 @@ impl RegexAutomaton {
     pub fn new(regex: Arc<Regex>) -> Self {
         let initial_accepting = regex.is_nullable();
 
-        let mut hasher = rustc_hash::FxHasher::default();
-        regex.hash(&mut hasher);
-        let hash = hasher.finish();
-
         let mut regex_to_state = FxHashMap::default();
-        regex_to_state.insert(hash, 0);
+        regex_to_state.insert((*regex).clone(), 0);
 
         Self {
             states: vec![AutomatonState {
@@ -568,23 +950,20 @@ impl RegexAutomaton {
 
     /// Get or create state for a regex
     fn get_or_create_state(&mut self, regex: Arc<Regex>) -> u32 {
-        let mut hasher = rustc_hash::FxHasher::default();
-        regex.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        if let Some(&id) = self.regex_to_state.get(&hash) {
+        if let Some(&id) = self.regex_to_state.get(&*regex) {
             return id;
         }
 
         let id = self.states.len() as u32;
         let accepting = regex.is_nullable();
+        let key = (*regex).clone();
         self.states.push(AutomatonState {
             regex,
             id,
             accepting,
         });
         self.transitions.push(SmallVec::new());
-        self.regex_to_state.insert(hash, id);
+        self.regex_to_state.insert(key, id);
         id
     }
 

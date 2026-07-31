@@ -239,6 +239,40 @@ impl SExpr {
     }
 }
 
+impl Drop for SExpr {
+    /// Tear an S-expression down iteratively.
+    ///
+    /// Now that [`SExprParser::parse_sexpr`] can build an arbitrarily deep
+    /// tree without consuming native stack, the compiler-generated drop
+    /// glue became the remaining depth limit: dropping a 100k-deep
+    /// `SExpr::List` recursed 100k frames and aborted the process. `Drop`
+    /// has no error channel at all, so this too has to be an explicit heap
+    /// stack rather than a bounded one.
+    ///
+    /// Each nested list's children are moved into a pending queue and the
+    /// husk is dropped with an empty `Vec`, so the derived glue never
+    /// descends more than one level.
+    fn drop(&mut self) {
+        let SExpr::List(items) = self else {
+            return;
+        };
+        if items.is_empty() {
+            return;
+        }
+
+        let mut pending: Vec<Vec<SExpr>> = vec![std::mem::take(items)];
+        while let Some(batch) = pending.pop() {
+            for mut item in batch {
+                if let SExpr::List(children) = &mut item
+                    && !children.is_empty()
+                {
+                    pending.push(std::mem::take(children));
+                }
+            }
+        }
+    }
+}
+
 /// Parser for S-expressions
 pub struct SExprParser {
     tokens: Vec<Token>,
@@ -251,43 +285,56 @@ impl SExprParser {
         Self { tokens, pos: 0 }
     }
 
-    /// Parse a single S-expression
+    /// Parse a single S-expression.
+    ///
+    /// The nesting depth of the input is directly attacker-controlled
+    /// (`((((…))))` in a CHC/SMT file reaching `SExprParser::parse_str`,
+    /// `ChcParser::parse`, or `ChcCompBuilder::from_file`), so this is
+    /// parsed with an explicit heap stack of partially built lists rather
+    /// than one native frame per level. Only the mechanism changes: the
+    /// same three error cases are reported, at the same points.
     pub fn parse_sexpr(&mut self) -> Result<SExpr, ParseError> {
-        if self.pos >= self.tokens.len() {
-            return Err(ParseError::InvalidSyntax(
-                "unexpected end of input".to_string(),
-            ));
-        }
+        // Stack of the lists currently being built; empty means "not
+        // inside any list", i.e. the next completed expression is the
+        // result.
+        let mut open_lists: Vec<Vec<SExpr>> = Vec::new();
 
-        let token = &self.tokens[self.pos];
+        loop {
+            let Some(token) = self.tokens.get(self.pos) else {
+                return Err(ParseError::InvalidSyntax(if open_lists.is_empty() {
+                    "unexpected end of input".to_string()
+                } else {
+                    "unclosed parenthesis".to_string()
+                }));
+            };
 
-        match token {
-            Token::LParen => {
-                self.pos += 1;
-                let mut items = Vec::new();
-
-                // Parse items until we hit RParen
-                while self.pos < self.tokens.len() {
-                    if matches!(self.tokens[self.pos], Token::RParen) {
-                        self.pos += 1;
-                        return Ok(SExpr::List(items));
-                    }
-
-                    items.push(self.parse_sexpr()?);
+            let finished = match token {
+                Token::LParen => {
+                    self.pos += 1;
+                    open_lists.push(Vec::new());
+                    continue;
                 }
+                Token::RParen => {
+                    let Some(items) = open_lists.pop() else {
+                        return Err(ParseError::InvalidSyntax(
+                            "unexpected closing parenthesis".to_string(),
+                        ));
+                    };
+                    self.pos += 1;
+                    SExpr::List(items)
+                }
+                atom => {
+                    let expr = SExpr::Atom(atom.clone());
+                    self.pos += 1;
+                    expr
+                }
+            };
 
-                Err(ParseError::InvalidSyntax(
-                    "unclosed parenthesis".to_string(),
-                ))
-            }
-            Token::RParen => Err(ParseError::InvalidSyntax(
-                "unexpected closing parenthesis".to_string(),
-            )),
-            _ => {
-                // It's an atom
-                let atom = self.tokens[self.pos].clone();
-                self.pos += 1;
-                Ok(SExpr::Atom(atom))
+            // Attach the finished expression to its parent, or return it
+            // when there is no enclosing list left.
+            match open_lists.last_mut() {
+                Some(parent) => parent.push(finished),
+                None => return Ok(finished),
             }
         }
     }
@@ -344,7 +391,24 @@ pub struct ChcParser<'a> {
     /// Variable name to term ID mapping (local to current rule)
     #[allow(dead_code)]
     variables: HashMap<String, TermId>,
+    /// Current nesting depth of [`ChcParser::parse_term`].
+    term_depth: usize,
 }
+
+/// Maximum S-expression nesting `ChcParser::parse_term` will descend into.
+///
+/// Unlike the s-expression reader, term construction dispatches through a
+/// large per-operator `match`, so its native frames are fat; the depth is
+/// still attacker-controlled. `parse_term` returns a `Result`, so exceeding
+/// the bound is reported as a real parse error — the input is *rejected*,
+/// never silently truncated into a different (wrong) term.
+///
+/// The value is chosen so that parsing at the limit is safe even when the
+/// caller runs on a small (1 MiB) worker thread in an unoptimized build,
+/// which `parse_term_accepts_nesting_just_under_the_limit` pins; SMT-LIB
+/// formulas nest far shallower than this in practice (they are wide
+/// conjunctions, not deep chains).
+const MAX_TERM_NESTING: usize = 500;
 
 impl<'a> ChcParser<'a> {
     /// Create a new CHC parser
@@ -354,6 +418,7 @@ impl<'a> ChcParser<'a> {
             system: ChcSystem::new(),
             predicates: HashMap::new(),
             variables: HashMap::new(),
+            term_depth: 0,
         }
     }
 
@@ -472,12 +537,26 @@ impl<'a> ChcParser<'a> {
         }
     }
 
-    /// Parse a term from an S-expression
+    /// Parse a term from an S-expression.
+    ///
+    /// Descends one native frame per nesting level, so the depth is capped
+    /// at [`MAX_TERM_NESTING`] and exceeding it is an honest
+    /// [`ParseError`]: the caller learns the input was refused instead of
+    /// receiving a truncated term that would silently mean something else.
     fn parse_term(&mut self, expr: &SExpr) -> Result<TermId, ParseError> {
-        match expr {
+        if self.term_depth >= MAX_TERM_NESTING {
+            return Err(ParseError::InvalidSyntax(format!(
+                "term nesting exceeds the supported limit of {MAX_TERM_NESTING} levels"
+            )));
+        }
+
+        self.term_depth += 1;
+        let parsed = match expr {
             SExpr::Atom(token) => self.parse_atom(token),
             SExpr::List(items) => self.parse_application(items),
-        }
+        };
+        self.term_depth -= 1;
+        parsed
     }
 
     /// Parse an atomic term (variable, constant, etc.)
@@ -876,20 +955,14 @@ impl<'a> ChcParser<'a> {
     }
 
     /// Flatten an AND-tree into individual conjuncts.
+    ///
+    /// The `And` nesting depth is whatever the parsed file contains, so the
+    /// flattening walks an explicit heap stack
+    /// ([`crate::walk::flatten_conjuncts`]) rather than recursing, and does
+    /// not re-expand a shared `And` sub-DAG (conjunction is idempotent, so
+    /// that only costs exponential time and output size).
     fn collect_conjuncts(&self, term: TermId) -> Vec<TermId> {
-        let Some(term_data) = self.terms.get(term) else {
-            return vec![term];
-        };
-        match &term_data.kind {
-            TermKind::And(args) => {
-                let mut result = Vec::new();
-                for &arg in args.iter() {
-                    result.extend(self.collect_conjuncts(arg));
-                }
-                result
-            }
-            _ => vec![term],
-        }
+        crate::walk::flatten_conjuncts(self.terms, term)
     }
 
     /// Split a conjunction into predicate applications and theory constraints.
@@ -1370,5 +1443,140 @@ mod tests {
         let system = result.expect("parse succeeded");
         assert_eq!(system.num_predicates(), 1);
         assert_eq!(system.num_rules(), 2, "should have 2 Horn rules");
+    }
+
+    /// 100k nested parentheses must parse without overflowing the stack —
+    /// the nesting depth is directly attacker-controlled.
+    #[test]
+    fn parse_sexpr_survives_deep_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                const DEPTH: usize = 100_000;
+                let mut input = String::with_capacity(DEPTH * 2 + 1);
+                input.push_str(&"(".repeat(DEPTH));
+                input.push('a');
+                input.push_str(&")".repeat(DEPTH));
+
+                let parsed = SExprParser::parse_str(&input).expect("deep s-expr must parse");
+                assert_eq!(parsed.len(), 1);
+
+                // Walk down iteratively to confirm the shape, then drop the
+                // value without recursing (`SExpr`'s own `Drop` is derived
+                // and recursive, so keep the depth check cheap).
+                let mut depth = 0usize;
+                let mut node = &parsed[0];
+                while let SExpr::List(items) = node {
+                    depth += 1;
+                    match items.first() {
+                        Some(first) => node = first,
+                        None => break,
+                    }
+                }
+                assert_eq!(depth, DEPTH, "every level must be preserved");
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep parse must return");
+    }
+
+    /// The three error cases of `parse_sexpr` must be reported exactly as
+    /// before the explicit-stack rewrite.
+    #[test]
+    fn parse_sexpr_error_cases_are_unchanged() {
+        let err = SExprParser::parse_str("(a b").expect_err("unclosed list must fail");
+        assert!(
+            err.to_string().contains("unclosed parenthesis"),
+            "got: {err}"
+        );
+
+        let err = SExprParser::parse_str(")").expect_err("stray `)` must fail");
+        assert!(
+            err.to_string().contains("unexpected closing parenthesis"),
+            "got: {err}"
+        );
+
+        let mut parser = SExprParser::new(Vec::new());
+        let err = parser.parse_sexpr().expect_err("empty input must fail");
+        assert!(
+            err.to_string().contains("unexpected end of input"),
+            "got: {err}"
+        );
+    }
+
+    /// Nested lists keep their structure and order.
+    #[test]
+    fn parse_sexpr_preserves_nested_structure() {
+        let parsed = SExprParser::parse_str("(a (b c) d)").expect("must parse");
+        assert_eq!(parsed.len(), 1);
+        let SExpr::List(items) = &parsed[0] else {
+            panic!("expected a list");
+        };
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].as_symbol(), Some("a"));
+        let SExpr::List(inner) = &items[1] else {
+            panic!("expected a nested list");
+        };
+        assert_eq!(inner.len(), 2);
+        assert_eq!(inner[0].as_symbol(), Some("b"));
+        assert_eq!(inner[1].as_symbol(), Some("c"));
+        assert_eq!(items[2].as_symbol(), Some("d"));
+    }
+
+    /// A term nested far past [`MAX_TERM_NESTING`] must be *rejected*, not
+    /// crash the process and not silently produce a truncated term.
+    #[test]
+    fn parse_term_rejects_excessive_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                const DEPTH: usize = 100_000;
+                let mut input = String::from("(assert ");
+                input.push_str(&"(not ".repeat(DEPTH));
+                input.push_str("true");
+                input.push_str(&")".repeat(DEPTH));
+                input.push(')');
+
+                let mut terms = TermManager::new();
+                let mut parser = ChcParser::new(&mut terms);
+                let err = parser
+                    .parse(&input)
+                    .expect_err("a 100k-deep term must be refused");
+                assert!(
+                    err.to_string().contains("term nesting exceeds"),
+                    "got: {err}"
+                );
+            })
+            .expect("thread spawn should succeed");
+        handle
+            .join()
+            .expect("over-deep term parsing must return an error, not abort");
+    }
+
+    /// The limit itself must be *reachable* on a small stack: a term just
+    /// under [`MAX_TERM_NESTING`] parses successfully inside a 1 MiB
+    /// thread, so the bound rejects only inputs that would have crashed.
+    #[test]
+    fn parse_term_accepts_nesting_just_under_the_limit() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let depth = MAX_TERM_NESTING - 10;
+                let mut input = String::from("(assert ");
+                input.push_str(&"(and ".repeat(depth));
+                input.push_str("true");
+                input.push_str(&")".repeat(depth));
+                input.push(')');
+
+                let mut terms = TermManager::new();
+                let mut parser = ChcParser::new(&mut terms);
+                assert!(
+                    parser.parse(&input).is_ok(),
+                    "a term just under the limit must still parse"
+                );
+            })
+            .expect("thread spawn should succeed");
+        handle
+            .join()
+            .expect("parsing at the configured depth limit must not overflow");
     }
 }

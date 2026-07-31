@@ -10,11 +10,11 @@
 //!   ([`Z3Context::sort_of_bool`], [`Z3Context::sort_of_int`],
 //!   [`Z3Context::sort_of_real`], [`Z3Context::sort_of_bv`],
 //!   [`Z3Context::sort_of_term`]).
-//! - **Term substitution** — [`Z3Context::substitute`], a capture-avoiding
-//!   bottom-up rebuild that replaces ground subterms.  Implemented directly
-//!   here (rather than delegating to `TermManager::substitute`) because the
-//!   core routine does not recurse through bit-vector operators or function
-//!   applications, both of which are reachable through the Z3 compat surface.
+//! - **Term substitution** — [`Z3Context::substitute`], which replaces
+//!   subterms throughout an expression.  A thin adapter over
+//!   [`TermManager::substitute`]: it converts Z3's `&[(from, to)]` pair slice
+//!   into the map that routine takes, and inherits its iterative,
+//!   capture-avoiding, exhaustive-by-construction behaviour.
 //! - **Quantifier patterns / triggers** — [`Z3Pattern`],
 //!   [`Z3Context::mk_pattern`], [`Z3Context::forall_with_patterns`] and
 //!   [`Z3Context::exists_with_patterns`].  Backed by
@@ -29,7 +29,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
-use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_core::ast::{TermId, TermManager};
 use oxiz_core::sort::{SortId, SortKind};
 
 use crate::z3_compat::{BV, Bool, Int, Real, Z3Context};
@@ -247,318 +247,50 @@ impl Z3Context {
     /// Substitute subterms within `expr`.
     ///
     /// Each `(from, to)` pair replaces every occurrence of the subterm `from`
-    /// with `to`.  Substitution is performed bottom-up with memoization so the
-    /// cost is linear in the size of the term DAG even when subterms are
-    /// shared.
+    /// with `to`.  Substitution is memoized so the cost is linear in the size
+    /// of the term DAG even when subterms are shared.
     ///
-    /// This is capture-avoiding for **ground** replacement (the standard Z3
-    /// `substitute` use case): the `from`/`to` terms are treated as opaque, and
-    /// because OxiZ quantifiers carry their bound variables as `(name, sort)`
-    /// pairs (not as free `Var` terms inside the body that could clash with a
-    /// replacement), rebuilding through the manager's `mk_*` constructors cannot
-    /// introduce variable capture.
+    /// # Delegates to the core substitution
     ///
-    /// # Why not delegate to `TermManager::substitute`?
+    /// This is a thin adapter over
+    /// [`TermManager::substitute`](oxiz_core::ast::TermManager::substitute) --
+    /// it only turns Z3's `&[(from, to)]` pair slice into the `FxHashMap` that
+    /// routine takes -- so it inherits all of that routine's properties:
     ///
-    /// The core routine intentionally stops at "complex" terms — it does not
-    /// recurse through bit-vector operators or function applications, returning
-    /// them unchanged.  Those node kinds are directly reachable through the Z3
-    /// compat surface (`BV::*`, `FuncDecl::apply`), so a faithful Z3
-    /// `substitute` must descend into them; hence the dedicated rebuild here.
+    /// * it descends into `Forall`/`Exists`/`Let`/`Match` bodies, bindings,
+    ///   cases *and* trigger patterns, so a genuinely free (unshadowed)
+    ///   variable occurring under any binder is replaced;
+    /// * it is capture-avoiding: a bound variable whose name would capture a
+    ///   free variable of some replacement term is alpha-renamed first
+    ///   (OxiZ has no separate bound-variable representation -- a
+    ///   quantifier's bound occurrences are ordinary `TermKind::Var(name)`
+    ///   terms, hash-consed identically to free ones -- so this renaming is
+    ///   what makes substitution under a binder correct at all);
+    /// * every `TermKind` variant is handled explicitly there, with no
+    ///   catch-all arm, so a newly added variant is a compile error rather
+    ///   than a silently skipped node;
+    /// * it uses an explicit heap stack, so no input depth overflows the
+    ///   native call stack.
+    ///
+    /// This module used to carry its own bottom-up rebuild (`subst_rebuild`
+    /// and friends) instead, justified by the core routine "not recursing
+    /// through bit-vector operators or function applications". That
+    /// justification was stale: `TermManager::rebuild_substituted` covers
+    /// every bit-vector kind and `Apply` explicitly. The duplicate had two
+    /// defects the delegation removes -- it treated all four binder forms as
+    /// opaque (so `(forall ((x Int)) (Q x z))[z := t]` came back completely
+    /// untouched, a silent under-substitution), and it was a second
+    /// independent implementation of "rebuild a term given a subterm
+    /// replacement map", exactly the duplication that
+    /// `oxiz_core::ast::traversal::map_terms` retired its own
+    /// `transform_children` over.
     #[must_use]
     pub fn substitute(&self, expr: TermId, subst: &[(TermId, TermId)]) -> TermId {
         if subst.is_empty() {
             return expr;
         }
         let map: FxHashMap<TermId, TermId> = subst.iter().copied().collect();
-        let mut cache: FxHashMap<TermId, TermId> = FxHashMap::default();
-        let mut tm = self.tm.borrow_mut();
-        subst_rebuild(&mut tm, expr, &map, &mut cache)
-    }
-}
-
-/// Recursively rebuild `id`, replacing any node present in `map` and otherwise
-/// reconstructing the term from substituted children.
-///
-/// `cache` memoizes already-rewritten nodes so shared subterms are visited once.
-fn subst_rebuild(
-    tm: &mut TermManager,
-    id: TermId,
-    map: &FxHashMap<TermId, TermId>,
-    cache: &mut FxHashMap<TermId, TermId>,
-) -> TermId {
-    // Direct replacement takes precedence over structural recursion.
-    if let Some(&to) = map.get(&id) {
-        return to;
-    }
-    if let Some(&done) = cache.get(&id) {
-        return done;
-    }
-
-    let kind = match tm.get(id).map(|t| t.kind.clone()) {
-        Some(k) => k,
-        None => return id,
-    };
-
-    // Helper closures cannot borrow `tm` mutably while also being called in a
-    // loop, so children are rewritten inline via a small macro.
-    macro_rules! rec {
-        ($child:expr) => {
-            subst_rebuild(tm, $child, map, cache)
-        };
-    }
-
-    let result = match kind {
-        // Leaves: never structurally rewritten (direct replacement handled
-        // above). `Var` is a leaf too — a bound/free variable replaced only by
-        // an explicit (from, to) pair.
-        TermKind::True
-        | TermKind::False
-        | TermKind::IntConst(_)
-        | TermKind::RealConst(_)
-        | TermKind::BitVecConst { .. }
-        | TermKind::StringLit(_)
-        | TermKind::Var(_) => id,
-
-        // ── Boolean ──────────────────────────────────────────────────────
-        TermKind::Not(a) => {
-            let na = rec!(a);
-            if na == a { id } else { tm.mk_not(na) }
-        }
-        TermKind::And(args) => rebuild_nary(tm, id, &args, map, cache, |tm, a| tm.mk_and(a)),
-        TermKind::Or(args) => rebuild_nary(tm, id, &args, map, cache, |tm, a| tm.mk_or(a)),
-        TermKind::Xor(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_xor(na, nb)
-            }
-        }
-        TermKind::Implies(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_implies(na, nb)
-            }
-        }
-        TermKind::Ite(c, t, e) => {
-            let (nc, nt, ne) = (rec!(c), rec!(t), rec!(e));
-            if nc == c && nt == t && ne == e {
-                id
-            } else {
-                tm.mk_ite(nc, nt, ne)
-            }
-        }
-
-        // ── Equality / distinct ──────────────────────────────────────────
-        TermKind::Eq(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_eq(na, nb)
-            }
-        }
-        TermKind::Distinct(args) => {
-            rebuild_nary(tm, id, &args, map, cache, |tm, a| tm.mk_distinct(a))
-        }
-
-        // ── Arithmetic ───────────────────────────────────────────────────
-        TermKind::Neg(a) => {
-            let na = rec!(a);
-            if na == a { id } else { tm.mk_neg(na) }
-        }
-        TermKind::Add(args) => rebuild_nary(tm, id, &args, map, cache, |tm, a| tm.mk_add(a)),
-        TermKind::Mul(args) => rebuild_nary(tm, id, &args, map, cache, |tm, a| tm.mk_mul(a)),
-        TermKind::Sub(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_sub(na, nb)
-            }
-        }
-        TermKind::Div(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_div(na, nb)
-            }
-        }
-        TermKind::Mod(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_mod(na, nb)
-            }
-        }
-        TermKind::Lt(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_lt(na, nb)
-            }
-        }
-        TermKind::Le(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_le(na, nb)
-            }
-        }
-        TermKind::Gt(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_gt(na, nb)
-            }
-        }
-        TermKind::Ge(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_ge(na, nb)
-            }
-        }
-
-        // ── Bit-vectors ──────────────────────────────────────────────────
-        TermKind::BvConcat(a, b) => {
-            let (na, nb) = (rec!(a), rec!(b));
-            if na == a && nb == b {
-                id
-            } else {
-                tm.mk_bv_concat(na, nb)
-            }
-        }
-        TermKind::BvExtract { high, low, arg } => {
-            let na = rec!(arg);
-            if na == arg {
-                id
-            } else {
-                tm.mk_bv_extract(high, low, na)
-            }
-        }
-        TermKind::BvNot(a) => {
-            let na = rec!(a);
-            if na == a { id } else { tm.mk_bv_not(na) }
-        }
-        // Note: bit-vector negation has no dedicated `TermKind`; the builder
-        // desugars `mk_bv_neg` into `BvSub(0, x)`, handled by the `BvSub` arm.
-        TermKind::BvAnd(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_and),
-        TermKind::BvOr(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_or),
-        TermKind::BvXor(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_xor),
-        TermKind::BvAdd(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_add),
-        TermKind::BvSub(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_sub),
-        TermKind::BvMul(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_mul),
-        TermKind::BvUdiv(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_udiv),
-        TermKind::BvSdiv(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_sdiv),
-        TermKind::BvUrem(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_urem),
-        TermKind::BvSrem(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_srem),
-        TermKind::BvShl(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_shl),
-        TermKind::BvLshr(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_lshr),
-        TermKind::BvAshr(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_ashr),
-        TermKind::BvUlt(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_ult),
-        TermKind::BvUle(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_ule),
-        TermKind::BvSlt(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_slt),
-        TermKind::BvSle(a, b) => rebuild_bin(tm, id, a, b, map, cache, TermManager::mk_bv_sle),
-
-        // ── Arrays ───────────────────────────────────────────────────────
-        TermKind::Select(arr, idx) => {
-            let (na, ni) = (rec!(arr), rec!(idx));
-            if na == arr && ni == idx {
-                id
-            } else {
-                tm.mk_select(na, ni)
-            }
-        }
-        TermKind::Store(arr, idx, val) => {
-            let (na, ni, nv) = (rec!(arr), rec!(idx), rec!(val));
-            if na == arr && ni == idx && nv == val {
-                id
-            } else {
-                tm.mk_store(na, ni, nv)
-            }
-        }
-
-        // ── Uninterpreted-function application ───────────────────────────
-        TermKind::Apply { func, args } => {
-            let new_args: smallvec::SmallVec<[TermId; 4]> = args.iter().map(|&a| rec!(a)).collect();
-            if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-                id
-            } else {
-                let func_name = tm.resolve_str(func).to_string();
-                let sort = tm.get(id).map_or(tm.sorts.bool_sort, |t| t.sort);
-                tm.mk_apply(&func_name, new_args, sort)
-            }
-        }
-
-        // Any other term kind (string operators, floating-point, datatypes,
-        // quantifiers, let/match) is treated as opaque and replaced only by an
-        // explicit (from, to) pair, which was already handled above. This is
-        // safe and conservative for the ground-substitution contract.
-        _ => id,
-    };
-
-    cache.insert(id, result);
-    result
-}
-
-/// Rewrite the children of an n-ary node and rebuild it via `build` only if any
-/// child changed.
-///
-/// `build` is generic over a closure so it can call the manager's n-ary
-/// constructors (which take `impl IntoIterator<Item = TermId>`) directly,
-/// avoiding fragile coercion of generic methods to function pointers.
-fn rebuild_nary<F>(
-    tm: &mut TermManager,
-    id: TermId,
-    args: &[TermId],
-    map: &FxHashMap<TermId, TermId>,
-    cache: &mut FxHashMap<TermId, TermId>,
-    build: F,
-) -> TermId
-where
-    F: FnOnce(&mut TermManager, smallvec::SmallVec<[TermId; 4]>) -> TermId,
-{
-    let new_args: smallvec::SmallVec<[TermId; 4]> = args
-        .iter()
-        .map(|&a| subst_rebuild(tm, a, map, cache))
-        .collect();
-    if new_args.iter().zip(args.iter()).all(|(a, b)| a == b) {
-        id
-    } else {
-        build(tm, new_args)
-    }
-}
-
-/// Rewrite both operands of a binary node and rebuild it via `build` only if
-/// either operand changed.
-fn rebuild_bin<F>(
-    tm: &mut TermManager,
-    id: TermId,
-    a: TermId,
-    b: TermId,
-    map: &FxHashMap<TermId, TermId>,
-    cache: &mut FxHashMap<TermId, TermId>,
-    build: F,
-) -> TermId
-where
-    F: FnOnce(&mut TermManager, TermId, TermId) -> TermId,
-{
-    let na = subst_rebuild(tm, a, map, cache);
-    let nb = subst_rebuild(tm, b, map, cache);
-    if na == a && nb == b {
-        id
-    } else {
-        build(tm, na, nb)
+        self.tm.borrow_mut().substitute(expr, &map)
     }
 }
 
@@ -657,6 +389,7 @@ impl Z3Context {
 mod tests {
     use super::*;
     use crate::z3_compat::Z3Config;
+    use oxiz_core::ast::TermKind;
 
     fn ctx() -> Z3Context {
         Z3Context::new(&Z3Config::new())
@@ -700,5 +433,160 @@ mod tests {
         let p = c.mk_pattern(&[]);
         assert!(p.is_empty());
         assert_eq!(p.len(), 0);
+    }
+
+    /// Run `f` to completion on a dedicated thread with a 128 KiB stack --
+    /// deliberately far smaller than the default (several-MiB) main-thread
+    /// stack -- and return whatever it returns. Mirrors the same helper in
+    /// `oxiz-core`'s `ast/manager/query/tests.rs`: a stack overflow aborts
+    /// the whole process rather than failing a single test gracefully, so
+    /// for the deep-nesting test below, the call *returning at all* is
+    /// itself part of what is being asserted.
+    ///
+    /// This stack and the depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    #[test]
+    fn substitute_survives_deep_not_chain_on_tiny_stack() {
+        // Regression: this module's own (since retired) `subst_rebuild`
+        // used to recurse natively once per level of term nesting, with no
+        // depth guard at all; `TermManager::substitute`, which
+        // `Z3Context::substitute` now delegates to, uses an explicit heap
+        // stack. Built
+        // iteratively (never recursively, which would overflow before the
+        // assertion runs) and run inside a thread with a deliberately
+        // small 128 KiB stack: the call returning at all is part of the
+        // assertion, but the result must also be exactly correct -- the
+        // substitution must reach all the way through the chain down to
+        // the leaf, replacing it, not silently stop partway.
+        const DEPTH: usize = 12_500;
+
+        let (reached_leaf, old_leaf_gone) = run_on_small_stack(|| {
+            let c = ctx();
+            let bool_sort = c.bool_sort();
+            let x = Bool::new_const(&c, "x");
+            let y = Bool::new_const(&c, "y");
+
+            // Built via repeated `mk_apply` of the same 1-ary uninterpreted
+            // function `f` (`f(f(f(...f(x)...)))`) rather than `mk_not`:
+            // `TermManager::intern` is `pub(crate)` in oxiz-core and not
+            // reachable from this crate, and `mk_not` would collapse a
+            // chain of an even number of negations back down to `x`
+            // itself. Uninterpreted function application has no such
+            // simplification, so this reaches genuine depth through only
+            // the public API.
+            let mut chain = x.id;
+            {
+                let mut tm = c.tm.borrow_mut();
+                for _ in 0..DEPTH {
+                    chain = tm.mk_apply("f", [chain], bool_sort);
+                }
+            }
+
+            let result = c.substitute(chain, &[(x.id, y.id)]);
+
+            // Peel the same number of `f(...)` layers back off the result
+            // and confirm the leaf underneath is now `y`, not `x`.
+            let mut current = result;
+            for _ in 0..DEPTH {
+                let kind = c.tm.borrow().get(current).map(|t| t.kind.clone());
+                match kind {
+                    Some(TermKind::Apply { args, .. }) if args.len() == 1 => current = args[0],
+                    _ => break,
+                }
+            }
+            (current == y.id, current != x.id)
+        });
+
+        assert!(
+            reached_leaf,
+            "substitute must reach the bottom of a 12,500-deep application chain"
+        );
+        assert!(
+            old_leaf_gone,
+            "the old leaf x must not remain after substitution"
+        );
+    }
+
+    /// Regression: `Z3Context::substitute` used to treat `Forall`/`Exists`/
+    /// `Let`/`Match` as opaque, so a genuinely free (unshadowed) variable
+    /// occurring under any binder was silently left in place -- an
+    /// under-substitution the caller has no way to detect.
+    #[test]
+    fn substitute_descends_into_forall_body() {
+        let c = ctx();
+        let int_sort = c.int_sort();
+        let bool_sort = c.bool_sort();
+        let x = Int::new_const(&c, "x");
+        let z = Int::new_const(&c, "z");
+        let w = Int::new_const(&c, "w");
+
+        // (forall ((x Int)) (Q x z)) with z free.
+        let body = c.tm.borrow_mut().mk_apply("Q", [x.id, z.id], bool_sort);
+        let forall = c.forall_with_patterns(&[("x", int_sort)], &[], &Bool::from_id(body));
+
+        let result = c.substitute(forall.id, &[(z.id, w.id)]);
+
+        let expected_body = c.tm.borrow_mut().mk_apply("Q", [x.id, w.id], bool_sort);
+        let expected =
+            c.forall_with_patterns(&[("x", int_sort)], &[], &Bool::from_id(expected_body));
+        assert_eq!(
+            result, expected.id,
+            "the free z under the forall must be replaced by w"
+        );
+    }
+
+    /// Companion to [`substitute_descends_into_forall_body`]: now that the
+    /// walk descends into binders, it must also be capture-avoiding --
+    /// substituting a replacement whose free variable collides with a bound
+    /// name has to alpha-rename that binder rather than capture it.
+    #[test]
+    fn substitute_under_binder_is_capture_avoiding() {
+        let c = ctx();
+        let int_sort = c.int_sort();
+        let bool_sort = c.bool_sort();
+        let x = Int::new_const(&c, "x");
+        let z = Int::new_const(&c, "z");
+
+        // (forall ((x Int)) (Q x z))[z := x]: naive substitution would
+        // produce (forall ((x Int)) (Q x x)), capturing the substituted x.
+        let body = c.tm.borrow_mut().mk_apply("Q", [x.id, z.id], bool_sort);
+        let forall = c.forall_with_patterns(&[("x", int_sort)], &[], &Bool::from_id(body));
+
+        let result = c.substitute(forall.id, &[(z.id, x.id)]);
+
+        let kind =
+            c.tm.borrow()
+                .get(result)
+                .map(|t| t.kind.clone())
+                .expect("result term must exist");
+        let TermKind::Forall { vars, body, .. } = kind else {
+            panic!("expected the result to still be a Forall, got {kind:?}");
+        };
+        let renamed = vars
+            .first()
+            .map(|&(name, sort)| (c.tm.borrow().resolve_str(name).to_string(), sort))
+            .expect("the rebuilt Forall must bind exactly one variable");
+        assert_ne!(
+            renamed.0, "x",
+            "the bound x must have been alpha-renamed away from the substituted free x"
+        );
+
+        let fresh = c.tm.borrow_mut().mk_var(&renamed.0, renamed.1);
+        let expected_body = c.tm.borrow_mut().mk_apply("Q", [fresh, x.id], bool_sort);
+        assert_eq!(
+            body, expected_body,
+            "the bound occurrence must be renamed and the substituted x left free"
+        );
     }
 }

@@ -18,6 +18,19 @@ type DatatypeConstructorGroup = (
     Vec<DataTypeConstructor>,
 );
 
+/// Outcome of reading one top-level `( ... )` form.
+///
+/// The `Skipped` case exists so [`Parser::parse_command`] can retry with a
+/// loop; see its doc comment for why a tail call was not good enough.
+enum CommandStep {
+    /// End of input reached; there was no further form to read.
+    Eof,
+    /// A recognized command was parsed.
+    Parsed(Command),
+    /// An unrecognized command was balance-skipped and produced no command.
+    Skipped,
+}
+
 impl<'a> Parser<'a> {
     /// Expect an opening parenthesis '('
     pub(super) fn expect_lparen(&mut self) -> Result<()> {
@@ -116,6 +129,45 @@ impl<'a> Parser<'a> {
             return Ok(sort_id);
         }
         self.parse_sort()
+    }
+
+    /// Spell out, for a diagnostic, the alias cycle a rejected `define-sort`
+    /// would have closed.
+    ///
+    /// `body_symbol` is the raw source symbol of a bare-symbol body, before
+    /// [`Parser::parse_sort`] flattened it through the existing alias table;
+    /// following that table from it recovers the intermediate names, so
+    /// `(define-sort A () B)` followed by `(define-sort B () A)` reports
+    /// `B -> A -> B` rather than the flattened `B -> B`. A compound body has
+    /// no such chain and is reported by its printed form, e.g.
+    /// `A -> (Array A Int)`.
+    fn sort_alias_cycle_path(
+        &self,
+        name: &str,
+        body_symbol: Option<&str>,
+        body_text: &str,
+    ) -> String {
+        let Some(body_symbol) = body_symbol else {
+            return format!("{name} -> {body_text}");
+        };
+        let mut path = vec![name.to_string(), body_symbol.to_string()];
+        let mut current = body_symbol.to_string();
+        // The existing table is acyclic (this very check keeps it so), hence
+        // this walk terminates; the bound only makes that independent of the
+        // invariant holding.
+        for _ in 0..self.sort_aliases.len() {
+            if current == name {
+                break;
+            }
+            match self.sort_aliases.get(&current) {
+                Some((params, base)) if params.is_empty() => {
+                    current = base.clone();
+                    path.push(current.clone());
+                }
+                _ => break,
+            }
+        }
+        path.join(" -> ")
     }
 
     /// Parse a single SMT-LIB attribute value (as used by `set-info` and
@@ -262,13 +314,35 @@ impl<'a> Parser<'a> {
 
     /// Parse a single SMT-LIB2 top-level command.
     /// Returns `None` on EOF.
+    ///
+    /// Unrecognized commands are balance-skipped and the next form is read.
+    /// That retry is a *loop*, not a tail call: skipping used to `return
+    /// self.parse_command()`, and because a live `cmd_name: String` has to be
+    /// dropped after the call returns, LLVM cannot turn it into a jump. A
+    /// script of N unknown commands — a documented, tested, fully valid input
+    /// ("lenient interoperability") — therefore consumed N native stack
+    /// frames and aborted the process well before N reached a million.
     pub fn parse_command(&mut self) -> Result<Option<Command>> {
+        loop {
+            match self.parse_command_step()? {
+                CommandStep::Eof => return Ok(None),
+                CommandStep::Parsed(cmd) => return Ok(Some(cmd)),
+                CommandStep::Skipped => {}
+            }
+        }
+    }
+
+    /// Read exactly one top-level `( ... )` form.
+    ///
+    /// Callers must go through [`Parser::parse_command`], which turns a
+    /// [`CommandStep::Skipped`] outcome into another iteration.
+    fn parse_command_step(&mut self) -> Result<CommandStep> {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::Parser);
         let token = match self.lexer.next_token() {
-            Some(t) if matches!(t.kind, TokenKind::Eof) => return Ok(None),
+            Some(t) if matches!(t.kind, TokenKind::Eof) => return Ok(CommandStep::Eof),
             Some(t) => t,
-            None => return Ok(None),
+            None => return Ok(CommandStep::Eof),
         };
 
         if !matches!(token.kind, TokenKind::LParen) {
@@ -559,18 +633,45 @@ impl<'a> Parser<'a> {
                 // references (e.g. `(Array MyInt Int)`, resolved by
                 // `parse_sort`'s ordinary recursive descent rather than
                 // `resolve_sort`) still see it.
-                let is_bare_symbol = matches!(
-                    self.lexer.peek().map(|t| t.kind),
-                    Some(TokenKind::Symbol(_))
-                );
+                let body_symbol = match self.lexer.peek().map(|t| t.kind) {
+                    Some(TokenKind::Symbol(s)) => Some(s),
+                    _ => None,
+                };
+                let is_bare_symbol = body_symbol.is_some();
 
                 // Parse the body with the full sort grammar (not just a bare
                 // symbol) so compound bodies like `(Array Int Int)` or
                 // `(_ BitVec 32)` parse instead of erroring, and resolve to a
                 // concrete `SortId` up front.
+                let body_position = self.lexer.position();
                 let sort_id = self.parse_sort()?;
                 self.expect_rparen()?;
                 let sort_expr = self.sort_id_to_string(sort_id);
+
+                // Soundness: a sort abbreviation defined in terms of itself has
+                // no fixed point, so there is nothing to register. The body
+                // parses fine -- a not-yet-known symbol becomes a fresh
+                // `Uninterpreted` sort carrying that very name -- and only a
+                // *later* reference reveals the problem, by which point
+                // `parse_sort_name` is chasing `A -> A` forever. Reject it
+                // here, where the cycle is still nameable; z3 likewise rejects
+                // a `define-sort` body that names an unknown sort at the
+                // definition rather than at the use.
+                //
+                // Both `sort_aliases` and the sort manager's `define_alias`
+                // registry are written below, so this check must precede both
+                // for the two tables to stay consistent.
+                if self.sort_mentions_name(sort_id, &name) {
+                    return Err(OxizError::ParseError {
+                        position: body_position,
+                        message: format!(
+                            "define-sort '{name}': cyclic sort abbreviation ({}); a sort \
+                             abbreviation may not be defined in terms of itself, directly or \
+                             through other abbreviations",
+                            self.sort_alias_cycle_path(&name, body_symbol.as_deref(), &sort_expr)
+                        ),
+                    });
+                }
 
                 if is_bare_symbol {
                     self.sort_aliases
@@ -650,8 +751,15 @@ impl<'a> Parser<'a> {
                 self.function_defs
                     .insert(name.clone(), (params.clone(), body));
 
-                // For nullary define-fun, inline it directly as a binding
+                // For nullary define-fun, inline it directly as a binding.
+                // Because that inlining is a *substitution* at every later
+                // occurrence, the depth of `body` is charged against the
+                // parser's nesting budget here — a chain of such definitions
+                // otherwise builds an arbitrarily deep term while every
+                // individual command stays shallow. See
+                // `Parser::charge_binding_depth`.
                 if params.is_empty() {
+                    self.charge_binding_depth(&name, body)?;
                     self.bindings.insert(name.clone(), body);
                 }
 
@@ -706,11 +814,11 @@ impl<'a> Parser<'a> {
                         _ => {}
                     }
                 }
-                return self.parse_command();
+                return Ok(CommandStep::Skipped);
             }
         };
 
-        Ok(Some(cmd))
+        Ok(CommandStep::Parsed(cmd))
     }
 
     /// Consume the remainder of a recognized-but-unsupported command's
@@ -777,6 +885,15 @@ impl<'a> Parser<'a> {
             }
             self.expect_rparen()?;
             datatype_names.push(dt_name);
+        }
+
+        // Register every declared name's sort *before* any constructor group is
+        // parsed, so that a field mentioning one of them — the recursive
+        // `(tail Lst)`, or a mutually recursive `(left Tree)` — resolves to the
+        // datatype's own sort instead of a fresh uninterpreted one.
+        for dt_name in &datatype_names {
+            let dt_sort = self.manager.sorts.mk_datatype_sort(dt_name);
+            self.dt_sorts.insert(dt_name.clone(), dt_sort);
         }
 
         // Parse the constructor-group list: exactly one group per declared
@@ -859,6 +976,11 @@ impl<'a> Parser<'a> {
                 let selector_sort = self.sort_id_to_string(selector_sort_id);
                 self.expect_rparen()?;
                 selector_defs.push((self.manager.intern_str(&selector_name), selector_sort_id));
+                // Record the selector as a declared symbol so that a later
+                // `(head l)` resolves to a `DtSelector` of the declared result
+                // sort instead of an uninterpreted `Bool`-sorted application.
+                self.dt_selectors
+                    .insert(selector_name.clone(), selector_sort_id);
                 selectors.push((selector_name, selector_sort));
             }
 
@@ -877,11 +999,15 @@ impl<'a> Parser<'a> {
         let name = self.expect_symbol()?;
         self.expect_lparen()?;
 
+        // Register the sort before the constructor group is parsed so a
+        // recursive field `(tail Lst)` resolves to this datatype (see the
+        // multi-datatype form for the same reasoning).
+        let dt_sort = self.manager.sorts.mk_datatype_sort(&name);
+        self.dt_sorts.insert(name.clone(), dt_sort);
+
         let (constructors, ctor_defs) = self.parse_datatype_constructor_group()?;
 
         self.expect_rparen()?;
-
-        let dt_sort = self.manager.sorts.mk_datatype_sort(&name);
         for (ctor_name, _selectors) in &constructors {
             self.dt_constructors.insert(ctor_name.clone(), dt_sort);
         }

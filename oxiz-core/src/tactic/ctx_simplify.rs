@@ -6,6 +6,96 @@ use crate::error::Result;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use smallvec::SmallVec;
+use std::rc::Rc;
+
+/// A set of boolean facts assumed true while simplifying a subterm.
+///
+/// Shared by reference-count rather than cloned into every pending frame:
+/// the explicit work stack in
+/// [`CtxSolverSimplifyTactic::simplify_with_assignments`] can hold one frame
+/// per level of nesting, and cloning the whole map into each of them would
+/// reintroduce the O(depth x |assignments|) memory the recursive version had.
+type Ctx = Rc<FxHashMap<TermId, bool>>;
+
+/// Memo key: a term together with the *exact* context it was simplified
+/// under, identified by [`CtxSimplifyState::intern`].
+type CtxCacheKey = (TermId, usize);
+
+/// How a [`CtxFrame::Build`] frame recombines the simplified children that
+/// its matching `Eval` frames left on the result stack.
+enum CtxBuild {
+    Not,
+    Or(usize),
+    Add(usize),
+    Eq,
+    Sub,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    /// Simplified antecedent; the single pending result is the consequent.
+    Implies(TermId),
+    /// Simplified condition; the two pending results are the branches.
+    Ite(TermId),
+}
+
+/// One pending step of the iterative contextual simplification walk. Each
+/// variant carries the resume state its recursive counterpart used to keep in
+/// live locals across the recursive call.
+enum CtxFrame {
+    /// Simplify `term` under `ctx`.
+    Eval { term: TermId, ctx: Ctx },
+    /// Normalize + memoize the single pending result as the value of `key`.
+    Finish { key: CtxCacheKey },
+    /// The antecedent of an `Implies` has been simplified; extend the context
+    /// with it and simplify the consequent.
+    ImpliesRhs {
+        key: CtxCacheKey,
+        ctx: Ctx,
+        rhs: TermId,
+    },
+    /// The condition of an `Ite` has been simplified; re-test it against the
+    /// context and either take a branch or rebuild.
+    IteCond {
+        key: CtxCacheKey,
+        ctx: Ctx,
+        then_branch: TermId,
+        else_branch: TermId,
+    },
+    /// Conjunction arguments are simplified left to right, each one under a
+    /// context extended by the previous ones — so they cannot be batched like
+    /// the other n-ary nodes. `issued` counts the `Eval`s pushed so far;
+    /// `done` collects their results.
+    AndStep {
+        key: CtxCacheKey,
+        args: SmallVec<[TermId; 4]>,
+        issued: usize,
+        scoped: FxHashMap<TermId, bool>,
+        done: SmallVec<[TermId; 4]>,
+    },
+    /// All children of a node are simplified; rebuild it.
+    Build { key: CtxCacheKey, op: CtxBuild },
+}
+
+/// Memo plus context-identity table for one contextual-simplification run.
+#[derive(Default)]
+struct CtxSimplifyState {
+    cache: FxHashMap<CtxCacheKey, TermId>,
+    /// Sorted assignment list -> dense id. Interning the assignments
+    /// themselves (rather than a hash of them) is what makes the memo key
+    /// collision-free; see
+    /// [`CtxSolverSimplifyTactic::simplify_with_assignments`].
+    context_ids: FxHashMap<Vec<(u32, bool)>, usize>,
+}
+
+impl CtxSimplifyState {
+    fn intern(&mut self, assignments: &Ctx) -> usize {
+        let mut pairs: Vec<(u32, bool)> = assignments.iter().map(|(k, v)| (k.0, *v)).collect();
+        pairs.sort_unstable();
+        let next = self.context_ids.len();
+        *self.context_ids.entry(pairs).or_insert(next)
+    }
+}
 
 /// Context-based solver simplification tactic
 pub struct CtxSolverSimplifyTactic<'a> {
@@ -79,114 +169,348 @@ impl<'a> CtxSolverSimplifyTactic<'a> {
     }
 
     fn simplify_with_context(&mut self, term: TermId) -> TermId {
-        let assignments = FxHashMap::default();
-        let mut cache = FxHashMap::default();
-        self.simplify_with_assignments(term, &assignments, &mut cache)
+        let mut state = CtxSimplifyState::default();
+        let root_ctx = Rc::new(FxHashMap::default());
+        self.simplify_with_assignments(term, &root_ctx, &mut state)
     }
 
+    /// Context-aware simplification of `term` under the boolean `assignments`
+    /// already known to hold.
+    ///
+    /// # Explicit work stack
+    ///
+    /// This used to recurse natively once per level of boolean/arithmetic
+    /// nesting with no guard at all. The return type is `TermId` — there is
+    /// no error channel — so a depth cap could only have returned a term that
+    /// silently stopped being simplified partway down while still being
+    /// presented as the simplification of the whole. The walk is therefore
+    /// driven by an explicit heap [`Vec`] of [`CtxFrame`]s instead, mirroring
+    /// `ast::manager::query::substitute`. Frames carry their own resume
+    /// state, so no "impossible" pop can occur: every frame that consumes
+    /// child results was pushed together with exactly the child evaluations
+    /// that produce them.
+    ///
+    /// # Exact context keys
+    ///
+    /// The memo is keyed on `(TermId, context-id)`. The context id comes from
+    /// [`CtxSimplifyState::intern`], which interns the *sorted assignment
+    /// list itself*. It previously came from an `assignment_fingerprint`
+    /// helper that hashed the assignments down to a single `u64`: two
+    /// different contexts that collided on that 64-bit digest would have made
+    /// this function return a term simplified under the **wrong** set of
+    /// known-true facts — a genuine (if improbable) unsoundness, since the
+    /// whole point of the context is that facts in it are assumed. Interning
+    /// compares the assignments themselves, so distinct contexts can never
+    /// alias.
     fn simplify_with_assignments(
         &mut self,
         term: TermId,
-        assignments: &FxHashMap<TermId, bool>,
-        cache: &mut FxHashMap<(TermId, u64), TermId>,
+        assignments: &Ctx,
+        state: &mut CtxSimplifyState,
     ) -> TermId {
-        let cache_key = (term, assignment_fingerprint(assignments));
-        if let Some(&cached) = cache.get(&cache_key) {
-            return cached;
-        }
+        let mut frames: Vec<CtxFrame> = vec![CtxFrame::Eval {
+            term,
+            ctx: Rc::clone(assignments),
+        }];
+        // Simplified child results, consumed by the `Build`/resume frames
+        // that requested them.
+        let mut results: Vec<TermId> = Vec::new();
 
-        let simplified = match self.manager.get(term).map(|t| t.kind.clone()) {
-            Some(TermKind::Implies(cond, rhs)) => {
-                let cond = self.simplify_with_assignments(cond, assignments, cache);
-                let mut rhs_assignments = assignments.clone();
-                record_assignment(cond, true, self.manager, &mut rhs_assignments);
-                let rhs = self.simplify_with_assignments(rhs, &rhs_assignments, cache);
-                self.manager.mk_implies(cond, rhs)
-            }
-            Some(TermKind::And(args)) => {
-                let mut scoped = assignments.clone();
-                let simplified_args: SmallVec<[TermId; 4]> = args
-                    .into_iter()
-                    .map(|arg| {
-                        let rewritten = self.simplify_with_assignments(arg, &scoped, cache);
-                        record_assignment(rewritten, true, self.manager, &mut scoped);
-                        rewritten
-                    })
-                    .collect();
-                self.manager.mk_and(simplified_args)
-            }
-            Some(TermKind::Or(args)) => {
-                let simplified_args: SmallVec<[TermId; 4]> = args
-                    .into_iter()
-                    .map(|arg| self.simplify_with_assignments(arg, assignments, cache))
-                    .collect();
-                self.manager.mk_or(simplified_args)
-            }
-            Some(TermKind::Not(arg)) => {
-                let arg = self.simplify_with_assignments(arg, assignments, cache);
-                self.manager.mk_not(arg)
-            }
-            Some(TermKind::Ite(cond, then_branch, else_branch)) => {
-                if let Some(value) = evaluate_condition(cond, assignments, self.manager) {
-                    let chosen = if value { then_branch } else { else_branch };
-                    self.simplify_with_assignments(chosen, assignments, cache)
-                } else {
-                    let cond = self.simplify_with_assignments(cond, assignments, cache);
-                    if let Some(value) = evaluate_condition(cond, assignments, self.manager) {
+        while let Some(frame) = frames.pop() {
+            match frame {
+                CtxFrame::Eval { term, ctx } => {
+                    self.eval_frame(term, &ctx, state, &mut frames, &mut results);
+                }
+
+                CtxFrame::Finish { key } => {
+                    // `Eval` pushed exactly one child evaluation before this
+                    // frame, so `results` cannot be empty here; `unwrap_or`
+                    // keeps the impossible branch unwritable without an
+                    // `expect`, falling back to the node itself.
+                    let value = results.pop().unwrap_or(key.0);
+                    self.finish(key, value, state, &mut results);
+                }
+
+                CtxFrame::ImpliesRhs { key, ctx, rhs } => {
+                    let cond = results.pop().unwrap_or(key.0);
+                    let mut rhs_assignments = (*ctx).clone();
+                    record_assignment(cond, true, self.manager, &mut rhs_assignments);
+                    frames.push(CtxFrame::Build {
+                        key,
+                        op: CtxBuild::Implies(cond),
+                    });
+                    frames.push(CtxFrame::Eval {
+                        term: rhs,
+                        ctx: Rc::new(rhs_assignments),
+                    });
+                }
+
+                CtxFrame::IteCond {
+                    key,
+                    ctx,
+                    then_branch,
+                    else_branch,
+                } => {
+                    let cond = results.pop().unwrap_or(key.0);
+                    if let Some(value) = evaluate_condition(cond, &ctx, self.manager) {
                         let chosen = if value { then_branch } else { else_branch };
-                        self.simplify_with_assignments(chosen, assignments, cache)
+                        frames.push(CtxFrame::Finish { key });
+                        frames.push(CtxFrame::Eval { term: chosen, ctx });
                     } else {
-                        let then_branch =
-                            self.simplify_with_assignments(then_branch, assignments, cache);
-                        let else_branch =
-                            self.simplify_with_assignments(else_branch, assignments, cache);
-                        self.manager.mk_ite(cond, then_branch, else_branch)
+                        frames.push(CtxFrame::Build {
+                            key,
+                            op: CtxBuild::Ite(cond),
+                        });
+                        frames.push(CtxFrame::Eval {
+                            term: else_branch,
+                            ctx: Rc::clone(&ctx),
+                        });
+                        frames.push(CtxFrame::Eval {
+                            term: then_branch,
+                            ctx,
+                        });
                     }
                 }
+
+                CtxFrame::AndStep {
+                    key,
+                    args,
+                    mut issued,
+                    mut scoped,
+                    mut done,
+                } => {
+                    if done.len() < issued {
+                        let rewritten = results.pop().unwrap_or(key.0);
+                        record_assignment(rewritten, true, self.manager, &mut scoped);
+                        done.push(rewritten);
+                    }
+                    if issued == args.len() {
+                        let built = self.manager.mk_and(done);
+                        self.finish(key, built, state, &mut results);
+                    } else {
+                        let next = args[issued];
+                        issued += 1;
+                        let ctx = Rc::new(scoped.clone());
+                        frames.push(CtxFrame::AndStep {
+                            key,
+                            args,
+                            issued,
+                            scoped,
+                            done,
+                        });
+                        frames.push(CtxFrame::Eval { term: next, ctx });
+                    }
+                }
+
+                CtxFrame::Build { key, op } => {
+                    let built = self.build(&op, &mut results, key.0);
+                    self.finish(key, built, state, &mut results);
+                }
             }
-            Some(TermKind::Eq(lhs, rhs)) => {
-                let lhs = self.simplify_with_assignments(lhs, assignments, cache);
-                let rhs = self.simplify_with_assignments(rhs, assignments, cache);
-                self.manager.mk_eq(lhs, rhs)
+        }
+
+        // The root evaluation leaves exactly one value behind.
+        results.pop().unwrap_or(term)
+    }
+
+    /// Expand one `Eval` frame: consult the memo, then either finish `term`
+    /// immediately (leaf) or push the child evaluations plus the frame that
+    /// recombines them.
+    fn eval_frame(
+        &mut self,
+        term: TermId,
+        ctx: &Ctx,
+        state: &mut CtxSimplifyState,
+        frames: &mut Vec<CtxFrame>,
+        results: &mut Vec<TermId>,
+    ) {
+        let key = (term, state.intern(ctx));
+        if let Some(&cached) = state.cache.get(&key) {
+            results.push(cached);
+            return;
+        }
+
+        match self.manager.get(term).map(|t| t.kind.clone()) {
+            Some(TermKind::Implies(cond, rhs)) => {
+                frames.push(CtxFrame::ImpliesRhs {
+                    key,
+                    ctx: Rc::clone(ctx),
+                    rhs,
+                });
+                frames.push(CtxFrame::Eval {
+                    term: cond,
+                    ctx: Rc::clone(ctx),
+                });
             }
+
+            Some(TermKind::And(args)) => {
+                frames.push(CtxFrame::AndStep {
+                    key,
+                    args,
+                    issued: 0,
+                    scoped: (**ctx).clone(),
+                    done: SmallVec::new(),
+                });
+            }
+
+            Some(TermKind::Or(args)) => {
+                Self::push_children(frames, ctx, key, CtxBuild::Or(args.len()), &args);
+            }
+
             Some(TermKind::Add(args)) => {
-                let args: SmallVec<[TermId; 4]> = args
-                    .into_iter()
-                    .map(|arg| self.simplify_with_assignments(arg, assignments, cache))
-                    .collect();
-                self.manager.mk_add(args)
+                Self::push_children(frames, ctx, key, CtxBuild::Add(args.len()), &args);
+            }
+
+            Some(TermKind::Not(arg)) => {
+                Self::push_children(frames, ctx, key, CtxBuild::Not, &[arg]);
+            }
+
+            Some(TermKind::Ite(cond, then_branch, else_branch)) => {
+                if let Some(value) = evaluate_condition(cond, ctx, self.manager) {
+                    let chosen = if value { then_branch } else { else_branch };
+                    frames.push(CtxFrame::Finish { key });
+                    frames.push(CtxFrame::Eval {
+                        term: chosen,
+                        ctx: Rc::clone(ctx),
+                    });
+                } else {
+                    frames.push(CtxFrame::IteCond {
+                        key,
+                        ctx: Rc::clone(ctx),
+                        then_branch,
+                        else_branch,
+                    });
+                    frames.push(CtxFrame::Eval {
+                        term: cond,
+                        ctx: Rc::clone(ctx),
+                    });
+                }
+            }
+
+            Some(TermKind::Eq(lhs, rhs)) => {
+                Self::push_children(frames, ctx, key, CtxBuild::Eq, &[lhs, rhs]);
             }
             Some(TermKind::Sub(lhs, rhs)) => {
-                let lhs = self.simplify_with_assignments(lhs, assignments, cache);
-                let rhs = self.simplify_with_assignments(rhs, assignments, cache);
-                self.manager.mk_sub(lhs, rhs)
+                Self::push_children(frames, ctx, key, CtxBuild::Sub, &[lhs, rhs]);
             }
             Some(TermKind::Lt(lhs, rhs)) => {
-                let lhs = self.simplify_with_assignments(lhs, assignments, cache);
-                let rhs = self.simplify_with_assignments(rhs, assignments, cache);
-                self.manager.mk_lt(lhs, rhs)
+                Self::push_children(frames, ctx, key, CtxBuild::Lt, &[lhs, rhs]);
             }
             Some(TermKind::Le(lhs, rhs)) => {
-                let lhs = self.simplify_with_assignments(lhs, assignments, cache);
-                let rhs = self.simplify_with_assignments(rhs, assignments, cache);
-                self.manager.mk_le(lhs, rhs)
+                Self::push_children(frames, ctx, key, CtxBuild::Le, &[lhs, rhs]);
             }
             Some(TermKind::Gt(lhs, rhs)) => {
-                let lhs = self.simplify_with_assignments(lhs, assignments, cache);
-                let rhs = self.simplify_with_assignments(rhs, assignments, cache);
-                self.manager.mk_gt(lhs, rhs)
+                Self::push_children(frames, ctx, key, CtxBuild::Gt, &[lhs, rhs]);
             }
             Some(TermKind::Ge(lhs, rhs)) => {
-                let lhs = self.simplify_with_assignments(lhs, assignments, cache);
-                let rhs = self.simplify_with_assignments(rhs, assignments, cache);
-                self.manager.mk_ge(lhs, rhs)
+                Self::push_children(frames, ctx, key, CtxBuild::Ge, &[lhs, rhs]);
             }
-            _ => term,
+
+            // Every other node is opaque to *contextual* simplification: it
+            // is handed to `TermManager::simplify` (in `finish`) but its
+            // children are not re-simplified under the surrounding context.
+            // That is an incompleteness, not an unsoundness — the term is
+            // returned intact rather than replaced by a default — and it is
+            // the behaviour this tactic has always had. `None` (a dangling
+            // id) lands here too and likewise yields the id unchanged.
+            _ => self.finish(key, term, state, results),
+        }
+    }
+
+    /// Push a `Build` frame plus one `Eval` per child, ordered so the
+    /// children's results land in `results` in argument order.
+    fn push_children(
+        frames: &mut Vec<CtxFrame>,
+        ctx: &Ctx,
+        key: CtxCacheKey,
+        op: CtxBuild,
+        args: &[TermId],
+    ) {
+        frames.push(CtxFrame::Build { key, op });
+        for &arg in args.iter().rev() {
+            frames.push(CtxFrame::Eval {
+                term: arg,
+                ctx: Rc::clone(ctx),
+            });
+        }
+    }
+
+    /// Rebuild a node from the simplified children sitting on top of
+    /// `results`.
+    fn build(&mut self, op: &CtxBuild, results: &mut Vec<TermId>, fallback: TermId) -> TermId {
+        // `take` pops `n` results in argument order. Each `Build` frame was
+        // pushed together with exactly `n` child evaluations, so the requested
+        // results are always present; `fallback` (the original node) keeps the
+        // unreachable branch expressible without a panic.
+        let take = |n: usize, results: &mut Vec<TermId>| -> SmallVec<[TermId; 4]> {
+            let start = results.len().saturating_sub(n);
+            let mut taken: SmallVec<[TermId; 4]> = results.split_off(start).into();
+            while taken.len() < n {
+                taken.push(fallback);
+            }
+            taken
         };
 
-        let normalized = self.manager.simplify(simplified);
-        cache.insert(cache_key, normalized);
-        normalized
+        match *op {
+            CtxBuild::Not => {
+                let a = take(1, results);
+                self.manager.mk_not(a[0])
+            }
+            CtxBuild::Or(n) => {
+                let args = take(n, results);
+                self.manager.mk_or(args)
+            }
+            CtxBuild::Add(n) => {
+                let args = take(n, results);
+                self.manager.mk_add(args)
+            }
+            CtxBuild::Eq => {
+                let a = take(2, results);
+                self.manager.mk_eq(a[0], a[1])
+            }
+            CtxBuild::Sub => {
+                let a = take(2, results);
+                self.manager.mk_sub(a[0], a[1])
+            }
+            CtxBuild::Lt => {
+                let a = take(2, results);
+                self.manager.mk_lt(a[0], a[1])
+            }
+            CtxBuild::Le => {
+                let a = take(2, results);
+                self.manager.mk_le(a[0], a[1])
+            }
+            CtxBuild::Gt => {
+                let a = take(2, results);
+                self.manager.mk_gt(a[0], a[1])
+            }
+            CtxBuild::Ge => {
+                let a = take(2, results);
+                self.manager.mk_ge(a[0], a[1])
+            }
+            CtxBuild::Implies(cond) => {
+                let a = take(1, results);
+                self.manager.mk_implies(cond, a[0])
+            }
+            CtxBuild::Ite(cond) => {
+                let a = take(2, results);
+                self.manager.mk_ite(cond, a[0], a[1])
+            }
+        }
+    }
+
+    /// Normalize, memoize and publish the result for one node — the tail the
+    /// recursive version ran after every match arm.
+    fn finish(
+        &mut self,
+        key: CtxCacheKey,
+        value: TermId,
+        state: &mut CtxSimplifyState,
+        results: &mut Vec<TermId>,
+    ) {
+        let normalized = self.manager.simplify(value);
+        state.cache.insert(key, normalized);
+        results.push(normalized);
     }
 
     /// Apply context-dependent simplification to a goal
@@ -323,20 +647,37 @@ fn record_assignment(
     }
 }
 
+/// Decide `condition` from the known-true `assignments`, if possible.
+///
+/// Iterative rather than recursive: `Not` chains are the only recursive case
+/// and `(not (not (not ...)))` of arbitrary depth is trivially constructible,
+/// while the `Option<bool>` return means a depth cap would answer "unknown"
+/// for a condition the context does in fact decide (an incompleteness that is
+/// avoidable outright).
 fn evaluate_condition(
     condition: TermId,
     assignments: &FxHashMap<TermId, bool>,
     manager: &TermManager,
 ) -> Option<bool> {
-    if let Some(&value) = assignments.get(&condition) {
-        return Some(value);
-    }
+    let mut current = condition;
+    // Parity of the `Not` chain unwound so far.
+    let mut negated = false;
+    loop {
+        if let Some(&value) = assignments.get(&current) {
+            return Some(value != negated);
+        }
 
-    match manager.get(condition).map(|term| &term.kind) {
-        Some(TermKind::True) => Some(true),
-        Some(TermKind::False) => Some(false),
-        Some(TermKind::Not(inner)) => evaluate_condition(*inner, assignments, manager).map(|v| !v),
-        _ => None,
+        match manager.get(current).map(|term| &term.kind) {
+            Some(TermKind::True) => return Some(!negated),
+            Some(TermKind::False) => return Some(negated),
+            Some(TermKind::Not(inner)) => {
+                current = *inner;
+                negated = !negated;
+            }
+            // Anything else is opaque to this purely syntactic evaluator:
+            // honestly "unknown", never a guessed default.
+            _ => return None,
+        }
     }
 }
 
@@ -401,19 +742,6 @@ fn rewrite_ite_in_context(
         // Non-ITE terms: no rewrite at this level
         _ => term_id,
     }
-}
-
-fn assignment_fingerprint(assignments: &FxHashMap<TermId, bool>) -> u64 {
-    let mut pairs: Vec<(u32, bool)> = assignments.iter().map(|(k, v)| (k.0, *v)).collect();
-    pairs.sort_unstable_by_key(|(term_id, _)| *term_id);
-    let mut hash = 0_u64;
-    for (term_id, value) in pairs {
-        hash = hash
-            .wrapping_mul(1_099_511_628_211)
-            .wrapping_add(u64::from(term_id) << 1)
-            .wrapping_add(u64::from(value));
-    }
-    hash
 }
 
 #[cfg(test)]
@@ -602,6 +930,132 @@ mod tests {
         assert!(
             matches!(result, TacticResult::Solved(SolveResult::Unsat)),
             "expected Unsat status preserved, got {result:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod group_c1_tests {
+    use super::*;
+
+    /// `simplify_with_assignments` is driven by an explicit heap stack now.
+    /// A formula far deeper than any native stack could hold must simply
+    /// return -- an overflow would abort the process, so returning at all is
+    /// the assertion.
+    ///
+    /// The converted walk is exercised directly via `simplify_with_context`
+    /// rather than through `apply_mut`: the latter re-runs the whole pass up
+    /// to `max_iterations` times, which multiplies the cost by ten.
+    ///
+    /// Depth is 8 000 rather than the usual 60 000-100 000 because this
+    /// tactic normalizes *every* rebuilt node through `TermManager::simplify`,
+    /// making one pass quadratic in nesting depth for reasons that have
+    /// nothing to do with recursion (60 000 takes minutes). 8 000 is still
+    /// far past the depth at which the previous native recursion aborted on a
+    /// 1 MiB stack -- its frames carried a cloned `TermKind` plus a
+    /// `SmallVec` and a cloned assignment map per level -- so it exercises
+    /// exactly the property under test.
+    #[test]
+    fn contextual_simplification_survives_a_deep_formula_on_a_tiny_stack() {
+        const DEPTH: usize = 8_000;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let bool_sort = manager.sorts.bool_sort;
+                let p = manager.mk_var("p", bool_sort);
+
+                // `Not(Or(current, q_i))` per level, with a distinct `q_i` so
+                // nothing folds. `Or` is used rather than `And` because only
+                // `And`/`Implies` extend the assignment context, and this
+                // test is about recursion depth, not context size.
+                let mut current = p;
+                for i in 0..DEPTH {
+                    let q = manager.mk_var(&format!("q{i}"), bool_sort);
+                    let disj = manager.mk_or([current, q]);
+                    current = manager.mk_not(disj);
+                }
+
+                let mut tactic = CtxSolverSimplifyTactic::new(&mut manager);
+                let simplified = tactic.simplify_with_context(current);
+                // The formula has no contextual redundancy, so it must come
+                // back unchanged rather than truncated.
+                simplified == current
+            })
+            .expect("test thread must spawn");
+
+        assert_eq!(handle.join().ok(), Some(true));
+    }
+
+    /// `evaluate_condition` unwinds `Not` chains iteratively and must report
+    /// the right parity. The chain is built through `TermManager`, which may
+    /// fold double negations, so the expectation is derived from the term the
+    /// manager actually produced rather than from the loop count.
+    #[test]
+    fn evaluate_condition_unwinds_long_not_chains() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let p = manager.mk_var("p", bool_sort);
+
+        let mut assignments = FxHashMap::default();
+        assignments.insert(p, true);
+
+        let mut current = p;
+        for _ in 0..10_001 {
+            current = manager.mk_not(current);
+        }
+
+        // Read the final term structurally to derive the expected answer.
+        let mut probe = current;
+        let mut negated = false;
+        while let Some(TermKind::Not(inner)) = manager.get(probe).map(|t| t.kind.clone()) {
+            probe = inner;
+            negated = !negated;
+        }
+        let expected = (probe == p).then_some(!negated);
+
+        assert_eq!(
+            evaluate_condition(current, &assignments, &manager),
+            expected
+        );
+    }
+
+    /// The memo key interns the assignment set itself. Two *different*
+    /// contexts must therefore never share a cache entry -- the previous
+    /// 64-bit `assignment_fingerprint` digest could alias them and hand back
+    /// a term simplified under facts that do not hold.
+    #[test]
+    fn context_ids_are_injective() {
+        let mut state = CtxSimplifyState::default();
+
+        let a = TermId::new(1);
+        let b = TermId::new(2);
+
+        let mut ctx_a = FxHashMap::default();
+        ctx_a.insert(a, true);
+        let mut ctx_b = FxHashMap::default();
+        ctx_b.insert(a, false);
+        let mut ctx_c = FxHashMap::default();
+        ctx_c.insert(a, true);
+        ctx_c.insert(b, true);
+        // Same contents, different insertion order: must intern equal.
+        let mut ctx_c2 = FxHashMap::default();
+        ctx_c2.insert(b, true);
+        ctx_c2.insert(a, true);
+
+        let ids = [
+            state.intern(&Rc::new(ctx_a)),
+            state.intern(&Rc::new(ctx_b)),
+            state.intern(&Rc::new(ctx_c)),
+        ];
+        assert_ne!(ids[0], ids[1], "opposite polarities must not share an id");
+        assert_ne!(ids[0], ids[2], "a superset must not share an id");
+        assert_ne!(ids[1], ids[2]);
+        assert_eq!(
+            state.intern(&Rc::new(ctx_c2)),
+            ids[2],
+            "order must not affect the interned identity"
         );
     }
 }

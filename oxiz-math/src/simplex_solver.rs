@@ -27,6 +27,8 @@
 //! in standard form the shadow price of constraint i is −(reduced cost of
 //! its slack variable s_i), which equals the dual variable π_i.
 
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};

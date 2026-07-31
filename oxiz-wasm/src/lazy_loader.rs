@@ -278,31 +278,88 @@ impl LazyLoader {
         self.loaded.get(name).map(|t| t.state)
     }
 
-    /// Load a theory and all its dependencies
+    /// Load a theory and all its dependencies.
+    ///
+    /// The dependency graph is walked iteratively (explicit heap stack) and the
+    /// resulting dependencies-first order is loaded in a flat loop, so a long
+    /// acyclic dependency chain no longer nests one `Box::pin`ned future — and
+    /// one poll frame — per level on the 1 MiB WASM stack.
     pub async fn load_theory(&mut self, name: &str) -> LoadResult<()> {
         if self.is_loaded(name) {
             return Err(LoadError::AlreadyLoaded(name.to_string()));
         }
 
-        // Get the descriptor
-        let descriptor = self
-            .registry
+        // Get the descriptor (existence check for the requested theory)
+        self.registry
             .get(name)
-            .ok_or_else(|| LoadError::TheoryNotFound(name.to_string()))?
-            .clone();
+            .ok_or_else(|| LoadError::TheoryNotFound(name.to_string()))?;
 
         // Check for dependency cycles
         let mut visited = HashSet::new();
         let mut rec_stack = Vec::new();
         self.check_dependency_cycle(name, &mut visited, &mut rec_stack)?;
 
-        // Load dependencies first
-        for dep in &descriptor.dependencies {
-            if !self.is_loaded(dep) {
-                // Use Box::pin for recursive async calls
-                Box::pin(self.load_theory(dep)).await?;
+        // Dependencies first, each exactly once, requested theory last.
+        for theory in self.dependency_load_order(name)? {
+            self.load_one_theory(&theory).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Post-order dependency listing for `name`: every not-yet-loaded theory it
+    /// transitively needs, dependencies before dependents, `name` itself last.
+    ///
+    /// Iterative (explicit heap stack). A theory named as a dependency but
+    /// absent from the registry is reported as [`LoadError::TheoryNotFound`],
+    /// exactly as the recursive loader did when it reached that dependency.
+    fn dependency_load_order(&self, name: &str) -> LoadResult<Vec<String>> {
+        /// Work item for the iterative dependency walk.
+        enum OrderFrame {
+            /// Schedule this theory's dependencies.
+            Enter(String),
+            /// Append this theory after its dependencies.
+            Emit(String),
+        }
+
+        let mut order = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut stack = vec![OrderFrame::Enter(name.to_string())];
+
+        while let Some(frame) = stack.pop() {
+            match frame {
+                OrderFrame::Enter(current) => {
+                    if self.is_loaded(&current) || !seen.insert(current.clone()) {
+                        continue;
+                    }
+                    let descriptor = self
+                        .registry
+                        .get(&current)
+                        .ok_or_else(|| LoadError::TheoryNotFound(current.clone()))?;
+                    stack.push(OrderFrame::Emit(current));
+                    stack.extend(
+                        descriptor
+                            .dependencies
+                            .iter()
+                            .rev()
+                            .cloned()
+                            .map(OrderFrame::Enter),
+                    );
+                }
+                OrderFrame::Emit(current) => order.push(current),
             }
         }
+
+        Ok(order)
+    }
+
+    /// Load exactly one theory, whose dependencies are already loaded.
+    async fn load_one_theory(&mut self, name: &str) -> LoadResult<()> {
+        let descriptor = self
+            .registry
+            .get(name)
+            .ok_or_else(|| LoadError::TheoryNotFound(name.to_string()))?
+            .clone();
 
         // Check memory budget
         if self.max_memory_budget > 0 {
@@ -512,32 +569,63 @@ impl LazyLoader {
         }
     }
 
-    /// Check for dependency cycles using DFS
+    /// Check for dependency cycles using DFS.
+    ///
+    /// Iterative (explicit heap stack): the cycle detector must not itself die
+    /// on a deep *acyclic* graph before it can report anything, and this runs on
+    /// a 1 MiB WASM stack where an overflow traps unrecoverably. The membership
+    /// test also no longer allocates a fresh `String` per node per level.
     fn check_dependency_cycle(
         &self,
         name: &str,
         visited: &mut HashSet<String>,
         rec_stack: &mut Vec<String>,
     ) -> LoadResult<()> {
-        if rec_stack.contains(&name.to_string()) {
-            rec_stack.push(name.to_string());
-            return Err(LoadError::DependencyCycle(rec_stack.clone()));
+        /// Work item for the iterative cycle check.
+        enum CycleFrame {
+            /// Descend into this theory's dependencies.
+            Enter(String),
+            /// Pop this theory off the recursion path.
+            Leave,
         }
 
-        if visited.contains(name) {
-            return Ok(());
-        }
+        let mut stack = vec![CycleFrame::Enter(name.to_string())];
 
-        visited.insert(name.to_string());
-        rec_stack.push(name.to_string());
+        while let Some(frame) = stack.pop() {
+            match frame {
+                CycleFrame::Enter(current) => {
+                    if rec_stack.contains(&current) {
+                        rec_stack.push(current);
+                        return Err(LoadError::DependencyCycle(rec_stack.clone()));
+                    }
+                    if visited.contains(&current) {
+                        continue;
+                    }
 
-        if let Some(descriptor) = self.registry.get(name) {
-            for dep in &descriptor.dependencies {
-                self.check_dependency_cycle(dep, visited, rec_stack)?;
+                    visited.insert(current.clone());
+
+                    if let Some(descriptor) = self.registry.get(&current) {
+                        stack.push(CycleFrame::Leave);
+                        rec_stack.push(current);
+                        stack.extend(
+                            descriptor
+                                .dependencies
+                                .iter()
+                                .rev()
+                                .cloned()
+                                .map(CycleFrame::Enter),
+                        );
+                    } else {
+                        // No descriptor: nothing to descend into. The recursive
+                        // version pushed and immediately popped `current`.
+                    }
+                }
+                CycleFrame::Leave => {
+                    rec_stack.pop();
+                }
             }
         }
 
-        rec_stack.pop();
         Ok(())
     }
 
@@ -717,5 +805,78 @@ mod tests {
         assert_eq!(stats.registered_count, 0);
         assert_eq!(stats.loaded_count, 0);
         assert_eq!(stats.memory_usage_bytes, 0);
+    }
+
+    /// `check_dependency_cycle` used to recurse once per dependency level, so
+    /// the cycle detector died on a deep *acyclic* graph before it could report
+    /// anything — on a 1 MiB WASM stack, where that is an unrecoverable trap.
+    /// A stack overflow aborts the process rather than failing a test, so
+    /// *returning at all* is the assertion.
+    ///
+    /// What a recursive implementation trips over is the bytes-per-frame budget
+    /// `stack_size / depth`, not either number alone. So the WASM-native pair of
+    /// 1 MiB and a 100,000-long chain is scaled down by 8, to a 128 KiB stack
+    /// and a 12,500-long chain: the same ~10 bytes per frame, at an eighth of
+    /// the allocation. The two constants are deliberately tied — restoring the
+    /// longer chain without also restoring the larger stack would silently stop
+    /// this test from catching a recursive rewrite.
+    #[test]
+    fn deep_acyclic_dependency_chain_is_walked_without_recursion() {
+        std::thread::Builder::new()
+            .name("wasm_deep_deps".to_string())
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let depth = 12_500;
+                let mut loader = LazyLoader::new();
+                for level in 0..depth {
+                    loader
+                        .register_theory(
+                            TheoryDescriptor::new(format!("t{level}"))
+                                .with_dependency(format!("t{}", level + 1)),
+                        )
+                        .expect("registration should succeed");
+                }
+                loader
+                    .register_theory(TheoryDescriptor::new(format!("t{depth}")))
+                    .expect("registration should succeed");
+
+                let mut visited = HashSet::new();
+                let mut rec_stack = Vec::new();
+                loader
+                    .check_dependency_cycle("t0", &mut visited, &mut rec_stack)
+                    .expect("an acyclic chain must not be reported as cyclic");
+                assert_eq!(visited.len(), depth + 1);
+                assert!(rec_stack.is_empty());
+
+                // Dependencies first, requested theory last.
+                let order = loader
+                    .dependency_load_order("t0")
+                    .expect("every theory is registered");
+                assert_eq!(order.len(), depth + 1);
+                assert_eq!(
+                    order.first().map(String::as_str),
+                    Some(format!("t{depth}").as_str())
+                );
+                assert_eq!(order.last().map(String::as_str), Some("t0"));
+            })
+            .expect("test thread should spawn")
+            .join()
+            .expect("test thread should not panic");
+    }
+
+    /// Semantic pin: a genuine cycle is still reported as one.
+    #[test]
+    fn dependency_cycle_is_still_detected() {
+        let mut loader = LazyLoader::new();
+        for (name, dep) in [("a", "b"), ("b", "c"), ("c", "a")] {
+            loader
+                .register_theory(TheoryDescriptor::new(name).with_dependency(dep))
+                .expect("registration should succeed");
+        }
+
+        let mut visited = HashSet::new();
+        let mut rec_stack = Vec::new();
+        let result = loader.check_dependency_cycle("a", &mut visited, &mut rec_stack);
+        assert!(matches!(result, Err(LoadError::DependencyCycle(_))));
     }
 }

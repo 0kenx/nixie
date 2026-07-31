@@ -3,6 +3,7 @@
 //! Extracts minimal satisfying assignments from models.
 
 use super::{Model, ModelEvaluator, Value};
+use crate::ast::traversal::get_children;
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -189,48 +190,18 @@ impl ImplicantExtractor {
         relevant
     }
 
-    /// Add children of a term to the worklist
+    /// Add children of a term to the worklist.
+    ///
+    /// Delegates to the crate's single [`get_children`] definition, which
+    /// matches every [`TermKind`] variant exhaustively. This function used to
+    /// carry its own partial match with a `_ => {}` catch-all covering roughly
+    /// twenty of the ~110 variants, so the relevant-term walk stopped dead at
+    /// the first `Select`/`Store`/`Apply`/string/FP/quantifier/datatype node
+    /// and reported an implicant that silently omitted every literal
+    /// underneath it — a *wrong* (non-implying) implicant, not merely an
+    /// unminimized one.
     fn add_children_to_worklist(&self, kind: &TermKind, worklist: &mut Vec<TermId>) {
-        match kind {
-            TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => {
-                worklist.push(*a);
-            }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::Distinct(args) => {
-                for arg in args.iter() {
-                    worklist.push(*arg);
-                }
-            }
-            TermKind::Xor(a, b)
-            | TermKind::Implies(a, b)
-            | TermKind::Eq(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::BvAnd(a, b)
-            | TermKind::BvOr(a, b)
-            | TermKind::BvXor(a, b)
-            | TermKind::BvAdd(a, b)
-            | TermKind::BvSub(a, b)
-            | TermKind::BvMul(a, b)
-            | TermKind::BvConcat(a, b) => {
-                worklist.push(*a);
-                worklist.push(*b);
-            }
-            TermKind::Ite(a, b, c) => {
-                worklist.push(*a);
-                worklist.push(*b);
-                worklist.push(*c);
-            }
-            _ => {}
-        }
+        worklist.extend(get_children(kind));
     }
 
     /// Minimize a set of literals while preserving satisfiability
@@ -305,6 +276,53 @@ impl Default for ImplicantExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::TermManager;
+
+    /// `add_children_to_worklist` used to carry a partial `TermKind` match
+    /// with a `_ => {}` catch-all, so the relevant-term walk stopped dead at
+    /// the first `Select`/`Store`/`Apply`/string/FP/quantifier/datatype node
+    /// and produced an implicant that silently omitted every literal beneath
+    /// it. It now delegates to the exhaustive `get_children`.
+    #[test]
+    fn children_of_a_select_reach_the_worklist() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let array_sort = manager.sorts.array(int_sort, int_sort);
+        let arr = manager.mk_var("a", array_sort);
+        let idx = manager.mk_var("i", int_sort);
+        let select = manager.mk_select(arr, idx);
+
+        let extractor = ImplicantExtractor::new();
+        let mut worklist = Vec::new();
+        let kind = manager.get(select).map(|t| t.kind.clone()).expect("term");
+        extractor.add_children_to_worklist(&kind, &mut worklist);
+
+        assert!(
+            worklist.contains(&arr),
+            "Select's array operand was dropped"
+        );
+        assert!(
+            worklist.contains(&idx),
+            "Select's index operand was dropped"
+        );
+    }
+
+    /// Semantic pin for a shape the old partial match already covered.
+    #[test]
+    fn children_of_a_conjunction_still_reach_the_worklist() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let p = manager.mk_var("p", bool_sort);
+        let q = manager.mk_var("q", bool_sort);
+        let conj = manager.mk_and(vec![p, q]);
+
+        let extractor = ImplicantExtractor::new();
+        let mut worklist = Vec::new();
+        let kind = manager.get(conj).map(|t| t.kind.clone()).expect("term");
+        extractor.add_children_to_worklist(&kind, &mut worklist);
+
+        assert_eq!(worklist, vec![p, q]);
+    }
 
     #[test]
     fn test_implicant_config() {

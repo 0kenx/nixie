@@ -25,7 +25,8 @@
 
 use crate::grobner::buchberger::{Relation, SatResult};
 use crate::polynomial::{Polynomial, Var};
-use crate::prelude::FxHashMap;
+#[allow(unused_imports)]
+use crate::prelude::*;
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 

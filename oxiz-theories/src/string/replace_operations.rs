@@ -13,6 +13,16 @@
 //! (assert (= (str.replace_all s "a" "b") result))
 //! (assert (= (str.replace_re s (re.++ (str.to_re "a") (re.* re.allchar)) "X") result))
 //! ```
+//!
+//! ## Indexing convention
+//!
+//! SMT-LIB strings are sequences of Unicode scalar values, and the rest of the
+//! string theory (`ground_solver::eval`, `solver`, `word_eq`, …) counts one
+//! scalar as one character. This module follows the same convention: every
+//! position and length exposed or consumed here — `find_all_positions`,
+//! `count_occurrences`, `compute_result_length`, `estimate_result_bounds`, and
+//! the regex scan internals — is measured in `char`s, never in UTF-8 bytes.
+//! For pure-ASCII input the two coincide, so ASCII behaviour is unchanged.
 
 use super::regex::Regex;
 #[allow(unused_imports)]
@@ -173,21 +183,16 @@ impl ReplaceSolver {
         }
     }
 
-    /// Replace all occurrences of pattern with replacement
+    /// Replace all non-overlapping occurrences of pattern with replacement
+    ///
+    /// The empty pattern is the asymmetric case in SMT-LIB: `str.replace_all`
+    /// with `t = ""` is *defined* to leave the string unchanged (it cannot
+    /// replace infinitely many empty occurrences), unlike `str.replace`, which
+    /// prepends the replacement. This matches
+    /// `ground_solver::eval`'s `eval_replace`.
     fn replace_all(&self, source: &str, pattern: &str, replacement: &str) -> String {
         if pattern.is_empty() {
-            // Empty pattern - insert replacement between each character
-            let mut result = String::new();
-            for (i, c) in source.chars().enumerate() {
-                if i > 0 {
-                    result.push_str(replacement);
-                }
-                result.push(c);
-            }
-            if !source.is_empty() {
-                result.push_str(replacement);
-            }
-            result
+            source.to_string()
         } else {
             source.replace(pattern, replacement)
         }
@@ -200,13 +205,15 @@ impl ReplaceSolver {
         regex: &Regex,
         replacement: &str,
     ) -> Result<String> {
+        // Scan over Unicode scalars, not UTF-8 bytes: slicing a `&str` at an
+        // arbitrary byte index panics on multi-byte input.
+        let chars: Vec<char> = source.chars().collect();
         // Find first match
-        if let Some(pos) = self.find_regex_match(source, regex, 0)? {
-            let match_end = pos + self.match_length_at(source, regex, pos)?;
-            let mut result = String::new();
-            result.push_str(&source[..pos]);
+        if let Some(pos) = self.find_regex_match(&chars, regex, 0)? {
+            let match_end = pos + self.match_length_at(&chars[pos..], regex)?;
+            let mut result: String = chars[..pos].iter().collect();
             result.push_str(replacement);
-            result.push_str(&source[match_end..]);
+            result.extend(chars[match_end..].iter());
             Ok(result)
         } else {
             // No match - return source unchanged
@@ -216,31 +223,33 @@ impl ReplaceSolver {
 
     /// Replace all regex matches with replacement
     fn replace_regex_all(&self, source: &str, regex: &Regex, replacement: &str) -> Result<String> {
+        let chars: Vec<char> = source.chars().collect();
         let mut result = String::new();
         let mut pos = 0;
 
-        while pos < source.len() {
-            if let Some(match_pos) = self.find_regex_match(source, regex, pos)? {
-                let match_len = self.match_length_at(source, regex, match_pos)?;
+        while pos < chars.len() {
+            if let Some(match_pos) = self.find_regex_match(&chars, regex, pos)? {
+                let match_len = self.match_length_at(&chars[match_pos..], regex)?;
 
                 // Append text before match
-                result.push_str(&source[pos..match_pos]);
+                result.extend(chars[pos..match_pos].iter());
                 // Append replacement
                 result.push_str(replacement);
 
                 pos = match_pos + match_len;
                 if match_len == 0 {
-                    // Avoid infinite loop on empty matches
-                    if pos < source.len() {
-                        result.push(source[pos..].chars().next().expect("has char"));
-                        pos += 1;
-                    } else {
-                        break;
+                    // Avoid infinite loop on empty matches: consume one scalar.
+                    match chars.get(pos) {
+                        Some(&c) => {
+                            result.push(c);
+                            pos += 1;
+                        }
+                        None => break,
                     }
                 }
             } else {
                 // No more matches
-                result.push_str(&source[pos..]);
+                result.extend(chars[pos..].iter());
                 break;
             }
         }
@@ -248,35 +257,39 @@ impl ReplaceSolver {
         Ok(result)
     }
 
-    /// Find the position of a regex match starting from offset
+    /// Find the character position of a regex match starting from `offset`
+    ///
+    /// `chars` is the source string decoded into Unicode scalars; `offset` and
+    /// the returned position are character indices into it.
     fn find_regex_match(
         &self,
-        source: &str,
+        chars: &[char],
         regex: &Regex,
         offset: usize,
     ) -> Result<Option<usize>> {
-        let text = &source[offset..];
-        for i in 0..=text.len() {
-            if self.matches_regex_at(text, regex, i) {
-                return Ok(Some(offset + i));
+        for i in offset..=chars.len() {
+            if self.matches_regex_at(chars, regex, i) {
+                return Ok(Some(i));
             }
         }
         Ok(None)
     }
 
-    /// Check if regex matches at a specific position
-    fn matches_regex_at(&self, text: &str, regex: &Regex, pos: usize) -> bool {
+    /// Check if regex matches the suffix starting at character position `pos`
+    fn matches_regex_at(&self, chars: &[char], regex: &Regex, pos: usize) -> bool {
         // Simplified regex matching - in production, use a full regex engine
         // For now, delegate to the regex's matches method on the suffix
-        regex.matches(&text[pos..])
+        let suffix: String = chars[pos..].iter().collect();
+        regex.matches(&suffix)
     }
 
-    /// Get the length of a regex match at a specific position
-    fn match_length_at(&self, source: &str, regex: &Regex, pos: usize) -> Result<usize> {
-        let text = &source[pos..];
+    /// Get the length (in characters) of the longest regex match at the start
+    /// of `chars`
+    fn match_length_at(&self, chars: &[char], regex: &Regex) -> Result<usize> {
         // Try to find the longest match
-        for len in (1..=text.len()).rev() {
-            if regex.matches(&text[..len]) {
+        for len in (1..=chars.len()).rev() {
+            let prefix: String = chars[..len].iter().collect();
+            if regex.matches(&prefix) {
                 return Ok(len);
             }
         }
@@ -432,7 +445,10 @@ impl ReplaceAnalyzer {
         }
     }
 
-    /// Count occurrences of pattern in text
+    /// Count non-overlapping occurrences of pattern in text
+    ///
+    /// The empty pattern occurs once at every character position plus once
+    /// after the last character (character counts, per the module convention).
     pub fn count_occurrences(&mut self, text: &str, pattern: &str) -> usize {
         let key = (text.to_string(), pattern.to_string());
         if let Some(&count) = self.occurrence_cache.get(&key) {
@@ -456,7 +472,11 @@ impl ReplaceAnalyzer {
         count
     }
 
-    /// Compute the result length after replacement
+    /// Compute the result length (in characters) after replacement
+    ///
+    /// All lengths are character counts. Occurrence data that cannot come from
+    /// a real string (more pattern characters consumed than the source has)
+    /// saturates at `0` rather than overflowing.
     pub fn compute_result_length(
         &mut self,
         source_len: usize,
@@ -467,11 +487,12 @@ impl ReplaceAnalyzer {
         if num_occurrences == 0 {
             source_len
         } else {
-            source_len - (pattern_len * num_occurrences) + (replacement_len * num_occurrences)
+            source_len.saturating_sub(pattern_len * num_occurrences)
+                + (replacement_len * num_occurrences)
         }
     }
 
-    /// Estimate result length bounds for replace operation
+    /// Estimate result length bounds (in characters) for replace operation
     pub fn estimate_result_bounds(
         &self,
         source_len: usize,
@@ -493,10 +514,9 @@ impl ReplaceAnalyzer {
             ReplaceMode::All => {
                 // Replace all occurrences
                 if pattern_len == 0 {
-                    // Empty pattern - insert between all characters
-                    let insertions = source_len + 1;
-                    let result_len = source_len + insertions * replacement_len;
-                    (result_len, result_len)
+                    // Empty pattern - `str.replace_all` leaves the string
+                    // unchanged (see `ReplaceSolver::replace_all`).
+                    (source_len, source_len)
                 } else {
                     // Non-empty pattern
                     let max_occurrences = source_len.checked_div(pattern_len).unwrap_or(0);
@@ -526,33 +546,50 @@ impl ReplaceAnalyzer {
         first == second
     }
 
-    /// Find all occurrence positions
+    /// Find all non-overlapping occurrence positions, as character indices
+    ///
+    /// Positions count Unicode scalars, matching the rest of the string theory
+    /// (`str.indexof` in `ground_solver::eval`); for ASCII input this is
+    /// identical to the byte offsets.
     pub fn find_all_positions(&self, text: &str, pattern: &str) -> Vec<usize> {
+        let text_chars: Vec<char> = text.chars().collect();
         if pattern.is_empty() {
-            // Empty pattern matches at every position
-            (0..=text.len()).collect()
+            // Empty pattern matches at every position, including after the
+            // last character.
+            (0..=text_chars.len()).collect()
         } else {
+            let pattern_chars: Vec<char> = pattern.chars().collect();
             let mut positions = Vec::new();
+            if pattern_chars.len() > text_chars.len() {
+                return positions;
+            }
+            let last = text_chars.len() - pattern_chars.len();
             let mut pos = 0;
-            while let Some(found) = text[pos..].find(pattern) {
-                let absolute_pos = pos + found;
-                positions.push(absolute_pos);
-                pos = absolute_pos + pattern.len();
+            while pos <= last {
+                if text_chars[pos..pos + pattern_chars.len()] == pattern_chars[..] {
+                    positions.push(pos);
+                    pos += pattern_chars.len();
+                } else {
+                    pos += 1;
+                }
             }
             positions
         }
     }
 
     /// Check if pattern overlaps with itself
+    ///
+    /// True when some proper non-empty prefix of the pattern equals the suffix
+    /// of the same character length. Compared scalar-by-scalar, so multi-byte
+    /// patterns are handled correctly (and never sliced mid-character).
     pub fn pattern_has_overlap(&self, pattern: &str) -> bool {
-        if pattern.len() <= 1 {
+        let chars: Vec<char> = pattern.chars().collect();
+        if chars.len() <= 1 {
             return false;
         }
 
-        for i in 1..pattern.len() {
-            let prefix = &pattern[..i];
-            let suffix = &pattern[pattern.len() - i..];
-            if prefix == suffix {
+        for i in 1..chars.len() {
+            if chars[..i] == chars[chars.len() - i..] {
                 return true;
             }
         }
@@ -661,8 +698,9 @@ mod tests {
     #[test]
     fn test_replace_all_empty_pattern() {
         let solver = ReplaceSolver::new();
+        // SMT-LIB: `str.replace_all` with an empty pattern is the identity.
         let result = solver.replace_all("hi", "", "X");
-        assert_eq!(result, "hXiX");
+        assert_eq!(result, "hi");
     }
 
     #[test]
@@ -901,6 +939,125 @@ mod tests {
         let solver = ReplaceSolver::new();
         let result = solver.replace_first("test", "t", "tt");
         assert_eq!(result, "ttest");
+    }
+
+    // --- Unicode (multi-byte) regression tests -------------------------
+    //
+    // Every position in this module is a character index; the byte-indexed
+    // predecessors of these functions panicked with "byte index N is not a
+    // char boundary" on each of these inputs.
+
+    #[test]
+    fn test_replace_regex_first_non_ascii() {
+        let solver = ReplaceSolver::new();
+        let regex = Regex::literal("é");
+        // Repro: any non-ASCII source used to panic while scanning positions.
+        let result = solver
+            .replace_regex_first("aé", &regex, "X")
+            .expect("regex replace should succeed");
+        assert_eq!(result, "aX");
+
+        let result = solver
+            .replace_regex_first("ééé", &regex, "X")
+            .expect("regex replace should succeed");
+        // Only the final "é" is a position whose whole suffix matches.
+        assert_eq!(result, "ééX");
+    }
+
+    #[test]
+    fn test_replace_regex_first_astral() {
+        let solver = ReplaceSolver::new();
+        let regex = Regex::literal("𝄞");
+        let result = solver
+            .replace_regex_first("a𝄞", &regex, "X")
+            .expect("regex replace should succeed");
+        assert_eq!(result, "aX");
+    }
+
+    #[test]
+    fn test_replace_regex_first_ascii_unchanged() {
+        let solver = ReplaceSolver::new();
+        let regex = Regex::literal("bc");
+        let result = solver
+            .replace_regex_first("abc", &regex, "X")
+            .expect("regex replace should succeed");
+        assert_eq!(result, "aX");
+    }
+
+    #[test]
+    fn test_replace_regex_all_non_ascii() {
+        let solver = ReplaceSolver::new();
+        let regex = Regex::literal("é");
+        let result = solver
+            .replace_regex_all("éé", &regex, "X")
+            .expect("regex replace should succeed");
+        assert_eq!(result, "éX");
+    }
+
+    #[test]
+    fn test_replace_regex_all_empty_match_non_ascii() {
+        let solver = ReplaceSolver::new();
+        // The empty regex matches only the empty suffix, so each scalar is
+        // copied verbatim - and copied whole, never split mid-character.
+        let regex = Regex::epsilon();
+        let result = solver
+            .replace_regex_all("é𝄞a", &regex, "X")
+            .expect("regex replace should succeed");
+        assert_eq!(result, "é𝄞aX");
+    }
+
+    #[test]
+    fn test_pattern_has_overlap_non_ascii() {
+        let analyzer = ReplaceAnalyzer::new();
+        // Repro: "éé" used to panic on the byte-index prefix/suffix slice.
+        assert!(analyzer.pattern_has_overlap("éé"));
+        assert!(analyzer.pattern_has_overlap("éxé"));
+        assert!(!analyzer.pattern_has_overlap("éx"));
+        // A single multi-byte scalar is one character: no proper overlap.
+        assert!(!analyzer.pattern_has_overlap("𝄞"));
+        assert!(analyzer.pattern_has_overlap("𝄞𝄞"));
+    }
+
+    #[test]
+    fn test_find_all_positions_non_ascii_char_indices() {
+        let analyzer = ReplaceAnalyzer::new();
+        // "béanana" - positions are character indices, so the multi-byte "é"
+        // counts as one.
+        assert_eq!(analyzer.find_all_positions("béanana", "a"), vec![2, 4, 6]);
+        assert_eq!(analyzer.find_all_positions("ééé", "é"), vec![0, 1, 2]);
+        assert_eq!(analyzer.find_all_positions("é𝄞", ""), vec![0, 1, 2]);
+        // Pattern longer than the text.
+        assert_eq!(analyzer.find_all_positions("é", "éé"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_find_all_positions_non_overlapping_matches_ascii() {
+        let analyzer = ReplaceAnalyzer::new();
+        // Unchanged ASCII behaviour: non-overlapping, left to right.
+        assert_eq!(analyzer.find_all_positions("aaaa", "aa"), vec![0, 2]);
+        assert_eq!(analyzer.find_all_positions("banana", "ana"), vec![1]);
+    }
+
+    #[test]
+    fn test_count_occurrences_non_ascii() {
+        let mut analyzer = ReplaceAnalyzer::new();
+        assert_eq!(analyzer.count_occurrences("béanana", "a"), 3);
+        assert_eq!(analyzer.count_occurrences("ééé", "é"), 3);
+        // Empty pattern: one position per character plus one at the end.
+        assert_eq!(analyzer.count_occurrences("é𝄞", ""), 3);
+    }
+
+    #[test]
+    fn test_is_idempotent_non_ascii() {
+        let mut analyzer = ReplaceAnalyzer::new();
+        assert!(analyzer.is_idempotent("éaé", "é", "é"));
+    }
+
+    #[test]
+    fn test_compute_result_length_saturates() {
+        let mut analyzer = ReplaceAnalyzer::new();
+        // Impossible occurrence data must not overflow.
+        assert_eq!(analyzer.compute_result_length(2, 3, 1, 4), 4);
     }
 
     #[test]

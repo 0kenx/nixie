@@ -51,6 +51,15 @@ pub enum SpacerError {
     Internal(String),
 }
 
+/// Maximum depth of the recursive POB-blocking search.
+///
+/// Blocking descends one frame level per step, so this is an upper bound on
+/// `SpacerConfig::max_level`'s effect on native stack usage. It is generous
+/// enough never to be hit by a realistic configuration and small enough that
+/// the frames fit comfortably; exceeding it is reported as
+/// [`SpacerError::ResourceLimit`], never silently ignored.
+const BLOCK_RECURSION_LIMIT: usize = 100_000;
+
 /// Result of Spacer solving
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpacerResult {
@@ -448,6 +457,24 @@ impl<'a> Spacer<'a> {
     ///   predecessor exists, the POB is generalized into a blocking lemma at
     ///   `level` and closed.
     fn block(&mut self, pob_id: PobId) -> Result<BlockResult, SpacerError> {
+        self.block_at_depth(pob_id, 0)
+    }
+
+    /// [`Self::block`] with the current blocking-recursion depth.
+    ///
+    /// Blocking recurses on a POB one level lower each time, so the depth is
+    /// bounded by `SpacerConfig::max_level` -- which is a *user-supplied*
+    /// number, and a legitimate-looking `max_level: 100_000` would overflow
+    /// the native stack. Because this function already returns a `Result`,
+    /// the bound is enforced honestly: exceeding it reports
+    /// [`SpacerError::ResourceLimit`], which the caller surfaces as
+    /// `Unknown`, rather than truncating the search and reporting `Safe` on
+    /// an unexplored obligation.
+    fn block_at_depth(&mut self, pob_id: PobId, depth: usize) -> Result<BlockResult, SpacerError> {
+        if depth > BLOCK_RECURSION_LIMIT {
+            return Err(SpacerError::ResourceLimit);
+        }
+
         let (level, pred, post) = {
             let pob = self
                 .pobs
@@ -489,7 +516,7 @@ impl<'a> Spacer<'a> {
             }
 
             match self.find_predecessor(pob_id)? {
-                Some(pred_pob_id) => match self.block(pred_pob_id)? {
+                Some(pred_pob_id) => match self.block_at_depth(pred_pob_id, depth + 1)? {
                     BlockResult::Counterexample => return Ok(BlockResult::Counterexample),
                     BlockResult::Blocked => {
                         // Predecessor blocked; loop to look for another one.

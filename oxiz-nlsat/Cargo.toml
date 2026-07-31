@@ -29,3 +29,6 @@ criterion.workspace = true
 [[bench]]
 name = "nlsat_benchmarks"
 harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

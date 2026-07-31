@@ -107,21 +107,18 @@ impl Solver {
         let mut bv_xor_constraints: Vec<(TermId, TermId, TermId)> = Vec::new(); // (result, x, y)
         let mut bv_widths: FxHashMap<TermId, u32> = FxHashMap::default();
 
-        for &assertion in &self.assertions {
-            self.collect_bv_constraints(
-                assertion,
-                manager,
-                &mut bv_values,
-                &mut bv_or_constraints,
-                &mut bv_sub_constraints,
-                &mut bv_urem_constraints,
-                &mut bv_sdiv_constraints,
-                &mut bv_srem_constraints,
-                &mut bv_not_constraints,
-                &mut bv_xor_constraints,
-                &mut bv_widths,
-            );
-        }
+        self.collect_bv_constraints(
+            manager,
+            &mut bv_values,
+            &mut bv_or_constraints,
+            &mut bv_sub_constraints,
+            &mut bv_urem_constraints,
+            &mut bv_sdiv_constraints,
+            &mut bv_srem_constraints,
+            &mut bv_not_constraints,
+            &mut bv_xor_constraints,
+            &mut bv_widths,
+        );
 
         // Check: OR conflict (bv_02)
         // If a OR b = result, check if computed result matches expected
@@ -319,11 +316,47 @@ impl Solver {
         false
     }
 
-    /// Collect BV constraints from a term
+    /// Collect BV constraints from a term.
+    ///
+    /// Only *unconditional* facts may be collected: every caller of
+    /// [`Self::check_bv_constraints`] treats a hit as a definite top-level
+    /// conflict and answers `unsat` outright.  Descending through `Or` or `Not`
+    /// would record a fact that only holds under some branch — e.g. the
+    /// `bvurem` result in `(or (= (bvurem a b) #x05) (= a #x01))` — and the
+    /// remainder-bound check would then refute a satisfiable formula.  An
+    /// equality's operands are conditional for the same reason: `(= p q)` over
+    /// two Bool-sorted terms is a `TermKind::Eq` (this AST has no `Iff`), so
+    /// `(= (= r (bvor x y)) p)` leaves `r = (bvor x y)` free to be false.
+    ///
+    /// We therefore descend only through the conjuncts of an `And`, which are
+    /// all asserted — the same shape as
+    /// `check_string.rs::collect_string_constraints`.
+    ///
+    /// # Why not `term_walk::asserted_children`
+    ///
+    /// This descent is *narrower* than the general rule, and deliberately so.
+    /// `asserted_children` also hands out a `Not`'s body and an `Or`'s
+    /// disjuncts at negative polarity — but the `Eq` arm below records its
+    /// facts as *positive* ones, with no polarity parameter to consult.  Fed
+    /// the negatively-asserted equality inside `(not (or (= r (bvor x y)) p))`
+    /// it would record `r = (bvor x y)` as if it held, when the assertion says
+    /// the opposite.  Descending through `And` only means every fact reached is
+    /// positive by construction, so the two must not be unified without also
+    /// threading a polarity through the `Eq` arm.
+    ///
+    /// The walk is an explicit heap worklist, not recursion, because the
+    /// nesting depth of an assertion is attacker-controlled and this runs on
+    /// whatever stack `check_sat`'s caller has.  Conjuncts are pushed in
+    /// reverse so they pop left to right, preserving the recursive order —
+    /// which matters, because `bv_values` / `bv_widths` are `insert`ed into and
+    /// the last write for a term wins.
+    ///
+    /// There is deliberately no `visited` set: the recursive version had none,
+    /// and a shared sub-term genuinely does contribute its facts once per
+    /// occurrence.
     #[allow(clippy::too_many_arguments)]
     fn collect_bv_constraints(
         &self,
-        term: TermId,
         manager: &TermManager,
         bv_values: &mut FxHashMap<TermId, num_bigint::BigInt>,
         bv_or_constraints: &mut Vec<(TermId, TermId, TermId)>,
@@ -335,156 +368,100 @@ impl Solver {
         bv_xor_constraints: &mut Vec<(TermId, TermId, TermId)>,
         bv_widths: &mut FxHashMap<TermId, u32>,
     ) {
-        let Some(term_data) = manager.get(term) else {
-            return;
-        };
+        let mut worklist: Vec<TermId> = self.assertions.iter().rev().copied().collect();
 
-        match &term_data.kind {
-            TermKind::Eq(lhs, rhs) => {
-                // Check for BV literal assignment
-                if let Some((val, width)) = self.get_bv_literal_value(*rhs, manager) {
-                    bv_values.insert(*lhs, val.clone());
-                    bv_widths.insert(*lhs, width);
-                    bv_values.insert(*rhs, val);
-                    bv_widths.insert(*rhs, width);
-                } else if let Some((val, width)) = self.get_bv_literal_value(*lhs, manager) {
-                    bv_values.insert(*rhs, val.clone());
-                    bv_widths.insert(*rhs, width);
-                    bv_values.insert(*lhs, val);
-                    bv_widths.insert(*lhs, width);
-                }
+        while let Some(term) = worklist.pop() {
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
 
-                // Check for BV operation results
-                if let Some(rhs_data) = manager.get(*rhs) {
-                    match &rhs_data.kind {
-                        TermKind::BvOr(a, b) => {
-                            bv_or_constraints.push((*lhs, *a, *b));
-                        }
-                        TermKind::BvSub(x, y) => {
-                            bv_sub_constraints.push((*lhs, *x, *y));
-                        }
-                        TermKind::BvUrem(x, y) => {
-                            bv_urem_constraints.push((*lhs, *x, *y));
-                        }
-                        TermKind::BvSdiv(x, y) => {
-                            bv_sdiv_constraints.push((*lhs, *x, *y));
-                        }
-                        TermKind::BvSrem(x, y) => {
-                            bv_srem_constraints.push((*lhs, *x, *y));
-                        }
-                        TermKind::BvNot(x) => {
-                            bv_not_constraints.push((*lhs, *x));
-                        }
-                        TermKind::BvXor(x, y) => {
-                            bv_xor_constraints.push((*lhs, *x, *y));
-                        }
-                        _ => {}
+            match &term_data.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    // Check for BV literal assignment
+                    if let Some((val, width)) = self.get_bv_literal_value(*rhs, manager) {
+                        bv_values.insert(*lhs, val.clone());
+                        bv_widths.insert(*lhs, width);
+                        bv_values.insert(*rhs, val);
+                        bv_widths.insert(*rhs, width);
+                    } else if let Some((val, width)) = self.get_bv_literal_value(*lhs, manager) {
+                        bv_values.insert(*rhs, val.clone());
+                        bv_widths.insert(*rhs, width);
+                        bv_values.insert(*lhs, val);
+                        bv_widths.insert(*lhs, width);
                     }
-                }
-                if let Some(lhs_data) = manager.get(*lhs) {
-                    match &lhs_data.kind {
-                        TermKind::BvOr(a, b) => {
-                            bv_or_constraints.push((*rhs, *a, *b));
-                        }
-                        TermKind::BvSub(x, y) => {
-                            bv_sub_constraints.push((*rhs, *x, *y));
-                        }
-                        TermKind::BvUrem(x, y) => {
-                            bv_urem_constraints.push((*rhs, *x, *y));
-                        }
-                        TermKind::BvSdiv(x, y) => {
-                            bv_sdiv_constraints.push((*rhs, *x, *y));
-                        }
-                        TermKind::BvSrem(x, y) => {
-                            bv_srem_constraints.push((*rhs, *x, *y));
-                        }
-                        TermKind::BvNot(x) => {
-                            bv_not_constraints.push((*rhs, *x));
-                        }
-                        TermKind::BvXor(x, y) => {
-                            bv_xor_constraints.push((*rhs, *x, *y));
-                        }
-                        _ => {}
-                    }
-                }
 
-                self.collect_bv_constraints(
-                    *lhs,
-                    manager,
-                    bv_values,
-                    bv_or_constraints,
-                    bv_sub_constraints,
-                    bv_urem_constraints,
-                    bv_sdiv_constraints,
-                    bv_srem_constraints,
-                    bv_not_constraints,
-                    bv_xor_constraints,
-                    bv_widths,
-                );
-                self.collect_bv_constraints(
-                    *rhs,
-                    manager,
-                    bv_values,
-                    bv_or_constraints,
-                    bv_sub_constraints,
-                    bv_urem_constraints,
-                    bv_sdiv_constraints,
-                    bv_srem_constraints,
-                    bv_not_constraints,
-                    bv_xor_constraints,
-                    bv_widths,
-                );
-            }
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.collect_bv_constraints(
-                        arg,
-                        manager,
-                        bv_values,
-                        bv_or_constraints,
-                        bv_sub_constraints,
-                        bv_urem_constraints,
-                        bv_sdiv_constraints,
-                        bv_srem_constraints,
-                        bv_not_constraints,
-                        bv_xor_constraints,
-                        bv_widths,
-                    );
+                    // Check for BV operation results
+                    if let Some(rhs_data) = manager.get(*rhs) {
+                        match &rhs_data.kind {
+                            TermKind::BvOr(a, b) => {
+                                bv_or_constraints.push((*lhs, *a, *b));
+                            }
+                            TermKind::BvSub(x, y) => {
+                                bv_sub_constraints.push((*lhs, *x, *y));
+                            }
+                            TermKind::BvUrem(x, y) => {
+                                bv_urem_constraints.push((*lhs, *x, *y));
+                            }
+                            TermKind::BvSdiv(x, y) => {
+                                bv_sdiv_constraints.push((*lhs, *x, *y));
+                            }
+                            TermKind::BvSrem(x, y) => {
+                                bv_srem_constraints.push((*lhs, *x, *y));
+                            }
+                            TermKind::BvNot(x) => {
+                                bv_not_constraints.push((*lhs, *x));
+                            }
+                            TermKind::BvXor(x, y) => {
+                                bv_xor_constraints.push((*lhs, *x, *y));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(lhs_data) = manager.get(*lhs) {
+                        match &lhs_data.kind {
+                            TermKind::BvOr(a, b) => {
+                                bv_or_constraints.push((*rhs, *a, *b));
+                            }
+                            TermKind::BvSub(x, y) => {
+                                bv_sub_constraints.push((*rhs, *x, *y));
+                            }
+                            TermKind::BvUrem(x, y) => {
+                                bv_urem_constraints.push((*rhs, *x, *y));
+                            }
+                            TermKind::BvSdiv(x, y) => {
+                                bv_sdiv_constraints.push((*rhs, *x, *y));
+                            }
+                            TermKind::BvSrem(x, y) => {
+                                bv_srem_constraints.push((*rhs, *x, *y));
+                            }
+                            TermKind::BvNot(x) => {
+                                bv_not_constraints.push((*rhs, *x));
+                            }
+                            TermKind::BvXor(x, y) => {
+                                bv_xor_constraints.push((*rhs, *x, *y));
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // No descent into `lhs` / `rhs`.  A bit-vector-sorted operand
+                    // holds no formula for this collector to find, so every
+                    // sub-term the recursion ever reached lay behind a *Boolean*
+                    // equality — this AST has no `Iff`, so `(= p q)` on two
+                    // Bool-sorted terms is a `TermKind::Eq` and hence a polarity
+                    // boundary.  `(= (= r (bvor x y)) p)` is satisfied just as well
+                    // with both sides false, so `r = (bvor x y)` is conditional and
+                    // must not be recorded.  Same rule as
+                    // `check_string.rs::collect_string_constraints`.
                 }
-            }
-            TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_bv_constraints(
-                        arg,
-                        manager,
-                        bv_values,
-                        bv_or_constraints,
-                        bv_sub_constraints,
-                        bv_urem_constraints,
-                        bv_sdiv_constraints,
-                        bv_srem_constraints,
-                        bv_not_constraints,
-                        bv_xor_constraints,
-                        bv_widths,
-                    );
+                TermKind::And(args) => {
+                    worklist.extend(args.iter().rev().copied());
                 }
+                // `Or` and `Not` are deliberately NOT traversed: their sub-terms are
+                // conditional, and this collector's facts feed a definite-conflict
+                // check (see the doc comment above).
+                _ => {}
             }
-            TermKind::Not(inner) => {
-                self.collect_bv_constraints(
-                    *inner,
-                    manager,
-                    bv_values,
-                    bv_or_constraints,
-                    bv_sub_constraints,
-                    bv_urem_constraints,
-                    bv_sdiv_constraints,
-                    bv_srem_constraints,
-                    bv_not_constraints,
-                    bv_xor_constraints,
-                    bv_widths,
-                );
-            }
-            _ => {}
         }
     }
 
@@ -547,5 +524,134 @@ impl Solver {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Solver;
+    use crate::prelude::*;
+    use num_bigint::BigInt;
+    use oxiz_core::ast::{TermId, TermKind, TermManager};
+    use smallvec::smallvec;
+
+    /// The two fact sets these tests inspect: the `bvurem` constraints and the
+    /// concrete bit-vector values.
+    type BvFacts = (Vec<(TermId, TermId, TermId)>, FxHashMap<TermId, BigInt>);
+
+    /// Run the bit-vector collector over `assertions`.
+    fn collect(manager: &TermManager, assertions: Vec<TermId>) -> BvFacts {
+        let mut solver = Solver::new();
+        solver.assertions = assertions;
+        let mut values = FxHashMap::default();
+        let mut or_constraints = Vec::new();
+        let mut sub_constraints = Vec::new();
+        let mut urem_constraints = Vec::new();
+        let mut sdiv_constraints = Vec::new();
+        let mut srem_constraints = Vec::new();
+        let mut not_constraints = Vec::new();
+        let mut xor_constraints = Vec::new();
+        let mut widths = FxHashMap::default();
+        solver.collect_bv_constraints(
+            manager,
+            &mut values,
+            &mut or_constraints,
+            &mut sub_constraints,
+            &mut urem_constraints,
+            &mut sdiv_constraints,
+            &mut srem_constraints,
+            &mut not_constraints,
+            &mut xor_constraints,
+            &mut widths,
+        );
+        (urem_constraints, values)
+    }
+
+    /// A two-conjunct `And` the builder cannot flatten into its parent — see
+    /// `check_dt.rs`'s twin for why `mk_and` will not do.
+    fn nested_and(manager: &mut TermManager, first: TermId, second: TermId) -> TermId {
+        let bool_sort = manager.sorts.bool_sort;
+        manager.intern_term(TermKind::And(smallvec![first, second]), bool_sort)
+    }
+
+    /// An asserted `(= r (bvurem a b))` is collected; the same equality inside
+    /// a disjunct, or under a `Not`, is conditional and must not be.
+    #[test]
+    fn only_unconditional_equalities_are_collected() {
+        let mut manager = TermManager::new();
+        let bv8 = manager.sorts.bitvec(8);
+        let a = manager.mk_var("a", bv8);
+        let b = manager.mk_var("b", bv8);
+        let r = manager.mk_var("r", bv8);
+        let p = manager.mk_var("p", manager.sorts.bool_sort);
+        let urem = manager.mk_bv_urem(a, b);
+        let equality = manager.mk_eq(r, urem);
+
+        let (collected, _) = collect(&manager, vec![equality]);
+        assert_eq!(collected, vec![(r, a, b)]);
+
+        // Inside one disjunct of an `Or`: satisfied by `p` alone.
+        let disjunction = manager.mk_or([equality, p]);
+        let (collected, _) = collect(&manager, vec![disjunction]);
+        assert!(collected.is_empty());
+
+        // Under a `Not`: the assertion says the equality does *not* hold.
+        let negated = manager.mk_not(equality);
+        let (collected, _) = collect(&manager, vec![negated]);
+        assert!(collected.is_empty());
+
+        // And through an `And`, which is the one node this collector descends.
+        let conjunction = manager.mk_and([equality, p]);
+        let (collected, _) = collect(&manager, vec![conjunction]);
+        assert_eq!(collected, vec![(r, a, b)]);
+    }
+
+    /// Conjuncts are visited left to right, which decides `bv_values` — a later
+    /// literal for the same term overwrites an earlier one.
+    #[test]
+    fn later_conjuncts_win_the_value_map() {
+        let mut manager = TermManager::new();
+        let bv8 = manager.sorts.bitvec(8);
+        let x = manager.mk_var("x", bv8);
+        let first_value = manager.mk_bitvec(1u32, 8);
+        let second_value = manager.mk_bitvec(2u32, 8);
+        let first = manager.mk_eq(x, first_value);
+        let second = manager.mk_eq(x, second_value);
+        let assertion = nested_and(&mut manager, first, second);
+
+        let (_, values) = collect(&manager, vec![assertion]);
+        assert_eq!(values.get(&x), Some(&BigInt::from(2)));
+    }
+
+    /// A deeply nested conjunction is walked on the heap, and the equality at
+    /// the bottom is still collected.
+    #[test]
+    fn deeply_nested_conjunction_walks_on_a_worker_stack() {
+        // Stack and depth scale together (1 MiB/200k -> 128 KiB/25k): the
+        // ~5 B-per-frame threshold is the pin, so never raise one alone.
+        const DEPTH: usize = 25_000;
+
+        let collected = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let bv8 = manager.sorts.bitvec(8);
+                let a = manager.mk_var("a", bv8);
+                let b = manager.mk_var("b", bv8);
+                let r = manager.mk_var("r", bv8);
+                let filler = manager.mk_var("p", manager.sorts.bool_sort);
+                let urem = manager.mk_bv_urem(a, b);
+                let mut chain = manager.mk_eq(r, urem);
+                for _ in 0..DEPTH {
+                    chain = nested_and(&mut manager, chain, filler);
+                }
+                let (urem_constraints, _) = collect(&manager, vec![chain]);
+                (urem_constraints, r, a, b)
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread must return, not abort");
+
+        assert_eq!(collected.0, vec![(collected.1, collected.2, collected.3)]);
     }
 }

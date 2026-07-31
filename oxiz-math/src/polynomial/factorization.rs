@@ -138,26 +138,43 @@ impl PolynomialFactorizer {
 
     /// Berlekamp-Zassenhaus factorization algorithm.
     fn berlekamp_zassenhaus(&mut self, poly: &[BigRational]) -> Vec<Vec<BigRational>> {
-        // Simplified implementation
-        if poly.len() <= 2 {
-            // Linear or constant - already irreducible
-            return vec![poly.to_vec()];
+        // Explicit work-stack rather than recursion: each split peels one
+        // linear factor off, so the recursion depth was the polynomial
+        // degree — attacker-controlled — with two `Vec<BigRational>`s and a
+        // `Vec<Vec<BigRational>>` accumulator per frame. The `Vec` return
+        // type leaves nowhere to report a depth cap, so a cap could only
+        // have dropped factors silently.
+        //
+        // Pushing the second half before the first makes the LIFO stack
+        // emit factors in the same order as the former recursion.
+        let mut factors = Vec::new();
+        let mut work = vec![poly.to_vec()];
+
+        while let Some(current) = work.pop() {
+            if current.len() <= 2 {
+                // Linear or constant - already irreducible
+                factors.push(current);
+                continue;
+            }
+
+            // Check if polynomial is irreducible
+            if self.is_irreducible(&current) {
+                factors.push(current);
+                continue;
+            }
+
+            // Attempt factorization using Kronecker substitution
+            if let Some((f1, f2)) = self.kronecker_factor(&current) {
+                work.push(f2);
+                work.push(f1);
+                continue;
+            }
+
+            // Default: return as single factor
+            factors.push(current);
         }
 
-        // Check if polynomial is irreducible
-        if self.is_irreducible(poly) {
-            return vec![poly.to_vec()];
-        }
-
-        // Attempt factorization using Kronecker substitution
-        if let Some((f1, f2)) = self.kronecker_factor(poly) {
-            let mut factors = self.berlekamp_zassenhaus(&f1);
-            factors.extend(self.berlekamp_zassenhaus(&f2));
-            return factors;
-        }
-
-        // Default: return as single factor
-        vec![poly.to_vec()]
+        factors
     }
 
     /// Kronecker substitution factorization attempt.
@@ -243,13 +260,41 @@ impl PolynomialFactorizer {
     }
 
     /// Polynomial GCD (Euclidean algorithm).
+    /// Drop leading (highest-degree) zero coefficients.
+    ///
+    /// Coefficients are stored highest-degree first, so a leading zero
+    /// makes `remainder`'s `lead_div.is_zero()` guard fire and return the
+    /// dividend unchanged — which is what made the recursive `gcd` below
+    /// able to cycle forever.
+    fn strip_leading_zeros(poly: &[BigRational]) -> Vec<BigRational> {
+        let start = poly.iter().position(|c| !c.is_zero()).unwrap_or(poly.len());
+        poly[start..].to_vec()
+    }
+
+    /// Euclidean polynomial GCD.
+    ///
+    /// Iterative rather than recursive, for two reasons:
+    ///
+    /// * Depth was O(degree) with a whole `Vec<BigRational>` remainder per
+    ///   frame, on attacker-supplied polynomials, and the `Vec` return type
+    ///   has no channel for a depth error.
+    /// * More seriously, termination was not guaranteed. `remainder`
+    ///   returns the dividend unchanged when the divisor's *leading*
+    ///   coefficient is zero (its `lead_div.is_zero()` break), so
+    ///   `gcd(a, b)` could step to `gcd(b, a)` and back forever. Stripping
+    ///   leading zeros makes each `remainder` strictly reduce the length,
+    ///   which is the progress the Euclidean algorithm needs.
     fn gcd(a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
-        if Self::is_zero(b) {
-            return a.to_vec();
+        let mut a = Self::strip_leading_zeros(a);
+        let mut b = Self::strip_leading_zeros(b);
+
+        while !Self::is_zero(&b) {
+            let remainder = Self::strip_leading_zeros(&Self::remainder(&a, &b));
+            a = b;
+            b = remainder;
         }
 
-        let remainder = Self::remainder(a, b);
-        Self::gcd(b, &remainder)
+        a
     }
 
     /// Polynomial division (quotient).

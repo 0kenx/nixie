@@ -291,13 +291,9 @@ impl ResolutionProof {
     ) -> Result<ResolutionStepId, String> {
         let unit = self.get_clause(unit_clause).ok_or("Invalid unit clause")?;
 
-        if !unit.is_unit() {
+        let Some(pivot) = unit.unit_literal() else {
             return Err("First premise must be a unit clause".to_string());
-        }
-
-        let pivot = unit
-            .unit_literal()
-            .expect("unit clause has exactly one literal");
+        };
         self.resolve(unit_clause, clause, pivot)
     }
 

@@ -88,29 +88,40 @@ fn extract_boolean_clauses(
     Some((clauses, ordered_vars))
 }
 
+/// Flatten `term` into clause literals, returning `false` if it is not a
+/// clause (a disjunction of variables and negated variables).
+///
+/// Runs on an explicit heap work-stack. The recursion this replaces was
+/// driven by `Or`-nesting depth in user-supplied assertions, and the `bool`
+/// return has no room for a "too deep" answer — capping it would silently
+/// reclassify a genuine clause as a non-clause and disable symmetry
+/// breaking (or, capping the other way, admit a non-clause).
+///
+/// No visited set is used: a shared sub-disjunction legitimately
+/// contributes its literals once per occurrence, so pruning would drop
+/// literals. Order of `out` (pre-order, left-to-right) and the
+/// short-circuit on the first non-clause sub-term both match the former
+/// `Iterator::all`-based recursion, including leaving partially collected
+/// literals in `out` on failure (callers discard them).
 fn collect_clause_literals(
     manager: &TermManager,
     term: TermId,
     out: &mut Vec<(TermId, bool)>,
 ) -> bool {
-    match manager.get(term).map(|node| &node.kind) {
-        Some(TermKind::Var(_)) => {
-            out.push((term, true));
-            true
+    let mut stack = vec![term];
+    while let Some(current) = stack.pop() {
+        match manager.get(current).map(|node| &node.kind) {
+            Some(TermKind::Var(_)) => out.push((current, true)),
+            Some(TermKind::Not(inner)) => match manager.get(*inner).map(|node| &node.kind) {
+                Some(TermKind::Var(_)) => out.push((*inner, false)),
+                _ => return false,
+            },
+            // Push in reverse so the LIFO stack pops disjuncts left-to-right.
+            Some(TermKind::Or(args)) => stack.extend(args.iter().rev().copied()),
+            _ => return false,
         }
-        Some(TermKind::Not(inner)) => match manager.get(*inner).map(|node| &node.kind) {
-            Some(TermKind::Var(_)) => {
-                out.push((*inner, false));
-                true
-            }
-            _ => false,
-        },
-        Some(TermKind::Or(args)) => args
-            .iter()
-            .copied()
-            .all(|arg| collect_clause_literals(manager, arg, out)),
-        _ => false,
     }
+    true
 }
 
 fn clause_to_term(manager: &mut TermManager, clause: &[Lit], vars: &[TermId]) -> TermId {
@@ -132,6 +143,59 @@ fn clause_to_term(manager: &mut TermManager, clause: &[Lit], vars: &[TermId]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 100_000-literal clause walked on a 1 MiB stack. `mk_or` flattens
+    /// nested disjunctions, so a clause built through the public builder is
+    /// wide rather than deep — but the flattening happens at *construction*
+    /// time, and a `TermManager` populated by any other route (a different
+    /// front end, a deserialized term table) can present a deep `Or` spine
+    /// to this walk. The assertion is that the walk returns; a stack
+    /// overflow aborts the process.
+    #[test]
+    fn test_collect_clause_literals_huge_clause_returns() {
+        let worker = std::thread::Builder::new().stack_size(1 << 20).spawn(|| {
+            const WIDTH: usize = 100_000;
+            let mut manager = TermManager::new();
+            let bool_sort = manager.sorts.bool_sort;
+            let lits: Vec<TermId> = (0..WIDTH)
+                .map(|i| manager.mk_var(&format!("v{i}"), bool_sort))
+                .collect();
+            let clause = manager.mk_or(lits.clone());
+            let mut out = Vec::new();
+            let ok = collect_clause_literals(&manager, clause, &mut out);
+            (ok, out.len(), out.first().copied(), lits.first().copied())
+        });
+        let (ok, len, first_out, first_lit) = match worker.map(std::thread::JoinHandle::join) {
+            Ok(Ok(result)) => result,
+            _ => panic!("wide-clause worker thread did not complete"),
+        };
+        assert!(ok);
+        assert_eq!(len, 100_000);
+        // Left-to-right order preserved.
+        assert_eq!(first_out, first_lit.map(|t| (t, true)));
+    }
+
+    /// Semantic pins: literal order and polarity are preserved, and a
+    /// non-clause sub-term still reports `false`.
+    #[test]
+    fn test_collect_clause_literals_semantics() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let a = manager.mk_var("a", bool_sort);
+        let b = manager.mk_var("b", bool_sort);
+        let not_b = manager.mk_not(b);
+        let clause = manager.mk_or([a, not_b]);
+
+        let mut out = Vec::new();
+        assert!(collect_clause_literals(&manager, clause, &mut out));
+        assert_eq!(out, vec![(a, true), (b, false)]);
+
+        // `(or a (and a b))` is not a clause.
+        let conj = manager.mk_and([a, b]);
+        let non_clause = manager.mk_or([a, conj]);
+        let mut out = Vec::new();
+        assert!(!collect_clause_literals(&manager, non_clause, &mut out));
+    }
 
     #[test]
     fn test_symmetry_break_adds_clauses() {

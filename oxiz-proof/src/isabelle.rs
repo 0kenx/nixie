@@ -222,6 +222,48 @@ mod tests {
         assert_eq!(IsabelleExporter::escape_string("hello"), "hello");
         assert_eq!(IsabelleExporter::escape_string("a\\b"), "a\\\\b");
         assert_eq!(IsabelleExporter::escape_string("a\"b"), "a\\\"b");
+        // Non-ASCII and control characters are neither `"` nor `\`, so they
+        // pass through unchanged: Isabelle's outer-syntax term quotation
+        // accepts raw UTF-8 text, and only `"`/`\` are special to it.
+        assert_eq!(IsabelleExporter::escape_string("caf\u{e9}"), "caf\u{e9}");
+        assert_eq!(IsabelleExporter::escape_string("a\u{0}b"), "a\u{0}b");
+    }
+
+    /// Confirmation (not a fix): a `"` in a conclusion could break the
+    /// enclosing `"..."` term quotation every proposition is wrapped in, but
+    /// `conclusion_to_prop` already routes every conclusion through
+    /// `escape_string` before embedding it, turning `"` into `\"`. This pins
+    /// that the *whole* export pipeline — not just the helper in isolation —
+    /// keeps the outer quotation balanced when a conclusion contains one.
+    #[test]
+    fn test_export_proof_conclusion_with_quote_keeps_outer_quotes_balanced() {
+        let mut proof = Proof::new();
+        proof.add_axiom("has \"quote\" inside");
+
+        let isabelle_code = export_to_isabelle(&proof, "QuoteProof");
+        assert!(
+            isabelle_code.contains("\\\"quote\\\""),
+            "the quote must be escaped, not raw, in: {isabelle_code}"
+        );
+        for line in isabelle_code.lines().filter(|l| l.contains(": \"")) {
+            let after = line.split_once(": \"").expect("filtered line matches").1;
+            let mut chars = after.chars();
+            let mut terminated = false;
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    chars.next();
+                    continue;
+                }
+                if c == '"' {
+                    terminated = true;
+                    break;
+                }
+            }
+            assert!(
+                terminated,
+                "outer term quotation never reaches an unescaped closing quote in: {line}"
+            );
+        }
     }
 
     #[test]

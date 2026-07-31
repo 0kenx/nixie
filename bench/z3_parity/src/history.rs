@@ -116,19 +116,13 @@ fn git_sha() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Query Z3 version if available
+/// Query Z3 version if available.
+///
+/// Resolves the binary through the same probe the parity run itself uses, so a
+/// snapshot names the Z3 that actually answered rather than whatever a bare
+/// `z3` on `PATH` happens to be.
 fn z3_version() -> Option<String> {
-    let output = std::process::Command::new("z3")
-        .arg("--version")
-        .output()
-        .ok()?;
-    if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .map(|s| s.trim().to_string())
-    } else {
-        None
-    }
+    crate::z3_runner::z3_version_raw()
 }
 
 /// Build a HistorySnapshot from parity results

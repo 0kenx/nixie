@@ -83,36 +83,140 @@ impl TptpTerm {
         matches!(self, TptpTerm::Variable(_))
     }
 
-    /// Get all variables in this term
+    /// Get all variables in this term.
+    ///
+    /// Iterative (explicit heap stack): `f(f(f(...)))` nesting comes straight
+    /// from an attacker-supplied `.p` file, and `-> ()` leaves nowhere to report
+    /// a truncated walk.
     fn collect_variables(&self, vars: &mut HashSet<String>) {
-        match self {
-            TptpTerm::Variable(name) => {
-                vars.insert(name.clone());
-            }
-            TptpTerm::Constant(_) => {}
-            TptpTerm::Function(_, args) => {
-                for arg in args {
-                    arg.collect_variables(vars);
+        let mut stack: Vec<&TptpTerm> = vec![self];
+
+        while let Some(term) = stack.pop() {
+            match term {
+                TptpTerm::Variable(name) => {
+                    vars.insert(name.clone());
                 }
+                TptpTerm::Constant(_) => {}
+                TptpTerm::Function(_, args) => stack.extend(args.iter()),
             }
         }
     }
 
-    /// Convert to SMT-LIB2 term
+    /// Convert to SMT-LIB2 term.
+    ///
+    /// Iterative (explicit heap stack); output is byte-identical to the
+    /// recursive formulation.
     fn to_smtlib2(&self) -> String {
-        match self {
-            TptpTerm::Variable(name) => name.clone(),
-            TptpTerm::Constant(name) => name.clone(),
-            TptpTerm::Function(name, args) => {
-                if args.is_empty() {
-                    name.clone()
-                } else {
-                    let args_str: Vec<String> = args.iter().map(|a| a.to_smtlib2()).collect();
-                    format!("({} {})", name, args_str.join(" "))
+        let mut out = String::new();
+        let mut stack = vec![TermEmit::Term(self)];
+
+        while let Some(task) = stack.pop() {
+            let term = match task {
+                TermEmit::Text(text) => {
+                    out.push_str(text);
+                    continue;
+                }
+                TermEmit::Term(term) => term,
+            };
+
+            match term {
+                TptpTerm::Variable(name) | TptpTerm::Constant(name) => out.push_str(name),
+                TptpTerm::Function(name, args) => {
+                    if args.is_empty() {
+                        out.push_str(name);
+                    } else {
+                        out.push('(');
+                        out.push_str(name);
+                        stack.push(TermEmit::Text(")"));
+                        for arg in args.iter().rev() {
+                            stack.push(TermEmit::Term(arg));
+                            stack.push(TermEmit::Text(" "));
+                        }
+                    }
                 }
             }
         }
+
+        out
     }
+}
+
+/// Work item for the iterative [`TptpTerm::to_smtlib2`] serializer.
+enum TermEmit<'a> {
+    /// Serialize this subterm.
+    Term(&'a TptpTerm),
+    /// Emit a structural token verbatim.
+    Text(&'static str),
+}
+
+/// Maximum nesting accepted by the TPTP formula and term parsers.
+///
+/// The parsers themselves are iterative, so this is not a stack guard for the
+/// parse: it bounds the *depth of the resulting AST*, which is still walked
+/// recursively by the compiler-generated `Drop`, `Clone`, `Debug` and
+/// `PartialEq` impls of [`TptpFormula`] and [`TptpTerm`]. A `.p` file is
+/// untrusted input auto-detected by extension, so the bound is enforced through
+/// the parsers' existing `Result<_, String>` channel rather than left to
+/// whichever of those walks runs first — a recursive drop firing after the
+/// parse has already returned would abort the process with no diagnostic at
+/// all. Matches `MAX_PARSE_DEPTH` in oxiz-core's SMT-LIB term parser.
+const MAX_TPTP_DEPTH: usize = 1024;
+
+/// Continuation-stack budget corresponding to [`MAX_TPTP_DEPTH`].
+///
+/// The formula parser pushes up to four continuations per grammar level
+/// (`iff -> implies -> or -> and`), plus one for each `~` or quantifier prefix.
+const MAX_TPTP_CONTINUATIONS: usize = MAX_TPTP_DEPTH * 4;
+
+/// A pending step of the iterative formula parser: what still has to happen
+/// once the operand currently being read is complete.
+///
+/// Each variant corresponds to one rung of the recursive-descent ladder this
+/// replaces (`iff -> implies -> or -> and -> unary -> atomic`), with its
+/// partially-accumulated state carried explicitly instead of living in a call
+/// frame.
+enum FormulaCont {
+    /// Iff chain (`<=>` / `<~>`), left-associative.
+    Iff {
+        /// Accumulated left side and whether the pending operator was `<~>`.
+        pending: Option<(TptpFormula, bool)>,
+    },
+    /// Implication level: `None` while reading the left operand, `Some` while
+    /// reading the right operand of `=>` (`reversed == false`) or `<=`
+    /// (`reversed == true`).
+    Implies {
+        /// The already-parsed side, once an implication operator was seen.
+        left: Option<(TptpFormula, bool)>,
+    },
+    /// Disjunction chain (`|`).
+    Or {
+        /// Operands read so far.
+        operands: Vec<TptpFormula>,
+    },
+    /// Conjunction chain (`&`).
+    And {
+        /// Operands read so far.
+        operands: Vec<TptpFormula>,
+    },
+    /// A `~` awaiting its operand.
+    Not,
+    /// A quantifier prefix awaiting its body.
+    Quantify {
+        /// True for `!` (forall), false for `?` (exists).
+        universal: bool,
+        /// The bound variables.
+        vars: Vec<String>,
+    },
+    /// An open `(` at atomic level awaiting its `)`.
+    CloseParen,
+}
+
+/// Work item for the iterative `TptpFormula::to_smtlib2` serializer.
+enum FormulaEmit<'a> {
+    /// Serialize this subformula.
+    Formula(&'a TptpFormula),
+    /// Emit a pre-rendered token verbatim.
+    Text(String),
 }
 
 /// TPTP formula
@@ -152,173 +256,226 @@ impl TptpFormula {
         free
     }
 
+    /// Iterative (explicit heap stack) free-variable collection.
+    ///
+    /// The set of bound variables in scope is kept in a side table indexed per
+    /// frame, so it is cloned only where the recursive version cloned it: on
+    /// entering a quantifier.
     fn collect_free_variables(&self, free: &mut HashSet<String>, bound: &HashSet<String>) {
-        match self {
-            TptpFormula::Atom(_, args) => {
-                for arg in args {
+        // Scope 0 is the caller's `bound` set; quantifiers append new scopes.
+        let mut scopes: Vec<HashSet<String>> = vec![bound.clone()];
+        let mut stack: Vec<(&TptpFormula, usize)> = vec![(self, 0)];
+
+        while let Some((formula, scope)) = stack.pop() {
+            match formula {
+                TptpFormula::Atom(_, args) => {
+                    for arg in args {
+                        let mut term_vars = HashSet::new();
+                        arg.collect_variables(&mut term_vars);
+                        for v in term_vars {
+                            if !scopes.get(scope).is_some_and(|s| s.contains(&v)) {
+                                free.insert(v);
+                            }
+                        }
+                    }
+                }
+                TptpFormula::Equality(t1, t2) | TptpFormula::Inequality(t1, t2) => {
                     let mut term_vars = HashSet::new();
-                    arg.collect_variables(&mut term_vars);
+                    t1.collect_variables(&mut term_vars);
+                    t2.collect_variables(&mut term_vars);
                     for v in term_vars {
-                        if !bound.contains(&v) {
+                        if !scopes.get(scope).is_some_and(|s| s.contains(&v)) {
                             free.insert(v);
                         }
                     }
                 }
+                TptpFormula::Not(f) => stack.push((f, scope)),
+                TptpFormula::And(fs) | TptpFormula::Or(fs) => {
+                    stack.extend(fs.iter().map(|f| (f, scope)));
+                }
+                TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
+                    stack.push((f1, scope));
+                    stack.push((f2, scope));
+                }
+                TptpFormula::Forall(vars, f) | TptpFormula::Exists(vars, f) => {
+                    let mut new_bound = scopes.get(scope).cloned().unwrap_or_default();
+                    for v in vars {
+                        new_bound.insert(v.clone());
+                    }
+                    scopes.push(new_bound);
+                    let new_scope = scopes.len() - 1;
+                    stack.push((f, new_scope));
+                }
+                TptpFormula::True | TptpFormula::False => {}
             }
-            TptpFormula::Equality(t1, t2) | TptpFormula::Inequality(t1, t2) => {
-                let mut term_vars = HashSet::new();
-                t1.collect_variables(&mut term_vars);
-                t2.collect_variables(&mut term_vars);
-                for v in term_vars {
-                    if !bound.contains(&v) {
-                        free.insert(v);
+        }
+    }
+
+    /// Get all predicates used in this formula with their arities.
+    ///
+    /// Iterative (explicit heap stack); see [`TptpTerm::collect_variables`].
+    fn collect_predicates(&self, predicates: &mut HashMap<String, usize>) {
+        let mut stack: Vec<&TptpFormula> = vec![self];
+
+        while let Some(formula) = stack.pop() {
+            match formula {
+                TptpFormula::Atom(name, args) => {
+                    predicates.insert(name.clone(), args.len());
+                }
+                TptpFormula::Equality(_, _) | TptpFormula::Inequality(_, _) => {}
+                TptpFormula::Not(f) => stack.push(f),
+                TptpFormula::And(fs) | TptpFormula::Or(fs) => stack.extend(fs.iter()),
+                TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
+                    stack.push(f1);
+                    stack.push(f2);
+                }
+                TptpFormula::Forall(_, f) | TptpFormula::Exists(_, f) => stack.push(f),
+                TptpFormula::True | TptpFormula::False => {}
+            }
+        }
+    }
+
+    /// Get all functions used in this formula with their arities.
+    ///
+    /// Iterative (explicit heap stack); see [`TptpTerm::collect_variables`].
+    fn collect_functions(&self, functions: &mut HashMap<String, usize>) {
+        let mut stack: Vec<&TptpFormula> = vec![self];
+
+        while let Some(formula) = stack.pop() {
+            match formula {
+                TptpFormula::Atom(_, args) => {
+                    for arg in args {
+                        Self::collect_functions_from_term(arg, functions);
                     }
                 }
-            }
-            TptpFormula::Not(f) => f.collect_free_variables(free, bound),
-            TptpFormula::And(fs) | TptpFormula::Or(fs) => {
-                for f in fs {
-                    f.collect_free_variables(free, bound);
+                TptpFormula::Equality(t1, t2) | TptpFormula::Inequality(t1, t2) => {
+                    Self::collect_functions_from_term(t1, functions);
+                    Self::collect_functions_from_term(t2, functions);
                 }
-            }
-            TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
-                f1.collect_free_variables(free, bound);
-                f2.collect_free_variables(free, bound);
-            }
-            TptpFormula::Forall(vars, f) | TptpFormula::Exists(vars, f) => {
-                let mut new_bound = bound.clone();
-                for v in vars {
-                    new_bound.insert(v.clone());
+                TptpFormula::Not(f) => stack.push(f),
+                TptpFormula::And(fs) | TptpFormula::Or(fs) => stack.extend(fs.iter()),
+                TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
+                    stack.push(f1);
+                    stack.push(f2);
                 }
-                f.collect_free_variables(free, &new_bound);
+                TptpFormula::Forall(_, f) | TptpFormula::Exists(_, f) => stack.push(f),
+                TptpFormula::True | TptpFormula::False => {}
             }
-            TptpFormula::True | TptpFormula::False => {}
         }
     }
 
-    /// Get all predicates used in this formula with their arities
-    fn collect_predicates(&self, predicates: &mut HashMap<String, usize>) {
-        match self {
-            TptpFormula::Atom(name, args) => {
-                predicates.insert(name.clone(), args.len());
-            }
-            TptpFormula::Equality(_, _) | TptpFormula::Inequality(_, _) => {}
-            TptpFormula::Not(f) => f.collect_predicates(predicates),
-            TptpFormula::And(fs) | TptpFormula::Or(fs) => {
-                for f in fs {
-                    f.collect_predicates(predicates);
-                }
-            }
-            TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
-                f1.collect_predicates(predicates);
-                f2.collect_predicates(predicates);
-            }
-            TptpFormula::Forall(_, f) | TptpFormula::Exists(_, f) => {
-                f.collect_predicates(predicates);
-            }
-            TptpFormula::True | TptpFormula::False => {}
-        }
-    }
-
-    /// Get all functions used in this formula with their arities
-    fn collect_functions(&self, functions: &mut HashMap<String, usize>) {
-        match self {
-            TptpFormula::Atom(_, args) => {
-                for arg in args {
-                    Self::collect_functions_from_term(arg, functions);
-                }
-            }
-            TptpFormula::Equality(t1, t2) | TptpFormula::Inequality(t1, t2) => {
-                Self::collect_functions_from_term(t1, functions);
-                Self::collect_functions_from_term(t2, functions);
-            }
-            TptpFormula::Not(f) => f.collect_functions(functions),
-            TptpFormula::And(fs) | TptpFormula::Or(fs) => {
-                for f in fs {
-                    f.collect_functions(functions);
-                }
-            }
-            TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
-                f1.collect_functions(functions);
-                f2.collect_functions(functions);
-            }
-            TptpFormula::Forall(_, f) | TptpFormula::Exists(_, f) => {
-                f.collect_functions(functions);
-            }
-            TptpFormula::True | TptpFormula::False => {}
-        }
-    }
-
+    /// Iterative (explicit heap stack) function-symbol collection over a term.
     fn collect_functions_from_term(term: &TptpTerm, functions: &mut HashMap<String, usize>) {
-        match term {
-            TptpTerm::Variable(_) => {}
-            TptpTerm::Constant(name) => {
-                functions.entry(name.clone()).or_insert(0);
-            }
-            TptpTerm::Function(name, args) => {
-                functions.insert(name.clone(), args.len());
-                for arg in args {
-                    Self::collect_functions_from_term(arg, functions);
+        let mut stack: Vec<&TptpTerm> = vec![term];
+
+        while let Some(current) = stack.pop() {
+            match current {
+                TptpTerm::Variable(_) => {}
+                TptpTerm::Constant(name) => {
+                    functions.entry(name.clone()).or_insert(0);
+                }
+                TptpTerm::Function(name, args) => {
+                    functions.insert(name.clone(), args.len());
+                    stack.extend(args.iter());
                 }
             }
         }
     }
 
-    /// Convert to SMT-LIB2 formula string
+    /// Convert to SMT-LIB2 formula string.
+    ///
+    /// Iterative (explicit heap stack): formula nesting is fully controlled by
+    /// the `.p` file and `-> String` has no channel through which a depth cap
+    /// could report truncation — a truncated formula here would be handed to the
+    /// solver as if it were the real problem. Output is byte-identical to the
+    /// recursive formulation.
     fn to_smtlib2(&self) -> String {
-        match self {
-            TptpFormula::Atom(name, args) => {
-                if args.is_empty() {
-                    name.clone()
-                } else {
-                    let args_str: Vec<String> = args.iter().map(|a| a.to_smtlib2()).collect();
-                    format!("({} {})", name, args_str.join(" "))
+        let mut out = String::new();
+        let mut stack = vec![FormulaEmit::Formula(self)];
+
+        while let Some(task) = stack.pop() {
+            let formula = match task {
+                FormulaEmit::Text(text) => {
+                    out.push_str(&text);
+                    continue;
                 }
-            }
-            TptpFormula::Equality(t1, t2) => {
-                format!("(= {} {})", t1.to_smtlib2(), t2.to_smtlib2())
-            }
-            TptpFormula::Inequality(t1, t2) => {
-                format!("(not (= {} {}))", t1.to_smtlib2(), t2.to_smtlib2())
-            }
-            TptpFormula::Not(f) => format!("(not {})", f.to_smtlib2()),
-            TptpFormula::And(fs) => {
-                if fs.is_empty() {
-                    "true".to_string()
-                } else if fs.len() == 1 {
-                    fs[0].to_smtlib2()
-                } else {
-                    let fs_str: Vec<String> = fs.iter().map(|f| f.to_smtlib2()).collect();
-                    format!("(and {})", fs_str.join(" "))
+                FormulaEmit::Formula(formula) => formula,
+            };
+
+            match formula {
+                TptpFormula::Atom(name, args) => {
+                    if args.is_empty() {
+                        out.push_str(name);
+                    } else {
+                        let args_str: Vec<String> = args.iter().map(TptpTerm::to_smtlib2).collect();
+                        out.push_str(&format!("({} {})", name, args_str.join(" ")));
+                    }
                 }
-            }
-            TptpFormula::Or(fs) => {
-                if fs.is_empty() {
-                    "false".to_string()
-                } else if fs.len() == 1 {
-                    fs[0].to_smtlib2()
-                } else {
-                    let fs_str: Vec<String> = fs.iter().map(|f| f.to_smtlib2()).collect();
-                    format!("(or {})", fs_str.join(" "))
+                TptpFormula::Equality(t1, t2) => {
+                    out.push_str(&format!("(= {} {})", t1.to_smtlib2(), t2.to_smtlib2()));
                 }
+                TptpFormula::Inequality(t1, t2) => {
+                    out.push_str(&format!(
+                        "(not (= {} {}))",
+                        t1.to_smtlib2(),
+                        t2.to_smtlib2()
+                    ));
+                }
+                TptpFormula::Not(f) => {
+                    out.push_str("(not ");
+                    stack.push(FormulaEmit::Text(")".to_string()));
+                    stack.push(FormulaEmit::Formula(f));
+                }
+                TptpFormula::And(fs) | TptpFormula::Or(fs) => {
+                    let (empty, head) = if matches!(formula, TptpFormula::And(_)) {
+                        ("true", "(and")
+                    } else {
+                        ("false", "(or")
+                    };
+                    match fs.split_first() {
+                        None => out.push_str(empty),
+                        Some((only, [])) => {
+                            stack.push(FormulaEmit::Formula(only));
+                        }
+                        Some(_) => {
+                            out.push_str(head);
+                            stack.push(FormulaEmit::Text(")".to_string()));
+                            for f in fs.iter().rev() {
+                                stack.push(FormulaEmit::Formula(f));
+                                stack.push(FormulaEmit::Text(" ".to_string()));
+                            }
+                        }
+                    }
+                }
+                TptpFormula::Implies(f1, f2) | TptpFormula::Iff(f1, f2) => {
+                    let head = if matches!(formula, TptpFormula::Implies(..)) {
+                        "(=> "
+                    } else {
+                        "(= "
+                    };
+                    out.push_str(head);
+                    stack.push(FormulaEmit::Text(")".to_string()));
+                    stack.push(FormulaEmit::Formula(f2));
+                    stack.push(FormulaEmit::Text(" ".to_string()));
+                    stack.push(FormulaEmit::Formula(f1));
+                }
+                TptpFormula::Forall(vars, f) | TptpFormula::Exists(vars, f) => {
+                    let head = if matches!(formula, TptpFormula::Forall(..)) {
+                        "forall"
+                    } else {
+                        "exists"
+                    };
+                    let bindings: Vec<String> = vars.iter().map(|v| format!("({} U)", v)).collect();
+                    out.push_str(&format!("({} ({}) ", head, bindings.join(" ")));
+                    stack.push(FormulaEmit::Text(")".to_string()));
+                    stack.push(FormulaEmit::Formula(f));
+                }
+                TptpFormula::True => out.push_str("true"),
+                TptpFormula::False => out.push_str("false"),
             }
-            TptpFormula::Implies(f1, f2) => {
-                format!("(=> {} {})", f1.to_smtlib2(), f2.to_smtlib2())
-            }
-            TptpFormula::Iff(f1, f2) => {
-                format!("(= {} {})", f1.to_smtlib2(), f2.to_smtlib2())
-            }
-            TptpFormula::Forall(vars, f) => {
-                let bindings: Vec<String> = vars.iter().map(|v| format!("({} U)", v)).collect();
-                format!("(forall ({}) {})", bindings.join(" "), f.to_smtlib2())
-            }
-            TptpFormula::Exists(vars, f) => {
-                let bindings: Vec<String> = vars.iter().map(|v| format!("({} U)", v)).collect();
-                format!("(exists ({}) {})", bindings.join(" "), f.to_smtlib2())
-            }
-            TptpFormula::True => "true".to_string(),
-            TptpFormula::False => "false".to_string(),
         }
+
+        out
     }
 
     /// Convert to SMT-LIB2, universally closing over this formula's own
@@ -476,133 +633,244 @@ impl TptpParser {
         })
     }
 
-    /// Parse a formula
+    /// Parse a formula.
+    ///
+    /// Iterative pushdown parser (explicit heap stack of pending
+    /// continuations). The recursive-descent ladder this replaces cost roughly
+    /// seven call frames per parenthesis level and one per `~`, over input that
+    /// is an untrusted `.p` file auto-detected by extension and parsed on a
+    /// rayon worker thread with a ~2 MiB stack — so a depth cap large enough to
+    /// be useful could never have fired there. Grammar, associativity and error
+    /// messages are unchanged.
     fn parse_formula(&mut self) -> Result<TptpFormula, String> {
-        self.parse_iff()
-    }
+        let mut conts: Vec<FormulaCont> = Vec::new();
+        Self::push_formula_levels(&mut conts);
 
-    /// Parse iff (<=>)
-    fn parse_iff(&mut self) -> Result<TptpFormula, String> {
-        let mut left = self.parse_implies()?;
+        'descend: loop {
+            if conts.len() > MAX_TPTP_CONTINUATIONS {
+                return Err(format!(
+                    "formula nesting exceeds the maximum supported depth of {MAX_TPTP_DEPTH}"
+                ));
+            }
+            // ---- prefix operators, then an atomic formula ----
+            let mut value = loop {
+                // Checked here as well as at `'descend`: a run of `~` or
+                // quantifier prefixes grows the continuation stack without
+                // completing an operand.
+                if conts.len() > MAX_TPTP_CONTINUATIONS {
+                    return Err(format!(
+                        "formula nesting exceeds the maximum supported depth of {MAX_TPTP_DEPTH}"
+                    ));
+                }
 
-        loop {
-            self.skip_whitespace();
-            if self.try_consume("<=>") {
                 self.skip_whitespace();
-                let right = self.parse_implies()?;
-                left = TptpFormula::Iff(Box::new(left), Box::new(right));
-            } else if self.try_consume("<~>") {
-                // XOR (not iff)
+
+                // Negation
+                if self.try_consume("~") {
+                    self.skip_whitespace();
+                    conts.push(FormulaCont::Not);
+                    continue;
+                }
+
+                // Universal quantifier
+                if self.try_consume("!") {
+                    let vars = self.parse_quantifier_vars()?;
+                    conts.push(FormulaCont::Quantify {
+                        universal: true,
+                        vars,
+                    });
+                    continue;
+                }
+
+                // Existential quantifier
+                if self.try_consume("?") {
+                    let vars = self.parse_quantifier_vars()?;
+                    conts.push(FormulaCont::Quantify {
+                        universal: false,
+                        vars,
+                    });
+                    continue;
+                }
+
                 self.skip_whitespace();
-                let right = self.parse_implies()?;
-                left =
-                    TptpFormula::Not(Box::new(TptpFormula::Iff(Box::new(left), Box::new(right))));
-            } else {
-                break;
+
+                // Check for true/false
+                if self.try_consume("$true") {
+                    break TptpFormula::True;
+                }
+                if self.try_consume("$false") {
+                    break TptpFormula::False;
+                }
+
+                // Check for parenthesized formula
+                if self.peek() == Some('(') {
+                    self.consume_char('(')?;
+                    conts.push(FormulaCont::CloseParen);
+                    Self::push_formula_levels(&mut conts);
+                    continue;
+                }
+
+                break self.parse_atomic_relation()?;
+            };
+
+            // ---- fold the completed value through the pending continuations ----
+            loop {
+                let Some(cont) = conts.pop() else {
+                    return Ok(value);
+                };
+
+                match cont {
+                    FormulaCont::Not => value = TptpFormula::Not(Box::new(value)),
+                    FormulaCont::Quantify { universal, vars } => {
+                        value = if universal {
+                            TptpFormula::Forall(vars, Box::new(value))
+                        } else {
+                            TptpFormula::Exists(vars, Box::new(value))
+                        };
+                    }
+                    FormulaCont::CloseParen => {
+                        self.skip_whitespace();
+                        self.consume_char(')')?;
+                    }
+                    FormulaCont::And { mut operands } => {
+                        operands.push(value);
+                        self.skip_whitespace();
+                        if self.try_consume("&") {
+                            self.skip_whitespace();
+                            conts.push(FormulaCont::And { operands });
+                            continue 'descend;
+                        }
+                        value = Self::collapse(operands, TptpFormula::And);
+                    }
+                    FormulaCont::Or { mut operands } => {
+                        operands.push(value);
+                        self.skip_whitespace();
+                        if self.try_consume("|") {
+                            self.skip_whitespace();
+                            conts.push(FormulaCont::Or { operands });
+                            conts.push(FormulaCont::And {
+                                operands: Vec::new(),
+                            });
+                            continue 'descend;
+                        }
+                        value = Self::collapse(operands, TptpFormula::Or);
+                    }
+                    FormulaCont::Implies { left: None } => {
+                        let left = value;
+                        self.skip_whitespace();
+
+                        if self.try_consume("=>") {
+                            self.skip_whitespace();
+                            conts.push(FormulaCont::Implies {
+                                left: Some((left, false)),
+                            });
+                            Self::push_implies_levels(&mut conts);
+                            continue 'descend;
+                        }
+
+                        if self.peek() == Some('<') {
+                            // Check for reverse implies (<=) but not <=> or <~>
+                            let next_chars: String =
+                                self.input[self.pos..].iter().take(3).collect();
+                            if next_chars.starts_with("<=")
+                                && !next_chars.starts_with("<=>")
+                                && !next_chars.starts_with("<~>")
+                            {
+                                self.try_consume("<=");
+                                self.skip_whitespace();
+                                conts.push(FormulaCont::Implies {
+                                    left: Some((left, true)),
+                                });
+                                Self::push_implies_levels(&mut conts);
+                                continue 'descend;
+                            }
+                        }
+
+                        value = left;
+                    }
+                    FormulaCont::Implies {
+                        left: Some((left, reversed)),
+                    } => {
+                        value = if reversed {
+                            TptpFormula::Implies(Box::new(value), Box::new(left))
+                        } else {
+                            TptpFormula::Implies(Box::new(left), Box::new(value))
+                        };
+                    }
+                    FormulaCont::Iff { pending } => {
+                        let combined = match pending {
+                            None => value,
+                            Some((left, xor)) => {
+                                let iff = TptpFormula::Iff(Box::new(left), Box::new(value));
+                                if xor {
+                                    TptpFormula::Not(Box::new(iff))
+                                } else {
+                                    iff
+                                }
+                            }
+                        };
+
+                        self.skip_whitespace();
+                        let next_xor = if self.try_consume("<=>") {
+                            Some(false)
+                        } else if self.try_consume("<~>") {
+                            // XOR (not iff)
+                            Some(true)
+                        } else {
+                            None
+                        };
+
+                        if let Some(xor) = next_xor {
+                            self.skip_whitespace();
+                            conts.push(FormulaCont::Iff {
+                                pending: Some((combined, xor)),
+                            });
+                            Self::push_implies_levels(&mut conts);
+                            continue 'descend;
+                        }
+
+                        value = combined;
+                    }
+                }
             }
         }
-
-        Ok(left)
     }
 
-    /// Parse implies (=>)
-    fn parse_implies(&mut self) -> Result<TptpFormula, String> {
-        let left = self.parse_or()?;
-
-        self.skip_whitespace();
-        if self.try_consume("=>") {
-            self.skip_whitespace();
-            let right = self.parse_implies()?;
-            Ok(TptpFormula::Implies(Box::new(left), Box::new(right)))
-        } else if self.peek() == Some('<') {
-            // Check for reverse implies (<=) but not <=> or <~>
-            let next_chars: String = self.input[self.pos..].iter().take(3).collect();
-            if next_chars.starts_with("<=")
-                && !next_chars.starts_with("<=>")
-                && !next_chars.starts_with("<~>")
-            {
-                self.try_consume("<=");
-                self.skip_whitespace();
-                let right = self.parse_implies()?;
-                Ok(TptpFormula::Implies(Box::new(right), Box::new(left)))
-            } else {
-                Ok(left)
-            }
-        } else {
-            Ok(left)
-        }
+    /// Schedule the full `iff -> implies -> or -> and` descent for the next
+    /// operand.
+    fn push_formula_levels(conts: &mut Vec<FormulaCont>) {
+        conts.push(FormulaCont::Iff { pending: None });
+        Self::push_implies_levels(conts);
     }
 
-    /// Parse or (|)
-    fn parse_or(&mut self) -> Result<TptpFormula, String> {
-        let mut operands = vec![self.parse_and()?];
+    /// Schedule an `implies -> or -> and` descent (the right-hand side of an
+    /// implication, and each operand of an iff chain).
+    fn push_implies_levels(conts: &mut Vec<FormulaCont>) {
+        conts.push(FormulaCont::Implies { left: None });
+        conts.push(FormulaCont::Or {
+            operands: Vec::new(),
+        });
+        conts.push(FormulaCont::And {
+            operands: Vec::new(),
+        });
+    }
 
-        loop {
-            self.skip_whitespace();
-            if self.try_consume("|") {
-                self.skip_whitespace();
-                operands.push(self.parse_and()?);
-            } else {
-                break;
-            }
-        }
-
+    /// A single operand stays as-is; several become an n-ary connective.
+    fn collapse(
+        operands: Vec<TptpFormula>,
+        build: fn(Vec<TptpFormula>) -> TptpFormula,
+    ) -> TptpFormula {
         if operands.len() == 1 {
-            // Safety: len() == 1 ensures pop() succeeds, use into_iter for no-unwrap policy
-            Ok(operands.into_iter().next().unwrap_or(TptpFormula::True))
+            // Safety: len() == 1 ensures next() succeeds, use into_iter for no-unwrap policy
+            operands.into_iter().next().unwrap_or(TptpFormula::True)
         } else {
-            Ok(TptpFormula::Or(operands))
+            build(operands)
         }
     }
 
-    /// Parse and (&)
-    fn parse_and(&mut self) -> Result<TptpFormula, String> {
-        let mut operands = vec![self.parse_unary()?];
-
-        loop {
-            self.skip_whitespace();
-            if self.try_consume("&") {
-                self.skip_whitespace();
-                operands.push(self.parse_unary()?);
-            } else {
-                break;
-            }
-        }
-
-        if operands.len() == 1 {
-            // Safety: len() == 1 ensures pop() succeeds, use into_iter for no-unwrap policy
-            Ok(operands.into_iter().next().unwrap_or(TptpFormula::True))
-        } else {
-            Ok(TptpFormula::And(operands))
-        }
-    }
-
-    /// Parse unary operators (~ for not, ! for forall, ? for exists)
-    fn parse_unary(&mut self) -> Result<TptpFormula, String> {
-        self.skip_whitespace();
-
-        // Negation
-        if self.try_consume("~") {
-            self.skip_whitespace();
-            let inner = self.parse_unary()?;
-            return Ok(TptpFormula::Not(Box::new(inner)));
-        }
-
-        // Universal quantifier
-        if self.try_consume("!") {
-            return self.parse_quantifier(true);
-        }
-
-        // Existential quantifier
-        if self.try_consume("?") {
-            return self.parse_quantifier(false);
-        }
-
-        self.parse_atomic()
-    }
-
-    /// Parse a quantified formula
-    fn parse_quantifier(&mut self, is_universal: bool) -> Result<TptpFormula, String> {
+    /// Parse the `[X, Y, ...]:` prefix of a quantified formula, returning the
+    /// bound variables. The body is parsed by the caller's continuation.
+    fn parse_quantifier_vars(&mut self) -> Result<Vec<String>, String> {
         self.skip_whitespace();
         self.consume_char('[')?;
         self.skip_whitespace();
@@ -643,36 +911,12 @@ impl TptpParser {
         self.try_consume(":");
         self.skip_whitespace();
 
-        let body = self.parse_unary()?;
-
-        if is_universal {
-            Ok(TptpFormula::Forall(vars, Box::new(body)))
-        } else {
-            Ok(TptpFormula::Exists(vars, Box::new(body)))
-        }
+        Ok(vars)
     }
 
-    /// Parse atomic formula
-    fn parse_atomic(&mut self) -> Result<TptpFormula, String> {
-        self.skip_whitespace();
-
-        // Check for true/false
-        if self.try_consume("$true") {
-            return Ok(TptpFormula::True);
-        }
-        if self.try_consume("$false") {
-            return Ok(TptpFormula::False);
-        }
-
-        // Check for parenthesized formula
-        if self.peek() == Some('(') {
-            self.consume_char('(')?;
-            let formula = self.parse_formula()?;
-            self.skip_whitespace();
-            self.consume_char(')')?;
-            return Ok(formula);
-        }
-
+    /// Parse the term-level part of an atomic formula: a term, optionally
+    /// followed by `=` or `!=` and a second term.
+    fn parse_atomic_relation(&mut self) -> Result<TptpFormula, String> {
         // Parse term or predicate
         let first_term = self.parse_term()?;
 
@@ -705,45 +949,69 @@ impl TptpParser {
         // Convert term to atom
         match first_term {
             TptpTerm::Function(name, args) => Ok(TptpFormula::Atom(name, args)),
-            TptpTerm::Constant(name) => Ok(TptpFormula::Atom(name, vec![])),
-            TptpTerm::Variable(name) => Ok(TptpFormula::Atom(name, vec![])),
+            TptpTerm::Constant(name) | TptpTerm::Variable(name) => {
+                Ok(TptpFormula::Atom(name, vec![]))
+            }
         }
     }
 
-    /// Parse a term
+    /// Parse a term.
+    ///
+    /// Iterative (explicit heap stack): `f(f(f(...)))` nesting is bounded only
+    /// by the input file. Grammar and error messages are unchanged.
     fn parse_term(&mut self) -> Result<TptpTerm, String> {
-        self.skip_whitespace();
+        // Function applications whose argument list is still being read.
+        let mut pending: Vec<(String, Vec<TptpTerm>)> = Vec::new();
 
-        let name = self.parse_identifier()?;
-
-        self.skip_whitespace();
-
-        // Check for function application
-        if self.peek() == Some('(') {
-            self.consume_char('(')?;
+        'read: loop {
+            if pending.len() > MAX_TPTP_DEPTH {
+                return Err(format!(
+                    "term nesting exceeds the maximum supported depth of {MAX_TPTP_DEPTH}"
+                ));
+            }
             self.skip_whitespace();
 
-            let mut args = Vec::new();
-            if self.peek() != Some(')') {
-                args.push(self.parse_term()?);
+            let name = self.parse_identifier()?;
+
+            self.skip_whitespace();
+
+            // Check for function application
+            let mut value = if self.peek() == Some('(') {
+                self.consume_char('(')?;
                 self.skip_whitespace();
 
-                while self.try_consume(",") {
-                    self.skip_whitespace();
-                    args.push(self.parse_term()?);
-                    self.skip_whitespace();
+                if self.peek() != Some(')') {
+                    pending.push((name, Vec::new()));
+                    continue 'read;
                 }
+
+                self.consume_char(')')?;
+                TptpTerm::Function(name, Vec::new())
+            } else if name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                // Variable (uppercase)
+                TptpTerm::Variable(name)
+            } else {
+                // Constant (lowercase)
+                TptpTerm::Constant(name)
+            };
+
+            loop {
+                let Some((fn_name, mut args)) = pending.pop() else {
+                    return Ok(value);
+                };
+
+                args.push(value);
+                self.skip_whitespace();
+
+                if self.try_consume(",") {
+                    self.skip_whitespace();
+                    pending.push((fn_name, args));
+                    continue 'read;
+                }
+
+                self.consume_char(')')?;
+                value = TptpTerm::Function(fn_name, args);
             }
-
-            self.consume_char(')')?;
-
-            Ok(TptpTerm::Function(name, args))
-        } else if name.chars().next().is_some_and(|c| c.is_uppercase()) {
-            // Variable (uppercase)
-            Ok(TptpTerm::Variable(name))
-        } else {
-            // Constant (lowercase)
-            Ok(TptpTerm::Constant(name))
         }
     }
 
@@ -1360,5 +1628,112 @@ mod tests {
         assert!(smtlib.contains("(assert (forall ((X U)) (p X)))"));
         // Must not be double-wrapped in a second forall.
         assert!(!smtlib.contains("(forall ((X U)) (forall"));
+    }
+
+    /// Stack size for the deep-nesting regression tests below. A stack overflow
+    /// aborts the process rather than failing a test, so *returning at all* is
+    /// the assertion; the small stack makes a surviving recursion detectable.
+    const SMALL_STACK: usize = 1 << 20;
+
+    /// Run `body` on a thread with a deliberately small stack.
+    fn on_small_stack<F>(name: &str, body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .name(name.to_string())
+            .stack_size(SMALL_STACK)
+            .spawn(body)
+            .expect("test thread should spawn")
+            .join()
+            .expect("test thread should not panic");
+    }
+
+    #[test]
+    fn deep_negation_run_is_rejected_not_fatal() {
+        on_small_stack("tptp_deep_not", || {
+            // One recursive-descent frame per `~` in the old parser.
+            let src = format!("fof(a, axiom, {}p).", "~".repeat(100_000));
+            let mut parser = TptpParser::new(&src);
+            let result = parser.parse_problem();
+            // An honest error through the parser's existing channel, never an abort.
+            assert!(result.is_err(), "expected a depth error, got {result:?}");
+        });
+    }
+
+    #[test]
+    fn deep_paren_nesting_is_rejected_not_fatal() {
+        on_small_stack("tptp_deep_parens", || {
+            // ~7 recursive-descent frames per parenthesis level in the old parser.
+            let src = format!(
+                "fof(a, axiom, {}p{}).",
+                "(".repeat(50_000),
+                ")".repeat(50_000)
+            );
+            let mut parser = TptpParser::new(&src);
+            assert!(parser.parse_problem().is_err());
+        });
+    }
+
+    #[test]
+    fn deep_term_nesting_is_rejected_not_fatal() {
+        on_small_stack("tptp_deep_terms", || {
+            let depth = 50_000;
+            let src = format!(
+                "fof(a, axiom, p({}c{})).",
+                "f(".repeat(depth),
+                ")".repeat(depth)
+            );
+            let mut parser = TptpParser::new(&src);
+            assert!(parser.parse_problem().is_err());
+        });
+    }
+
+    #[test]
+    fn nesting_just_under_the_cap_still_parses_and_converts() {
+        on_small_stack("tptp_under_cap", || {
+            // 1000 `~`s is under MAX_TPTP_DEPTH, so it must parse *and* survive
+            // every post-parse walk (to_smtlib2, free_variables, ...).
+            let depth = 1000;
+            let src = format!("fof(a, axiom, {}p).", "~".repeat(depth));
+            let mut parser = TptpParser::new(&src);
+            let problem = parser.parse_problem().expect("should parse under the cap");
+            let smtlib = problem.to_smtlib2();
+            assert!(smtlib.contains(&"(not ".repeat(depth)));
+        });
+    }
+
+    #[test]
+    fn deep_term_walks_survive_under_the_cap() {
+        on_small_stack("tptp_deep_walks", || {
+            let depth = 1000;
+            let src = format!(
+                "fof(a, axiom, p(X, {}c{})).",
+                "f(".repeat(depth),
+                ")".repeat(depth)
+            );
+            let mut parser = TptpParser::new(&src);
+            let problem = parser.parse_problem().expect("should parse under the cap");
+            let smtlib = problem.to_smtlib2();
+            // Free variable X is universally closed, and the nested term survives
+            // collect_variables / collect_functions / to_smtlib2.
+            assert!(smtlib.contains("(forall ((X U))"));
+            assert!(smtlib.contains(&"(f ".repeat(depth)));
+        });
+    }
+
+    #[test]
+    fn smtlib2_conversion_output_is_unchanged() {
+        // Semantic pins over the iterative serializers.
+        let mut parser = TptpParser::new(
+            "fof(a, axiom, ![X]: (p(X) & (q(X) | ~r(f(X)))) ).\n\
+             fof(b, axiom, (p(c) <=> q(c)) => (a != b)).",
+        );
+        let problem = parser.parse_problem().expect("should parse");
+        let smtlib = problem.to_smtlib2();
+        assert!(
+            smtlib.contains("(assert (forall ((X U)) (and (p X) (or (q X) (not (r (f X)))))))")
+        );
+        assert!(smtlib.contains("(assert (=> (= (p c) (q c)) (not (= a b))))"));
     }
 }

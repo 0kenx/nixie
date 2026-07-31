@@ -155,9 +155,28 @@ enum Locality {
     Global,
 }
 
+/// Work item for the iterative post-order walks over the proof DAG.
+#[derive(Debug, Clone, Copy)]
+enum WalkFrame {
+    /// The node's premises have not been scheduled yet.
+    Enter(ProofNodeId),
+    /// All premises of the node have been processed.
+    Exit(ProofNodeId),
+}
+
 /// A structured interpolant formula, kept as a small AST so that intermediate
 /// combinations can be simplified before being rendered to a string.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Depth invariant
+///
+/// There is deliberately no bound on how deep an `IForm` may be:
+/// [`InterpolantExtractor::build_interpolants`] combines the two premise
+/// interpolants at every resolution step, so the AST is as deep as the
+/// refutation, which follows the input problem. Every walk over this type is
+/// therefore iterative -- [`IForm::render`], [`Clone`], [`PartialEq`] and
+/// [`Drop`]. Only the derived [`fmt::Debug`] is still recursive; it is used
+/// solely for diagnostics on small values.
+#[derive(Debug)]
 enum IForm {
     /// Boolean constant `true`.
     True,
@@ -171,70 +190,253 @@ enum IForm {
     Or(Vec<IForm>),
 }
 
+impl Drop for IForm {
+    /// Iterative drop.
+    ///
+    /// An `IForm` is as deep as the refutation it came from (see the
+    /// type-level depth invariant), so the compiler-generated recursive
+    /// `drop_in_place` would overflow the stack when the extractor's
+    /// `partial_interpolants` map is torn down -- after the interpolant has
+    /// already been produced, making it an abort with no diagnostic. Each node
+    /// is dismantled into a shallow shell before being released.
+    fn drop(&mut self) {
+        /// Detach a node's children, leaving a shell that drops trivially.
+        fn dismantle(node: &mut IForm, out: &mut Vec<IForm>) {
+            match node {
+                IForm::True | IForm::False | IForm::Lit(_) => {}
+                IForm::And(xs) | IForm::Or(xs) => out.append(xs),
+            }
+        }
+
+        let mut pending = Vec::new();
+        dismantle(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            dismantle(&mut node, &mut pending);
+        }
+    }
+}
+
+impl PartialEq for IForm {
+    /// Iterative structural equality.
+    ///
+    /// The derived `PartialEq` recursed once per nesting level, and it is
+    /// reached from the `flat.contains(&other)` scans in [`IForm::and`] and
+    /// [`IForm::or`] -- i.e. on every resolution step, over ASTs of refutation
+    /// depth. The pairs still to be compared live on the heap instead; the
+    /// relation itself is unchanged.
+    fn eq(&self, other: &Self) -> bool {
+        let mut worklist = vec![(self, other)];
+
+        while let Some((a, b)) = worklist.pop() {
+            match a {
+                Self::True => {
+                    if !matches!(b, Self::True) {
+                        return false;
+                    }
+                }
+                Self::False => {
+                    if !matches!(b, Self::False) {
+                        return false;
+                    }
+                }
+                Self::Lit(x) => {
+                    let Self::Lit(y) = b else { return false };
+                    if x != y {
+                        return false;
+                    }
+                }
+                Self::And(xs) => {
+                    let Self::And(ys) = b else { return false };
+                    if xs.len() != ys.len() {
+                        return false;
+                    }
+                    worklist.extend(xs.iter().zip(ys.iter()).rev());
+                }
+                Self::Or(xs) => {
+                    let Self::Or(ys) = b else { return false };
+                    if xs.len() != ys.len() {
+                        return false;
+                    }
+                    worklist.extend(xs.iter().zip(ys.iter()).rev());
+                }
+            }
+        }
+
+        true
+    }
+}
+
+impl Eq for IForm {}
+
+/// One in-progress `And`/`Or` node in the iterative [`Clone`] impl for
+/// [`IForm`].
+struct IFormCloneFrame<'a> {
+    /// `true` for `And`, `false` for `Or`.
+    is_and: bool,
+    /// Children still to be cloned, in source order.
+    rest: std::slice::Iter<'a, IForm>,
+    /// Children cloned so far, in source order.
+    done: Vec<IForm>,
+}
+
+impl Clone for IForm {
+    /// Iterative clone.
+    ///
+    /// `build_interpolants` clones premise interpolants out of its map at every
+    /// resolution step, so the derived recursive `Clone` ran once per nesting
+    /// level on exactly the deep values this type is built to hold. The result
+    /// is structurally identical: nodes are rebuilt with their plain variant
+    /// constructors, never with the normalizing [`IForm::and`]/[`IForm::or`].
+    fn clone(&self) -> Self {
+        /// Rebuild a finished `And`/`Or` node.
+        fn finish(is_and: bool, children: Vec<IForm>) -> IForm {
+            if is_and {
+                IForm::And(children)
+            } else {
+                IForm::Or(children)
+            }
+        }
+
+        let mut stack: Vec<IFormCloneFrame<'_>> = Vec::new();
+        let mut node: &IForm = self;
+
+        loop {
+            // Descend to the next leaf, opening a frame per compound node.
+            let mut value = 'descend: loop {
+                match node {
+                    Self::True => break 'descend Self::True,
+                    Self::False => break 'descend Self::False,
+                    Self::Lit(s) => break 'descend Self::Lit(s.clone()),
+                    Self::And(children) | Self::Or(children) => {
+                        let is_and = matches!(node, Self::And(_));
+                        let mut rest = children.iter();
+                        match rest.next() {
+                            Some(first) => {
+                                stack.push(IFormCloneFrame {
+                                    is_and,
+                                    rest,
+                                    done: Vec::new(),
+                                });
+                                node = first;
+                                continue 'descend;
+                            }
+                            None => break 'descend finish(is_and, Vec::new()),
+                        }
+                    }
+                }
+            };
+
+            // Unwind: hand the cloned child to its parent frame.
+            loop {
+                let Some(mut frame) = stack.pop() else {
+                    return value;
+                };
+                frame.done.push(value);
+                match frame.rest.next() {
+                    Some(next) => {
+                        node = next;
+                        stack.push(frame);
+                        break;
+                    }
+                    None => value = finish(frame.is_and, frame.done),
+                }
+            }
+        }
+    }
+}
+
 impl IForm {
     /// Build a conjunction, collapsing constants and flattening nesting.
     fn and(terms: Vec<IForm>) -> IForm {
-        let mut flat = Vec::new();
-        for t in terms {
-            match t {
+        let mut flat: Vec<IForm> = Vec::new();
+        for mut t in terms {
+            // `mem::take`/`append` rather than a by-value destructure: `IForm`
+            // has a manual `Drop` (see above), so its fields cannot be moved out.
+            match &mut t {
                 IForm::True => continue,
                 IForm::False => return IForm::False,
-                IForm::And(inner) => flat.extend(inner),
-                other => {
-                    if !flat.contains(&other) {
-                        flat.push(other);
+                IForm::And(inner) => flat.append(inner),
+                _ => {
+                    if !flat.contains(&t) {
+                        flat.push(t);
                     }
                 }
             }
         }
         match flat.len() {
             0 => IForm::True,
-            1 => flat.into_iter().next().unwrap_or(IForm::True),
+            1 => flat.pop().unwrap_or(IForm::True),
             _ => IForm::And(flat),
         }
     }
 
     /// Build a disjunction, collapsing constants and flattening nesting.
     fn or(terms: Vec<IForm>) -> IForm {
-        let mut flat = Vec::new();
-        for t in terms {
-            match t {
+        let mut flat: Vec<IForm> = Vec::new();
+        for mut t in terms {
+            // See `and` above for why this cannot destructure by value.
+            match &mut t {
                 IForm::False => continue,
                 IForm::True => return IForm::True,
-                IForm::Or(inner) => flat.extend(inner),
-                other => {
-                    if !flat.contains(&other) {
-                        flat.push(other);
+                IForm::Or(inner) => flat.append(inner),
+                _ => {
+                    if !flat.contains(&t) {
+                        flat.push(t);
                     }
                 }
             }
         }
         match flat.len() {
             0 => IForm::False,
-            1 => flat.into_iter().next().unwrap_or(IForm::False),
+            1 => flat.pop().unwrap_or(IForm::False),
             _ => IForm::Or(flat),
         }
     }
 
     /// Render to an SMT-LIB-style string.
+    ///
+    /// Iterative (explicit heap stack). The interpolant AST is built from the
+    /// proof DAG by [`InterpolantExtractor::build_interpolants`], so its depth
+    /// tracks refutation depth; a recursive renderer would overflow long before
+    /// the formula itself became a problem, and `-> String` gives it no way to
+    /// report that. Output is byte-identical to the recursive formulation.
     fn render(&self) -> String {
-        match self {
-            IForm::True => "true".to_string(),
-            IForm::False => "false".to_string(),
-            IForm::Lit(s) => s.clone(),
-            IForm::And(ts) => Self::render_nary("and", ts),
-            IForm::Or(ts) => Self::render_nary("or", ts),
+        /// Work item for the iterative renderer.
+        enum RenderTask<'a> {
+            /// Render this sub-formula.
+            Form(&'a IForm),
+            /// Emit a structural token verbatim.
+            Text(&'static str),
         }
-    }
 
-    fn render_nary(op: &str, ts: &[IForm]) -> String {
-        let mut out = String::from("(");
-        out.push_str(op);
-        for t in ts {
-            out.push(' ');
-            out.push_str(&t.render());
+        let mut out = String::new();
+        let mut stack = vec![RenderTask::Form(self)];
+
+        while let Some(task) = stack.pop() {
+            match task {
+                RenderTask::Text(text) => out.push_str(text),
+                RenderTask::Form(form) => match form {
+                    IForm::True => out.push_str("true"),
+                    IForm::False => out.push_str("false"),
+                    IForm::Lit(s) => out.push_str(s),
+                    IForm::And(ts) | IForm::Or(ts) => {
+                        let op = if matches!(form, IForm::And(_)) {
+                            "and"
+                        } else {
+                            "or"
+                        };
+                        out.push('(');
+                        out.push_str(op);
+                        stack.push(RenderTask::Text(")"));
+                        for t in ts.iter().rev() {
+                            stack.push(RenderTask::Form(t));
+                            stack.push(RenderTask::Text(" "));
+                        }
+                    }
+                },
+            }
         }
-        out.push(')');
+
         out
     }
 }
@@ -377,42 +579,83 @@ impl InterpolantExtractor {
     }
 
     /// Compute the color of each proof node.
+    ///
+    /// Iterative post-order walk over the proof DAG using an explicit heap
+    /// stack: refutation depth is set by problem hardness, not by input
+    /// nesting, so a recursive descent overflows on legitimately hard inputs.
+    /// Results are memoized in `self.colors`, so each node is colored once, and
+    /// a cycle in the proof is reported as an error instead of looping forever.
     fn compute_colors(&mut self, proof: &Proof, node_id: ProofNodeId) -> Result<Color, String> {
-        if let Some(&color) = self.colors.get(&node_id) {
-            return Ok(color);
-        }
+        let mut stack = vec![WalkFrame::Enter(node_id)];
+        let mut in_progress: FxHashSet<ProofNodeId> = FxHashSet::default();
 
-        let node = proof
-            .get_node(node_id)
-            .ok_or_else(|| format!("Node {node_id} not found"))?;
+        while let Some(frame) = stack.pop() {
+            match frame {
+                WalkFrame::Enter(id) => {
+                    if self.colors.contains_key(&id) {
+                        continue;
+                    }
+                    let node = proof
+                        .get_node(id)
+                        .ok_or_else(|| format!("Node {id} not found"))?;
 
-        let color = match &node.step {
-            ProofStep::Axiom { conclusion } => self.color_axiom(node_id, conclusion),
-            ProofStep::Inference { premises, .. } => {
-                let premises: Vec<ProofNodeId> = premises.iter().copied().collect();
-                let mut has_a = false;
-                let mut has_b = false;
-                for premise_id in premises {
-                    match self.compute_colors(proof, premise_id)? {
-                        Color::A => has_a = true,
-                        Color::B => has_b = true,
-                        Color::AB => {
-                            has_a = true;
-                            has_b = true;
+                    match &node.step {
+                        ProofStep::Axiom { conclusion } => {
+                            let color = self.color_axiom(id, conclusion);
+                            self.colors.insert(id, color);
+                        }
+                        ProofStep::Inference { premises, .. } => {
+                            if !in_progress.insert(id) {
+                                return Err(format!(
+                                    "cyclic proof: node {id} is its own (transitive) premise"
+                                ));
+                            }
+                            stack.push(WalkFrame::Exit(id));
+                            stack.extend(premises.iter().rev().copied().map(WalkFrame::Enter));
                         }
                     }
                 }
-                match (has_a, has_b) {
-                    (true, true) => Color::AB,
-                    (false, true) => Color::B,
-                    // Pure-A, and the degenerate premise-less case, both color A.
-                    _ => Color::A,
+                WalkFrame::Exit(id) => {
+                    in_progress.remove(&id);
+                    let node = proof
+                        .get_node(id)
+                        .ok_or_else(|| format!("Node {id} not found"))?;
+                    let ProofStep::Inference { premises, .. } = &node.step else {
+                        continue;
+                    };
+
+                    let mut has_a = false;
+                    let mut has_b = false;
+                    for premise_id in premises {
+                        let premise_color = self
+                            .colors
+                            .get(premise_id)
+                            .copied()
+                            .ok_or_else(|| format!("Node {premise_id} not found"))?;
+                        match premise_color {
+                            Color::A => has_a = true,
+                            Color::B => has_b = true,
+                            Color::AB => {
+                                has_a = true;
+                                has_b = true;
+                            }
+                        }
+                    }
+                    let color = match (has_a, has_b) {
+                        (true, true) => Color::AB,
+                        (false, true) => Color::B,
+                        // Pure-A, and the degenerate premise-less case, both color A.
+                        _ => Color::A,
+                    };
+                    self.colors.insert(id, color);
                 }
             }
-        };
+        }
 
-        self.colors.insert(node_id, color);
-        Ok(color)
+        self.colors
+            .get(&node_id)
+            .copied()
+            .ok_or_else(|| format!("Node {node_id} not found"))
     }
 
     /// Color an axiom using the caller's explicit partition when available,
@@ -438,34 +681,59 @@ impl InterpolantExtractor {
     }
 
     /// Build partial interpolants for each node.
+    ///
+    /// Iterative post-order walk over the proof DAG (explicit heap stack),
+    /// memoized in `self.partial_interpolants`; see [`Self::compute_colors`].
     fn build_interpolants(&mut self, proof: &Proof, node_id: ProofNodeId) -> Result<(), String> {
-        if self.partial_interpolants.contains_key(&node_id) {
-            return Ok(());
+        let mut stack = vec![WalkFrame::Enter(node_id)];
+        let mut in_progress: FxHashSet<ProofNodeId> = FxHashSet::default();
+
+        while let Some(frame) = stack.pop() {
+            match frame {
+                WalkFrame::Enter(id) => {
+                    if self.partial_interpolants.contains_key(&id) {
+                        continue;
+                    }
+                    let node = proof
+                        .get_node(id)
+                        .ok_or_else(|| format!("Node {id} not found"))?;
+
+                    match &node.step {
+                        ProofStep::Axiom { conclusion } => {
+                            let color = *self
+                                .colors
+                                .get(&id)
+                                .ok_or_else(|| format!("Node {id} has no color"))?;
+                            let form = self.axiom_interpolant(id, color, conclusion)?;
+                            self.partial_interpolants.insert(id, form);
+                        }
+                        ProofStep::Inference { premises, .. } => {
+                            if !in_progress.insert(id) {
+                                return Err(format!(
+                                    "cyclic proof: node {id} is its own (transitive) premise"
+                                ));
+                            }
+                            stack.push(WalkFrame::Exit(id));
+                            stack.extend(premises.iter().rev().copied().map(WalkFrame::Enter));
+                        }
+                    }
+                }
+                WalkFrame::Exit(id) => {
+                    in_progress.remove(&id);
+                    let node = proof
+                        .get_node(id)
+                        .ok_or_else(|| format!("Node {id} not found"))?;
+                    let ProofStep::Inference { rule, premises, .. } = &node.step else {
+                        continue;
+                    };
+                    let rule = rule.clone();
+                    let premises: Vec<ProofNodeId> = premises.iter().copied().collect();
+                    let form = self.resolution_interpolant(proof, id, &rule, &premises)?;
+                    self.partial_interpolants.insert(id, form);
+                }
+            }
         }
 
-        let node = proof
-            .get_node(node_id)
-            .ok_or_else(|| format!("Node {node_id} not found"))?;
-
-        let form = match &node.step {
-            ProofStep::Axiom { conclusion } => {
-                let color = *self
-                    .colors
-                    .get(&node_id)
-                    .ok_or_else(|| format!("Node {node_id} has no color"))?;
-                self.axiom_interpolant(node_id, color, conclusion)?
-            }
-            ProofStep::Inference { rule, premises, .. } => {
-                let rule = rule.clone();
-                let premises: Vec<ProofNodeId> = premises.iter().copied().collect();
-                for &premise_id in &premises {
-                    self.build_interpolants(proof, premise_id)?;
-                }
-                self.resolution_interpolant(proof, node_id, &rule, &premises)?
-            }
-        };
-
-        self.partial_interpolants.insert(node_id, form);
         Ok(())
     }
 
@@ -652,15 +920,20 @@ fn parse_clause_literals(conclusion: &str) -> Vec<ClauseLiteral> {
 /// Parse a single literal: `(not X)` flips polarity; anything else becomes an
 /// opaque atom named after its exact text.
 fn parse_literal(text: &str) -> ClauseLiteral {
-    let trimmed = text.trim();
-    if let Some(inner) = strip_wrapped(trimmed, "not") {
-        let mut lit = parse_literal(inner);
-        lit.positive = !lit.positive;
-        return lit;
+    // Iterative: `(not (not (not ...)))` in an untrusted conclusion string cost
+    // one call frame per `not`, and the `-> ClauseLiteral` return type has no
+    // channel through which a depth cap could report truncation.
+    let mut trimmed = text.trim();
+    let mut positive = true;
+
+    while let Some(inner) = strip_wrapped(trimmed, "not") {
+        positive = !positive;
+        trimmed = inner.trim();
     }
+
     ClauseLiteral {
         atom: trimmed.to_string(),
-        positive: true,
+        positive,
         symbols: extract_symbols(trimmed),
     }
 }
@@ -1059,6 +1332,79 @@ mod tests {
         assert!(
             err.contains("mixes A and B") || err.contains("unsupported"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// Build `And(And(... And(Lit) ...))` nested `depth` levels deep, with the
+    /// plain variant constructor (the normalizing `IForm::and` would flatten
+    /// the nesting away).
+    fn deep_iform(depth: usize, leaf: &str) -> IForm {
+        let mut node = IForm::Lit(leaf.to_string());
+        for _ in 0..depth {
+            node = IForm::And(vec![node]);
+        }
+        node
+    }
+
+    /// An `IForm` is as deep as the refutation it is built from, and `Clone`,
+    /// `PartialEq` and `Drop` used to be compiler-generated recursive walks.
+    ///
+    /// Running on a deliberately small (128 KiB) stack: returning at all is the
+    /// proof. The `Drop`s at the end of the closure are part of the test.
+    ///
+    /// The stack size and `DEPTH` are scaled together on purpose: what is
+    /// pinned is the ratio, ~21 bytes per frame, which no real call frame fits
+    /// into. Never raise one without raising the other.
+    #[test]
+    fn test_deep_iform_walks_do_not_overflow() {
+        const DEPTH: usize = 6_250;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let original = deep_iform(DEPTH, "p");
+                let copy = original.clone();
+                assert!(copy == original);
+
+                // A difference buried at the very bottom must still be found.
+                let other = deep_iform(DEPTH, "q");
+                assert!(other != original);
+
+                // Rendering is iterative too, and agrees with the structure.
+                let rendered = copy.render();
+                assert!(rendered.starts_with("(and (and "));
+                assert!(rendered.ends_with(&format!(" p{}", ")".repeat(DEPTH))));
+            })
+            .expect("thread spawn should succeed");
+
+        handle.join().expect("worker thread should not panic");
+    }
+
+    /// `IForm::and`/`IForm::or` must still flatten, absorb constants and
+    /// deduplicate after being rewritten to avoid moving out of a type with a
+    /// manual `Drop`.
+    #[test]
+    fn test_iform_and_or_normalization_is_unchanged() {
+        let p = || IForm::Lit("p".to_string());
+        let q = || IForm::Lit("q".to_string());
+
+        // `true` is absorbed, `false` is annihilating.
+        assert!(IForm::and(vec![IForm::True, p()]) == p());
+        assert!(IForm::and(vec![p(), IForm::False, q()]) == IForm::False);
+        assert!(IForm::and(Vec::new()) == IForm::True);
+
+        assert!(IForm::or(vec![IForm::False, p()]) == p());
+        assert!(IForm::or(vec![p(), IForm::True, q()]) == IForm::True);
+        assert!(IForm::or(Vec::new()) == IForm::False);
+
+        // Nested conjunctions are flattened, duplicates dropped.
+        assert!(IForm::and(vec![IForm::And(vec![p(), q()]), p()]) == IForm::And(vec![p(), q()]));
+        assert!(IForm::or(vec![IForm::Or(vec![p(), q()]), q()]) == IForm::Or(vec![p(), q()]));
+
+        // An `Or` inside an `and` is *not* flattened (and vice versa).
+        assert!(
+            IForm::and(vec![IForm::Or(vec![p(), q()]), p()])
+                == IForm::And(vec![IForm::Or(vec![p(), q()]), p()])
         );
     }
 }

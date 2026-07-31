@@ -89,6 +89,21 @@ impl Solver {
             // Nothing search-derived to discard; just make sure we are at the
             // root decision level so the next solve starts cleanly.
             self.backtrack_with_phase_saving(0);
+
+            // Re-arm propagation over the retained prefix, exactly as the
+            // size-based rollback below does.
+            //
+            // It is tempting to skip the rewind here on the grounds that
+            // `backtrack_with_phase_saving` already clamps the head to the
+            // rollback boundary — but that clamp is a *no-op when the search is
+            // already at level 0*, which is precisely the state this branch
+            // sees. A probe whose `solve()` ended in a level-0 conflict returns
+            // without growing the trail (so `current_size == trail_size`) and
+            // without backtracking, leaving the head parked past a literal whose
+            // watch list was abandoned mid-scan. Rewinding guarantees the next
+            // `solve()` re-derives the whole prefix's consequences whatever the
+            // previous probe did.
+            self.trail.reset_propagation_head();
             return;
         }
 
@@ -103,6 +118,25 @@ impl Solver {
         // `backtrack_to_size` clears the values and resets the level to 0 but
         // does not re-insert the freed variables into the decision heaps.
         self.trail.backtrack_to_size(trail_size);
+
+        // Re-arm unit propagation over the retained prefix.
+        //
+        // `backtrack_to_size` parks the propagation head at the end of the
+        // surviving trail — correct for ordinary CDCL backtracking, where every
+        // surviving literal has already been propagated *and its consequences
+        // are still on the trail*.  That does not hold here: the discarded
+        // suffix includes level-0 consequences of the retained prefix (e.g. the
+        // bits a bit-blasted comparator derived from a pinned `assert_const`
+        // operand), so leaving the head at the end tells the next `solve()`
+        // that a prefix whose implications have just been erased is fully
+        // propagated.  The solve then starts with no unit information at all and
+        // has to rediscover it by search — turning a propagation-only refutation
+        // into an exponential one (observed as multi-second `unsat` answers for
+        // 24-bit bit-vector comparisons, and timeouts at 32 bits).  Rewinding
+        // the head re-derives the prefix's consequences on the next propagate;
+        // re-propagating an already-assigned literal is a no-op, so this is free
+        // of semantic effect.
+        self.trail.reset_propagation_head();
 
         for var in unassigned_vars {
             if !self.vsids.contains(var) {

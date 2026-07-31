@@ -78,3 +78,6 @@ harness = false
 [[bench]]
 name = "bundle_size"
 harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

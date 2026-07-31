@@ -90,17 +90,93 @@ impl BvBoundsPropagation {
     // ── Private helpers ──────────────────────────────────────────────────────
 
     /// Compute bounds for `tid`, memoising the result.
+    ///
+    /// Iterative (explicit heap stack): the memo already stopped a shared
+    /// sub-DAG from being re-analysed, but the walk itself still consumed one
+    /// native frame per nesting level — and the frames were fat, each holding
+    /// owned `BigUint` interval endpoints. The depth of a bit-vector term is
+    /// set by the input formula, so the recursion could overflow the stack on
+    /// a deeply nested expression. Bounds are now computed strictly bottom-up:
+    /// a node's operands are already in `self.bounds` when it is folded.
     fn compute_bounds(&mut self, tid: TermId, tm: &TermManager) -> Result<BvInterval, String> {
-        if let Some(cached) = self.bounds.get(&tid) {
-            return Ok(cached.clone());
+        /// Work item for the iterative bounds walk.
+        enum BoundsTask {
+            /// Ensure this term (and transitively its operands) has bounds.
+            Visit(TermId),
+            /// Fold this operator node from its operands' memoised bounds.
+            Fold(TermId),
         }
 
-        self.stats.bounds_computed += 1;
-        let term = tm
-            .get(tid)
-            .ok_or_else(|| format!("term {:?} not found", tid))?;
+        let mut tasks = vec![BoundsTask::Visit(tid)];
 
-        let interval = match &term.kind {
+        while let Some(task) = tasks.pop() {
+            match task {
+                BoundsTask::Visit(current) => {
+                    if self.bounds.contains_key(&current) {
+                        continue;
+                    }
+
+                    let term = tm
+                        .get(current)
+                        .ok_or_else(|| format!("term {:?} not found", current))?;
+
+                    match &term.kind {
+                        // ── Binary bit-vector operators ────────────────────
+                        TermKind::BvAdd(lhs, rhs)
+                        | TermKind::BvSub(lhs, rhs)
+                        | TermKind::BvMul(lhs, rhs)
+                        | TermKind::BvAnd(lhs, rhs)
+                        | TermKind::BvOr(lhs, rhs)
+                        | TermKind::BvXor(lhs, rhs)
+                        | TermKind::BvShl(lhs, rhs)
+                        | TermKind::BvLshr(lhs, rhs)
+                        | TermKind::BvAshr(lhs, rhs) => {
+                            let (lhs, rhs) = (*lhs, *rhs);
+                            tasks.push(BoundsTask::Fold(current));
+                            tasks.push(BoundsTask::Visit(rhs));
+                            tasks.push(BoundsTask::Visit(lhs));
+                        }
+                        // ── Unary bit-vector operator ──────────────────────
+                        TermKind::BvNot(arg) => {
+                            let arg = *arg;
+                            tasks.push(BoundsTask::Fold(current));
+                            tasks.push(BoundsTask::Visit(arg));
+                        }
+                        // ── Leaves (no operands to visit first) ────────────
+                        _ => {
+                            let interval = self.leaf_bounds(&term.kind);
+                            self.stats.bounds_computed += 1;
+                            self.bounds.insert(current, interval);
+                        }
+                    }
+                }
+                BoundsTask::Fold(current) => {
+                    if self.bounds.contains_key(&current) {
+                        // Reached again through a second edge of a shared DAG
+                        // node after the first fold already stored its bounds.
+                        continue;
+                    }
+
+                    let term = tm
+                        .get(current)
+                        .ok_or_else(|| format!("term {:?} not found", current))?;
+                    let interval = self.fold_bounds(&term.kind)?;
+                    self.stats.bounds_computed += 1;
+                    self.stats.propagations += 1;
+                    self.bounds.insert(current, interval);
+                }
+            }
+        }
+
+        self.bounds
+            .get(&tid)
+            .cloned()
+            .ok_or_else(|| format!("bounds for term {:?} were not computed", tid))
+    }
+
+    /// Bounds for a term with no bit-vector operands of interest.
+    fn leaf_bounds(&self, kind: &TermKind) -> BvInterval {
+        match kind {
             // ── Constants ─────────────────────────────────────────────────
             TermKind::BitVecConst { value, width } => {
                 let w = *width as usize;
@@ -113,79 +189,64 @@ impl BvBoundsPropagation {
                     width: w,
                 }
             }
+            // ── Variables (unconstrained) and every other term kind ───────
+            _ => full_range(self.default_width()),
+        }
+    }
 
-            // ── Variables (unconstrained) ──────────────────────────────────
-            TermKind::Var(_) => full_range(self.default_width()),
+    /// Fold an operator node from its operands' already-memoised bounds.
+    ///
+    /// Every operand is guaranteed to be in the memo: `Fold` is only ever
+    /// scheduled underneath the `Visit`s of its own operands.
+    fn fold_bounds(&self, kind: &TermKind) -> Result<BvInterval, String> {
+        /// Look up an operand's memoised bounds.
+        fn operand(
+            bounds: &FxHashMap<TermId, BvInterval>,
+            tid: TermId,
+        ) -> Result<&BvInterval, String> {
+            bounds
+                .get(&tid)
+                .ok_or_else(|| format!("operand {:?} has no computed bounds", tid))
+        }
 
-            // ── Bitvector arithmetic / logic ───────────────────────────────
+        let interval = match kind {
             TermKind::BvAdd(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_add(&lb, &rb)
+                bv_add(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
             TermKind::BvSub(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_sub(&lb, &rb)
+                bv_sub(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
             TermKind::BvMul(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_mul(&lb, &rb)
+                bv_mul(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
             TermKind::BvAnd(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_and(&lb, &rb)
+                bv_and(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
             TermKind::BvOr(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_or(&lb, &rb)
+                bv_or(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
+            // XOR result ≤ OR result upper ≤ mask; lower is 0 conservatively,
+            // so the OR bounds are a sound superset.
             TermKind::BvXor(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                // XOR result ≤ OR result upper ≤ mask; lower is 0 conservatively.
-                bv_or(&lb, &rb) // conservative superset
+                bv_or(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
-            TermKind::BvNot(arg) => {
-                let ab = self.compute_bounds(*arg, tm)?;
-                self.stats.propagations += 1;
-                bv_not(&ab)
-            }
+            TermKind::BvNot(arg) => bv_not(operand(&self.bounds, *arg)?),
             TermKind::BvShl(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_shl(&lb, &rb)
+                bv_shl(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
-            TermKind::BvLshr(lhs, rhs) => {
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_lshr(&lb, &rb)
+            // Arithmetic right shift: for unsigned abstract interpretation,
+            // treat identically to logical right shift (sound over-approximation).
+            TermKind::BvLshr(lhs, rhs) | TermKind::BvAshr(lhs, rhs) => {
+                bv_lshr(operand(&self.bounds, *lhs)?, operand(&self.bounds, *rhs)?)
             }
-            TermKind::BvAshr(lhs, rhs) => {
-                // Arithmetic right shift: for unsigned abstract interpretation,
-                // treat identically to logical right shift (sound over-approximation).
-                let lb = self.compute_bounds(*lhs, tm)?;
-                let rb = self.compute_bounds(*rhs, tm)?;
-                self.stats.propagations += 1;
-                bv_lshr(&lb, &rb)
+            other => {
+                return Err(format!(
+                    "fold_bounds called on a non-operator term kind: {:?}",
+                    core::mem::discriminant(other)
+                ));
             }
-
-            // ── All other term kinds: return full range of default width ────
-            _ => full_range(self.default_width()),
         };
 
-        self.bounds.insert(tid, interval.clone());
         Ok(interval)
     }
 
@@ -444,6 +505,79 @@ mod tests {
         let r = full_range(8);
         assert_eq!(r.lower, BigUint::zero());
         assert_eq!(r.upper, BigUint::from(255u32));
+    }
+
+    /// Run `body` on a worker thread with a deliberately small (1 MiB) stack,
+    /// so a recursive walk over a deep term would abort instead of getting
+    /// away with the main thread's much larger stack.
+    fn run_with_small_stack<F>(body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(body)
+            .expect("thread spawn should succeed")
+            .join()
+            .expect("deep-nesting walk must not overflow the stack");
+    }
+
+    #[test]
+    fn test_compute_bounds_handles_deeply_nested_terms() {
+        run_with_small_stack(|| {
+            const DEPTH: usize = 50_000;
+
+            let mut tm = TermManager::new();
+            let bv8 = tm.sorts.bitvec(8);
+            let one = tm.mk_bitvec(1u64, 8);
+
+            // `intern_term` bypasses `mk_bv_*`'s constant folding, so the
+            // chain really is 50k operator nodes deep.
+            let mut current = one;
+            for _ in 0..DEPTH {
+                current = tm.intern_term(TermKind::BvAdd(current, one), bv8);
+            }
+
+            let mut prop = BvBoundsPropagation::new();
+            let interval = prop
+                .compute_bounds(current, &tm)
+                .expect("deep bounds computation should succeed");
+            assert_eq!(interval.width, 8);
+        });
+    }
+
+    #[test]
+    fn test_compute_bounds_folds_constants_exactly() {
+        let mut tm = TermManager::new();
+        let bv8 = tm.sorts.bitvec(8);
+        let five = tm.mk_bitvec(5u64, 8);
+        let ten = tm.mk_bitvec(10u64, 8);
+        let sum = tm.intern_term(TermKind::BvAdd(five, ten), bv8);
+
+        let mut prop = BvBoundsPropagation::new();
+        let interval = prop
+            .compute_bounds(sum, &tm)
+            .expect("bounds computation should succeed");
+
+        assert_eq!(interval.lower, BigUint::from(15u32));
+        assert_eq!(interval.upper, BigUint::from(15u32));
+        assert_eq!(interval.width, 8);
+
+        // The memo is consulted per node, so a second query is a pure lookup.
+        let before = prop.stats().bounds_computed;
+        let again = prop
+            .compute_bounds(sum, &tm)
+            .expect("bounds computation should succeed");
+        assert_eq!(again, interval);
+        assert_eq!(prop.stats().bounds_computed, before);
+    }
+
+    #[test]
+    fn test_compute_bounds_reports_missing_term() {
+        let tm = TermManager::new();
+        let mut prop = BvBoundsPropagation::new();
+        let bogus = TermId::from(u32::MAX);
+        assert!(prop.compute_bounds(bogus, &tm).is_err());
     }
 
     #[test]

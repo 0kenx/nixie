@@ -178,6 +178,18 @@ impl Diagnostic {
         output
     }
 
+    /// Byte offset of the 1-based character column `column` inside `line`.
+    ///
+    /// Column 0 and column 1 both map to the start of the line, and a column
+    /// past the end of the line maps to its end. The result is always a
+    /// character boundary, so slicing `line` at it can never panic.
+    fn byte_offset_of_column(line: &str, column: usize) -> usize {
+        let char_index = column.saturating_sub(1);
+        line.char_indices()
+            .nth(char_index)
+            .map_or(line.len(), |(offset, _)| offset)
+    }
+
     /// Format source context with error highlighting.
     fn format_source_context(&self, source: &str, span: &SourceSpan) -> Option<String> {
         let lines: Vec<&str> = source.lines().collect();
@@ -193,12 +205,17 @@ impl Diagnostic {
         // Line number and source
         output.push_str(&format!("{:4} | {}\n", span.start.line, line));
 
-        // Error marker
-        let spaces = span.start.column.saturating_sub(1);
+        // Error marker. Columns are 1-based character positions, so column 0
+        // is out of range: clamp it to the start of the line instead of
+        // underflowing `column - 1`.
+        let start_column = span.start.column.max(1);
+        let spaces = start_column - 1;
         let marker_len = if span.start.line == span.end.line {
-            span.end.column.saturating_sub(span.start.column).max(1)
+            span.end.column.saturating_sub(start_column).max(1)
         } else {
-            line.len().saturating_sub(span.start.column - 1).max(1)
+            // Character count, not byte length: a multi-byte character is one
+            // column, so `line.len()` would over-count the marker.
+            line.chars().count().saturating_sub(spaces).max(1)
         };
 
         output.push_str(&format!(
@@ -225,15 +242,21 @@ impl Diagnostic {
         let mut output = String::new();
         output.push_str("     | suggested replacement:\n");
 
-        let before_len = fix.span.start.column - 1;
-        let replace_len = if fix.span.start.line == fix.span.end.line {
-            fix.span.end.column - fix.span.start.column
+        // Columns are 1-based character positions. Converting them to byte
+        // offsets keeps the slices on character boundaries (a byte offset
+        // computed from a column would split a multi-byte character and
+        // panic), and clamping handles column 0 and an end column that
+        // precedes the start column without underflowing.
+        let start_column = fix.span.start.column.max(1);
+        let before_end = Self::byte_offset_of_column(line, start_column);
+        let after_start = if fix.span.start.line == fix.span.end.line {
+            Self::byte_offset_of_column(line, fix.span.end.column.max(start_column))
         } else {
-            line.len() - (fix.span.start.column - 1)
+            line.len()
         };
 
-        let before = &line[..before_len.min(line.len())];
-        let after = &line[(before_len + replace_len).min(line.len())..];
+        let before = &line[..before_end];
+        let after = &line[after_start..];
 
         output.push_str(&format!("     | {}{}{}\n", before, fix.replacement, after));
 
@@ -435,5 +458,70 @@ mod tests {
         assert!(formatted.contains("error"));
         assert!(formatted.contains("unexpected token"));
         assert!(formatted.contains("note"));
+    }
+
+    /// Build a diagnostic carrying a single fix over the given span.
+    fn diagnostic_with_fix(span: SourceSpan, replacement: &str) -> Diagnostic {
+        Diagnostic::error("boom").with_fix("try this", span, replacement)
+    }
+
+    #[test]
+    fn test_fix_preview_column_zero_does_not_underflow() {
+        // Column 0 is out of range for a 1-based column; `column - 1` used to
+        // underflow to `usize::MAX` and then slice out of bounds.
+        let span = SourceSpan::new(SourceLocation::new(1, 0, 0), SourceLocation::new(1, 0, 0));
+        let formatted = diagnostic_with_fix(span, "X").format(Some("abc"));
+        assert!(formatted.contains("suggested replacement"));
+        assert!(formatted.contains("Xabc"));
+    }
+
+    #[test]
+    fn test_fix_preview_end_before_start_does_not_underflow() {
+        // A malformed span whose end precedes its start: the replacement is
+        // simply inserted, never an arithmetic underflow.
+        let span = SourceSpan::new(SourceLocation::new(1, 3, 2), SourceLocation::new(1, 1, 0));
+        let formatted = diagnostic_with_fix(span, "X").format(Some("abcdef"));
+        assert!(formatted.contains("abXcdef"));
+    }
+
+    #[test]
+    fn test_fix_preview_beyond_line_end_is_clamped() {
+        let span = SourceSpan::new(
+            SourceLocation::new(1, 99, 98),
+            SourceLocation::new(1, 120, 119),
+        );
+        let formatted = diagnostic_with_fix(span, "X").format(Some("abc"));
+        assert!(formatted.contains("abcX"));
+    }
+
+    #[test]
+    fn test_fix_preview_respects_char_boundaries() {
+        // Every character here is multi-byte, so a byte-indexed slice at
+        // column 2 would land inside a character and panic.
+        let span = SourceSpan::new(SourceLocation::new(1, 2, 3), SourceLocation::new(1, 3, 6));
+        let formatted = diagnostic_with_fix(span, "X").format(Some("日本語"));
+        assert!(formatted.contains("日X語"), "got: {formatted}");
+    }
+
+    #[test]
+    fn test_source_context_column_zero_does_not_underflow() {
+        // Multi-line span starting at column 0: the marker length used to be
+        // `line.len() - (column - 1)`, an underflow on both operands.
+        let span = SourceSpan::new(SourceLocation::new(1, 0, 0), SourceLocation::new(2, 1, 5));
+        let formatted = Diagnostic::error("boom")
+            .with_span(span)
+            .format(Some("abc\ndef"));
+        assert!(formatted.contains("^^^"));
+    }
+
+    #[test]
+    fn test_source_context_multiline_marker_counts_characters() {
+        let span = SourceSpan::new(SourceLocation::new(1, 2, 3), SourceLocation::new(2, 1, 20));
+        let formatted = Diagnostic::error("boom")
+            .with_span(span)
+            .format(Some("日本語\nx"));
+        // Two remaining characters, not the six remaining bytes. One leading
+        // space places the marker under the second character.
+        assert!(formatted.contains("|  ^^\n"), "got: {formatted}");
     }
 }

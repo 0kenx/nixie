@@ -1,6 +1,6 @@
 # OxiZ Python Bindings — z3-python Parity Matrix
 
-Status as of version 0.2.1.
+Status as of version 0.3.1.
 
 Ground truth: `oxiz-py/src/lib.rs` (PyO3 module registration) and `oxiz-py/src/` source files.
 
@@ -10,11 +10,11 @@ Ground truth: `oxiz-py/src/lib.rs` (PyO3 module registration) and `oxiz-py/src/`
 | `Int(name)` / `ctx.int_const(name)` | `Context.int_const(name)` | ✅ supported |
 | `Real(name)` / `ctx.real_const(name)` | `Context.real_const(name)` | ✅ supported |
 | `BitVec(name, width)` / `ctx.bv_const(name, width)` | `Context.bv_const(name, width)` | ✅ supported |
-| `Array(name, dom, rng)` | `TermManager.mk_select` / `mk_store` (no sort constructor) | ⚠️ partial |
-| `FP(name, sort)` / `FPSort(eb, sb)` | not exported | ❌ missing |
-| `StringVal(s)` / string sort | not exported | ❌ missing |
-| `ForAll(vars, body)` | not exported | ❌ missing |
-| `Exists(vars, body)` | not exported | ❌ missing |
+| `Array(name, dom, rng)` | `oxiz.ArraySort(dom, rng)`, the `"Array[D,R]"` sort string, `TermManager.mk_select` / `mk_store` | ✅ supported |
+| `FP(name, sort)` / `FPSort(eb, sb)` | `oxiz.FPSort(eb, sb)` / `oxiz.FPVal(...)` / `fp_add`, `fp_sub`, `fp_mul`, `fp_div`; sort strings `"Float[eb,sb]"` and `"FP[eb,sb]"` | ✅ supported |
+| `StringVal(s)` / string sort | `oxiz.StringVal(s)` / `oxiz.StringSort()`; `Concat`, `Length`, `Contains`, `PrefixOf`, `SuffixOf`; sort string `"String"` | ✅ supported |
+| `ForAll(vars, body)` | `oxiz.ForAll(vars, body)` / `TermManager.mk_forall` | ✅ supported |
+| `Exists(vars, body)` | `oxiz.Exists(vars, body)` / `TermManager.mk_exists` | ✅ supported |
 | `Solver.check()` | `Solver.check(tm)` / `Solver.check_sat(tm)` | ✅ supported |
 | `Solver.model()` | `Solver.model()` (typed) and `Solver.get_model(tm)` (string) | ✅ supported |
 | `Solver.unsat_core()` | `Solver.unsat_core()` / `Solver.get_unsat_core()` | ✅ supported |
@@ -29,9 +29,9 @@ Ground truth: `oxiz-py/src/lib.rs` (PyO3 module registration) and `oxiz-py/src/`
 
 ## Notes
 
-- **Array (⚠️ partial)**: `TermManager.mk_select` and `mk_store` build AST nodes, but `mk_var` does not accept an `"Array[...]"` sort string. No typed array-sort constructor is exposed. Full array theory requires adding `ArraySort` to `parse_sort_name()`.
-- **FP (❌ missing)**: Floating-point sorts and operations (FPSort, FPVal, fp_add, etc.) are not wrapped. The underlying oxiz-core may have partial FP AST nodes, but no PyO3 layer exists.
-- **String (❌ missing)**: String sort and operations (StringVal, Length, Concat, Contains) are not wrapped. No string sort is registered in `parse_sort_name()`.
-- **ForAll / Exists (❌ missing)**: Quantified formulas are not constructible from Python. No `mk_forall` or `mk_exists` on TermManager, no module-level `ForAll` / `Exists` function.
+- **Array**: `parse_sort_name()` accepts `"Array[D,R]"` (parsed iteratively, so arbitrarily deep nesting is safe), `oxiz.ArraySort(dom, rng)` builds the sort directly, and `TermManager.mk_select` / `mk_store` build the AST nodes.
+- **FP**: `parse_sort_name()` accepts `"Float[eb,sb]"` and `"FP[eb,sb]"`; `FPSort`, `FPVal`, the `PyFPRoundingMode` sentinel class, and `fp_add` / `fp_sub` / `fp_mul` / `fp_div` are exported at module level.
+- **String**: `"String"` is registered in `parse_sort_name()`; `StringVal`, `StringSort`, `Concat`, `Length`, `Contains`, `PrefixOf`, `SuffixOf` are module-level functions, with the full `mk_str_*` family on `TermManager`.
+- **ForAll / Exists**: `TermManager.mk_forall` / `mk_exists` take `(name, sort_name)` pairs plus a body; `oxiz.ForAll` / `oxiz.Exists` are the module-level z3-style wrappers.
 - **Optimizer**: `Optimizer.push()` / `Optimizer.pop()` exist but take no arguments (z3-python's `pop()` also takes no arguments for Optimize).
 - **Timeout for Optimizer**: not separately exposed; only `Solver.set_timeout()` is available.

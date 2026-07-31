@@ -1,12 +1,27 @@
 //! Chronological backtracking support
 //!
-//! Chronological backtracking is a modern SAT solving technique that can improve
-//! performance by sometimes backtracking chronologically instead of always using
-//! non-chronological backtracking.
+//! Chronological backtracking (Nadel & Ryvchin, *Chronological Backtracking*,
+//! SAT 2018; refined by Möhle & Biere, *Backing Backtracking*, SAT 2019) trades
+//! the textbook backjump for a one-level rollback: instead of jumping all the
+//! way down to the learned clause's assertion level `a`, the solver backtracks
+//! only to `conflict_level - 1` and keeps every decision in between.  That saves
+//! the work of re-deriving all the propagations those decisions imply, which is
+//! exactly the win when the backjump would otherwise be very deep.
 //!
-//! Key idea: After learning a clause, instead of always jumping to the assertion
-//! level, we can sometimes backtrack chronologically (one level at a time) if the
-//! learned clause is still satisfied at higher levels.
+//! Two invariants make this sound, and both live outside this module:
+//!
+//! * the asserting literal must be assigned at its **true** implication level
+//!   (the maximum level over the learned clause's remaining literals), not at
+//!   the level the search happens to sit at after the rollback — see
+//!   [`crate::trail::Trail::assign_propagation_at`]; and
+//! * the trail is consequently no longer sorted by decision level, so rollback
+//!   filters by level instead of truncating — see
+//!   [`crate::trail::Trail::backtrack_to_with_callback`] — and the solver's
+//!   1-UIP conflict analysis skips trail literals that are not at the conflict
+//!   level.
+//!
+//! A **unit** learned clause is never backtracked chronologically: it is a
+//! consequence of the formula alone and belongs at level 0.
 
 use crate::literal::Lit;
 #[allow(unused_imports)]
@@ -18,7 +33,10 @@ use crate::trail::Trail;
 pub struct ChronoBacktrack {
     /// Enable chronological backtracking
     enabled: bool,
-    /// Threshold for chronological backtracking (max distance from current level)
+    /// Minimum backjump distance (`conflict_level - assertion_level`) that makes
+    /// chronological backtracking worthwhile.  Jumps of at most this many levels
+    /// use ordinary backjumping; anything deeper is backtracked chronologically.
+    /// `0` forces chronological backtracking on every non-unit conflict.
     threshold: u32,
 }
 
@@ -29,56 +47,65 @@ impl ChronoBacktrack {
         Self { enabled, threshold }
     }
 
-    /// Determine the backtrack level for a learned clause
+    /// Determine the backtrack level for a learned clause.
     ///
-    /// Returns the level to backtrack to, which may be higher than the
-    /// assertion level if chronological backtracking is beneficial.
+    /// Returns a level in `[assertion_level, conflict_level - 1]`: the assertion
+    /// level for an ordinary backjump, or `conflict_level - 1` for a
+    /// chronological backtrack.  The upper bound is not negotiable — the
+    /// asserting literal sits at `conflict_level`, so the rollback must go at
+    /// least one level below it or the literal would still be assigned when the
+    /// learned clause tries to imply it, duplicating it on the trail.
     ///
     /// # Arguments
     ///
-    /// * `trail` - The assignment trail
-    /// * `learnt` - The learned clause (first literal is the asserting literal)
-    /// * `assertion_level` - The traditional assertion level (second highest level)
+    /// * `trail` - The assignment trail (used only for debug invariant checks)
+    /// * `learnt` - The learned clause, `learnt[0]` being the asserting literal
+    /// * `conflict_level` - The level of the asserting literal `learnt[0]`
+    /// * `assertion_level` - The second highest level in the clause, i.e. the
+    ///   level at which the clause becomes unit (0 for a unit clause)
     ///
     /// # Returns
     ///
-    /// The level to backtrack to
+    /// The level to backtrack to.
     #[must_use]
     pub fn compute_backtrack_level(
         &self,
         trail: &Trail,
         learnt: &[Lit],
+        conflict_level: u32,
         assertion_level: u32,
     ) -> u32 {
-        if !self.enabled || learnt.is_empty() {
+        // A unit (or empty) learned clause is implied by the formula alone, so
+        // it must be installed at the root level where nothing can retract it.
+        // Backtracking chronologically here would pin a global fact inside some
+        // decision level, losing it on the next rollback — and, because the
+        // asserting literal of a unit clause has no reason clause to resolve
+        // against, planting a second reason-less literal in the middle of a
+        // level, which breaks 1-UIP termination and yields over-strong (unsound)
+        // learned clauses.
+        if learnt.len() <= 1 {
+            return 0;
+        }
+
+        if !self.enabled || conflict_level == 0 || assertion_level >= conflict_level {
             return assertion_level;
         }
 
-        let current_level = trail.decision_level();
-
-        // If we're already at or below the assertion level, use it
-        if current_level <= assertion_level {
+        // Ordinary backjumping for short hops: chronological backtracking pays
+        // off precisely when the backjump would throw away many levels of
+        // propagation work, and costs (a deeper trail, more re-propagation)
+        // when it would not.  Mirrors Z3's `use_backjumping` /
+        // `m_backtrack_scopes` and CaDiCaL's `chronolevelim`.
+        if conflict_level - assertion_level <= self.threshold {
             return assertion_level;
         }
 
-        // If the distance is too large, use non-chronological backtracking
-        if current_level - assertion_level > self.threshold {
-            return assertion_level;
-        }
-
-        // Try chronological backtracking: find the highest level where the
-        // learned clause is still asserting (exactly one literal unassigned)
-        let mut best_level = assertion_level;
-
-        for level in (assertion_level + 1)..=current_level {
-            if self.is_clause_asserting_at_level(trail, learnt, level) {
-                best_level = level - 1; // Backtrack to just before this level
-            } else {
-                break;
-            }
-        }
-
-        best_level
+        let chrono_level = conflict_level - 1;
+        debug_assert!(
+            self.is_clause_asserting_at_level(trail, learnt, chrono_level),
+            "the learned clause must be unit at the chronological backtrack level"
+        );
+        chrono_level
     }
 
     /// Check if the clause is asserting at the given level
@@ -171,30 +198,90 @@ mod tests {
     use crate::literal::Var;
     use crate::trail::Trail;
 
-    #[test]
-    fn test_chrono_disabled() {
-        let chrono = ChronoBacktrack::new(false, 100);
-        let trail = Trail::new(10);
-        let learnt = vec![Lit::pos(Var::new(0)), Lit::neg(Var::new(1))];
-
-        let level = chrono.compute_backtrack_level(&trail, &learnt, 5);
-        assert_eq!(level, 5); // Should use assertion level when disabled
+    /// Build a trail with `x9` as a level-0 fact and `x1..=x5` decided at
+    /// levels 1..=5, matching the shape used by the backtrack-level tests.
+    fn chain_trail() -> Trail {
+        let mut trail = Trail::new(10);
+        trail.assign_decision(Lit::pos(Var::new(9)));
+        for v in 1..=5u32 {
+            trail.new_decision_level();
+            trail.assign_decision(Lit::pos(Var::new(v)));
+        }
+        trail
     }
 
     #[test]
-    fn test_chrono_threshold() {
-        let chrono = ChronoBacktrack::new(true, 10);
-        let trail = Trail::new(100);
+    fn test_chrono_disabled() {
+        let chrono = ChronoBacktrack::new(false, 100);
+        let trail = chain_trail();
+        let learnt = vec![Lit::neg(Var::new(5)), Lit::neg(Var::new(1))];
 
-        // Create a learned clause
-        let learnt = vec![Lit::pos(Var::new(0)), Lit::neg(Var::new(1))];
+        let level = chrono.compute_backtrack_level(&trail, &learnt, 5, 1);
+        assert_eq!(level, 1); // Should use assertion level when disabled
+    }
 
-        // Distance is 50, which exceeds threshold of 10
-        let level = chrono.compute_backtrack_level(&trail, &learnt, 5);
+    // The threshold selects between backjumping and chronological backtracking
+    // the way Z3's `use_backjumping` does: short hops are backjumped, long ones
+    // are backtracked chronologically.  A previous revision had this inverted
+    // (chronological only for *short* hops), which made chronological
+    // backtracking fire on essentially every conflict — the opposite of the
+    // heuristic's intent, and the amplifier that turned the level bugs it was
+    // paired with into false `unsat` answers.
+    #[test]
+    fn test_chrono_threshold_selects_backjump_for_short_hops() {
+        let trail = chain_trail();
+        let learnt = vec![Lit::neg(Var::new(5)), Lit::neg(Var::new(1))];
 
-        // Should use non-chronological backtracking (assertion level) when threshold exceeded
-        // Note: In a real scenario, the trail would have assignments that determine the behavior
-        assert!(level <= 55); // Either assertion level or chronological, but reasonable
+        // Jump distance is 5 - 1 = 4.
+        let short = ChronoBacktrack::new(true, 10);
+        assert_eq!(
+            short.compute_backtrack_level(&trail, &learnt, 5, 1),
+            1,
+            "a 4-level hop is below the threshold and must be backjumped"
+        );
+
+        let long = ChronoBacktrack::new(true, 2);
+        assert_eq!(
+            long.compute_backtrack_level(&trail, &learnt, 5, 1),
+            4,
+            "a 4-level hop exceeds the threshold and must backtrack chronologically"
+        );
+    }
+
+    // A unit learned clause is a consequence of the formula alone: it belongs at
+    // level 0 regardless of how deep the search was when it was derived, and no
+    // threshold setting may override that.
+    #[test]
+    fn test_chrono_never_lifts_a_unit_clause_off_the_root_level() {
+        let trail = chain_trail();
+        let learnt = vec![Lit::neg(Var::new(5))];
+
+        for threshold in [0, 1, 100] {
+            let chrono = ChronoBacktrack::new(true, threshold);
+            assert_eq!(
+                chrono.compute_backtrack_level(&trail, &learnt, 5, 0),
+                0,
+                "unit learned clauses must always be installed at the root level"
+            );
+        }
+    }
+
+    // The asserting literal lives at `conflict_level`, so the rollback must go
+    // strictly below it — otherwise the literal is still assigned when the
+    // learned clause implies it and it ends up duplicated on the trail.
+    #[test]
+    fn test_chrono_level_stays_below_the_asserting_literal() {
+        let trail = chain_trail();
+        let learnt = vec![Lit::neg(Var::new(5)), Lit::neg(Var::new(1))];
+
+        for threshold in [0, 1, 2, 3, 100] {
+            let chrono = ChronoBacktrack::new(true, threshold);
+            let level = chrono.compute_backtrack_level(&trail, &learnt, 5, 1);
+            assert!(
+                (1..5).contains(&level),
+                "backtrack level {level} must lie in [assertion_level, conflict_level)"
+            );
+        }
     }
 
     #[test]
@@ -211,46 +298,16 @@ mod tests {
         assert_eq!(chrono.threshold(), 100);
     }
 
-    // Regression test: `is_clause_asserting_at_level` previously (a) treated
-    // any variable assigned at decision level 0 as *unassigned* rather than
-    // checking its actual (permanent) truth value, and (b) silently dropped
-    // variables assigned strictly above the level under test instead of
-    // counting them as unassigned — together these meant the asserting
-    // check almost never succeeded, so chronological backtracking was
-    // effectively inert and `compute_backtrack_level` always degenerated to
-    // the plain (non-chronological) assertion level.
-    //
-    // Build a trail where x9 is a level-0 fact and x1..x4 are decisions at
-    // levels 1..4, with x5 (the would-be UIP) decided at level 5. The learnt
-    // clause `¬x5 ∨ ¬x9 ∨ ¬x1` stays asserting through levels 2..4 (x5 is
-    // simply not yet decided as of those points, and x9/x1 are both false),
-    // so chronological backtracking should jump to level 3 — strictly
-    // higher than the traditional assertion level of 1. Under the old
-    // buggy logic this returned 1 (no chronological jump at all).
+    // Chronological backtracking keeps the decisions between the assertion
+    // level and the conflict level instead of throwing them away: with x9 a
+    // level-0 fact, x1..x4 decided at levels 1..4 and x5 (the UIP) at level 5,
+    // the clause `¬x5 ∨ ¬x9 ∨ ¬x1` is asserting from level 1 upwards, and a
+    // chronological rollback stops at level 4 — retaining the levels 2..4 that a
+    // plain backjump to the assertion level 1 would have discarded.
     #[test]
-    fn test_chrono_backtrack_finds_higher_level_for_asserting_clause() {
-        let chrono = ChronoBacktrack::new(true, 100);
-        let mut trail = Trail::new(10);
-
-        // Level 0: root-level fact. Must NOT be misread as "unassigned".
-        trail.assign_decision(Lit::pos(Var::new(9)));
-
-        // Level 1: drives assertion_level = 1.
-        trail.new_decision_level();
-        trail.assign_decision(Lit::pos(Var::new(1)));
-
-        // Levels 2..4: decisions unrelated to the learnt clause; the clause
-        // should remain asserting all the way through them.
-        trail.new_decision_level();
-        trail.assign_decision(Lit::pos(Var::new(2)));
-        trail.new_decision_level();
-        trail.assign_decision(Lit::pos(Var::new(3)));
-        trail.new_decision_level();
-        trail.assign_decision(Lit::pos(Var::new(4)));
-
-        // Level 5: the (would-be) UIP variable.
-        trail.new_decision_level();
-        trail.assign_decision(Lit::pos(Var::new(5)));
+    fn test_chrono_backtrack_keeps_intervening_decisions() {
+        let chrono = ChronoBacktrack::new(true, 0);
+        let trail = chain_trail();
 
         let learnt = vec![
             Lit::neg(Var::new(5)),
@@ -258,12 +315,12 @@ mod tests {
             Lit::neg(Var::new(1)),
         ];
 
-        let level = chrono.compute_backtrack_level(&trail, &learnt, 1);
+        let level = chrono.compute_backtrack_level(&trail, &learnt, 5, 1);
 
         assert_eq!(
-            level, 3,
-            "chronological backtracking should skip past levels 2..4 instead of \
-             degenerating to the plain assertion level"
+            level, 4,
+            "chronological backtracking should stop one level below the conflict \
+             level instead of jumping down to the assertion level"
         );
     }
 

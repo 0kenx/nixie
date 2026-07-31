@@ -291,20 +291,100 @@ impl<'a> Generalizer<'a> {
         }
     }
 
-    /// Estimate the size of a term (for prioritization)
+    /// Estimate the size of a term (for prioritization).
+    ///
+    /// Iterative post-order walk with a memo table. The recursive version
+    /// had neither a depth bound nor a memo: it overflowed the stack on
+    /// deeply nested input and re-expanded a shared DAG once per path
+    /// (`2^n` work for `n` doublings). Because the result is a plain
+    /// `usize` with no error channel, a depth cap could only have produced
+    /// a silently wrong size, which then mis-orders literal elimination.
+    ///
+    /// The weights are unchanged: every node counts `1`, and only the kinds
+    /// the old `match` enumerated are descended into — anything else
+    /// (variables, constants, and operators outside that set) counts as a
+    /// single node exactly as before.
     fn term_size(&self, term: TermId) -> usize {
+        self.accumulate(term, |_| 1)
+    }
+
+    /// Estimate the computational cost of a term.
+    /// Higher cost means more expensive to check.
+    ///
+    /// Same iterative post-order walk and the same per-kind weights as the
+    /// recursive version it replaces (`Mul`/`Div`/`Mod` = 10, `Add`/`Sub` =
+    /// 5, comparisons = 4, `And`/`Or` = 3, `Not` = 2, everything else = 1);
+    /// see [`Self::term_size`] for why recursion had to go.
+    fn term_cost(&self, term: TermId) -> usize {
         use oxiz_core::TermKind;
 
-        let Some(t) = self.terms.get(term) else {
-            return 1;
-        };
+        self.accumulate(term, |kind| match kind {
+            TermKind::Mul(_) | TermKind::Div(_, _) | TermKind::Mod(_, _) => 10,
+            TermKind::Add(_) | TermKind::Sub(_, _) => 5,
+            TermKind::Eq(_, _)
+            | TermKind::Le(_, _)
+            | TermKind::Lt(_, _)
+            | TermKind::Ge(_, _)
+            | TermKind::Gt(_, _) => 4,
+            TermKind::And(_) | TermKind::Or(_) => 3,
+            TermKind::Not(_) => 2,
+            _ => 1,
+        })
+    }
 
-        match &t.kind {
+    /// Sum `weight(kind)` over the term skeleton both [`Self::term_size`]
+    /// and [`Self::term_cost`] walk, using an explicit stack and a memo.
+    ///
+    /// A term absent from the manager weighs `1`, matching the old
+    /// `let Some(t) = … else { return 1 }` guard in both functions.
+    fn accumulate(&self, term: TermId, weight: impl Fn(&oxiz_core::TermKind) -> usize) -> usize {
+        let mut memo: rustc_hash::FxHashMap<TermId, usize> = rustc_hash::FxHashMap::default();
+        let mut stack: Vec<(TermId, bool)> = vec![(term, false)];
+
+        while let Some((current, expanded)) = stack.pop() {
+            if memo.contains_key(&current) {
+                continue;
+            }
+            let Some(kind) = self.terms.get(current).map(|t| &t.kind) else {
+                memo.insert(current, 1);
+                continue;
+            };
+            let children = Self::measured_children(kind);
+
+            if expanded {
+                let total = children
+                    .iter()
+                    .map(|child| memo.get(child).copied().unwrap_or(0))
+                    .sum::<usize>()
+                    .saturating_add(weight(kind));
+                memo.insert(current, total);
+            } else {
+                stack.push((current, true));
+                for child in children {
+                    if !memo.contains_key(&child) {
+                        stack.push((child, false));
+                    }
+                }
+            }
+        }
+
+        memo.get(&term).copied().unwrap_or(1)
+    }
+
+    /// The subterms the size/cost estimates descend into.
+    ///
+    /// Deliberately *not* every child: this reproduces the exact kind set
+    /// the recursive estimates enumerated, so the numbers they feed into
+    /// the elimination-order heuristics are unchanged.
+    fn measured_children(kind: &oxiz_core::TermKind) -> Vec<TermId> {
+        use oxiz_core::TermKind;
+
+        match kind {
             TermKind::And(args)
             | TermKind::Or(args)
             | TermKind::Add(args)
-            | TermKind::Mul(args) => 1 + args.iter().map(|&arg| self.term_size(arg)).sum::<usize>(),
-            TermKind::Not(arg) => 1 + self.term_size(*arg),
+            | TermKind::Mul(args) => args.to_vec(),
+            TermKind::Not(arg) => vec![*arg],
             TermKind::Eq(a, b)
             | TermKind::Le(a, b)
             | TermKind::Lt(a, b)
@@ -312,41 +392,8 @@ impl<'a> Generalizer<'a> {
             | TermKind::Gt(a, b)
             | TermKind::Sub(a, b)
             | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => 1 + self.term_size(*a) + self.term_size(*b),
-            _ => 1,
-        }
-    }
-
-    /// Estimate the computational cost of a term
-    /// Higher cost means more expensive to check
-    fn term_cost(&self, term: TermId) -> usize {
-        use oxiz_core::TermKind;
-
-        let Some(t) = self.terms.get(term) else {
-            return 1;
-        };
-
-        match &t.kind {
-            // Arithmetic operations have higher cost
-            TermKind::Mul(args) => 10 + args.iter().map(|&arg| self.term_cost(arg)).sum::<usize>(),
-            TermKind::Div(a, b) | TermKind::Mod(a, b) => {
-                10 + self.term_cost(*a) + self.term_cost(*b)
-            }
-            TermKind::Add(args) => 5 + args.iter().map(|&arg| self.term_cost(arg)).sum::<usize>(),
-            TermKind::Sub(a, b) => 5 + self.term_cost(*a) + self.term_cost(*b),
-            // Logical operations have medium cost
-            TermKind::And(args) | TermKind::Or(args) => {
-                3 + args.iter().map(|&arg| self.term_cost(arg)).sum::<usize>()
-            }
-            TermKind::Not(arg) => 2 + self.term_cost(*arg),
-            // Comparisons have medium cost
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b) => 4 + self.term_cost(*a) + self.term_cost(*b),
-            // Variables and constants have low cost
-            _ => 1,
+            | TermKind::Mod(a, b) => vec![*a, *b],
+            _ => Vec::new(),
         }
     }
 
@@ -469,28 +516,33 @@ impl<'a> Generalizer<'a> {
         cube
     }
 
-    /// Collect literals from a formula into a cube
+    /// Collect literals from a formula into a cube.
+    ///
+    /// The `And` tree is flattened with an explicit heap stack
+    /// ([`crate::walk::flatten_conjuncts`]); the previous recursive form
+    /// descended one native frame per `And` level, with no bound and no
+    /// error channel (`-> ()`), so deeply nested cube input aborted the
+    /// process. The per-literal rules are unchanged: `true` conjuncts are
+    /// skipped, a `false` conjunct resets the cube to itself, and any other
+    /// literal is appended unless already present.
     fn collect_literals(terms: &TermManager, formula: TermId, cube: &mut Vec<TermId>) {
-        if let Some(term) = terms.get(formula) {
+        for literal in crate::walk::flatten_conjuncts(terms, formula) {
+            let Some(term) = terms.get(literal) else {
+                // Not a term of this manager: ignored, as before.
+                continue;
+            };
             match &term.kind {
-                TermKind::And(args) => {
-                    // Recursively collect from conjuncts
-                    for &arg in args.iter() {
-                        Self::collect_literals(terms, arg, cube);
-                    }
-                }
-                TermKind::True => {
-                    // Skip true literals
-                }
+                // Skip true literals.
+                TermKind::True => {}
+                // False makes the whole cube unsatisfiable.
                 TermKind::False => {
-                    // False makes the whole cube unsatisfiable
                     cube.clear();
-                    cube.push(formula);
+                    cube.push(literal);
                 }
+                // Atomic literal or negation.
                 _ => {
-                    // Atomic literal or negation
-                    if !cube.contains(&formula) {
-                        cube.push(formula);
+                    if !cube.contains(&literal) {
+                        cube.push(literal);
                     }
                 }
             }
@@ -575,54 +627,18 @@ impl<'a> Generalizer<'a> {
         false
     }
 
-    /// Collect variables from a term
+    /// Collect the distinct variables occurring in a term.
+    ///
+    /// Iterative walk with a visited set (see [`crate::walk`]). The old
+    /// recursive helper passed a `HashSet` that looked like memoization but
+    /// was the *output* set — it never pruned traversal — so a shared DAG
+    /// was re-expanded exponentially, and nesting depth was unbounded.
+    /// It also stopped at any operator outside a short enumeration
+    /// (`_ => {}`), missing variables under `Ite`, `Implies`, `Apply`,
+    /// `Select`/`Store` and every bitvector/string operation, which made the
+    /// frequency heuristics score literals on incomplete variable sets.
     fn collect_vars(terms: &TermManager, term: TermId) -> Vec<TermId> {
-        use std::collections::HashSet;
-        let mut vars = HashSet::new();
-        Self::collect_vars_rec(terms, term, &mut vars);
-        vars.into_iter().collect()
-    }
-
-    /// Recursively collect variables
-    fn collect_vars_rec(
-        terms: &TermManager,
-        term: TermId,
-        vars: &mut std::collections::HashSet<TermId>,
-    ) {
-        use oxiz_core::TermKind;
-
-        let Some(t) = terms.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::Var(_) => {
-                vars.insert(term);
-            }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => {
-                for &arg in args.iter() {
-                    Self::collect_vars_rec(terms, arg, vars);
-                }
-            }
-            TermKind::Not(arg) => {
-                Self::collect_vars_rec(terms, *arg, vars);
-            }
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => {
-                Self::collect_vars_rec(terms, *a, vars);
-                Self::collect_vars_rec(terms, *b, vars);
-            }
-            _ => {}
-        }
+        crate::walk::collect_vars(terms, term)
     }
 
     /// Get the number of SMT queries performed
@@ -639,6 +655,20 @@ impl<'a> Generalizer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Stack size and nesting depth shared by the deep-recursion tests below.
+    ///
+    /// The two are scaled together on purpose: what these tests actually pin
+    /// is the *ratio* -- about 21 bytes of stack per nesting level
+    /// (128 KiB / 6_250). A natively recursive estimator needs far more than
+    /// that per frame and still overflows, so the regression keeps every bit
+    /// of its detection power. The pair used to be 1 MiB / 50_000 -- the same
+    /// 21 bytes -- but `mk_and` flattens its arguments, so a chain built with
+    /// `acc = mk_and([acc, atom])` is quadratic, and 50_000 levels cost tens
+    /// of GB of live terms. Never raise `DEEP_DEPTH` without raising
+    /// `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 6_250;
 
     #[test]
     fn test_generalizer_creation() {
@@ -706,5 +736,115 @@ mod tests {
         let result = GeneralizationResult::new(Vec::<TermId>::new());
         let formula = result.to_formula(&mut terms);
         assert_eq!(formula, terms.mk_true());
+    }
+
+    /// Size and cost must keep their exact previous values, and must be
+    /// computed without native recursion or DAG re-expansion.
+    #[test]
+    fn term_size_and_cost_are_pinned_and_dag_linear() {
+        let mut terms = TermManager::new();
+        let x = terms.mk_var("x", terms.sorts.int_sort);
+        let one = terms.mk_int(1);
+        // `x + 1`: Add(1) + x(1) + 1(1) = 3 nodes; cost 5 + 1 + 1 = 7.
+        let sum = terms.mk_add([x, one]);
+        let zero = terms.mk_int(0);
+        // `x + 1 >= 0`: 1 + 3 + 1 = 5 nodes; cost 4 + 7 + 1 = 12.
+        let atom = terms.mk_ge(sum, zero);
+
+        let system = ChcSystem::new();
+        let generalizer = Generalizer::new(&mut terms, &system);
+        assert_eq!(
+            generalizer.term_size(atom),
+            5,
+            "term_size must be unchanged"
+        );
+        assert_eq!(
+            generalizer.term_cost(atom),
+            12,
+            "term_cost must be unchanged"
+        );
+
+        // A 60-deep doubling DAG has 2^60 tree paths: without the memo this
+        // never finishes.
+        let mut terms = TermManager::new();
+        let x = terms.mk_var("x", terms.sorts.int_sort);
+        let one = terms.mk_int(1);
+        let mut shared = terms.mk_add([x, one]);
+        for _ in 0..60 {
+            shared = terms.mk_add([shared, shared]);
+        }
+        let system = ChcSystem::new();
+        let generalizer = Generalizer::new(&mut terms, &system);
+        assert!(generalizer.term_size(shared) > 0);
+        assert!(generalizer.term_cost(shared) > 0);
+    }
+
+    /// Neither estimate may overflow the stack on deeply nested input.
+    #[test]
+    fn term_size_survives_deep_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut terms = TermManager::new();
+                let mut current = terms.mk_var("x", terms.sorts.int_sort);
+                for i in 0..DEEP_DEPTH {
+                    let k = terms.mk_int(i);
+                    current = terms.mk_add([current, k]);
+                }
+                let system = ChcSystem::new();
+                let generalizer = Generalizer::new(&mut terms, &system);
+                assert!(generalizer.term_size(current) > DEEP_DEPTH as usize);
+                assert!(generalizer.term_cost(current) > DEEP_DEPTH as usize);
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep term_size must return");
+    }
+
+    /// Variables under operators the old enumeration skipped must be found.
+    #[test]
+    fn collect_vars_sees_through_ite() {
+        let mut terms = TermManager::new();
+        let int_sort = terms.sorts.int_sort;
+        let bool_sort = terms.sorts.bool_sort;
+        let x = terms.mk_var("x", int_sort);
+        let y = terms.mk_var("y", int_sort);
+        let cond = terms.mk_var("c", bool_sort);
+        let ite = terms.mk_ite(cond, x, y);
+        let vars = Generalizer::collect_vars(&terms, ite);
+        assert!(vars.contains(&x) && vars.contains(&y) && vars.contains(&cond));
+    }
+
+    /// A deeply nested cube must be extracted without overflowing, and the
+    /// literal-ordering/dedup rules must be preserved.
+    #[test]
+    fn extract_cube_survives_deep_nesting_and_pins_rules() {
+        let mut terms = TermManager::new();
+        let int_sort = terms.sorts.int_sort;
+        let x = terms.mk_var("x", int_sort);
+        let zero = terms.mk_int(0);
+        let a = terms.mk_ge(x, zero);
+        let b = terms.mk_lt(x, zero);
+        let truth = terms.mk_true();
+        // `a /\ true /\ b /\ a` -> [a, b] (true skipped, duplicate dropped).
+        let cube_term = terms.mk_and([a, truth, b, a]);
+        assert_eq!(Generalizer::extract_cube(&terms, cube_term), vec![a, b]);
+
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut terms = TermManager::new();
+                let int_sort = terms.sorts.int_sort;
+                let zero = terms.mk_int(0);
+                let first = terms.mk_var("v0", int_sort);
+                let mut formula = terms.mk_ge(first, zero);
+                for i in 1..DEEP_DEPTH {
+                    let v = terms.mk_var(&format!("v{i}"), int_sort);
+                    let atom = terms.mk_ge(v, zero);
+                    formula = terms.mk_and([formula, atom]);
+                }
+                assert!(Generalizer::extract_cube(&terms, formula).len() >= DEEP_DEPTH as usize);
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep cube extraction must return");
     }
 }

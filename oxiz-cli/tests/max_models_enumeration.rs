@@ -6,7 +6,8 @@
 //! into a real bounded blocking-clause enumeration
 //! (`enumerate_additional_models` in `src/main.rs`).
 
-use std::env;
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,20 +18,12 @@ fn oxiz_bin() -> PathBuf {
 }
 
 /// Create a temporary SMT2 file for testing.
-fn create_temp_smt2(content: &str) -> PathBuf {
-    let temp_dir = env::temp_dir();
-    let file_path = temp_dir.join(format!("test_max_models_{}.smt2", rand_string()));
-    fs::write(&file_path, content).expect("Failed to write temp file");
-    file_path
-}
-
-/// Generate a random string for unique filenames.
-fn rand_string() -> String {
-    use std::time::SystemTime;
-    let duration = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("Time went backwards");
-    format!("{}{}", duration.as_secs(), duration.subsec_nanos())
+///
+/// See `tests/common/mod.rs` for why this is collision-proof by
+/// construction (pid + per-process counter) rather than timestamp-based,
+/// and why it cleans up on `Drop` (including on panic).
+fn create_temp_smt2(content: &str) -> common::TempPath {
+    common::TempPath::write("max_models", "smt2", content)
 }
 
 /// `p XOR q` (encoded as two clauses) has exactly two models: `(p, q)` in

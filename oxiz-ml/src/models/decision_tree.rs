@@ -73,49 +73,112 @@ pub enum DecisionNode {
     },
 }
 
+impl Drop for DecisionNode {
+    /// Iterative drop.
+    ///
+    /// `build_tree` is iterative and `TreeConfig::max_depth` is a public field,
+    /// so a tree can be arbitrarily unbalanced; the compiler-generated recursive
+    /// `drop_in_place` would then abort the process at scope exit, after the
+    /// model has already been used, with no diagnostic. Each node is dismantled
+    /// into a shallow shell before being released.
+    fn drop(&mut self) {
+        /// Detach a node's children, leaving a shell that drops trivially.
+        fn dismantle(node: &mut DecisionNode, out: &mut Vec<DecisionNode>) {
+            /// Replace a boxed child with a leaf and hand the child over.
+            fn take(slot: &mut Box<DecisionNode>, out: &mut Vec<DecisionNode>) {
+                out.push(std::mem::replace(
+                    slot.as_mut(),
+                    DecisionNode::Leaf {
+                        value: 0.0,
+                        num_samples: 0,
+                    },
+                ));
+            }
+
+            match node {
+                DecisionNode::Leaf { .. } => {}
+                DecisionNode::Internal { left, right, .. } => {
+                    take(left, out);
+                    take(right, out);
+                }
+            }
+        }
+
+        let mut pending = Vec::new();
+        dismantle(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            dismantle(&mut node, &mut pending);
+        }
+    }
+}
+
 impl DecisionNode {
-    /// Predict for a single sample
+    /// Predict for a single sample.
+    ///
+    /// Iterative: prediction follows a single root-to-leaf path, and a tree
+    /// loaded from an untrusted model file (or trained with a large
+    /// `TreeConfig::max_depth`) can be arbitrarily unbalanced. `-> f64` has no
+    /// error channel, so a depth cap here could only return a wrong prediction.
     pub fn predict(&self, features: &[f64]) -> f64 {
-        match self {
-            DecisionNode::Internal {
-                feature_idx,
-                threshold,
-                left,
-                right,
-            } => {
-                if *feature_idx >= features.len() {
-                    // Handle dimension mismatch gracefully
-                    return 0.0;
-                }
+        let mut node = self;
+        loop {
+            match node {
+                DecisionNode::Internal {
+                    feature_idx,
+                    threshold,
+                    left,
+                    right,
+                } => {
+                    let Some(&feature) = features.get(*feature_idx) else {
+                        // Handle dimension mismatch gracefully
+                        return 0.0;
+                    };
 
-                if features[*feature_idx] <= *threshold {
-                    left.predict(features)
-                } else {
-                    right.predict(features)
+                    node = if feature <= *threshold { left } else { right };
                 }
+                DecisionNode::Leaf { value, .. } => return *value,
             }
-            DecisionNode::Leaf { value, .. } => *value,
         }
     }
 
-    /// Count total nodes in tree
+    /// Count total nodes in tree.
+    ///
+    /// Iterative (explicit heap stack); see [`DecisionNode::predict`].
     pub fn count_nodes(&self) -> usize {
-        match self {
-            DecisionNode::Internal { left, right, .. } => {
-                1 + left.count_nodes() + right.count_nodes()
+        let mut stack: Vec<&DecisionNode> = vec![self];
+        let mut count = 0usize;
+
+        while let Some(node) = stack.pop() {
+            count = count.saturating_add(1);
+            if let DecisionNode::Internal { left, right, .. } = node {
+                stack.push(left);
+                stack.push(right);
             }
-            DecisionNode::Leaf { .. } => 1,
         }
+
+        count
     }
 
-    /// Get maximum depth of tree
+    /// Get maximum depth of tree.
+    ///
+    /// Iterative (explicit heap stack): the depth of the deepest leaf, which is
+    /// exactly what `1 + max(left, right)` computed recursively.
     pub fn max_depth(&self) -> usize {
-        match self {
-            DecisionNode::Internal { left, right, .. } => {
-                1 + left.max_depth().max(right.max_depth())
+        let mut stack: Vec<(&DecisionNode, usize)> = vec![(self, 0)];
+        let mut deepest = 0usize;
+
+        while let Some((node, depth)) = stack.pop() {
+            match node {
+                DecisionNode::Internal { left, right, .. } => {
+                    let child_depth = depth.saturating_add(1);
+                    stack.push((left, child_depth));
+                    stack.push((right, child_depth));
+                }
+                DecisionNode::Leaf { .. } => deepest = deepest.max(depth),
             }
-            DecisionNode::Leaf { .. } => 0,
         }
+
+        deepest
     }
 }
 
@@ -232,7 +295,11 @@ impl DecisionTree {
         Ok(())
     }
 
-    /// Recursively build tree
+    /// Build the tree.
+    ///
+    /// Iterative (explicit heap stack): `TreeConfig::max_depth` is a public
+    /// field, so the only structural bound on depth is the sample count, and a
+    /// pathological split sequence produces a chain one sample deep per level.
     fn build_tree(
         &self,
         features: &[Vec<f64>],
@@ -240,64 +307,117 @@ impl DecisionTree {
         indices: &[usize],
         depth: usize,
     ) -> ModelResult<DecisionNode> {
-        if indices.is_empty() {
-            return Err(ModelError::EmptyInput);
+        /// Work item for the iterative tree builder.
+        enum BuildTask {
+            /// Build the subtree for this index set.
+            Split {
+                /// Sample indices reaching this node.
+                indices: Vec<usize>,
+                /// Depth of this node below the root.
+                depth: usize,
+            },
+            /// Join the two most recently built subtrees under an internal node.
+            Join {
+                /// Feature the node splits on.
+                feature_idx: usize,
+                /// Split threshold.
+                threshold: f64,
+            },
         }
 
-        // Extract values for current indices
-        let values: Vec<f64> = indices.iter().map(|&i| targets[i]).collect();
+        let mut tasks = vec![BuildTask::Split {
+            indices: indices.to_vec(),
+            depth,
+        }];
+        let mut built: Vec<DecisionNode> = Vec::new();
 
-        // Stopping criteria
-        let should_stop = depth >= self.config.max_depth
-            || indices.len() < self.config.min_samples_split
-            || self.is_pure(&values);
+        while let Some(task) = tasks.pop() {
+            let (node_indices, node_depth) = match task {
+                BuildTask::Join {
+                    feature_idx,
+                    threshold,
+                } => {
+                    let right = built.pop();
+                    let left = built.pop();
+                    let (Some(left), Some(right)) = (left, right) else {
+                        return Err(ModelError::EmptyInput);
+                    };
+                    built.push(DecisionNode::Internal {
+                        feature_idx,
+                        threshold,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    });
+                    continue;
+                }
+                BuildTask::Split { indices, depth } => (indices, depth),
+            };
 
-        if should_stop {
-            // Create leaf with mean value
-            let value = values.iter().sum::<f64>() / values.len() as f64;
-            return Ok(DecisionNode::Leaf {
-                value,
-                num_samples: indices.len(),
-            });
-        }
+            if node_indices.is_empty() {
+                return Err(ModelError::EmptyInput);
+            }
 
-        // Find best split
-        if let Some((best_feature, best_threshold)) =
-            self.find_best_split(features, targets, indices)
-        {
+            // Extract values for current indices
+            let values: Vec<f64> = node_indices.iter().map(|&i| targets[i]).collect();
+            let leaf_value = values.iter().sum::<f64>() / values.len() as f64;
+
+            // Stopping criteria
+            let should_stop = node_depth >= self.config.max_depth
+                || node_indices.len() < self.config.min_samples_split
+                || self.is_pure(&values);
+
+            if should_stop {
+                // Create leaf with mean value
+                built.push(DecisionNode::Leaf {
+                    value: leaf_value,
+                    num_samples: node_indices.len(),
+                });
+                continue;
+            }
+
+            // Find best split
+            let Some((best_feature, best_threshold)) =
+                self.find_best_split(features, targets, &node_indices)
+            else {
+                // No valid split found, create leaf
+                built.push(DecisionNode::Leaf {
+                    value: leaf_value,
+                    num_samples: node_indices.len(),
+                });
+                continue;
+            };
+
             // Split data
             let (left_indices, right_indices) =
-                self.split_data(features, indices, best_feature, best_threshold);
+                self.split_data(features, &node_indices, best_feature, best_threshold);
 
             // Check minimum leaf size
             if left_indices.len() < self.config.min_samples_leaf
                 || right_indices.len() < self.config.min_samples_leaf
             {
-                let value = values.iter().sum::<f64>() / values.len() as f64;
-                return Ok(DecisionNode::Leaf {
-                    value,
-                    num_samples: indices.len(),
+                built.push(DecisionNode::Leaf {
+                    value: leaf_value,
+                    num_samples: node_indices.len(),
                 });
+                continue;
             }
 
-            // Recursively build left and right subtrees
-            let left = Box::new(self.build_tree(features, targets, &left_indices, depth + 1)?);
-            let right = Box::new(self.build_tree(features, targets, &right_indices, depth + 1)?);
-
-            Ok(DecisionNode::Internal {
+            // Build left and right subtrees, then join them (left completes first).
+            tasks.push(BuildTask::Join {
                 feature_idx: best_feature,
                 threshold: best_threshold,
-                left,
-                right,
-            })
-        } else {
-            // No valid split found, create leaf
-            let value = values.iter().sum::<f64>() / values.len() as f64;
-            Ok(DecisionNode::Leaf {
-                value,
-                num_samples: indices.len(),
-            })
+            });
+            tasks.push(BuildTask::Split {
+                indices: right_indices,
+                depth: node_depth + 1,
+            });
+            tasks.push(BuildTask::Split {
+                indices: left_indices,
+                depth: node_depth + 1,
+            });
         }
+
+        built.pop().ok_or(ModelError::EmptyInput)
     }
 
     /// Check if all values are the same (pure node)
@@ -421,14 +541,24 @@ impl DecisionTree {
         }
     }
 
-    /// Count number of leaf nodes
+    /// Count number of leaf nodes.
+    ///
+    /// Iterative (explicit heap stack); see [`DecisionNode::predict`].
     fn count_leaves(&self, node: &DecisionNode) -> usize {
-        match node {
-            DecisionNode::Internal { left, right, .. } => {
-                self.count_leaves(left) + self.count_leaves(right)
+        let mut stack: Vec<&DecisionNode> = vec![node];
+        let mut leaves = 0usize;
+
+        while let Some(current) = stack.pop() {
+            match current {
+                DecisionNode::Internal { left, right, .. } => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+                DecisionNode::Leaf { .. } => leaves = leaves.saturating_add(1),
             }
-            DecisionNode::Leaf { .. } => 1,
         }
+
+        leaves
     }
 
     /// Number of samples currently held in the online training buffer.
@@ -794,5 +924,86 @@ mod tests {
         let pred2 = tree2.predict(&[1.5, 1.5]);
 
         assert_eq!(pred1, pred2);
+    }
+
+    /// Stack size for the deep-tree regression tests. A stack overflow aborts
+    /// the process rather than failing a test, so *returning at all* is the
+    /// assertion; the small stack makes a surviving recursion detectable.
+    const DEEP_TREE_STACK: usize = 1 << 20;
+
+    /// Build a right-leaning chain of `depth` internal nodes.
+    fn deep_chain(depth: usize) -> DecisionNode {
+        let mut node = DecisionNode::Leaf {
+            value: 42.0,
+            num_samples: 1,
+        };
+        for _ in 0..depth {
+            node = DecisionNode::Internal {
+                feature_idx: 0,
+                threshold: 0.5,
+                left: Box::new(DecisionNode::Leaf {
+                    value: -1.0,
+                    num_samples: 1,
+                }),
+                right: Box::new(node),
+            };
+        }
+        node
+    }
+
+    #[test]
+    fn deep_tree_walks_and_drop_survive_a_small_stack() {
+        std::thread::Builder::new()
+            .name("ml_deep_tree".to_string())
+            .stack_size(DEEP_TREE_STACK)
+            .spawn(|| {
+                let depth = 100_000;
+                let tree = deep_chain(depth);
+
+                // Semantic pins: the same values the recursive versions produced.
+                assert_eq!(tree.count_nodes(), 2 * depth + 1);
+                assert_eq!(tree.max_depth(), depth);
+                // features[0] > threshold at every level, so we walk to the
+                // bottom-right leaf.
+                assert!((tree.predict(&[1.0]) - 42.0).abs() < f64::EPSILON);
+                // ... and left at the first level.
+                assert!((tree.predict(&[0.0]) + 1.0).abs() < f64::EPSILON);
+                // Dimension mismatch is still reported as 0.0.
+                assert!(tree.predict(&[]).abs() < f64::EPSILON);
+
+                // `tree` is dropped here: iterative Drop, not 100k drop frames.
+            })
+            .expect("test thread should spawn")
+            .join()
+            .expect("test thread should not panic");
+    }
+
+    #[test]
+    fn shallow_tree_walk_values_are_unchanged() {
+        let tree = DecisionNode::Internal {
+            feature_idx: 1,
+            threshold: 2.0,
+            left: Box::new(DecisionNode::Leaf {
+                value: 10.0,
+                num_samples: 3,
+            }),
+            right: Box::new(DecisionNode::Internal {
+                feature_idx: 0,
+                threshold: 1.0,
+                left: Box::new(DecisionNode::Leaf {
+                    value: 20.0,
+                    num_samples: 2,
+                }),
+                right: Box::new(DecisionNode::Leaf {
+                    value: 30.0,
+                    num_samples: 1,
+                }),
+            }),
+        };
+        assert_eq!(tree.count_nodes(), 5);
+        assert_eq!(tree.max_depth(), 2);
+        assert!((tree.predict(&[0.0, 1.0]) - 10.0).abs() < f64::EPSILON);
+        assert!((tree.predict(&[0.5, 3.0]) - 20.0).abs() < f64::EPSILON);
+        assert!((tree.predict(&[5.0, 3.0]) - 30.0).abs() < f64::EPSILON);
     }
 }

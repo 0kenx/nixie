@@ -31,6 +31,18 @@ struct ComparisonKey {
     b: TermId,
 }
 
+/// Saved lengths of every retractable buffer, recorded by `push` so `pop`
+/// restores exactly the state the enclosing decision level had.
+#[derive(Debug, Clone, Copy)]
+struct ContextMark {
+    /// Length of `assertions`.
+    assertions_len: usize,
+    /// Length of `assertion_guard_terms`.
+    guard_terms_len: usize,
+    /// Length of `outer_bool_journal`.
+    outer_bool_len: usize,
+}
+
 /// BitVector Theory Solver using bit-blasting
 #[derive(Debug)]
 pub struct BvSolver {
@@ -40,8 +52,8 @@ pub struct BvSolver {
     term_to_bv: FxHashMap<TermId, BvVar>,
     /// Pending assertions
     assertions: Vec<(TermId, bool)>,
-    /// Context stack: each entry stores (assertions_len, guard_terms_len)
-    context_stack: Vec<(usize, usize)>,
+    /// Context stack: one [`ContextMark`] per open push, restored by `pop`.
+    context_stack: Vec<ContextMark>,
     /// Configuration
     config: BvConfig,
     /// Track unsigned less-than comparisons for conflict detection
@@ -65,6 +77,14 @@ pub struct BvSolver {
     /// truth value, used when bit-blasting `ite` conditions and the boolean
     /// connectives that build them (so `not(c)` stays the negation of `c`).
     bool_node: FxHashMap<TermId, Var>,
+    /// Truth values the *outer* CDCL(T) search has fixed for Bool-sorted terms,
+    /// so that a bit-blasted `ite` selector agrees with the enclosing solver
+    /// instead of floating free. See [`Self::assert_bool_value`].
+    outer_bool: FxHashMap<TermId, bool>,
+    /// Undo journal for `outer_bool`: `(term, value it had before)`, replayed
+    /// in reverse by [`Theory::pop`] so the link is retracted with the decision
+    /// level that established it.
+    outer_bool_journal: Vec<(TermId, Option<bool>)>,
 }
 
 impl Default for BvSolver {
@@ -95,6 +115,8 @@ impl BvSolver {
             assertion_guard_terms: Vec::new(),
             last_sat_model: Vec::new(),
             bool_node: FxHashMap::default(),
+            outer_bool: FxHashMap::default(),
+            outer_bool_journal: Vec::new(),
         }
     }
 
@@ -123,6 +145,18 @@ impl BvSolver {
     /// between search rounds). Both are pure performance heuristics — disabling
     /// them costs only speed, never soundness or completeness — so the embedded
     /// solver turns them off to keep the incremental cleanup contract exact.
+    ///
+    /// Chronological backtracking, by contrast, is left **on** (the workspace
+    /// default): it never adds a clause to the database, so it does not touch
+    /// the cleanup contract above.  It was briefly disabled here while
+    /// `oxiz-sat` recorded a learned clause's asserting literal at the
+    /// post-backtrack decision level instead of at its true implication level —
+    /// which pinned unit lemmas inside a decision level and let conflict
+    /// analysis emit clauses stronger than resolution derives, refuting
+    /// satisfiable bit-blasted circuits such as `x <=u (x bvxor x)`.  That is
+    /// fixed in the SAT engine itself (see `Solver::assert_learned_clause` and
+    /// `Trail::backtrack_to_with_callback`), so the embedded solver no longer
+    /// needs to opt out.
     fn embedded_sat_config() -> SatConfig {
         SatConfig {
             enable_lazy_hyper_binary: false,
@@ -173,14 +207,27 @@ impl BvSolver {
         &self.config
     }
 
+    /// The bit-vectors of two operands, if both are bit-blasted **and** share a
+    /// width.
+    ///
+    /// Every binary bit-level encoding goes through this: a caller that hands
+    /// over operands of *different* widths (which the term builder does not
+    /// currently reject for `(bvadd x8 y16)`) has asked for a circuit that does
+    /// not exist, and the honest answer is "not encodable" — not an
+    /// `assert_eq!` that aborts the process, and not a circuit wired from the
+    /// bits that happen to line up.
+    fn binop_bits(&self, a: TermId, b: TermId) -> Option<(BvVar, BvVar)> {
+        let va = self.term_to_bv.get(&a)?.clone();
+        let vb = self.term_to_bv.get(&b)?.clone();
+        (va.width == vb.width).then_some((va, vb))
+    }
+
     /// Assert equality: a = b
-    pub fn assert_eq(&mut self, a: TermId, b: TermId) {
-        let bv_a = self.term_to_bv.get(&a).cloned();
-        let bv_b = self.term_to_bv.get(&b).cloned();
-
-        if let (Some(va), Some(vb)) = (bv_a, bv_b) {
-            assert_eq!(va.width, vb.width);
-
+    ///
+    /// Returns `false` — asserting nothing — when either operand has not been
+    /// bit-blasted or the two have different widths.
+    pub fn assert_eq(&mut self, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             for i in 0..va.width as usize {
                 // a[i] <=> b[i]
                 // (a[i] => b[i]) and (b[i] => a[i])
@@ -190,17 +237,17 @@ impl BvSolver {
                 self.sat
                     .add_clause([Lit::neg(vb.bits[i]), Lit::pos(va.bits[i])]);
             }
+            return true;
         }
+        false
     }
 
     /// Assert disequality: a != b
-    pub fn assert_neq(&mut self, a: TermId, b: TermId) {
-        let bv_a = self.term_to_bv.get(&a).cloned();
-        let bv_b = self.term_to_bv.get(&b).cloned();
-
-        if let (Some(va), Some(vb)) = (bv_a, bv_b) {
-            assert_eq!(va.width, vb.width);
-
+    ///
+    /// Returns `false` — asserting nothing — when either operand has not been
+    /// bit-blasted or the two have different widths.
+    pub fn assert_neq(&mut self, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             // At least one bit must differ
             // Introduce auxiliary variables for XOR of each bit pair
             let mut diff_lits: SmallVec<[Lit; 32]> = SmallVec::new();
@@ -228,17 +275,17 @@ impl BvSolver {
 
             // At least one diff bit must be true
             self.sat.add_clause(diff_lits);
+            return true;
         }
+        false
     }
 
     /// Assert unsigned less than: a < b
-    pub fn assert_ult(&mut self, a: TermId, b: TermId) {
-        let bv_a = self.term_to_bv.get(&a).cloned();
-        let bv_b = self.term_to_bv.get(&b).cloned();
-
-        if let (Some(va), Some(vb)) = (bv_a, bv_b) {
-            assert_eq!(va.width, vb.width);
-
+    ///
+    /// Returns `false` — asserting nothing — when either operand has not been
+    /// bit-blasted or the two have different widths.
+    pub fn assert_ult(&mut self, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             // Get or create comparison result variable for a < b
             let key_ab = ComparisonKey { a, b };
             let ult_ab = if let Some(&var) = self.ult_cache.get(&key_ab) {
@@ -264,52 +311,104 @@ impl BvSolver {
 
             // Also check for conflict with a <= b and b <= a
             // If a < b, then NOT(a = b), so we ensure anti-symmetry
+            return true;
         }
+        false
     }
 
     /// Assert unsigned less than or equal: a <= b
     ///
     /// `ule(a, b)` is equivalent to `NOT(ult(b, a))`: encode the unsigned
     /// comparison `b < a` into a fresh SAT variable and assert its negation.
-    pub fn assert_ule(&mut self, a: TermId, b: TermId) {
-        let bv_a = self.term_to_bv.get(&a).cloned();
-        let bv_b = self.term_to_bv.get(&b).cloned();
-
-        if let (Some(va), Some(vb)) = (bv_a, bv_b) {
-            assert_eq!(va.width, vb.width);
-
+    ///
+    /// Returns `false` — asserting nothing — when either operand has not been
+    /// bit-blasted or the two have different widths.
+    pub fn assert_ule(&mut self, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             // Encode b < a (unsigned) into `ult_ba`.
             let ult_ba = self.sat.new_var();
             self.encode_ult_result(&vb.bits, &va.bits, ult_ba);
 
             // Assert NOT(b < a), which is exactly a <= b.
             self.sat.add_clause([Lit::neg(ult_ba)]);
+            return true;
         }
+        false
     }
 
-    /// Assert a constant value for a bit vector
-    pub fn assert_const(&mut self, term: TermId, value: u64, width: u32) {
-        let bv = self.new_bv(term, width).clone();
+    /// Assert a constant value for a bit vector whose width is at most 64.
+    ///
+    /// `value` supplies the low 64 bits; every higher bit of a wider vector is
+    /// pinned to `0`, which is only the intended meaning when the constant
+    /// really does fit in a `u64`.  A caller holding a *wider* constant must
+    /// use [`Self::assert_const_big`] (or [`Self::assert_const_limbs`]):
+    /// truncating it to a `u64` here would pin the wrong bits and admit
+    /// assignments the constant forbids — the shape that answered `sat` for
+    /// `x = 2^64 ∧ x <u 1` at width 128.
+    ///
+    /// Returns `false` when `term` already has a bit-vector of a *different*
+    /// width, in which case nothing is pinned: the caller asked for a constant
+    /// the existing circuit cannot represent, and silently pinning the bits
+    /// that happen to exist would constrain a different value.
+    pub fn assert_const(&mut self, term: TermId, value: u64, width: u32) -> bool {
+        self.assert_const_limbs(term, &[value], width)
+    }
 
-        for i in 0..width as usize {
-            let bit = (value >> i) & 1;
+    /// Assert an arbitrary-width constant value for a bit vector.
+    ///
+    /// Every bit of `value` below `width` is pinned, so this is correct for
+    /// bit-vectors wider than 64 bits.  Bits of `value` at or above `width` are
+    /// ignored (the literal is read modulo `2^width`, exactly as SMT-LIB reads
+    /// an out-of-range numeral).  See [`Self::assert_const`] for the return
+    /// value.
+    pub fn assert_const_big(&mut self, term: TermId, value: &BigUint, width: u32) -> bool {
+        let limbs: SmallVec<[u64; 2]> = value.iter_u64_digits().collect();
+        self.assert_const_limbs(term, &limbs, width)
+    }
+
+    /// Assert an arbitrary-width constant given as little-endian 64-bit limbs
+    /// (`limbs[0]` holds bits 0..63, `limbs[1]` bits 64..127, and so on).
+    ///
+    /// This is the primitive both [`Self::assert_const`] and
+    /// [`Self::assert_const_big`] delegate to; it exists so a caller holding a
+    /// `BigInt`-backed literal can pass `value.iter_u64_digits()` directly
+    /// without first deciding on a sign-carrying big-integer type.  A limb
+    /// beyond the end of the slice reads as `0`, which is the value of that bit
+    /// in the little-endian encoding — not a fallback.  See
+    /// [`Self::assert_const`] for the return value.
+    pub fn assert_const_limbs(&mut self, term: TermId, limbs: &[u64], width: u32) -> bool {
+        let bv = self.new_bv(term, width).clone();
+        if bv.width != width {
+            return false;
+        }
+
+        for (i, &bit_var) in bv.bits.iter().enumerate() {
+            let bit = limbs.get(i / 64).map_or(0, |limb| (limb >> (i % 64)) & 1);
             if bit == 1 {
-                self.sat.add_clause([Lit::pos(bv.bits[i])]);
+                self.sat.add_clause([Lit::pos(bit_var)]);
             } else {
-                self.sat.add_clause([Lit::neg(bv.bits[i])]);
+                self.sat.add_clause([Lit::neg(bit_var)]);
             }
         }
+        true
     }
 
     /// Concatenate two bit vectors: result = high ++ low
     /// result[0..low.width-1] = low, result[low.width..low.width+high.width-1] = high
-    pub fn concat(&mut self, result: TermId, high: TermId, low: TermId) {
+    ///
+    /// Returns `false` — encoding nothing — when either operand has not been
+    /// bit-blasted, or when `result` already denotes a bit-vector whose width
+    /// is not the sum of the operand widths.
+    pub fn concat(&mut self, result: TermId, high: TermId, low: TermId) -> bool {
         if let (Some(h), Some(l)) = (
             self.term_to_bv.get(&high).cloned(),
             self.term_to_bv.get(&low).cloned(),
         ) {
             let result_width = h.width + l.width;
             let r = self.new_bv(result, result_width).clone();
+            if r.width != result_width {
+                return false;
+            }
 
             // Copy low bits
             for i in 0..l.width as usize {
@@ -320,24 +419,36 @@ impl BvSolver {
             for i in 0..h.width as usize {
                 self.encode_bit_eq(r.bits[l.width as usize + i], h.bits[i]);
             }
+            return true;
         }
+        false
     }
 
     /// Extract a bit range from a bit vector: result = bv\[high:low\]
     /// Extract bits from position `low` to `high` (inclusive)
-    pub fn extract(&mut self, result: TermId, bv: TermId, high: u32, low: u32) {
+    ///
+    /// Returns `false` — encoding nothing — when `bv` has not been bit-blasted
+    /// or the range `[low, high]` does not lie inside it.  An out-of-range
+    /// extraction is a malformed term, not a reason to abort the process.
+    pub fn extract(&mut self, result: TermId, bv: TermId, high: u32, low: u32) -> bool {
         if let Some(v) = self.term_to_bv.get(&bv).cloned() {
-            assert!(high >= low);
-            assert!(high < v.width);
+            if high < low || high >= v.width {
+                return false;
+            }
 
             let result_width = high - low + 1;
             let r = self.new_bv(result, result_width).clone();
+            if r.width != result_width {
+                return false;
+            }
 
             for i in 0..result_width {
                 let src_idx = (low + i) as usize;
                 self.encode_bit_eq(r.bits[i as usize], v.bits[src_idx]);
             }
+            return true;
         }
+        false
     }
 
     /// Bit-blast a BV-sorted `ite(cond, then, else)`: a fresh result BV whose
@@ -371,6 +482,37 @@ impl BvSolver {
         }
     }
 
+    /// Fix a Bool-sorted term's truth value from the *enclosing* CDCL(T) search.
+    ///
+    /// A bit-blasted `ite` selector that is a bare boolean variable has no
+    /// circuit of its own: [`Self::encode_bool_node`] gives it a fresh, free SAT
+    /// variable inside the embedded solver. Free means the embedded search may
+    /// pick the branch the outer solver has *ruled out*, so
+    /// `(= (ite c #x01 #x02) x) ∧ ¬c ∧ (= x #x01)` looked satisfiable: the outer
+    /// solver knows `c` is false, the BV solver did not, and each considered its
+    /// own half consistent.
+    ///
+    /// The theory manager therefore replays every atom assignment here. The unit
+    /// lands on the embedded solver's trail at the current level, which is kept
+    /// in lockstep with the outer decision levels, so it is retracted on
+    /// backtrack exactly like the (dis)equality and comparison assertions. The
+    /// value is also remembered so a selector that is *first encoded later*
+    /// still picks it up — the outer assignment and the bit-blasting can happen
+    /// in either order.
+    pub fn assert_bool_value(&mut self, term: TermId, value: bool) {
+        let previous = self.outer_bool.insert(term, value);
+        self.outer_bool_journal.push((term, previous));
+        if let Some(&var) = self.bool_node.get(&term) {
+            self.pin_bool_var(var, value);
+        }
+    }
+
+    /// Add the unit clause forcing `var` to `value`.
+    fn pin_bool_var(&mut self, var: Var, value: bool) {
+        let lit = if value { Lit::pos(var) } else { Lit::neg(var) };
+        self.sat.add_clause([lit]);
+    }
+
     /// Encode a Bool-sorted term into a single SAT truth variable, recursively
     /// bit-blasting any BV operands it compares. Returns `None` for boolean
     /// shapes outside the supported connective/comparison set.
@@ -385,6 +527,12 @@ impl BvSolver {
     ) -> Option<Var> {
         use oxiz_core::ast::TermKind;
         if let Some(&v) = self.bool_node.get(&term) {
+            // Re-apply any outer truth value: the node may have been created
+            // below a decision level that has since been popped, which retracts
+            // the unit clause but not the cached variable.
+            if let Some(&value) = self.outer_bool.get(&term) {
+                self.pin_bool_var(v, value);
+            }
             return Some(v);
         }
         let kind = manager.get(term)?.kind.clone();
@@ -491,6 +639,10 @@ impl BvSolver {
             _ => return None,
         };
         self.bool_node.insert(term, out);
+        // Honour an outer assignment recorded before this node existed.
+        if let Some(&value) = self.outer_bool.get(&term) {
+            self.pin_bool_var(out, value);
+        }
         Some(out)
     }
 
@@ -550,67 +702,98 @@ impl BvSolver {
         Some(v)
     }
 
+    /// The result bit-vector of a unary/binary operation at `width`, or `None`
+    /// when `result` already denotes a bit-vector of a different width.
+    fn result_bits(&mut self, result: TermId, width: u32) -> Option<BvVar> {
+        let r = self.new_bv(result, width).clone();
+        (r.width == width).then_some(r)
+    }
+
     /// Bitwise NOT: result = ~a
-    pub fn bv_not(&mut self, result: TermId, a: TermId) {
+    ///
+    /// Returns `false` — encoding nothing — when `a` has not been bit-blasted
+    /// or `result` already has a different width.
+    pub fn bv_not(&mut self, result: TermId, a: TermId) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
-            let r = self.new_bv(result, va.width).clone();
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             for i in 0..va.width as usize {
                 // r[i] = ~a[i]
                 self.encode_not(r.bits[i], va.bits[i]);
             }
+            return true;
         }
+        false
     }
 
     /// Bitwise AND: result = a & b
-    pub fn bv_and(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let r = self.new_bv(result, va.width).clone();
+    ///
+    /// Returns `false` — encoding nothing — when an operand has not been
+    /// bit-blasted, the two operands have different widths, or `result`
+    /// already has a different width.
+    pub fn bv_and(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             for i in 0..va.width as usize {
                 self.encode_and(r.bits[i], va.bits[i], vb.bits[i]);
             }
+            return true;
         }
+        false
     }
 
     /// Bitwise OR: result = a | b
-    pub fn bv_or(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let r = self.new_bv(result, va.width).clone();
+    ///
+    /// Returns `false` — encoding nothing — when an operand has not been
+    /// bit-blasted, the two operands have different widths, or `result`
+    /// already has a different width.
+    pub fn bv_or(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             for i in 0..va.width as usize {
                 self.encode_or(r.bits[i], va.bits[i], vb.bits[i]);
             }
+            return true;
         }
+        false
     }
 
     /// Bitwise XOR: result = a ^ b
-    pub fn bv_xor(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let r = self.new_bv(result, va.width).clone();
+    ///
+    /// Returns `false` — encoding nothing — when an operand has not been
+    /// bit-blasted, the two operands have different widths, or `result`
+    /// already has a different width.
+    pub fn bv_xor(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             for i in 0..va.width as usize {
                 self.encode_xor(r.bits[i], va.bits[i], vb.bits[i]);
             }
+            return true;
         }
+        false
     }
 
     /// Negation (two's complement): result = -a = ~a + 1
-    pub fn bv_neg(&mut self, result: TermId, a: TermId) {
+    ///
+    /// Returns `false` — encoding nothing — when `a` has not been bit-blasted
+    /// or `result` already has a different width.
+    pub fn bv_neg(&mut self, result: TermId, a: TermId) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
-            let r = self.new_bv(result, va.width).clone();
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             // First compute ~a
             let mut not_bits: SmallVec<[Var; 32]> = SmallVec::new();
@@ -622,30 +805,38 @@ impl BvSolver {
 
             // Then add 1 using a ripple-carry adder
             self.encode_add_const(&r.bits, &not_bits, 1);
+            return true;
         }
+        false
     }
 
     /// Addition: result = a + b
-    pub fn bv_add(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let r = self.new_bv(result, va.width).clone();
+    ///
+    /// Returns `false` — encoding nothing — when an operand has not been
+    /// bit-blasted, the two operands have different widths, or `result`
+    /// already has a different width.
+    pub fn bv_add(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             self.encode_adder(&r.bits, &va.bits, &vb.bits);
+            return true;
         }
+        false
     }
 
     /// Subtraction: result = a - b = a + (-b)
-    pub fn bv_sub(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let r = self.new_bv(result, va.width).clone();
+    ///
+    /// Returns `false` — encoding nothing — when an operand has not been
+    /// bit-blasted, the two operands have different widths, or `result`
+    /// already has a different width.
+    pub fn bv_sub(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
 
             // Compute -b (two's complement)
             let mut neg_b: SmallVec<[Var; 32]> = SmallVec::new();
@@ -664,19 +855,25 @@ impl BvSolver {
 
             // Add a + (-b)
             self.encode_adder(&r.bits, &va.bits, &neg_b_with_one);
+            return true;
         }
+        false
     }
 
     /// Multiplication: result = a * b (using shift-and-add)
-    pub fn bv_mul(&mut self, result: TermId, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
-            let r = self.new_bv(result, va.width).clone();
+    ///
+    /// Returns `false` — encoding nothing — when an operand has not been
+    /// bit-blasted, the two operands have different widths, or `result`
+    /// already has a different width.
+    pub fn bv_mul(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let Some(r) = self.result_bits(result, va.width) else {
+                return false;
+            };
             self.encode_mul(&r.bits, &va.bits, &vb.bits);
+            return true;
         }
+        false
     }
 
     /// Left shift by a compile-time constant: result = a << shift_amount.
@@ -684,9 +881,17 @@ impl BvSolver {
     /// Encodes each result bit as a direct wire from the source bit `shift_amount`
     /// positions below, or as a constant-0 for the low `shift_amount` bits.
     /// Used to constant-fold `bvmul(x, 2^k)` without the expensive multiplier.
-    pub fn bv_shl_const(&mut self, result: TermId, a: TermId, shift: u32, width: u32) {
+    ///
+    /// Returns `false` — encoding nothing — when `a` has not been bit-blasted,
+    /// `a` is not `width` bits wide, or `result` already has a different width.
+    pub fn bv_shl_const(&mut self, result: TermId, a: TermId, shift: u32, width: u32) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
-            let r = self.new_bv(result, width).clone();
+            if va.width != width {
+                return false;
+            }
+            let Some(r) = self.result_bits(result, width) else {
+                return false;
+            };
             for k in 0..width as usize {
                 if shift >= width || k < shift as usize {
                     self.sat.add_clause([Lit::neg(r.bits[k])]);
@@ -694,17 +899,22 @@ impl BvSolver {
                     self.encode_bit_eq(r.bits[k], va.bits[k - shift as usize]);
                 }
             }
+            return true;
         }
+        false
     }
 
     /// Signed less than: a < b (two's complement)
-    pub fn assert_slt(&mut self, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
+    ///
+    /// Returns `false` — asserting nothing — when either operand has not been
+    /// bit-blasted, the two have different widths, or the width is zero (a
+    /// zero-width vector has no sign bit).
+    pub fn assert_slt(&mut self, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
             let width = va.width as usize;
+            if width == 0 {
+                return false;
+            }
 
             // For signed comparison:
             // If sign bits differ: a < b iff a is negative (a[n-1] = 1)
@@ -742,23 +952,28 @@ impl BvSolver {
 
             // Assert that result is true
             self.sat.add_clause([Lit::pos(result)]);
+            return true;
         }
+        false
     }
 
     /// Signed less than or equal: a <= b
-    pub fn assert_sle(&mut self, a: TermId, b: TermId) {
-        if let (Some(va), Some(vb)) = (
-            self.term_to_bv.get(&a).cloned(),
-            self.term_to_bv.get(&b).cloned(),
-        ) {
-            assert_eq!(va.width, vb.width);
+    ///
+    /// Returns `false` — asserting nothing — when either operand has not been
+    /// bit-blasted, the two have different widths, or the width is zero (a
+    /// zero-width vector has no sign bit).
+    pub fn assert_sle(&mut self, a: TermId, b: TermId) -> bool {
+        if let Some((va, vb)) = self.binop_bits(a, b) {
+            let width = va.width as usize;
+            if width == 0 {
+                return false;
+            }
 
             // a <= b is equivalent to NOT(b < a)
             // Create temporary variables for checking b < a
             let slt_ba = self.sat.new_var();
 
             // Encode b < a into slt_ba
-            let width = va.width as usize;
             let sign_a = va.bits[width - 1];
             let sign_b = vb.bits[width - 1];
 
@@ -781,7 +996,9 @@ impl BvSolver {
 
             // Assert NOT(slt_ba) which means a <= b
             self.sat.add_clause([Lit::neg(slt_ba)]);
+            return true;
         }
+        false
     }
 
     // ===== Helper encoding functions =====
@@ -1234,6 +1451,20 @@ impl BvSolver {
         Some(value)
     }
 
+    /// Truth value the model assigns to a Bool-sorted term that was encoded
+    /// into this solver by [`Self::encode_bool_node`] — the `ite` selectors and
+    /// the comparisons underneath them.
+    ///
+    /// Returns `None` for a term that was never encoded as a boolean node, so
+    /// callers can tell "the model says false" apart from "this solver has no
+    /// opinion". Used by `oxiz-solver`'s debug-only model-validity net to
+    /// resolve a bit-blasted `ite` to the branch the model actually selected.
+    #[must_use]
+    pub fn bool_value(&self, term: TermId) -> Option<bool> {
+        let &var = self.bool_node.get(&term)?;
+        Some(self.read_model_bit(var))
+    }
+
     /// Read a single SAT variable's boolean value from the model.
     ///
     /// Prefers the snapshot captured at the last SAT check: the live trail
@@ -1364,15 +1595,28 @@ impl Theory for BvSolver {
     }
 
     fn push(&mut self) {
-        self.context_stack
-            .push((self.assertions.len(), self.assertion_guard_terms.len()));
+        self.context_stack.push(ContextMark {
+            assertions_len: self.assertions.len(),
+            guard_terms_len: self.assertion_guard_terms.len(),
+            outer_bool_len: self.outer_bool_journal.len(),
+        });
         self.sat.push();
     }
 
     fn pop(&mut self) {
-        if let Some((assertions_len, guard_len)) = self.context_stack.pop() {
-            self.assertions.truncate(assertions_len);
-            self.assertion_guard_terms.truncate(guard_len);
+        if let Some(mark) = self.context_stack.pop() {
+            self.assertions.truncate(mark.assertions_len);
+            self.assertion_guard_terms.truncate(mark.guard_terms_len);
+            // Undo the outer-boolean links in reverse so a term fixed at
+            // several levels is restored to the value of the surviving one.
+            while self.outer_bool_journal.len() > mark.outer_bool_len {
+                if let Some((term, previous)) = self.outer_bool_journal.pop() {
+                    match previous {
+                        Some(value) => self.outer_bool.insert(term, value),
+                        None => self.outer_bool.remove(&term),
+                    };
+                }
+            }
             self.sat.pop();
         }
     }
@@ -1388,6 +1632,8 @@ impl Theory for BvSolver {
         self.assertion_guard_terms.clear();
         self.last_sat_model.clear();
         self.bool_node.clear();
+        self.outer_bool.clear();
+        self.outer_bool_journal.clear();
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {
@@ -1523,257 +1769,6 @@ impl BvSolver {
     }
 }
 
+/// Unit tests for this module.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Regression (theories-bv, 811-line solver.rs refactor): a genuinely
-    /// satisfiable 8-bit multiplication + disjunction pattern must not return
-    /// a false `Unsat` after an earlier probe has run on the same solver.
-    ///
-    /// Root cause: lazy hyper-binary resolution injected derived binary clauses
-    /// into the SAT database mid-`solve()`; those clauses were *not* tracked in
-    /// the learned-clause list, so `check()`'s per-probe `forget_learned_since`
-    /// cleanup (and the enclosing `pop()`) could not remove them. Left behind,
-    /// such a clause — implicitly resting on a since-retracted level-0 decision
-    /// installed by `assert_const` — spuriously forced `Unsat` on the next
-    /// probe. `embedded_sat_config()` now disables that heuristic (and
-    /// inprocessing) so the incremental cleanup contract stays exact.
-    ///
-    /// Drives the same `a = x*3 ∧ a ≠ x ∧ (a = x ∨ a = 7)` disjunction as the
-    /// `oxiz-solver` integration test `bv_mul_aux_disjunction_const_is_sat_8bit`
-    /// via explicit `push`/`check`/`pop` branches: branch `a = x` is UNSAT, the
-    /// following branch `a = 7` is SAT (e.g. x=173: 173*3 = 519 ≡ 7 mod 256).
-    fn run_mul_disjunction_branches(width: u32) -> (TheoryResult, TheoryResult) {
-        let mut solver = BvSolver::new();
-        let x = TermId::new(1);
-        let three = TermId::new(2);
-        let a = TermId::new(3);
-        let seven = TermId::new(4);
-        solver.new_bv(x, width);
-        solver.assert_const(three, 3, width);
-        solver.bv_mul(a, x, three);
-        solver.assert_neq(a, x);
-
-        // Disjunct 1: a = x  (=> UNSAT: x*3 = x with x != x is impossible).
-        solver.push();
-        solver.assert_eq(a, x);
-        let r1 = solver.check().expect("check should succeed");
-        solver.pop();
-
-        // Disjunct 2: a = 7  (=> SAT, and must NOT be poisoned by disjunct 1).
-        solver.push();
-        solver.new_bv(seven, width);
-        solver.assert_const(seven, 7, width);
-        solver.assert_eq(a, seven);
-        let r2 = solver.check().expect("check should succeed");
-        solver.pop();
-        (r1, r2)
-    }
-
-    #[test]
-    fn bv_mul_disjunction_incremental_stays_sat_4bit() {
-        let (r1, r2) = run_mul_disjunction_branches(4);
-        assert!(matches!(r1, TheoryResult::Unsat(_)), "a=x branch {r1:?}");
-        assert!(matches!(r2, TheoryResult::Sat), "a=7 branch {r2:?}");
-    }
-
-    #[test]
-    fn bv_mul_disjunction_incremental_stays_sat_8bit() {
-        let (r1, r2) = run_mul_disjunction_branches(8);
-        assert!(matches!(r1, TheoryResult::Unsat(_)), "a=x branch {r1:?}");
-        assert!(matches!(r2, TheoryResult::Sat), "a=7 branch {r2:?}");
-    }
-
-    #[test]
-    fn bv_mul_disjunction_single_check_is_sat_8bit() {
-        // The same pattern collapsed into one probe: a = x*3, a != x, a = 7.
-        // SAT with x=173 (173*3 = 519 ≡ 7 mod 256, and 7 != 173).
-        let mut solver = BvSolver::new();
-        let x = TermId::new(1);
-        let three = TermId::new(2);
-        let a = TermId::new(3);
-        solver.new_bv(x, 8);
-        solver.assert_const(three, 3, 8);
-        solver.bv_mul(a, x, three);
-        solver.assert_neq(a, x);
-        solver.assert_const(a, 7, 8);
-        let r = solver.check().expect("check should succeed");
-        assert!(matches!(r, TheoryResult::Sat), "got {r:?}");
-    }
-
-    #[test]
-    fn test_bv_eq() {
-        let mut solver = BvSolver::new();
-
-        let a = TermId::new(1);
-        let b = TermId::new(2);
-
-        solver.new_bv(a, 8);
-        solver.new_bv(b, 8);
-
-        // a = 42
-        solver.assert_const(a, 42, 8);
-
-        // a = b
-        solver.assert_eq(a, b);
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Sat));
-
-        // b should be 42
-        assert_eq!(solver.get_value(b), Some(42));
-    }
-
-    #[test]
-    fn test_bv_neq() {
-        let mut solver = BvSolver::new();
-
-        let a = TermId::new(1);
-        let b = TermId::new(2);
-
-        solver.new_bv(a, 4);
-        solver.new_bv(b, 4);
-
-        // a = 5
-        solver.assert_const(a, 5, 4);
-        // b = 5
-        solver.assert_const(b, 5, 4);
-        // a != b (contradiction)
-        solver.assert_neq(a, b);
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Unsat(_)));
-    }
-
-    // Audit regression (theories-bv): `BvSolver::check()` could return a
-    // false `Unsat` for a genuinely satisfiable "inverse" bit-vector
-    // constraint (fixed dividend/quotient, free divisor) because its own
-    // first internal `solve()` call could hit an unsound learned clause
-    // (resolved through a bare, clause-less level-0 decision literal
-    // installed by `assert_const`). `check()` now re-verifies an `Unsat`
-    // verdict by discarding this probe's learned clauses and retrying once
-    // before trusting it. This was previously worked around at the test
-    // level by `#[ignore]`ing `test_bv10_udiv` in `tests/test_bv10.rs`.
-    #[test]
-    fn audit_check_recovers_from_first_attempt_false_unsat() {
-        let mut solver = BvSolver::new();
-        let width = 8u32;
-
-        let dividend = TermId::new(1);
-        let divisor = TermId::new(2);
-        let quotient = TermId::new(3);
-        let result = TermId::new(4);
-
-        solver.new_bv(dividend, width);
-        solver.new_bv(divisor, width);
-        solver.new_bv(quotient, width);
-        solver.new_bv(result, width);
-
-        solver.assert_const(dividend, 100, width);
-        solver.assert_const(quotient, 5, width);
-        solver.bv_udiv(result, dividend, divisor);
-        solver.assert_eq(result, quotient);
-
-        let outcome = solver.check().expect("check should succeed");
-        assert!(
-            matches!(outcome, TheoryResult::Sat),
-            "100 / divisor = 5 is satisfiable (e.g. divisor in 17..=20); got {outcome:?}"
-        );
-
-        let d = solver
-            .get_value(divisor)
-            .expect("divisor should have a value");
-        assert_eq!(100 / d, 5, "witness divisor {d} must satisfy 100/d = 5");
-    }
-
-    // Audit regression (theories-bv): `get_value` computed `1u64 << i` for
-    // every bit index, which panics (debug) or silently wraps to a wrong
-    // value (release) once a bit-vector is wider than 64 bits. It must now
-    // honestly report "unavailable" (`None`) instead, while a new
-    // `get_value_big` correctly returns the full-width value.
-    #[test]
-    fn get_value_returns_none_for_width_over_64_get_value_big_is_correct() {
-        let mut solver = BvSolver::new();
-        let a = TermId::new(1);
-
-        solver.new_bv(a, 100);
-        // Manually force bit 0 and bit 99 true, everything else false --
-        // exercises the exact `i >= 64` shift that used to panic/wrap.
-        let bv = solver
-            .term_to_bv
-            .get(&a)
-            .cloned()
-            .expect("bv var must exist after new_bv");
-        for (i, &var) in bv.bits.iter().enumerate() {
-            if i == 0 || i == 99 {
-                solver.sat.add_clause([Lit::pos(var)]);
-            } else {
-                solver.sat.add_clause([Lit::neg(var)]);
-            }
-        }
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Sat));
-
-        assert_eq!(
-            solver.get_value(a),
-            None,
-            "get_value must honestly report unavailable for width > 64, not panic or wrap"
-        );
-
-        let mut expected = BigUint::ZERO;
-        expected.set_bit(0, true);
-        expected.set_bit(99, true);
-        assert_eq!(
-            solver.get_value_big(a),
-            Some(expected),
-            "get_value_big must return the correct full-width value"
-        );
-    }
-
-    // Audit regression (theories-bv): `extract_model_equalities` (used for
-    // Nelson-Oppen model-based equality sharing) keyed its value map by
-    // `u64`, computed via the same panicking/wrapping `1u64 << i` shift for
-    // bit-vectors wider than 64 bits. It must now correctly detect equal
-    // wide values via a `BigUint`-keyed map instead.
-    #[test]
-    fn extract_model_equalities_handles_width_over_64() {
-        let mut solver = BvSolver::new();
-        let a = TermId::new(1);
-        let b = TermId::new(2);
-
-        solver.new_bv(a, 70);
-        solver.new_bv(b, 70);
-
-        // Force both `a` and `b` to the same 70-bit value (bit 69 set).
-        for &term in &[a, b] {
-            let bv = solver
-                .term_to_bv
-                .get(&term)
-                .cloned()
-                .expect("bv var must exist after new_bv");
-            for (i, &var) in bv.bits.iter().enumerate() {
-                if i == 69 {
-                    solver.sat.add_clause([Lit::pos(var)]);
-                } else {
-                    solver.sat.add_clause([Lit::neg(var)]);
-                }
-            }
-        }
-
-        assert!(matches!(solver.sat.solve(), SolverResult::Sat));
-
-        // Must not panic (previously `1u64 << 69` would panic in debug /
-        // silently wrap -- and possibly corrupt equality detection -- in
-        // release).
-        solver.extract_model_equalities();
-
-        let shared = solver.get_shared_equalities();
-        assert_eq!(
-            shared.len(),
-            1,
-            "a and b share the same 70-bit value and must be reported equal"
-        );
-    }
-}
+mod tests;

@@ -167,11 +167,19 @@ impl SetSort {
     }
 
     /// Get the depth of nesting
+    ///
+    /// Iterative: `SetSet` nesting is caller-controlled (the sort is `pub` and
+    /// built by callers, not by a depth-capped parser) and the return type is
+    /// `usize`, so a depth cap here could only report a nesting depth that is
+    /// silently too small.
     pub fn nesting_depth(&self) -> usize {
-        match self {
-            SetSort::SetSet(inner) => 1 + inner.nesting_depth(),
-            _ => 0,
+        let mut depth = 0;
+        let mut current = self;
+        while let SetSort::SetSet(inner) = current {
+            depth += 1;
+            current = inner;
         }
+        depth
     }
 
     /// Get the element sort for this set sort
@@ -179,6 +187,27 @@ impl SetSort {
         match self {
             SetSort::SetSet(inner) => Some(inner),
             _ => None,
+        }
+    }
+}
+
+impl Drop for SetSort {
+    /// Unlink the `SetSet` chain iteratively.
+    ///
+    /// Compiler-generated drop glue recurses once per nesting level, so a sort
+    /// deep enough to build is deep enough to abort the process at scope exit,
+    /// after it has already been used successfully.
+    fn drop(&mut self) {
+        let mut current = match self {
+            SetSort::SetSet(inner) => core::mem::replace(inner, Box::new(SetSort::IntSet)),
+            _ => return,
+        };
+        loop {
+            let next = match &mut *current {
+                SetSort::SetSet(inner) => core::mem::replace(inner, Box::new(SetSort::IntSet)),
+                _ => return,
+            };
+            current = next;
         }
     }
 }

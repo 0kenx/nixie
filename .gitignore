@@ -3,11 +3,21 @@
 **/*.rs.bk
 target
 
-# Cargo.lock is intentionally NOT ignored here: oxiz-cli ships as a binary
-# crate, and reproducible binary builds want a committed lockfile
-# (see https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control).
-# The root Cargo.lock still needs to be added to git (`git add Cargo.lock`) to
-# actually become tracked. Do not re-add a `Cargo.lock` ignore rule here.
+# --- POLICY CHANGE: Cargo.lock is now ignored (was previously committed) ---
+# Previously this repository intentionally tracked the root Cargo.lock, on the
+# grounds that oxiz-cli ships as a binary crate and reproducible binary builds
+# want a committed lockfile.
+# That policy has been reversed: OxiZ is primarily consumed as a set of library
+# crates published to crates.io, where the lockfile is ignored by downstream
+# users anyway, and a tracked lockfile produces constant merge conflicts and
+# churn on every dependency bump (Latest crates policy).
+# CI and release builds should pin dependencies explicitly when reproducibility
+# is required, rather than relying on a committed lockfile.
+# Do NOT re-add Cargo.lock to version control.
+# Root-anchored on purpose: per-crate lockfiles (fuzz, bench/z3_parity) stay tracked.
+/Cargo.lock
+/bench/z3_parity/results.json
+/bench/z3_parity/results.*.json
 
 # claude
 .claude/

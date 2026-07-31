@@ -22,6 +22,40 @@
 //! `Real`/`Int` constants, and free variables whose only constraints are
 //! special-value predicates (`fp.isNaN`, `fp.isInfinite`, …) for which a witness
 //! special value is synthesised.
+//!
+//! # Recursion and memoization
+//!
+//! The three evaluators (`eval_real_core`, `eval_fp_core`, `eval_bool_core`)
+//! used to be plain native recursion with no depth guard and no memo: a term
+//! built through the `TermManager` builder API can nest arbitrarily deep, so
+//! a sufficiently deep formula overflowed the native stack — a fatal,
+//! `catch_unwind`-proof process abort — and a shared sub-DAG of the
+//! hash-consed term graph was re-expanded once per path (`2^n` work for an
+//! `n`-level doubling DAG).  Each evaluator is now an explicit-worklist walk
+//! ([`Task`]) over a per-call `TermId`-keyed memo table.  A depth cap was
+//! never an option: these functions return `Option` where `None` means "give
+//! up on `Sat`", so a cap would be survivable — but the explicit stack makes
+//! the walk total on every input, which is strictly better than refusing
+//! deep-but-legitimate models.
+//!
+//! Memoizing on bare `TermId` is exact here because every evaluation is
+//! context-free: no binder is ever entered (quantified formulas fall out of
+//! the concrete fragment as `None` leaves), `values` is never mutated during
+//! a single evaluation (only [`FpModelFinder::try_define`] writes it, after
+//! the evaluator returned), and the engine's rounding mode cannot leak
+//! between sub-evaluations — every rounding-sensitive operation
+//! (`add`/`sub`/`mul`/`div`/`sqrt`/`fma`/`convert_format`) sets its mode from
+//! the term's own `RoundingMode` immediately before executing, and the
+//! remaining operations (`abs`/`neg`/`rem`/`min`/`max`/`classify` and the
+//! comparisons) are exact and mode-independent per IEEE-754.  The memos are
+//! created fresh per top-level call precisely because `values` *does* change
+//! between calls (each `try_define` fixpoint round pins new variables).
+//!
+//! The worklist evaluates every operand of a node before combining, whereas
+//! the recursive original short-circuited (`?`, and `And`/`Or` early
+//! returns).  The produced values are identical — a definite `false`/`true`
+//! still dominates an unknown sibling, and skipped operands were pure — only
+//! the work profile differs, and the memo keeps that linear in DAG size.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -58,6 +92,68 @@ impl PredicateFlags {
             || self.want_positive
             || self.want_negative
     }
+}
+
+/// One step of an explicit-worklist evaluation (see the module doc's
+/// "Recursion and memoization" section): either visit a term — resolving it
+/// immediately when it is a leaf of the walk, or scheduling its operands —
+/// or apply a deferred operator whose operands have all been evaluated into
+/// the memo table.
+enum Task<Op> {
+    /// Evaluate this term (memo-checked; may schedule an `Apply`).
+    Visit(TermId),
+    /// All operands are in the memo; combine them into this term's value.
+    Apply(TermId, Op),
+}
+
+/// A deferred `Real`-arithmetic operator awaiting its operand values
+/// (`eval_real_core`).  N-ary operand lists are copied out of the term so the
+/// combine step never has to re-fetch and re-match the term kind.
+enum RealOp {
+    Neg(TermId),
+    Sub(TermId, TermId),
+    Div(TermId, TermId),
+    Add(Vec<TermId>),
+    Mul(Vec<TermId>),
+}
+
+/// A deferred FP operator awaiting its operand values (`eval_fp_core`).
+/// Rounding-sensitive operators carry the term's own [`RoundingMode`], which
+/// is applied to the engine immediately before the operation — exactly where
+/// the recursive original applied it.
+enum FpOp {
+    Abs(TermId),
+    Neg(TermId),
+    Sqrt(RoundingMode, TermId),
+    Add(RoundingMode, TermId, TermId),
+    Sub(RoundingMode, TermId, TermId),
+    Mul(RoundingMode, TermId, TermId),
+    Div(RoundingMode, TermId, TermId),
+    Rem(TermId, TermId),
+    Fma(RoundingMode, TermId, TermId, TermId),
+    Min(TermId, TermId),
+    Max(TermId, TermId),
+    /// `fp.to_fp` format conversion to `(eb, sb)`.
+    Convert(RoundingMode, TermId, u32, u32),
+}
+
+/// A deferred Boolean connective awaiting its operand values
+/// (`eval_bool_core`).
+enum BoolOp {
+    Not(TermId),
+    And(Vec<TermId>),
+    Or(Vec<TermId>),
+    /// The Boolean-equality fallback of `Eq`, entered only after the FP
+    /// interpretation of both sides failed.
+    EqBool(TermId, TermId),
+}
+
+/// Committed value of `term` in a memo table: `None` both for "evaluated to
+/// unknown" and for "absent".  Operands of a scheduled `Apply` are always
+/// present (their `Visit` completed first), so the collapse is unobservable
+/// there; at the root it returns the honest `None`.
+fn memoed<T: Copy>(memo: &FxHashMap<TermId, Option<T>>, term: TermId) -> Option<T> {
+    memo.get(&term).copied().flatten()
 }
 
 /// Concrete FP model finder: assigns a bit-exact [`FpValue`] to every relevant
@@ -111,36 +207,114 @@ impl<'a> FpModelFinder<'a> {
 
     /// Evaluate a `Real`/`Int`-sorted term to an `f64`, following the small
     /// arithmetic shapes that appear as `(_ to_fp …)` operands.
-    fn eval_real(&self, term: TermId) -> Option<f64> {
-        let td = self.manager.get(term)?;
-        match &td.kind {
-            TermKind::RealConst(r) => r.to_f64(),
-            TermKind::IntConst(n) => n.to_f64(),
-            TermKind::Neg(a) => self.eval_real(*a).map(|v| -v),
-            TermKind::Sub(a, b) => Some(self.eval_real(*a)? - self.eval_real(*b)?),
-            TermKind::Div(a, b) => {
-                let denom = self.eval_real(*b)?;
-                if denom == 0.0 {
-                    return None;
+    ///
+    /// Explicit-worklist walk over a per-call memo — see the module doc's
+    /// "Recursion and memoization" section.  Purely a function of the term
+    /// (no engine, no `values`), so `TermId`-keyed memoization is trivially
+    /// exact.
+    fn eval_real_core(
+        &self,
+        root: TermId,
+        memo: &mut FxHashMap<TermId, Option<f64>>,
+    ) -> Option<f64> {
+        let mut stack: Vec<Task<RealOp>> = vec![Task::Visit(root)];
+        while let Some(task) = stack.pop() {
+            match task {
+                Task::Visit(term) => {
+                    if memo.contains_key(&term) {
+                        continue;
+                    }
+                    let Some(td) = self.manager.get(term) else {
+                        memo.insert(term, None);
+                        continue;
+                    };
+                    match &td.kind {
+                        TermKind::RealConst(r) => {
+                            memo.insert(term, r.to_f64());
+                        }
+                        TermKind::IntConst(n) => {
+                            memo.insert(term, n.to_f64());
+                        }
+                        TermKind::Neg(a) => {
+                            stack.push(Task::Apply(term, RealOp::Neg(*a)));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::Sub(a, b) => {
+                            stack.push(Task::Apply(term, RealOp::Sub(*a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::Div(a, b) => {
+                            stack.push(Task::Apply(term, RealOp::Div(*a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::Add(args) => {
+                            stack.push(Task::Apply(term, RealOp::Add(args.to_vec())));
+                            for &a in args.iter().rev() {
+                                stack.push(Task::Visit(a));
+                            }
+                        }
+                        TermKind::Mul(args) => {
+                            stack.push(Task::Apply(term, RealOp::Mul(args.to_vec())));
+                            for &a in args.iter().rev() {
+                                stack.push(Task::Visit(a));
+                            }
+                        }
+                        _ => {
+                            memo.insert(term, None);
+                        }
+                    }
                 }
-                Some(self.eval_real(*a)? / denom)
-            }
-            TermKind::Add(args) => {
-                let mut acc = 0.0;
-                for &a in args {
-                    acc += self.eval_real(a)?;
+                Task::Apply(term, op) => {
+                    let value = match op {
+                        RealOp::Neg(a) => memoed(memo, a).map(|v| -v),
+                        RealOp::Sub(a, b) => match (memoed(memo, a), memoed(memo, b)) {
+                            (Some(x), Some(y)) => Some(x - y),
+                            _ => None,
+                        },
+                        // The original evaluated the denominator first and gave
+                        // up on zero; combining after both operands are known
+                        // produces the same value in every case (`-0.0 == 0.0`
+                        // included).
+                        RealOp::Div(a, b) => match (memoed(memo, a), memoed(memo, b)) {
+                            (Some(x), Some(y)) if y != 0.0 => Some(x / y),
+                            _ => None,
+                        },
+                        // Left-to-right accumulation preserved: float addition
+                        // and multiplication are order-sensitive.
+                        RealOp::Add(args) => {
+                            let mut acc = Some(0.0);
+                            for a in args {
+                                acc = match (acc, memoed(memo, a)) {
+                                    (Some(s), Some(v)) => Some(s + v),
+                                    _ => None,
+                                };
+                                if acc.is_none() {
+                                    break;
+                                }
+                            }
+                            acc
+                        }
+                        RealOp::Mul(args) => {
+                            let mut acc = Some(1.0);
+                            for a in args {
+                                acc = match (acc, memoed(memo, a)) {
+                                    (Some(s), Some(v)) => Some(s * v),
+                                    _ => None,
+                                };
+                                if acc.is_none() {
+                                    break;
+                                }
+                            }
+                            acc
+                        }
+                    };
+                    memo.insert(term, value);
                 }
-                Some(acc)
             }
-            TermKind::Mul(args) => {
-                let mut acc = 1.0;
-                for &a in args {
-                    acc *= self.eval_real(a)?;
-                }
-                Some(acc)
-            }
-            _ => None,
         }
+        memoed(memo, root)
     }
 
     /// Round an `f64` value to `format` under rounding mode `rm`, producing a
@@ -157,104 +331,217 @@ impl<'a> FpModelFinder<'a> {
     /// Evaluate an FP-sorted term to a concrete [`FpValue`], if all of its
     /// leaves are already pinned. Returns `None` when any input is unknown or
     /// the operation is not (yet) supported by concrete evaluation.
+    ///
+    /// Thin entry point over [`Self::eval_fp_core`] with fresh per-call memos
+    /// (see the module doc for why the memos must not outlive a call).
     fn eval_fp(&mut self, term: TermId) -> Option<FpValue> {
-        let td = self.manager.get(term)?;
-        match &td.kind {
-            TermKind::Var(_) => self.values.get(&term).copied(),
-            TermKind::FpLit {
-                sign,
-                exp,
-                sig,
-                eb,
-                sb,
-            } => Some(FpValue {
-                sign: *sign,
-                exponent: exp.to_u64()?,
-                significand: sig.to_u64()?,
-                format: FpFormat::new(*eb, *sb),
-            }),
-            TermKind::FpPlusInfinity { eb, sb } => {
-                Some(FpValue::pos_infinity(FpFormat::new(*eb, *sb)))
+        let mut fp_memo: FxHashMap<TermId, Option<FpValue>> = FxHashMap::default();
+        let mut real_memo: FxHashMap<TermId, Option<f64>> = FxHashMap::default();
+        self.eval_fp_core(term, &mut fp_memo, &mut real_memo)
+    }
+
+    /// Explicit-worklist body of [`Self::eval_fp`]; also driven by
+    /// [`Self::eval_bool_core`] with the memos of the enclosing Boolean
+    /// evaluation, so shared FP sub-DAGs are evaluated once per assertion
+    /// rather than once per reference.
+    fn eval_fp_core(
+        &mut self,
+        root: TermId,
+        fp_memo: &mut FxHashMap<TermId, Option<FpValue>>,
+        real_memo: &mut FxHashMap<TermId, Option<f64>>,
+    ) -> Option<FpValue> {
+        let mut stack: Vec<Task<FpOp>> = vec![Task::Visit(root)];
+        while let Some(task) = stack.pop() {
+            match task {
+                Task::Visit(term) => {
+                    if fp_memo.contains_key(&term) {
+                        continue;
+                    }
+                    let Some(td) = self.manager.get(term) else {
+                        fp_memo.insert(term, None);
+                        continue;
+                    };
+                    match &td.kind {
+                        TermKind::Var(_) => {
+                            let value = self.values.get(&term).copied();
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpLit {
+                            sign,
+                            exp,
+                            sig,
+                            eb,
+                            sb,
+                        } => {
+                            let value = match (exp.to_u64(), sig.to_u64()) {
+                                (Some(exponent), Some(significand)) => Some(FpValue {
+                                    sign: *sign,
+                                    exponent,
+                                    significand,
+                                    format: FpFormat::new(*eb, *sb),
+                                }),
+                                _ => None,
+                            };
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpPlusInfinity { eb, sb } => {
+                            let value = Some(FpValue::pos_infinity(FpFormat::new(*eb, *sb)));
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpMinusInfinity { eb, sb } => {
+                            let value = Some(FpValue::neg_infinity(FpFormat::new(*eb, *sb)));
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpPlusZero { eb, sb } => {
+                            let value = Some(FpValue::pos_zero(FpFormat::new(*eb, *sb)));
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpMinusZero { eb, sb } => {
+                            let value = Some(FpValue::neg_zero(FpFormat::new(*eb, *sb)));
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpNaN { eb, sb } => {
+                            let value = Some(FpValue::nan(FpFormat::new(*eb, *sb)));
+                            fp_memo.insert(term, value);
+                        }
+                        TermKind::FpAbs(a) => {
+                            stack.push(Task::Apply(term, FpOp::Abs(*a)));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpNeg(a) => {
+                            stack.push(Task::Apply(term, FpOp::Neg(*a)));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpSqrt(rm, a) => {
+                            stack.push(Task::Apply(term, FpOp::Sqrt(*rm, *a)));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpAdd(rm, a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Add(*rm, *a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpSub(rm, a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Sub(*rm, *a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpMul(rm, a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Mul(*rm, *a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpDiv(rm, a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Div(*rm, *a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpRem(a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Rem(*a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpFma(rm, a, b, c) => {
+                            stack.push(Task::Apply(term, FpOp::Fma(*rm, *a, *b, *c)));
+                            stack.push(Task::Visit(*c));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpMin(a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Min(*a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpMax(a, b) => {
+                            stack.push(Task::Apply(term, FpOp::Max(*a, *b)));
+                            stack.push(Task::Visit(*b));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::FpToFp { rm, arg, eb, sb } => {
+                            stack.push(Task::Apply(term, FpOp::Convert(*rm, *arg, *eb, *sb)));
+                            stack.push(Task::Visit(*arg));
+                        }
+                        TermKind::RealToFp { rm, arg, eb, sb } => {
+                            let (rm, arg, eb, sb) = (*rm, *arg, *eb, *sb);
+                            let value = self.eval_real_core(arg, real_memo).map(|v| {
+                                self.real_to_fp(v, FpFormat::new(eb, sb), Self::engine_rm(rm))
+                            });
+                            fp_memo.insert(term, value);
+                        }
+                        _ => {
+                            fp_memo.insert(term, None);
+                        }
+                    }
+                }
+                Task::Apply(term, op) => {
+                    let value = self.apply_fp_op(op, fp_memo);
+                    fp_memo.insert(term, value);
+                }
             }
-            TermKind::FpMinusInfinity { eb, sb } => {
-                Some(FpValue::neg_infinity(FpFormat::new(*eb, *sb)))
-            }
-            TermKind::FpPlusZero { eb, sb } => Some(FpValue::pos_zero(FpFormat::new(*eb, *sb))),
-            TermKind::FpMinusZero { eb, sb } => Some(FpValue::neg_zero(FpFormat::new(*eb, *sb))),
-            TermKind::FpNaN { eb, sb } => Some(FpValue::nan(FpFormat::new(*eb, *sb))),
-            TermKind::FpAbs(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.abs(&v))
-            }
-            TermKind::FpNeg(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.neg(&v))
-            }
-            TermKind::FpSqrt(rm, a) => {
-                let v = self.eval_fp(*a)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
+        }
+        memoed(fp_memo, root)
+    }
+
+    /// Execute one deferred FP operator against operand values already in the
+    /// memo, setting the engine rounding mode exactly where the recursive
+    /// original did: immediately before each rounding-sensitive operation.
+    /// The remaining operations (`abs`/`neg`/`rem`/`min`/`max`) are exact and
+    /// mode-independent, so no mode is set for them — same as before.
+    fn apply_fp_op(
+        &mut self,
+        op: FpOp,
+        memo: &FxHashMap<TermId, Option<FpValue>>,
+    ) -> Option<FpValue> {
+        match op {
+            FpOp::Abs(a) => memoed(memo, a).map(|v| self.engine.abs(&v)),
+            FpOp::Neg(a) => memoed(memo, a).map(|v| self.engine.neg(&v)),
+            FpOp::Sqrt(rm, a) => {
+                let v = memoed(memo, a)?;
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
                 Some(self.engine.sqrt(&v))
             }
-            TermKind::FpAdd(rm, a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
+            FpOp::Add(rm, a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
                 Some(self.engine.add(&va, &vb))
             }
-            TermKind::FpSub(rm, a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
+            FpOp::Sub(rm, a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
                 Some(self.engine.sub(&va, &vb))
             }
-            TermKind::FpMul(rm, a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
+            FpOp::Mul(rm, a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
                 Some(self.engine.mul(&va, &vb))
             }
-            TermKind::FpDiv(rm, a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
+            FpOp::Div(rm, a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
                 Some(self.engine.div(&va, &vb))
             }
-            TermKind::FpRem(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
+            FpOp::Rem(a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
                 Some(self.engine.rem(&va, &vb))
             }
-            TermKind::FpFma(rm, a, b, c) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                let vc = self.eval_fp(*c)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
+            FpOp::Fma(rm, a, b, c) => {
+                let (va, vb, vc) = (memoed(memo, a)?, memoed(memo, b)?, memoed(memo, c)?);
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
                 Some(self.engine.fma(&va, &vb, &vc))
             }
-            TermKind::FpMin(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
+            FpOp::Min(a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
                 Some(self.engine.min(&va, &vb))
             }
-            TermKind::FpMax(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
+            FpOp::Max(a, b) => {
+                let (va, vb) = (memoed(memo, a)?, memoed(memo, b)?);
                 Some(self.engine.max(&va, &vb))
             }
-            TermKind::FpToFp { rm, arg, eb, sb } => {
-                let v = self.eval_fp(*arg)?;
-                self.engine.set_rounding_mode(Self::engine_rm(*rm));
-                Some(convert_format(
-                    &mut self.engine,
-                    &v,
-                    FpFormat::new(*eb, *sb),
-                ))
+            FpOp::Convert(rm, arg, eb, sb) => {
+                let v = memoed(memo, arg)?;
+                self.engine.set_rounding_mode(Self::engine_rm(rm));
+                Some(convert_format(&mut self.engine, &v, FpFormat::new(eb, sb)))
             }
-            TermKind::RealToFp { rm, arg, eb, sb } => {
-                let value = self.eval_real(*arg)?;
-                Some(self.real_to_fp(value, FpFormat::new(*eb, *sb), Self::engine_rm(*rm)))
-            }
-            _ => None,
         }
     }
 
@@ -288,103 +575,215 @@ impl<'a> FpModelFinder<'a> {
     /// Returns `None` when the term contains anything the concrete evaluator
     /// cannot decide (a non-FP atom, an unassigned variable, an unsupported
     /// operation, …), which forces the caller to give up on `Sat`.
+    ///
+    /// Thin entry point over [`Self::eval_bool_core`] with fresh per-call
+    /// memos (see the module doc for why the memos must not outlive a call).
     fn eval_bool(&mut self, term: TermId) -> Option<bool> {
-        let td = self.manager.get(term)?;
-        match &td.kind {
-            TermKind::True => Some(true),
-            TermKind::False => Some(false),
-            TermKind::Not(a) => self.eval_bool(*a).map(|b| !b),
-            TermKind::And(args) => {
-                let mut result = Some(true);
-                for &a in args {
-                    match self.eval_bool(a) {
-                        Some(false) => return Some(false),
-                        Some(true) => {}
-                        None => result = None,
+        let mut bool_memo: FxHashMap<TermId, Option<bool>> = FxHashMap::default();
+        let mut fp_memo: FxHashMap<TermId, Option<FpValue>> = FxHashMap::default();
+        let mut real_memo: FxHashMap<TermId, Option<f64>> = FxHashMap::default();
+        self.eval_bool_core(term, &mut bool_memo, &mut fp_memo, &mut real_memo)
+    }
+
+    /// Explicit-worklist body of [`Self::eval_bool`].  FP atoms are resolved
+    /// inline through [`Self::eval_fp_core`] (itself iterative, so the native
+    /// call depth stays constant); only the Boolean connectives are deferred
+    /// onto the worklist.
+    fn eval_bool_core(
+        &mut self,
+        root: TermId,
+        bool_memo: &mut FxHashMap<TermId, Option<bool>>,
+        fp_memo: &mut FxHashMap<TermId, Option<FpValue>>,
+        real_memo: &mut FxHashMap<TermId, Option<f64>>,
+    ) -> Option<bool> {
+        let mut stack: Vec<Task<BoolOp>> = vec![Task::Visit(root)];
+        while let Some(task) = stack.pop() {
+            match task {
+                Task::Visit(term) => {
+                    if bool_memo.contains_key(&term) {
+                        continue;
+                    }
+                    let Some(td) = self.manager.get(term) else {
+                        bool_memo.insert(term, None);
+                        continue;
+                    };
+                    match &td.kind {
+                        TermKind::True => {
+                            bool_memo.insert(term, Some(true));
+                        }
+                        TermKind::False => {
+                            bool_memo.insert(term, Some(false));
+                        }
+                        TermKind::Not(a) => {
+                            stack.push(Task::Apply(term, BoolOp::Not(*a)));
+                            stack.push(Task::Visit(*a));
+                        }
+                        TermKind::And(args) => {
+                            stack.push(Task::Apply(term, BoolOp::And(args.to_vec())));
+                            for &a in args.iter().rev() {
+                                stack.push(Task::Visit(a));
+                            }
+                        }
+                        TermKind::Or(args) => {
+                            stack.push(Task::Apply(term, BoolOp::Or(args.to_vec())));
+                            for &a in args.iter().rev() {
+                                stack.push(Task::Visit(a));
+                            }
+                        }
+                        TermKind::Eq(a, b) => {
+                            let (a, b) = (*a, *b);
+                            let va = self.eval_fp_core(a, fp_memo, real_memo);
+                            let vb = self.eval_fp_core(b, fp_memo, real_memo);
+                            if let (Some(va), Some(vb)) = (va, vb) {
+                                let value = Some(self.fp_structural_eq(&va, &vb));
+                                bool_memo.insert(term, value);
+                            } else {
+                                // Fall back to Boolean equality (e.g.
+                                // `(= (fp.isNaN x) true)`).
+                                stack.push(Task::Apply(term, BoolOp::EqBool(a, b)));
+                                stack.push(Task::Visit(b));
+                                stack.push(Task::Visit(a));
+                            }
+                        }
+                        TermKind::FpEq(a, b) => {
+                            let value = self
+                                .eval_fp_pair(*a, *b, fp_memo, real_memo)
+                                .map(|(va, vb)| self.engine.eq(&va, &vb));
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpLt(a, b) => {
+                            let value = self
+                                .eval_fp_pair(*a, *b, fp_memo, real_memo)
+                                .map(|(va, vb)| self.engine.lt(&va, &vb));
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpGt(a, b) => {
+                            let value = self
+                                .eval_fp_pair(*a, *b, fp_memo, real_memo)
+                                .map(|(va, vb)| self.engine.gt(&va, &vb));
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpLeq(a, b) => {
+                            let value = self
+                                .eval_fp_pair(*a, *b, fp_memo, real_memo)
+                                .map(|(va, vb)| self.engine.le(&va, &vb));
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpGeq(a, b) => {
+                            let value = self
+                                .eval_fp_pair(*a, *b, fp_memo, real_memo)
+                                .map(|(va, vb)| self.engine.ge(&va, &vb));
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsNaN(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.engine.classify(&v).is_nan());
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsInfinite(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.engine.classify(&v).is_infinite());
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsZero(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.engine.classify(&v).is_zero());
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsNormal(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.engine.classify(&v).is_normal());
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsSubnormal(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.engine.classify(&v).is_subnormal());
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsPositive(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.is_positive(&v));
+                            bool_memo.insert(term, value);
+                        }
+                        TermKind::FpIsNegative(a) => {
+                            let value = self
+                                .eval_fp_core(*a, fp_memo, real_memo)
+                                .map(|v| self.is_negative(&v));
+                            bool_memo.insert(term, value);
+                        }
+                        _ => {
+                            bool_memo.insert(term, None);
+                        }
                     }
                 }
-                result
-            }
-            TermKind::Or(args) => {
-                let mut result = Some(false);
-                for &a in args {
-                    match self.eval_bool(a) {
-                        Some(true) => return Some(true),
-                        Some(false) => {}
-                        None => result = None,
-                    }
+                Task::Apply(term, op) => {
+                    let value = match op {
+                        BoolOp::Not(a) => memoed(bool_memo, a).map(|b| !b),
+                        // The recursive original returned early on a definite
+                        // `false`; scanning the memoized children reproduces
+                        // the same dominance (a definite `false` wins even
+                        // when an earlier sibling was unknown).
+                        BoolOp::And(args) => {
+                            let mut result = Some(true);
+                            for a in args {
+                                match memoed(bool_memo, a) {
+                                    Some(false) => {
+                                        result = Some(false);
+                                        break;
+                                    }
+                                    Some(true) => {}
+                                    None => result = None,
+                                }
+                            }
+                            result
+                        }
+                        BoolOp::Or(args) => {
+                            let mut result = Some(false);
+                            for a in args {
+                                match memoed(bool_memo, a) {
+                                    Some(true) => {
+                                        result = Some(true);
+                                        break;
+                                    }
+                                    Some(false) => {}
+                                    None => result = None,
+                                }
+                            }
+                            result
+                        }
+                        BoolOp::EqBool(a, b) => {
+                            match (memoed(bool_memo, a), memoed(bool_memo, b)) {
+                                (Some(ba), Some(bb)) => Some(ba == bb),
+                                _ => None,
+                            }
+                        }
+                    };
+                    bool_memo.insert(term, value);
                 }
-                result
             }
-            TermKind::Eq(a, b) => {
-                let va = self.eval_fp(*a);
-                let vb = self.eval_fp(*b);
-                if let (Some(va), Some(vb)) = (va, vb) {
-                    return Some(self.fp_structural_eq(&va, &vb));
-                }
-                // Fall back to Boolean equality (e.g. `(= (fp.isNaN x) true)`).
-                let ba = self.eval_bool(*a);
-                let bb = self.eval_bool(*b);
-                match (ba, bb) {
-                    (Some(ba), Some(bb)) => Some(ba == bb),
-                    _ => None,
-                }
-            }
-            TermKind::FpEq(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                Some(self.engine.eq(&va, &vb))
-            }
-            TermKind::FpLt(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                Some(self.engine.lt(&va, &vb))
-            }
-            TermKind::FpGt(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                Some(self.engine.gt(&va, &vb))
-            }
-            TermKind::FpLeq(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                Some(self.engine.le(&va, &vb))
-            }
-            TermKind::FpGeq(a, b) => {
-                let va = self.eval_fp(*a)?;
-                let vb = self.eval_fp(*b)?;
-                Some(self.engine.ge(&va, &vb))
-            }
-            TermKind::FpIsNaN(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.classify(&v).is_nan())
-            }
-            TermKind::FpIsInfinite(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.classify(&v).is_infinite())
-            }
-            TermKind::FpIsZero(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.classify(&v).is_zero())
-            }
-            TermKind::FpIsNormal(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.classify(&v).is_normal())
-            }
-            TermKind::FpIsSubnormal(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.engine.classify(&v).is_subnormal())
-            }
-            TermKind::FpIsPositive(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.is_positive(&v))
-            }
-            TermKind::FpIsNegative(a) => {
-                let v = self.eval_fp(*a)?;
-                Some(self.is_negative(&v))
-            }
-            _ => None,
         }
+        memoed(bool_memo, root)
+    }
+
+    /// Evaluate both operands of a binary FP predicate; `None` when either
+    /// side is unknown.  Mirrors the recursive original's `?`-chain: the
+    /// second operand is not evaluated when the first fails.
+    fn eval_fp_pair(
+        &mut self,
+        a: TermId,
+        b: TermId,
+        fp_memo: &mut FxHashMap<TermId, Option<FpValue>>,
+        real_memo: &mut FxHashMap<TermId, Option<f64>>,
+    ) -> Option<(FpValue, FpValue)> {
+        let va = self.eval_fp_core(a, fp_memo, real_memo)?;
+        let vb = self.eval_fp_core(b, fp_memo, real_memo)?;
+        Some((va, vb))
     }
 
     /// Propagate definitional equalities `(= var <fp-expr>)` to a fixpoint,
@@ -565,5 +964,371 @@ impl Solver {
         }
         let mut finder = FpModelFinder::new(manager);
         finder.find(&self.assertions)
+    }
+}
+
+/// Regression tests for the explicit-worklist conversion of the three
+/// concrete-model evaluators (`eval_real_core` / `eval_fp_core` /
+/// `eval_bool_core`) — see the module doc's "Recursion and memoization"
+/// section for the rationale.  Deep-nesting tests run on a deliberately small
+/// (128 KiB) thread stack: a native stack overflow is a fatal abort that
+/// `catch_unwind` cannot intercept, so returning at all is the proof, and the
+/// pinned values additionally prove the walk was complete and correct.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use num_rational::Rational64;
+
+    /// `eval_real_core` with a fresh memo, mirroring how `eval_fp_core`
+    /// drives it.
+    fn eval_real(finder: &FpModelFinder<'_>, term: TermId) -> Option<f64> {
+        let mut memo: FxHashMap<TermId, Option<f64>> = FxHashMap::default();
+        finder.eval_real_core(term, &mut memo)
+    }
+
+    // -----------------------------------------------------------------------
+    // Semantic pins: small inputs with known-exact answers.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_real_pins_the_arithmetic_shapes() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        let three_halves = manager.mk_real(Rational64::new(3, 2));
+        let five_halves = manager.mk_real(Rational64::new(5, 2));
+        let two = manager.mk_int(2);
+        let one = manager.mk_int(1);
+        let sum = manager.mk_add(vec![three_halves, five_halves]); // 4.0
+        let product = manager.mk_mul(vec![sum, two]); // 8.0
+        let diff = manager.mk_sub(product, one); // 7.0
+        let neg = manager.mk_neg(diff); // -7.0
+        let quotient = manager.mk_div(neg, two); // -3.5
+        let zero = manager.mk_int(0);
+        let div_by_zero = manager.mk_div(three_halves, zero);
+        let opaque = manager.mk_var("p", bool_sort);
+        let sum_with_opaque = manager.mk_add(vec![three_halves, opaque]);
+
+        let finder = FpModelFinder::new(&manager);
+        assert_eq!(eval_real(&finder, quotient), Some(-3.5));
+        assert_eq!(
+            eval_real(&finder, div_by_zero),
+            None,
+            "division by zero must stay an honest unknown"
+        );
+        assert_eq!(
+            eval_real(&finder, sum_with_opaque),
+            None,
+            "an unsupported operand makes the whole sum unknown"
+        );
+    }
+
+    #[test]
+    fn eval_fp_pins_arithmetic_over_pinned_variables() {
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let x = manager.mk_var("x", fp_sort);
+        let y = manager.mk_var("y", fp_sort);
+        let add = manager.mk_fp_add(RoundingMode::RNE, x, y);
+        let neg = manager.mk_fp_neg(add);
+        let abs = manager.mk_fp_abs(neg);
+        let free = manager.mk_var("free", fp_sort);
+        let add_free = manager.mk_fp_add(RoundingMode::RNE, x, free);
+
+        let mut finder = FpModelFinder::new(&manager);
+        finder.values.insert(x, FpValue::from_f64(1.5));
+        finder.values.insert(y, FpValue::from_f64(2.25));
+
+        assert_eq!(finder.eval_fp(add), Some(FpValue::from_f64(3.75)));
+        assert_eq!(finder.eval_fp(neg), Some(FpValue::from_f64(-3.75)));
+        assert_eq!(finder.eval_fp(abs), Some(FpValue::from_f64(3.75)));
+        assert_eq!(
+            finder.eval_fp(free),
+            None,
+            "an unpinned variable stays unknown"
+        );
+        assert_eq!(finder.eval_fp(add_free), None, "unknown operands propagate");
+    }
+
+    /// Each conversion applies the rounding mode of its *own* term: `1/3` is
+    /// not representable in float32, so rounding toward positive and toward
+    /// zero must land on adjacent, strictly ordered values.  This pins that
+    /// the worklist applies modes immediately before each operation instead
+    /// of letting one leak across scheduled operations.
+    #[test]
+    fn eval_fp_applies_each_conversions_own_rounding_mode() {
+        let mut manager = TermManager::new();
+        let third = manager.mk_real(Rational64::new(1, 3));
+        let rtp = manager.mk_real_to_fp(RoundingMode::RTP, third, 8, 24);
+        let rtz = manager.mk_real_to_fp(RoundingMode::RTZ, third, 8, 24);
+
+        let mut finder = FpModelFinder::new(&manager);
+        let vp = finder.eval_fp(rtp).and_then(|v| v.to_f32());
+        let vz = finder.eval_fp(rtz).and_then(|v| v.to_f32());
+        assert!(
+            vp.zip(vz).is_some_and(|(p, z)| p > z),
+            "RTP must round 1/3 up and RTZ down; got {vp:?} vs {vz:?}"
+        );
+    }
+
+    #[test]
+    fn eval_bool_pins_connective_semantics_including_unknowns() {
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let bool_sort = manager.sorts.bool_sort;
+        let x = manager.mk_var("x", fp_sort);
+        let p = manager.mk_var("p", bool_sort);
+        let is_zero = manager.mk_fp_is_zero(x);
+        let is_neg = manager.mk_fp_is_negative(x);
+        let not_zero = manager.mk_not(is_zero);
+        let and_unknown = manager.mk_and(vec![is_zero, p]);
+        let and_false = manager.mk_and(vec![p, is_neg]);
+        let or_unknown = manager.mk_or(vec![is_neg, p]);
+        let or_true = manager.mk_or(vec![p, is_zero]);
+
+        let mut finder = FpModelFinder::new(&manager);
+        finder
+            .values
+            .insert(x, FpValue::pos_zero(FpFormat::new(11, 53)));
+
+        assert_eq!(finder.eval_bool(is_zero), Some(true));
+        assert_eq!(finder.eval_bool(is_neg), Some(false), "+0 is not negative");
+        assert_eq!(finder.eval_bool(not_zero), Some(false));
+        assert_eq!(finder.eval_bool(and_unknown), None);
+        assert_eq!(
+            finder.eval_bool(and_false),
+            Some(false),
+            "a definite false dominates an unknown sibling"
+        );
+        assert_eq!(finder.eval_bool(or_unknown), None);
+        assert_eq!(
+            finder.eval_bool(or_true),
+            Some(true),
+            "a definite true dominates an unknown sibling"
+        );
+    }
+
+    #[test]
+    fn eval_bool_eq_uses_fp_first_then_boolean_fallback() {
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let x = manager.mk_var("x", fp_sort);
+        let y = manager.mk_var("y", fp_sort);
+        let n1 = manager.mk_var("n1", fp_sort);
+        let n2 = manager.mk_var("n2", fp_sort);
+        let eq_fp = manager.mk_eq(x, y);
+        let eq_nan = manager.mk_eq(n1, n2);
+        let is_zero_x = manager.mk_fp_is_zero(x);
+        let t = manager.mk_true();
+        let eq_bool = manager.mk_eq(t, is_zero_x);
+
+        let mut finder = FpModelFinder::new(&manager);
+        finder.values.insert(x, FpValue::from_f64(2.5));
+        finder.values.insert(y, FpValue::from_f64(2.5));
+        let format = FpFormat::new(11, 53);
+        finder.values.insert(n1, FpValue::nan(format));
+        finder.values.insert(n2, FpValue::nan(format));
+
+        assert_eq!(
+            finder.eval_bool(eq_fp),
+            Some(true),
+            "FP structural-equality path"
+        );
+        assert_eq!(
+            finder.eval_bool(eq_nan),
+            Some(true),
+            "all NaNs are structurally equal under SMT-LIB `=`"
+        );
+        assert_eq!(
+            finder.eval_bool(eq_bool),
+            Some(false),
+            "Boolean fallback: (= true (fp.isZero 2.5)) is false"
+        );
+    }
+
+    /// End-to-end pin of the construct-and-verify pipeline over the new
+    /// evaluators: a witness is found and verified for a satisfiable set, and
+    /// the finder declines (never guesses) when its witness fails to verify.
+    #[test]
+    fn find_verifies_a_witness_and_declines_a_contradiction() {
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let x = manager.mk_var("x", fp_sort);
+        let is_zero = manager.mk_fp_is_zero(x);
+        let is_neg = manager.mk_fp_is_negative(x);
+        let is_normal = manager.mk_fp_is_normal(x);
+
+        let mut finder = FpModelFinder::new(&manager);
+        assert!(
+            finder.find(&[is_zero, is_neg]),
+            "-0 witnesses isZero ∧ isNegative"
+        );
+
+        let mut finder = FpModelFinder::new(&manager);
+        assert!(
+            !finder.find(&[is_zero, is_normal]),
+            "the zero witness cannot satisfy isNormal; the finder must decline"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Shared-DAG regressions: doubling DAGs that were exponential without the
+    // per-call memo must now be linear.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_real_shared_add_dag_is_linear_not_exponential() {
+        const LEVELS: i32 = 60;
+        let mut manager = TermManager::new();
+        let mut term = manager.mk_real(Rational64::new(3, 2));
+        for _ in 0..LEVELS {
+            term = manager.mk_add(vec![term, term]);
+        }
+
+        let finder = FpModelFinder::new(&manager);
+        assert_eq!(
+            eval_real(&finder, term),
+            Some(1.5 * (2.0f64).powi(LEVELS)),
+            "60 exact doublings of 1.5"
+        );
+    }
+
+    #[test]
+    fn eval_fp_shared_add_dag_is_linear_not_exponential() {
+        const LEVELS: i32 = 60;
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let x = manager.mk_var("x", fp_sort);
+        let mut term = x;
+        for _ in 0..LEVELS {
+            term = manager.mk_fp_add(RoundingMode::RNE, term, term);
+        }
+
+        let mut finder = FpModelFinder::new(&manager);
+        finder.values.insert(x, FpValue::from_f64(1.5));
+        assert_eq!(
+            finder.eval_fp(term),
+            Some(FpValue::from_f64(1.5 * (2.0f64).powi(LEVELS))),
+            "60 exact doublings of 1.5 through the IEEE engine"
+        );
+    }
+
+    #[test]
+    fn eval_bool_shared_and_dag_is_linear_not_exponential() {
+        const LEVELS: usize = 60;
+        let mut manager = TermManager::new();
+        let fp_sort = manager.sorts.float_sort(11, 53);
+        let bool_sort = manager.sorts.bool_sort;
+        let x = manager.mk_var("x", fp_sort);
+        let mut term = manager.mk_fp_is_zero(x);
+        for _ in 0..LEVELS {
+            // Raw intern: `mk_and` flattens nested `And`s, which would defeat
+            // the sharing this test exists to exercise.
+            term =
+                manager.intern_term(TermKind::And([term, term].into_iter().collect()), bool_sort);
+        }
+
+        let mut finder = FpModelFinder::new(&manager);
+        finder
+            .values
+            .insert(x, FpValue::pos_zero(FpFormat::new(11, 53)));
+        assert_eq!(finder.eval_bool(term), Some(true));
+    }
+
+    // -----------------------------------------------------------------------
+    // Deep-nesting regressions on a 128 KiB stack.
+    //
+    // Each `(STACK_SIZE, DEPTH)` pair below was scaled down from
+    // (1 MiB, 100 000) by a factor of 8 on both sides.  What these tests pin
+    // is the ~10 bytes of stack available per nesting level — no native frame
+    // fits in that, so a recursive evaluator still dies — not the absolute
+    // depth, and the smaller pair costs a 64th of the construction work.
+    // Never raise one of the two without the other.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_real_survives_a_deep_neg_chain_on_a_small_stack() {
+        const STACK_SIZE: usize = 1 << 17; // 128 KiB
+        const DEPTH: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let mut term = manager.mk_real(Rational64::new(3, 2));
+                for _ in 0..DEPTH {
+                    term = manager.mk_neg(term);
+                }
+                let finder = FpModelFinder::new(&manager);
+                assert_eq!(
+                    eval_real(&finder, term),
+                    Some(1.5),
+                    "an even number of negations returns the original value"
+                );
+            })
+            .expect("spawning a 128 KiB-stack thread should succeed");
+        handle
+            .join()
+            .expect("eval_real must return on a 128 KiB stack instead of overflowing");
+    }
+
+    #[test]
+    fn eval_fp_survives_a_deep_conversion_chain_on_a_small_stack() {
+        const STACK_SIZE: usize = 1 << 17; // 128 KiB
+        const DEPTH: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let three_halves = manager.mk_real(Rational64::new(3, 2));
+                let mut term = manager.mk_real_to_fp(RoundingMode::RNE, three_halves, 11, 53);
+                for _ in 0..DEPTH {
+                    term = manager.mk_fp_to_fp(RoundingMode::RNE, term, 11, 53);
+                }
+                let mut finder = FpModelFinder::new(&manager);
+                assert_eq!(
+                    finder.eval_fp(term),
+                    Some(FpValue::from_f64(1.5)),
+                    "identity conversions must preserve 1.5 through every level"
+                );
+            })
+            .expect("spawning a 128 KiB-stack thread should succeed");
+        handle
+            .join()
+            .expect("eval_fp must return on a 128 KiB stack instead of overflowing");
+    }
+
+    #[test]
+    fn eval_bool_survives_a_deep_eq_chain_on_a_small_stack() {
+        const STACK_SIZE: usize = 1 << 17; // 128 KiB
+        const DEPTH: usize = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let fp_sort = manager.sorts.float_sort(11, 53);
+                let x = manager.mk_var("x", fp_sort);
+                let t = manager.mk_true();
+                let mut term = manager.mk_fp_is_zero(x);
+                for _ in 0..DEPTH {
+                    // `mk_eq` folds only constant pairs, so `(= true prev)`
+                    // nests one level per iteration.
+                    term = manager.mk_eq(t, term);
+                }
+                let mut finder = FpModelFinder::new(&manager);
+                finder
+                    .values
+                    .insert(x, FpValue::pos_zero(FpFormat::new(11, 53)));
+                assert_eq!(
+                    finder.eval_bool(term),
+                    Some(true),
+                    "every level of the (= true …) chain evaluates to true"
+                );
+            })
+            .expect("spawning a 128 KiB-stack thread should succeed");
+        handle
+            .join()
+            .expect("eval_bool must return on a 128 KiB stack instead of overflowing");
     }
 }

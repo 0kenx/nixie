@@ -290,13 +290,34 @@ impl ArrayTheory {
         axioms
     }
 
-    /// Check if two arrays are equal by checking all selects
+    /// Check whether two arrays are *provably* equal from the registered selects
+    ///
+    /// This is an equality-establishing predicate, so the conservative
+    /// direction is `false`: a `true` answer asserts that the two arrays agree,
+    /// and every caller may act on that assertion. It therefore requires
+    /// positive evidence for every known index —
+    ///
+    /// * both arrays must have a registered select at that index, and
+    /// * the two select terms must be identical.
+    ///
+    /// Missing evidence — no index is known at all, or only one of the two
+    /// arrays has a select at some index — yields `false` ("not proven
+    /// equal"), not `true`. The previous direction returned `true` for exactly
+    /// those cases, i.e. it claimed extensional equality for two arrays about
+    /// which nothing was known.
+    ///
+    /// Note that `false` means "not proven equal", never "proven different";
+    /// callers must not read it as a disequality.
     pub fn check_extensionality(
         &self,
         array1: TermId,
         array2: TermId,
         _manager: &TermManager,
     ) -> bool {
+        if array1 == array2 {
+            return true;
+        }
+
         // Get all indices used with these arrays
         let mut indices = FxHashSet::default();
 
@@ -306,21 +327,24 @@ impl ArrayTheory {
             }
         }
 
-        // Check if for all known indices, the selects are equal
-        // (This is a conservative check)
-        indices.is_empty()
-            || indices.iter().all(|idx| {
-                let select1 = self.selects.get(&(array1, *idx));
-                let select2 = self.selects.get(&(array2, *idx));
-                match (select1, select2) {
-                    (Some(&s1), Some(&s2)) => {
-                        // In a real implementation, we'd check if these are equal in the current model
-                        // For now, we just do structural equality
-                        s1 == s2
-                    }
-                    _ => true, // Unknown, conservatively return true
-                }
-            })
+        // With no shared index there is no evidence of agreement at all.
+        if indices.is_empty() {
+            return false;
+        }
+
+        indices.iter().all(|idx| {
+            match (
+                self.selects.get(&(array1, *idx)),
+                self.selects.get(&(array2, *idx)),
+            ) {
+                // Structural equality of the select terms is the only
+                // evidence available without a model.
+                (Some(&s1), Some(&s2)) => s1 == s2,
+                // One side has no select at this index: nothing is known
+                // about the value there, so agreement is not established.
+                _ => false,
+            }
+        })
     }
 
     /// Get statistics about the theory
@@ -524,5 +548,68 @@ mod tests {
         // Should only have one copy
         assert_eq!(theory.pending_axioms.len(), 1);
         assert_eq!(theory.instantiated.len(), 1);
+    }
+
+    #[test]
+    fn test_extensionality_without_evidence_is_not_proven() {
+        let manager = TermManager::new();
+        let theory = ArrayTheory::new();
+        let a = TermId(1);
+        let b = TermId(2);
+
+        // Nothing at all is known about `a` and `b`. Claiming they agree
+        // would let a caller merge two unrelated arrays.
+        assert!(!theory.check_extensionality(a, b, &manager));
+    }
+
+    #[test]
+    fn test_extensionality_requires_both_sides_at_every_index() {
+        let manager = TermManager::new();
+        let mut theory = ArrayTheory::new();
+        let a = TermId(1);
+        let b = TermId(2);
+        let i = TermId(10);
+        let select_a_i = TermId(20);
+
+        // Only `a` has a select at `i`: the value of `b[i]` is unknown, so
+        // agreement is not established.
+        theory.register_select(select_a_i, a, i);
+        assert!(!theory.check_extensionality(a, b, &manager));
+
+        // A *different* select term at the same index is not agreement either.
+        theory.register_select(TermId(21), b, i);
+        assert!(!theory.check_extensionality(a, b, &manager));
+    }
+
+    #[test]
+    fn test_extensionality_proven_when_all_selects_agree() {
+        let manager = TermManager::new();
+        let mut theory = ArrayTheory::new();
+        let a = TermId(1);
+        let b = TermId(2);
+        let i = TermId(10);
+        let j = TermId(11);
+        let shared_i = TermId(20);
+        let shared_j = TermId(21);
+
+        theory.register_select(shared_i, a, i);
+        theory.register_select(shared_i, b, i);
+        theory.register_select(shared_j, a, j);
+        theory.register_select(shared_j, b, j);
+
+        assert!(theory.check_extensionality(a, b, &manager));
+
+        // Adding a one-sided index withdraws the proof again.
+        theory.register_select(TermId(22), a, TermId(12));
+        assert!(!theory.check_extensionality(a, b, &manager));
+    }
+
+    #[test]
+    fn test_extensionality_is_reflexive() {
+        let manager = TermManager::new();
+        let theory = ArrayTheory::new();
+        let a = TermId(1);
+        // An array always agrees with itself, even with no registered selects.
+        assert!(theory.check_extensionality(a, a, &manager));
     }
 }

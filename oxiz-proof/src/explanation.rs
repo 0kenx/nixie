@@ -210,16 +210,11 @@ impl ProofExplainer {
     /// Identify the critical path in a proof (longest path from axiom to conclusion).
     #[must_use]
     pub fn critical_path(&self, proof: &Proof) -> Vec<ProofNodeId> {
-        if proof.is_empty() {
+        // Find the node with maximum depth; an empty proof has no path to
+        // report rather than a fabricated one.
+        let Some(max_depth_node) = proof.nodes().iter().max_by_key(|n| n.depth) else {
             return Vec::new();
-        }
-
-        // Find the node with maximum depth
-        let max_depth_node = proof
-            .nodes()
-            .iter()
-            .max_by_key(|n| n.depth)
-            .expect("proof has at least one node");
+        };
 
         // Trace back to axioms
         let mut path = vec![max_depth_node.id];

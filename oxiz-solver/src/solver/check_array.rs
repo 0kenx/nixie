@@ -1,10 +1,24 @@
 //! Array theory constraint checking
+//!
+//! The two ground evaluators the checks below lean on live in their own
+//! submodules, because both walk *input-shaped* term structure and both are
+//! written as explicit heap frame stacks rather than as native recursion:
+//!
+//! * [`eval_bv`] — bit-vector expressions, for the cross-theory select check.
+//! * [`eval_int`] — integer expressions modulo read-over-write, for the
+//!   ordering check.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 
 use super::Solver;
+
+mod eval_bv;
+mod eval_int;
+
+#[cfg(test)]
+mod tests;
 
 impl Solver {
     pub(super) fn check_array_constraints(&self, manager: &TermManager) -> bool {
@@ -26,18 +40,15 @@ impl Solver {
         // This allows select(B, i) to be resolved via the read-over-write axiom.
         let array_var_aliases = self.collect_array_var_aliases(manager);
 
-        for &assertion in &self.assertions {
-            self.collect_array_constraints(
-                assertion,
-                manager,
-                &mut select_values,
-                &mut store_select_same_index,
-                &mut array_equalities,
-                &mut select_assertions,
-                &mut negated_select_assertions,
-                &mut read_conflicts,
-            );
-        }
+        self.collect_array_constraints(
+            manager,
+            &mut select_values,
+            &mut store_select_same_index,
+            &mut array_equalities,
+            &mut select_assertions,
+            &mut negated_select_assertions,
+            &mut read_conflicts,
+        );
 
         // Resolve alias-based conflicts:
         // For each select_assertion (select_term, asserted_value) where the array in
@@ -240,68 +251,77 @@ impl Solver {
         false
     }
 
-    /// Evaluate a select term by recursively applying the read-over-write axiom
+    /// Evaluate a select term by repeatedly applying the read-over-write axiom
     /// select(store(a, i, v), i) = v
     /// Returns Some(value) if the select can be evaluated to a concrete value
+    ///
+    /// The axiom is applied to a fixpoint by a loop rather than by recursion.
+    /// The recursive shape was `evaluate(stored_val).unwrap_or(stored_val)`,
+    /// i.e. "keep rewriting while the axiom applies, and keep the last value
+    /// that it did apply to", which is what `resolved` records here.
     fn evaluate_select_axiom(&self, term: TermId, manager: &TermManager) -> Option<TermId> {
-        let term_data = manager.get(term)?;
+        let mut current = term;
+        let mut resolved: Option<TermId> = None;
+        loop {
+            let Some(term_data) = manager.get(current) else {
+                return resolved;
+            };
+            let TermKind::Select(array, index) = &term_data.kind else {
+                return resolved;
+            };
 
-        if let TermKind::Select(array, index) = &term_data.kind {
-            // First, check if the array itself needs simplification (recursive call)
+            // The array position may itself need read-over-write simplification
+            // first; failing that, the original array may already be a store.
             let simplified_array = self.simplify_array_term(*array, manager);
+            let stored = [simplified_array, *array]
+                .into_iter()
+                .find_map(|candidate| {
+                    let TermKind::Store(_base, store_idx, stored_val) =
+                        &manager.get(candidate)?.kind
+                    else {
+                        return None;
+                    };
+                    self.terms_equal_simple(*store_idx, *index, manager)
+                        .then_some(*stored_val)
+                });
 
-            // Check if simplified_array is a store with the same index
-            if let Some(simplified_data) = manager.get(simplified_array) {
-                if let TermKind::Store(_base, store_idx, stored_val) = &simplified_data.kind {
-                    if self.terms_equal_simple(*store_idx, *index, manager) {
-                        // select(store(a, i, v), i) = v
-                        // Recursively evaluate the stored value
-                        return Some(
-                            self.evaluate_select_axiom(*stored_val, manager)
-                                .unwrap_or(*stored_val),
-                        );
-                    }
-                }
-            }
-
-            // Also check the original array if it's a store
-            if let Some(array_data) = manager.get(*array) {
-                if let TermKind::Store(_base, store_idx, stored_val) = &array_data.kind {
-                    if self.terms_equal_simple(*store_idx, *index, manager) {
-                        // select(store(a, i, v), i) = v
-                        return Some(
-                            self.evaluate_select_axiom(*stored_val, manager)
-                                .unwrap_or(*stored_val),
-                        );
-                    }
-                }
-            }
+            let Some(stored_val) = stored else {
+                return resolved;
+            };
+            resolved = Some(stored_val);
+            current = stored_val;
         }
-
-        None
     }
 
     /// Simplify an array term by applying the read-over-write axiom
     /// If the term is select(store(a, i, v), i), return v
+    ///
+    /// The rewrite is applied to a fixpoint by a loop rather than by tail
+    /// recursion: the `select`/`store` nesting is input-controlled and this
+    /// runs on whatever stack `check_sat`'s caller has.
     fn simplify_array_term(&self, term: TermId, manager: &TermManager) -> TermId {
-        let Some(term_data) = manager.get(term) else {
-            return term;
-        };
+        let mut current = term;
+        loop {
+            let Some(term_data) = manager.get(current) else {
+                return current;
+            };
 
-        if let TermKind::Select(array, index) = &term_data.kind {
+            let TermKind::Select(array, index) = &term_data.kind else {
+                return current;
+            };
             // Check if array is a store with the same index
-            if let Some(array_data) = manager.get(*array) {
-                if let TermKind::Store(_base, store_idx, stored_val) = &array_data.kind {
-                    if self.terms_equal_simple(*store_idx, *index, manager) {
-                        // select(store(a, i, v), i) = v
-                        // Recursively simplify the result
-                        return self.simplify_array_term(*stored_val, manager);
-                    }
-                }
+            let Some(array_data) = manager.get(*array) else {
+                return current;
+            };
+            let TermKind::Store(_base, store_idx, stored_val) = &array_data.kind else {
+                return current;
+            };
+            if !self.terms_equal_simple(*store_idx, *index, manager) {
+                return current;
             }
+            // select(store(a, i, v), i) = v, then keep simplifying the result.
+            current = *stored_val;
         }
-
-        term
     }
 
     /// Check if two terms represent different concrete values
@@ -329,11 +349,54 @@ impl Solver {
         }
     }
 
-    /// Collect array constraints from a term
-    /// `in_positive_context` tracks whether we're in a positive (true) or negative (not) context
+    /// Collect array constraints from the sub-terms of every assertion that are
+    /// **unconditionally asserted**, carrying the polarity of each.
+    ///
+    /// The walk is an explicit heap worklist rather than recursion: it runs on
+    /// whatever stack `check_sat`'s caller has, and an assertion's nesting
+    /// depth is attacker-controlled, so one native frame per level is a process
+    /// abort waiting to happen.  Children are pushed in reverse so they pop
+    /// left to right — the recursive order, which matters because
+    /// `select_values` is `insert`ed into and the *first* write for an
+    /// `(array, index)` pair wins (a later one becomes a read conflict
+    /// instead).
+    ///
+    /// Each worklist entry carries two flags, both of which the recursive
+    /// version passed down:
+    ///
+    /// * `in_positive_context` — whether an odd number of `Not`s has been
+    ///   crossed.  Only [`super::term_walk::asserted_children`] decides which
+    ///   children inherit assertedness, and at which polarity; in particular an
+    ///   `And` hands out its conjuncts only at *positive* polarity, because
+    ///   `(not (and a b))` is `(or (not a) (not b))` and entails neither.
+    /// * `collect_facts` — whether the term's own truth value is asserted at
+    ///   all.  It is `false` for the operands of an equality: `(= a b)` asserts
+    ///   only that `a` and `b` are *equal*, NOT that either holds on its own,
+    ///   so a nested Boolean equality such as
+    ///   `(= p (= (select (store a 3 5) 3) 6))` must not yield an asserted
+    ///   read-over-write fact — doing so produced a spurious UNSAT for a
+    ///   formula that is SAT with `p = false`.  An entry with `collect_facts`
+    ///   clear is dropped immediately, exactly as the recursive version
+    ///   returned at once; the flag is kept rather than folded away so the
+    ///   equality arm's descent stays visible where the reasoning for it is.
+    ///
+    /// Re-visits are pruned by a set keyed on `(TermId, polarity)` — NOT on
+    /// `TermId` alone, because on a shared-subterm DAG the same term is
+    /// reachable under both polarities and each polarity yields different
+    /// facts (dropping the second visit lost the negated-select fact).  Two
+    /// visits at the *same* polarity, though, are exact duplicates: what a
+    /// fact-collecting visit does is a function of `(term, polarity)` only, so
+    /// a repeat could only append copies of facts already recorded — and
+    /// `select_values` keeps the first write for a key, so a repeat cannot
+    /// even manufacture a spurious read conflict against itself.  Without the
+    /// set, a ladder like `(and x (not (not x)))` — buildable with shared
+    /// `let` bindings — walks `x` once per *path*, which doubles per level:
+    /// sixty levels of linear-size input became 2⁶⁰ visits and `check_sat`
+    /// never returned.  Entries with `collect_facts` clear bypass the set
+    /// entirely: they do nothing when popped, and letting one mark its term
+    /// visited would suppress a later fact-collecting visit of the same node.
     fn collect_array_constraints(
         &self,
-        term: TermId,
         manager: &TermManager,
         select_values: &mut FxHashMap<(TermId, TermId), TermId>,
         store_select_same_index: &mut Vec<(TermId, TermId, TermId, TermId)>,
@@ -342,202 +405,147 @@ impl Solver {
         negated_select_assertions: &mut Vec<(TermId, TermId)>,
         read_conflicts: &mut Vec<(TermId, TermId)>,
     ) {
-        self.collect_array_constraints_inner(
-            term,
-            manager,
-            select_values,
-            store_select_same_index,
-            array_equalities,
-            select_assertions,
-            negated_select_assertions,
-            read_conflicts,
-            true,
-            true,
-        );
-    }
+        // `(term, in_positive_context, collect_facts)`, with the first
+        // assertion on top so assertions are visited left to right.
+        let mut worklist: Vec<(TermId, bool, bool)> = self
+            .assertions
+            .iter()
+            .rev()
+            .map(|&assertion| (assertion, true, true))
+            .collect();
+        let mut visited: FxHashSet<(TermId, bool)> = FxHashSet::default();
 
-    #[allow(clippy::too_many_arguments)]
-    fn collect_array_constraints_inner(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        select_values: &mut FxHashMap<(TermId, TermId), TermId>,
-        store_select_same_index: &mut Vec<(TermId, TermId, TermId, TermId)>,
-        array_equalities: &mut Vec<(TermId, TermId)>,
-        select_assertions: &mut Vec<(TermId, TermId)>,
-        negated_select_assertions: &mut Vec<(TermId, TermId)>,
-        read_conflicts: &mut Vec<(TermId, TermId)>,
-        in_positive_context: bool,
-        // Whether the truth value of `term` is *directly asserted* (top-level
-        // assertion, a conjunct of an asserted And, or under a Not with the
-        // polarity tracked in `in_positive_context`).  This is `false` once we
-        // descend into the operands of an equality: `(= a b)` asserts only that
-        // `a` and `b` are *equal*, NOT that either operand holds on its own.  A
-        // nested Boolean equality such as `(= p (= (select (store a 3 5) 3) 6))`
-        // must therefore NOT collect the inner select-equality as an asserted
-        // read-over-write fact -- doing so produced a spurious UNSAT for a
-        // formula that is SAT with `p = false`.
-        collect_facts: bool,
-    ) {
-        // Inside an equality operand nothing is individually asserted, so we
-        // must not collect any read-over-write / extensionality facts from this
-        // subtree.  Descending further could only reinterpret non-asserted
-        // Boolean structure (nested Eq/And/Not) as asserted, which is unsound.
-        if !collect_facts {
-            return;
-        }
-
-        let Some(term_data) = manager.get(term) else {
-            return;
-        };
-
-        match &term_data.kind {
-            TermKind::Eq(lhs, rhs) => {
-                // Only check for array equality when in positive context (not inside a Not)
-                // Array equality like (= a b) only means a equals b when it's asserted directly,
-                // not when it's negated as (not (= a b))
-                if in_positive_context {
-                    if self.is_array_variable(*lhs, manager)
-                        && self.is_array_variable(*rhs, manager)
-                    {
-                        array_equalities.push((*lhs, *rhs));
-                    }
-                }
-
-                // Check for (select a i) = v — only in positive context
-                if in_positive_context {
-                    if let Some((array, index)) = self.extract_select(*lhs, manager) {
-                        if let Some(&existing_val) = select_values.get(&(array, index)) {
-                            if existing_val != *rhs {
-                                read_conflicts.push((existing_val, *rhs));
-                            }
-                        } else {
-                            select_values.insert((array, index), *rhs);
-                        }
-                        // Also record for nested array evaluation (array_08)
-                        select_assertions.push((*lhs, *rhs));
-                    }
-                    if let Some((array, index)) = self.extract_select(*rhs, manager) {
-                        if let Some(&existing_val) = select_values.get(&(array, index)) {
-                            if existing_val != *lhs {
-                                read_conflicts.push((existing_val, *lhs));
-                            }
-                        } else {
-                            select_values.insert((array, index), *lhs);
-                        }
-                        // Also record for nested array evaluation (array_08)
-                        select_assertions.push((*rhs, *lhs));
-                    }
-
-                    // Check for (select (store a i v) i) = result
-                    if let Some((inner_array, outer_index)) = self.extract_select(*lhs, manager) {
-                        if let Some((base_array, store_index, stored_val)) =
-                            self.extract_store(inner_array, manager)
-                        {
-                            // Check if indices are the same
-                            if self.terms_equal_simple(outer_index, store_index, manager) {
-                                store_select_same_index.push((
-                                    base_array,
-                                    store_index,
-                                    stored_val,
-                                    *rhs,
-                                ));
-                            }
-                        }
-                    }
-                    if let Some((inner_array, outer_index)) = self.extract_select(*rhs, manager) {
-                        if let Some((base_array, store_index, stored_val)) =
-                            self.extract_store(inner_array, manager)
-                        {
-                            if self.terms_equal_simple(outer_index, store_index, manager) {
-                                store_select_same_index.push((
-                                    base_array,
-                                    store_index,
-                                    stored_val,
-                                    *lhs,
-                                ));
-                            }
-                        }
-                    }
-                } else {
-                    // Negative context: we are inside a not(= ...) expression.
-                    // Collect negated select assertions: not(= (select array idx) val)
-                    // These mean the assertion claims select(array, idx) != val.
-                    // If the store-select axiom forces select(array, idx) = val, contradiction.
-                    if self.extract_select(*lhs, manager).is_some() {
-                        negated_select_assertions.push((*lhs, *rhs));
-                    }
-                    if self.extract_select(*rhs, manager).is_some() {
-                        negated_select_assertions.push((*rhs, *lhs));
-                    }
-                }
-
-                // Descend into the operands with `collect_facts = false`: an
-                // equality's operands are not individually asserted, so any
-                // Boolean structure inside them (a nested Eq/And/Not) must not
-                // be treated as an asserted read-over-write fact.  The
-                // asserted equality itself has already been recorded above.
-                self.collect_array_constraints_inner(
-                    *lhs,
-                    manager,
-                    select_values,
-                    store_select_same_index,
-                    array_equalities,
-                    select_assertions,
-                    negated_select_assertions,
-                    read_conflicts,
-                    in_positive_context,
-                    false,
-                );
-                self.collect_array_constraints_inner(
-                    *rhs,
-                    manager,
-                    select_values,
-                    store_select_same_index,
-                    array_equalities,
-                    select_assertions,
-                    negated_select_assertions,
-                    read_conflicts,
-                    in_positive_context,
-                    false,
-                );
+        while let Some((term, in_positive_context, collect_facts)) = worklist.pop() {
+            // Inside an equality operand nothing is individually asserted, so we
+            // must not collect any read-over-write / extensionality facts from this
+            // subtree.  Descending further could only reinterpret non-asserted
+            // Boolean structure (nested Eq/And/Not) as asserted, which is unsound.
+            if !collect_facts {
+                continue;
             }
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.collect_array_constraints_inner(
-                        arg,
-                        manager,
-                        select_values,
-                        store_select_same_index,
-                        array_equalities,
-                        select_assertions,
-                        negated_select_assertions,
-                        read_conflicts,
-                        in_positive_context,
-                        collect_facts,
+
+            // A repeat at the same polarity is an exact duplicate — see the
+            // doc comment for why the polarity must be part of the key.
+            if !visited.insert((term, in_positive_context)) {
+                continue;
+            }
+
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
+
+            match &term_data.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    // Only check for array equality when in positive context (not inside a Not)
+                    // Array equality like (= a b) only means a equals b when it's asserted directly,
+                    // not when it's negated as (not (= a b))
+                    if in_positive_context {
+                        if self.is_array_variable(*lhs, manager)
+                            && self.is_array_variable(*rhs, manager)
+                        {
+                            array_equalities.push((*lhs, *rhs));
+                        }
+                    }
+
+                    // Check for (select a i) = v — only in positive context
+                    if in_positive_context {
+                        if let Some((array, index)) = self.extract_select(*lhs, manager) {
+                            if let Some(&existing_val) = select_values.get(&(array, index)) {
+                                if existing_val != *rhs {
+                                    read_conflicts.push((existing_val, *rhs));
+                                }
+                            } else {
+                                select_values.insert((array, index), *rhs);
+                            }
+                            // Also record for nested array evaluation (array_08)
+                            select_assertions.push((*lhs, *rhs));
+                        }
+                        if let Some((array, index)) = self.extract_select(*rhs, manager) {
+                            if let Some(&existing_val) = select_values.get(&(array, index)) {
+                                if existing_val != *lhs {
+                                    read_conflicts.push((existing_val, *lhs));
+                                }
+                            } else {
+                                select_values.insert((array, index), *lhs);
+                            }
+                            // Also record for nested array evaluation (array_08)
+                            select_assertions.push((*rhs, *lhs));
+                        }
+
+                        // Check for (select (store a i v) i) = result
+                        if let Some((inner_array, outer_index)) = self.extract_select(*lhs, manager)
+                        {
+                            if let Some((base_array, store_index, stored_val)) =
+                                self.extract_store(inner_array, manager)
+                            {
+                                // Check if indices are the same
+                                if self.terms_equal_simple(outer_index, store_index, manager) {
+                                    store_select_same_index.push((
+                                        base_array,
+                                        store_index,
+                                        stored_val,
+                                        *rhs,
+                                    ));
+                                }
+                            }
+                        }
+                        if let Some((inner_array, outer_index)) = self.extract_select(*rhs, manager)
+                        {
+                            if let Some((base_array, store_index, stored_val)) =
+                                self.extract_store(inner_array, manager)
+                            {
+                                if self.terms_equal_simple(outer_index, store_index, manager) {
+                                    store_select_same_index.push((
+                                        base_array,
+                                        store_index,
+                                        stored_val,
+                                        *lhs,
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        // Negative context: we are inside a not(= ...) expression.
+                        // Collect negated select assertions: not(= (select array idx) val)
+                        // These mean the assertion claims select(array, idx) != val.
+                        // If the store-select axiom forces select(array, idx) = val, contradiction.
+                        if self.extract_select(*lhs, manager).is_some() {
+                            negated_select_assertions.push((*lhs, *rhs));
+                        }
+                        if self.extract_select(*rhs, manager).is_some() {
+                            negated_select_assertions.push((*rhs, *lhs));
+                        }
+                    }
+
+                    // Descend into the operands with `collect_facts = false`:
+                    // an equality's operands are not individually asserted, so
+                    // any Boolean structure inside them (a nested Eq/And/Not)
+                    // must not be treated as an asserted read-over-write fact.
+                    // The asserted equality itself has already been recorded
+                    // above.  Pushed left operand last so it pops first.
+                    worklist.push((*rhs, in_positive_context, false));
+                    worklist.push((*lhs, in_positive_context, false));
+                }
+                // `And` / `Or` / `Not` are the only nodes that carry unconditional
+                // assertedness downwards.  Which children qualify depends on the
+                // polarity, and `asserted_children` is the single place that rule
+                // lives: an `And` hands out its conjuncts only at *positive*
+                // polarity, because `(not (and a b))` is `(or (not a) (not b))` and
+                // entails neither conjunct.  Passing `in_positive_context` straight
+                // through here previously refuted the satisfiable
+                // `(not (and (= (select (store a 3 5) 3) 5) p))`.
+                TermKind::And(_) | TermKind::Or(_) | TermKind::Not(_) => {
+                    let children =
+                        super::term_walk::asserted_children(&term_data.kind, in_positive_context);
+                    worklist.extend(
+                        children
+                            .into_iter()
+                            .rev()
+                            .map(|(child, child_positive)| (child, child_positive, collect_facts)),
                     );
                 }
+                _ => {}
             }
-            TermKind::Or(_args) => {
-                // Don't collect from OR branches - they represent disjunctions
-            }
-            TermKind::Not(inner) => {
-                // Flip the context when entering a Not; a Not preserves direct
-                // assertedness (asserting `(not X)` asserts `X` is false).
-                self.collect_array_constraints_inner(
-                    *inner,
-                    manager,
-                    select_values,
-                    store_select_same_index,
-                    array_equalities,
-                    select_assertions,
-                    negated_select_assertions,
-                    read_conflicts,
-                    !in_positive_context,
-                    collect_facts,
-                );
-            }
-            _ => {}
         }
     }
 
@@ -750,134 +758,6 @@ impl Solver {
             if let TermKind::BitVecConst { value, width } = &val_data.kind {
                 result.insert(var_term, (value.clone(), *width));
             }
-        }
-    }
-
-    /// Compute the modular mask for a given bit width: (2^width - 1).
-    /// Returns a BigInt that can be used for masking.
-    fn bv_mask(width: u32) -> num_bigint::BigInt {
-        use num_bigint::BigInt;
-        use num_traits::One;
-        (BigInt::one() << width as usize) - BigInt::one()
-    }
-
-    /// Evaluate a BV expression to a concrete (value, width) pair given variable bindings.
-    /// Returns None if the expression cannot be fully evaluated.
-    fn evaluate_bv_expr(
-        &self,
-        term: TermId,
-        var_equalities: &FxHashMap<TermId, (num_bigint::BigInt, u32)>,
-        manager: &TermManager,
-    ) -> Option<(num_bigint::BigInt, u32)> {
-        use num_bigint::BigInt;
-        use num_traits::Zero;
-
-        let term_data = manager.get(term)?;
-        match &term_data.kind {
-            TermKind::BitVecConst { value, width } => Some((value.clone(), *width)),
-            TermKind::Var(_) => var_equalities.get(&term).cloned(),
-            TermKind::BvAdd(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                let mask = Self::bv_mask(wa);
-                Some(((va + vb) & &mask, wa))
-            }
-            TermKind::BvSub(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                let mask = Self::bv_mask(wa);
-                // Add mask+1 to avoid negative results before masking
-                Some(((va - vb + (&mask + BigInt::from(1i32))) & &mask, wa))
-            }
-            TermKind::BvMul(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                let mask = Self::bv_mask(wa);
-                Some(((va * vb) & &mask, wa))
-            }
-            TermKind::BvUdiv(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                if vb.is_zero() {
-                    // BV unsigned division by zero is defined as all-ones
-                    return Some((Self::bv_mask(wa), wa));
-                }
-                Some((va / vb, wa))
-            }
-            TermKind::BvUrem(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                if vb.is_zero() {
-                    return Some((va, wa));
-                }
-                Some((va % vb, wa))
-            }
-            TermKind::BvAnd(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                Some((va & vb, wa))
-            }
-            TermKind::BvOr(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                Some((va | vb, wa))
-            }
-            TermKind::BvXor(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                if wa != wb {
-                    return None;
-                }
-                Some((va ^ vb, wa))
-            }
-            TermKind::BvNot(a) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let mask = Self::bv_mask(wa);
-                // NOT in BV: flip all bits within the width
-                Some((!va & mask, wa))
-            }
-            TermKind::BvShl(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, _wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                let mask = Self::bv_mask(wa);
-                // Convert shift amount to usize safely
-                let shift: usize = vb.to_u64_digits().1.first().copied().unwrap_or(0) as usize;
-                if shift >= wa as usize {
-                    return Some((BigInt::zero(), wa));
-                }
-                Some(((va << shift) & mask, wa))
-            }
-            TermKind::BvLshr(a, b) => {
-                let (va, wa) = self.evaluate_bv_expr(*a, var_equalities, manager)?;
-                let (vb, _wb) = self.evaluate_bv_expr(*b, var_equalities, manager)?;
-                let shift: usize = vb.to_u64_digits().1.first().copied().unwrap_or(0) as usize;
-                if shift >= wa as usize {
-                    return Some((BigInt::zero(), wa));
-                }
-                Some((va >> shift, wa))
-            }
-            _ => None,
         }
     }
 
@@ -1530,58 +1410,77 @@ impl Solver {
         manager: &TermManager,
     ) -> Vec<(TermId, TermId)> {
         let mut out = Vec::new();
-        for &assertion in &self.assertions {
-            self.scan_positive_array_eq(assertion, true, manager, &mut out);
-        }
+        self.scan_positive_array_eq(manager, &mut out);
         out
     }
 
-    /// Recursive polarity-aware walker for
-    /// [`Solver::collect_positive_array_term_equalities`]. Descends through `And`
-    /// conjuncts (assertedness preserved) and flips polarity through `Not`; only
-    /// records store=store equalities encountered in positive polarity.
-    fn scan_positive_array_eq(
-        &self,
-        term: TermId,
-        positive: bool,
-        manager: &TermManager,
-        out: &mut Vec<(TermId, TermId)>,
-    ) {
-        let Some(data) = manager.get(term) else {
-            return;
-        };
-        match &data.kind {
-            TermKind::And(args) => {
-                for &arg in args {
-                    self.scan_positive_array_eq(arg, positive, manager, out);
+    /// Polarity-aware walker for
+    /// [`Solver::collect_positive_array_term_equalities`]. Descends only into the
+    /// sub-terms that are unconditionally asserted — see
+    /// [`super::term_walk::asserted_children`] — and records a store=store
+    /// equality only at positive polarity.
+    ///
+    /// The descent used to pass `positive` straight through an `And`, which made
+    /// a doubly-negated equality inside `(not (and (not (= …)) p))` look
+    /// asserted and refuted a formula that is satisfiable with `p = false`.
+    ///
+    /// Iterative, and pushing children in reverse so they pop left to right,
+    /// for the same reasons as [`Solver::collect_array_constraints`] — as is
+    /// the `(TermId, polarity)`-keyed revisit set, without which a shared
+    /// Boolean sub-DAG is re-walked once per *path* to it, which doubles per
+    /// level on a `(and x (not (not x)))` ladder.  A repeat at the same
+    /// polarity could only push a duplicate pair into `out`, and both
+    /// consumers re-run the same extensionality check on a duplicate.
+    fn scan_positive_array_eq(&self, manager: &TermManager, out: &mut Vec<(TermId, TermId)>) {
+        let mut worklist: Vec<(TermId, bool)> = self
+            .assertions
+            .iter()
+            .rev()
+            .map(|&assertion| (assertion, true))
+            .collect();
+        let mut visited: FxHashSet<(TermId, bool)> = FxHashSet::default();
+
+        while let Some((term, positive)) = worklist.pop() {
+            if !visited.insert((term, positive)) {
+                continue;
+            }
+            let Some(data) = manager.get(term) else {
+                continue;
+            };
+            match &data.kind {
+                TermKind::And(_) | TermKind::Or(_) | TermKind::Not(_) => {
+                    let children = super::term_walk::asserted_children(&data.kind, positive);
+                    worklist.extend(children.into_iter().rev());
                 }
+                TermKind::Eq(lhs, rhs)
+                    if positive
+                        && *lhs != *rhs
+                        && self.is_store_term(*lhs, manager)
+                        && self.is_store_term(*rhs, manager)
+                        && self.is_array_sorted(*lhs, manager)
+                        && self.is_array_sorted(*rhs, manager) =>
+                {
+                    out.push((*lhs, *rhs));
+                }
+                _ => {}
             }
-            TermKind::Not(inner) => {
-                self.scan_positive_array_eq(*inner, !positive, manager, out);
-            }
-            TermKind::Eq(lhs, rhs)
-                if positive
-                    && *lhs != *rhs
-                    && self.is_store_term(*lhs, manager)
-                    && self.is_store_term(*rhs, manager)
-                    && self.is_array_sorted(*lhs, manager)
-                    && self.is_array_sorted(*rhs, manager) =>
-            {
-                out.push((*lhs, *rhs));
-            }
-            _ => {}
         }
     }
 
     /// Collect the store indices along the store chain rooted at `array` (i.e. the
     /// index of every `(store base idx val)` node until a non-store base is
     /// reached).
+    ///
+    /// A loop, not tail recursion: a store chain is as long as the input makes
+    /// it, and one native frame per link is a process abort on a small stack.
     fn collect_store_indices(&self, array: TermId, manager: &TermManager, out: &mut Vec<TermId>) {
-        if let Some(data) = manager.get(array) {
-            if let TermKind::Store(base, idx, _val) = &data.kind {
-                out.push(*idx);
-                self.collect_store_indices(*base, manager, out);
-            }
+        let mut current = array;
+        while let Some(data) = manager.get(current) {
+            let TermKind::Store(base, idx, _val) = &data.kind else {
+                return;
+            };
+            out.push(*idx);
+            current = *base;
         }
     }
 
@@ -1590,20 +1489,26 @@ impl Solver {
     /// index provably matches a store index, or provably differs at every store
     /// down to a store whose index matches); returns `None` when the outcome is
     /// ambiguous (base is a variable, or index/store-index relationship unknown).
+    ///
+    /// The store chain is walked by a loop rather than by tail recursion, for
+    /// the same reason as [`Solver::collect_store_indices`].
     fn eval_read(&self, array: TermId, index: TermId, manager: &TermManager) -> Option<TermId> {
-        let data = manager.get(array)?;
-        if let TermKind::Store(base, store_idx, stored_val) = &data.kind {
+        let mut current = array;
+        loop {
+            let data = manager.get(current)?;
+            let TermKind::Store(base, store_idx, stored_val) = &data.kind else {
+                return None;
+            };
             if self.terms_equal_simple(*store_idx, index, manager) {
                 return Some(*stored_val);
             }
-            if self.are_different_values(*store_idx, index, manager) {
-                return self.eval_read(*base, index, manager);
+            if !self.are_different_values(*store_idx, index, manager) {
+                // The relationship between `store_idx` and `index` is unknown:
+                // cannot decide which value the read yields.
+                return None;
             }
-            // The relationship between `store_idx` and `index` is unknown: cannot
-            // decide which value the read yields.
-            return None;
+            current = *base;
         }
-        None
     }
 
     /// Detect an extensionality conflict between two store terms `x` and `y`:
@@ -1646,48 +1551,6 @@ impl Solver {
             }
         }
         false
-    }
-
-    /// Evaluate an integer expression after reducing array selects through the
-    /// read-over-write axiom.
-    fn evaluate_int_expr_with_array_axiom(
-        &self,
-        term: TermId,
-        aliases: &FxHashMap<TermId, TermId>,
-        manager: &TermManager,
-    ) -> Option<num_bigint::BigInt> {
-        let term_data = manager.get(term)?;
-        match &term_data.kind {
-            TermKind::IntConst(value) => Some(value.clone()),
-            TermKind::Select(_, _) => {
-                let resolved = if aliases.is_empty() {
-                    self.evaluate_select_axiom(term, manager)
-                } else {
-                    self.evaluate_select_axiom_with_alias(term, aliases, manager)
-                        .or_else(|| self.evaluate_select_axiom(term, manager))
-                }?;
-                self.evaluate_int_expr_with_array_axiom(resolved, aliases, manager)
-            }
-            TermKind::Add(args) => {
-                let mut sum = num_bigint::BigInt::from(0);
-                for &arg in args {
-                    sum += self.evaluate_int_expr_with_array_axiom(arg, aliases, manager)?;
-                }
-                Some(sum)
-            }
-            TermKind::Sub(lhs, rhs) => Some(
-                self.evaluate_int_expr_with_array_axiom(*lhs, aliases, manager)?
-                    - self.evaluate_int_expr_with_array_axiom(*rhs, aliases, manager)?,
-            ),
-            TermKind::Mul(args) => {
-                let mut product = num_bigint::BigInt::from(1);
-                for &arg in args {
-                    product *= self.evaluate_int_expr_with_array_axiom(arg, aliases, manager)?;
-                }
-                Some(product)
-            }
-            _ => None,
-        }
     }
 }
 

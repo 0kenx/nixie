@@ -626,6 +626,20 @@ mod tests {
         (TermManager::new(), RewriteContext::new(), BvRewriter::new())
     }
 
+    /// Build a bit-vector operation node **without** the term manager's
+    /// constant folding.
+    ///
+    /// `TermManager`'s `mk_bv_*` constructors apply these same identities at
+    /// construction time, so building `bvand x #x0` through the public API
+    /// hands back `#x0` directly and this rewriter would never be asked to do
+    /// anything.  The rules under test still have to work on terms that reach
+    /// the rewriter from elsewhere (a substitution that turned an operand into
+    /// a literal, a deserialised term, ...), so the tests intern the raw node.
+    fn raw_bv_op(manager: &mut TermManager, kind: TermKind, width: u32) -> TermId {
+        let sort = manager.sorts.bitvec(width);
+        manager.intern_term(kind, sort)
+    }
+
     #[test]
     fn test_bvand_zero() {
         let (mut manager, mut ctx, mut rewriter) = setup();
@@ -633,7 +647,7 @@ mod tests {
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
         let zero = manager.mk_bitvec(BigInt::zero(), 32);
-        let and = manager.mk_bv_and(x, zero);
+        let and = raw_bv_op(&mut manager, TermKind::BvAnd(x, zero), 32);
 
         let result = rewriter.rewrite(and, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -648,7 +662,7 @@ mod tests {
 
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
-        let and = manager.mk_bv_and(x, x);
+        let and = raw_bv_op(&mut manager, TermKind::BvAnd(x, x), 32);
 
         let result = rewriter.rewrite(and, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -662,7 +676,7 @@ mod tests {
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
         let zero = manager.mk_bitvec(BigInt::zero(), 32);
-        let or = manager.mk_bv_or(x, zero);
+        let or = raw_bv_op(&mut manager, TermKind::BvOr(x, zero), 32);
 
         let result = rewriter.rewrite(or, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -675,8 +689,8 @@ mod tests {
 
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
-        let not1 = manager.mk_bv_not(x);
-        let not2 = manager.mk_bv_not(not1);
+        let not1 = raw_bv_op(&mut manager, TermKind::BvNot(x), 32);
+        let not2 = raw_bv_op(&mut manager, TermKind::BvNot(not1), 32);
 
         let result = rewriter.rewrite(not2, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -690,7 +704,7 @@ mod tests {
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
         let zero = manager.mk_bitvec(BigInt::zero(), 32);
-        let add = manager.mk_bv_add(x, zero);
+        let add = raw_bv_op(&mut manager, TermKind::BvAdd(x, zero), 32);
 
         let result = rewriter.rewrite(add, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -703,7 +717,7 @@ mod tests {
 
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
-        let sub = manager.mk_bv_sub(x, x);
+        let sub = raw_bv_op(&mut manager, TermKind::BvSub(x, x), 32);
 
         let result = rewriter.rewrite(sub, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -719,7 +733,7 @@ mod tests {
         let bv_sort = manager.sorts.bitvec(32);
         let x = manager.mk_var("x", bv_sort);
         let zero = manager.mk_bitvec(BigInt::zero(), 32);
-        let mul = manager.mk_bv_mul(x, zero);
+        let mul = raw_bv_op(&mut manager, TermKind::BvMul(x, zero), 32);
 
         let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
         assert!(result.was_rewritten());

@@ -30,3 +30,6 @@ criterion.workspace = true
 [[bench]]
 name = "opt_benchmarks"
 harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

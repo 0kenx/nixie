@@ -227,13 +227,27 @@ impl ConstructorTheory {
     }
 
     /// Get constructor arguments from a term.
+    ///
+    /// A constructor application is represented either as a native
+    /// [`TermKind::DtConstructor`] or — for terms built before datatype
+    /// support existed — as an uninterpreted [`TermKind::Apply`]; both carry
+    /// their arguments directly.  A nullary constructor interned as a bare
+    /// symbol ([`TermKind::Var`]) genuinely has no arguments.  Every other
+    /// kind is *not* a constructor application, and answering `vec![]` for it
+    /// would silently erase the injectivity equalities derived from it, so it
+    /// is an explicit error instead.
     fn get_constructor_args(&self, term: TermId, tm: &TermManager) -> Result<Vec<TermId>, String> {
         let t = tm.get(term).ok_or("term not found")?;
 
-        // Simplified: extract from TermKind
         match &t.kind {
-            TermKind::Apply { args, .. } => Ok(args.to_vec()),
-            _ => Ok(vec![]),
+            TermKind::DtConstructor { args, .. } | TermKind::Apply { args, .. } => {
+                Ok(args.to_vec())
+            }
+            // A nullary constructor registered as a plain constant symbol.
+            TermKind::Var(_) => Ok(vec![]),
+            other => Err(format!(
+                "term registered as a constructor application has non-constructor kind {other:?}"
+            )),
         }
     }
 
@@ -583,5 +597,80 @@ mod tests {
 
         assert!(theory.same_datatype((0, 0), (0, 1)));
         assert!(!theory.same_datatype((0, 0), (1, 0)));
+    }
+
+    /// `get_constructor_args` must return the real arguments of a
+    /// `DtConstructor` term.  It used to fall into a catch-all that answered
+    /// `Ok(vec![])`, which made injectivity on `cons(x, xs) = cons(y, ys)`
+    /// silently derive *no* equalities.
+    #[test]
+    fn test_injectivity_on_dt_constructor_terms() {
+        let mut tm = TermManager::new();
+        let mut theory = ConstructorTheory::new();
+        let list_id = theory.define_list("Int".to_string());
+
+        let int_sort = tm.sorts.int_sort;
+        let x = tm.mk_var("x", int_sort);
+        let y = tm.mk_var("y", int_sort);
+        let xs = tm.mk_var("xs", int_sort);
+        let ys = tm.mk_var("ys", int_sort);
+        let lhs = tm.mk_dt_constructor("Cons", [x, xs], int_sort);
+        let rhs = tm.mk_dt_constructor("Cons", [y, ys], int_sort);
+
+        let cons = (list_id, 1);
+        theory.register_constructor_term(lhs, cons);
+        theory.register_constructor_term(rhs, cons);
+
+        let equalities = theory
+            .assert_equality(lhs, rhs, &tm)
+            .expect("same-constructor equality must succeed");
+        assert_eq!(equalities, vec![(x, y), (xs, ys)]);
+    }
+
+    /// A term that is *not* a constructor application must be an explicit
+    /// error, never an empty argument list.
+    #[test]
+    fn test_non_constructor_term_is_an_error() {
+        let mut tm = TermManager::new();
+        let mut theory = ConstructorTheory::new();
+        let nat_id = theory.define_nat();
+
+        let a = tm.mk_int(1);
+        let b = tm.mk_int(2);
+        let lhs = tm.mk_add([a, b]);
+        let rhs = tm.mk_add([b, a]);
+        let succ = (nat_id, 1);
+        theory.register_constructor_term(lhs, succ);
+        theory.register_constructor_term(rhs, succ);
+
+        // Both registered under the same constructor, but neither term is a
+        // constructor application: injectivity cannot read their arguments.
+        if lhs == rhs {
+            // Hash-consing may canonicalise commutative operands to the same
+            // id, in which case injectivity trivially yields no equalities and
+            // the argument-extraction path is exercised below instead.
+            let args = theory.get_constructor_args(lhs, &tm);
+            assert!(args.is_err(), "Add term must not pass as a constructor");
+        } else {
+            assert!(theory.assert_equality(lhs, rhs, &tm).is_err());
+        }
+    }
+
+    /// Nullary constructors interned as bare symbols keep their (empty)
+    /// argument list.
+    #[test]
+    fn test_nullary_constructor_as_symbol() {
+        let mut tm = TermManager::new();
+        let mut theory = ConstructorTheory::new();
+        let nat_id = theory.define_nat();
+
+        let int_sort = tm.sorts.int_sort;
+        let zero = tm.mk_var("Zero", int_sort);
+        theory.register_constructor_term(zero, (nat_id, 0));
+
+        let equalities = theory
+            .assert_equality(zero, zero, &tm)
+            .expect("nullary self-equality must succeed");
+        assert!(equalities.is_empty());
     }
 }

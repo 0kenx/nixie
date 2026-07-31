@@ -6,6 +6,10 @@
 
 #![allow(dead_code)]
 #![allow(unused_imports)]
+// Benches are test-class code: panicking on broken setup is the desired
+// failure mode, but clippy has no allow-unwrap-in-benches analogue to the
+// allow-unwrap-in-tests knob that covers the test targets.
+#![allow(clippy::unwrap_used)]
 
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};

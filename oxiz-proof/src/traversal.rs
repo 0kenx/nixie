@@ -49,25 +49,46 @@ pub fn traverse<V: ProofVisitor>(proof: &Proof, visitor: &mut V, order: Traversa
     }
 }
 
+/// Work item for the explicit-stack depth-first walks below.
+///
+/// Proof DAGs produced by a solver are routinely 10^4-10^6 nodes deep, so every
+/// depth-first walk in this module uses a heap stack rather than the call stack.
+#[derive(Debug, Clone, Copy)]
+enum DfsFrame {
+    /// Node has not been expanded yet.
+    Enter(ProofNodeId),
+    /// All premises of the node have been processed.
+    Exit(ProofNodeId),
+}
+
 /// Pre-order traversal (root, then children).
+///
+/// Iterative (explicit heap stack); semantics are identical to the natural
+/// recursive formulation, including that a node is marked visited even when it
+/// is not present in the proof.
 fn traverse_pre_order<V: ProofVisitor>(
     proof: &Proof,
     node_id: ProofNodeId,
     visitor: &mut V,
     visited: &mut HashSet<ProofNodeId>,
 ) {
-    if visited.contains(&node_id) {
-        return;
-    }
-    visited.insert(node_id);
+    let mut stack = vec![node_id];
 
-    if let Some(node) = proof.get_node(node_id) {
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+
+        let Some(node) = proof.get_node(current) else {
+            continue;
+        };
+
         // Visit this node first
         visitor.visit_node(proof, node);
 
         match &node.step {
             ProofStep::Axiom { conclusion } => {
-                visitor.visit_axiom(proof, node_id, conclusion);
+                visitor.visit_axiom(proof, current, conclusion);
             }
             ProofStep::Inference {
                 rule,
@@ -75,51 +96,66 @@ fn traverse_pre_order<V: ProofVisitor>(
                 conclusion,
                 ..
             } => {
-                visitor.visit_inference(proof, node_id, rule, premises, conclusion);
+                visitor.visit_inference(proof, current, rule, premises, conclusion);
 
-                // Then visit children
-                for &premise in premises {
-                    traverse_pre_order(proof, premise, visitor, visited);
-                }
+                // Then visit children, leftmost first (hence reversed pushes)
+                stack.extend(premises.iter().rev().copied());
             }
         }
     }
 }
 
 /// Post-order traversal (children first, then root).
+///
+/// Iterative (explicit heap stack) with an `Enter`/`Exit` frame so the parent is
+/// visited after all of its premises, exactly as the recursive formulation did.
 fn traverse_post_order<V: ProofVisitor>(
     proof: &Proof,
     node_id: ProofNodeId,
     visitor: &mut V,
     visited: &mut HashSet<ProofNodeId>,
 ) {
-    if visited.contains(&node_id) {
-        return;
-    }
-    visited.insert(node_id);
+    let mut stack = vec![DfsFrame::Enter(node_id)];
 
-    if let Some(node) = proof.get_node(node_id) {
-        // Visit children first
-        if let ProofStep::Inference { premises, .. } = &node.step {
-            for &premise in premises {
-                traverse_post_order(proof, premise, visitor, visited);
+    while let Some(frame) = stack.pop() {
+        match frame {
+            DfsFrame::Enter(current) => {
+                if !visited.insert(current) {
+                    continue;
+                }
+
+                let Some(node) = proof.get_node(current) else {
+                    continue;
+                };
+
+                stack.push(DfsFrame::Exit(current));
+
+                // Visit children first
+                if let ProofStep::Inference { premises, .. } = &node.step {
+                    stack.extend(premises.iter().rev().copied().map(DfsFrame::Enter));
+                }
             }
-        }
+            DfsFrame::Exit(current) => {
+                let Some(node) = proof.get_node(current) else {
+                    continue;
+                };
 
-        // Then visit this node
-        visitor.visit_node(proof, node);
+                // Then visit this node
+                visitor.visit_node(proof, node);
 
-        match &node.step {
-            ProofStep::Axiom { conclusion } => {
-                visitor.visit_axiom(proof, node_id, conclusion);
-            }
-            ProofStep::Inference {
-                rule,
-                premises,
-                conclusion,
-                ..
-            } => {
-                visitor.visit_inference(proof, node_id, rule, premises, conclusion);
+                match &node.step {
+                    ProofStep::Axiom { conclusion } => {
+                        visitor.visit_axiom(proof, current, conclusion);
+                    }
+                    ProofStep::Inference {
+                        rule,
+                        premises,
+                        conclusion,
+                        ..
+                    } => {
+                        visitor.visit_inference(proof, current, rule, premises, conclusion);
+                    }
+                }
             }
         }
     }
@@ -174,29 +210,48 @@ pub fn topological_order(proof: &Proof) -> Vec<ProofNodeId> {
     order
 }
 
+/// Iterative post-order collection (explicit heap stack).
+///
+/// Note that, exactly as in the recursive formulation, a node that is not
+/// present in the proof is still marked visited and still appended to `order`.
 fn collect_topological(
     proof: &Proof,
     node_id: ProofNodeId,
     order: &mut Vec<ProofNodeId>,
     visited: &mut HashSet<ProofNodeId>,
 ) {
-    if visited.contains(&node_id) {
-        return;
-    }
-    visited.insert(node_id);
+    let mut stack = vec![DfsFrame::Enter(node_id)];
 
-    if let Some(node) = proof.get_node(node_id)
-        && let ProofStep::Inference { premises, .. } = &node.step
-    {
-        for &premise in premises {
-            collect_topological(proof, premise, order, visited);
+    while let Some(frame) = stack.pop() {
+        match frame {
+            DfsFrame::Enter(current) => {
+                if !visited.insert(current) {
+                    continue;
+                }
+
+                stack.push(DfsFrame::Exit(current));
+
+                if let Some(node) = proof.get_node(current)
+                    && let ProofStep::Inference { premises, .. } = &node.step
+                {
+                    stack.extend(premises.iter().rev().copied().map(DfsFrame::Enter));
+                }
+            }
+            DfsFrame::Exit(current) => order.push(current),
         }
     }
-
-    order.push(node_id);
 }
 
-/// Find all paths from leaves to root.
+/// Find all root-to-leaf paths in the proof.
+///
+/// Only *simple* paths are enumerated: a node that already occurs on the current
+/// path is not descended into again. On an acyclic proof (the documented shape —
+/// see [`crate::validation`]) this is exactly "every root-to-axiom path"; on a
+/// cyclic proof it terminates instead of looping forever.
+///
+/// The number of paths is the product of the premise counts along the DAG, so
+/// this is inherently exponential in the proof size for a shared DAG. Prefer
+/// [`topological_order`] unless every distinct path really is required.
 #[must_use]
 pub fn find_all_paths(proof: &Proof) -> Vec<Vec<ProofNodeId>> {
     let mut paths = Vec::new();
@@ -207,30 +262,55 @@ pub fn find_all_paths(proof: &Proof) -> Vec<Vec<ProofNodeId>> {
     paths
 }
 
+/// Frame for the iterative path enumeration.
+#[derive(Debug, Clone, Copy)]
+enum PathFrame {
+    /// Extend the current path with this node.
+    Enter(ProofNodeId),
+    /// Drop the last node of the current path.
+    Leave,
+}
+
+/// Iterative (explicit heap stack) enumeration of simple root-to-leaf paths.
 fn collect_paths(
     proof: &Proof,
     node_id: ProofNodeId,
     current_path: &mut Vec<ProofNodeId>,
     all_paths: &mut Vec<Vec<ProofNodeId>>,
 ) {
-    current_path.push(node_id);
+    let mut stack = vec![PathFrame::Enter(node_id)];
+    let mut on_path: HashSet<ProofNodeId> = HashSet::new();
 
-    if let Some(node) = proof.get_node(node_id) {
-        match &node.step {
-            ProofStep::Axiom { .. } => {
-                // Reached a leaf - save the path
-                all_paths.push(current_path.clone());
+    while let Some(frame) = stack.pop() {
+        match frame {
+            PathFrame::Enter(current) => {
+                if !on_path.insert(current) {
+                    // Cycle: the node is already on the current path.
+                    continue;
+                }
+                current_path.push(current);
+                stack.push(PathFrame::Leave);
+
+                if let Some(node) = proof.get_node(current) {
+                    match &node.step {
+                        ProofStep::Axiom { .. } => {
+                            // Reached a leaf - save the path
+                            all_paths.push(current_path.clone());
+                        }
+                        ProofStep::Inference { premises, .. } => {
+                            // Continue down each premise, leftmost first
+                            stack.extend(premises.iter().rev().copied().map(PathFrame::Enter));
+                        }
+                    }
+                }
             }
-            ProofStep::Inference { premises, .. } => {
-                // Continue down each premise
-                for &premise in premises {
-                    collect_paths(proof, premise, current_path, all_paths);
+            PathFrame::Leave => {
+                if let Some(popped) = current_path.pop() {
+                    on_path.remove(&popped);
                 }
             }
         }
     }
-
-    current_path.pop();
 }
 
 /// A visitor that counts nodes by type.

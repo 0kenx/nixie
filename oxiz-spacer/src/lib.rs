@@ -84,6 +84,7 @@ pub mod smt;
 pub mod tactics;
 pub mod theory;
 pub mod translate;
+pub mod walk;
 
 // Re-exports for convenience
 pub use abduction::{

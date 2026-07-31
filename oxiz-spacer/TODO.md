@@ -1,6 +1,6 @@
 # oxiz-spacer TODO
 
-Last Updated: 2026-07-21 (v0.3.0) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.0 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness/hardening pass (recursive term-walks converted to explicit stacks, exhaustive error handling, clippy::unwrap_used denied)
 
 Reference: Z3's `muz/spacer/` directory
 

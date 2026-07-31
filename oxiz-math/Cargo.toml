@@ -31,6 +31,9 @@ std = [
     "rustc-hash/std",
     "rand",
 ]
+# Reserved: the `simd` module is compiled unconditionally and relies on
+# auto-vectorization, so this feature currently enables no extra code. It is
+# kept so that an explicit opt-in can be added without a breaking change.
 simd = []
 
 [dev-dependencies]
@@ -40,3 +43,6 @@ criterion.workspace = true
 [[bench]]
 name = "math_benchmarks"
 harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

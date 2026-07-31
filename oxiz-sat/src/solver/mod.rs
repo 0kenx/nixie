@@ -108,6 +108,27 @@ pub enum SolverResult {
     Unknown,
 }
 
+/// Outcome of [`Solver::pre_check_effective_unit`], resolved *before* any
+/// watches are chosen for a new clause in [`Solver::add_clause`].
+enum PreAttachOutcome {
+    /// Already satisfied by the current assignment, or simply not
+    /// effectively unit (2+ literals still undefined). Either way, nothing
+    /// special is needed: add and watch the clause normally.
+    Ordinary,
+    /// Every literal is false and, after resolving level-0-only facts via
+    /// [`Solver::backtrack_to_root`] where needed, still is: an
+    /// unconditional (level-0) conflict. The caller must set
+    /// `trivially_unsat` and return `false` without adding the clause.
+    UnconditionalConflict,
+    /// The clause is an effective unit (every literal false except this one,
+    /// which is undefined) and every false literal is confirmed to be a
+    /// permanent level-0 fact. The caller must force this literal via
+    /// `Trail::assign_propagation_at(_, clause_id, 0)` once the clause has
+    /// been inserted and its `ClauseId` is known (not yet, at the point this
+    /// outcome is produced).
+    ForceUnitAtLevelZero(Lit),
+}
+
 /// Solver configuration
 #[derive(Clone)]
 pub struct SolverConfig {
@@ -647,6 +668,99 @@ impl Solver {
         }
     }
 
+    /// Scan `clause_lits` against the *current* trail: is any literal true,
+    /// what is the highest level among the false literals (0 if there are
+    /// none), and which literals are still undefined.
+    ///
+    /// Read-only. Used by [`Solver::pre_check_effective_unit`] both before
+    /// and (when it backtracks) after a `backtrack_to_root()` call, so it
+    /// must not itself assume anything about levels.
+    fn scan_clause_for_attach(&self, clause_lits: &[Lit]) -> (bool, u32, SmallVec<[Lit; 4]>) {
+        let mut has_true = false;
+        let mut max_false_level = 0u32;
+        let mut undefined: SmallVec<[Lit; 4]> = SmallVec::new();
+        for &lit in clause_lits {
+            let value = self.trail.lit_value(lit);
+            if value.is_true() {
+                has_true = true;
+                break;
+            } else if value.is_false() {
+                max_false_level = max_false_level.max(self.trail.level(lit.var()));
+            } else {
+                undefined.push(lit);
+            }
+        }
+        (has_true, max_false_level, undefined)
+    }
+
+    /// Resolve `clause_lits`'s conflict / effective-unit status against the
+    /// current trail, performing any necessary backtrack, *before* the
+    /// caller chooses which literals to watch.
+    ///
+    /// # Why this must run before watch selection
+    ///
+    /// The two-watched-literal ranking (`watch_rank` and its call sites in
+    /// `add_clause`) is computed against whatever the trail looks like when
+    /// it runs. A `backtrack_to_root()` performed *after* that ranking would
+    /// silently invalidate it: literals the ranking saw as false may now be
+    /// undefined, so the "watch the two latest-falsified literals" choice it
+    /// made is no longer meaningful. Running this check first, and letting
+    /// its backtrack (if any) land before ranking ever executes, keeps the
+    /// two steps consistent with each other.
+    ///
+    /// # Why "effectively unit" needs the same treatment as "all false"
+    ///
+    /// A clause is only safe to attach as-is when every literal that is
+    /// currently false is false *permanently* (at level 0). A literal false
+    /// above level 0 can be unassigned by a future backtrack while some
+    /// *other* disjunct of the clause survives (in particular, an implied
+    /// literal this same function forces at the wrong level would -- see the
+    /// history of this function for the bug that motivated this rewrite):
+    /// the clause is then silently reopened, with no live watcher able to
+    /// notice, because watch/graph registration only fires on a literal's
+    /// *next* transition, not because of anything a backtrack does. This is
+    /// true whether the clause is fully false (a conflict) or has exactly
+    /// one literal left undefined (an effective unit) -- both are handled by
+    /// the same rule here.
+    ///
+    /// `backtrack_to_root()` resolves the ambiguity outright: every literal
+    /// false above level 0 becomes undefined, so a mandatory re-scan
+    /// afterward finds either 2+ undefined literals (ordinary watching is
+    /// then correct and sufficient -- the clause is genuinely open again) or
+    /// still at most one undefined literal, with every remaining false
+    /// literal now unconditionally at level 0 (forced at level 0, which
+    /// survives every future backtrack by construction).
+    fn pre_check_effective_unit(&mut self, clause_lits: &[Lit]) -> PreAttachOutcome {
+        let (has_true, max_false_level, undefined) = self.scan_clause_for_attach(clause_lits);
+        if has_true || undefined.len() >= 2 {
+            return PreAttachOutcome::Ordinary;
+        }
+
+        if max_false_level > 0 {
+            self.backtrack_to_root();
+            // Mandatory re-scan: the sets computed above are now stale.
+            let (has_true, _post_backtrack_max_level, undefined) =
+                self.scan_clause_for_attach(clause_lits);
+            debug_assert!(
+                !has_true,
+                "backtrack_to_root() cannot turn a false/undefined literal true"
+            );
+            return if undefined.is_empty() {
+                PreAttachOutcome::UnconditionalConflict
+            } else if undefined.len() == 1 {
+                PreAttachOutcome::ForceUnitAtLevelZero(undefined[0])
+            } else {
+                PreAttachOutcome::Ordinary
+            };
+        }
+
+        if undefined.is_empty() {
+            PreAttachOutcome::UnconditionalConflict
+        } else {
+            PreAttachOutcome::ForceUnitAtLevelZero(undefined[0])
+        }
+    }
+
     /// Add a clause
     pub fn add_clause(&mut self, lits: impl IntoIterator<Item = Lit>) -> bool {
         let mut clause_lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
@@ -748,25 +862,21 @@ impl Solver {
                     return true;
                 }
 
-                // If both literals are false, we have a conflict
-                if val0.is_false() && val1.is_false() {
-                    // Check if both are at level 0
-                    let level0 = self.trail.level(lit0.var());
-                    let level1 = self.trail.level(lit1.var());
-
-                    if level0 == 0 && level1 == 0 {
-                        // Conflict at level 0 - UNSAT
-                        self.trivially_unsat = true;
-                        return false;
-                    }
-
-                    // Backtrack to level 0 and add clause
-                    // The clause will be propagated on next solve()
-                    self.backtrack_to_root();
+                // Resolve conflict / effective-unit status *before*
+                // attaching the clause -- see `pre_check_effective_unit`'s
+                // doc comment for the full reasoning (in particular why an
+                // "effectively unit" binary clause, not just an "all false"
+                // one, needs its level bookkeeping resolved this way: the
+                // watches registered below cannot be trusted to discover it
+                // on their own, since they only fire on a literal's *next*
+                // transition -- a level-0 fact from earlier in this
+                // incremental session was already dequeued long ago and will
+                // never be dequeued again).
+                let outcome = self.pre_check_effective_unit(&clause_lits);
+                if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
+                    self.trivially_unsat = true;
+                    return false;
                 }
-
-                // If one literal is false and one undefined, propagate
-                // after adding the clause (via next solve())
 
                 let clause_id = self.clauses.add_original(clause_lits.iter().copied());
                 if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
@@ -778,31 +888,25 @@ impl Solver {
                     .add(lit0.negate(), Watcher::new(clause_id, lit1));
                 self.watches
                     .add(lit1.negate(), Watcher::new(clause_id, lit0));
+
+                if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
+                    self.trail.assign_propagation_at(forced, clause_id, 0);
+                }
                 return true;
             }
             _ => {}
         }
 
         // Add clause (3+ literals)
-        // Check if clause is satisfied or conflicts with current assignment
-        let num_false = clause_lits
-            .iter()
-            .filter(|&l| self.trail.lit_value(*l).is_false())
-            .count();
-        let has_true = clause_lits
-            .iter()
-            .any(|l| self.trail.lit_value(*l).is_true());
-
-        if !has_true && num_false == clause_lits.len() {
-            // All literals are false - conflict
-            // Check if all at level 0
-            let all_at_zero = clause_lits.iter().all(|l| self.trail.level(l.var()) == 0);
-            if all_at_zero {
-                self.trivially_unsat = true;
-                return false;
-            }
-            // Backtrack to level 0
-            self.backtrack_to_root();
+        // Resolve conflict / effective-unit status *before* choosing watches
+        // -- see `pre_check_effective_unit`'s doc comment. Must run before
+        // the `watch_rank` selection below: a `backtrack_to_root()` decided
+        // on afterward would silently invalidate whatever ranking that
+        // selection just computed.
+        let outcome = self.pre_check_effective_unit(&clause_lits);
+        if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
+            self.trivially_unsat = true;
+            return false;
         }
 
         // Choose the two watch literals *before* storing the clause, following
@@ -820,6 +924,11 @@ impl Solver {
         // conflict on an actually-UNSAT formula. Watching the two
         // latest-falsified literals restores the invariant that a watched
         // literal becoming false always re-examines the clause.
+        //
+        // Safe to run *after* `pre_check_effective_unit` above: any
+        // `backtrack_to_root()` it performed has already happened, so this
+        // ranking sees the final, post-backtrack trail state rather than one
+        // that gets invalidated out from under it.
         let n = clause_lits.len();
         let mut best = 0;
         for i in 1..n {
@@ -850,6 +959,15 @@ impl Solver {
             .add(lit0.negate(), Watcher::new(clause_id, lit1));
         self.watches
             .add(lit1.negate(), Watcher::new(clause_id, lit0));
+
+        // `pre_check_effective_unit` already determined -- against the exact
+        // pre-watch-selection trail state, before anything here could shift
+        // it -- whether this clause needs its sole undefined literal forced,
+        // and confirmed every false literal is a permanent level-0 fact when
+        // it did. Apply that decision now that `clause_id` exists.
+        if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
+            self.trail.assign_propagation_at(forced, clause_id, 0);
+        }
 
         true
     }
@@ -901,6 +1019,7 @@ impl Solver {
 
             // Propagate
             if let Some(conflict) = self.propagate() {
+                self.debug_check_conflict_clause(conflict);
                 self.stats.conflicts += 1;
                 self.conflicts_since_inprocessing += 1;
 
@@ -927,6 +1046,7 @@ impl Solver {
 
                 // Backtrack with phase saving
                 self.backtrack_with_phase_saving(backtrack_level);
+                self.debug_check_invariants("after backtrack");
 
                 // Emit the learned clause as a DRAT addition (RUP-derivable from
                 // the current database by construction of 1-UIP learning). Covers
@@ -946,7 +1066,7 @@ impl Solver {
                         current_level_clauses.push(clause_id);
                     }
 
-                    self.trail.assign_decision(learnt_clause[0]);
+                    self.assert_learned_clause(&learnt_clause, clause_id);
                 } else {
                     // Compute LBD for the learned clause
                     let lbd = self.compute_lbd(&learnt_clause);
@@ -970,6 +1090,7 @@ impl Solver {
                     if let Some(clause) = self.clauses.get_mut(clause_id) {
                         clause.lbd = lbd;
                     }
+                    self.debug_check_learned_clause_lbd(clause_id);
 
                     // Track learned clause for potential deletion
                     self.learned_clause_ids.push(clause_id);
@@ -987,8 +1108,9 @@ impl Solver {
                     self.watches
                         .add(lit1.negate(), Watcher::new(clause_id, lit0));
 
-                    // Propagate the asserting literal
-                    self.trail.assign_propagation(learnt_clause[0], clause_id);
+                    // Propagate the asserting literal at its true implication
+                    // level (see `Solver::assert_learned_clause`).
+                    self.assert_learned_clause(&learnt_clause, clause_id);
                 }
 
                 // Decay activities
@@ -1006,6 +1128,7 @@ impl Solver {
                 // Periodic clause database reduction
                 if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
                     self.reduce_clause_database();
+                    self.debug_check_invariants("after clause database reduction");
                     self.conflicts_since_deletion = 0;
 
                     // Vivification after clause database reduction (at level 0 after restart)
@@ -1020,6 +1143,7 @@ impl Solver {
                 // Check for restart
                 if self.stats.conflicts >= self.restart_threshold {
                     self.restart();
+                    self.debug_check_restart_consistency();
                 }
 
                 // Periodic inprocessing
@@ -1030,7 +1154,10 @@ impl Solver {
                     self.conflicts_since_inprocessing = 0;
                 }
             } else {
-                // No conflict - try to decide
+                // No conflict - try to decide. `propagate()` just returned `None`,
+                // i.e. reached a fixpoint, which is exactly where the watched-literal
+                // and unit-propagation-completeness invariants become meaningful.
+                self.debug_check_fixpoint_invariants("after propagation fixpoint");
                 if let Some(var) = self.pick_branch_var() {
                     self.stats.decisions += 1;
                     self.trail.new_decision_level();
@@ -1052,6 +1179,8 @@ impl Solver {
                 } else {
                     // All variables assigned - SAT
                     self.save_model();
+                    self.debug_verify_model();
+                    self.debug_check_invariants("at SAT");
                     return SolverResult::Sat;
                 }
             }
@@ -1145,6 +1274,7 @@ impl Solver {
             }
 
             if let Some(conflict) = self.propagate() {
+                self.debug_check_conflict_clause(conflict);
                 self.stats.conflicts += 1;
 
                 // Check if conflict involves assumptions
@@ -1171,13 +1301,16 @@ impl Solver {
                 }
 
                 self.backtrack_with_phase_saving(bt_level.max(assumption_level_start + 1));
+                self.debug_check_invariants("after backtrack (assumptions)");
                 self.learn_clause(learnt_clause);
 
                 self.vsids.decay();
                 self.clauses.decay_activity(self.config.clause_decay);
                 self.handle_clause_deletion_and_restart_limited(assumption_level_start);
             } else {
-                // No conflict - try to decide
+                // No conflict - try to decide. `propagate()` just returned `None`,
+                // i.e. reached a fixpoint.
+                self.debug_check_fixpoint_invariants("after propagation fixpoint (assumptions)");
                 if let Some(var) = self.pick_branch_var() {
                     self.stats.decisions += 1;
                     self.trail.new_decision_level();
@@ -1196,6 +1329,8 @@ impl Solver {
                 } else {
                     // All variables assigned - SAT
                     self.save_model();
+                    self.debug_verify_model();
+                    self.debug_check_invariants("at SAT (assumptions)");
                     self.backtrack(assumption_level_start);
                     return (SolverResult::Sat, None);
                 }
@@ -1237,6 +1372,30 @@ impl Solver {
     #[must_use]
     pub fn num_clauses(&self) -> usize {
         self.clauses.len()
+    }
+
+    /// Number of *original* (asserted, non-learned) clauses in the database.
+    ///
+    /// This is the ground truth for "how much did the caller's encoding grow",
+    /// and it is **not** the same as `num_clauses() - learned_clause_count()`:
+    /// [`Self::learned_clause_count`] reports the size of the
+    /// `learned_clause_ids` registry, which is a *subset* of the clauses the
+    /// database itself flags as learned (the registry exists so an incremental
+    /// caller can forget a probe's learned clauses again).  Subtracting it from
+    /// the total therefore silently counts every unregistered learned clause as
+    /// "original".  Callers that want to pin encoder growth must use this.
+    #[must_use]
+    pub fn num_original_clauses(&self) -> usize {
+        self.clauses.num_original()
+    }
+
+    /// Number of clauses the database flags as learned.
+    ///
+    /// See [`Self::num_original_clauses`] for why this can exceed
+    /// [`Self::learned_clause_count`].
+    #[must_use]
+    pub fn num_learned_clauses(&self) -> usize {
+        self.clauses.num_learned()
     }
 
     /// Push a new assertion level (for incremental solving)
@@ -1317,6 +1476,29 @@ impl Solver {
 
             // Ensure we're at decision level 0 with proper heap re-insertion
             self.backtrack_with_phase_saving(0);
+
+            // Re-arm unit propagation over the retained prefix.
+            //
+            // `backtrack_to_size` parks the propagation head at the end of the
+            // surviving trail, declaring that prefix fully propagated. That is
+            // false here for two independent reasons: the discarded suffix held
+            // level-0 *consequences* of the retained prefix, and this pop has
+            // just removed clauses the prefix was propagated against. The
+            // surviving literals are therefore assigned but no longer followed by
+            // their implications, and nothing would ever recompute them —
+            // `backtrack_with_phase_saving(0)` above only clamps the head when it
+            // actually rolls a level back, and after `backtrack_to_size` the
+            // solver already sits at level 0.
+            //
+            // A clause left falsified that way is never revisited: its watched
+            // literals were assigned before the head and so are never
+            // re-propagated, so the conflict is silently lost and the next
+            // `solve()` reports `Sat` on a model violating it. Rewinding costs
+            // one extra pass over the retained watch lists; re-propagating an
+            // already-assigned literal is a no-op, so it has no semantic effect
+            // beyond restoring the facts the pop erased. Mirrors the same rewind
+            // in `Solver::restore_to_trail_size`.
+            self.trail.reset_propagation_head();
 
             // Clear the trivially_unsat flag as we've removed problematic clauses
             self.trivially_unsat = false;

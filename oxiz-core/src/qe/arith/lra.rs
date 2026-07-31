@@ -171,98 +171,262 @@ fn rational64_to_big(r: Rational64) -> BigRational {
 }
 
 /// Whether `id` syntactically mentions the eliminated variable `x`.
+///
+/// Iterative, with a visited set. The result type `bool` has no error
+/// channel, so a depth cap could only ever answer "does not mention `x`" for
+/// a term it never finished inspecting — and this predicate gates the whole
+/// eliminator, so a wrong `false` silently drops a constraint. The visited
+/// set also stops a shared-subterm DAG from being re-walked as a tree; this
+/// predicate is called at the top of three separate recursions, which made
+/// the re-expansion quadratic at best.
 pub(crate) fn mentions_var(id: TermId, x: Spur, tm: &TermManager) -> bool {
-    let Some(term) = tm.get(id) else {
-        return false;
-    };
-    if let TermKind::Var(s) = term.kind {
-        return s == x;
+    let mut stack = vec![id];
+    let mut visited: crate::prelude::FxHashSet<TermId> = crate::prelude::FxHashSet::default();
+
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        let Some(term) = tm.get(current) else {
+            continue;
+        };
+        if let TermKind::Var(s) = term.kind {
+            if s == x {
+                return true;
+            }
+            continue;
+        }
+        stack.extend(crate::ast::traversal::get_children(&term.kind));
     }
-    let children = crate::ast::traversal::get_children(&term.kind);
-    children.iter().any(|&c| mentions_var(c, x, tm))
+
+    false
+}
+
+/// Map every sub-term reachable from `root` to whether it mentions `x`.
+///
+/// The structural walkers below need this predicate at *every* node they
+/// visit. Calling [`mentions_var`] per node re-walks the whole sub-tree each
+/// time, which is quadratic on a deeply nested formula; one shared post-order
+/// pass answers all of them in linear time. A term the manager cannot resolve
+/// is recorded as `false`, exactly as [`mentions_var`] treats it.
+fn mentions_map(root: TermId, x: Spur, tm: &TermManager) -> FxHashMap<TermId, bool> {
+    /// Work item of the iterative post-order pass.
+    enum Step {
+        /// Schedule the children of a term.
+        Enter(TermId),
+        /// Combine the children's answers into this term's answer.
+        Build(TermId),
+    }
+
+    let mut map: FxHashMap<TermId, bool> = FxHashMap::default();
+    let mut stack = vec![Step::Enter(root)];
+
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Enter(current) => {
+                if map.contains_key(&current) {
+                    continue;
+                }
+                let Some(term) = tm.get(current) else {
+                    map.insert(current, false);
+                    continue;
+                };
+                if let TermKind::Var(s) = term.kind {
+                    map.insert(current, s == x);
+                    continue;
+                }
+                let children = crate::ast::traversal::get_children(&term.kind);
+                if children.is_empty() {
+                    map.insert(current, false);
+                    continue;
+                }
+                stack.push(Step::Build(current));
+                for &c in children.iter() {
+                    stack.push(Step::Enter(c));
+                }
+            }
+            Step::Build(current) => {
+                let Some(term) = tm.get(current) else {
+                    map.insert(current, false);
+                    continue;
+                };
+                let children = crate::ast::traversal::get_children(&term.kind);
+                // Every child was fully processed before this `Build` popped.
+                let any = children
+                    .iter()
+                    .any(|c| map.get(c).copied().unwrap_or(false));
+                map.insert(current, any);
+            }
+        }
+    }
+
+    map
+}
+
+/// Look a node up in a [`mentions_map`].
+///
+/// A missing entry cannot happen for a node reached from the map's root, but
+/// if it ever did, answering `true` keeps the walker on the path that either
+/// rewrites the atom properly or reports an honest `Err` — answering `false`
+/// would silently return an `x`-containing term as if it were `x`-free.
+fn mentions_lookup(map: &FxHashMap<TermId, bool>, id: TermId) -> bool {
+    map.get(&id).copied().unwrap_or(true)
 }
 
 /// Sort of the first syntactic occurrence of `x` in `id`, if any.
+///
+/// Iterative pre-order walk that visits children left-to-right, which is the
+/// order in which the recursive form found "the first" occurrence. All
+/// occurrences of a variable share one `TermId` (terms are hash-consed), so
+/// every occurrence carries the same sort and the choice is immaterial for
+/// the returned value; the order is preserved anyway.
 pub(crate) fn find_var_sort(id: TermId, x: Spur, tm: &TermManager) -> Option<crate::sort::SortId> {
-    let term = tm.get(id)?;
-    if let TermKind::Var(s) = term.kind {
-        return if s == x { Some(term.sort) } else { None };
-    }
-    let children = crate::ast::traversal::get_children(&term.kind);
-    for c in children {
-        if let Some(sort) = find_var_sort(c, x, tm) {
-            return Some(sort);
+    let mut stack = vec![id];
+    let mut visited: crate::prelude::FxHashSet<TermId> = crate::prelude::FxHashSet::default();
+
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
         }
+        let Some(term) = tm.get(current) else {
+            continue;
+        };
+        if let TermKind::Var(s) = term.kind {
+            if s == x {
+                return Some(term.sort);
+            }
+            continue;
+        }
+        let children = crate::ast::traversal::get_children(&term.kind);
+        stack.extend(children.iter().rev().copied());
     }
+
     None
 }
 
 /// Parse `id` into a [`LinForm`] over `x`, or `None` if `x` occurs non-linearly
 /// (e.g. `x*x`, `x` under an uninterpreted symbol) or the term is unsupported.
 pub(crate) fn to_linear(id: TermId, x: Spur, tm: &TermManager) -> Option<LinForm> {
-    let term = tm.get(id)?;
-    match &term.kind {
-        TermKind::IntConst(n) => Some(LinForm::constant_val(BigRational::from_integer(n.clone()))),
-        TermKind::RealConst(r) => Some(LinForm::constant_val(rational64_to_big(*r))),
-        TermKind::Var(s) => {
-            if *s == x {
-                Some(LinForm::x())
-            } else {
-                Some(LinForm::atom(id))
-            }
-        }
-        TermKind::Neg(a) => Some(to_linear(*a, x, tm)?.neg()),
-        TermKind::Add(args) => {
-            let mut acc = LinForm::zero();
-            for &a in args {
-                acc = acc.add(to_linear(a, x, tm)?);
-            }
-            Some(acc)
-        }
-        TermKind::Sub(a, b) => {
-            let la = to_linear(*a, x, tm)?;
-            let lb = to_linear(*b, x, tm)?;
-            Some(la.sub(lb))
-        }
-        TermKind::Mul(args) => {
-            let mut const_prod = BigRational::one();
-            let mut nonconst: Option<LinForm> = None;
-            for &a in args {
-                let lf = to_linear(a, x, tm)?;
-                if lf.is_constant() {
-                    const_prod *= lf.constant;
-                } else if nonconst.is_none() {
-                    nonconst = Some(lf);
-                } else {
-                    // Product of two non-constant factors → non-linear in x.
-                    return None;
+    /// Work item of the iterative linear-form parser.
+    enum Step {
+        /// Classify a term and schedule its operands.
+        Enter(TermId),
+        /// Fold already-parsed operands into this term's linear form.
+        Build(TermId),
+    }
+
+    // Explicit stack plus a memo: the recursive form had one frame per level
+    // of arithmetic nesting (each holding a `LinForm` with an `FxHashMap` of
+    // `BigRational`s) and re-parsed shared sub-terms once per occurrence.
+    // The memo is keyed on `TermId` alone, which is exact here — the linear
+    // form of a term depends only on the term and on `x`.
+    let mut memo: FxHashMap<TermId, LinForm> = FxHashMap::default();
+    let mut stack = vec![Step::Enter(id)];
+
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Enter(current) => {
+                if memo.contains_key(&current) {
+                    continue;
+                }
+                let term = tm.get(current)?;
+                match &term.kind {
+                    TermKind::IntConst(n) => {
+                        memo.insert(
+                            current,
+                            LinForm::constant_val(BigRational::from_integer(n.clone())),
+                        );
+                    }
+                    TermKind::RealConst(r) => {
+                        memo.insert(current, LinForm::constant_val(rational64_to_big(*r)));
+                    }
+                    TermKind::Var(s) => {
+                        let form = if *s == x {
+                            LinForm::x()
+                        } else {
+                            LinForm::atom(current)
+                        };
+                        memo.insert(current, form);
+                    }
+                    TermKind::Neg(a) => {
+                        stack.push(Step::Build(current));
+                        stack.push(Step::Enter(*a));
+                    }
+                    TermKind::Add(args) | TermKind::Mul(args) => {
+                        stack.push(Step::Build(current));
+                        for &a in args.iter() {
+                            stack.push(Step::Enter(a));
+                        }
+                    }
+                    TermKind::Sub(a, b) | TermKind::Div(a, b) => {
+                        stack.push(Step::Build(current));
+                        stack.push(Step::Enter(*a));
+                        stack.push(Step::Enter(*b));
+                    }
+                    _ => {
+                        // Any other term is acceptable only as an opaque atom
+                        // that does not mention `x`; otherwise `x` occurs in
+                        // an unsupported position and the caller is told so.
+                        if mentions_var(current, x, tm) {
+                            return None;
+                        }
+                        memo.insert(current, LinForm::atom(current));
+                    }
                 }
             }
-            Some(match nonconst {
-                Some(lf) => lf.scale(&const_prod),
-                None => LinForm::constant_val(const_prod),
-            })
-        }
-        TermKind::Div(a, b) => {
-            // Real division by a non-zero constant: `a / c`.
-            let lb = to_linear(*b, x, tm)?;
-            if !lb.is_constant() || lb.constant.is_zero() {
-                return None;
-            }
-            let la = to_linear(*a, x, tm)?;
-            let inv = lb.constant.recip();
-            Some(la.scale(&inv))
-        }
-        _ => {
-            // Any other term is acceptable only as an opaque atom that does not
-            // mention `x`; otherwise `x` occurs in an unsupported position.
-            if mentions_var(id, x, tm) {
-                None
-            } else {
-                Some(LinForm::atom(id))
+            Step::Build(current) => {
+                let term = tm.get(current)?;
+                let form = match &term.kind {
+                    TermKind::Neg(a) => memo.get(a)?.clone().neg(),
+                    TermKind::Add(args) => {
+                        let mut acc = LinForm::zero();
+                        for a in args.iter() {
+                            acc = acc.add(memo.get(a)?.clone());
+                        }
+                        acc
+                    }
+                    TermKind::Sub(a, b) => {
+                        let la = memo.get(a)?.clone();
+                        let lb = memo.get(b)?.clone();
+                        la.sub(lb)
+                    }
+                    TermKind::Mul(args) => {
+                        let mut const_prod = BigRational::one();
+                        let mut nonconst: Option<LinForm> = None;
+                        for a in args.iter() {
+                            let lf = memo.get(a)?.clone();
+                            if lf.is_constant() {
+                                const_prod *= lf.constant;
+                            } else if nonconst.is_none() {
+                                nonconst = Some(lf);
+                            } else {
+                                // Product of two non-constant factors → non-linear in x.
+                                return None;
+                            }
+                        }
+                        match nonconst {
+                            Some(lf) => lf.scale(&const_prod),
+                            None => LinForm::constant_val(const_prod),
+                        }
+                    }
+                    TermKind::Div(a, b) => {
+                        // Real division by a non-zero constant: `a / c`.
+                        let lb = memo.get(b)?;
+                        if !lb.is_constant() || lb.constant.is_zero() {
+                            return None;
+                        }
+                        let inv = lb.constant.recip();
+                        memo.get(a)?.clone().scale(&inv)
+                    }
+                    // `Build` is only ever scheduled for the kinds above.
+                    _ => return None,
+                };
+                memo.insert(current, form);
             }
         }
     }
+
+    memo.remove(&id)
 }
 
 /// Materialise a rational constant as a real term, or `None` on `i64` overflow.
@@ -356,46 +520,60 @@ fn inf_truth(rel: Rel, to_pos_inf: bool) -> bool {
 ///
 /// Atoms in which `x` cancels (zero net coefficient) are skipped: they are
 /// `x`-free and contribute no boundary.
+///
+/// Iterative pre-order walk over the boolean skeleton, in the same
+/// left-to-right order the recursive form used. A `visited` set stops a
+/// sub-formula shared by several parents from being expanded once per path:
+/// the collected atoms form a *test set*, and a repeated sub-formula yields
+/// exactly the same atoms, so visiting it once loses nothing (both callers
+/// sort and `dedup` the boundary terms anyway) while turning a would-be
+/// exponential DAG expansion into a linear walk.
 pub(crate) fn collect_x_atoms(
     formula: TermId,
     x: Spur,
     tm: &TermManager,
     out: &mut Vec<XAtom>,
 ) -> Result<(), String> {
-    if !mentions_var(formula, x, tm) {
-        return Ok(());
-    }
-    let Some(term) = tm.get(formula) else {
-        return Err("lra: term not found".to_string());
-    };
-    match &term.kind {
-        TermKind::Not(a) => collect_x_atoms(*a, x, tm, out),
-        TermKind::And(args) | TermKind::Or(args) => {
-            for &a in args {
-                collect_x_atoms(a, x, tm, out)?;
+    let mentions = mentions_map(formula, x, tm);
+    let mut visited: crate::prelude::FxHashSet<TermId> = crate::prelude::FxHashSet::default();
+    let mut stack = vec![formula];
+
+    while let Some(current) = stack.pop() {
+        if !mentions_lookup(&mentions, current) {
+            continue;
+        }
+        if !visited.insert(current) {
+            continue;
+        }
+        let Some(term) = tm.get(current) else {
+            return Err("lra: term not found".to_string());
+        };
+        match &term.kind {
+            TermKind::Not(a) => stack.push(*a),
+            TermKind::And(args) | TermKind::Or(args) => {
+                stack.extend(args.iter().rev().copied());
             }
-            Ok(())
+            TermKind::Implies(a, b) | TermKind::Xor(a, b) => {
+                stack.push(*b);
+                stack.push(*a);
+            }
+            TermKind::Ite(c, t, e) => {
+                stack.push(*e);
+                stack.push(*t);
+                stack.push(*c);
+            }
+            TermKind::Lt(a, b) => push_cmp_atom(*a, *b, Rel::Lt, x, tm, out)?,
+            TermKind::Le(a, b) => push_cmp_atom(*a, *b, Rel::Le, x, tm, out)?,
+            TermKind::Gt(a, b) => push_cmp_atom(*a, *b, Rel::Gt, x, tm, out)?,
+            TermKind::Ge(a, b) => push_cmp_atom(*a, *b, Rel::Ge, x, tm, out)?,
+            TermKind::Eq(a, b) => push_cmp_atom(*a, *b, Rel::Eq, x, tm, out)?,
+            _ => {
+                return Err("lra: unsupported term mentioning the eliminated variable".to_string());
+            }
         }
-        TermKind::Implies(a, b) => {
-            collect_x_atoms(*a, x, tm, out)?;
-            collect_x_atoms(*b, x, tm, out)
-        }
-        TermKind::Xor(a, b) => {
-            collect_x_atoms(*a, x, tm, out)?;
-            collect_x_atoms(*b, x, tm, out)
-        }
-        TermKind::Ite(c, t, e) => {
-            collect_x_atoms(*c, x, tm, out)?;
-            collect_x_atoms(*t, x, tm, out)?;
-            collect_x_atoms(*e, x, tm, out)
-        }
-        TermKind::Lt(a, b) => push_cmp_atom(*a, *b, Rel::Lt, x, tm, out),
-        TermKind::Le(a, b) => push_cmp_atom(*a, *b, Rel::Le, x, tm, out),
-        TermKind::Gt(a, b) => push_cmp_atom(*a, *b, Rel::Gt, x, tm, out),
-        TermKind::Ge(a, b) => push_cmp_atom(*a, *b, Rel::Ge, x, tm, out),
-        TermKind::Eq(a, b) => push_cmp_atom(*a, *b, Rel::Eq, x, tm, out),
-        _ => Err("lra: unsupported term mentioning the eliminated variable".to_string()),
     }
+
+    Ok(())
 }
 
 fn push_cmp_atom(
@@ -435,52 +613,178 @@ pub(crate) fn inf_rewrite(
     at_plus_inf: bool,
     tm: &mut TermManager,
 ) -> Result<TermId, String> {
-    if !mentions_var(formula, x, tm) {
-        return Ok(formula);
+    structural_rewrite(formula, x, &AtomMode::Inf(at_plus_inf), tm)
+}
+
+/// How a comparison atom mentioning `x` is rewritten by [`structural_rewrite`].
+///
+/// Both eliminators share one structural walk over the boolean skeleton and
+/// differ only in what a comparison atom becomes.
+enum AtomMode {
+    /// Limit `x → +∞` (`true`) or `x → -∞` (`false`).
+    Inf(bool),
+    /// Virtual substitution `x := s + ε`.
+    Eps(TermId),
+}
+
+/// Rewrite the comparison atom `a REL b` according to `mode`.
+fn atom_rewrite(
+    a: TermId,
+    b: TermId,
+    rel: Rel,
+    x: Spur,
+    mode: &AtomMode,
+    tm: &mut TermManager,
+) -> Result<TermId, String> {
+    match *mode {
+        AtomMode::Inf(at_plus_inf) => atom_inf(a, b, rel, x, at_plus_inf, tm),
+        AtomMode::Eps(s) => atom_eps(a, b, rel, x, s, tm),
     }
-    let kind = tm.get(formula).ok_or("lra: term not found")?.kind.clone();
-    match kind {
-        TermKind::Not(a) => {
-            let a = inf_rewrite(a, x, at_plus_inf, tm)?;
-            Ok(tm.mk_not(a))
-        }
-        TermKind::And(args) => {
-            let mut out = Vec::with_capacity(args.len());
-            for a in args {
-                out.push(inf_rewrite(a, x, at_plus_inf, tm)?);
-            }
-            Ok(tm.mk_and(out))
-        }
-        TermKind::Or(args) => {
-            let mut out = Vec::with_capacity(args.len());
-            for a in args {
-                out.push(inf_rewrite(a, x, at_plus_inf, tm)?);
-            }
-            Ok(tm.mk_or(out))
-        }
-        TermKind::Implies(a, b) => {
-            let a = inf_rewrite(a, x, at_plus_inf, tm)?;
-            let b = inf_rewrite(b, x, at_plus_inf, tm)?;
-            Ok(tm.mk_implies(a, b))
-        }
-        TermKind::Xor(a, b) => {
-            let a = inf_rewrite(a, x, at_plus_inf, tm)?;
-            let b = inf_rewrite(b, x, at_plus_inf, tm)?;
-            Ok(tm.mk_xor(a, b))
-        }
-        TermKind::Ite(c, t, e) => {
-            let c = inf_rewrite(c, x, at_plus_inf, tm)?;
-            let t = inf_rewrite(t, x, at_plus_inf, tm)?;
-            let e = inf_rewrite(e, x, at_plus_inf, tm)?;
-            Ok(tm.mk_ite(c, t, e))
-        }
-        TermKind::Lt(a, b) => atom_inf(a, b, Rel::Lt, x, at_plus_inf, tm),
-        TermKind::Le(a, b) => atom_inf(a, b, Rel::Le, x, at_plus_inf, tm),
-        TermKind::Gt(a, b) => atom_inf(a, b, Rel::Gt, x, at_plus_inf, tm),
-        TermKind::Ge(a, b) => atom_inf(a, b, Rel::Ge, x, at_plus_inf, tm),
-        TermKind::Eq(a, b) => atom_inf(a, b, Rel::Eq, x, at_plus_inf, tm),
-        _ => Err("lra: unsupported term mentioning the eliminated variable".to_string()),
+}
+
+/// Structural rewrite of the boolean skeleton of `formula`, replacing every
+/// comparison atom that mentions `x` according to `mode` and leaving `x`-free
+/// sub-formulae untouched.
+///
+/// Explicit work stack (two phases: schedule operands, then rebuild the node
+/// from the already-rewritten operands) plus a memo. Both rewrites are a
+/// function of the sub-term alone once `x` and `mode` are fixed — neither
+/// carries polarity or any other context down the walk — so memoising on
+/// `TermId` is exact, and it keeps a sub-formula shared by several parents
+/// (an `Xor`/`Ite` chain re-expands one operand under two parents per level)
+/// from being rewritten once per path.
+fn structural_rewrite(
+    formula: TermId,
+    x: Spur,
+    mode: &AtomMode,
+    tm: &mut TermManager,
+) -> Result<TermId, String> {
+    /// Work item of the iterative rewrite.
+    enum Step {
+        /// Classify a sub-formula and schedule its operands.
+        Enter(TermId),
+        /// Rebuild a node from its already-rewritten operands.
+        Build(TermId),
     }
+
+    let mentions = mentions_map(formula, x, tm);
+    let mut memo: FxHashMap<TermId, TermId> = FxHashMap::default();
+    let mut stack = vec![Step::Enter(formula)];
+
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Enter(current) => {
+                if memo.contains_key(&current) {
+                    continue;
+                }
+                if !mentions_lookup(&mentions, current) {
+                    // `x`-free sub-formula: both rewrites are the identity.
+                    memo.insert(current, current);
+                    continue;
+                }
+                let kind = tm.get(current).ok_or("lra: term not found")?.kind.clone();
+                match kind {
+                    TermKind::Not(a) => {
+                        stack.push(Step::Build(current));
+                        stack.push(Step::Enter(a));
+                    }
+                    TermKind::And(args) | TermKind::Or(args) => {
+                        stack.push(Step::Build(current));
+                        for &a in args.iter() {
+                            stack.push(Step::Enter(a));
+                        }
+                    }
+                    TermKind::Implies(a, b) | TermKind::Xor(a, b) => {
+                        stack.push(Step::Build(current));
+                        stack.push(Step::Enter(a));
+                        stack.push(Step::Enter(b));
+                    }
+                    TermKind::Ite(c, t, e) => {
+                        stack.push(Step::Build(current));
+                        stack.push(Step::Enter(c));
+                        stack.push(Step::Enter(t));
+                        stack.push(Step::Enter(e));
+                    }
+                    TermKind::Lt(a, b) => {
+                        let r = atom_rewrite(a, b, Rel::Lt, x, mode, tm)?;
+                        memo.insert(current, r);
+                    }
+                    TermKind::Le(a, b) => {
+                        let r = atom_rewrite(a, b, Rel::Le, x, mode, tm)?;
+                        memo.insert(current, r);
+                    }
+                    TermKind::Gt(a, b) => {
+                        let r = atom_rewrite(a, b, Rel::Gt, x, mode, tm)?;
+                        memo.insert(current, r);
+                    }
+                    TermKind::Ge(a, b) => {
+                        let r = atom_rewrite(a, b, Rel::Ge, x, mode, tm)?;
+                        memo.insert(current, r);
+                    }
+                    TermKind::Eq(a, b) => {
+                        let r = atom_rewrite(a, b, Rel::Eq, x, mode, tm)?;
+                        memo.insert(current, r);
+                    }
+                    _ => {
+                        return Err(
+                            "lra: unsupported term mentioning the eliminated variable".to_string()
+                        );
+                    }
+                }
+            }
+            Step::Build(current) => {
+                let kind = tm.get(current).ok_or("lra: term not found")?.kind.clone();
+                let rewritten = |id: TermId, memo: &FxHashMap<TermId, TermId>| {
+                    memo.get(&id)
+                        .copied()
+                        .ok_or_else(|| "lra: internal error: unrewritten sub-formula".to_string())
+                };
+                let built = match kind {
+                    TermKind::Not(a) => {
+                        let a = rewritten(a, &memo)?;
+                        tm.mk_not(a)
+                    }
+                    TermKind::And(args) => {
+                        let mut out = Vec::with_capacity(args.len());
+                        for &a in args.iter() {
+                            out.push(rewritten(a, &memo)?);
+                        }
+                        tm.mk_and(out)
+                    }
+                    TermKind::Or(args) => {
+                        let mut out = Vec::with_capacity(args.len());
+                        for &a in args.iter() {
+                            out.push(rewritten(a, &memo)?);
+                        }
+                        tm.mk_or(out)
+                    }
+                    TermKind::Implies(a, b) => {
+                        let (a, b) = (rewritten(a, &memo)?, rewritten(b, &memo)?);
+                        tm.mk_implies(a, b)
+                    }
+                    TermKind::Xor(a, b) => {
+                        let (a, b) = (rewritten(a, &memo)?, rewritten(b, &memo)?);
+                        tm.mk_xor(a, b)
+                    }
+                    TermKind::Ite(c, t, e) => {
+                        let c = rewritten(c, &memo)?;
+                        let t = rewritten(t, &memo)?;
+                        let e = rewritten(e, &memo)?;
+                        tm.mk_ite(c, t, e)
+                    }
+                    // `Build` is only ever scheduled for the kinds above.
+                    _ => {
+                        return Err("lra: internal error: unexpected rebuild target".to_string());
+                    }
+                };
+                memo.insert(current, built);
+            }
+        }
+    }
+
+    memo.get(&formula)
+        .copied()
+        .ok_or_else(|| "lra: internal error: rewrite produced no result".to_string())
 }
 
 fn atom_inf(
@@ -516,52 +820,7 @@ pub(crate) fn eps_rewrite(
     s: TermId,
     tm: &mut TermManager,
 ) -> Result<TermId, String> {
-    if !mentions_var(formula, x, tm) {
-        return Ok(formula);
-    }
-    let kind = tm.get(formula).ok_or("lra: term not found")?.kind.clone();
-    match kind {
-        TermKind::Not(a) => {
-            let a = eps_rewrite(a, x, s, tm)?;
-            Ok(tm.mk_not(a))
-        }
-        TermKind::And(args) => {
-            let mut out = Vec::with_capacity(args.len());
-            for a in args {
-                out.push(eps_rewrite(a, x, s, tm)?);
-            }
-            Ok(tm.mk_and(out))
-        }
-        TermKind::Or(args) => {
-            let mut out = Vec::with_capacity(args.len());
-            for a in args {
-                out.push(eps_rewrite(a, x, s, tm)?);
-            }
-            Ok(tm.mk_or(out))
-        }
-        TermKind::Implies(a, b) => {
-            let a = eps_rewrite(a, x, s, tm)?;
-            let b = eps_rewrite(b, x, s, tm)?;
-            Ok(tm.mk_implies(a, b))
-        }
-        TermKind::Xor(a, b) => {
-            let a = eps_rewrite(a, x, s, tm)?;
-            let b = eps_rewrite(b, x, s, tm)?;
-            Ok(tm.mk_xor(a, b))
-        }
-        TermKind::Ite(c, t, e) => {
-            let c = eps_rewrite(c, x, s, tm)?;
-            let t = eps_rewrite(t, x, s, tm)?;
-            let e = eps_rewrite(e, x, s, tm)?;
-            Ok(tm.mk_ite(c, t, e))
-        }
-        TermKind::Lt(a, b) => atom_eps(a, b, Rel::Lt, x, s, tm),
-        TermKind::Le(a, b) => atom_eps(a, b, Rel::Le, x, s, tm),
-        TermKind::Gt(a, b) => atom_eps(a, b, Rel::Gt, x, s, tm),
-        TermKind::Ge(a, b) => atom_eps(a, b, Rel::Ge, x, s, tm),
-        TermKind::Eq(a, b) => atom_eps(a, b, Rel::Eq, x, s, tm),
-        _ => Err("lra: unsupported term mentioning the eliminated variable".to_string()),
-    }
+    structural_rewrite(formula, x, &AtomMode::Eps(s), tm)
 }
 
 fn atom_eps(
@@ -651,5 +910,226 @@ mod tests {
         assert!(!inf_truth(Rel::Eq, false));
         assert!(inf_truth(Rel::Ne, true));
         assert!(inf_truth(Rel::Ne, false));
+    }
+}
+
+#[cfg(test)]
+mod deep_walk_tests {
+    use super::*;
+
+    #[test]
+    fn test_mentions_var_shared_dag_is_fast() {
+        // Two-strand DAG, 55 levels: 2^55 nodes without a visited set.
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let x = tm.mk_var("x", int_sort);
+        let y = tm.mk_var("y", int_sort);
+        let (mut a, mut b) = (x, y);
+        for _ in 0..55 {
+            let next_a = tm.mk_sub(a, b);
+            let next_b = tm.mk_add([b, a]);
+            a = next_a;
+            b = next_b;
+        }
+        let x_spur = tm.intern_str("x");
+        let z_spur = tm.intern_str("z");
+
+        assert!(mentions_var(a, x_spur, &tm));
+        assert!(!mentions_var(a, z_spur, &tm));
+        assert_eq!(find_var_sort(a, x_spur, &tm), Some(int_sort));
+        assert_eq!(find_var_sort(a, z_spur, &tm), None);
+    }
+
+    /// A real variable plus the atoms used by the structural tests.
+    fn deep_setup(tm: &mut TermManager) -> (TermId, TermId, TermId) {
+        let real_sort = tm.sorts.real_sort;
+        let x = tm.mk_var("x", real_sort);
+        let y = tm.mk_var("y", real_sort);
+        let zero = tm.mk_real(Rational64::new(0, 1));
+        let atom_x = tm.mk_lt(x, zero);
+        let atom_y = tm.mk_lt(y, zero);
+        (atom_x, atom_y, zero)
+    }
+
+    /// `levels` alternating `And`/`Or` nestings around an `x` atom. Alternating
+    /// the connective defeats the n-ary flattening in `mk_and`/`mk_or`, so the
+    /// boolean skeleton really is `levels` deep.
+    fn deep_bool_formula(tm: &mut TermManager, levels: usize) -> TermId {
+        let (atom_x, atom_y, _) = deep_setup(tm);
+        let mut f = atom_x;
+        for _ in 0..levels / 2 {
+            f = tm.mk_and([f, atom_y]);
+            f = tm.mk_or([f, atom_y]);
+        }
+        f
+    }
+
+    #[test]
+    fn test_collect_x_atoms_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let f = deep_bool_formula(&mut tm, 50_000);
+                let x_spur = tm.intern_str("x");
+                let mut atoms = Vec::new();
+                let outcome = collect_x_atoms(f, x_spur, &tm, &mut atoms);
+                (outcome, atoms.len())
+            })
+            .expect("thread spawn should succeed");
+
+        let (outcome, n) = handle.join().expect("collect_x_atoms must not overflow");
+        assert!(outcome.is_ok(), "collect_x_atoms failed: {outcome:?}");
+        assert_eq!(n, 1, "the single shared x atom is collected exactly once");
+    }
+
+    #[test]
+    fn test_inf_rewrite_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let f = deep_bool_formula(&mut tm, 50_000);
+                let x_spur = tm.intern_str("x");
+                let neg = inf_rewrite(f, x_spur, false, &mut tm);
+                let pos = inf_rewrite(f, x_spur, true, &mut tm);
+                let still_mentions = neg
+                    .as_ref()
+                    .ok()
+                    .map(|&t| mentions_var(t, x_spur, &tm))
+                    .unwrap_or(true);
+                (neg.is_ok(), pos.is_ok(), still_mentions)
+            })
+            .expect("thread spawn should succeed");
+
+        let (neg_ok, pos_ok, still_mentions) =
+            handle.join().expect("inf_rewrite must not overflow");
+        assert!(neg_ok && pos_ok);
+        assert!(!still_mentions, "x survived the ±∞ rewrite");
+    }
+
+    #[test]
+    fn test_eps_rewrite_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let f = deep_bool_formula(&mut tm, 50_000);
+                let s = tm.mk_real(Rational64::new(0, 1));
+                let x_spur = tm.intern_str("x");
+                let out = eps_rewrite(f, x_spur, s, &mut tm);
+                let still_mentions = out
+                    .as_ref()
+                    .ok()
+                    .map(|&t| mentions_var(t, x_spur, &tm))
+                    .unwrap_or(true);
+                (out.is_ok(), still_mentions)
+            })
+            .expect("thread spawn should succeed");
+
+        let (ok, still_mentions) = handle.join().expect("eps_rewrite must not overflow");
+        assert!(ok);
+        assert!(!still_mentions, "x survived the ε rewrite");
+    }
+
+    #[test]
+    fn test_nested_xor_walks_are_linear() {
+        // 30 nested `Xor`s: each level is reachable under two parents in the
+        // rewrite, so an unmemoised walk would visit 2³⁰ nodes.
+        let mut tm = TermManager::new();
+        let (atom_x, atom_y, s) = deep_setup(&mut tm);
+        let mut f = atom_x;
+        for _ in 0..30 {
+            f = tm.mk_xor(f, atom_y);
+        }
+        let x_spur = tm.intern_str("x");
+
+        let start = std::time::Instant::now();
+        let mut atoms = Vec::new();
+        collect_x_atoms(f, x_spur, &tm, &mut atoms).expect("collect must succeed");
+        let neg_inf = inf_rewrite(f, x_spur, false, &mut tm).expect("inf rewrite must succeed");
+        let eps = eps_rewrite(f, x_spur, s, &mut tm).expect("eps rewrite must succeed");
+        let elapsed = start.elapsed();
+
+        assert_eq!(atoms.len(), 1);
+        assert!(!mentions_var(neg_inf, x_spur, &tm));
+        assert!(!mentions_var(eps, x_spur, &tm));
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "nested-Xor walk took {elapsed:?}: the sharing memo regressed"
+        );
+    }
+
+    #[test]
+    fn test_inf_rewrite_atom_limits_are_exact() {
+        let mut tm = TermManager::new();
+        let real_sort = tm.sorts.real_sort;
+        let x = tm.mk_var("x", real_sort);
+        let five = tm.mk_real(Rational64::new(5, 1));
+        let lt = tm.mk_lt(x, five);
+        let gt = tm.mk_gt(x, five);
+        let x_spur = tm.intern_str("x");
+        let (t, f) = (tm.mk_true(), tm.mk_false());
+
+        assert_eq!(inf_rewrite(lt, x_spur, false, &mut tm), Ok(t));
+        assert_eq!(inf_rewrite(lt, x_spur, true, &mut tm), Ok(f));
+        assert_eq!(inf_rewrite(gt, x_spur, false, &mut tm), Ok(f));
+        assert_eq!(inf_rewrite(gt, x_spur, true, &mut tm), Ok(t));
+    }
+
+    #[test]
+    fn test_rewrites_leave_x_free_subformulae_untouched() {
+        let mut tm = TermManager::new();
+        let real_sort = tm.sorts.real_sort;
+        let y = tm.mk_var("y", real_sort);
+        let zero = tm.mk_real(Rational64::new(0, 1));
+        let atom_y = tm.mk_lt(y, zero);
+        let x_spur = tm.intern_str("x");
+
+        assert_eq!(inf_rewrite(atom_y, x_spur, true, &mut tm), Ok(atom_y));
+        assert_eq!(eps_rewrite(atom_y, x_spur, zero, &mut tm), Ok(atom_y));
+    }
+
+    #[test]
+    fn test_eps_rewrite_equality_cannot_hold_on_an_interval() {
+        let mut tm = TermManager::new();
+        let real_sort = tm.sorts.real_sort;
+        let x = tm.mk_var("x", real_sort);
+        let three = tm.mk_real(Rational64::new(3, 1));
+        let eq = tm.mk_eq(x, three);
+        let ne = tm.mk_not(eq);
+        let x_spur = tm.intern_str("x");
+        let (t, f) = (tm.mk_true(), tm.mk_false());
+
+        assert_eq!(eps_rewrite(eq, x_spur, three, &mut tm), Ok(f));
+        // ¬(x = 3) rewrites through `Not` of the same atom.
+        assert_eq!(eps_rewrite(ne, x_spur, three, &mut tm), Ok(t));
+    }
+
+    #[test]
+    fn test_lra_walks_deep_nesting_do_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let int_sort = tm.sorts.int_sort;
+                let x = tm.mk_var("x", int_sort);
+                let one = tm.mk_int(1);
+                let mut term = x;
+                for _ in 0..60_000 {
+                    term = tm.mk_add([term, one]);
+                }
+                let x_spur = tm.intern_str("x");
+
+                let mentions = mentions_var(term, x_spur, &tm);
+                let linear = to_linear(term, x_spur, &tm);
+                (mentions, linear.map(|f| f.x_coeff))
+            })
+            .expect("thread spawn should succeed");
+
+        let (mentions, x_coeff) = handle.join().expect("deep walks must not overflow");
+        assert!(mentions);
+        // `x + 1 + 1 + ...` keeps a unit coefficient on `x`.
+        assert_eq!(x_coeff, Some(BigRational::one()));
     }
 }

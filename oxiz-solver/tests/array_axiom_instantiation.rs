@@ -189,3 +189,115 @@ fn aliased_store_read_over_write_is_unsat() {
 "#;
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
+
+/// Issue #22 (reduced): an equality between two *independent* read-over-write
+/// reads whose indices are arithmetic compounds.
+///
+/// Both base arrays are unconstrained, so a model exists trivially (choose the
+/// arrays so the two reads agree).  Nothing here entails a conflict, yet the
+/// index terms (`+`, `div`) are not syntactically comparable — the case that
+/// stresses the RoW instantiation's "index relationship unknown" path.  The
+/// axiom layer must leave such a read unresolved (`eval_read` → `None`) rather
+/// than committing to a value and manufacturing a disequality conflict.
+#[test]
+fn test_issue_22_read_over_write_arith_index() {
+    let script = r#"
+(set-logic QF_AUFLIA)
+(declare-const a0 (Array Int Int))
+(declare-const a1 (Array Int Int))
+(declare-const i0 Int)
+(declare-const i1 Int)
+(declare-const i2 Int)
+(assert (= (select (store a1 1 2) (+ 2 i1))
+           (select (store a0 i0 (div i1 8)) (div i2 10))))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Sat);
+}
+
+/// Issue #22 (verbatim reproducer): read-over-write with `div`, `mod`, `abs`,
+/// `ite` and `+` in the index/value positions, wrapped in `(not (distinct …))`.
+///
+/// `z3` answers `sat`; this pins that oxiz agrees.  The Euclidean constants
+/// involved — `(div 7 7) = 1`, `(mod (- 3) (- 5)) = 2`, `(abs 7) = 7` — are
+/// covered independently by `oxiz-core/tests/audit_div_semantics.rs`.
+#[test]
+fn test_issue_22_full_reproducer() {
+    let script = r#"
+(set-logic QF_AUFLIA)
+(declare-const a0 (Array Int Int))
+(declare-const a1 (Array Int Int))
+(declare-const i0 Int)
+(declare-const i1 Int)
+(declare-const i2 Int)
+(assert (not (distinct
+  (select (store a1 (div 7 7) (mod (- 3) (- 5))) (+ 2 i1))
+  (select (store a0 (ite (<= (mod (abs 7) 2) (- 3)) (- 9) i0) (div i1 8)) (div i2 10)))))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Sat);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Polarity boundary: facts must be unconditionally asserted
+// ──────────────────────────────────────────────────────────────────
+
+/// `(not (and A B))` is `(or (not A) (not B))`, so neither conjunct is
+/// entailed.  The array pre-check's collector tracked polarity but passed it
+/// straight through its `And` arm, so a single `(not (and …))` handed every
+/// conjunct to the definite-conflict maps at negative polarity.
+///
+/// Here `(= (select (store a 3 5) 3) 5)` is a *true* read-over-write, so
+/// recording it as a negated select assertion made the axiom evaluation agree
+/// with the "negated" value and fire a conflict.  The formula is satisfiable
+/// with `p = false` (`z3` answers `sat`).
+#[test]
+fn test_array_bool_eq_polarity_boundary() {
+    let script = r#"
+(set-logic QF_ALIA)
+(declare-const a (Array Int Int))
+(declare-const p Bool)
+(assert (not (and (= (select (store a 3 5) 3) 5) p)))
+(check-sat)
+"#;
+    assert_ne!(
+        run_script(script),
+        SolverResult::Unsat,
+        "conjuncts of a negated And are disjunctive; they must not be collected \
+         as unconditional read-over-write facts"
+    );
+
+    // Double negation reaches the store=store extensionality collector, which
+    // had the same pass-through: the inner disequality flips back to positive
+    // polarity and was recorded as an asserted `(= (store a 0 1) (store b 0 2))`.
+    // Satisfiable with `p = false` — the inner disequality is in fact valid, so
+    // the assertion reduces to `(not p)`.
+    let double_negation = r#"
+(set-logic QF_ALIA)
+(declare-const a (Array Int Int))
+(declare-const b (Array Int Int))
+(declare-const p Bool)
+(assert (not (and (not (= (store a 0 1) (store b 0 2))) p)))
+(check-sat)
+"#;
+    assert_ne!(
+        run_script(double_negation),
+        SolverResult::Unsat,
+        "a doubly-negated equality under a negated And is not asserted; the \
+         store extensionality check must not fire on it"
+    );
+}
+
+/// Control: the same store=store equality asserted *unconditionally* really is
+/// unsatisfiable, so the fix above must not have disabled the check.
+#[test]
+fn test_array_store_extensionality_still_fires_when_asserted() {
+    let script = r#"
+(set-logic QF_ALIA)
+(declare-const a (Array Int Int))
+(declare-const b (Array Int Int))
+(assert (= (store a 0 1) (store b 0 2)))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Unsat);
+}

@@ -2,6 +2,10 @@
 //!
 //! Comprehensive benchmarks for optimization algorithms and data structures
 
+// Benches are test-class code: panicking on broken setup is the desired
+// failure mode, but clippy has no allow-unwrap-in-benches analogue to the
+// allow-unwrap-in-tests knob that covers the test targets.
+#![allow(clippy::unwrap_used)]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use num_bigint::BigInt;
 use num_rational::BigRational;

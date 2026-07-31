@@ -251,12 +251,7 @@ impl ModelMinimizer {
         let mut essential_indices: FxHashSet<usize> = FxHashSet::default();
 
         // Binary search for minimal set.
-        self.binary_search_minimal(
-            &all,
-            &checker,
-            &mut essential_indices,
-            &mut stats,
-        );
+        self.binary_search_minimal(all, &checker, &mut essential_indices, &mut stats);
 
         let mut essential = Vec::new();
         let mut optional = Vec::new();
@@ -276,108 +271,145 @@ impl ModelMinimizer {
         }
     }
 
-    /// Recursive binary search for minimal satisfying set.
+    /// Binary search for the minimal satisfying set, driven by an explicit
+    /// heap stack.
+    ///
+    /// This used to be a two-call recursion (`Both halves are needed` below
+    /// descends into the left half, mutates the essential set, then descends
+    /// into the right half). Its return type is `()`, so it has no channel
+    /// through which a depth cap could report truncation — a cap could only
+    /// silently return a wrong `ModelMinResult`. The recursion is therefore
+    /// converted to an explicit stack that preserves the original traversal
+    /// order, the original check counts, and the original mutations of
+    /// `essential` exactly; the only behavioural difference is that the native
+    /// call stack is no longer the depth bound.
     fn binary_search_minimal<F>(
         &self,
-        indices: &[usize],
+        root: Vec<usize>,
         checker: &F,
         essential: &mut FxHashSet<usize>,
         stats: &mut MinStats,
     ) where
         F: Fn(&[(u32, String)]) -> bool,
     {
-        if indices.is_empty() {
-            return;
-        }
+        let mut stack: Vec<MinFrame> = vec![MinFrame::Descend(root)];
 
-        if indices.len() == 1 {
-            // Single element: check if it is essential.
-            let idx = indices[0];
-            let without: Vec<(u32, String)> = self
-                .assignments
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| essential.contains(i) && *i != idx)
-                .map(|(_, a)| (a.var_id, a.value.clone()))
-                .collect();
-
-            stats.checks_performed += 1;
-            stats.removals_attempted += 1;
-
-            if !checker(&without) {
-                essential.insert(idx);
-            } else {
-                stats.successful_removals += 1;
-            }
-            return;
-        }
-
-        if stats.checks_performed >= self.max_checks {
-            // Budget exceeded: mark all as essential.
-            for &idx in indices {
-                essential.insert(idx);
-            }
-            return;
-        }
-
-        let mid = indices.len() / 2;
-        let left = &indices[..mid];
-        let right = &indices[mid..];
-
-        // Try with only the left half + current essential.
-        let left_set: FxHashSet<usize> = left.iter().copied().collect();
-        let left_subset: Vec<(u32, String)> = self
-            .assignments
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| left_set.contains(i) || essential.contains(i))
-            .map(|(_, a)| (a.var_id, a.value.clone()))
-            .collect();
-
-        stats.checks_performed += 1;
-        if checker(&left_subset) {
-            // Left half alone is sufficient: right half is optional.
-            stats.successful_removals += right.len() as u64;
-            // Recurse into left to minimize further.
-            self.binary_search_minimal(left, checker, essential, stats);
-        } else {
-            // Try right half alone.
-            let right_set: FxHashSet<usize> = right.iter().copied().collect();
-            let right_subset: Vec<(u32, String)> = self
-                .assignments
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| right_set.contains(i) || essential.contains(i))
-                .map(|(_, a)| (a.var_id, a.value.clone()))
-                .collect();
-
-            stats.checks_performed += 1;
-            if checker(&right_subset) {
-                // Right half alone is sufficient: left half is optional.
-                stats.successful_removals += left.len() as u64;
-                self.binary_search_minimal(right, checker, essential, stats);
-            } else {
-                // Both halves are needed: recurse into each.
-                // First add all of right to essential, then minimize left.
-                for &idx in right {
-                    essential.insert(idx);
+        while let Some(frame) = stack.pop() {
+            match frame {
+                MinFrame::ResumeRight { left, right } => {
+                    // Continuation of the `both halves are needed` case: the
+                    // left descent has finished, so hand the right half back
+                    // its own turn with the left half pinned as essential.
+                    for idx in &right {
+                        essential.remove(idx);
+                    }
+                    for idx in &left {
+                        essential.insert(*idx);
+                    }
+                    stack.push(MinFrame::Descend(right));
                 }
-                self.binary_search_minimal(left, checker, essential, stats);
+                MinFrame::Descend(indices) => {
+                    if indices.is_empty() {
+                        continue;
+                    }
 
-                // Now minimize right with left essential.
-                let right_owned: Vec<usize> = right.to_vec();
-                // Remove right from essential to re-check.
-                for &idx in &right_owned {
-                    essential.remove(&idx);
+                    if let [idx] = indices[..] {
+                        // Single element: check if it is essential.
+                        let without = self.subset_where(|i| essential.contains(&i) && i != idx);
+
+                        stats.checks_performed += 1;
+                        stats.removals_attempted += 1;
+
+                        if checker(&without) {
+                            stats.successful_removals += 1;
+                        } else {
+                            essential.insert(idx);
+                        }
+                        continue;
+                    }
+
+                    if stats.checks_performed >= self.max_checks {
+                        // Budget exceeded: mark all as essential.
+                        essential.extend(indices.iter().copied());
+                        continue;
+                    }
+
+                    let mid = indices.len() / 2;
+                    let right: Vec<usize> = indices[mid..].to_vec();
+                    let mut left = indices;
+                    left.truncate(mid);
+
+                    // Try with only the left half + current essential.
+                    let left_set: FxHashSet<usize> = left.iter().copied().collect();
+                    let left_subset =
+                        self.subset_where(|i| left_set.contains(&i) || essential.contains(&i));
+
+                    stats.checks_performed += 1;
+                    if checker(&left_subset) {
+                        // Left half alone is sufficient: right half is optional.
+                        stats.successful_removals += right.len() as u64;
+                        // Descend into left to minimize further.
+                        stack.push(MinFrame::Descend(left));
+                        continue;
+                    }
+
+                    // Try right half alone.
+                    let right_set: FxHashSet<usize> = right.iter().copied().collect();
+                    let right_subset =
+                        self.subset_where(|i| right_set.contains(&i) || essential.contains(&i));
+
+                    stats.checks_performed += 1;
+                    if checker(&right_subset) {
+                        // Right half alone is sufficient: left half is optional.
+                        stats.successful_removals += left.len() as u64;
+                        stack.push(MinFrame::Descend(right));
+                        continue;
+                    }
+
+                    // Both halves are needed: descend into each.
+                    // First add all of right to essential, then minimize left;
+                    // the resume frame then swaps the roles and takes right.
+                    essential.extend(right.iter().copied());
+                    stack.push(MinFrame::ResumeRight {
+                        left: left.clone(),
+                        right,
+                    });
+                    stack.push(MinFrame::Descend(left));
                 }
-                // Add left to essential.
-                for &idx in left {
-                    essential.insert(idx);
-                }
-                self.binary_search_minimal(&right_owned, checker, essential, stats);
             }
         }
     }
+
+    /// Project the assignments whose index satisfies `keep` into the
+    /// `(var_id, value)` pair list the checker expects.
+    fn subset_where(&self, keep: impl Fn(usize) -> bool) -> Vec<(u32, String)> {
+        self.assignments
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| keep(*i))
+            .map(|(_, a)| (a.var_id, a.value.clone()))
+            .collect()
+    }
+}
+
+/// One pending step of the iterative [`ModelMinimizer::binary_search_minimal`]
+/// driver.
+///
+/// The recursion this replaces had a resume point in the middle of one arm
+/// (descend left, mutate the essential set, descend right), so that arm needs
+/// its own frame rather than a plain worklist entry.
+#[derive(Debug)]
+enum MinFrame {
+    /// Process this index range as the original recursive call would.
+    Descend(Vec<usize>),
+    /// Continuation for the `both halves are needed` arm: unpin `right`,
+    /// pin `left`, then process `right`.
+    ResumeRight {
+        /// Left half, pinned as essential before the right half is processed.
+        left: Vec<usize>,
+        /// Right half, processed after the swap.
+        right: Vec<usize>,
+    },
 }
 
 impl Default for ModelMinimizer {
@@ -415,9 +447,7 @@ mod tests {
         minimizer.add_assignment(make_assignment(2, "y", "false"));
 
         // Both are essential: removing either makes it unsatisfying.
-        let result = minimizer.minimize_linear(|assignments| {
-            assignments.len() >= 2
-        });
+        let result = minimizer.minimize_linear(|assignments| assignments.len() >= 2);
 
         assert_eq!(result.essential_vars.len(), 2);
         assert_eq!(result.optional_vars.len(), 0);
@@ -446,9 +476,8 @@ mod tests {
         minimizer.add_assignment(make_assignment(3, "z", "true"));
 
         // Only var 1 is essential: need at least one assignment with var_id=1.
-        let result = minimizer.minimize_linear(|assignments| {
-            assignments.iter().any(|(id, _)| *id == 1)
-        });
+        let result =
+            minimizer.minimize_linear(|assignments| assignments.iter().any(|(id, _)| *id == 1));
 
         assert_eq!(result.essential_vars.len(), 1);
         assert_eq!(result.essential_vars[0].var_id, 1);
@@ -459,11 +488,7 @@ mod tests {
     fn test_binary_minimization() {
         let mut minimizer = ModelMinimizer::new();
         for i in 0..8 {
-            minimizer.add_assignment(make_assignment(
-                i,
-                &format!("v{}", i),
-                "true",
-            ));
+            minimizer.add_assignment(make_assignment(i, &format!("v{}", i), "true"));
         }
 
         // Only vars 0 and 4 are essential.
@@ -503,17 +528,98 @@ mod tests {
         assert!(text.contains("y = false (removable)"));
     }
 
+    /// Semantic pin for the recursive -> iterative conversion of
+    /// `binary_search_minimal`: the *exact* essential set, optional set and
+    /// check counts produced by the original recursion on a hand-checked
+    /// input.
+    #[test]
+    fn test_binary_minimization_exact_semantics_pin() {
+        let mut minimizer = ModelMinimizer::new();
+        for i in 0..8 {
+            minimizer.add_assignment(make_assignment(i, &format!("v{}", i), "true"));
+        }
+
+        // Every variable is required: this drives the `both halves are needed`
+        // arm at every internal node, i.e. the one arm that had a resume point
+        // in the middle of the old recursion.
+        let result = minimizer.minimize_binary(|assignments| assignments.len() == 8);
+
+        let mut essential_ids: Vec<u32> = result.essential_vars.iter().map(|v| v.var_id).collect();
+        essential_ids.sort_unstable();
+        assert_eq!(essential_ids, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+        assert!(result.optional_vars.is_empty());
+        assert_eq!(result.stats.checks_performed, 22);
+        assert_eq!(result.stats.removals_attempted, 8);
+        assert_eq!(result.stats.successful_removals, 0);
+    }
+
+    /// Semantic pin for the mixed case (one half sufficient at the root).
+    #[test]
+    fn test_binary_minimization_left_half_sufficient_pin() {
+        let mut minimizer = ModelMinimizer::new();
+        for i in 0..8 {
+            minimizer.add_assignment(make_assignment(i, &format!("v{}", i), "true"));
+        }
+
+        // Only var 0 matters, and it sits in the left half at every level.
+        let result = minimizer.minimize_binary(|a| a.iter().any(|(id, _)| *id == 0));
+
+        let essential_ids: Vec<u32> = result.essential_vars.iter().map(|v| v.var_id).collect();
+        assert_eq!(essential_ids, vec![0]);
+        assert_eq!(result.optional_vars.len(), 7);
+        assert_eq!(result.stats.checks_performed, 4);
+        assert_eq!(result.stats.removals_attempted, 1);
+        assert_eq!(result.stats.successful_removals, 4 + 2 + 1);
+    }
+
+    /// The converted walk must return rather than overflow the native stack.
+    ///
+    /// Honest scaling note: unlike a term walk, this driver's *nesting depth*
+    /// is logarithmic in the input (each frame halves its index range), so a
+    /// 50 000-level nesting is not constructible here at all — 2^50000
+    /// assignments do not fit in memory. The deepest tree an input of `n`
+    /// assignments can produce is `log2(n)` levels, and it is produced by
+    /// forcing the two-way `both halves are needed` arm at every node, which
+    /// is exactly what this test does. The input is sized so the O(n^2) subset
+    /// rebuilding stays fast, and it runs on a deliberately small 1 MiB stack
+    /// so that a regression back to recursion would have to fit its whole
+    /// tree there.
+    ///
+    /// The stack stays at 1 MiB, unlike the crate's other deep-nesting tests
+    /// that were scaled down to 128 KiB together with their depths: this one
+    /// nests only `log2(1024) = 10` levels, so there is no stack/depth ratio
+    /// to preserve and nothing quadratic to shrink.
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_binary_minimization_returns_on_small_stack() {
+        const N: u32 = 1024;
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut minimizer = ModelMinimizer::new();
+                minimizer.set_max_checks(u64::MAX);
+                for i in 0..N {
+                    minimizer.add_assignment(make_assignment(i, &format!("v{}", i), "true"));
+                }
+                // Every variable required => the two-way arm fires at every
+                // internal node, giving the deepest tree this input admits.
+                let result = minimizer.minimize_binary(|a| a.len() >= N as usize);
+                (result.total_vars(), result.essential_vars.len())
+            })
+            .expect("spawn minimization thread");
+
+        let (total, essential) = handle.join().expect("minimization thread panicked");
+        assert_eq!(total, N as usize);
+        assert_eq!(essential, N as usize);
+    }
+
     #[test]
     fn test_max_checks_limit() {
         let mut minimizer = ModelMinimizer::new();
         minimizer.set_max_checks(2);
 
         for i in 0..10 {
-            minimizer.add_assignment(make_assignment(
-                i,
-                &format!("v{}", i),
-                "true",
-            ));
+            minimizer.add_assignment(make_assignment(i, &format!("v{}", i), "true"));
         }
 
         let result = minimizer.minimize_linear(|_| true);

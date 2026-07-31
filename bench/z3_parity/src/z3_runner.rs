@@ -34,6 +34,53 @@ pub fn is_z3_available() -> bool {
     find_z3().is_some()
 }
 
+/// Raw first line of `z3 --version` for the binary `find_z3` resolves (the
+/// same one [`run_z3`] uses), e.g. `"Z3 version 4.15.4 - 64 bit"`.
+///
+/// `None` when no Z3 binary is reachable or the probe itself failed.
+pub fn z3_version_raw() -> Option<String> {
+    let z3_path = find_z3()?;
+    let output = Command::new(z3_path).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_string())
+}
+
+/// Bare version of the Z3 binary that [`run_z3`] would use, e.g. `"4.15.4"`.
+///
+/// Z3 verdicts move between releases (Ubuntu's `apt` ships 4.13.3 while the
+/// recorded baseline is 4.15.4), so a parity record that does not name the Z3
+/// build it was measured against cannot attribute a disagreement to either
+/// solver. Recorded per run for exactly that reason.
+///
+/// When the `--version` output carries no recognisable dotted version the raw
+/// line is returned unchanged rather than a guess, so the recorded value is
+/// always something that was actually observed.
+pub fn z3_version() -> Option<String> {
+    let raw = z3_version_raw()?;
+    Some(parse_z3_version(&raw).unwrap_or(raw))
+}
+
+/// Extract the bare version token (`4.15.4`) from a `z3 --version` line
+/// (`Z3 version 4.15.4 - 64 bit`).
+fn parse_z3_version(raw: &str) -> Option<String> {
+    raw.split_whitespace()
+        .find(|token| {
+            token.starts_with(|c: char| c.is_ascii_digit())
+                && token.contains('.')
+                && token.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
+        .map(|token| token.to_string())
+}
+
 pub fn run_z3(smt2_file: &Path) -> Result<SolverResult> {
     let z3_path = find_z3().context("Z3 not found. Please install Z3 and ensure it's in PATH")?;
 
@@ -141,5 +188,39 @@ mod tests {
     #[test]
     fn test_find_z3_does_not_panic() {
         let _ = find_z3();
+    }
+
+    #[test]
+    fn test_parse_z3_version() {
+        assert_eq!(
+            parse_z3_version("Z3 version 4.15.4 - 64 bit"),
+            Some("4.15.4".to_string())
+        );
+        // The version Ubuntu's apt ships, which the baseline is NOT measured
+        // against - it must parse just as cleanly so the mismatch is visible.
+        assert_eq!(
+            parse_z3_version("Z3 version 4.13.3 - 64 bit"),
+            Some("4.13.3".to_string())
+        );
+    }
+
+    /// Unrecognised output must never be coerced into a plausible-looking
+    /// version: callers record the raw line instead, so a metadata header can
+    /// only ever claim a version that was actually observed.
+    #[test]
+    fn test_parse_z3_version_rejects_unrecognized_output() {
+        assert_eq!(parse_z3_version("no version here"), None);
+        assert_eq!(parse_z3_version(""), None);
+    }
+
+    /// The live probe may only report a version when a Z3 binary is actually
+    /// reachable, and never an empty one - a metadata header must not be able
+    /// to claim a version out of thin air.
+    #[test]
+    fn test_z3_version_never_invents_a_version() {
+        if let Some(version) = z3_version() {
+            assert!(is_z3_available());
+            assert!(!version.trim().is_empty());
+        }
     }
 }

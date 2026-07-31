@@ -71,11 +71,19 @@ pub mod validation;
 pub mod visualization;
 
 // Internal modules
-mod builder;
-mod cnf;
-mod convert;
-mod quantifier;
 mod resolution;
+
+// Tseitin CNF encoding (equisatisfiable, not equivalent -- see the module
+// doc comment for what that means and why it matters).
+pub mod cnf;
+
+// Fluent builders for `Proof` and `TheoryProof`.
+pub mod builder;
+// `TheoryProof` -> `AletheProof` conversion (distinct from, and narrower
+// than, `conversion`'s external-file-format converters).
+pub mod convert;
+// Quantifier proof-step recording (generic `Proof`) and e-matching.
+pub mod quantifier;
 
 // Premise tracking: public because `CraigInterpolator::new` (see `craig`)
 // takes a `PremiseTracker` by value, so callers outside this crate need to
@@ -92,12 +100,15 @@ pub mod replay;
 
 // Re-exports
 pub use alethe::{AletheProof, AletheProofProducer, AletheRule, AletheStep};
+pub use builder::{ProofBuilder, TheoryProofBuilder};
 pub use carcara::{CarcaraProof, to_carcara_format, validate_for_carcara};
 pub use checker::{CheckError, CheckResult, Checkable, CheckerConfig, ErrorSeverity, ProofChecker};
+pub use cnf::{CnfStats, CnfTransformer, Formula, Var as CnfVar};
 pub use compress::{
     CompressionConfig, CompressionResult, ProofCompressor, get_dependency_cone, trim_to_conclusion,
 };
 pub use conversion::{ConversionError, ConversionResult, FormatConverter};
+pub use convert::{ConversionStats, theory_to_alethe, theory_to_alethe_with_stats};
 pub use coq::{CoqExporter, export_theory_to_coq, export_to_coq};
 pub use coq_enhanced::{CoqProofTerm, CoqType, EnhancedCoqExporter, export_to_coq_enhanced};
 pub use diff::{ProofDiff, ProofSimilarity, compute_similarity, diff_proofs};
@@ -130,6 +141,10 @@ pub use pattern::{LemmaPattern, PatternExtractor, PatternStructure};
 pub use pcc::{CodeLocation, PccBuilder, ProofCarryingCode, SafetyProperty, VerificationCondition};
 pub use premise::{Premise, PremiseDependency, PremiseId, PremiseTracker};
 pub use proof::{Proof, ProofNode, ProofNodeId, ProofStats, ProofStep};
+pub use quantifier::{
+    EMatchPattern, Instantiation, QuantVar, QuantifiedFormula, QuantifierProofError,
+    QuantifierProofRecorder, Substitution as QuantifierSubstitution,
+};
 #[cfg(feature = "arena")]
 pub use recorder::ArenaProofStepId;
 pub use recorder::Recorder;

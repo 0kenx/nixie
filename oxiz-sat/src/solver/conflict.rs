@@ -176,7 +176,20 @@ impl Solver {
                 }
             }
 
-            // Find next literal to analyze
+            // Find next literal to resolve on: the most recently assigned
+            // still-unresolved literal AT THE CONFLICT LEVEL.
+            //
+            // The level check is what makes this walk correct under
+            // chronological backtracking. The trail is no longer sorted by
+            // decision level — a literal implied at a low level can sit near the
+            // top of the trail — so "the last `seen` literal" is not necessarily
+            // a conflict-level literal any more. Resolving on a lower-level one
+            // would decrement the conflict-level counter for a literal that was
+            // never counted in it, terminating the 1-UIP loop early and emitting
+            // a clause that is missing literals, i.e. stronger than what
+            // resolution actually derives. Reference: Z3's `sat_solver.cpp`,
+            // whose 1-UIP loop skips marked literals with
+            // `lvl(c_var) != m_conflict_lvl` for exactly this reason.
             let mut current_lit = Lit::from_code(0); // sentinel default
             let mut found_next = false;
             loop {
@@ -189,8 +202,9 @@ impl Solver {
                 }
                 index -= 1;
                 current_lit = self.trail.assignments()[index];
-                p = Some(current_lit);
-                if self.seen[current_lit.var().index()] {
+                let var = current_lit.var();
+                if self.seen[var.index()] && self.trail.level(var) == current_level {
+                    p = Some(current_lit);
                     found_next = true;
                     break;
                 }
@@ -221,6 +235,33 @@ impl Solver {
             self.learnt[0] = lit.negate();
         }
 
+        // Repair an early exit from the resolution loop.
+        //
+        // The loop above stops as soon as it reaches a literal with no clausal
+        // reason (a decision, or a theory propagation whose explanation is not a
+        // clause in the database). If `counter` has not reached 0 by then, some
+        // conflict-level literals were counted but never resolved away, and they
+        // are simply missing from `self.learnt` — an over-strong clause, which is
+        // unsound: it can drive the solver to a bogus root-level unit and hence
+        // to a false `unsat`. Every such literal is still `seen`, and its
+        // contribution to the resolvent is the negation of its trail assignment
+        // (the resolvent's literals are all false), so adding those recovers a
+        // clause that resolution genuinely derives.
+        if counter > 0 {
+            let uip_var = p.map(|lit| lit.var());
+            for &lit in self.trail.assignments() {
+                let var = lit.var();
+                if self.seen[var.index()]
+                    && self.trail.level(var) == current_level
+                    && Some(var) != uip_var
+                {
+                    // Stays `seen`: that flag is how minimization recognises the
+                    // literals that are in the learned clause.
+                    self.learnt.push(lit.negate());
+                }
+            }
+        }
+
         // Minimize learnt clause using recursive resolution
         self.minimize_learnt_clause();
 
@@ -241,29 +282,34 @@ impl Solver {
             }
         }
 
-        // Calculate assertion level (traditional backtrack level)
-        let assertion_level = if self.learnt.len() == 1 {
+        // Order the clause so that its two highest-level literals occupy the
+        // watched positions, `learnt[0]` being the highest.
+        //
+        // For a textbook 1-UIP clause `learnt[0]` is already the unique
+        // conflict-level literal, so this only moves the second watch into place.
+        // Under chronological backtracking that is no longer guaranteed: the
+        // asserting literal is assigned at its true implication level, which may
+        // sit *below* another literal of the clause. Leaving such a clause
+        // unordered would compute a backtrack level above `learnt[0]`'s level, so
+        // backtracking would not unassign it and the learned clause would
+        // re-assign an already-assigned variable, corrupting the trail. Z3 does
+        // the same swap in `learn_lemma_and_backjump` ("with scope tracking and
+        // chronological backtracking, consequent may not be at highest decision
+        // level").
+        let uip_level = self.reorder_learnt_watches();
+
+        // Level at which the clause becomes unit (the second highest level).
+        let assertion_level = if self.learnt.len() <= 1 {
             0
         } else {
-            // Find second highest level
-            let mut max_level = 0;
-            let mut max_idx = 1;
-            for (i, &lit) in self.learnt.iter().enumerate().skip(1) {
-                let level = self.trail.level(lit.var());
-                if level > max_level {
-                    max_level = level;
-                    max_idx = i;
-                }
-            }
-            // Move second watch to position 1
-            self.learnt.swap(1, max_idx);
-            max_level
+            self.trail.level(self.learnt[1].var())
         };
 
         // Apply chronological backtracking if enabled
         let backtrack_level = self.chrono_backtrack.compute_backtrack_level(
             &self.trail,
             &self.learnt,
+            uip_level,
             assertion_level,
         );
 
@@ -316,6 +362,45 @@ impl Solver {
         );
 
         (backtrack_level, self.learnt.clone())
+    }
+
+    /// Move the two highest-level literals of `self.learnt` into the watched
+    /// positions — `learnt[0]` highest, `learnt[1]` second highest — and return
+    /// `learnt[0]`'s decision level.
+    ///
+    /// This is the standard "watch the two literals falsified latest" invariant.
+    /// For a textbook 1-UIP clause `learnt[0]` already holds the unique
+    /// conflict-level literal, so only the second watch actually moves.
+    fn reorder_learnt_watches(&mut self) -> u32 {
+        if self.learnt.is_empty() {
+            return 0;
+        }
+
+        let mut max_idx = 0;
+        let mut max_level = self.trail.level(self.learnt[0].var());
+        for i in 1..self.learnt.len() {
+            let level = self.trail.level(self.learnt[i].var());
+            if level > max_level {
+                max_level = level;
+                max_idx = i;
+            }
+        }
+        self.learnt.swap(0, max_idx);
+
+        if self.learnt.len() > 1 {
+            let mut second_idx = 1;
+            let mut second_level = self.trail.level(self.learnt[1].var());
+            for i in 2..self.learnt.len() {
+                let level = self.trail.level(self.learnt[i].var());
+                if level > second_level {
+                    second_level = level;
+                    second_idx = i;
+                }
+            }
+            self.learnt.swap(1, second_idx);
+        }
+
+        max_level
     }
 
     /// Minimize the learned clause by removing redundant literals

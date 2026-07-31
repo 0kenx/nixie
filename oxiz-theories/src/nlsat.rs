@@ -80,50 +80,8 @@ impl<'a> TermPolyTranslator<'a> {
     /// Returns `None` for sub-expressions that cannot be expressed as a
     /// polynomial (e.g. division, modulo, uninterpreted functions).
     pub fn translate(&mut self, term_id: TermId) -> Option<Polynomial> {
-        let term = self.manager.get(term_id)?;
-        match &term.kind.clone() {
-            TermKind::IntConst(n) => {
-                let r = BigRational::from_integer(n.clone());
-                Some(Polynomial::constant(r))
-            }
-            TermKind::RealConst(r) => {
-                let big = BigRational::new(
-                    BigInt::from(r.numer().to_i64().unwrap_or(0)),
-                    BigInt::from(r.denom().to_i64().unwrap_or(1)),
-                );
-                Some(Polynomial::constant(big))
-            }
-            TermKind::Var(_) => {
-                let v = self.get_or_create_var(term_id);
-                Some(Polynomial::from_var(v))
-            }
-            TermKind::Neg(inner) => {
-                let p = self.translate(*inner)?;
-                Some(Polynomial::neg(&p))
-            }
-            TermKind::Add(args) => {
-                let mut acc = Polynomial::zero();
-                for &arg in args.iter() {
-                    let p = self.translate(arg)?;
-                    acc = Polynomial::add(&acc, &p);
-                }
-                Some(acc)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let lp = self.translate(*lhs)?;
-                let rp = self.translate(*rhs)?;
-                Some(Polynomial::sub(&lp, &rp))
-            }
-            TermKind::Mul(args) => {
-                let mut acc = Polynomial::one();
-                for &arg in args.iter() {
-                    let p = self.translate(arg)?;
-                    acc = Polynomial::mul(&acc, &p);
-                }
-                Some(acc)
-            }
-            _ => None,
-        }
+        let manager = self.manager;
+        translate_poly(manager, self, term_id)
     }
 
     fn get_or_create_var(&mut self, term_id: TermId) -> u32 {
@@ -156,6 +114,204 @@ impl<'a> TermPolyTranslator<'a> {
     }
 }
 
+impl PolyVarSource for TermPolyTranslator<'_> {
+    fn var_for(&mut self, term_id: TermId) -> u32 {
+        self.get_or_create_var(term_id)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared iterative term→polynomial translation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The one thing the two translators do differently: mint (or look up) the
+/// polynomial variable index for a term.
+trait PolyVarSource {
+    /// The polynomial variable index standing for `term_id`.
+    fn var_for(&mut self, term_id: TermId) -> u32;
+}
+
+/// How a node's polynomial is assembled from its operands'.
+#[derive(Debug, Clone, Copy)]
+enum PolyCombine {
+    /// Unary `-`, over the sum of the (single) operand.
+    Neg,
+    /// n-ary `+`, folded left to right from zero.
+    Add,
+    /// n-ary `*`, folded left to right from one.
+    Mul,
+    /// Binary `-`: the first operand minus the rest.
+    Sub,
+}
+
+/// One pending arithmetic node of the iterative translation.
+struct PolyFrame {
+    /// How to combine the operands.
+    combine: PolyCombine,
+    /// Operand terms still to translate, reversed so `pop` yields them in the
+    /// same left-to-right order the recursive version used (which matters:
+    /// `var_for` mints variable indices as a side effect).
+    pending: Vec<TermId>,
+    /// Operands translated so far, in operand order.
+    done: Vec<Polynomial>,
+}
+
+impl PolyFrame {
+    /// Fold this node's operands into its polynomial.
+    fn finish(self) -> Polynomial {
+        match self.combine {
+            PolyCombine::Neg => Polynomial::neg(&fold_add(self.done)),
+            PolyCombine::Add => fold_add(self.done),
+            PolyCombine::Mul => {
+                let mut acc = Polynomial::one();
+                for p in &self.done {
+                    acc = Polynomial::mul(&acc, p);
+                }
+                acc
+            }
+            PolyCombine::Sub => {
+                let mut operands = self.done.into_iter();
+                let mut acc = operands.next().unwrap_or_else(Polynomial::zero);
+                for p in operands {
+                    acc = Polynomial::sub(&acc, &p);
+                }
+                acc
+            }
+        }
+    }
+}
+
+/// Sum a list of polynomials left to right, starting from zero — which is also
+/// exactly what a one-element list needs, so unary nodes can reuse it instead
+/// of asserting their operand is present.
+fn fold_add(parts: Vec<Polynomial>) -> Polynomial {
+    let mut acc = Polynomial::zero();
+    for p in &parts {
+        acc = Polynomial::add(&acc, p);
+    }
+    acc
+}
+
+/// What translating one term needs: a polynomial already, or its operands.
+enum PolyOpened {
+    /// A constant or a variable.
+    Leaf(Polynomial),
+    /// An arithmetic operator whose operands must be translated first.
+    Frame(PolyFrame),
+}
+
+/// Classify one term for [`translate_poly`]. `None` means "not expressible as
+/// a polynomial", exactly as the recursive version's `_ => None` did.
+fn open_poly<S: PolyVarSource>(
+    manager: &TermManager,
+    src: &mut S,
+    term_id: TermId,
+) -> Option<PolyOpened> {
+    // The operand list is copied out before `src` is touched, so the borrow of
+    // `manager` never overlaps the `&mut` borrow `var_for` needs.
+    enum Shape {
+        Const(Polynomial),
+        Var,
+        Op(PolyCombine, Vec<TermId>),
+    }
+    let shape = {
+        let term = manager.get(term_id)?;
+        match &term.kind {
+            TermKind::IntConst(n) => {
+                Shape::Const(Polynomial::constant(BigRational::from_integer(n.clone())))
+            }
+            TermKind::RealConst(r) => Shape::Const(Polynomial::constant(BigRational::new(
+                BigInt::from(r.numer().to_i64().unwrap_or(0)),
+                BigInt::from(r.denom().to_i64().unwrap_or(1)),
+            ))),
+            TermKind::Var(_) => Shape::Var,
+            TermKind::Neg(inner) => Shape::Op(PolyCombine::Neg, vec![*inner]),
+            TermKind::Add(args) => {
+                Shape::Op(PolyCombine::Add, args.iter().rev().copied().collect())
+            }
+            TermKind::Sub(lhs, rhs) => Shape::Op(PolyCombine::Sub, vec![*rhs, *lhs]),
+            TermKind::Mul(args) => {
+                Shape::Op(PolyCombine::Mul, args.iter().rev().copied().collect())
+            }
+            _ => return None,
+        }
+    };
+    Some(match shape {
+        Shape::Const(p) => PolyOpened::Leaf(p),
+        Shape::Var => PolyOpened::Leaf(Polynomial::from_var(src.var_for(term_id))),
+        Shape::Op(combine, pending) => PolyOpened::Frame(PolyFrame {
+            combine,
+            pending,
+            done: Vec::new(),
+        }),
+    })
+}
+
+/// Translate an arithmetic term into a polynomial with an explicit stack.
+///
+/// The recursive version descended once per nesting level of an entirely
+/// input-controlled term (and cloned the whole `TermKind`, `Vec<TermId>` and
+/// `BigInt` included, into every frame). Shared subterms are translated once
+/// and reused, so a `let`-shared doubling term cannot re-expand exponentially.
+fn translate_poly<S: PolyVarSource>(
+    manager: &TermManager,
+    src: &mut S,
+    root: TermId,
+) -> Option<Polynomial> {
+    let mut memo: HashMap<TermId, Polynomial> = HashMap::new();
+    let mut frames: Vec<PolyFrame> = match open_poly(manager, src, root)? {
+        PolyOpened::Leaf(p) => return Some(p),
+        PolyOpened::Frame(f) => vec![f],
+    };
+    // A finished operand polynomial travelling back to the frame that asked
+    // for it, paired with the term it came from so it can be memoised.
+    let mut carry: Option<Polynomial> = None;
+    // The term each frame is translating, parallel to `frames`.
+    let mut frame_terms: Vec<TermId> = vec![root];
+
+    while !frames.is_empty() {
+        let next = match frames.last_mut() {
+            Some(top) => {
+                if let Some(p) = carry.take() {
+                    top.done.push(p);
+                }
+                top.pending.pop()
+            }
+            // Unreachable: the loop condition just checked non-emptiness.
+            None => break,
+        };
+        match next {
+            Some(child) => {
+                if let Some(hit) = memo.get(&child) {
+                    carry = Some(hit.clone());
+                    continue;
+                }
+                match open_poly(manager, src, child)? {
+                    PolyOpened::Leaf(p) => {
+                        memo.insert(child, p.clone());
+                        carry = Some(p);
+                    }
+                    PolyOpened::Frame(f) => {
+                        frames.push(f);
+                        frame_terms.push(child);
+                    }
+                }
+            }
+            None => match (frames.pop(), frame_terms.pop()) {
+                (Some(frame), Some(term)) => {
+                    let built = frame.finish();
+                    memo.insert(term, built.clone());
+                    carry = Some(built);
+                }
+                // Unreachable: the two stacks are pushed and popped together.
+                _ => break,
+            },
+        }
+    }
+
+    carry
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: nonlinearity detection
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,31 +319,44 @@ impl<'a> TermPolyTranslator<'a> {
 /// Returns `true` if `term_id` (recursively) contains a `Mul` node where at
 /// least two non-constant operands are multiplied together.
 pub fn term_is_nonlinear(term_id: TermId, manager: &TermManager) -> bool {
-    let Some(term) = manager.get(term_id) else {
-        return false;
-    };
-    match &term.kind {
-        TermKind::Mul(args) => {
-            let non_const_count = args.iter().filter(|&&a| !is_const_term(a, manager)).count();
-            if non_const_count >= 2 {
-                return true;
+    // Explicit stack plus a visited set. This is the first thing the NIA/NRA
+    // dispatcher does for every assertion, so its depth is the assertion's
+    // nesting depth (input-controlled) and its breadth is the assertion DAG
+    // (which a `let`-shared term makes exponential to re-walk). It returns
+    // `bool`, so a depth cap could only answer "linear" for a nonlinear
+    // problem and hand the whole logic to the wrong solver.
+    let mut stack: Vec<TermId> = vec![term_id];
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        let Some(term) = manager.get(current) else {
+            continue;
+        };
+        match &term.kind {
+            TermKind::Mul(args) => {
+                let non_const_count = args.iter().filter(|&&a| !is_const_term(a, manager)).count();
+                if non_const_count >= 2 {
+                    return true;
+                }
+                stack.extend(args.iter().copied());
             }
-            args.iter().any(|&a| term_is_nonlinear(a, manager))
+            TermKind::Add(args) | TermKind::And(args) => stack.extend(args.iter().copied()),
+            TermKind::Sub(lhs, rhs)
+            | TermKind::Eq(lhs, rhs)
+            | TermKind::Gt(lhs, rhs)
+            | TermKind::Ge(lhs, rhs)
+            | TermKind::Lt(lhs, rhs)
+            | TermKind::Le(lhs, rhs) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            TermKind::Neg(inner) => stack.push(*inner),
+            _ => {}
         }
-        TermKind::Add(args) | TermKind::And(args) => {
-            args.iter().any(|&a| term_is_nonlinear(a, manager))
-        }
-        TermKind::Sub(lhs, rhs)
-        | TermKind::Eq(lhs, rhs)
-        | TermKind::Gt(lhs, rhs)
-        | TermKind::Ge(lhs, rhs)
-        | TermKind::Lt(lhs, rhs)
-        | TermKind::Le(lhs, rhs) => {
-            term_is_nonlinear(*lhs, manager) || term_is_nonlinear(*rhs, manager)
-        }
-        TermKind::Neg(inner) => term_is_nonlinear(*inner, manager),
-        _ => false,
     }
+    false
 }
 
 fn is_const_term(term_id: TermId, manager: &TermManager) -> bool {
@@ -197,44 +366,55 @@ fn is_const_term(term_id: TermId, manager: &TermManager) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the term mentions an operator the polynomial translation cannot
+/// express. Same shape (and same reasons for being iterative + memoised) as
+/// [`term_is_nonlinear`]: `bool` return, `check_sat` path, input-controlled
+/// depth and sharing.
 fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
-    let Some(term) = manager.get(term_id) else {
-        return false;
-    };
-
-    match &term.kind {
-        TermKind::Div(_, _) | TermKind::Mod(_, _) => true,
-        TermKind::Apply { .. }
-        | TermKind::Forall { .. }
-        | TermKind::Exists { .. }
-        | TermKind::Let { .. }
-        | TermKind::Match { .. } => true,
-        TermKind::Neg(inner) | TermKind::Not(inner) => contains_non_polynomial_ops(*inner, manager),
-        TermKind::Add(args)
-        | TermKind::Mul(args)
-        | TermKind::And(args)
-        | TermKind::Or(args)
-        | TermKind::Distinct(args) => args
-            .iter()
-            .any(|&arg| contains_non_polynomial_ops(arg, manager)),
-        TermKind::Ite(cond, then_term, else_term) => {
-            contains_non_polynomial_ops(*cond, manager)
-                || contains_non_polynomial_ops(*then_term, manager)
-                || contains_non_polynomial_ops(*else_term, manager)
+    let mut stack: Vec<TermId> = vec![term_id];
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
         }
-        TermKind::Xor(lhs, rhs) | TermKind::Implies(lhs, rhs) => {
-            contains_non_polynomial_ops(*lhs, manager) || contains_non_polynomial_ops(*rhs, manager)
+        let Some(term) = manager.get(current) else {
+            continue;
+        };
+        match &term.kind {
+            TermKind::Div(_, _) | TermKind::Mod(_, _) => return true,
+            TermKind::Apply { .. }
+            | TermKind::Forall { .. }
+            | TermKind::Exists { .. }
+            | TermKind::Let { .. }
+            | TermKind::Match { .. } => return true,
+            TermKind::Neg(inner) | TermKind::Not(inner) => stack.push(*inner),
+            TermKind::Add(args)
+            | TermKind::Mul(args)
+            | TermKind::And(args)
+            | TermKind::Or(args)
+            | TermKind::Distinct(args) => stack.extend(args.iter().copied()),
+            TermKind::Ite(cond, then_term, else_term) => {
+                stack.push(*cond);
+                stack.push(*then_term);
+                stack.push(*else_term);
+            }
+            TermKind::Xor(lhs, rhs) | TermKind::Implies(lhs, rhs) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            TermKind::Sub(lhs, rhs)
+            | TermKind::Eq(lhs, rhs)
+            | TermKind::Gt(lhs, rhs)
+            | TermKind::Ge(lhs, rhs)
+            | TermKind::Lt(lhs, rhs)
+            | TermKind::Le(lhs, rhs) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            _ => {}
         }
-        TermKind::Sub(lhs, rhs)
-        | TermKind::Eq(lhs, rhs)
-        | TermKind::Gt(lhs, rhs)
-        | TermKind::Ge(lhs, rhs)
-        | TermKind::Lt(lhs, rhs)
-        | TermKind::Le(lhs, rhs) => {
-            contains_non_polynomial_ops(*lhs, manager) || contains_non_polynomial_ops(*rhs, manager)
-        }
-        _ => false,
     }
+    false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -270,81 +450,95 @@ fn extract_poly_atoms(
     out: &mut Vec<PolyAtom>,
     incomplete: &mut bool,
 ) {
-    let Some(term) = manager.get(term_id) else {
-        *incomplete = true;
-        return;
-    };
-    match &term.kind.clone() {
-        TermKind::Eq(lhs, rhs) => {
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&lp, &rp),
-                    kind: AtomKind::Eq,
-                    positive: true,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Lt(lhs, rhs) => {
-            // lhs < rhs → rhs - lhs > 0
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&rp, &lp),
-                    kind: AtomKind::Gt,
-                    positive: true,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Le(lhs, rhs) => {
-            // lhs <= rhs → rhs - lhs >= 0 → NOT(rhs - lhs < 0)
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&rp, &lp),
-                    kind: AtomKind::Lt,
-                    positive: false,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Gt(lhs, rhs) => {
-            // lhs > rhs → lhs - rhs > 0
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&lp, &rp),
-                    kind: AtomKind::Gt,
-                    positive: true,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Ge(lhs, rhs) => {
-            // lhs >= rhs → NOT(lhs - rhs < 0)
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&lp, &rp),
-                    kind: AtomKind::Lt,
-                    positive: false,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::And(args) => {
-            for &arg in args.iter() {
-                extract_poly_atoms(arg, manager, translator, out, incomplete);
-            }
-        }
-        _ => {
-            // Any other top-level shape (Or/Not/Distinct/Ite/…) belongs to the
-            // boolean abstraction layer, not to this pure-conjunction fast
-            // path. Dropping it silently would let the solver "prove" Sat on a
-            // relaxed problem, so flag the extraction as incomplete instead.
+    // Iterative conjunction descent: an assertion is an implicit conjunction
+    // and `(and A (and B …))` nests as deep as the input makes it. Conjuncts
+    // are pushed in reverse so they pop left to right, the order the recursive
+    // descent used (and the order atoms land in `out`).
+    let mut worklist = vec![term_id];
+    while let Some(current) = worklist.pop() {
+        let Some(term) = manager.get(current) else {
             *incomplete = true;
+            continue;
+        };
+        let kind = term.kind.clone();
+        match &kind {
+            TermKind::Eq(lhs, rhs) => {
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&lp, &rp),
+                        kind: AtomKind::Eq,
+                        positive: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Lt(lhs, rhs) => {
+                // lhs < rhs → rhs - lhs > 0
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&rp, &lp),
+                        kind: AtomKind::Gt,
+                        positive: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Le(lhs, rhs) => {
+                // lhs <= rhs → rhs - lhs >= 0 → NOT(rhs - lhs < 0)
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&rp, &lp),
+                        kind: AtomKind::Lt,
+                        positive: false,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Gt(lhs, rhs) => {
+                // lhs > rhs → lhs - rhs > 0
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&lp, &rp),
+                        kind: AtomKind::Gt,
+                        positive: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Ge(lhs, rhs) => {
+                // lhs >= rhs → NOT(lhs - rhs < 0)
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&lp, &rp),
+                        kind: AtomKind::Lt,
+                        positive: false,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::And(args) => worklist.extend(args.iter().rev().copied()),
+            _ => {
+                // Any other top-level shape (Or/Not/Distinct/Ite/…) belongs to the
+                // boolean abstraction layer, not to this pure-conjunction fast
+                // path. Dropping it silently would let the solver "prove" Sat on a
+                // relaxed problem, so flag the extraction as incomplete instead.
+                *incomplete = true;
+            }
         }
     }
 }
@@ -445,49 +639,8 @@ impl<'a> RealPolyTranslator<'a> {
     }
 
     fn translate(&mut self, term_id: TermId) -> Option<Polynomial> {
-        let term = self.manager.get(term_id)?;
-        match &term.kind.clone() {
-            TermKind::IntConst(n) => {
-                Some(Polynomial::constant(BigRational::from_integer(n.clone())))
-            }
-            TermKind::RealConst(r) => {
-                let big = BigRational::new(
-                    BigInt::from(r.numer().to_i64().unwrap_or(0)),
-                    BigInt::from(r.denom().to_i64().unwrap_or(1)),
-                );
-                Some(Polynomial::constant(big))
-            }
-            TermKind::Var(_) => {
-                let v = self.get_or_create_var(term_id);
-                Some(Polynomial::from_var(v))
-            }
-            TermKind::Neg(inner) => {
-                let p = self.translate(*inner)?;
-                Some(Polynomial::neg(&p))
-            }
-            TermKind::Add(args) => {
-                let mut acc = Polynomial::zero();
-                for &arg in args.iter() {
-                    let p = self.translate(arg)?;
-                    acc = Polynomial::add(&acc, &p);
-                }
-                Some(acc)
-            }
-            TermKind::Sub(lhs, rhs) => {
-                let lp = self.translate(*lhs)?;
-                let rp = self.translate(*rhs)?;
-                Some(Polynomial::sub(&lp, &rp))
-            }
-            TermKind::Mul(args) => {
-                let mut acc = Polynomial::one();
-                for &arg in args.iter() {
-                    let p = self.translate(arg)?;
-                    acc = Polynomial::mul(&acc, &p);
-                }
-                Some(acc)
-            }
-            _ => None,
-        }
+        let manager = self.manager;
+        translate_poly(manager, self, term_id)
     }
 
     fn get_or_create_var(&mut self, term_id: TermId) -> u32 {
@@ -500,6 +653,12 @@ impl<'a> RealPolyTranslator<'a> {
     }
 }
 
+impl PolyVarSource for RealPolyTranslator<'_> {
+    fn var_for(&mut self, term_id: TermId) -> u32 {
+        self.get_or_create_var(term_id)
+    }
+}
+
 /// Real-arithmetic analogue of [`extract_poly_atoms`]. See its documentation
 /// for the meaning of `incomplete`.
 fn extract_real_poly_atoms(
@@ -509,73 +668,87 @@ fn extract_real_poly_atoms(
     out: &mut Vec<PolyAtom>,
     incomplete: &mut bool,
 ) {
-    let Some(term) = manager.get(term_id) else {
-        *incomplete = true;
-        return;
-    };
-    match &term.kind.clone() {
-        TermKind::Eq(lhs, rhs) => {
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&lp, &rp),
-                    kind: AtomKind::Eq,
-                    positive: true,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Lt(lhs, rhs) => {
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&rp, &lp),
-                    kind: AtomKind::Gt,
-                    positive: true,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Le(lhs, rhs) => {
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&rp, &lp),
-                    kind: AtomKind::Lt,
-                    positive: false,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Gt(lhs, rhs) => {
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&lp, &rp),
-                    kind: AtomKind::Gt,
-                    positive: true,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::Ge(lhs, rhs) => {
-            if let (Some(lp), Some(rp)) = (translator.translate(*lhs), translator.translate(*rhs)) {
-                out.push(PolyAtom {
-                    poly: Polynomial::sub(&lp, &rp),
-                    kind: AtomKind::Lt,
-                    positive: false,
-                });
-            } else {
-                *incomplete = true;
-            }
-        }
-        TermKind::And(args) => {
-            for &arg in args.iter() {
-                extract_real_poly_atoms(arg, manager, translator, out, incomplete);
-            }
-        }
-        _ => {
+    // Iterative conjunction descent: an assertion is an implicit conjunction
+    // and `(and A (and B …))` nests as deep as the input makes it. Conjuncts
+    // are pushed in reverse so they pop left to right, the order the recursive
+    // descent used (and the order atoms land in `out`).
+    let mut worklist = vec![term_id];
+    while let Some(current) = worklist.pop() {
+        let Some(term) = manager.get(current) else {
             *incomplete = true;
+            continue;
+        };
+        let kind = term.kind.clone();
+        match &kind {
+            TermKind::Eq(lhs, rhs) => {
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&lp, &rp),
+                        kind: AtomKind::Eq,
+                        positive: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Lt(lhs, rhs) => {
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&rp, &lp),
+                        kind: AtomKind::Gt,
+                        positive: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Le(lhs, rhs) => {
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&rp, &lp),
+                        kind: AtomKind::Lt,
+                        positive: false,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Gt(lhs, rhs) => {
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&lp, &rp),
+                        kind: AtomKind::Gt,
+                        positive: true,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::Ge(lhs, rhs) => {
+                if let (Some(lp), Some(rp)) =
+                    (translator.translate(*lhs), translator.translate(*rhs))
+                {
+                    out.push(PolyAtom {
+                        poly: Polynomial::sub(&lp, &rp),
+                        kind: AtomKind::Lt,
+                        positive: false,
+                    });
+                } else {
+                    *incomplete = true;
+                }
+            }
+            TermKind::And(args) => worklist.extend(args.iter().rev().copied()),
+            _ => {
+                *incomplete = true;
+            }
         }
     }
 }

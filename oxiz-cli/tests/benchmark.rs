@@ -2,6 +2,8 @@
 //!
 //! These tests measure performance characteristics of the CLI
 
+mod common;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -13,12 +15,16 @@ fn oxiz_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oxiz"))
 }
 
-/// Create a temporary SMT2 file for testing
-fn create_temp_smt2(content: &str, name: &str) -> PathBuf {
-    let temp_dir = env::temp_dir();
-    let file_path = temp_dir.join(format!("bench_{}.smt2", name));
-    fs::write(&file_path, content).expect("Failed to write temp file");
-    file_path
+/// Create a temporary SMT2 file for testing.
+///
+/// See `tests/common/mod.rs` for why this is collision-proof by
+/// construction (pid + per-process counter) rather than the fixed,
+/// name-only path this used to build -- two concurrent runs of this same
+/// binary (e.g. a debug and a release `cargo test` invocation overlapping)
+/// previously raced on the identical path -- and why it cleans up on
+/// `Drop` (including on panic).
+fn create_temp_smt2(content: &str, name: &str) -> common::TempPath {
+    common::TempPath::write(&format!("bench_{name}"), "smt2", content)
 }
 
 /// Wall-clock duration assertions in this file are flaky under shared-machine /
@@ -30,15 +36,26 @@ fn timing_asserts_enabled() -> bool {
     env::var("OXIZ_TIMING_TESTS").as_deref() == Ok("1")
 }
 
-/// Assert `elapsed` is under `budget_ms`, but only when timing assertions are
-/// enabled via `OXIZ_TIMING_TESTS=1`. Always prints the elapsed time either way.
-fn assert_within_budget(elapsed: std::time::Duration, budget_ms: u128, label: &str) {
-    if timing_asserts_enabled() {
+/// Assert `elapsed` is under `budget_ms` when `enabled` is `true`; otherwise
+/// a no-op except for always printing the elapsed time. Parameterized
+/// (rather than reading the gate internally) so the gate's on/off behavior
+/// can be unit-tested without mutating process-global environment state --
+/// see `assert_within_budget` below and the tests at the bottom of this
+/// file for why that mutation used to be a second, independent race.
+fn assert_budget_gated(elapsed: std::time::Duration, budget_ms: u128, label: &str, enabled: bool) {
+    println!("{label}: {elapsed:?} (budget {budget_ms}ms, timing asserts enabled: {enabled})");
+    if enabled {
         assert!(
             elapsed.as_millis() < budget_ms,
             "{label} took too long: {elapsed:?}"
         );
     }
+}
+
+/// Assert `elapsed` is under `budget_ms`, but only when timing assertions are
+/// enabled via `OXIZ_TIMING_TESTS=1`. Always prints the elapsed time either way.
+fn assert_within_budget(elapsed: std::time::Duration, budget_ms: u128, label: &str) {
+    assert_budget_gated(elapsed, budget_ms, label, timing_asserts_enabled());
 }
 
 #[test]
@@ -218,52 +235,40 @@ fn bench_json_output() {
     assert!(stdout.contains("{") && stdout.contains("}"));
 }
 
-/// Regression test for the `OXIZ_TIMING_TESTS` gate: by default (unset), a
+/// Regression test for the `OXIZ_TIMING_TESTS` gate: when disabled, a
 /// wildly-over-budget duration must NOT panic — only the solve/output
-/// assertions run. `cargo-nextest` isolates each test in its own process, so
-/// mutating the environment here does not leak into other tests in this file.
+/// assertions run.
+///
+/// This used to set/remove the real `OXIZ_TIMING_TESTS` process environment
+/// variable via `env::set_var`/`env::remove_var` (`unsafe` as of the 2024
+/// edition) to drive `timing_asserts_enabled()`. That variable is
+/// process-global: under plain `cargo test` (as opposed to `cargo-nextest`,
+/// which the old comment here assumed but which is not guaranteed for every
+/// invocation of this suite), every `#[test]` in this binary runs as a
+/// thread in one process, so this test toggling the var raced against every
+/// other thread reading it -- including the benchmark tests above, whose
+/// hardcoded timing budgets would then flip from advisory to enforced mid-run
+/// under load. Testing the pure, parameterized `assert_budget_gated` directly
+/// exercises the exact same gate logic without touching global state at all.
 #[test]
 fn timing_budget_is_opt_in_by_default() {
-    // SAFETY: nextest runs each test in its own process; no other thread in
-    // this process reads/writes OXIZ_TIMING_TESTS concurrently.
-    unsafe {
-        env::remove_var("OXIZ_TIMING_TESTS");
-    }
-    assert!(
-        !timing_asserts_enabled(),
-        "timing asserts must default to disabled"
-    );
-
     // An absurdly long "elapsed" must not panic when the gate is off.
     let huge = std::time::Duration::from_secs(3600);
-    assert_within_budget(huge, 5000, "should not panic with gate off");
+    assert_budget_gated(huge, 5000, "should not panic with gate off", false);
 }
 
-/// Regression test: when explicitly opted in via `OXIZ_TIMING_TESTS=1`, an
-/// over-budget duration DOES panic, so the gate is not a no-op.
+/// Regression test: when the gate is enabled, an over-budget duration DOES
+/// panic, so the gate is not a no-op. See
+/// `timing_budget_is_opt_in_by_default` above for why this no longer
+/// mutates the real `OXIZ_TIMING_TESTS` environment variable.
 #[test]
 fn timing_budget_enforced_when_opted_in() {
-    // SAFETY: see note above.
-    unsafe {
-        env::set_var("OXIZ_TIMING_TESTS", "1");
-    }
-    assert!(
-        timing_asserts_enabled(),
-        "timing asserts must be enabled once OXIZ_TIMING_TESTS=1 is set"
-    );
-
     let huge = std::time::Duration::from_secs(3600);
     let result = std::panic::catch_unwind(|| {
-        assert_within_budget(huge, 5000, "over-budget duration");
+        assert_budget_gated(huge, 5000, "over-budget duration", true);
     });
     assert!(
         result.is_err(),
-        "assert_within_budget should panic when over budget and the gate is on"
+        "assert_budget_gated should panic when over budget and the gate is on"
     );
-
-    // Clean up so this process's env doesn't affect anything else that
-    // might run after this test within the same process.
-    unsafe {
-        env::remove_var("OXIZ_TIMING_TESTS");
-    }
 }

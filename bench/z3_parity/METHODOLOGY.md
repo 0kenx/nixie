@@ -15,15 +15,27 @@ This test suite validates OxiZ's correctness by comparing its results against Z3
 - **QF_FP** (10 benchmarks): Quantifier-Free Floating Point
 - **QF_DT** (10 benchmarks): Quantifier-Free Datatypes
 - **QF_A** (10 benchmarks): Quantifier-Free Arrays
+- **QF_ABV** (5 benchmarks): Quantifier-Free Arrays + Bit-Vectors
+- **QF_ALIA** (5 benchmarks): Quantifier-Free Arrays + Linear Integer Arithmetic
+- **QF_AUFBV** (5 benchmarks): Quantifier-Free Arrays + Uninterpreted Functions + Bit-Vectors
+- **QF_AUFLIA** (5 benchmarks): Quantifier-Free Arrays + Uninterpreted Functions + LIA
+- **QF_NIA** (1 benchmark): Quantifier-Free Nonlinear Integer Arithmetic
+- **QF_NIRA** (5 benchmarks): Quantifier-Free Nonlinear Mixed Integer/Real Arithmetic
+- **QF_UFLIA** (5 benchmarks): Quantifier-Free Uninterpreted Functions + LIA
+- **QF_UFLRA** (5 benchmarks): Quantifier-Free Uninterpreted Functions + LRA
+- **AUFLIA** (10 benchmarks): Quantified Arrays + Uninterpreted Functions + LIA
+- **AUFLIRA** (5 benchmarks): Quantified Arrays + Uninterpreted Functions + Mixed Arithmetic
+- **UFLIA** (20 benchmarks): Quantified Uninterpreted Functions + LIA
+- **UFLRA** (10 benchmarks): Quantified Uninterpreted Functions + LRA
 
-**Total:** 87 benchmarks
+**Total:** 168 benchmarks across 19 logic families
 
 ### Benchmark Selection Criteria
 
 Each benchmark was selected to:
 
 1. **Cover diverse constraint patterns** - Not just simple satisfiability checks
-2. **Mix of SAT/UNSAT/UNKNOWN** - Approximately 40% SAT, 40% UNSAT, 20% UNKNOWN
+2. **Mix of SAT and UNSAT** - The current corpus is 116 SAT and 52 UNSAT as decided by `z3`; every case is decisive on both sides, so none of them is `Inconclusive`
 3. **Varied complexity** - Easy, medium, and hard instances
 4. **Execute within timeout** - Both solvers should complete within 60 seconds
 5. **Test edge cases** - Boundary conditions, special values, tricky patterns
@@ -70,32 +82,135 @@ This will:
 2. Run each benchmark on both Z3 and OxiZ (in parallel)
 3. Compare results
 4. Generate a summary report
-5. Save detailed results to `results.json`
+5. Write the detailed results twice, with identical content: to `results.json` (git-ignored
+   **scratch** copy of the run you just performed, not the project's recorded evidence) and to
+   this machine's tracked snapshot `results.<os>-<arch>.json`. See "Result Files" immediately
+   below for which one is evidence and which one is not.
+
+### Result Files: One Tracked Snapshot per Environment
+
+Two files, two different jobs:
+
+| File | Tracked? | Role |
+|------|----------|------|
+| `results.json` | **No** — git-ignored | Scratch output of the most recent local run *on this machine*. Every run overwrites it. Never cite it as evidence. |
+| `results.<os>-<arch>.json` | **Yes** — committed | The recorded parity result **for one environment** (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`). This is what `README.md`, `TODO.md` and `docs/smtcomp2026_participation.md` point at when they say "authoritative". |
+
+A run writes both files itself, so publishing a result is just a matter of committing the right
+one: stage `results.<os>-<arch>.json` for the environment you actually ran on, never `results.json`
+and never another environment's snapshot. A machine may only speak for itself.
+
+#### File schema (`schema_version` 1)
+
+```json
+{
+  "schema_version": 1,
+  "metadata": {
+    "oxiz_version": "0.3.1",
+    "z3_version": "4.15.4",
+    "os": "macos",
+    "arch": "aarch64",
+    "generated_at": "2026-07-31T11:14:13+07:00",
+    "benchmark_count": 168,
+    "provenance": "optional; present only on migrated files"
+  },
+  "results": [
+    {
+      "benchmark": "array_extensionality.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": { "secs": 0, "nanos": 1340381 },
+      "z3_time": { "secs": 0, "nanos": 17799137 },
+      "match_status": "Correct"
+    }
+  ]
+}
+```
+
+`results` holds the `ParityResult` objects the runner already produced — the field set is
+unchanged from the pre-schema single-file format. `metadata.benchmark_count` must equal
+`results.len()`, and `metadata.os` / `metadata.arch` must match the file's own name, so a snapshot
+cannot be filed under another environment's identity. `metadata.z3_version` is the version probed
+from the binary at run time, and is `null` when no `z3` could be probed — never a guessed or
+transcribed value on a generated file. `metadata.provenance` is absent on generated files; see
+below.
+
+#### The agreement rule
+
+> Every tracked `results.<os>-<arch>.json` must agree on the VERDICT of every benchmark
+> (`oxiz_result`, `z3_result`, `match_status`). Timings (`oxiz_time`, `z3_time`) are
+> machine-dependent and are expected to differ.
+
+This is what makes a per-logic table in `README.md` a statement about OxiZ rather than about one
+laptop. It was verified by hand when the layout was introduced — 168 benchmarks × 3 verdict fields
+across the macOS record and a fresh Linux run, zero mismatches, with `oxiz_time` and `z3_time` the
+only fields that differed anywhere in the file — and it is now a standing check:
+`tests/cross_env_verdict_agreement.rs` discovers every tracked snapshot, validates the envelope,
+and fails with the offending benchmark, field and both values whenever two snapshots disagree. It
+reads committed JSON only: no `z3` binary, no solving, so it runs in any environment.
+
+#### Why per-environment files
+
+The suite used to write a single tracked `results.json` that every document cited as *the*
+authoritative result, while it actually held "whatever machine ran last". On 2026-07-31 a Linux
+run overwrote macOS-recorded numbers and nothing in the file signalled it — one platform could
+silently overwrite another platform's recorded evidence, and a genuine cross-platform divergence
+would have been indistinguishable from a routine re-run. Splitting the record per environment
+makes both the overwrite impossible and the divergence visible.
+
+#### `provenance` on migrated files
+
+A snapshot produced by an actual run carries no `provenance` field. `results.macos-aarch64.json`
+does: it was migrated from the single tracked `results.json` as recorded at commit `540b7d0`.
+Metadata that had to be **reconstructed** during that migration (the environment, the tool
+versions, the timestamp) is an attribution, not a measurement — the per-benchmark verdicts and
+timings are exactly as recorded, but a reconstructed metadata field must not be read as if it had
+been measured at run time.
+
+#### The z3 version is part of the evidence
+
+`metadata.z3_version` is not decoration. The recorded baseline is **z3 4.15.4**; Ubuntu's `apt`
+currently ships **4.13.3**, which is a different solver for evidence purposes. If two snapshots
+disagree on a verdict and were produced against different z3 versions, the disagreement is
+*unattributable*: nothing in it can be pinned on OxiZ or on z3 until both sides are re-measured
+against the same z3 binary. Prefer an upstream release matching the baseline over the distro
+package, and always record the `z3 --version` you actually ran.
 
 ### Interpreting Results
 
 #### Match Status
 
-- **Correct**: Both solvers agree (SAT/SAT, UNSAT/UNSAT, UNKNOWN/UNKNOWN)
+The classification is implemented by `compare_results` in `src/comparator.rs`, which uses an
+**honest comparator**: an `UNKNOWN` answer from either solver can never produce a `Correct`
+verdict, so a solver cannot inflate its parity score by declining to answer.
+
+- **Correct**: Both solvers returned the *same decisive* answer (SAT/SAT or UNSAT/UNSAT)
 - **Wrong**: Disagreement on SAT/UNSAT (critical bug!)
-- **Timeout**: One or both solvers exceeded 60s timeout
+- **Inconclusive**: Either or both solvers answered UNKNOWN — including UNKNOWN/UNKNOWN. No parity claim can be made, because the decisive answer (if any) was never cross-checked
+- **Timeout**: One or both solvers exceeded the 60s timeout
 - **Error**: Parse error or execution failure
 
-**Note:** If one solver returns UNKNOWN and the other returns SAT or UNSAT, this is considered **Correct** (UNKNOWN is a valid response).
+**Note:** `MatchStatus::is_decisive()` counts only `Correct` and `Wrong` towards the parity
+percentage. A unit test in `src/comparator.rs` asserts that no combination involving `UNKNOWN`
+can ever yield `Correct`.
 
 #### Pass Criteria
 
-For **v0.1.3 release**, the following accuracy is required:
+For the **v0.3.1 release**, every logic family in the suite must be **100% Correct with 0 Wrong,
+0 Inconclusive, 0 Timeout and 0 Error**, which is the currently recorded result in *every* tracked
+`results.<os>-<arch>.json` snapshot (`results.macos-aarch64.json`, `results.linux-x86_64.json`):
+**168/168 Correct** across all 19 logic families against a real `z3` 4.15.4 binary. The snapshots
+agree on every benchmark's verdict — that agreement is itself part of the pass criteria and is
+checked by `tests/cross_env_verdict_agreement.rs`; only the recorded timings differ between them.
 
-- **QF_LIA**: 100% correct (0 wrong)
-- **QF_LRA**: 100% correct (0 wrong)
-- **QF_BV**: 100% correct (0 wrong)
-- **QF_S**: ≥ 80% correct (exploratory)
-- **QF_FP**: ≥ 80% correct (exploratory)
-- **QF_DT**: ≥ 70% correct (work in progress)
-- **QF_A**: ≥ 90% correct (mature theory)
+Two rules are non-negotiable regardless of the headline number:
 
-**Overall**: ≥ 95% correct across all logics
+- **0 Wrong** is a hard blocker — any decisive disagreement is a soundness bug.
+- Any `Inconclusive`, `Timeout` or `Error` case must be reported as such and never re-labelled
+  `Correct`, so the reported figure always reflects cross-checked decisive answers only.
+
+This is a claim about *this suite*, not a blanket "100% Z3 compatibility" statement.
 
 ## Limitations
 
@@ -109,9 +224,8 @@ For **v0.1.3 release**, the following accuracy is required:
 ### What This Does NOT Test
 
 ❌ **Model quality** - We don't validate model values, only SAT/UNSAT
-❌ **Proof generation** - OxiZ doesn't generate proofs yet
+❌ **Proof generation** - OxiZ's proof output is not cross-checked here (see `oxiz-proof`)
 ❌ **Incremental solving** - Benchmarks are one-shot
-❌ **Quantifiers** - Limited to quantifier-free logics
 ❌ **Performance limits** - All benchmarks finish in < 60s
 
 ## Differential Testing
@@ -219,7 +333,13 @@ Example:
 ```
 
 3. Run the parity suite to validate
-4. Commit both the benchmark and updated `results.json`
+4. Commit the benchmark together with **your own environment's** `results.<os>-<arch>.json`
+   (see "Result Files" above). Do **not** commit `results.json` — it is git-ignored scratch — and
+   do **not** overwrite another environment's snapshot with your run's numbers: adding a benchmark
+   means every other tracked snapshot is now missing it, which
+   `tests/cross_env_verdict_agreement.rs` will report by name. Ask a maintainer on the other
+   platform to re-run and commit theirs, and note in the pull request which environments are still
+   pending, rather than making one machine speak for all of them.
 
 ## Troubleshooting
 
@@ -262,4 +382,4 @@ This test suite should be run:
 - [ ] Incremental solving tests (push/pop)
 - [ ] Performance benchmarking (not just correctness)
 - [ ] Fuzz-generated benchmarks
-- [ ] Quantified formula tests (once implemented)
+- [x] Quantified formula tests (`AUFLIA`, `AUFLIRA`, `UFLIA`, `UFLRA` are part of the suite)

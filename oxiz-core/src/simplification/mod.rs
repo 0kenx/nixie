@@ -47,17 +47,18 @@ pub struct AggressiveSimplifier<'a> {
     /// Current recursion depth of `simplify_cached`, bounded by
     /// `SIMPLIFICATION_MAX_DEPTH`.
     depth: usize,
-    /// Set once the depth cap has triggered during the current top-level
-    /// `simplify_term` call. While set, `manager_simplify` (the only path
-    /// into `TermManager::simplify`, itself an *unbounded*-depth recursive
-    /// traversal in `ast/manager/query.rs`) becomes a no-op passthrough:
-    /// once some subterm has been returned unprocessed by the depth cap, it
-    /// may still be arbitrarily deep, and handing it to another unbounded
-    /// recursive traversal would simply move the stack overflow one layer
-    /// out instead of preventing it. Reset at the start of every top-level
-    /// call so capping in one call cannot degrade later, unrelated calls on
-    /// the same (memo-cache-sharing) instance.
-    capped: bool,
+    /// Monotone count of how many times the depth bound has been hit.
+    ///
+    /// `simplify_cached` samples it on entry and again before memoizing: if
+    /// it moved, some subterm was returned *un*-simplified because the bound
+    /// fired, so this node's result is under-simplified too and must not be
+    /// cached. Without this, an under-simplified result computed during one
+    /// deep call outlived that call and was served to every later, shallower
+    /// call on the same term -- the depth bound leaking a permanently
+    /// degraded answer into an unrelated query. (The bound itself is sound
+    /// either way: its result is always a weaker simplification of the same
+    /// term, never a different term.)
+    capped_hits: u64,
 }
 
 impl<'a> AggressiveSimplifier<'a> {
@@ -68,7 +69,7 @@ impl<'a> AggressiveSimplifier<'a> {
             config,
             memo_cache: LruCache::new(SIMPLIFICATION_MEMO_CAPACITY),
             depth: 0,
-            capped: false,
+            capped_hits: 0,
         }
     }
 
@@ -81,17 +82,26 @@ impl<'a> AggressiveSimplifier<'a> {
     /// Simplify a term recursively.
     /// Results are memoized in an LRU cache shared across all calls on this instance.
     pub fn simplify_term(&mut self, term: TermId) -> TermId {
-        self.capped = false;
         self.simplify_cached(term)
     }
 
-    /// Call `TermManager::simplify`, unless the depth cap has already
-    /// triggered somewhere in the current top-level call (see `capped`), in
-    /// which case this is a no-op passthrough. See `capped` for why.
+    /// Call `TermManager::simplify`.
+    ///
+    /// This used to be a conditional passthrough that turned into a no-op
+    /// once this simplifier's own `SIMPLIFICATION_MAX_DEPTH` cap had
+    /// triggered anywhere in the current top-level call, on the theory that
+    /// `TermManager::simplify` was itself an unbounded-depth recursive
+    /// traversal, so handing it an arbitrarily-deep subterm returned
+    /// unprocessed by that cap would "move the stack overflow one layer
+    /// out" instead of preventing it. That is no longer true --
+    /// `TermManager::simplify` was converted to an explicit heap stack (see
+    /// `ast/manager/query/simplify.rs`) and now has no depth limit at all,
+    /// so it cannot overflow the native stack regardless of how deep the
+    /// term it is given is. There is nothing left to guard against here:
+    /// this is now a direct, unconditional passthrough, kept as a named
+    /// method only as a single choke point for every call this type makes
+    /// into `TermManager::simplify`.
     fn manager_simplify(&mut self, id: TermId) -> TermId {
-        if self.capped {
-            return id;
-        }
         self.manager.simplify(id)
     }
 
@@ -105,9 +115,10 @@ impl<'a> AggressiveSimplifier<'a> {
         // be able to simplify it fully rather than reusing an unsimplified
         // capped result.
         if self.depth >= SIMPLIFICATION_MAX_DEPTH {
-            self.capped = true;
+            self.capped_hits = self.capped_hits.saturating_add(1);
             return term;
         }
+        let capped_before = self.capped_hits;
         self.depth += 1;
 
         let simplified = match self.manager.get(term).map(|t| t.kind.clone()) {
@@ -229,7 +240,11 @@ impl<'a> AggressiveSimplifier<'a> {
         };
 
         self.depth -= 1;
-        self.memo_cache.insert(term, simplified);
+        // Only cache a result that was computed without the depth bound
+        // firing anywhere beneath it -- see `capped_hits`.
+        if self.capped_hits == capped_before {
+            self.memo_cache.insert(term, simplified);
+        }
         simplified
     }
 

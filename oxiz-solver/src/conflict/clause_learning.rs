@@ -365,9 +365,19 @@ impl ClauseLearner {
     }
 
     /// Get literals of a clause.
-    fn get_clause_literals(&self, _clause_id: ClauseId) -> Result<Vec<TermId>, String> {
-        // Placeholder: would retrieve from clause database
-        Ok(vec![])
+    ///
+    /// A [`ClauseId`] indexes [`LearnedDatabase::clauses`]. An id that is not
+    /// in the database is an error, not an empty clause: callers treat an
+    /// empty reason as "vacuously covered", so returning one for an unknown
+    /// id would let conflict minimization delete literals it has no
+    /// justification for. (This routine used to return `Ok(vec![])`
+    /// unconditionally, which did exactly that for *every* id.)
+    fn get_clause_literals(&self, clause_id: ClauseId) -> Result<Vec<TermId>, String> {
+        self.learned_db
+            .clauses
+            .get(clause_id)
+            .map(|clause| clause.literals.clone())
+            .ok_or_else(|| format!("unknown clause id {clause_id}"))
     }
 
     /// Subsume redundant clauses.
@@ -463,51 +473,88 @@ impl ClauseLearner {
     ///
     /// A `visited` set guards against revisiting nodes; implication graphs in
     /// standard CDCL are acyclic, but the guard is kept for robustness.
+    ///
+    /// The walk is driven by an explicit heap stack rather than the native
+    /// call stack. Its depth is the length of an implication chain, which is
+    /// bounded only by the number of assigned literals in the problem -- i.e.
+    /// fully input-controlled -- and the answer is a bare `bool` with no error
+    /// channel, so a depth cap here could only ever turn "cannot remove" into
+    /// a silently wrong "can remove" (or vice versa) and corrupt a learned
+    /// clause. Frames are visited in exactly the order the previous recursion
+    /// visited them, and the first `false` aborts the whole walk, so the
+    /// `visited`-set pruning behaves identically.
     fn can_remove_literal(&self, lit: TermId, clause: &[TermId]) -> bool {
         let mut visited = FxHashSet::default();
-        self.can_remove_literal_rec(lit, clause, &mut visited)
+
+        let mut stack: Vec<RemovalFrame> = Vec::new();
+        match self.enter_removal(lit, &mut visited) {
+            RemovalStep::Done(answer) => return answer,
+            RemovalStep::Descend(frame) => stack.push(frame),
+        }
+
+        while let Some(mut frame) = stack.pop() {
+            let mut descend: Option<RemovalFrame> = None;
+
+            // Every literal in the reason clause (other than `frame.lit`
+            // itself) must either already be present in `clause` or be
+            // removable in turn.
+            while frame.next < frame.reason_lits.len() {
+                let other_lit = frame.reason_lits[frame.next];
+                frame.next += 1;
+
+                if other_lit == frame.lit || clause.contains(&other_lit) {
+                    continue;
+                }
+
+                match self.enter_removal(other_lit, &mut visited) {
+                    RemovalStep::Done(true) => continue,
+                    RemovalStep::Done(false) => return false,
+                    RemovalStep::Descend(child) => {
+                        descend = Some(child);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(child) = descend {
+                stack.push(frame);
+                stack.push(child);
+            }
+            // Otherwise the frame's literals are exhausted: it yields `true`,
+            // which the parent frame simply continues past.
+        }
+
+        true
     }
 
-    fn can_remove_literal_rec(
-        &self,
-        lit: TermId,
-        clause: &[TermId],
-        visited: &mut FxHashSet<TermId>,
-    ) -> bool {
+    /// Classify one node of the [`Self::can_remove_literal`] walk: either the
+    /// answer for that node is immediate, or it has a reason clause whose
+    /// literals must be examined.
+    fn enter_removal(&self, lit: TermId, visited: &mut FxHashSet<TermId>) -> RemovalStep {
         if !visited.insert(lit) {
             // Already visited this node — avoid infinite looping.
-            return true;
+            return RemovalStep::Done(true);
         }
 
         // Decision literals have no reason clause and cannot be removed.
-        let reason_id = match self.impl_graph.get_reason(lit) {
-            Some(r) => r,
-            None => return false,
+        let Some(reason_id) = self.impl_graph.get_reason(lit) else {
+            return RemovalStep::Done(false);
         };
 
         // Retrieve the reason clause's literals.  If the underlying clause
         // database is not yet wired up, `get_clause_literals` returns an empty
-        // vec, which makes the vacuous `all` below return `true` — harmless
-        // because no real literal will be removed from an empty reason clause.
-        let reason_lits = match self.get_clause_literals(reason_id) {
-            Ok(lits) => lits,
-            Err(_) => return false,
+        // vec, which makes the (vacuous) per-literal check below succeed —
+        // harmless because no real literal will be removed from an empty
+        // reason clause.
+        let Ok(reason_lits) = self.get_clause_literals(reason_id) else {
+            return RemovalStep::Done(false);
         };
 
-        // Every literal in the reason clause (other than `lit` itself) must
-        // either already be present in `clause` or be recursively removable.
-        for other_lit in &reason_lits {
-            if *other_lit == lit {
-                continue;
-            }
-            if !clause.contains(other_lit)
-                && !self.can_remove_literal_rec(*other_lit, clause, visited)
-            {
-                return false;
-            }
-        }
-
-        true
+        RemovalStep::Descend(RemovalFrame {
+            lit,
+            reason_lits,
+            next: 0,
+        })
     }
 
     /// Reduce clause database.
@@ -529,6 +576,28 @@ impl ClauseLearner {
     pub fn stats(&self) -> &ClauseLearningStats {
         &self.stats
     }
+}
+
+/// One suspended node of the [`ClauseLearner::can_remove_literal`] walk.
+///
+/// Owning the reason literals plus the index of the next one to examine is
+/// what lets the walk be resumed after descending into a child, i.e. what
+/// replaces the native call frame.
+struct RemovalFrame {
+    /// The literal whose reason clause this frame is scanning.
+    lit: TermId,
+    /// Literals of that reason clause.
+    reason_lits: Vec<TermId>,
+    /// Index of the next literal in `reason_lits` to examine.
+    next: usize,
+}
+
+/// Result of classifying one node of the literal-removal walk.
+enum RemovalStep {
+    /// The node's answer is already known; no descent needed.
+    Done(bool),
+    /// The node has a reason clause that must be scanned.
+    Descend(RemovalFrame),
 }
 
 impl ImplicationGraph {
@@ -766,5 +835,94 @@ mod tests {
 
         // LBD depends on decision levels, which are 0 by default
         assert_eq!(lbd, 1);
+    }
+
+    /// Build a chain of implications `lit_i` <- clause `[lit_i, lit_{i+1}]`,
+    /// so removing `lit_0` requires walking the whole chain. The walk used to
+    /// be recursive and overflowed on a chain the size of a real trail.
+    fn build_implication_chain(learner: &mut ClauseLearner, chain: u32) {
+        for var in 0..=chain {
+            let literals = if var == chain {
+                vec![TermId::from(var)]
+            } else {
+                vec![TermId::from(var), TermId::from(var + 1)]
+            };
+            let clause_id = learner.learned_db.clauses.len();
+            learner.learned_db.add_clause(LearnedClause {
+                literals,
+                asserting_lit: TermId::from(var),
+                backtrack_level: 0,
+                activity: 0.0,
+                locked: false,
+                lbd: 1,
+            });
+            learner
+                .impl_graph
+                .add_node(TermId::from(var), true, 0, Some(clause_id), false);
+        }
+    }
+
+    #[test]
+    fn can_remove_literal_survives_a_long_implication_chain_on_a_small_stack() {
+        // Stack and chain length scale together (1 MiB/100k -> 128 KiB/12.5k):
+        // the ~10 B-per-frame threshold is the pin, so never raise one alone.
+        const CHAIN: u32 = 12_500;
+
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(|| {
+                let mut learner = ClauseLearner::default();
+                build_implication_chain(&mut learner, CHAIN);
+                learner.can_remove_literal(TermId::from(0), &[])
+            })
+            .expect("spawning the worker thread should succeed");
+
+        assert!(handle.join().expect("the walk must not overflow"));
+    }
+
+    /// Semantic pin: a decision literal has no reason clause and can never be
+    /// removed.
+    #[test]
+    fn can_remove_literal_keeps_a_decision_literal() {
+        let mut learner = ClauseLearner::default();
+        learner
+            .impl_graph
+            .add_node(TermId::from(1), true, 0, None, true);
+
+        assert!(!learner.can_remove_literal(TermId::from(1), &[]));
+    }
+
+    /// Semantic pin: a literal whose reason clause is covered by the clause
+    /// being strengthened is removable.
+    #[test]
+    fn can_remove_literal_accepts_a_covered_reason() {
+        let mut learner = ClauseLearner::default();
+        learner.learned_db.add_clause(LearnedClause {
+            literals: vec![TermId::from(1), TermId::from(2)],
+            asserting_lit: TermId::from(1),
+            backtrack_level: 0,
+            activity: 0.0,
+            locked: false,
+            lbd: 1,
+        });
+        learner
+            .impl_graph
+            .add_node(TermId::from(1), true, 0, Some(0), false);
+
+        assert!(learner.can_remove_literal(TermId::from(1), &[TermId::from(2)]));
+    }
+
+    /// A clause id that is not in the database is an error, not an empty
+    /// clause: an empty reason reads as "vacuously covered" and would delete
+    /// the literal.
+    #[test]
+    fn unknown_clause_id_is_an_error_not_an_empty_clause() {
+        let mut learner = ClauseLearner::default();
+        learner
+            .impl_graph
+            .add_node(TermId::from(1), true, 0, Some(42), false);
+
+        assert!(learner.get_clause_literals(42).is_err());
+        assert!(!learner.can_remove_literal(TermId::from(1), &[]));
     }
 }

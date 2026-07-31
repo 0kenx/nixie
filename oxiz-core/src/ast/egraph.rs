@@ -101,6 +101,12 @@ pub struct EGraph {
     classes: FxHashMap<EClassId, EClass>,
     /// Union-find structure for e-class merging
     unionfind: FxHashMap<EClassId, EClassId>,
+    /// Union-by-rank tree heights, keyed by root e-class
+    ///
+    /// Without a rank (or size) heuristic the union step below always made
+    /// one fixed root the child, so `n` chained merges built a parent chain
+    /// of length `n` and every `find` walked all of it.
+    ranks: FxHashMap<EClassId, u32>,
     /// Hashcons: maps e-nodes to their e-class
     hashcons: FxHashMap<ENode, EClassId>,
     /// Pending merges for congruence closure
@@ -118,6 +124,7 @@ impl EGraph {
         Self {
             classes: FxHashMap::default(),
             unionfind: FxHashMap::default(),
+            ranks: FxHashMap::default(),
             hashcons: FxHashMap::default(),
             pending: VecDeque::new(),
             next_id: 0,
@@ -133,15 +140,38 @@ impl EGraph {
     }
 
     /// Find the canonical representative of an e-class (with path compression)
+    ///
+    /// Implemented as the classic iterative two-pass union-find: the first
+    /// pass walks the parent chain up to the root, the second re-points every
+    /// node on that path directly at the root. The recursive form this
+    /// replaces consumed one call frame per link in the chain, and — with the
+    /// union step below now using union-by-rank — a chain can no longer grow
+    /// linearly in the number of merges either.
     pub fn find(&mut self, id: EClassId) -> EClassId {
-        if let Some(&parent) = self.unionfind.get(&id)
-            && parent != id
-        {
-            let root = self.find(parent);
-            self.unionfind.insert(id, root);
-            return root;
+        // Pass 1: locate the root.
+        let mut root = id;
+        while let Some(&parent) = self.unionfind.get(&root) {
+            if parent == root {
+                break;
+            }
+            root = parent;
         }
-        id
+
+        // Pass 2: compress the path that was just walked. Only nodes that
+        // were already present in `unionfind` are visited, so this never
+        // fabricates an entry for an unknown e-class.
+        let mut current = id;
+        while current != root {
+            let Some(parent) = self.unionfind.insert(current, root) else {
+                break;
+            };
+            if parent == current {
+                break;
+            }
+            current = parent;
+        }
+
+        root
     }
 
     /// Add an e-node to the e-graph, returning its e-class ID
@@ -178,7 +208,13 @@ impl EGraph {
         id
     }
 
-    /// Merge two e-classes
+    /// Merge two e-classes, returning the surviving representative
+    ///
+    /// The union is by rank: the shallower tree is attached under the deeper
+    /// one, which keeps `find`'s parent chains near-constant. The returned id
+    /// is therefore *not* necessarily `find(id1)` — callers must use the
+    /// returned root (or call `find` again) rather than assume the first
+    /// argument won.
     pub fn merge(&mut self, id1: EClassId, id2: EClassId) -> EClassId {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::EGraphMerge);
@@ -189,28 +225,42 @@ impl EGraph {
             return root1;
         }
 
-        // Union: make root2 point to root1
-        self.unionfind.insert(root2, root1);
+        let rank1 = self.ranks.get(&root1).copied().unwrap_or(0);
+        let rank2 = self.ranks.get(&root2).copied().unwrap_or(0);
+        // Attach the lower-ranked root under the higher-ranked one; on a tie
+        // keep `root1` and bump its rank by one.
+        let (winner, loser) = if rank1 < rank2 {
+            (root2, root1)
+        } else {
+            if rank1 == rank2 {
+                self.ranks.insert(root1, rank1.saturating_add(1));
+            }
+            (root1, root2)
+        };
+
+        // Union: make the loser point at the winner.
+        self.unionfind.insert(loser, winner);
+        self.ranks.remove(&loser);
 
         // Merge the e-classes
-        let (class2_nodes, class2_parents) = if let Some(class2) = self.classes.remove(&root2) {
-            (class2.nodes, class2.parents)
+        let (loser_nodes, loser_parents) = if let Some(loser_class) = self.classes.remove(&loser) {
+            (loser_class.nodes, loser_class.parents)
         } else {
             (SmallVec::new(), FxHashSet::default())
         };
 
-        if let Some(class1) = self.classes.get_mut(&root1) {
-            for node in class2_nodes {
-                class1.add_node(node);
+        if let Some(winner_class) = self.classes.get_mut(&winner) {
+            for node in loser_nodes {
+                winner_class.add_node(node);
             }
             // Merge parent sets
-            class1.parents.extend(class2_parents);
+            winner_class.parents.extend(loser_parents);
         }
 
         // Add to pending for congruence closure
-        self.pending.push_back((root1, root2));
+        self.pending.push_back((winner, loser));
 
-        root1
+        winner
     }
 
     /// Perform congruence closure
@@ -595,13 +645,18 @@ impl EGraph {
     }
 
     /// Find the canonical e-class ID (helper for extraction)
+    ///
+    /// The read-only twin of [`EGraph::find`]: it cannot compress the path it
+    /// walks. The step budget is the number of union-find entries, which every
+    /// well-formed forest walk stays under; it exists so that a corrupted
+    /// forest degrades into a stale answer rather than an infinite loop.
     fn find_canonical(&self, id: EClassId) -> EClassId {
         let mut current = id;
-        while let Some(&parent) = self.unionfind.get(&current) {
-            if parent == current {
-                return current;
+        for _ in 0..=self.unionfind.len() {
+            match self.unionfind.get(&current) {
+                Some(&parent) if parent != current => current = parent,
+                _ => return current,
             }
-            current = parent;
         }
         current
     }
@@ -941,5 +996,107 @@ mod tests {
         let merged = egraph.merge(id1, id2);
         assert_eq!(egraph.find_canonical(id1), merged);
         assert_eq!(egraph.find_canonical(id2), merged);
+    }
+
+    /// Number of e-classes chained together by the union-find stress tests.
+    const CHAIN_LEN: i64 = 50_000;
+
+    /// Build `CHAIN_LEN` singleton e-classes and merge them in the order that
+    /// used to build a maximally deep parent chain: every merge makes the
+    /// *previous* root a child of a brand-new class, and no `find` in between
+    /// gets the chance to compress it.
+    fn build_worst_case_chain() -> (EGraph, Vec<EClassId>) {
+        let mut egraph = EGraph::new();
+        let ids: Vec<EClassId> = (0..CHAIN_LEN)
+            .map(|i| {
+                egraph.add(ENode {
+                    kind: ENodeKind::IntConst(i),
+                    children: Vec::new(),
+                })
+            })
+            .collect();
+        for i in 1..ids.len() {
+            egraph.merge(ids[i], ids[i - 1]);
+        }
+        (egraph, ids)
+    }
+
+    #[test]
+    fn test_find_deep_union_chain_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let (mut egraph, ids) = build_worst_case_chain();
+                let (Some(&first), Some(&last)) = (ids.first(), ids.last()) else {
+                    return false;
+                };
+                // The recursive `find` used one frame per link here.
+                egraph.find(first) == egraph.find(last)
+            })
+            .expect("thread spawn should succeed");
+
+        assert!(
+            handle.join().expect("deep union-find must not overflow"),
+            "every class in the chain must share one representative"
+        );
+    }
+
+    #[test]
+    fn test_union_by_rank_keeps_chains_shallow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let (egraph, ids) = build_worst_case_chain();
+                // Depth measured without any path compression: union-by-rank
+                // alone must keep it logarithmic, not linear.
+                let mut max_depth = 0usize;
+                for &id in &ids {
+                    let mut depth = 0usize;
+                    let mut current = id;
+                    while let Some(&parent) = egraph.unionfind.get(&current) {
+                        if parent == current {
+                            break;
+                        }
+                        current = parent;
+                        depth += 1;
+                    }
+                    max_depth = max_depth.max(depth);
+                }
+                max_depth
+            })
+            .expect("thread spawn should succeed");
+
+        let max_depth = handle.join().expect("depth probe must not overflow");
+        assert!(
+            max_depth <= 64,
+            "union-by-rank must bound the tree height (got {max_depth})"
+        );
+    }
+
+    #[test]
+    fn test_merge_return_value_is_the_surviving_root() {
+        let mut egraph = EGraph::new();
+        let a = egraph.add(ENode {
+            kind: ENodeKind::IntConst(1),
+            children: Vec::new(),
+        });
+        let b = egraph.add(ENode {
+            kind: ENodeKind::IntConst(2),
+            children: Vec::new(),
+        });
+        let c = egraph.add(ENode {
+            kind: ENodeKind::IntConst(3),
+            children: Vec::new(),
+        });
+
+        let ab = egraph.merge(a, b);
+        // `c` (rank 0) must lose against the deeper `ab` tree (rank 1), so the
+        // returned root is `ab` even though `c` was the first argument.
+        let abc = egraph.merge(c, ab);
+        assert_eq!(abc, ab);
+        assert_eq!(egraph.find(a), abc);
+        assert_eq!(egraph.find(b), abc);
+        assert_eq!(egraph.find(c), abc);
+        assert!(egraph.get_class(abc).is_some());
     }
 }

@@ -51,7 +51,10 @@ mod unicode;
 pub mod word_eq;
 
 // Core exports
-pub use ground_solver::{GroundStringOutcome, solve_ground_string};
+pub use ground_solver::{
+    GroundStringModel, GroundStringOutcome, eval_ground_bool, solve_ground_string,
+    solve_ground_string_model,
+};
 pub use regex::{Regex, RegexOp};
 pub use regex_membership::{WordSearch, compile_regex, search_word};
 pub use regex_solver::{

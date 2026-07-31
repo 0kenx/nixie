@@ -11,7 +11,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// Configuration for term graph analysis
 #[derive(Debug, Clone)]
 pub struct TermGraphConfig {
-    /// Maximum depth to analyze
+    /// Advisory depth budget, retained for source compatibility.
+    ///
+    /// It no longer truncates the traversal: a truncated graph produced a
+    /// silently incomplete free-variable and influence analysis with no way
+    /// for the caller to notice. The traversal is iterative and always
+    /// covers the whole formula.
     pub max_depth: usize,
     /// Track term occurrences
     pub track_occurrences: bool,
@@ -149,61 +154,66 @@ impl TermGraph {
     /// Add a formula to the graph
     pub fn add_formula(&mut self, formula: TermId, manager: &TermManager) {
         self.roots.push(formula);
-        self.build_graph(formula, manager, 0);
+        self.build_graph(formula, manager);
         self.compute_parents();
         self.compute_free_vars();
     }
 
-    /// Build the graph by traversing the term
-    fn build_graph(&mut self, term: TermId, manager: &TermManager, depth: u32) {
-        if depth > self.config.max_depth as u32 {
-            return;
-        }
+    /// Build the graph by traversing the term.
+    ///
+    /// The traversal uses an explicit stack and visits every reachable
+    /// subterm: an arbitrarily deep formula can neither overflow the stack
+    /// nor be silently truncated. Truncating here would hand
+    /// [`Self::identify_important_variables`] an incomplete graph and make
+    /// it report a confidently wrong answer.
+    fn build_graph(&mut self, root: TermId, manager: &TermManager) {
+        // Pre-order DFS: children are pushed in reverse so they pop in
+        // source order, matching the depth assignment of a left-to-right
+        // recursive descent.
+        let mut stack: Vec<(TermId, u32)> = vec![(root, 0)];
 
-        if self.nodes.contains_key(&term) {
-            if self.config.track_occurrences
-                && let Some(node) = self.nodes.get_mut(&term)
-            {
-                node.occurrences += 1;
+        while let Some((term, depth)) = stack.pop() {
+            if let Some(node) = self.nodes.get_mut(&term) {
+                if self.config.track_occurrences {
+                    node.occurrences += 1;
+                }
+                continue;
             }
-            return;
-        }
 
-        let t = match manager.get(term) {
-            Some(t) => t,
-            None => return,
-        };
+            let Some(t) = manager.get(term) else {
+                continue;
+            };
 
-        let kind = Self::classify_term(&t.kind);
-        let mut node = TermNode::new(term, kind);
-        node.depth = depth;
+            let kind = Self::classify_term(&t.kind);
+            let mut node = TermNode::new(term, kind);
+            node.depth = depth;
 
-        // Track variables
-        if kind == TermNodeKind::Variable {
-            self.variables.insert(term);
-        }
+            // Track variables
+            if kind == TermNodeKind::Variable {
+                self.variables.insert(term);
+            }
 
-        // Track quantified variables (vars are (name, sort) tuples, not TermIds)
-        if let TermKind::Forall { .. } | TermKind::Exists { .. } = &t.kind {
-            // Note: quantified variables are identified by name, not TermId
-            // We track the quantifier term itself as a quantified node
-            self.stats.num_quantifiers += 1;
-        }
+            // Track quantified variables (vars are (name, sort) tuples, not TermIds)
+            if let TermKind::Forall { .. } | TermKind::Exists { .. } = &t.kind {
+                // Note: quantified variables are identified by name, not TermId
+                // We track the quantifier term itself as a quantified node
+                self.stats.num_quantifiers += 1;
+            }
 
-        // Get children and recurse
-        let children = Self::get_children(&t.kind);
-        node.children = children.clone();
+            let children = Self::get_children(&t.kind);
+            node.children.clone_from(&children);
 
-        self.nodes.insert(term, node);
-        self.stats.num_nodes += 1;
+            self.nodes.insert(term, node);
+            self.stats.num_nodes += 1;
 
-        if depth > self.stats.max_depth {
-            self.stats.max_depth = depth;
-        }
+            if depth > self.stats.max_depth {
+                self.stats.max_depth = depth;
+            }
 
-        for child in children {
-            self.build_graph(child, manager, depth + 1);
-            self.stats.num_edges += 1;
+            self.stats.num_edges += children.len() as u64;
+            for &child in children.iter().rev() {
+                stack.push((child, depth + 1));
+            }
         }
     }
 
@@ -238,36 +248,16 @@ impl TermGraph {
         }
     }
 
-    /// Get children of a term kind
+    /// Get children of a term kind.
+    ///
+    /// Delegates to the exhaustive [`crate::ast::traversal::get_children`]:
+    /// a local catch-all here silently dropped the children of every kind it
+    /// did not enumerate (function applications, array and string
+    /// operations, `let`, `match`, floating point, ...), which made the
+    /// graph — and every free-variable and influence answer derived from it
+    /// — quietly wrong for those formulas.
     fn get_children(kind: &TermKind) -> Vec<TermId> {
-        match kind {
-            TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => vec![*a],
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args)
-            | TermKind::Distinct(args) => args.to_vec(),
-            TermKind::Xor(a, b)
-            | TermKind::Implies(a, b)
-            | TermKind::Eq(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::BvAnd(a, b)
-            | TermKind::BvOr(a, b)
-            | TermKind::BvXor(a, b)
-            | TermKind::BvAdd(a, b)
-            | TermKind::BvSub(a, b)
-            | TermKind::BvMul(a, b)
-            | TermKind::BvConcat(a, b) => vec![*a, *b],
-            TermKind::Ite(a, b, c) => vec![*a, *b, *c],
-            TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => vec![*body],
-            _ => Vec::new(),
-        }
+        crate::ast::traversal::get_children(kind).to_vec()
     }
 
     /// Compute parent pointers
@@ -287,17 +277,50 @@ impl TermGraph {
         }
     }
 
+    /// Post-order (children-before-parents) listing of every node.
+    ///
+    /// Computed with an explicit stack so that a deep formula cannot
+    /// overflow, and used instead of a depth ordering: in a shared DAG a
+    /// node's recorded depth is its *first-visit* depth, which is not a
+    /// topological order — a parent could be processed before a child it
+    /// shares with a shallower part of the formula, silently losing that
+    /// child's free variables.
+    fn postorder_nodes(&self) -> Vec<TermId> {
+        let mut order = Vec::with_capacity(self.nodes.len());
+        let mut visited: HashSet<TermId> = HashSet::new();
+        let mut stack: Vec<(TermId, bool)> = Vec::new();
+
+        for &start in self.nodes.keys() {
+            if visited.contains(&start) {
+                continue;
+            }
+            stack.push((start, false));
+
+            while let Some((term, expanded)) = stack.pop() {
+                if expanded {
+                    order.push(term);
+                    continue;
+                }
+                if !visited.insert(term) {
+                    continue;
+                }
+                stack.push((term, true));
+                if let Some(node) = self.nodes.get(&term) {
+                    for &child in &node.children {
+                        if !visited.contains(&child) {
+                            stack.push((child, false));
+                        }
+                    }
+                }
+            }
+        }
+
+        order
+    }
+
     /// Compute free variables for each term
     fn compute_free_vars(&mut self) {
-        // Process in bottom-up order (by depth, highest first)
-        let mut terms_by_depth: Vec<(u32, TermId)> = self
-            .nodes
-            .iter()
-            .map(|(&id, node)| (node.depth, id))
-            .collect();
-        terms_by_depth.sort_by_key(|item| std::cmp::Reverse(item.0)); // Descending
-
-        for (_, term_id) in terms_by_depth {
+        for term_id in self.postorder_nodes() {
             let children: Vec<_> = self
                 .nodes
                 .get(&term_id)
@@ -504,6 +527,72 @@ mod tests {
         let t = TermId::from(1u32);
         let result = graph.bfs_traversal(t);
         assert_eq!(result, vec![t]);
+    }
+
+    #[test]
+    fn test_apply_children_are_tracked() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let fx = manager.mk_apply("f", [x], int_sort);
+        let one = manager.mk_int(1);
+        let formula = manager.mk_gt(fx, one);
+
+        let graph = TermGraph::from_formula(formula, &manager);
+
+        // `f(x)`'s argument must be reachable, and `x` must be free in the
+        // whole formula: the old catch-all dropped `Apply` children.
+        let node = graph.get_node(fx).expect("apply node present");
+        assert_eq!(node.children, vec![x]);
+        assert!(graph.variables().contains(&x));
+        let root = graph.get_node(formula).expect("root node present");
+        assert!(root.free_vars.contains(&x));
+        assert!(graph.identify_important_variables().contains(&x));
+    }
+
+    #[test]
+    fn test_free_vars_with_shared_subterm() {
+        // `x` first appears deep inside the left conjunct and is shared with
+        // a shallow occurrence on the right; a depth-ordered bottom-up pass
+        // would visit the shallow parent before the deep child.
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", int_sort);
+        let mut deep = x;
+        for _ in 0..8 {
+            deep = manager.mk_apply("f", [deep], int_sort);
+        }
+        let zero = manager.mk_int(0);
+        let left = manager.mk_gt(deep, zero);
+        let right = manager.mk_gt(x, zero);
+        let formula = manager.mk_and([left, right]);
+
+        let graph = TermGraph::from_formula(formula, &manager);
+        let root = graph.get_node(formula).expect("root node present");
+        assert!(root.free_vars.contains(&x));
+        let right_node = graph.get_node(right).expect("right node present");
+        assert!(right_node.free_vars.contains(&x));
+    }
+
+    #[test]
+    fn test_build_graph_deep_nesting_does_not_overflow() {
+        let handle = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let mut term = manager.mk_var("x", int_sort);
+                for _ in 0..60_000 {
+                    term = manager.mk_apply("f", [term], int_sort);
+                }
+                let graph = TermGraph::from_formula(term, &manager);
+                graph.stats().num_nodes
+            })
+            .expect("thread spawn should succeed");
+
+        // The whole chain is analyzed: no silent truncation at depth 100.
+        let num_nodes = handle.join().expect("deep build_graph must not overflow");
+        assert_eq!(num_nodes, 60_001);
     }
 
     #[test]

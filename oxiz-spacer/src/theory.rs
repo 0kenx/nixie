@@ -9,6 +9,16 @@ use crate::chc::PredId;
 use oxiz_core::{SortId, TermId, TermManager};
 use smallvec::SmallVec;
 
+/// Outcome of one reduction step of [`TheoryIntegration::project_variables`].
+enum ProjectStep {
+    /// The subformula is fully projected.
+    Done(TermId),
+    /// The subformula is a conjunction; project these arguments first.
+    Conjuncts(Vec<TermId>),
+    /// The subformula is a disjunction; project these arguments first.
+    Disjuncts(Vec<TermId>),
+}
+
 /// Theory integration for Spacer
 pub struct TheoryIntegration;
 
@@ -116,206 +126,204 @@ impl TheoryIntegration {
         false
     }
 
-    /// Project a formula over specific variables (theory-aware)
+    /// Project a formula over specific variables (theory-aware).
+    ///
+    /// For LIA this keeps conjuncts that mention only `vars_to_keep` (or are
+    /// ground); arrays and bitvectors get their own theory-specific handling.
+    ///
+    /// This used to be mutually recursive with `project_not` (since inlined), and
+    /// *both* directions consumed native stack while simultaneously
+    /// allocating new terms at every level, so a deep formula exhausted the
+    /// stack and the term manager together. The traversal is an explicit
+    /// work stack now.
+    ///
+    /// The negation handling is unchanged in meaning: `project_not` never
+    /// did anything but reduce `¬arg` to another `project_variables` call
+    /// (`¬¬p → p`, De Morgan) or terminate on an atom, so it is expressed
+    /// here as a rewrite loop over `current` rather than a second function.
+    /// The array/bitvector checks are re-run after each such rewrite, which
+    /// is exactly what re-entering `project_variables` used to do.
     pub fn project_variables(
         formula: TermId,
         vars_to_keep: &[TermId],
         manager: &mut TermManager,
     ) -> TermId {
-        // Theory-aware projection
-        // For LIA: Use Fourier-Motzkin or virtual term substitution
-        // For Arrays: Use array property fragments and axiom instantiation
-        // For BV: Use bit-blasting or interval analysis
-        // For ADT: Use constructor/selector elimination
-
-        // Enhanced implementation with theory awareness for arrays and bitvectors
-        use oxiz_core::TermKind;
-
-        // Clone the term kind to avoid borrow checker issues
-        let term_kind = manager.get(formula).map(|t| t.kind.clone());
-
-        let Some(kind) = term_kind else {
-            return formula;
-        };
-
-        // Special handling for array theory
-        if Self::is_array_term(formula, manager) {
-            return Self::project_array_term(formula, vars_to_keep, manager);
+        /// One step of the explicit projection stack.
+        enum Work {
+            /// Project this subformula.
+            Eval(TermId),
+            /// Combine the top `n` results into a conjunction, dropping any
+            /// that mentions a variable outside `vars_to_keep`.
+            Conjoin(usize),
+            /// Combine the top `n` results into a disjunction.
+            Disjoin(usize),
         }
 
-        // Special handling for bitvector theory
-        if Self::is_bitvector_term(formula, manager) {
-            return Self::project_bitvector_term(formula, vars_to_keep, manager);
-        }
+        let mut work: Vec<Work> = vec![Work::Eval(formula)];
+        let mut values: Vec<TermId> = Vec::new();
 
-        match kind {
-            TermKind::And(args) => {
-                // Project each conjunct and recombine
-                let args_vec: Vec<TermId> = args.to_vec();
-                let mut projected = Vec::new();
-
-                for arg in args_vec {
-                    let proj = Self::project_variables(arg, vars_to_keep, manager);
-                    // Keep only formulas that mention variables we want to keep
-                    if Self::uses_only_vars(proj, vars_to_keep, manager)
-                        || Self::is_ground_constraint(proj, manager)
-                    {
-                        projected.push(proj);
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Eval(start) => match Self::project_step(start, vars_to_keep, manager) {
+                    ProjectStep::Done(result) => values.push(result),
+                    ProjectStep::Conjuncts(args) => {
+                        work.push(Work::Conjoin(args.len()));
+                        for arg in args.into_iter().rev() {
+                            work.push(Work::Eval(arg));
+                        }
                     }
+                    ProjectStep::Disjuncts(args) => {
+                        work.push(Work::Disjoin(args.len()));
+                        for arg in args.into_iter().rev() {
+                            work.push(Work::Eval(arg));
+                        }
+                    }
+                },
+                Work::Conjoin(count) => {
+                    let projected = values.split_off(values.len().saturating_sub(count));
+                    let kept: Vec<TermId> = projected
+                        .into_iter()
+                        .filter(|&proj| {
+                            Self::uses_only_vars(proj, vars_to_keep, manager)
+                                || Self::is_ground_constraint(proj, manager)
+                        })
+                        .collect();
+                    let combined = match kept.as_slice() {
+                        [] => manager.mk_true(),
+                        [only] => *only,
+                        _ => manager.mk_and(kept),
+                    };
+                    values.push(combined);
                 }
-
-                if projected.is_empty() {
-                    manager.mk_true()
-                } else if projected.len() == 1 {
-                    projected[0]
-                } else {
-                    manager.mk_and(projected)
-                }
-            }
-            TermKind::Or(args) => {
-                // For disjunctions, we need to be more conservative
-                let args_vec: Vec<TermId> = args.to_vec();
-                let projected: Vec<TermId> = args_vec
-                    .into_iter()
-                    .map(|arg| Self::project_variables(arg, vars_to_keep, manager))
-                    .collect();
-                manager.mk_or(projected)
-            }
-            TermKind::Not(arg) => Self::project_not(arg, vars_to_keep, manager),
-            _ => {
-                // For atomic formulas, check if they only use vars to keep
-                if Self::uses_only_vars(formula, vars_to_keep, manager)
-                    || Self::is_ground_constraint(formula, manager)
-                {
-                    formula
-                } else {
-                    manager.mk_true() // Project out
+                Work::Disjoin(count) => {
+                    let projected = values.split_off(values.len().saturating_sub(count));
+                    let combined = manager.mk_or(projected);
+                    values.push(combined);
                 }
             }
         }
+
+        // Exactly one value is produced for the root formula.
+        values.pop().unwrap_or(formula)
     }
 
-    /// Over-approximate `¬arg`, projecting out `vars_to_keep`-violating
-    /// subterms.
+    /// Reduce `formula` until it is either fully projected or exposed as a
+    /// conjunction/disjunction whose arguments must be projected first.
     ///
-    /// Naively recursing into `arg` with the same over-approximating
-    /// [`Self::project_variables`] and negating the result is unsound:
-    /// `project_variables` guarantees `arg => psi(arg)`, and negating
-    /// both sides gives `¬psi(arg) => ¬arg` -- i.e. `¬psi(arg)` is an
-    /// UNDER-approximation of `¬arg`, not the over-approximation this
-    /// module's whole contract requires (`phi => psi(phi)` for every
-    /// `phi`, including `phi = ¬arg`). A caller trusting the output as an
-    /// over-approximation (e.g. building a frame invariant) could then
-    /// wrongly exclude states it must include.
+    /// The loop performs the negation pushing that
+    /// `project_not` used to perform by re-entering `project_variables`:
+    /// `¬¬p` becomes `p`, `¬(a ∧ b)` becomes `¬a ∨ ¬b`, `¬(a ∨ b)` becomes
+    /// `¬a ∧ ¬b`, and a negated atom is projected like any other atom.
     ///
-    /// Instead, the negation is pushed inward (De Morgan / double-
-    /// negation elimination) until it lands on an atomic comparison,
-    /// which is then projected the same safe way atomic formulas
-    /// elsewhere in this function are: kept verbatim if it only
-    /// mentions `vars_to_keep` (or is ground), otherwise replaced by
-    /// `true` -- always a sound over-approximation of anything.
-    fn project_not(arg: TermId, vars_to_keep: &[TermId], manager: &mut TermManager) -> TermId {
+    /// Negation must *not* be handled by projecting `arg` and negating the
+    /// result: `project_variables` guarantees `phi ⇒ psi(phi)`, and negating
+    /// both sides yields an UNDER-approximation of `¬arg`, breaking the
+    /// over-approximation contract a caller building a frame invariant
+    /// relies on.
+    fn project_step(
+        formula: TermId,
+        vars_to_keep: &[TermId],
+        manager: &mut TermManager,
+    ) -> ProjectStep {
         use oxiz_core::TermKind;
 
-        let kind = manager.get(arg).map(|t| t.kind.clone());
-        match kind {
-            Some(TermKind::Not(inner)) => {
-                // ¬¬p = p
-                Self::project_variables(inner, vars_to_keep, manager)
+        let mut current = formula;
+        loop {
+            let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
+                return ProjectStep::Done(current);
+            };
+
+            if Self::is_array_term(current, manager) {
+                return ProjectStep::Done(Self::project_array_term(current, vars_to_keep, manager));
             }
-            Some(TermKind::And(args)) => {
-                // ¬(a ∧ b ∧ ...) = ¬a ∨ ¬b ∨ ...
-                let negated: Vec<TermId> = args.iter().map(|&a| manager.mk_not(a)).collect();
-                let disjunction = manager.mk_or(negated);
-                Self::project_variables(disjunction, vars_to_keep, manager)
+            if Self::is_bitvector_term(current, manager) {
+                return ProjectStep::Done(Self::project_bitvector_term(
+                    current,
+                    vars_to_keep,
+                    manager,
+                ));
             }
-            Some(TermKind::Or(args)) => {
-                // ¬(a ∨ b ∨ ...) = ¬a ∧ ¬b ∧ ...
-                let negated: Vec<TermId> = args.iter().map(|&a| manager.mk_not(a)).collect();
-                let conjunction = manager.mk_and(negated);
-                Self::project_variables(conjunction, vars_to_keep, manager)
-            }
-            _ => {
-                // Atomic (or unrecognized) formula under negation: treat
-                // the whole `¬arg` the same as any other atomic formula.
-                let whole = manager.mk_not(arg);
-                if Self::uses_only_vars(whole, vars_to_keep, manager)
-                    || Self::is_ground_constraint(whole, manager)
-                {
-                    whole
-                } else {
-                    manager.mk_true()
-                }
+
+            match kind {
+                TermKind::And(args) => return ProjectStep::Conjuncts(args.to_vec()),
+                TermKind::Or(args) => return ProjectStep::Disjuncts(args.to_vec()),
+                TermKind::Not(arg) => match manager.get(arg).map(|t| t.kind.clone()) {
+                    // ¬¬p = p
+                    Some(TermKind::Not(inner)) => current = inner,
+                    // ¬(a ∧ b ∧ …) = ¬a ∨ ¬b ∨ …
+                    Some(TermKind::And(args)) => {
+                        let negated: Vec<TermId> =
+                            args.iter().map(|&a| manager.mk_not(a)).collect();
+                        current = manager.mk_or(negated);
+                    }
+                    // ¬(a ∨ b ∨ …) = ¬a ∧ ¬b ∧ …
+                    Some(TermKind::Or(args)) => {
+                        let negated: Vec<TermId> =
+                            args.iter().map(|&a| manager.mk_not(a)).collect();
+                        current = manager.mk_and(negated);
+                    }
+                    // Atomic (or unknown) formula under negation.
+                    _ => {
+                        let whole = manager.mk_not(arg);
+                        return ProjectStep::Done(Self::project_atom(whole, vars_to_keep, manager));
+                    }
+                },
+                _ => return ProjectStep::Done(Self::project_atom(current, vars_to_keep, manager)),
             }
         }
     }
 
-    /// Check if a term uses only the specified variables
+    /// Keep an atomic formula verbatim if it only mentions `vars_to_keep`
+    /// (or is ground), otherwise replace it by `true` — always a sound
+    /// over-approximation of anything.
+    fn project_atom(atom: TermId, vars_to_keep: &[TermId], manager: &mut TermManager) -> TermId {
+        if Self::uses_only_vars(atom, vars_to_keep, manager)
+            || Self::is_ground_constraint(atom, manager)
+        {
+            atom
+        } else {
+            manager.mk_true()
+        }
+    }
+
+    /// Check that every variable occurring in `term` is one of `vars`.
+    ///
+    /// Walked iteratively with a visited set (see [`crate::walk`]). The old
+    /// recursive form had three problems: unbounded stack depth on nested
+    /// input, exponential re-expansion of a shared DAG, and a `_ => false`
+    /// arm that reported *any* term built from an operator it did not
+    /// enumerate (`Ite`, `Implies`, `Apply`, `Select`/`Store`, bitvector and
+    /// string operations, …) as "uses other variables" even when it
+    /// mentioned none at all. That last one is safe in direction — it only
+    /// over-projects — but it silently disabled projection for whole
+    /// theories. Descending uniformly answers the question exactly.
+    ///
+    /// A dangling id still answers `false`: nothing is known about it, and
+    /// "may use other variables" is the conservative reading.
     fn uses_only_vars(term: TermId, vars: &[TermId], manager: &TermManager) -> bool {
         use oxiz_core::TermKind;
 
-        let Some(t) = manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::Var(_) => vars.contains(&term),
-            TermKind::And(args) | TermKind::Or(args) => args
-                .iter()
-                .all(|&arg| Self::uses_only_vars(arg, vars, manager)),
-            TermKind::Not(arg) => Self::uses_only_vars(*arg, vars, manager),
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b) => {
-                Self::uses_only_vars(*a, vars, manager) && Self::uses_only_vars(*b, vars, manager)
-            }
-            TermKind::Add(args) | TermKind::Mul(args) => args
-                .iter()
-                .all(|&arg| Self::uses_only_vars(arg, vars, manager)),
-            TermKind::Sub(a, b) | TermKind::Div(a, b) | TermKind::Mod(a, b) => {
-                Self::uses_only_vars(*a, vars, manager) && Self::uses_only_vars(*b, vars, manager)
-            }
-            TermKind::True | TermKind::False | TermKind::IntConst(_) | TermKind::RealConst(_) => {
-                true
-            }
-            _ => false,
-        }
+        !crate::walk::any_node(manager, term, |id, kind| match kind {
+            Some(TermKind::Var(_)) => !vars.contains(&id),
+            Some(_) => false,
+            None => true,
+        })
     }
 
-    /// Check if a term is a ground constraint (no variables)
+    /// Check if a term is a ground constraint (no variables).
+    ///
+    /// Iterative walk with a visited set. As with [`Self::uses_only_vars`],
+    /// the old recursive version's `_ => false` arm declared any term
+    /// containing an operator outside its enumeration "not ground" even when
+    /// it was variable-free; descending uniformly answers exactly. A
+    /// dangling id answers `false` (unknown, so not provably ground).
     fn is_ground_constraint(term: TermId, manager: &TermManager) -> bool {
         use oxiz_core::TermKind;
 
-        let Some(t) = manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::Var(_) => false,
-            TermKind::True | TermKind::False | TermKind::IntConst(_) | TermKind::RealConst(_) => {
-                true
-            }
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => args
-                .iter()
-                .all(|&arg| Self::is_ground_constraint(arg, manager)),
-            TermKind::Not(arg) => Self::is_ground_constraint(*arg, manager),
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b) => {
-                Self::is_ground_constraint(*a, manager) && Self::is_ground_constraint(*b, manager)
-            }
-            _ => false,
-        }
+        !crate::walk::any_node(manager, term, |_, kind| match kind {
+            Some(TermKind::Var(_)) | None => true,
+            Some(_) => false,
+        })
     }
 
     /// Project an array term over specific variables
@@ -419,55 +427,20 @@ impl TheoryIntegration {
         }
     }
 
-    /// Check if a term uses any of the specified variables
+    /// Check if a term uses any of the specified variables.
+    ///
+    /// Iterative walk with a visited set. The old recursive form ended in
+    /// `_ => false`, so an occurrence under any unenumerated operator was
+    /// reported as absent; descending uniformly via
+    /// [`oxiz_core::ast::traversal::get_children`] answers exactly. A
+    /// dangling id answers `false`, matching the old behaviour (there is no
+    /// variable to find in a term that does not exist).
     fn uses_vars(term: TermId, vars: &[TermId], manager: &TermManager) -> bool {
         use oxiz_core::TermKind;
 
-        let Some(t) = manager.get(term) else {
-            return false;
-        };
-
-        match &t.kind {
-            TermKind::Var(_) => vars.contains(&term),
-            TermKind::And(args)
-            | TermKind::Or(args)
-            | TermKind::Add(args)
-            | TermKind::Mul(args) => args.iter().any(|&arg| Self::uses_vars(arg, vars, manager)),
-            TermKind::Not(arg) | TermKind::Neg(arg) | TermKind::BvNot(arg) => {
-                Self::uses_vars(*arg, vars, manager)
-            }
-            TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b)
-            | TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b)
-            | TermKind::BvAnd(a, b)
-            | TermKind::BvOr(a, b)
-            | TermKind::BvXor(a, b)
-            | TermKind::BvAdd(a, b)
-            | TermKind::BvSub(a, b)
-            | TermKind::BvMul(a, b) => {
-                Self::uses_vars(*a, vars, manager) || Self::uses_vars(*b, vars, manager)
-            }
-            TermKind::Select(a, i) => {
-                Self::uses_vars(*a, vars, manager) || Self::uses_vars(*i, vars, manager)
-            }
-            TermKind::Store(a, i, v) => {
-                Self::uses_vars(*a, vars, manager)
-                    || Self::uses_vars(*i, vars, manager)
-                    || Self::uses_vars(*v, vars, manager)
-            }
-            TermKind::BvExtract { arg, .. } => Self::uses_vars(*arg, vars, manager),
-            TermKind::True
-            | TermKind::False
-            | TermKind::IntConst(_)
-            | TermKind::RealConst(_)
-            | TermKind::BitVecConst { .. } => false,
-            _ => false,
-        }
+        crate::walk::any_node(manager, term, |id, kind| {
+            matches!(kind, Some(TermKind::Var(_))) && vars.contains(&id)
+        })
     }
 
     /// Strengthen a lemma using theory-specific information
@@ -786,6 +759,20 @@ pub enum Witness {
 mod tests {
     use super::*;
 
+    /// Stack size and nesting depth for the deep-recursion test below.
+    ///
+    /// The two are scaled together on purpose: what the test actually pins is
+    /// the *ratio* -- about 21 bytes of stack per nesting level
+    /// (128 KiB / 6_250). Natively recursive projection needs far more than
+    /// that per frame and still overflows, so the regression keeps every bit
+    /// of its detection power. The pair used to be 1 MiB / 50_000 -- the same
+    /// 21 bytes -- but `mk_and` flattens its arguments, so a chain built with
+    /// `acc = mk_and([acc, atom])` is quadratic, and 50_000 levels cost tens
+    /// of GB of live terms. Never raise `DEEP_DEPTH` without raising
+    /// `DEEP_STACK` by the same factor.
+    const DEEP_STACK: usize = 1 << 17;
+    const DEEP_DEPTH: u32 = 6_250;
+
     #[test]
     fn test_theory_integration_creation() {
         let theory = TheoryIntegration::new();
@@ -967,5 +954,89 @@ mod tests {
             projected, x_eq_0,
             "¬¬(x=0) over only kept variables must simplify exactly to x=0"
         );
+    }
+
+    /// Deeply nested conjunction/negation must not overflow: this used to be
+    /// mutual recursion between `project_variables` and `project_not`.
+    #[test]
+    fn project_variables_survives_deep_nesting() {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK)
+            .spawn(|| {
+                let mut manager = TermManager::new();
+                let int_sort = manager.sorts.int_sort;
+                let x = manager.mk_var("x", int_sort);
+                let zero = manager.mk_int(0);
+                let mut formula = manager.mk_ge(x, zero);
+                for i in 0..DEEP_DEPTH {
+                    let v = manager.mk_var(&format!("v{i}"), int_sort);
+                    let atom = manager.mk_ge(v, zero);
+                    formula = manager.mk_and([formula, atom]);
+                }
+                let projected = TheoryIntegration::project_variables(formula, &[x], &mut manager);
+                assert!(
+                    manager.get(projected).is_some(),
+                    "deep projection must return a term"
+                );
+            })
+            .expect("thread spawn should succeed");
+        handle.join().expect("deep project_variables must return");
+    }
+
+    /// `uses_only_vars` must be exact rather than answering "no" for every
+    /// operator outside a short enumeration.
+    #[test]
+    fn uses_only_vars_accepts_unenumerated_operators() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let cond = manager.mk_var("c", bool_sort);
+        // `Ite(c, x, y)` mentions exactly {c, x, y}.
+        let ite = manager.mk_ite(cond, x, y);
+        assert!(
+            TheoryIntegration::uses_only_vars(ite, &[cond, x, y], &manager),
+            "an Ite over kept variables uses only kept variables"
+        );
+        assert!(
+            !TheoryIntegration::uses_only_vars(ite, &[cond, x], &manager),
+            "dropping `y` from the kept set must make the answer `false`"
+        );
+    }
+
+    /// `is_ground_constraint` must recognise a variable-free term regardless
+    /// of which operators build it, and reject one containing a variable.
+    #[test]
+    fn is_ground_constraint_is_exact() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let one = manager.mk_int(1);
+        let two = manager.mk_int(2);
+        let sum = manager.mk_add([one, two]);
+        let ground = manager.mk_le(sum, two);
+        assert!(TheoryIntegration::is_ground_constraint(ground, &manager));
+
+        let x = manager.mk_var("x", int_sort);
+        let non_ground = manager.mk_le(x, two);
+        assert!(!TheoryIntegration::is_ground_constraint(
+            non_ground, &manager
+        ));
+    }
+
+    /// `uses_vars` finds an occurrence under an operator the old walk had no
+    /// arm for, and reports absence correctly.
+    #[test]
+    fn uses_vars_sees_through_ite() {
+        let mut manager = TermManager::new();
+        let int_sort = manager.sorts.int_sort;
+        let bool_sort = manager.sorts.bool_sort;
+        let x = manager.mk_var("x", int_sort);
+        let y = manager.mk_var("y", int_sort);
+        let cond = manager.mk_var("c", bool_sort);
+        let ite = manager.mk_ite(cond, x, y);
+        assert!(TheoryIntegration::uses_vars(ite, &[y], &manager));
+        let z = manager.mk_var("z", int_sort);
+        assert!(!TheoryIntegration::uses_vars(ite, &[z], &manager));
     }
 }

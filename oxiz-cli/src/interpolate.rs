@@ -530,10 +530,40 @@ fn solve_and_interpolate(
 mod tests {
     use super::*;
 
+    /// Guards [`test_temp_proof_log_is_cleaned_up`]'s before/after scan of
+    /// the OS temp directory against sibling tests in this module
+    /// concurrently creating their own (legitimately temporary)
+    /// `oxiz-interpolate-*` scratch proof logs. `cargo test` runs unit
+    /// tests as threads within one process, so without this guard a
+    /// sibling's file could be created after the "before" snapshot and not
+    /// yet removed by the "after" snapshot, reading as a false leak that
+    /// isn't actually this test's. Ordinary interpolation tests take a
+    /// shared (read) lock via [`execute_interpolation_for_test`] -- still
+    /// fully concurrent with each other -- while the directory-scanning
+    /// test takes an exclusive (write) lock for its whole
+    /// before/execute/after window, so no sibling's scratch file can appear
+    /// or disappear mid-scan.
+    static TEMP_PROOF_LOG_SCAN_GUARD: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+    /// Test-only wrapper around [`execute_interpolation`] that holds
+    /// [`TEMP_PROOF_LOG_SCAN_GUARD`]'s read lock for the duration of the
+    /// call; every test below except the scan test itself must go through
+    /// this instead of calling `execute_interpolation` directly.
+    fn execute_interpolation_for_test(
+        script: &str,
+        format: InterpolateFormat,
+        algorithm: Option<InterpolationAlgorithm>,
+    ) -> String {
+        let _guard = TEMP_PROOF_LOG_SCAN_GUARD
+            .read()
+            .expect("scan guard lock poisoned");
+        execute_interpolation(script, format, algorithm)
+    }
+
     #[test]
     fn test_missing_partition_is_error() {
         let script = "(assert-partition A p)\n";
-        let output = execute_interpolation(script, InterpolateFormat::Smtlib, None);
+        let output = execute_interpolation_for_test(script, InterpolateFormat::Smtlib, None);
         assert!(output.starts_with("error"));
         assert!(output.contains("Both A and B partitions"));
     }
@@ -546,7 +576,7 @@ mod tests {
             (assert-partition A p)
             (assert-partition B q)
         "#;
-        let output = execute_interpolation(script, InterpolateFormat::Smtlib, None);
+        let output = execute_interpolation_for_test(script, InterpolateFormat::Smtlib, None);
         assert!(output.starts_with("sat"));
         assert!(output.contains("no Craig interpolant exists"));
         assert!(!output.contains("(interpolant true)"));
@@ -559,7 +589,7 @@ mod tests {
             (assert-partition A p)
             (assert-partition B (not p))
         "#;
-        let output = execute_interpolation(script, InterpolateFormat::Smtlib, None);
+        let output = execute_interpolation_for_test(script, InterpolateFormat::Smtlib, None);
         assert!(output.starts_with("unsat"));
         // Must not silently claim a fabricated interpolant of "true" as
         // though it were a verified result.
@@ -583,7 +613,7 @@ mod tests {
     #[test]
     fn test_undeclared_symbol_is_reported_as_error_not_unknown() {
         let script = "(assert-partition A p)\n(assert-partition B (not p))\n";
-        let output = execute_interpolation(script, InterpolateFormat::Smtlib, None);
+        let output = execute_interpolation_for_test(script, InterpolateFormat::Smtlib, None);
         // `p` was never declared, so this must be a parse/type error, not a
         // silently swallowed "unknown".
         assert!(output.starts_with("error"));
@@ -597,7 +627,7 @@ mod tests {
             (assert-partition A p)
             (assert-partition B q)
         "#;
-        let output = execute_interpolation(
+        let output = execute_interpolation_for_test(
             script,
             InterpolateFormat::Json,
             Some(InterpolationAlgorithm::McMillan),
@@ -651,7 +681,7 @@ mod tests {
             (assert-partition A p)
             (assert-partition B (not p))
         "#;
-        let output = execute_interpolation(script, InterpolateFormat::Smtlib, None);
+        let output = execute_interpolation_for_test(script, InterpolateFormat::Smtlib, None);
         assert!(output.starts_with("unsat"));
         assert!(output.contains("input-clause"));
         assert!(!output.contains("private to oxiz-proof"));
@@ -663,6 +693,13 @@ mod tests {
     /// directory.
     #[test]
     fn test_temp_proof_log_is_cleaned_up() {
+        // Exclusive lock: no sibling test in this module may create or
+        // remove its own `oxiz-interpolate-*` scratch file while this scan
+        // is in flight. See `TEMP_PROOF_LOG_SCAN_GUARD`.
+        let _guard = TEMP_PROOF_LOG_SCAN_GUARD
+            .write()
+            .expect("scan guard lock poisoned");
+
         let before: std::collections::HashSet<_> = std::fs::read_dir(std::env::temp_dir())
             .map(|entries| {
                 entries

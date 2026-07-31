@@ -153,56 +153,41 @@ impl Pattern {
         }
     }
 
-    /// Extract variables from the pattern
+    /// Extract variables from the pattern.
+    ///
+    /// Explicit-stack walk with a visited set per pattern term (a set-valued
+    /// result, so traversal order is irrelevant); no input depth can
+    /// overflow the call stack. The descent set (`Apply` args, `Not`/`Neg`,
+    /// `And`/`Or` -- the shapes triggers are made of) is the retired
+    /// recursion's, unchanged.
     pub fn extract_variables(&mut self, manager: &TermManager) {
         self.variables.clear();
-        // Collect terms first to avoid borrow checker issues
-        let terms: Vec<_> = self.terms.to_vec();
-        for term in terms {
-            self.extract_vars_rec(term, manager);
-        }
-    }
+        for &root in &self.terms {
+            let mut visited: FxHashSet<TermId> = FxHashSet::default();
+            let mut work = vec![root];
+            while let Some(t_id) = work.pop() {
+                if !visited.insert(t_id) {
+                    continue;
+                }
 
-    fn extract_vars_rec(&mut self, term: TermId, manager: &TermManager) {
-        let mut visited = FxHashSet::default();
-        self.extract_vars_helper(term, manager, &mut visited);
-    }
+                let Some(t) = manager.get(t_id) else {
+                    continue;
+                };
 
-    fn extract_vars_helper(
-        &mut self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
+                if let TermKind::Var(name) = t.kind {
+                    self.variables.insert(name);
+                    continue;
+                }
 
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if let TermKind::Var(name) = t.kind {
-            self.variables.insert(name);
-            return;
-        }
-
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                for &arg in args.iter() {
-                    self.extract_vars_helper(arg, manager, visited);
+                match &t.kind {
+                    TermKind::Apply { args, .. } => work.extend(args.iter().copied()),
+                    TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                    TermKind::And(args) | TermKind::Or(args) => {
+                        work.extend(args.iter().copied());
+                    }
+                    _ => {}
                 }
             }
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.extract_vars_helper(*arg, manager, visited);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.extract_vars_helper(arg, manager, visited);
-                }
-            }
-            _ => {}
         }
     }
 
@@ -220,41 +205,29 @@ impl Pattern {
         self.quality = (num_funcs * 100 + num_vars * 50) as u32 - complexity_penalty as u32;
     }
 
+    /// Count distinct function applications reachable through `Apply`
+    /// spines (other kinds are leaves for this quality metric, unchanged).
+    ///
+    /// Explicit-stack walk with a visited set shared across the pattern's
+    /// terms; no input depth can overflow the call stack.
     fn count_function_symbols(&self, manager: &TermManager) -> usize {
-        let mut count = 0;
-        let mut visited = FxHashSet::default();
+        let mut count = 0usize;
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work: Vec<TermId> = self.terms.clone();
 
-        for &term in &self.terms {
-            count += self.count_funcs_rec(term, manager, &mut visited);
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+            if let Some(t) = manager.get(t_id)
+                && let TermKind::Apply { args, .. } = &t.kind
+            {
+                count += 1;
+                work.extend(args.iter().copied());
+            }
         }
 
         count
-    }
-
-    fn count_funcs_rec(
-        &self,
-        term: TermId,
-        manager: &TermManager,
-        visited: &mut FxHashSet<TermId>,
-    ) -> usize {
-        if visited.contains(&term) {
-            return 0;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return 0;
-        };
-
-        match &t.kind {
-            TermKind::Apply { args, .. } => {
-                1 + args
-                    .iter()
-                    .map(|&arg| self.count_funcs_rec(arg, manager, visited))
-                    .sum::<usize>()
-            }
-            _ => 0,
-        }
     }
 }
 
@@ -404,127 +377,114 @@ impl PatternGenerator {
         patterns
     }
 
+    /// Collect function applications in pre-order (children left-to-right,
+    /// preserving the retired recursion's result order exactly) with an
+    /// explicit heap stack, so no input depth can overflow the call stack.
     fn collect_function_applications(&self, term: TermId, manager: &TermManager) -> Vec<TermId> {
         let mut results = Vec::new();
-        let mut visited = FxHashSet::default();
-        self.collect_funcs_rec(term, &mut results, &mut visited, manager);
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work = vec![term];
+
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            if let TermKind::Apply { args, .. } = &t.kind {
+                results.push(t_id);
+                for &arg in args.iter().rev() {
+                    work.push(arg);
+                }
+            }
+
+            match &t.kind {
+                TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter().rev() {
+                        work.push(arg);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         results
     }
 
-    fn collect_funcs_rec(
-        &self,
-        term: TermId,
-        results: &mut Vec<TermId>,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if let TermKind::Apply { args, .. } = &t.kind {
-            results.push(term);
-            for &arg in args.iter() {
-                self.collect_funcs_rec(arg, results, visited, manager);
-            }
-        }
-
-        // Recurse into other term types
-        match &t.kind {
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_funcs_rec(*arg, results, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_funcs_rec(arg, results, visited, manager);
-                }
-            }
-            _ => {}
-        }
-    }
-
+    /// Collect equality terms in pre-order (descending only the boolean
+    /// structure `Not`/`Neg`/`And`/`Or`, unchanged) with an explicit heap
+    /// stack, so no input depth can overflow the call stack.
     fn collect_equalities(&self, term: TermId, manager: &TermManager) -> Vec<TermId> {
         let mut results = Vec::new();
-        let mut visited = FxHashSet::default();
-        self.collect_eqs_rec(term, &mut results, &mut visited, manager);
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work = vec![term];
+
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
+            }
+
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            if matches!(t.kind, TermKind::Eq(_, _)) {
+                results.push(t_id);
+            }
+
+            match &t.kind {
+                TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter().rev() {
+                        work.push(arg);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         results
     }
 
-    fn collect_eqs_rec(
-        &self,
-        term: TermId,
-        results: &mut Vec<TermId>,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        if matches!(t.kind, TermKind::Eq(_, _)) {
-            results.push(term);
-        }
-
-        match &t.kind {
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_eqs_rec(*arg, results, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_eqs_rec(arg, results, visited, manager);
-                }
-            }
-            _ => {}
-        }
-    }
-
+    /// Collect arithmetic comparison terms in pre-order (descending only the
+    /// boolean structure `Not`/`Neg`/`And`/`Or`, unchanged) with an explicit
+    /// heap stack, so no input depth can overflow the call stack.
     fn collect_arithmetic_terms(&self, term: TermId, manager: &TermManager) -> Vec<TermId> {
         let mut results = Vec::new();
-        let mut visited = FxHashSet::default();
-        self.collect_arith_rec(term, &mut results, &mut visited, manager);
-        results
-    }
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut work = vec![term];
 
-    fn collect_arith_rec(
-        &self,
-        term: TermId,
-        results: &mut Vec<TermId>,
-        visited: &mut FxHashSet<TermId>,
-        manager: &TermManager,
-    ) {
-        if visited.contains(&term) {
-            return;
-        }
-        visited.insert(term);
-
-        let Some(t) = manager.get(term) else {
-            return;
-        };
-
-        match &t.kind {
-            TermKind::Lt(_, _) | TermKind::Le(_, _) | TermKind::Gt(_, _) | TermKind::Ge(_, _) => {
-                results.push(term);
+        while let Some(t_id) = work.pop() {
+            if !visited.insert(t_id) {
+                continue;
             }
-            TermKind::Not(arg) | TermKind::Neg(arg) => {
-                self.collect_arith_rec(*arg, results, visited, manager);
-            }
-            TermKind::And(args) | TermKind::Or(args) => {
-                for &arg in args {
-                    self.collect_arith_rec(arg, results, visited, manager);
+
+            let Some(t) = manager.get(t_id) else {
+                continue;
+            };
+
+            match &t.kind {
+                TermKind::Lt(_, _)
+                | TermKind::Le(_, _)
+                | TermKind::Gt(_, _)
+                | TermKind::Ge(_, _) => {
+                    results.push(t_id);
                 }
+                TermKind::Not(arg) | TermKind::Neg(arg) => work.push(*arg),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &arg in args.iter().rev() {
+                        work.push(arg);
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+
+        results
     }
 
     /// Get statistics
@@ -658,6 +618,16 @@ impl Default for MultiPatternCoordinator {
 /// first candidate subterm found at its position (subject to sort
 /// agreement) and every subsequent occurrence of that variable must bind to
 /// the identical term, matching standard E-matching semantics.
+///
+/// Iterative worklist over `(pattern, candidate)` pairs with a visited-pair
+/// set, replacing a native recursion that had no memoisation: the two-sided
+/// walk re-expanded shared subterms of the hash-consed DAG once per path
+/// (exponential on a doubling DAG) and overflowed the native stack on deep
+/// triggers. Skipping an already-seen pair is sound because the walk is a
+/// pure conjunction with no backtracking: bindings only ever grow within
+/// one attempt, the first failing pair fails the whole attempt, and a pair
+/// that succeeded pinned every pattern variable below it to the
+/// corresponding candidate subterm.
 fn unify_trigger(
     pattern_term: TermId,
     candidate: TermId,
@@ -665,50 +635,67 @@ fn unify_trigger(
     manager: &TermManager,
     bindings: &mut FxHashMap<Spur, TermId>,
 ) -> bool {
-    if pattern_term == candidate {
-        // Identical (possibly ground) subterm shared between pattern and
-        // candidate -- always a valid match, whatever its shape.
-        return true;
-    }
+    let mut seen: FxHashSet<(TermId, TermId)> = FxHashSet::default();
+    // Pairs still to match; children are pushed in reverse so they are
+    // matched left-to-right, exactly as the recursive walk did.
+    let mut work: Vec<(TermId, TermId)> = vec![(pattern_term, candidate)];
 
-    let (Some(p), Some(c)) = (manager.get(pattern_term), manager.get(candidate)) else {
-        return false;
-    };
+    while let Some((p_id, c_id)) = work.pop() {
+        if !seen.insert((p_id, c_id)) {
+            continue;
+        }
 
-    if let TermKind::Var(name) = &p.kind {
-        if pattern_vars.contains(name) {
-            return match bindings.get(name) {
-                Some(&bound) => bound == candidate,
-                None if p.sort == c.sort => {
-                    bindings.insert(*name, candidate);
-                    true
+        if p_id == c_id {
+            // Identical (possibly ground) subterm shared between pattern and
+            // candidate -- always a valid match, whatever its shape.
+            continue;
+        }
+
+        let (Some(p), Some(c)) = (manager.get(p_id), manager.get(c_id)) else {
+            return false;
+        };
+
+        if let TermKind::Var(name) = &p.kind {
+            if pattern_vars.contains(name) {
+                match bindings.get(name) {
+                    Some(&bound) => {
+                        if bound != c_id {
+                            return false;
+                        }
+                    }
+                    None if p.sort == c.sort => {
+                        bindings.insert(*name, c_id);
+                    }
+                    None => return false,
                 }
-                None => false,
-            };
+                continue;
+            }
+            // A `Var` that is not one of the pattern's own bound variables is
+            // a free reference (e.g. a declared constant); it only matches an
+            // identical term, already handled by the `p_id == c_id` check
+            // above.
+            return false;
         }
-        // A `Var` that is not one of the pattern's own bound variables is a
-        // free reference (e.g. a declared constant); it only matches an
-        // identical term, already handled by the `pattern_term == candidate`
-        // check above.
-        return false;
+
+        match (&p.kind, &c.kind) {
+            (TermKind::Apply { func: pf, args: pa }, TermKind::Apply { func: cf, args: ca }) => {
+                if pf != cf || pa.len() != ca.len() {
+                    return false;
+                }
+                for (&pt, &ct) in pa.iter().zip(ca.iter()).rev() {
+                    work.push((pt, ct));
+                }
+            }
+            // Every other term shape falls back to exact structural equality,
+            // which was already ruled out by the `p_id == c_id` fast path
+            // above -- so no other shape can match here. This keeps the
+            // matcher conservative (never a spurious binding) for shapes
+            // beyond uninterpreted function application.
+            _ => return false,
+        }
     }
 
-    match (&p.kind, &c.kind) {
-        (TermKind::Apply { func: pf, args: pa }, TermKind::Apply { func: cf, args: ca }) => {
-            pf == cf
-                && pa.len() == ca.len()
-                && pa
-                    .iter()
-                    .zip(ca.iter())
-                    .all(|(&pt, &ct)| unify_trigger(pt, ct, pattern_vars, manager, bindings))
-        }
-        // Every other term shape falls back to exact structural equality,
-        // which was already ruled out by the `pattern_term == candidate`
-        // fast path above -- so no other shape can match here. This keeps
-        // the matcher conservative (never a spurious binding) for shapes
-        // beyond uninterpreted function application.
-        _ => false,
-    }
+    true
 }
 
 /// A set of patterns that must be matched together
@@ -863,5 +850,160 @@ mod tests {
         let p1 = Pattern::new(vec![TermId::new(1)]);
         let p2 = Pattern::new(vec![TermId::new(1)]);
         assert_eq!(p1, p2);
+    }
+
+    /// Run `f` on a dedicated 128 KiB stack: overflow aborts the process, so
+    /// returning at all is part of the assertion.
+    ///
+    /// This stack and every depth below were scaled down together by a factor
+    /// of 8 (from 1 MiB / 100 000).  The pin is the ~10 bytes of stack per
+    /// nesting level, not the absolute depth, and the smaller pair keeps the
+    /// interned terms out of swap.  Never raise one without the other.
+    fn run_on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(1 << 17)
+            .spawn(f)
+            .expect("spawning the constrained-stack test thread should succeed")
+            .join()
+            .expect("the constrained-stack thread must not panic")
+    }
+
+    /// All converted pattern walks must survive 12 500-deep terms on a
+    /// 128 KiB stack (the retired recursions overflowed) with pinned outputs.
+    #[test]
+    fn pattern_walks_survive_deep_terms_on_a_tiny_stack() {
+        const DEPTH: usize = 12_500;
+        run_on_small_stack(|| {
+            let mut m = TermManager::new();
+            let int_sort = m.sorts.int_sort;
+            let bool_sort = m.sorts.bool_sort;
+            let x = m.mk_var("x", int_sort);
+            let mut apply_chain = x;
+            for _ in 0..DEPTH {
+                apply_chain = m.mk_apply("f", [apply_chain], int_sort);
+            }
+
+            // extract_variables and count_function_symbols over the chain.
+            let mut pattern = Pattern::new(vec![apply_chain]);
+            pattern.extract_variables(&m);
+            assert_eq!(pattern.variables.len(), 1, "x is under the Apply chain");
+            assert_eq!(pattern.count_function_symbols(&m), DEPTH);
+
+            // A deep boolean chain for the eq/arith/func collectors:
+            // alternate And/Not so builder folding cannot collapse it.
+            let zero = m.mk_int(0);
+            let eq = m.mk_eq(x, zero);
+            let lt = m.mk_lt(x, zero);
+            let p_x = m.mk_apply("P", [x], bool_sort);
+            let seed = m.mk_and([eq, lt, p_x]);
+            let marker = m.mk_var("b", bool_sort);
+            let mut bool_chain = seed;
+            for _ in 0..DEPTH {
+                let conj = m.mk_and([marker, bool_chain]);
+                bool_chain = m.mk_not(conj);
+            }
+
+            let generator = PatternGenerator::new();
+            assert_eq!(generator.collect_equalities(bool_chain, &m), vec![eq]);
+            assert_eq!(generator.collect_arithmetic_terms(bool_chain, &m), vec![lt]);
+            assert_eq!(
+                generator.collect_function_applications(bool_chain, &m),
+                vec![p_x]
+            );
+
+            // unify_trigger over a deep pattern/candidate pair.
+            let seven = m.mk_int(7);
+            let mut deep_pattern = x;
+            let mut deep_candidate = seven;
+            for _ in 0..DEPTH {
+                deep_pattern = m.mk_apply("g", [deep_pattern], int_sort);
+                deep_candidate = m.mk_apply("g", [deep_candidate], int_sort);
+            }
+            let x_name = match m.get(x).map(|t| &t.kind) {
+                Some(TermKind::Var(n)) => *n,
+                _ => panic!("x is a variable"),
+            };
+            let pattern_vars: FxHashSet<Spur> = core::iter::once(x_name).collect();
+            let mut bindings = FxHashMap::default();
+            assert!(unify_trigger(
+                deep_pattern,
+                deep_candidate,
+                &pattern_vars,
+                &m,
+                &mut bindings
+            ));
+            assert_eq!(bindings.get(&x_name), Some(&seven));
+        });
+    }
+
+    /// A doubling (pattern, candidate) DAG is exponential without the
+    /// visited-pair set; with it the unification must complete essentially
+    /// instantly.
+    #[test]
+    fn unify_trigger_handles_shared_dag_without_blowup() {
+        const LEVELS: usize = 55;
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let seven = m.mk_int(7);
+
+        let mut pattern = x;
+        let mut candidate = seven;
+        for _ in 0..LEVELS {
+            pattern = m.mk_apply("g", [pattern, pattern], int_sort);
+            candidate = m.mk_apply("g", [candidate, candidate], int_sort);
+        }
+
+        let x_name = match m.get(x).map(|t| &t.kind) {
+            Some(TermKind::Var(n)) => *n,
+            _ => panic!("x is a variable"),
+        };
+        let pattern_vars: FxHashSet<Spur> = core::iter::once(x_name).collect();
+        let mut bindings = FxHashMap::default();
+        assert!(unify_trigger(
+            pattern,
+            candidate,
+            &pattern_vars,
+            &m,
+            &mut bindings
+        ));
+        assert_eq!(bindings.get(&x_name), Some(&seven));
+
+        // A conflicting occurrence must still be rejected: same doubling
+        // pattern against a candidate whose two halves disagree at the leaf.
+        let eight = m.mk_int(8);
+        let mut left = seven;
+        let mut right = eight;
+        for _ in 0..(LEVELS - 1) {
+            left = m.mk_apply("g", [left, left], int_sort);
+            right = m.mk_apply("g", [right, right], int_sort);
+        }
+        let mismatched = m.mk_apply("g", [left, right], int_sort);
+        let mut bindings = FxHashMap::default();
+        assert!(!unify_trigger(
+            pattern,
+            mismatched,
+            &pattern_vars,
+            &m,
+            &mut bindings
+        ));
+    }
+
+    /// Function-application collection order is pre-order left-to-right;
+    /// pinned so the iterative conversion is proven behavior-preserving.
+    #[test]
+    fn collect_function_applications_preserves_preorder() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let g_x = m.mk_apply("g", [x], int_sort);
+        let h_x = m.mk_apply("h", [x], int_sort);
+        let f = m.mk_apply("f", [g_x, h_x], int_sort);
+
+        let generator = PatternGenerator::new();
+        assert_eq!(
+            generator.collect_function_applications(f, &m),
+            vec![f, g_x, h_x]
+        );
     }
 }
