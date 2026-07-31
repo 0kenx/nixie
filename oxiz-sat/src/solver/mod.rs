@@ -1409,6 +1409,14 @@ impl Solver {
         if undefined.is_empty() {
             PreAttachOutcome::UnconditionalConflict
         } else {
+            // Force the unit *physically* at level 0: main's simple-pop trail
+            // removes by position, so appending this permanent fact at a higher
+            // level would let the next backtrack pop it. max_false_level == 0
+            // here, so no clause literal sits above level 0 and `undefined` is
+            // unchanged by the backtrack.
+            if self.trail.decision_level() > 0 {
+                self.backtrack_to_root();
+            }
             PreAttachOutcome::ForceUnitAtLevelZero(undefined[0])
         }
     }
