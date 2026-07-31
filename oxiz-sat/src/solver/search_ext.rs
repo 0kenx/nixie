@@ -81,7 +81,7 @@ impl Solver {
                 // literals that survive the rollback above that boundary, and
                 // the theory — which was just told to unwind to
                 // `backtrack_level` — has to see them again.
-                let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                self.backtrack_with_phase_saving(backtrack_level); let boundary = self.trail.assignments().len();
                 theory_processed = theory_processed.min(boundary);
                 self.learn_clause(learnt_clause);
 
@@ -144,7 +144,7 @@ impl Solver {
                     }
 
                     theory.on_backtrack(backtrack_level);
-                    let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                    self.backtrack_with_phase_saving(backtrack_level); let boundary = self.trail.assignments().len();
                     theory_processed = theory_processed.min(boundary);
                     self.learn_clause(learnt_clause);
 
@@ -216,7 +216,7 @@ impl Solver {
                         }
 
                         theory.on_backtrack(backtrack_level);
-                        let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                        self.backtrack_with_phase_saving(backtrack_level); let boundary = self.trail.assignments().len();
                         theory_processed = theory_processed.min(boundary);
                         self.learn_clause(learnt_clause);
 
@@ -292,7 +292,7 @@ impl Solver {
                         }
 
                         theory.on_backtrack(backtrack_level);
-                        let boundary = self.backtrack_with_phase_saving(backtrack_level);
+                        self.backtrack_with_phase_saving(backtrack_level); let boundary = self.trail.assignments().len();
                         theory_processed = theory_processed.min(boundary);
                         self.learn_clause(learnt_clause);
 
