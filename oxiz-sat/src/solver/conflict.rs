@@ -111,6 +111,12 @@ impl Solver {
         // level-0 fact, corrupting the trail (the earlier `decision_level()`
         // fallback did precisely this, tripping the trail-consistency assert).
         if current_level == 0 {
+            // Root-level refutation: every conflict literal is falsified under
+            // unconditional (level-0) facts, so the empty clause is derivable.
+            // The LRAT chain is built later by [`Self::build_chain_for_empty`]
+            // (a trail-order reason walk mirroring this function), invoked from
+            // the UNSAT emission site. Leave `lrat_chain` empty here so that
+            // path runs.
             self.learnt.clear();
             return (0, SmallVec::new());
         }
@@ -128,6 +134,14 @@ impl Solver {
         while let Some(clause) = self.clauses.get(reason_clause) {
             // Process reason clause (must exist, as it's either conflict or a propagation reason)
             let is_learned = clause.learned;
+
+            // LRAT: this reason clause is an antecedent in the 1-UIP resolution
+            // chain. Record its id in walk order (conflict-first); the chain is
+            // reversed into checker order at the end of `analyze` (mirrors
+            // `analyze_reason`'s `lrat_chain.push_back(reason->id)`).
+            if self.lrat {
+                self.lrat_chain.push(self.proof_clause_id(reason_clause));
+            }
 
             // Record clause usage for tier promotion and bump activity (if it's a learned clause)
             if is_learned && let Some(clause_mut) = self.clauses.get_mut(reason_clause) {
@@ -173,6 +187,14 @@ impl Solver {
                         // conflict, we need at least one of these literals to become TRUE.
                         self.learnt.push(lit);
                     }
+                } else if self.lrat && level == 0 && !self.seen[var.index()] {
+                    // LRAT: seed this level-0 antecedent (mark `seen`) for the
+                    // level-0 trail walk after the conflict walk. Resolving it
+                    // inline would interleave its reason clauses with the
+                    // conflict-level chain and break checker order; the dedicated
+                    // `collect_level0_chain` walk produces them as a correctly
+                    // ordered block (all level-0 facts ahead of conflict reasons).
+                    self.seen[var.index()] = true;
                 }
             }
 
@@ -278,8 +300,25 @@ impl Solver {
             }
         }
 
-        // Minimize learnt clause using recursive resolution
+        // Minimize learnt clause using recursive resolution (no-op that preserves
+        // the analyze RUP chain when LRAT is on; chain-extending minimization is
+        // handled inside `minimize_clause_lrat`).
         self.minimize_learnt_clause();
+
+        // LRAT chain finalization (faithful to the tail of cadical's `analyze`):
+        // append the level-0 unit ids collected during the reason walk, then
+        // reverse the whole chain into the checker's forward-propagation order.
+        // `minimize_clause_lrat` (when active) has already appended the
+        // minimization sub-chains ahead of this.
+        if self.lrat {
+            // Resolve all seeded level-0 antecedents via a trail walk (forward
+            // propagation order after the global reverse), as a block ahead of
+            // the conflict-level reasons.
+            self.collect_level0_chain();
+            self.lrat_chain.extend(self.unit_chain.drain(..));
+            self.lrat_chain.reverse();
+            self.unit_analyzed.clear();
+        }
 
         // Compute the real LBD from the FINAL learned (1-UIP) clause literals.
         // This is the standard Glucose definition: the number of distinct decision
@@ -422,6 +461,148 @@ impl Solver {
     /// Minimize the learned clause by removing redundant literals
     ///
     /// A literal can be removed if it is implied by the remaining literals.
+    /// Build the RUP hint chain for the empty clause by walking the assignment
+    /// **trail** in reverse (the same trail-order reason walk `analyze` uses for
+    /// higher levels), so the reversed chain lands in the checker's
+    /// forward-propagation order. Seed: mark the conflict clause's literal vars
+    /// as seen and push the conflict clause id. Then walk the trail backward;
+    /// each seen literal contributes its reason (a propagation clause id, or a
+    /// level-0 unit id for a `Decision` reason), and its reason clause's other
+    /// literals get marked seen. No-op when LRAT is off or the chain was already
+    /// populated.
+    pub(super) fn build_chain_for_empty(&mut self, conflict: Option<ClauseId>) {
+        if !self.lrat || !self.lrat_chain.is_empty() {
+            return;
+        }
+        let Some(cid) = conflict else {
+            return;
+        };
+        // Reset `seen` (a prior `analyze` leaves it dirty).
+        for s in &mut self.seen {
+            *s = false;
+        }
+        let mut chain_rev: SmallVec<[i64; 32]> = SmallVec::new();
+        let mut units: SmallVec<[i64; 16]> = SmallVec::new();
+        chain_rev.push(self.proof_clause_id(cid));
+        // Seed seen with the conflict clause's literal vars.
+        let mut max_var = 0usize;
+        if let Some(c) = self.clauses.get(cid) {
+            for &lit in &c.lits {
+                let v = lit.var().index();
+                if v < self.seen.len() {
+                    self.seen[v] = true;
+                }
+                if v >= max_var {
+                    max_var = v + 1;
+                }
+            }
+        }
+        // Walk the trail backward; process every seen literal's reason.
+        let trail = self.trail.assignments();
+        let mut index = trail.len();
+        while index > 0 {
+            index -= 1;
+            let lit = trail[index]; // true form on the trail
+            let var = lit.var();
+            let vi = var.index();
+            if vi >= self.seen.len() || !self.seen[vi] {
+                continue;
+            }
+            match self.trail.reason(var) {
+                Reason::Decision => {
+                    // Level-0 unit: record its true-literal unit id.
+                    units.push(self.proof_unit_id(lit.to_dimacs()));
+                }
+                Reason::Propagation(rcid) => {
+                    chain_rev.push(self.proof_clause_id(rcid));
+                    if let Some(rc) = self.clauses.get(rcid) {
+                        for &other in &rc.lits {
+                            let ov = other.var();
+                            if ov == var {
+                                continue;
+                            }
+                            if ov.index() < self.seen.len() {
+                                self.seen[ov.index()] = true;
+                            }
+                        }
+                    }
+                }
+                Reason::Theory => {}
+            }
+        }
+        let _ = max_var;
+        self.lrat_chain.extend(chain_rev);
+        self.lrat_chain.extend(units);
+        self.lrat_chain.reverse();
+    }
+
+    /// Walk the assignment trail backward and resolve every *seen* level-0
+    /// literal into its LRAT antecedents — reason-clause ids into
+    /// [`Solver::lrat_chain`] (backward trail order) and level-0 unit ids into
+    /// [`Solver::unit_chain`]. After the caller appends `unit_chain` and
+    /// reverses the whole `lrat_chain`, the level-0 antecedents land in forward
+    /// propagation order as a block ahead of the conflict-level reasons.
+    ///
+    /// A level-0 literal's reason clause has only level-0 antecedents (it was
+    /// propagated at level 0), all assigned earlier on the trail (lower
+    /// indices), so marking them `seen` while walking backward guarantees the
+    /// walk reaches them next.
+    pub(super) fn collect_level0_chain(&mut self) {
+        let trail_len = self.trail.assignments().len();
+        let mut i = trail_len;
+        while i > 0 {
+            i -= 1;
+            let lit = self.trail.assignments()[i];
+            let var = lit.var();
+            if self.trail.level(var) != 0 {
+                continue;
+            }
+            if var.index() >= self.seen.len() || !self.seen[var.index()] {
+                continue;
+            }
+            match self.trail.reason(var) {
+                Reason::Decision => {
+                    self.unit_chain.push(self.proof_unit_id(lit.to_dimacs()));
+                }
+                Reason::Propagation(rcid) => {
+                    self.lrat_chain.push(self.proof_clause_id(rcid));
+                    let others: SmallVec<[Lit; 8]> = self
+                        .clauses
+                        .get(rcid)
+                        .map(|c| c.lits.iter().copied().collect())
+                        .unwrap_or_default();
+                    for other in others {
+                        let ov = other.var();
+                        if ov == var {
+                            continue;
+                        }
+                        if self.trail.level(ov) == 0 && ov.index() < self.seen.len() {
+                            self.seen[ov.index()] = true;
+                        }
+                    }
+                }
+                Reason::Theory => {}
+            }
+        }
+    }
+
+    /// LRAT-path learned-clause minimization with RUP-chain extension —
+    /// faithful port of cadical's `minimize_clause` / `minimize_literal` /
+    /// `calculate_minimize_chain`.
+    ///
+    /// At present this is a correctness-preserving no-op: the un-minimized
+    /// 1-UIP clause is RUP-derivable from the chain assembled in [`Self::analyze`],
+    /// so emitting it verbatim yields a checkable proof. The full
+    /// chain-extending minimization (dropping redundant literals and walking
+    /// each one's reason sub-graph to extend `lrat_chain`) is left as the next
+    /// validated step — porting it without an oracle would risk silently
+    /// producing un-checkable proofs, so it is gated behind explicit
+    /// `lrat-check` validation.
+    #[allow(clippy::unused_self)]
+    fn minimize_clause_lrat(&mut self) {
+        // Intentionally empty: see doc comment.
+    }
+
     /// We use a recursive check: a literal l is redundant if its reason clause
     /// contains only literals that are either:
     /// - Already in the learnt clause (marked as seen)
@@ -432,6 +613,17 @@ impl Solver {
     pub(super) fn minimize_learnt_clause(&mut self) {
         if self.learnt.len() <= 2 {
             // Don't minimize very small clauses
+            return;
+        }
+
+        // Under LRAT, recursive minimization / self-subsuming strengthening would
+        // drop literals that the analyze-time RUP chain no longer justifies, so
+        // the chain must be extended per minimized literal (cadical's
+        // `calculate_minimize_chain`). That path is handled separately in
+        // [`Self::minimize_clause_lrat`]; the plain (non-LRAT) minimization used
+        // here is skipped to keep the proof checkable.
+        if self.lrat {
+            self.minimize_clause_lrat();
             return;
         }
 
