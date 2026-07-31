@@ -854,6 +854,31 @@ impl Solver {
         var
     }
 
+    /// Export the current SAT problem (every live clause plus every level-0
+    /// trail literal as a unit clause) in DIMACS int-literal encoding
+    /// (1-based, sign = polarity), together with the variable count. Used to
+    /// hand the problem to an external SAT backend.
+    pub fn export_problem_dimacs(&self) -> (usize, Vec<Vec<i32>>) {
+        let mut clauses: Vec<Vec<i32>> = Vec::new();
+        // Level-0 trail literals are the unconditional assertions; an external
+        // solver needs them as unit clauses.
+        for lit in self.trail.assignments() {
+            if self.trail.level(lit.var()) == 0 {
+                clauses.push(vec![lit.to_dimacs()]);
+            }
+        }
+        for id in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(id) else {
+                continue;
+            };
+            if c.deleted {
+                continue;
+            }
+            clauses.push(c.lits.iter().map(|l| l.to_dimacs()).collect());
+        }
+        (self.num_vars, clauses)
+    }
+
     /// Ensure we have at least n variables
     pub fn ensure_vars(&mut self, n: usize) {
         while self.num_vars < n {
