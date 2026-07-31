@@ -1727,9 +1727,17 @@ impl Solver {
         // literal substitution rewrote the clause database: the subsumption-
         // after-substitution sequence has a rare (≈1/15k) wrong-model
         // interaction still under investigation, so the two are not run
-        // together. BVE-alone keeps subsumption (verified clean to 15k+).
+        // together. Also skipped after BVE: running forward-subsumption over
+        // the BVE-reduced clause set (with BVE-derived units on the level-0
+        // trail) derives a spurious level-0 conflict on some SAT instances
+        // (reproduces on noL-11-14: SAT -> false UNSAT, 0 conflicts). BVE is
+        // currently off in every preset -- with the sound literal-count bound
+        // it eliminates no variables on the benchmarks tried -- so this guard
+        // is preventive, but it documents a real soundness hazard if BVE is
+        // re-enabled without also fixing the subsumption interaction.
         if (self.config.enable_bve || self.config.enable_equiv_substitution)
             && !self.did_equiv_subst
+            && !self.did_bve
         {
             self.forward_subsumption();
             self.self_subsumption_pass();
