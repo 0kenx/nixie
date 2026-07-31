@@ -34,6 +34,12 @@ fn chrono_config(threshold: u32) -> SolverConfig {
         // backtracking rather than to a clause-adding side heuristic.
         enable_lazy_hyper_binary: false,
         enable_inprocessing: false,
+        // Disable main's inprocess heuristics so the CNFs reach the CDCL search
+        // and actually exercise chronological backtracking: lucky/probing can
+        // shortcut these small CNFs before any conflict is analyzed.
+        enable_lucky: false,
+        enable_failed_literal_probing: false,
+        enable_hyper_binary_probing: false,
         random_polarity_prob: 0.0,
         restart_interval: 20,
         ..SolverConfig::default()
