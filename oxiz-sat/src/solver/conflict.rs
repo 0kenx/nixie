@@ -299,9 +299,8 @@ impl Solver {
             }
         }
 
-        // Minimize learnt clause using recursive resolution (no-op that preserves
-        // the analyze RUP chain when LRAT is on; chain-extending minimization is
-        // handled inside `minimize_clause_lrat`).
+        // Minimize learnt clause using recursive resolution (the chain-extending
+        // LRAT port when LRAT is on; the plain recursive minimization otherwise).
         self.minimize_learnt_clause();
 
         // LRAT chain finalization (faithful to the tail of cadical's `analyze`):
@@ -488,22 +487,55 @@ impl Solver {
     /// faithful port of cadical's `minimize_clause` / `minimize_literal` /
     /// `calculate_minimize_chain`. Drops redundant literals from the 1-UIP
     /// LRAT-path learned-clause minimization with RUP-chain extension —
-    /// port of cadical's `minimize_clause` / `minimize_literal` /
-    /// `calculate_minimize_chain`.
-    ///
-    /// **Currently disabled.** The level-0-to-units flush
-    /// ([`Self::flush_level0_unit`]) now holds cadical's invariant (every
-    /// level-0 literal is a unit), which the port needs, but the chain still
-    /// comes out mis-ordered on real instances: the `MF_ADDED` memoization in
-    /// `calculate_minimize_chain` lets one removed literal's reason sub-graph
-    /// absorb another's antecedents, so a hint can land ahead of the very
-    /// resolution it depends on (lrat-check rejects it). Until that ordering is
-    /// fixed, minimization stays off under LRAT and the un-minimized 1-UIP
-    /// clause — provably RUP with the analyze chain — is emitted instead. The
-    /// ported helpers below are retained for the fix.
+    /// faithful port of cadical's `minimize_clause` / `minimize_literal` /
+    /// `calculate_minimize_chain`. Drops redundant literals from the 1-UIP
+    /// clause and extends [`Solver::lrat_chain`] with each removed literal's
+    /// reason sub-graph so the smaller clause stays RUP-checkable. Enabled by
+    /// the level-0-to-units flush ([`Self::flush_level0_unit`]).
     fn minimize_clause_lrat(&mut self) {
-        let _ = self.learnt.len();
-        // Intentionally a no-op: see doc comment.
+        let n = self.learnt.len();
+        if n <= 2 {
+            return;
+        }
+        // `learnt[0]` is the asserting literal and is always kept. Process the
+        // rest in trail (assignment) order so that an earlier clause literal a
+        // later one resolves through is already decided (kept→`MF_KEEP`, or
+        // dropped→`MF_REMOVABLE`) before it is reached — the recursive base case
+        // (cadical `minimize_sort_clause`).
+        let asserting = self.learnt[0];
+        let mut order: SmallVec<[Lit; 16]> = self.learnt[1..].iter().copied().collect();
+        order.sort_by_key(|&l| self.trail.trail_index(l.var()));
+
+        let mut kept: SmallVec<[Lit; 16]> = SmallVec::new();
+        let mut minimize_chain: Vec<i64> = Vec::new();
+        for &lit in &order {
+            // `lit` is FALSE (a learnt literal); check its TRUE form's reason graph.
+            if self.minimize_literal_lrat(lit.negate(), 0) {
+                // Removable: drop `lit` and extend the chain with its antecedents.
+                self.calculate_minimize_chain_lrat(lit.negate());
+                // cadical: `minimize_chain` accumulates `mini_chain` forward.
+                for &id in &self.mini_chain {
+                    minimize_chain.push(id);
+                }
+                self.mini_chain.clear();
+            } else {
+                self.mf_set(lit.var(), MF_KEEP);
+                kept.push(lit);
+            }
+        }
+        // Rebuild the learnt clause: asserting literal first, then the kept ones.
+        self.learnt.clear();
+        self.learnt.push(asserting);
+        self.learnt.extend(kept);
+        // Clear the per-var minimize flags touched above.
+        self.clear_minimize_flags();
+        // Append the minimization sub-chains (reversed) to `lrat_chain`, ahead of
+        // the final level-0/unit assembly (mirrors cadical's tail of
+        // `minimize_clause`: `lrat_chain += reverse(minimize_chain)`; the later
+        // global reverse in `analyze` flips it back to forward order).
+        for &id in minimize_chain.iter().rev() {
+            self.lrat_chain.push(id);
+        }
     }
 
     /// Recursive removable check (faithful port of `minimize_literal`). `lit` is
@@ -511,7 +543,6 @@ impl Solver {
     /// out (its reason graph reaches only level-0 literals, kept clause
     /// literals, or already-removable literals). Sets `MF_REMOVABLE`/`MF_POISON`
     /// and records the var for cleanup. Depth-limited to bound the stack.
-    #[allow(dead_code)]
     fn minimize_literal_lrat(&mut self, lit: Lit, depth: u32) -> bool {
         const MINIMIZE_DEPTH_LIMIT: u32 = 100;
         let var = lit.var();
@@ -558,46 +589,47 @@ impl Solver {
     /// Iterative reason-graph walk collecting the LRAT chain for a minimized-away
     /// literal `lit` (TRUE form) — faithful port of `calculate_minimize_chain`.
     /// Reason-clause ids go to [`Solver::mini_chain`] in post-order; level-0
-    /// units go to [`Solver::unit_chain`]. Per-var flags indexed by `var.index()`;
-    /// a negative stack entry is an "emit this var's reason id" marker processed
-    /// after its descendants (post-order).
-    #[allow(dead_code)]
+    /// units go to [`Solver::unit_chain`]. Per-var flags indexed by `var.index()`.
+    ///
+    /// The stack uses **1-based** variable indices so that the "emit this var's
+    /// reason id" marker (the negated index) never collides with var index 0 —
+    /// cadical is safe because its `vidx` is already 1-based, but oxiz vars are
+    /// 0-based, so `-0 == 0` would otherwise alias var 0 with its own marker.
     fn calculate_minimize_chain_lrat(&mut self, lit: Lit) {
         debug_assert!(self.lrat);
         self.mini_chain.clear();
         let mut stack: SmallVec<[i32; 64]> = SmallVec::new();
-        stack.push(lit.var().index() as i32);
+        stack.push(lit.var().index() as i32 + 1); // 1-based
         while let Some(idx) = stack.pop() {
             if idx < 0 {
-                let var = Var::new((-idx) as u32);
+                // Marker: emit this var's reason-clause id.
+                let var = Var::new(((-idx) - 1) as u32);
                 if let Reason::Propagation(cid) = self.trail.reason(var) {
                     self.mini_chain.push(self.proof_clause_id(cid));
                 }
                 continue;
             }
-            let var = Var::new(idx as u32);
+            let var = Var::new((idx - 1) as u32);
             let f = self.mf_get(var);
             if (f & (MF_KEEP | MF_ADDED | MF_POISON)) != 0 {
                 continue;
             }
             let level = self.trail.level(var);
-            let reason = self.trail.reason(var);
-            if level == 0 && matches!(reason, Reason::Decision) {
-                // A genuine level-0 unit: record its unit id (cadical's level-0
-                // branch). Level-0 *propagated* literals fall through to the
-                // generic reason walk below (oxiz has these where cadical's
-                // units-only invariant avoids them).
+            if level == 0 {
+                // Every level-0 literal is a unit with an id (level-0 flush), so
+                // reference it directly — cadical's level-0 branch.
                 if (f & MF_SEEN) != 0 {
                     continue;
                 }
                 self.mf_set(var, MF_SEEN);
-                self.unit_analyzed.push(idx);
+                self.unit_analyzed.push(var.index() as i32);
                 let true_dimacs = self.true_lit_dimacs(var);
                 self.unit_chain.push(self.proof_unit_id(true_dimacs));
                 continue;
             }
+            let reason = self.trail.reason(var);
             let Reason::Propagation(cid) = reason else {
-                // level-0 with no usable reason (Theory) — skip.
+                // No usable reason (Decision at level>0 / Theory) — skip.
                 continue;
             };
             // level > 0 (or level-0 propagated): mark added, walk its reason clause.
@@ -613,14 +645,13 @@ impl Solver {
                 if other.var() == var {
                     continue;
                 }
-                stack.push(other.var().index() as i32);
+                stack.push(other.var().index() as i32 + 1); // 1-based
             }
         }
     }
 
     /// The DIMACS form of the literal currently TRUE for `var` (for level-0
     /// unit-id lookups during minimization).
-    #[allow(dead_code)]
     fn true_lit_dimacs(&self, var: Var) -> i32 {
         if self.trail.lit_value(Lit::pos(var)).is_true() {
             Lit::pos(var).to_dimacs()
@@ -631,7 +662,6 @@ impl Solver {
 
     /// Per-var minimization-flag accessors (flags live in [`Solver::lrat_flags`],
     /// indexed by `var.index()`).
-    #[allow(dead_code)]
     fn mf_get(&self, var: Var) -> u8 {
         let i = var.index();
         if i < self.lrat_flags.len() {
@@ -640,14 +670,12 @@ impl Solver {
             0
         }
     }
-    #[allow(dead_code)]
     fn mf_set(&mut self, var: Var, bit: u8) {
         let i = var.index();
         if i < self.lrat_flags.len() {
             self.lrat_flags[i] |= bit;
         }
     }
-    #[allow(dead_code)]
     fn mf_unset(&mut self, var: Var, bit: u8) {
         let i = var.index();
         if i < self.lrat_flags.len() {
@@ -658,7 +686,6 @@ impl Solver {
     /// Clear every minimization flag touched during [`Self::minimize_clause_lrat`]:
     /// removable/poison/added for minimized vars, keep for kept (learnt) vars,
     /// seen for level-0 vars reached by the chain walk.
-    #[allow(dead_code)]
     fn clear_minimize_flags(&mut self) {
         let minimized: SmallVec<[i32; 32]> = self.lrat_minimized.drain(..).collect();
         for vi in minimized {
@@ -689,12 +716,11 @@ impl Solver {
             return;
         }
 
-        // Under LRAT, recursive minimization / self-subsuming strengthening would
-        // drop literals that the analyze-time RUP chain no longer justifies, so
-        // the chain must be extended per minimized literal (cadical's
-        // `calculate_minimize_chain`). That chain-extending minimization is the
-        // LRAT path; the plain (non-LRAT) recursive minimization + strengthening
-        // used here is skipped to keep the two code paths independent.
+        // Under LRAT, recursive minimization runs the chain-extending port
+        // (`minimize_clause_lrat` + `calculate_minimize_chain_lrat`), which drops
+        // redundant literals and extends the RUP chain per removed literal so
+        // the smaller clause stays checkable. The plain (non-LRAT) recursive
+        // minimization + strengthening below is the non-proof path.
         if self.lrat {
             self.minimize_clause_lrat();
             return;
