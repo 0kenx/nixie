@@ -142,6 +142,13 @@ impl Trail {
             .map_or(Reason::Decision, |v| v.reason)
     }
 
+    /// Get the trail position (assignment order) at which a variable was
+    /// assigned. Used to order literals for recursive minimization.
+    #[must_use]
+    pub fn trail_index(&self, var: Var) -> u32 {
+        self.var_info.get(var.index()).map_or(0, |v| v.trail_idx)
+    }
+
     /// Start a new decision level
     pub fn new_decision_level(&mut self) {
         self.current_level += 1;
