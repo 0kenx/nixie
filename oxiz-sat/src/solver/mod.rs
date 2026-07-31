@@ -33,15 +33,10 @@ use smallvec::SmallVec;
 // Packed per-variable LRAT minimization flags (`Flags` in upstream), stored
 // in [`Solver::lrat_flags`] indexed by `Var::index()`. The bit layout mirrors
 // cadical's `Flags` fields used by `minimize.cpp`.
-#[allow(dead_code)]
 pub(super) const MF_KEEP: u8 = 1;
-#[allow(dead_code)]
 pub(super) const MF_POISON: u8 = 2;
-#[allow(dead_code)]
 pub(super) const MF_REMOVABLE: u8 = 4;
-#[allow(dead_code)]
 pub(super) const MF_ADDED: u8 = 8;
-#[allow(dead_code)]
 pub(super) const MF_SEEN: u8 = 16;
 
 /// Convert a path to a UTF-8 string for the file tracers (which take `&str`,

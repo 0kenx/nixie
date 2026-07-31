@@ -7,14 +7,17 @@
 //! - Clause learning with first-UIP scheme and recursive minimization
 //! - Preprocessing (BCE, BVE, subsumption elimination)
 //! - Incremental solving (push/pop)
-//! - DRAT/LRAT proof logging, fully wired into the CDCL search. Enable with
+//! - DRAT/LRAT proof logging, fully wired into the CDCL search (including
+//!   recursive clause minimization with RUP-chain extension). Enable with
 //!   [`Solver::enable_drat_proof`] / [`Solver::enable_lrat_proof`] (text or
 //!   binary) *before* adding clauses; `solve()` then streams a checkable proof
 //!   — derived clauses with RUP hint chains assembled during 1-UIP conflict
-//!   analysis, id-based deletions, and the empty clause on UNSAT. The LRAT
-//!   proof is verified by `lrat-check` (vendored under `tools/`). See the
-//!   `proof` module for the tracer/dispatcher architecture (faithful port of
-//!   cadical's `Proof`/`Tracer`).
+//!   analysis (and extended per minimized literal), id-based deletions, and the
+//!   empty clause on UNSAT. Level-0 propagations are flushed to explicit
+//!   derived units so the chain invariant holds. The LRAT proof is verified by
+//!   `lrat-check` (vendored under `tools/`). See the `proof` module for the
+//!   tracer/dispatcher architecture (faithful port of cadical's
+//!   `Proof`/`Tracer`).
 //! - Local search integration
 //! - Parallel portfolio solving
 //! - AllSAT enumeration
