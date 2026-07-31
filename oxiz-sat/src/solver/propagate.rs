@@ -50,6 +50,11 @@ impl Solver {
                 } else if !value.is_defined() {
                     // Propagate
                     self.trail.assign_propagation(implied_lit, clause_id);
+                    // LRAT: flush level-0 propagations to explicit derived units
+                    // so every level-0 literal carries a unit id.
+                    if self.lrat && self.trail.decision_level() == 0 {
+                        self.flush_level0_unit(implied_lit, clause_id);
+                    }
 
                     // Lazy hyper-binary resolution: check if we can learn a binary clause
                     if self.config.enable_lazy_hyper_binary {
@@ -139,6 +144,10 @@ impl Solver {
                 } else {
                     // Unit propagation
                     self.trail.assign_propagation(first, watcher.clause);
+                    // LRAT: flush level-0 propagations to explicit derived units.
+                    if self.lrat && self.trail.decision_level() == 0 {
+                        self.flush_level0_unit(first, watcher.clause);
+                    }
 
                     // Lazy hyper-binary resolution
                     if self.config.enable_lazy_hyper_binary {

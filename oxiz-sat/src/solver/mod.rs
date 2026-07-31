@@ -33,6 +33,7 @@ use smallvec::SmallVec;
 // Packed per-variable LRAT minimization flags (`Flags` in upstream), stored
 // in [`Solver::lrat_flags`] indexed by `Var::index()`. The bit layout mirrors
 // cadical's `Flags` fields used by `minimize.cpp`.
+#[allow(dead_code)]
 pub(super) const MF_KEEP: u8 = 1;
 #[allow(dead_code)]
 pub(super) const MF_POISON: u8 = 2;
@@ -988,6 +989,53 @@ impl Solver {
             self.unit_clauses_idx[li]
         } else {
             0
+        }
+    }
+
+    /// Flush a level-0 propagation to an explicit derived unit (the principled
+    /// fix that makes every level-0 literal a unit with an LRAT id, matching
+    /// cadical's invariant). Called right after a literal is propagated at
+    /// decision level 0: emits a derived unit `[lit]` whose RUP chain is the
+    /// antecedent unit ids (already flushed — propagation is in trail order)
+    /// followed by the propagating clause's id, and records the new unit id.
+    ///
+    /// This lets conflict analysis, the empty-clause walk, and minimization
+    /// reference any level-0 literal by a single unit id instead of re-walking
+    /// its reason sub-graph.
+    pub(super) fn flush_level0_unit(&mut self, lit: Lit, cid: ClauseId) {
+        if !self.lrat || self.proof.is_none() {
+            return;
+        }
+        let lit_dimacs = lit.to_dimacs();
+        if self.proof_unit_id_get_or_zero(lit_dimacs) != 0 {
+            return; // already a recorded unit (original/learned unit or already flushed)
+        }
+        // Chain: [unit id of each antecedent's true form] ++ [propagating clause id].
+        // Under ¬lit the antecedent units make the reason clause's antecedent
+        // literals false, so the reason clause is fully falsified → conflict.
+        let reason_lits: SmallVec<[Lit; 8]> = self
+            .clauses
+            .get(cid)
+            .map(|c| c.lits.iter().copied().collect())
+            .unwrap_or_default();
+        let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
+        for &l in &reason_lits {
+            if l.var() == lit.var() {
+                continue; // the propagated literal
+            }
+            let v = l.var();
+            let true_dimacs = if self.trail.lit_value(Lit::pos(v)).is_true() {
+                Lit::pos(v).to_dimacs()
+            } else {
+                Lit::neg(v).to_dimacs()
+            };
+            chain.push(self.proof_unit_id(true_dimacs));
+        }
+        chain.push(self.proof_clause_id(cid));
+        let id = self.proof_next_id();
+        self.proof_set_unit_id(lit_dimacs, id);
+        if let Some(proof) = &mut self.proof {
+            proof.add_derived_unit_clause(id, lit_dimacs, &chain);
         }
     }
 
