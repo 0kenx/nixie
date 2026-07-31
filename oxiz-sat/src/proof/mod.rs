@@ -486,8 +486,12 @@ mod tests {
         let buf_a = Arc::new(Mutex::new(Vec::<String>::new()));
         let buf_b = Arc::new(Mutex::new(Vec::<String>::new()));
         let mut p = Proof::new();
-        p.connect(Box::new(RecordingTracer { events: buf_a.clone() }));
-        p.connect(Box::new(RecordingTracer { events: buf_b.clone() }));
+        p.connect(Box::new(RecordingTracer {
+            events: buf_a.clone(),
+        }));
+        p.connect(Box::new(RecordingTracer {
+            events: buf_b.clone(),
+        }));
         p.add_derived_clause(5, true, &[1, -2], &[1, 2]);
         p.delete_clause(5, true, &[]);
         p.report_status(20, 5);
@@ -497,8 +501,12 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                "der:5:2", "del:5", "status:20", //
-                "der:5:2", "del:5", "status:20",
+                "der:5:2",
+                "del:5",
+                "status:20", //
+                "der:5:2",
+                "del:5",
+                "status:20",
             ]
         );
     }

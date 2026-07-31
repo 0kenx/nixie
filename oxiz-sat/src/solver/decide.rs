@@ -98,7 +98,7 @@ impl Solver {
     /// Backtrack with phase saving
     ///
     /// Performs every per-variable side effect of unassignment (phase saving
-    /// + branching-heap reinsertion) directly inside the trail's backtrack
+    /// and branching-heap reinsertion) directly inside the trail's backtrack
     /// callback by borrowing the disjoint Solver fields, instead of first
     /// collecting the unassigned variables into a throwaway `Vec`. That
     /// allocation happened on every backtrack (one per conflict) and showed up
@@ -334,7 +334,10 @@ impl Solver {
         // ungated rephase regresses broadly; stable-gated rephase is neutral.
         if self.config.rephase_interval > 0
             && self.stable
-            && self.stats.restarts % u64::from(self.config.rephase_interval) == 0
+            && self
+                .stats
+                .restarts
+                .is_multiple_of(u64::from(self.config.rephase_interval))
         {
             self.rephase_count += 1;
             if self.rephase_count % 2 == 1 && self.best_trail_size > 0 {
@@ -389,7 +392,7 @@ impl Solver {
                 // Here we just enforce a minimum gap between restarts
                 // (`restart_interval`) so the solver does not thrash, then wait
                 // for the next degradation.
-                self.restart_threshold = self.stats.conflicts + self.config.restart_interval as u64;
+                self.restart_threshold = self.stats.conflicts + self.config.restart_interval;
             }
             RestartStrategy::LocalLbd => {
                 // Local restarts based on LBD

@@ -52,11 +52,7 @@ fn build_vendored_lrat_check() -> Option<PathBuf> {
         .arg(&src)
         .status()
         .ok()?;
-    if status.success() {
-        Some(bin)
-    } else {
-        None
-    }
+    if status.success() { Some(bin) } else { None }
 }
 
 /// Solve `clauses` (over `nvars` variables) with LRAT logging to `lrat_path`,
@@ -174,12 +170,16 @@ fn decode_binary_lrat(bytes: &[u8]) -> String {
                 loop {
                     let l = dec_lit(varint(bytes, &mut i));
                     out.push_str(&format!("{l} "));
-                    if l == 0 { break; }
+                    if l == 0 {
+                        break;
+                    }
                 }
                 loop {
                     let h = dec_id(varint(bytes, &mut i));
                     out.push_str(&format!("{h} "));
-                    if h == 0 { break; }
+                    if h == 0 {
+                        break;
+                    }
                 }
                 out.push('\n');
             }
@@ -189,7 +189,9 @@ fn decode_binary_lrat(bytes: &[u8]) -> String {
                 loop {
                     let h = dec_id(varint(bytes, &mut i));
                     out.push_str(&format!("{h} "));
-                    if h == 0 { break; }
+                    if h == 0 {
+                        break;
+                    }
                 }
                 out.push('\n');
             }
@@ -204,12 +206,7 @@ fn lrat_text_2var_unsat() {
     // All four sign combinations of x1,x2 → UNSAT.
     assert_verified(
         2,
-        &[
-            vec![1, 2],
-            vec![1, -2],
-            vec![-1, 2],
-            vec![-1, -2],
-        ],
+        &[vec![1, 2], vec![1, -2], vec![-1, 2], vec![-1, -2]],
         false,
     );
 }
@@ -218,12 +215,7 @@ fn lrat_text_2var_unsat() {
 fn lrat_binary_2var_unsat() {
     assert_verified(
         2,
-        &[
-            vec![1, 2],
-            vec![1, -2],
-            vec![-1, 2],
-            vec![-1, -2],
-        ],
+        &[vec![1, 2], vec![1, -2], vec![-1, 2], vec![-1, -2]],
         true,
     );
 }

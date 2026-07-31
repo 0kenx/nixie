@@ -209,7 +209,11 @@ impl Preprocessor {
     /// A pure literal is one that appears only in positive or only in negative form.
     /// All clauses containing a pure literal can be satisfied and removed.
     /// Returns the number of clauses eliminated.
-    pub fn pure_literal_elimination(&mut self, clauses: &mut ClauseDatabase, assigned: &[bool]) -> usize {
+    pub fn pure_literal_elimination(
+        &mut self,
+        clauses: &mut ClauseDatabase,
+        assigned: &[bool],
+    ) -> usize {
         let mut eliminated = 0;
         self.build_occurrences(clauses);
 
@@ -702,7 +706,11 @@ impl Preprocessor {
     /// Apply all preprocessing techniques
     ///
     /// Returns (clauses_eliminated, vars_eliminated)
-    pub fn preprocess(&mut self, clauses: &mut ClauseDatabase, assigned: &[bool]) -> (usize, usize) {
+    pub fn preprocess(
+        &mut self,
+        clauses: &mut ClauseDatabase,
+        assigned: &[bool],
+    ) -> (usize, usize) {
         let mut total_clauses = 0;
         let total_vars = 0;
 

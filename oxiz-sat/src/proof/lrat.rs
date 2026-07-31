@@ -100,10 +100,18 @@ impl LratTracer {
     #[inline]
     fn write_varint(&mut self, mut x: u64) {
         while x & !0x7f != 0 {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(&[((x & 0x7f) | 0x80) as u8]);
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(&[((x & 0x7f) | 0x80) as u8]);
             x >>= 7;
         }
-        let _ = self.writer.get_mut().expect("proof writer").write_all(&[x as u8]);
+        let _ = self
+            .writer
+            .get_mut()
+            .expect("proof writer")
+            .write_all(&[x as u8]);
     }
 
     /// Emit any buffered deletions as a `d …` line and clear the buffer.
@@ -120,8 +128,16 @@ impl LratTracer {
             // id of the most-recently added clause. `lrat-check` parses but
             // ignores this index (it deletes the ids listed after `d`), so its
             // value is cosmetic; we reproduce upstream's convention exactly.
-            let _ = write!(self.writer.get_mut().expect("proof writer"), "{} ", self.latest_id);
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"d ");
+            let _ = write!(
+                self.writer.get_mut().expect("proof writer"),
+                "{} ",
+                self.latest_id
+            );
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"d ");
         }
         for did in ids {
             if self.binary {
@@ -133,7 +149,11 @@ impl LratTracer {
         if self.binary {
             self.put_binary_zero();
         } else {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"0\n");
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"0\n");
         }
     }
 
@@ -161,7 +181,11 @@ impl LratTracer {
         if self.binary {
             self.put_binary_zero();
         } else {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"0 ");
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"0 ");
         }
         for &c in chain {
             if self.binary {
@@ -173,7 +197,11 @@ impl LratTracer {
         if self.binary {
             self.put_binary_zero();
         } else {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"0\n");
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"0\n");
         }
     }
 
@@ -273,19 +301,11 @@ mod tests {
 
     fn decode_lit(x: u64) -> i32 {
         let idx = (x / 2) as i32;
-        if x & 1 == 1 {
-            -idx
-        } else {
-            idx
-        }
+        if x & 1 == 1 { -idx } else { idx }
     }
     fn decode_id(x: u64) -> i64 {
         let a = (x / 2) as i64;
-        if x & 1 == 1 {
-            -a
-        } else {
-            a
-        }
+        if x & 1 == 1 { -a } else { a }
     }
 
     #[test]

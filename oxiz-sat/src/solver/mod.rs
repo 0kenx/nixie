@@ -561,6 +561,10 @@ pub struct Solver {
     /// growth).
     pub(super) stabphases: u64,
     /// Conflict count at which to next switch stable/focused mode.
+    ///
+    /// Legacy: the tick-based schedule (`lim_stabilize`) drives the actual
+    /// transitions; retained for inspection but not read by the search.
+    #[allow(dead_code)]
     pub(super) next_stabilize: u64,
     /// Per-mode glue averages (current/saved), swapped on stable/focused
     /// transitions (cadical `swap_averages`).
@@ -1079,7 +1083,7 @@ impl Solver {
             // A 0 hint id means a clause/unit id was never bound — the proof
             // would be un-checkable. Catch it early in debug builds.
             debug_assert!(
-                !c.iter().any(|&h| h == 0),
+                !c.contains(&0),
                 "zero-id hint in derived clause {} (lits={:?})",
                 id,
                 lits.iter().map(|l| l.to_dimacs()).collect::<Vec<_>>()
@@ -2247,6 +2251,7 @@ impl Solver {
         })
     }
 
+    /// Total number of clauses currently in the database (original + learned).
     #[must_use]
     pub fn num_clauses(&self) -> usize {
         self.clauses.len()

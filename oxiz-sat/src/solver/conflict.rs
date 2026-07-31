@@ -193,7 +193,8 @@ impl Solver {
                     // directly (cadical's `analyze_literal` level-0 branch). `lit`
                     // is FALSE; its true form `¬lit` is the unit.
                     self.seen[var.index()] = true;
-                    self.unit_chain.push(self.proof_unit_id(lit.negate().to_dimacs()));
+                    self.unit_chain
+                        .push(self.proof_unit_id(lit.negate().to_dimacs()));
                 }
             }
 
@@ -319,7 +320,7 @@ impl Solver {
             // Finalize the LRAT chain: append the level-0 unit ids collected
             // during the walk, then reverse the whole chain into the checker's
             // forward-propagation order (cadical's tail of `analyze`).
-            self.lrat_chain.extend(self.unit_chain.drain(..));
+            self.lrat_chain.append(&mut self.unit_chain);
             self.lrat_chain.reverse();
             self.unit_analyzed.clear();
         }
@@ -485,7 +486,8 @@ impl Solver {
             .unwrap_or_default();
         for lit in clits {
             // `lit` is falsified; its negation is the level-0 unit.
-            self.lrat_chain.push(self.proof_unit_id(lit.negate().to_dimacs()));
+            self.lrat_chain
+                .push(self.proof_unit_id(lit.negate().to_dimacs()));
         }
         self.lrat_chain.push(self.proof_clause_id(cid));
     }
@@ -575,7 +577,13 @@ impl Solver {
         let others: SmallVec<[Lit; 8]> = self
             .clauses
             .get(cid)
-            .map(|c| c.lits.iter().filter(|&&l| l.var() != var).copied().collect())
+            .map(|c| {
+                c.lits
+                    .iter()
+                    .filter(|&&l| l.var() != var)
+                    .copied()
+                    .collect()
+            })
             .unwrap_or_default();
         let mut res = true;
         for other in others {

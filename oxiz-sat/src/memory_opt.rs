@@ -414,7 +414,8 @@ mod tests {
         assert_eq!(opt.stats().allocations, 2);
         assert_eq!(opt.stats().frees, 2);
         assert_eq!(
-            opt.stats().current_usage, baseline_usage,
+            opt.stats().current_usage,
+            baseline_usage,
             "balanced alloc/free must return current_usage to its baseline"
         );
         // hit_rate() is now always 0 (no pool tracking), which is harmless: it

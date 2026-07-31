@@ -350,6 +350,74 @@ impl Trail {
     }
 }
 
+// --- pr/sat additions (upstream/API functions main's trail.rs lacks) ---
+// Representation-independent (prop_head only, or delegate to assign_at).
+impl Trail {
+    /// Level-aware assign: main's `assign` hard-codes `current_level`, but the
+    /// effective-unit / asserting-literal paths must install a literal at an
+    /// explicit level (the falsifying literal's level, or 0 for a root fact).
+    /// Mirrors `assign` exactly except for the `VarInfo.level` field.
+    fn assign_at(&mut self, lit: Lit, reason: Reason, level: u32) {
+        let var = lit.var();
+        let idx = var.index();
+        let code = lit.code() as usize;
+        if idx >= self.var_info.len() {
+            self.var_info.resize(idx + 1, VarInfo::default());
+            let need = (idx + 1) * 2;
+            if self.values.len() < need {
+                self.values.resize(need, 0);
+            }
+        }
+        let value = if lit.is_pos() {
+            LBool::True
+        } else {
+            LBool::False
+        };
+        self.values[code] = 1;
+        self.values[code ^ 1] = -1;
+        self.var_info[idx] = VarInfo {
+            value,
+            level,
+            reason,
+            trail_idx: self.assignments.len() as u32,
+        };
+        self.assignments.push(lit);
+    }
+
+    /// Assign `lit` as a propagation with reason `clause` at decision `level`.
+    pub fn assign_propagation_at(&mut self, lit: Lit, clause: ClauseId, level: u32) {
+        self.assign_at(lit, Reason::Propagation(clause), level);
+    }
+
+    /// Assign `lit` as a permanent level-0 fact (decision reason, level 0).
+    pub fn assign_unit_fact(&mut self, lit: Lit) {
+        self.assign_at(lit, Reason::Decision, 0);
+    }
+
+    /// Index of the propagation head: every literal strictly before it has had
+    /// all of its consequences computed.
+    pub fn propagation_head(&self) -> usize {
+        self.prop_head
+    }
+
+    /// Decrement the propagation head by one, re-queuing the most recently
+    /// dequeued literal (used when bailing out of a watch-list scan before the
+    /// literal is fully propagated).
+    pub fn requeue_last_propagated(&mut self) {
+        debug_assert!(
+            self.prop_head > 0,
+            "requeue_last_propagated requires a literal to have been dequeued"
+        );
+        self.prop_head = self.prop_head.saturating_sub(1);
+    }
+
+    /// Reset the propagation head to 0, forcing the whole trail to be
+    /// re-propagated on the next propagation pass.
+    pub fn reset_propagation_head(&mut self) {
+        self.prop_head = 0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,64 +471,5 @@ mod tests {
         assert_eq!(trail.next_to_propagate(), Some(Lit::pos(Var::new(0))));
         assert_eq!(trail.next_to_propagate(), Some(Lit::neg(Var::new(1))));
         assert!(!trail.has_pending_propagation());
-    }
-}
-
-// --- pr/sat additions (upstream/API functions main's trail.rs lacks) ---
-// Representation-independent (prop_head only, or delegate to assign_at).
-impl Trail {
-    /// Level-aware assign: main's `assign` hard-codes `current_level`, but the
-    /// effective-unit / asserting-literal paths must install a literal at an
-    /// explicit level (the falsifying literal's level, or 0 for a root fact).
-    /// Mirrors `assign` exactly except for the `VarInfo.level` field.
-    fn assign_at(&mut self, lit: Lit, reason: Reason, level: u32) {
-        let var = lit.var();
-        let idx = var.index();
-        let code = lit.code() as usize;
-        if idx >= self.var_info.len() {
-            self.var_info.resize(idx + 1, VarInfo::default());
-            let need = (idx + 1) * 2;
-            if self.values.len() < need {
-                self.values.resize(need, 0);
-            }
-        }
-        let value = if lit.is_pos() {
-            LBool::True
-        } else {
-            LBool::False
-        };
-        self.values[code] = 1;
-        self.values[code ^ 1] = -1;
-        self.var_info[idx] = VarInfo {
-            value,
-            level,
-            reason,
-            trail_idx: self.assignments.len() as u32,
-        };
-        self.assignments.push(lit);
-    }
-
-    pub fn assign_propagation_at(&mut self, lit: Lit, clause: ClauseId, level: u32) {
-        self.assign_at(lit, Reason::Propagation(clause), level);
-    }
-
-    pub fn assign_unit_fact(&mut self, lit: Lit) {
-        self.assign_at(lit, Reason::Decision, 0);
-    }
-
-    pub fn propagation_head(&self) -> usize {
-        self.prop_head
-    }
-
-    pub fn requeue_last_propagated(&mut self) {
-        debug_assert!(
-            self.prop_head > 0,
-            "requeue_last_propagated requires a literal to have been dequeued"
-        );
-        self.prop_head = self.prop_head.saturating_sub(1);
-    }
-
-    pub fn reset_propagation_head(&mut self) {
-        self.prop_head = 0;
     }
 }

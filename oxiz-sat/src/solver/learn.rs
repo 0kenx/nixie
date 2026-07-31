@@ -344,7 +344,12 @@ impl Solver {
 
         // Proof: the explanation clause is a valid theory lemma (recorded with an
         // empty RUP chain; bound to the stored clause below).
-        let proof_id = self.proof_theory_clause(&clause_lits.iter().map(|l| l.to_dimacs()).collect::<SmallVec<[i32; 8]>>());
+        let proof_id = self.proof_theory_clause(
+            &clause_lits
+                .iter()
+                .map(|l| l.to_dimacs())
+                .collect::<SmallVec<[i32; 8]>>(),
+        );
         self.proof_set_clause_id(clause_id, proof_id);
 
         let lit0 = clause_lits[0];

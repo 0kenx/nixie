@@ -52,14 +52,7 @@ pub trait Tracer {
     // -- basic events --------------------------------------------------
 
     /// An original clause was added (`id`, redundant, clause, restored).
-    fn add_original_clause(
-        &mut self,
-        id: i64,
-        redundant: bool,
-        clause: &[i32],
-        restored: bool,
-    ) {
-    }
+    fn add_original_clause(&mut self, id: i64, redundant: bool, clause: &[i32], restored: bool) {}
 
     /// A clause was derived (`id`, redundant, witness, clause, LRAT chain).
     /// A non-zero `witness` marks a RAT clause.
