@@ -514,7 +514,14 @@ impl Solver {
 
         if self.stats.conflicts >= self.restart_threshold {
             self.restart();
-            self.debug_check_restart_consistency();
+            // `restart()` lands at decision level 0 only when reuse-trail is
+            // off; with reuse-trail on (the default) it backtracks only as far
+            // as `reuse_trail()`, so the level-0
+            // `debug_check_restart_consistency` invariant does not apply (same
+            // reasoning as the `_limited` variant below).
+            if !self.config.reuse_trail {
+                self.debug_check_restart_consistency();
+            }
         }
     }
 
