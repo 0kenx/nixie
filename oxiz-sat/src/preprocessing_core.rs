@@ -209,7 +209,7 @@ impl Preprocessor {
     /// A pure literal is one that appears only in positive or only in negative form.
     /// All clauses containing a pure literal can be satisfied and removed.
     /// Returns the number of clauses eliminated.
-    pub fn pure_literal_elimination(&mut self, clauses: &mut ClauseDatabase) -> usize {
+    pub fn pure_literal_elimination(&mut self, clauses: &mut ClauseDatabase, assigned: &[bool]) -> usize {
         let mut eliminated = 0;
         self.build_occurrences(clauses);
 
@@ -217,6 +217,16 @@ impl Preprocessor {
         let mut pure_literals = Vec::new();
 
         for v in 0..self.num_vars {
+            // Skip variables already fixed on the level-0 trail. Forced units
+            // (original unit clauses and their cascaded propagations) live on
+            // the trail, not in the clause DB, so `build_occurrences` does not
+            // see them -- without this skip a literal whose only opposing
+            // occurrence is a forced unit would look "pure", its clauses would
+            // be deleted, and the residual could become satisfiable, flipping
+            // an UNSAT formula to a false SAT.
+            if assigned.get(v).copied().unwrap_or(false) {
+                continue;
+            }
             let var = Var(v as u32);
             let pos_lit = Lit::pos(var);
             let neg_lit = Lit::neg(var);
@@ -692,7 +702,7 @@ impl Preprocessor {
     /// Apply all preprocessing techniques
     ///
     /// Returns (clauses_eliminated, vars_eliminated)
-    pub fn preprocess(&mut self, clauses: &mut ClauseDatabase) -> (usize, usize) {
+    pub fn preprocess(&mut self, clauses: &mut ClauseDatabase, assigned: &[bool]) -> (usize, usize) {
         let mut total_clauses = 0;
         let total_vars = 0;
 
@@ -701,7 +711,7 @@ impl Preprocessor {
             let mut changed = false;
 
             // Pure literal elimination
-            let pure_elim = self.pure_literal_elimination(clauses);
+            let pure_elim = self.pure_literal_elimination(clauses, assigned);
             if pure_elim > 0 {
                 total_clauses += pure_elim;
                 changed = true;
@@ -759,7 +769,7 @@ mod tests {
         clauses.add_original([Lit::pos(v0)]);
 
         let mut prep = Preprocessor::new(2);
-        let eliminated = prep.pure_literal_elimination(&mut clauses);
+        let eliminated = prep.pure_literal_elimination(&mut clauses, &[]);
 
         assert_eq!(eliminated, 2);
     }

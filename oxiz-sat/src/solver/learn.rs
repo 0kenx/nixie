@@ -1275,7 +1275,13 @@ impl Solver {
         // polarity after the clauses were dropped, so it is only run at the base
         // assertion level (no active `push`).
         if self.assertion_levels.len() <= 1 {
-            let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses);
+            // Variables already fixed on the level-0 trail must be excluded
+            // from pure-literal elimination (see
+            // `Preprocessor::pure_literal_elimination`).
+            let assigned: Vec<bool> = (0..self.num_vars)
+                .map(|i| self.trail.is_assigned(Var::new(i as u32)))
+                .collect();
+            let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses, &assigned);
             // Record each eliminated pure literal so `save_model` can fix it to
             // `true`, keeping the deleted clauses satisfied even if the search
             // later assigns the variable the opposite phase. Keep at most one
