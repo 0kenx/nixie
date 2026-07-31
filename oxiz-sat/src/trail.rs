@@ -409,18 +409,43 @@ mod tests {
 // --- pr/sat additions (upstream/API functions main's trail.rs lacks) ---
 // Representation-independent (prop_head only, or delegate to assign_at).
 impl Trail {
-    pub fn assign_propagation_at(&mut self, lit: Lit, clause: ClauseId, _level: u32) {
-        // main's trail assigns at `current_level`; every caller invokes this
-        // only when current_level already equals the intended level
-        // (force_theory_unit at level 0; the analyze asserting-literal path
-        // after backtracking to the assertion level), so the explicit level is
-        // implicit in main's representation.
-        self.assign(lit, Reason::Propagation(clause));
+    /// Level-aware assign: main's `assign` hard-codes `current_level`, but the
+    /// effective-unit / asserting-literal paths must install a literal at an
+    /// explicit level (the falsifying literal's level, or 0 for a root fact).
+    /// Mirrors `assign` exactly except for the `VarInfo.level` field.
+    fn assign_at(&mut self, lit: Lit, reason: Reason, level: u32) {
+        let var = lit.var();
+        let idx = var.index();
+        let code = lit.code() as usize;
+        if idx >= self.var_info.len() {
+            self.var_info.resize(idx + 1, VarInfo::default());
+            let need = (idx + 1) * 2;
+            if self.values.len() < need {
+                self.values.resize(need, 0);
+            }
+        }
+        let value = if lit.is_pos() {
+            LBool::True
+        } else {
+            LBool::False
+        };
+        self.values[code] = 1;
+        self.values[code ^ 1] = -1;
+        self.var_info[idx] = VarInfo {
+            value,
+            level,
+            reason,
+            trail_idx: self.assignments.len() as u32,
+        };
+        self.assignments.push(lit);
+    }
+
+    pub fn assign_propagation_at(&mut self, lit: Lit, clause: ClauseId, level: u32) {
+        self.assign_at(lit, Reason::Propagation(clause), level);
     }
 
     pub fn assign_unit_fact(&mut self, lit: Lit) {
-        // Caller (force_theory_unit) guarantees decision level 0.
-        self.assign(lit, Reason::Decision);
+        self.assign_at(lit, Reason::Decision, 0);
     }
 
     pub fn propagation_head(&self) -> usize {
