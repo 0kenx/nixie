@@ -41,7 +41,12 @@ impl Solver {
 
                 let value = self.trail.lit_val(implied_lit);
                 if value < 0 {
-                    // Conflict in binary clause
+                    // Conflict in binary clause. `lit`'s remaining implication
+                    // edges (and its whole watch list) have not been examined,
+                    // so put it back on the queue before bailing out — see
+                    // `Trail::requeue_last_propagated` (preserves the
+                    // propagation-queue contract so a later solve() re-visits it).
+                    self.trail.requeue_last_propagated();
                     return Some(clause_id);
                 } else if value == 0 {
                     // Propagate
