@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 //! Solve a CNF and, on SAT, verify the returned model satisfies EVERY original
 //! clause. Catches substitution (or any inprocessing) bugs that produce an
 //! invalid model. Usage: validate_model <file.cnf>  (EQUIV env honored).

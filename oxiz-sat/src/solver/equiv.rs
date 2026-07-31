@@ -88,7 +88,9 @@ impl Solver {
             while let Some(&(node, succ_i)) = work.last() {
                 let succs = self.binary_graph.get(Lit::from_code(node as u32));
                 if succ_i < succs.len() {
-                    work.last_mut().unwrap().1 = succ_i + 1;
+                    if let Some(entry) = work.last_mut() {
+                        entry.1 = succ_i + 1;
+                    }
                     let w = succs[succ_i].0.code() as usize;
                     if index[w] == -1 {
                         index[w] = index_counter as i64;
@@ -123,9 +125,11 @@ impl Solver {
                         // contradictions) that proved satisfiable formulas UNSAT.
                         let scc_members = stack.split_off(scc_start);
                         if scc_members.len() > 1 {
-                            let rep = Lit::from_code((*scc_members.iter().min().unwrap()) as u32);
-                            for &c in &scc_members {
-                                sub[c] = rep;
+                            if let Some(&min_c) = scc_members.iter().min() {
+                                let rep = Lit::from_code(min_c as u32);
+                                for &c in &scc_members {
+                                    sub[c] = rep;
+                                }
                             }
                         }
                     }
