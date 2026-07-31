@@ -1535,7 +1535,12 @@ impl Solver {
                 };
                 if do_restart {
                     self.restart();
-                    self.debug_check_restart_consistency();
+                    // Reuse-trail restarts backtrack only to reuse_trail()
+                    // (>0), so the level-0 restart-consistency invariant does
+                    // not apply (see handle_clause_deletion_and_restart).
+                    if !self.config.reuse_trail {
+                        self.debug_check_restart_consistency();
+                    }
                 }
 
                 // Periodic inprocessing
