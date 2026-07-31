@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 //! Diagnostic: solve one CNF and dump detailed search stats.
 use oxiz_sat::{DimacsParser, Solver, SolverConfig};
 

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 //! DIMACS SAT solver with DRAT/LRAT proof logging.
 //!
 //! Standard SAT-competition-style entry point:

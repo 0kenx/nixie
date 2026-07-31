@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 //! Differential correctness fuzz for the opt-in preprocessing stack
 //! (BVE + equivalent-literal substitution + congruence). Generates random
 //! CNFs, solves each via the identical DimacsParser path with the stack off
