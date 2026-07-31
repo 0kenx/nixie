@@ -37,7 +37,7 @@ impl Solver {
         if self.did_equiv_subst
             || self.trail.decision_level() != 0
             || self.assertion_levels.len() > 1
-            || self.drat.is_some()
+            || self.proof.is_some()
         {
             return SubstOutcome::Ok;
         }

@@ -30,6 +30,33 @@ use crate::watched::{WatchLists, Watcher};
 use core::sync::atomic::{AtomicBool, Ordering};
 use smallvec::SmallVec;
 
+// Packed per-literal LRAT minimization flags (`Flags` in upstream), stored in
+// [`Solver::lrat_flags`] indexed by `Lit::index()`. The bit layout mirrors
+// cadical's `Flags` fields used by `minimize.cpp` / `analyze.cpp`. Reserved
+// for the chain-extending minimization port (see `Solver::minimize_clause_lrat`);
+// currently unused while LRAT emits un-minimized 1-UIP clauses.
+#[allow(dead_code)]
+pub(super) const MF_KEEP: u8 = 1;
+#[allow(dead_code)]
+pub(super) const MF_POISON: u8 = 2;
+#[allow(dead_code)]
+pub(super) const MF_REMOVABLE: u8 = 4;
+#[allow(dead_code)]
+pub(super) const MF_ADDED: u8 = 8;
+#[allow(dead_code)]
+pub(super) const MF_SEEN: u8 = 16;
+
+/// Convert a path to a UTF-8 string for the file tracers (which take `&str`,
+/// faithful to upstream). Returns an error for non-UTF8 paths.
+fn path_to_str(path: &std::path::Path) -> std::io::Result<&str> {
+    path.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "proof file path must be valid UTF-8",
+        )
+    })
+}
+
 /// Binary implication graph for efficient binary clause propagation
 /// For each literal L, stores the list of literals that are implied when L is false
 /// (i.e., for binary clause (~L v M), when L is assigned false, M must be true)
@@ -631,13 +658,54 @@ pub struct Solver {
     /// the resource budget consulted by the CDCL loop and drives, e.g.,
     /// `oxiz-cli --timeout`-style bounded solving.
     pub(super) max_conflicts: Option<u64>,
-    /// Optional DRAT proof logger. When `Some`, the CDCL loop emits a DRAT
-    /// addition line for every learned clause, a deletion line for every clause
-    /// dropped by clause-database reduction / subsumption / vivification /
-    /// incremental forgetting, and the empty clause when unconditional UNSAT is
-    /// derived. `None` (the default) means no proof is produced and every DRAT
-    /// hook is a no-op, so proof logging costs nothing when unused.
-    pub(super) drat: Option<crate::proof::DratWriter>,
+    /// Proof dispatcher (`class Proof`). When `Some`, every proof event the
+    /// CDCL loop / inprocessing emits (learned/original/deleted clause, empty
+    /// clause, in-place strengthen/flush) is fanned out to the attached
+    /// tracers ([`crate::proof::DratTracer`] and/or [`crate::proof::LratTracer`]).
+    /// `None` (the default) means no proof is produced and every proof hook is a
+    /// no-op, so proof logging costs nothing when unused.
+    pub(super) proof: Option<crate::proof::Proof>,
+    /// `true` once an LRAT tracer (or any antecedent-requiring tracer) is
+    /// connected. Drives clause-id bookkeeping (`clause_lrat_id`,
+    /// `unit_clauses_idx`) and RUP-chain assembly in conflict analysis. DRAT-only
+    /// proofs leave this `false` — DRAT needs neither ids nor chains.
+    pub(super) lrat: bool,
+    /// Monotonic clause-id counter (`clause_id` in upstream). Original clauses
+    /// draw ids `1..K` in file order; derived clauses draw the rest. Maintained
+    /// only while a proof is active.
+    pub(super) clause_id: i64,
+    /// Per-stored-clause LRAT id, indexed by `ClauseId.index()` (`c->id` in
+    /// upstream). `0` = unassigned/none. Grown only while `lrat` is on.
+    pub(super) clause_lrat_id: Vec<i64>,
+    /// Per-literal unit-clause id table (`unit_clauses_idx` in upstream),
+    /// indexed by `Lit::index()` (`2·var + sign`). Holds the LRAT id of the
+    /// (original or derived) unit clause fixing that literal true. Grown only
+    /// while `lrat` is on.
+    pub(super) unit_clauses_idx: Vec<i64>,
+    /// LRAT RUP-chain scratch (`lrat_chain` in upstream): reason-clause ids
+    /// collected during 1-UIP analysis, in trail-walk order, reversed at the
+    /// end. Always present (empty when no proof).
+    pub(super) lrat_chain: Vec<i64>,
+    /// Unit-clause id chain collected during analysis (`unit_chain`):
+    /// level-0 literals resolved out of reason clauses. Appended to
+    /// `lrat_chain` before the final reversal.
+    pub(super) unit_chain: Vec<i64>,
+    /// Minimization chain scratch (`mini_chain` / `minimize_chain`): per
+    /// minimized-away literal's reason sub-chain, assembled reversed into
+    /// `lrat_chain`. Reserved for the chain-extending minimization port.
+    #[allow(dead_code)]
+    pub(super) mini_chain: Vec<i64>,
+    /// Level-0 literals marked `seen` during analysis, for cleanup
+    /// (`unit_analyzed` in upstream).
+    pub(super) unit_analyzed: Vec<i32>,
+    /// Packed per-literal minimization flags (`Flags` in upstream), indexed by
+    /// `Lit::index()`. Bit layout: [`MF_KEEP`]|[`MF_POISON`]|[`MF_REMOVABLE`]|
+    /// [`MF_ADDED`]|[`MF_SEEN`]. Grown only while `lrat` is on.
+    pub(super) lrat_flags: Vec<u8>,
+    /// Literals marked during minimization, for flag cleanup (`minimized`).
+    /// Reserved for the chain-extending minimization port.
+    #[allow(dead_code)]
+    pub(super) lrat_minimized: Vec<i32>,
 }
 
 impl Default for Solver {
@@ -725,7 +793,17 @@ impl Solver {
             equiv_subst_inited: false,
             interrupt: None,
             max_conflicts: None,
-            drat: None,
+            proof: None,
+            lrat: false,
+            clause_id: 0,
+            clause_lrat_id: Vec::new(),
+            unit_clauses_idx: Vec::new(),
+            lrat_chain: Vec::new(),
+            unit_chain: Vec::new(),
+            mini_chain: Vec::new(),
+            unit_analyzed: Vec::new(),
+            lrat_flags: Vec::new(),
+            lrat_minimized: Vec::new(),
         }
     }
 
@@ -738,64 +816,338 @@ impl Solver {
     /// be checked by any DRAT proof checker. Enabling it does not change the
     /// search itself — only whether the trace is recorded.
     pub fn enable_drat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
-        let mut writer = crate::proof::DratWriter::new();
-        writer.enable(path)?;
-        self.drat = Some(writer);
+        self.connect_drat(path, false)
+    }
+
+    /// Disable all proof logging, flushing and closing every attached tracer.
+    pub fn disable_proof(&mut self) {
+        if let Some(mut proof) = self.proof.take() {
+            proof.flush(false);
+            proof.close(false);
+        }
+        self.lrat = false;
+    }
+
+    /// Back-compat alias for [`Solver::disable_proof`].
+    pub fn disable_drat_proof(&mut self) {
+        self.disable_proof();
+    }
+
+    /// Returns `true` when any proof logging is currently enabled.
+    #[must_use]
+    pub fn proof_enabled(&self) -> bool {
+        self.proof.is_some()
+    }
+
+    /// Returns `true` when DRAT/LRAT proof logging is currently enabled
+    /// (back-compat name).
+    #[must_use]
+    pub fn drat_proof_enabled(&self) -> bool {
+        self.proof.is_some()
+    }
+
+    /// Returns `true` when LRAT (antecedent) proof logging is enabled.
+    #[must_use]
+    pub fn lrat_proof_enabled(&self) -> bool {
+        self.lrat
+    }
+
+    // -- proof connection helpers -------------------------------------
+
+    fn proof_ensure(&mut self) -> &mut crate::proof::Proof {
+        self.proof.get_or_insert_with(crate::proof::Proof::new)
+    }
+
+    fn connect_drat(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        binary: bool,
+    ) -> std::io::Result<()> {
+        let s = path_to_str(path.as_ref())?;
+        let tracer = if binary {
+            crate::proof::DratTracer::open_binary(s)?
+        } else {
+            crate::proof::DratTracer::open(s)?
+        };
+        let clause_id = self.clause_id;
+        let proof = self.proof_ensure();
+        proof.begin_proof(clause_id);
+        proof.connect(Box::new(tracer));
         Ok(())
     }
 
-    /// Disable DRAT proof logging (flushing any buffered output).
-    pub fn disable_drat_proof(&mut self) {
-        if let Some(mut writer) = self.drat.take() {
-            writer.disable();
+    /// Enable **binary** DRAT proof logging to `path`.
+    pub fn enable_drat_proof_binary(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<()> {
+        self.connect_drat(path, true)
+    }
+
+    fn connect_lrat(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+        binary: bool,
+    ) -> std::io::Result<()> {
+        let s = path_to_str(path.as_ref())?;
+        let tracer = if binary {
+            crate::proof::LratTracer::open_binary(s)?
+        } else {
+            crate::proof::LratTracer::open(s)?
+        };
+        // LRAT needs clause ids + RUP chains: switch on the bookkeeping.
+        self.lrat = true;
+        self.unit_clauses_idx.resize(2 * self.num_vars, 0);
+        self.lrat_flags.resize(2 * self.num_vars, 0);
+        let clause_id = self.clause_id;
+        let proof = self.proof_ensure();
+        proof.begin_proof(clause_id);
+        proof.connect(Box::new(tracer));
+        Ok(())
+    }
+
+    /// Enable **text** LRAT proof logging to `path`.
+    pub fn enable_lrat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        self.connect_lrat(path, false)
+    }
+
+    /// Enable **binary** LRAT proof logging to `path`.
+    pub fn enable_lrat_proof_binary(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<()> {
+        self.connect_lrat(path, true)
+    }
+
+    /// Flush all attached file tracers to disk.
+    pub fn flush_proof(&mut self) {
+        if let Some(proof) = &mut self.proof {
+            proof.flush(false);
         }
     }
 
-    /// Returns `true` when DRAT proof logging is currently enabled.
-    #[must_use]
-    pub fn drat_proof_enabled(&self) -> bool {
-        self.drat.is_some()
-    }
+    // -- clause-id bookkeeping ---------------------------------------
 
-    /// Emit a DRAT addition line for `lits` (no-op when proof logging is off).
-    pub(super) fn drat_add(&mut self, lits: &[Lit]) {
-        if let Some(writer) = &mut self.drat {
-            let _ = writer.add_clause(lits);
+    /// Allocate the next monotonic clause id (`++clause_id`). Returns 0 when no
+    /// proof is active (ids are meaningless without a tracer).
+    fn proof_next_id(&mut self) -> i64 {
+        if self.proof.is_some() {
+            self.clause_id += 1;
+            self.clause_id
+        } else {
+            0
         }
     }
 
-    /// Emit a DRAT deletion line for the clause `clause_id`, reading its literals
-    /// before it is removed from the database (no-op when proof logging is off or
-    /// the clause is already gone).
-    pub(super) fn drat_delete(&mut self, clause_id: ClauseId) {
-        if self.drat.is_none() {
+    /// Record that stored clause `cid` carries LRAT id `id` (`c->id = id`).
+    fn proof_set_clause_id(&mut self, cid: ClauseId, id: i64) {
+        if !self.lrat {
             return;
         }
-        let lits: Option<SmallVec<[Lit; 8]>> = self.clauses.get(clause_id).and_then(|c| {
-            if c.deleted {
-                None
-            } else {
-                Some(c.lits.iter().copied().collect())
+        let idx = cid.index();
+        if idx >= self.clause_lrat_id.len() {
+            self.clause_lrat_id.resize(idx + 1, 0);
+        }
+        self.clause_lrat_id[idx] = id;
+    }
+
+    /// Look up the LRAT id of stored clause `cid` (0 if unassigned/unknown).
+    fn proof_clause_id(&self, cid: ClauseId) -> i64 {
+        let idx = cid.index();
+        if idx < self.clause_lrat_id.len() {
+            self.clause_lrat_id[idx]
+        } else {
+            0
+        }
+    }
+
+    /// Record the unit clause fixing `lit_dimacs` (a *true* DIMACS literal) as
+    /// LRAT id `id` (`unit_clauses_idx[vlit(lit)] = id`).
+    fn proof_set_unit_id(&mut self, lit_dimacs: i32, id: i64) {
+        if !self.lrat {
+            return;
+        }
+        let lit = Lit::from_dimacs(lit_dimacs);
+        let li = lit.index();
+        if li >= self.unit_clauses_idx.len() {
+            let need = 2 * self.num_vars.max(lit.var().index() + 1);
+            self.unit_clauses_idx.resize(need, 0);
+        }
+        self.unit_clauses_idx[li] = id;
+    }
+
+    /// Look up the LRAT id of the unit clause fixing *true* literal `lit_dimacs`
+    /// (`unit_id(lit)` in upstream).
+    fn proof_unit_id(&self, lit_dimacs: i32) -> i64 {
+        debug_assert!(self.lrat);
+        self.proof_unit_id_get_or_zero(lit_dimacs)
+    }
+
+    fn proof_unit_id_get_or_zero(&self, lit_dimacs: i32) -> i64 {
+        if !self.lrat {
+            return 0;
+        }
+        let lit = Lit::from_dimacs(lit_dimacs);
+        let li = lit.index();
+        if li < self.unit_clauses_idx.len() {
+            self.unit_clauses_idx[li]
+        } else {
+            0
+        }
+    }
+
+    // -- higher-level proof events used by learn.rs / inprocessing ----
+
+    /// Emit a derived clause for a *theory* lemma / explanation clause
+    /// (`add_derived_clause` with an empty RUP chain). Pure-SAT runs never hit
+    /// this; CDCL(T) LRAT would need the theory layer to supply a real chain.
+    fn proof_theory_clause(&mut self, dimacs: &[i32]) -> i64 {
+        if self.proof.is_none() {
+            return 0;
+        }
+        let id = self.proof_next_id();
+        if let Some(proof) = &mut self.proof {
+            proof.add_derived_clause(id, false, dimacs, &[]);
+        }
+        id
+    }
+
+    /// Emit a derived *unit* theory lemma and record its unit id.
+    fn proof_theory_unit(&mut self, unit_dimacs: i32) -> i64 {
+        if self.proof.is_none() {
+            return 0;
+        }
+        let id = self.proof_next_id();
+        self.proof_set_unit_id(unit_dimacs, id);
+        if let Some(proof) = &mut self.proof {
+            proof.add_derived_unit_clause(id, unit_dimacs, &[]);
+        }
+        id
+    }
+
+    /// Emit a *learned* clause's derived-clause proof event: unit clauses go
+    /// through the unit variant and get a unit-id table entry; multi-literal
+    /// clauses go through the plain variant. The RUP chain is taken from
+    /// [`Solver::lrat_chain`] (assembled by `analyze`/`minimize`). Returns the
+    /// allocated id (0 if inactive) so the caller can bind it to the stored
+    /// clause via [`Solver::proof_set_clause_id`].
+    pub(super) fn proof_learn_clause(&mut self, lits: &[Lit]) -> i64 {
+        if self.proof.is_none() {
+            return 0;
+        }
+        let id = self.proof_next_id();
+        let chain = if self.lrat {
+            let c = std::mem::take(&mut self.lrat_chain);
+            // A 0 hint id means a clause/unit id was never bound — the proof
+            // would be un-checkable. Catch it early in debug builds.
+            debug_assert!(
+                !c.iter().any(|&h| h == 0),
+                "zero-id hint in derived clause {} (lits={:?})",
+                id,
+                lits.iter().map(|l| l.to_dimacs()).collect::<Vec<_>>()
+            );
+            c
+        } else {
+            Vec::new()
+        };
+        if lits.len() == 1 {
+            let unit = lits[0].to_dimacs();
+            self.proof_set_unit_id(unit, id);
+            if let Some(proof) = &mut self.proof {
+                proof.add_derived_unit_clause(id, unit, &chain);
             }
-        });
-        if let (Some(writer), Some(lits)) = (&mut self.drat, lits) {
-            let _ = writer.delete_clause(&lits);
+        } else {
+            let dimacs: SmallVec<[i32; 16]> = lits.iter().map(|l| l.to_dimacs()).collect();
+            if let Some(proof) = &mut self.proof {
+                proof.add_derived_clause(id, false, &dimacs, &chain);
+            }
+        }
+        id
+    }
+
+    /// Emit a clause *strengthen* (in-place shortening) as a proof event: add a
+    /// fresh derived clause with the kept literals, then delete the old clause,
+    /// finally rebind the stored clause's LRAT id to the new one
+    /// (`c->id = new_id` in upstream's `strengthen_clause`). The RUP chain is
+    /// empty — used by vivification, which proves the shorter clause is
+    /// RUP-derivable but does not currently expose its antecedents.
+    fn proof_strengthen_clause(&mut self, cid: ClauseId, kept: &[Lit]) {
+        if self.proof.is_none() {
+            return;
+        }
+        let old_id = self.proof_clause_id(cid);
+        let kept_dimacs: SmallVec<[i32; 8]> = kept.iter().map(|l| l.to_dimacs()).collect();
+        let old_dimacs: SmallVec<[i32; 8]> = self
+            .clauses
+            .get(cid)
+            .map(|c| c.lits.iter().map(|l| l.to_dimacs()).collect())
+            .unwrap_or_default();
+        let new_id = self.proof_next_id();
+        if let Some(proof) = &mut self.proof {
+            proof.strengthen_clause(new_id, false, &kept_dimacs, &[]);
+            proof.delete_clause(old_id, false, &old_dimacs);
+        }
+        self.proof_set_clause_id(cid, new_id);
+    }
+
+    /// Emit a clause deletion by stored-clause id, reading its literals before
+    /// the clause is detached (no-op when proof logging is off or the clause is
+    /// already gone). For LRAT the deletion is keyed by the clause's LRAT id;
+    /// for DRAT it is keyed by the literal set.
+    pub(super) fn drat_delete(&mut self, clause_id: ClauseId) {
+        if self.proof.is_none() {
+            return;
+        }
+        let lits: Option<SmallVec<[Lit; 8]>> = self
+            .clauses
+            .get(clause_id)
+            .filter(|c| !c.deleted)
+            .map(|c| c.lits.iter().copied().collect());
+        let Some(lits) = lits else { return };
+        let dimacs: SmallVec<[i32; 8]> = lits.iter().map(|l| l.to_dimacs()).collect();
+        let id = self.proof_clause_id(clause_id);
+        if let Some(proof) = &mut self.proof {
+            proof.delete_clause(id, false, &dimacs);
         }
     }
 
-    /// Emit a DRAT deletion line for an explicit literal set (used when a clause
-    /// is strengthened in place and its pre-strengthening form must be retired).
+    /// Emit a clause deletion by an explicit literal set (used when a clause is
+    /// strengthened in place and its pre-strengthening form must be retired).
     pub(super) fn drat_delete_lits(&mut self, lits: &[Lit]) {
-        if let Some(writer) = &mut self.drat {
-            let _ = writer.delete_clause(lits);
+        if self.proof.is_none() {
+            return;
+        }
+        let dimacs: SmallVec<[i32; 8]> = lits.iter().map(|l| l.to_dimacs()).collect();
+        // Best-effort id: a unit's id is recoverable from the unit table.
+        let id = if lits.len() == 1 {
+            self.proof_unit_id_get_or_zero(lits[0].to_dimacs())
+        } else {
+            0
+        };
+        if let Some(proof) = &mut self.proof {
+            proof.delete_clause(id, false, &dimacs);
         }
     }
 
-    /// Emit the empty clause (the DRAT proof of unconditional UNSAT).
-    pub(super) fn drat_emit_empty(&mut self) {
-        if let Some(writer) = &mut self.drat {
-            let _ = writer.add_clause(&[]);
+    /// Emit the empty clause (unconditional UNSAT). For LRAT this first builds
+    /// the empty clause's RUP chain from the current conflict.
+    pub(super) fn drat_emit_empty(&mut self, conflict: Option<ClauseId>) {
+        if self.proof.is_none() {
+            return;
         }
+        if self.lrat {
+            self.build_chain_for_empty(conflict);
+        }
+        let id = self.proof_next_id();
+        let chain = if self.lrat {
+            std::mem::take(&mut self.lrat_chain)
+        } else {
+            Vec::new()
+        };
+        if let Some(proof) = &mut self.proof {
+            proof.add_derived_empty_clause(id, &chain);
+        }
+        self.lrat_chain.clear();
     }
 
     /// Purge every binary-implication-graph edge belonging to `clause_id`.
@@ -888,6 +1240,12 @@ impl Solver {
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
+        }
+        // Grow the LRAT per-literal tables to cover the new variable. These
+        // are only non-empty while an LRAT tracer is connected.
+        if self.lrat {
+            self.unit_clauses_idx.resize(2 * self.num_vars, 0);
+            self.lrat_flags.resize(2 * self.num_vars, 0);
         }
         var
     }
@@ -1029,6 +1387,22 @@ impl Solver {
             }
         }
 
+        // Assign this original clause a monotonic LRAT id *before* any
+        // early-return (tautology / unit / empty), so every input clause draws
+        // exactly one id in file order — matching `lrat-check`'s CNF numbering
+        // (`1..K`). `0` when no proof is active. The id is bound to a stored
+        // clause / unit entry below; tautologies consume it but bind nothing.
+        let proof_oid = if self.proof.is_some() {
+            let id = self.proof_next_id();
+            let dimacs: SmallVec<[i32; 8]> = clause_lits.iter().map(|l| l.to_dimacs()).collect();
+            if let Some(proof) = &mut self.proof {
+                proof.add_original_clause(id, false, &dimacs);
+            }
+            id
+        } else {
+            0
+        };
+
         // Remove duplicates and check for tautology
         clause_lits.sort_by_key(|l| l.code());
         clause_lits.dedup();
@@ -1053,6 +1427,9 @@ impl Solver {
                 // Unit clauses must be assigned at level 0 to survive backtracking.
                 // After solve(), current_level may be > 0, so we must backtrack first.
                 let lit = clause_lits[0];
+                // Record the unit clause's LRAT id against its true literal so it
+                // can be referenced as an antecedent in RUP chains (`assign_original_unit`).
+                self.proof_set_unit_id(lit.to_dimacs(), proof_oid);
 
                 if self.trail.lit_value(lit).is_false() {
                     // The literal conflicts with the current trail.
@@ -1106,6 +1483,7 @@ impl Solver {
                 if val0.is_true() || val1.is_true() {
                     // Clause already satisfied by current assignment
                     let clause_id = self.clauses.add_original(clause_lits.iter().copied());
+                    self.proof_set_clause_id(clause_id, proof_oid);
                     if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
                         current_level_clauses.push(clause_id);
                     }
@@ -1135,6 +1513,7 @@ impl Solver {
                 }
 
                 let clause_id = self.clauses.add_original(clause_lits.iter().copied());
+                self.proof_set_clause_id(clause_id, proof_oid);
                 if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
                     current_level_clauses.push(clause_id);
                 }
@@ -1202,6 +1581,7 @@ impl Solver {
         clause_lits.swap(1, second);
 
         let clause_id = self.clauses.add_original(clause_lits.iter().copied());
+        self.proof_set_clause_id(clause_id, proof_oid);
 
         // Track clause for incremental solving
         if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
@@ -1272,13 +1652,13 @@ impl Solver {
     pub fn solve(&mut self) -> SolverResult {
         // Check if trivially unsatisfiable
         if self.trivially_unsat {
-            self.drat_emit_empty();
+            self.drat_emit_empty(None);
             return SolverResult::Unsat;
         }
 
         // Initial propagation
         if self.propagate().is_some() {
-            self.drat_emit_empty();
+            self.drat_emit_empty(None);
             return SolverResult::Unsat;
         }
 
@@ -1287,21 +1667,21 @@ impl Solver {
         // when there are no non-trivial SCCs. Runs at level 0 / base scope only.
         if self.config.enable_bve {
             if self.bounded_variable_elimination() == equiv::SubstOutcome::Unsat {
-                self.drat_emit_empty();
+                self.drat_emit_empty(None);
                 return SolverResult::Unsat;
             }
             if self.trivially_unsat {
-                self.drat_emit_empty();
+                self.drat_emit_empty(None);
                 return SolverResult::Unsat;
             }
         }
         if self.config.enable_equiv_substitution {
             if self.substitute_equivalent_literals() == equiv::SubstOutcome::Unsat {
-                self.drat_emit_empty();
+                self.drat_emit_empty(None);
                 return SolverResult::Unsat;
             }
             if self.trivially_unsat {
-                self.drat_emit_empty();
+                self.drat_emit_empty(None);
                 return SolverResult::Unsat;
             }
         }
@@ -1316,7 +1696,7 @@ impl Solver {
             self.forward_subsumption();
             self.self_subsumption_pass();
             if self.trivially_unsat {
-                self.drat_emit_empty();
+                self.drat_emit_empty(None);
                 return SolverResult::Unsat;
             }
         }
@@ -1359,7 +1739,7 @@ impl Solver {
                 self.vivify_clauses();
             }
             if self.trivially_unsat {
-                self.drat_emit_empty();
+                self.drat_emit_empty(None);
                 return SolverResult::Unsat;
             }
         }
@@ -1380,8 +1760,9 @@ impl Solver {
 
                 if self.trail.decision_level() == 0 {
                     // Conflict under only level-0 (unconditional) facts: the empty
-                    // clause is derivable, completing the DRAT proof of UNSAT.
-                    self.drat_emit_empty();
+                    // clause is derivable, completing the proof of UNSAT. Pass the
+                    // conflict clause so the LRAT empty-clause chain can be built.
+                    self.drat_emit_empty(Some(conflict));
                     return SolverResult::Unsat;
                 }
 
@@ -1390,12 +1771,12 @@ impl Solver {
 
                 // Empty learned clause = genuine root-level (level-0) refutation:
                 // every conflict literal is false under unconditional facts, so
-                // the instance is UNSAT and the empty clause completes the DRAT
-                // proof. `analyze` can report this even above decision level 0
-                // when a clause is falsified purely at the root.
+                // the instance is UNSAT and the empty clause completes the proof.
+                // `analyze` can report this even above decision level 0 when a
+                // clause is falsified purely at the root.
                 if learnt_clause.is_empty() {
                     self.trivially_unsat = true;
-                    self.drat_emit_empty();
+                    self.drat_emit_empty(Some(conflict));
                     return SolverResult::Unsat;
                 }
 
@@ -1403,15 +1784,18 @@ impl Solver {
                 self.backtrack_with_phase_saving(backtrack_level);
                 self.debug_check_invariants("after backtrack");
 
-                // Emit the learned clause as a DRAT addition (RUP-derivable from
-                // the current database by construction of 1-UIP learning). Covers
-                // both the unit and general learned-clause branches below.
-                self.drat_add(&learnt_clause);
+                // Emit the learned clause as a derived-clause proof event
+                // (RUP-derivable from the current database by construction of
+                // 1-UIP learning, with the chain assembled in `analyze`). Covers
+                // both the unit and general learned-clause branches below; the
+                // returned id is bound to the stored clause once added.
+                let proof_id = self.proof_learn_clause(&learnt_clause);
 
                 // Learn clause
                 if learnt_clause.len() == 1 {
                     // Store unit learned clause in database for persistence
                     let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+                    self.proof_set_clause_id(clause_id, proof_id);
                     self.stats.learned_clauses += 1;
                     self.stats.unit_clauses += 1;
                     self.learned_clause_ids.push(clause_id);
@@ -1451,6 +1835,7 @@ impl Solver {
                     }
 
                     let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+                    self.proof_set_clause_id(clause_id, proof_id);
                     self.stats.learned_clauses += 1;
 
                     // Set LBD score for the clause
@@ -2008,7 +2393,7 @@ impl Solver {
         self.pure_literal_reconstruction.clear();
         // Drop any proof logger: its clause ids refer to the now-cleared database,
         // so continuing to emit against it would produce a meaningless proof.
-        self.drat = None;
+        self.disable_proof();
     }
 
     /// Get the current trail (for theory solvers)

@@ -84,9 +84,9 @@ impl Solver {
 
         // Propagate root-level units first. A conflict here is a direct UNSAT
         // (mirrors the top of CaDiCaL's `lucky_phases`).
-        if self.propagate().is_some() {
+        if let Some(conflict) = self.propagate() {
             self.trivially_unsat = true;
-            self.drat_emit_empty();
+            self.drat_emit_empty(Some(conflict));
             return Some(SolverResult::Unsat);
         }
         if self.lucky_interrupted() || self.trivially_unsat {

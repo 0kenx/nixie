@@ -103,13 +103,15 @@ impl Solver {
         // Track allocation in memory optimizer for pool accounting
         let _pool_buf = self.memory_optimizer.allocate(learnt_clause.len());
 
-        // Record the learned clause in the DRAT proof (no-op unless enabled). It
-        // is RUP-derivable from the current database by 1-UIP construction.
-        self.drat_add(&learnt_clause);
+        // Record the learned clause in the proof (no-op unless enabled). It is
+        // RUP-derivable from the current database by 1-UIP construction; the
+        // returned id is bound to the stored clause in each branch below.
+        let proof_id = self.proof_learn_clause(&learnt_clause);
 
         if learnt_clause.len() == 1 {
             // Store unit learned clause in database for persistence across backtracks
             let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+            self.proof_set_clause_id(clause_id, proof_id);
             self.stats.learned_clauses += 1;
             self.stats.unit_clauses += 1;
             self.learned_clause_ids.push(clause_id);
@@ -119,6 +121,7 @@ impl Solver {
             // Binary learned clause - add to binary implication graph
             let lbd = self.compute_lbd(&learnt_clause);
             let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+            self.proof_set_clause_id(clause_id, proof_id);
             self.stats.learned_clauses += 1;
             self.stats.binary_clauses += 1;
             self.stats.total_lbd += lbd as u64;
@@ -148,6 +151,7 @@ impl Solver {
             let lbd = self.compute_lbd(&learnt_clause);
             self.stats.total_lbd += lbd as u64;
             let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+            self.proof_set_clause_id(clause_id, proof_id);
             self.stats.learned_clauses += 1;
 
             if let Some(clause) = self.clauses.get_mut(clause_id) {
@@ -338,8 +342,10 @@ impl Solver {
             clause.promote_to_core();
         }
 
-        // DRAT: the explanation clause is a valid theory lemma.
-        self.drat_add(&clause_lits);
+        // Proof: the explanation clause is a valid theory lemma (recorded with an
+        // empty RUP chain; bound to the stored clause below).
+        let proof_id = self.proof_theory_clause(&clause_lits.iter().map(|l| l.to_dimacs()).collect::<SmallVec<[i32; 8]>>());
+        self.proof_set_clause_id(clause_id, proof_id);
 
         let lit0 = clause_lits[0];
         let lit1 = clause_lits[1];
@@ -385,7 +391,10 @@ impl Solver {
             clause.lbd = 1;
             clause.promote_to_core();
         }
-        self.drat_add(&[lit]);
+        // Proof: the unit lemma (recorded as a derived unit with empty chain;
+        // bound to the stored clause and the unit-id table).
+        let proof_id = self.proof_theory_unit(lit.to_dimacs());
+        self.proof_set_clause_id(clause_id, proof_id);
         // Assign at level 0 as a decision (no propagation reason): this is the
         // only sound home for a unit, and it survives every backtrack.
         self.trail.assign_decision(lit);
@@ -855,10 +864,6 @@ impl Solver {
             _ => return,
         };
 
-        // Snapshot the pre-strengthening literals so the DRAT proof can retire the
-        // original clause once the shorter (still F-entailed) form is recorded.
-        let original_lits = lits.clone();
-
         // Detach the existing watches (keyed on the current positions 0 and 1).
         let old_w0 = lits[0];
         let old_w1 = lits[1];
@@ -900,13 +905,12 @@ impl Solver {
         self.watches.add(w0.negate(), Watcher::new(clause_id, w1));
         self.watches.add(w1.negate(), Watcher::new(clause_id, w0));
 
-        // Record the in-place strengthening in the DRAT proof: add the shorter
+        // Record the in-place strengthening in the proof: add the shorter
         // clause (RUP-derivable — vivification proved it entailed) then delete the
         // original, keeping the proof's clause set consistent with the database.
-        if self.drat.is_some() {
+        if self.proof.is_some() {
             let new_lits: SmallVec<[Lit; 8]> = lits.iter().copied().collect();
-            self.drat_add(&new_lits);
-            self.drat_delete_lits(&original_lits);
+            self.proof_strengthen_clause(clause_id, &new_lits);
         }
     }
 
@@ -1255,7 +1259,7 @@ impl Solver {
         // proof would keep clauses the live database no longer has, which is
         // exactly the minimality gap this snapshot closes. Skipped entirely
         // when proof logging is off.
-        let pre_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = if self.drat.is_some() {
+        let pre_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = if self.proof.is_some() {
             self.clauses
                 .iter_ids()
                 .filter_map(|id| {
