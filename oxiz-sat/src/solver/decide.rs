@@ -95,47 +95,52 @@ impl Solver {
             })
     }
 
-    /// Backtrack with phase saving.
+    /// Backtrack with phase saving
     ///
-    /// Returns the trail index at which the rolled-back region started (see
-    /// [`Trail::backtrack_to_with_callback`]). Callers holding a cursor into the
-    /// trail must clamp it to this value, not to the trail length: under
-    /// chronological backtracking, literals that survive the rollback are
-    /// re-appended above this index and have to be reprocessed.
-    pub(super) fn backtrack_with_phase_saving(&mut self, level: u32) -> usize {
-        // Collect variables that will be unassigned
-        let mut unassigned_vars = Vec::new();
-
-        // Save phases before backtracking
+    /// Performs every per-variable side effect of unassignment (phase saving
+    /// + branching-heap reinsertion) directly inside the trail's backtrack
+    /// callback by borrowing the disjoint Solver fields, instead of first
+    /// collecting the unassigned variables into a throwaway `Vec`. That
+    /// allocation happened on every backtrack (one per conflict) and showed up
+    /// as ~3% allocator time on BCP-heavy runs.
+    pub(super) fn backtrack_with_phase_saving(&mut self, level: u32) {
+        if level >= self.trail.decision_level() {
+            return;
+        }
+        // Borrow disjoint Solver fields (everything except `trail`, which the
+        // `backtrack_to_with_callback` call borrows mutably).
         let phase = &mut self.phase;
         let lrb = &mut self.lrb;
-        let boundary = self.trail.backtrack_to_with_callback(level, |lit| {
+        let vsids = &mut self.vsids;
+        let chb = &mut self.chb;
+        let vmtf = &mut self.vmtf;
+        let use_lrb = self.config.use_lrb_branching;
+        let use_chb = self.config.use_chb_branching;
+        let use_vmtf = self.config.use_vmtf;
+        self.trail.backtrack_to_with_callback(level, move |lit| {
             let var = lit.var();
-            if var.index() < phase.len() {
-                phase[var.index()] = lit.is_pos();
+            let vi = var.index();
+            if vi < phase.len() {
+                phase[vi] = lit.is_pos();
             }
-            // Re-insert variable into LRB heap
-            lrb.unassign(var);
-            unassigned_vars.push(var);
+            // Re-insert variable into the LRB heap (only when LRB is active).
+            if use_lrb {
+                lrb.unassign(var);
+            }
+            // Re-insert into VSIDS/CHB heaps and update the VMTF search pointer
+            // (cadical `unassign` → `update_queue_unassigned`): the pointer
+            // moves to the most-recently-bumped unassigned variable, keeping
+            // decisions O(1) amortized.
+            if !vsids.contains(var) {
+                vsids.insert(var);
+            }
+            if use_chb && !chb.contains(var) {
+                chb.insert(var);
+            }
+            if use_vmtf {
+                vmtf.notify_unassigned(var);
+            }
         });
-
-        // Re-insert unassigned variables into VSIDS and CHB heaps, and update
-        // the VMTF search pointer (cadical's `unassign` →
-        // `update_queue_unassigned`): the pointer moves to the most-recently-
-        // bumped unassigned variable, keeping decisions O(1) amortized.
-        for var in unassigned_vars {
-            if !self.vsids.contains(var) {
-                self.vsids.insert(var);
-            }
-            if !self.chb.contains(var) {
-                self.chb.insert(var);
-            }
-            if self.config.use_vmtf {
-                self.vmtf.notify_unassigned(var);
-            }
-        }
-
-        boundary
     }
 
     /// Backtrack to a given level without saving phases.
@@ -157,7 +162,7 @@ impl Solver {
         let mut unassigned_vars = Vec::new();
 
         let lrb = &mut self.lrb;
-        let boundary = self.trail.backtrack_to_with_callback(level, |lit| {
+        self.trail.backtrack_to_with_callback(level, |lit| {
             let var = lit.var();
             lrb.unassign(var);
             unassigned_vars.push(var);
@@ -172,7 +177,9 @@ impl Solver {
             }
         }
 
-        boundary
+        // `backtrack_to_with_callback` no longer returns the rollback boundary
+        // (main's alloc-free variant); derive it from the post-backtrack trail.
+        self.trail.assignments().len()
     }
 
     /// Compute the Luby sequence value for index i (1-indexed: luby(1)=1, luby(2)=1, ...)

@@ -39,15 +39,11 @@ impl Solver {
                 // In incremental mode (pop/forget), edges could go stale; that
                 // path would need edge invalidation, not per-propagation checks.
 
-                let value = self.trail.lit_value(implied_lit);
-                if value.is_false() {
-                    // Conflict in binary clause. `lit`'s remaining implication
-                    // edges (and its whole watch list) have not been examined,
-                    // so put it back on the queue before bailing out — see
-                    // `Trail::requeue_last_propagated`.
-                    self.trail.requeue_last_propagated();
+                let value = self.trail.lit_val(implied_lit);
+                if value < 0 {
+                    // Conflict in binary clause
                     return Some(clause_id);
-                } else if !value.is_defined() {
+                } else if value == 0 {
                     // Propagate
                     self.trail.assign_propagation(implied_lit, clause_id);
                     // LRAT: flush level-0 propagations to explicit derived units
@@ -85,7 +81,7 @@ impl Solver {
             for read in 0..watches.len() {
                 let watcher = watches[read];
 
-                if self.trail.lit_value(watcher.blocker).is_true() {
+                if self.trail.lit_val(watcher.blocker) > 0 {
                     watches[write] = watcher;
                     write += 1;
                     continue;
@@ -106,7 +102,7 @@ impl Solver {
 
                 // If first watch is true, clause is satisfied
                 let first = clause.lits[0];
-                if self.trail.lit_value(first).is_true() {
+                if self.trail.lit_val(first) > 0 {
                     watches[write] = Watcher::new(watcher.clause, first);
                     write += 1;
                     continue;
@@ -116,7 +112,7 @@ impl Solver {
                 let mut found = false;
                 for j in 2..clause.lits.len() {
                     let l = clause.lits[j];
-                    if !self.trail.lit_value(l).is_false() {
+                    if self.trail.lit_val(l) >= 0 {
                         clause.swap(1, j);
                         self.watches
                             .add(clause.lits[1].negate(), Watcher::new(watcher.clause, first));
@@ -132,7 +128,7 @@ impl Solver {
                 // No new watch found - clause is unit or conflicting
                 watches[write] = Watcher::new(watcher.clause, first);
 
-                if self.trail.lit_value(first).is_false() {
+                if self.trail.lit_val(first) < 0 {
                     conflict_found = Some(watcher.clause);
                     write += 1; // keep the conflicting watcher
                     // Copy remaining watchers to preserve them

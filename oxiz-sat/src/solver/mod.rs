@@ -1909,8 +1909,10 @@ impl Solver {
                 if self.config.use_chb_branching {
                     self.chb.decay();
                 }
-                self.lrb.decay();
-                self.lrb.on_conflict();
+                if self.config.use_lrb_branching {
+                    self.lrb.decay();
+                    self.lrb.on_conflict();
+                }
                 self.decay_clause_activity();
 
                 // Track conflicts for clause deletion
