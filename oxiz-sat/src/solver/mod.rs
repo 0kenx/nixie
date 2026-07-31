@@ -30,12 +30,9 @@ use crate::watched::{WatchLists, Watcher};
 use core::sync::atomic::{AtomicBool, Ordering};
 use smallvec::SmallVec;
 
-// Packed per-literal LRAT minimization flags (`Flags` in upstream), stored in
-// [`Solver::lrat_flags`] indexed by `Lit::index()`. The bit layout mirrors
-// cadical's `Flags` fields used by `minimize.cpp` / `analyze.cpp`. Reserved
-// for the chain-extending minimization port (see `Solver::minimize_clause_lrat`);
-// currently unused while LRAT emits un-minimized 1-UIP clauses.
-#[allow(dead_code)]
+// Packed per-variable LRAT minimization flags (`Flags` in upstream), stored
+// in [`Solver::lrat_flags`] indexed by `Var::index()`. The bit layout mirrors
+// cadical's `Flags` fields used by `minimize.cpp`.
 pub(super) const MF_KEEP: u8 = 1;
 #[allow(dead_code)]
 pub(super) const MF_POISON: u8 = 2;
@@ -691,9 +688,8 @@ pub struct Solver {
     /// `lrat_chain` before the final reversal.
     pub(super) unit_chain: Vec<i64>,
     /// Minimization chain scratch (`mini_chain` / `minimize_chain`): per
-    /// minimized-away literal's reason sub-chain, assembled reversed into
-    /// `lrat_chain`. Reserved for the chain-extending minimization port.
-    #[allow(dead_code)]
+    /// Minimization chain scratch (`mini_chain` / `minimize_chain`): per
+    /// minimized-away literal's reason sub-chain.
     pub(super) mini_chain: Vec<i64>,
     /// Level-0 literals marked `seen` during analysis, for cleanup
     /// (`unit_analyzed` in upstream).
@@ -703,7 +699,6 @@ pub struct Solver {
     /// [`MF_ADDED`]|[`MF_SEEN`]. Grown only while `lrat` is on.
     pub(super) lrat_flags: Vec<u8>,
     /// Literals marked during minimization, for flag cleanup (`minimized`).
-    /// Reserved for the chain-extending minimization port.
     #[allow(dead_code)]
     pub(super) lrat_minimized: Vec<i32>,
 }
