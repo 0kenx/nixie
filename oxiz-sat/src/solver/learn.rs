@@ -422,16 +422,18 @@ impl Solver {
                     continue;
                 }
 
-                // Check if clause is currently a reason for any assignment
-                // (We can't delete reason clauses)
-                let is_reason = clause.lits.iter().any(|&lit| {
-                    let var = lit.var();
-                    if self.trail.is_assigned(var) {
-                        matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
-                    } else {
-                        false
-                    }
-                });
+                // A clause is a current propagation reason iff the variable of its
+                // asserting literal (always `lits[0]`) records this clause as its
+                // reason. While a clause is a reason its `lits[0]` is the literal
+                // it propagated and is never swapped away (any watcher visit that
+                // would touch it finds it true and bails), so checking `lits[0]`
+                // alone is both necessary and sufficient — O(1) instead of the
+                // previous O(clause-length) scan over every clause every
+                // reduction.
+                let is_reason = matches!(
+                    self.trail.reason(clause.lits[0].var()),
+                    Reason::Propagation(r) if r == cid
+                );
 
                 if !is_reason {
                     match clause.tier {
