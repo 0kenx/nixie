@@ -133,7 +133,7 @@ fn pure_literal_elimination_records_pure_literal() {
     db.add_original([Lit::neg(v(1)), Lit::pos(v(0))]);
 
     let mut prep = Preprocessor::new(3);
-    let eliminated = prep.pure_literal_elimination(&mut db);
+    let eliminated = prep.pure_literal_elimination(&mut db, &[]);
 
     assert!(eliminated >= 1, "the pure clause should be eliminated");
     let pure = prep.eliminated_pure_literals();

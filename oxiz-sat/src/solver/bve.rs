@@ -99,8 +99,24 @@ impl Solver {
                 .filter_map(|&cid| self.clauses.get(cid).map(|c| c.lits.clone()))
                 .collect();
 
+            // Literal-aware SatELite bound: elimination must not increase the
+            // *total literal count*, not just the clause count. The clause-
+            // count bound alone lets several short clauses be replaced by fewer
+            // but much longer resolvents (e.g. 6x3-lit clauses -> 6x5-lit
+            // resolvents passes the clause bound but 18->30 literals). Cascaded
+            // over thousands of inprocessing passes this bloats the DB with
+            // long high-glue clauses, halving BCP throughput and exploding the
+            // conflict count (~37x slowdown on mrpp_4x4#12_12). Stricter is
+            // only more conservative here, so this cannot affect soundness.
+            let removed_lits: usize = pos_lits
+                .iter()
+                .chain(neg_lits.iter())
+                .map(|c| c.len())
+                .sum();
+
             // Generate resolvents, skipping tautologies and duplicates.
             let mut resolvents: Vec<SmallVec<[Lit; 8]>> = Vec::new();
+            let mut resolvent_lits: usize = 0;
             let mut abort = false;
             'pair: for pc in &pos_lits {
                 for nc in &neg_lits {
@@ -114,12 +130,16 @@ impl Solver {
                             return SubstOutcome::Unsat;
                         }
                         1 => {
+                            resolvent_lits += 1;
                             resolvents.push(r);
                         }
                         _ => {
-                            // Early bound: if we already exceed the clauses we
-                            // would remove, this elimination grows the formula.
-                            if resolvents.len() > pos_lits.len() + neg_lits.len() {
+                            // Early bounds: bail if this elimination would grow
+                            // the formula by clause count *or* literal count.
+                            resolvent_lits += r.len();
+                            if resolvents.len() + 1 > pos_lits.len() + neg_lits.len()
+                                || resolvent_lits > removed_lits
+                            {
                                 abort = true;
                                 break 'pair;
                             }
@@ -135,9 +155,11 @@ impl Solver {
                 continue;
             }
 
-            // SatELite bound: only eliminate if resolvents do not outnumber the
-            // clauses being removed.
-            if resolvents.len() > pos_lits.len() + neg_lits.len() {
+            // SatELite bounds: only eliminate if resolvents neither outnumber
+            // the removed clauses nor increase the total literal count.
+            if resolvents.len() > pos_lits.len() + neg_lits.len()
+                || resolvent_lits > removed_lits
+            {
                 continue;
             }
 
