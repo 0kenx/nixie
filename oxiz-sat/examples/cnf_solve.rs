@@ -65,10 +65,10 @@ fn main() {
             _ => ConfigPreset::CaDiCaL.config(),
         }
     };
-    if let Some(v) = std::env::var("INTERVAL").ok().filter(|s| !s.is_empty()) {
-        if let Ok(n) = v.parse::<u64>() {
-            config.restart_interval = n;
-        }
+    if let Some(v) = std::env::var("INTERVAL").ok().filter(|s| !s.is_empty())
+        && let Ok(n) = v.parse::<u64>()
+    {
+        config.restart_interval = n;
     }
     if let Some(v) = std::env::var("REUSE")
         .ok()
@@ -84,15 +84,19 @@ fn main() {
     {
         config.enable_inprocessing = v != "0";
     }
-    if let Ok(v) = std::env::var("EQUIV") { config.enable_equiv_substitution = v != "0"; }
-    if let Ok(v) = std::env::var("BVE") { config.enable_bve = v != "0"; }
+    if let Ok(v) = std::env::var("EQUIV") {
+        config.enable_equiv_substitution = v != "0";
+    }
+    if let Ok(v) = std::env::var("BVE") {
+        config.enable_bve = v != "0";
+    }
     if let Ok(v) = std::env::var("STABLE") {
         config.enable_stabilize = v != "0";
     }
-    if let Ok(v) = std::env::var("LUBYCAP") {
-        if let Ok(n) = v.parse::<u64>() {
-            config.luby_cap = n;
-        }
+    if let Ok(v) = std::env::var("LUBYCAP")
+        && let Ok(n) = v.parse::<u64>()
+    {
+        config.luby_cap = n;
     }
     if let Some(v) = std::env::var("LUCKY")
         .ok()
@@ -102,18 +106,18 @@ fn main() {
         // Lucky phases default to on (matching CaDiCaL); set LUCKY=0 to disable.
         config.enable_lucky = v != "0";
     }
-    if let Some(v) = std::env::var("REPHASE").ok().filter(|s| !s.is_empty()) {
-        if let Ok(n) = v.parse::<u32>() {
-            config.rephase_interval = n;
-        }
+    if let Some(v) = std::env::var("REPHASE").ok().filter(|s| !s.is_empty())
+        && let Ok(n) = v.parse::<u32>()
+    {
+        config.rephase_interval = n;
     }
 
     let mut parser = DimacsParser::new();
     let mut solver = Solver::with_config(config);
-    if let Some(v) = std::env::var("MAXC").ok().filter(|s| !s.is_empty()) {
-        if let Ok(n) = v.parse::<u64>() {
-            solver.set_max_conflicts(Some(n));
-        }
+    if let Some(v) = std::env::var("MAXC").ok().filter(|s| !s.is_empty())
+        && let Ok(n) = v.parse::<u64>()
+    {
+        solver.set_max_conflicts(Some(n));
     }
     if let Err(e) = parser.parse_file(&path, &mut solver) {
         eprintln!("parse error: {e}");

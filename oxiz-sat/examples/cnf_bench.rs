@@ -76,10 +76,10 @@ fn main() {
             _ => SolverConfig::default(),
         }
     };
-    if let Ok(v) = std::env::var("REPHASE") {
-        if let Ok(n) = v.parse::<u32>() {
-            base_config.rephase_interval = n;
-        }
+    if let Ok(v) = std::env::var("REPHASE")
+        && let Ok(n) = v.parse::<u32>()
+    {
+        base_config.rephase_interval = n;
     }
     if let Ok(v) = std::env::var("REUSE") {
         base_config.reuse_trail = v != "0";
@@ -87,23 +87,27 @@ fn main() {
     if let Ok(v) = std::env::var("INPROCESS") {
         base_config.enable_inprocessing = v != "0";
     }
-    if let Ok(v) = std::env::var("EQUIV") { base_config.enable_equiv_substitution = v != "0"; }
-    if let Ok(v) = std::env::var("BVE") { base_config.enable_bve = v != "0"; }
+    if let Ok(v) = std::env::var("EQUIV") {
+        base_config.enable_equiv_substitution = v != "0";
+    }
+    if let Ok(v) = std::env::var("BVE") {
+        base_config.enable_bve = v != "0";
+    }
     if let Ok(v) = std::env::var("CHRONO") {
         base_config.enable_chronological_backtrack = v != "0";
     }
     if let Ok(v) = std::env::var("STABLE") {
         base_config.enable_stabilize = v != "0";
     }
-    if let Ok(v) = std::env::var("LUBYCAP") {
-        if let Ok(n) = v.parse::<u64>() {
-            base_config.luby_cap = n;
-        }
+    if let Ok(v) = std::env::var("LUBYCAP")
+        && let Ok(n) = v.parse::<u64>()
+    {
+        base_config.luby_cap = n;
     }
-    if let Ok(v) = std::env::var("INTERVAL") {
-        if let Ok(n) = v.parse::<u64>() {
-            base_config.restart_interval = n;
-        }
+    if let Ok(v) = std::env::var("INTERVAL")
+        && let Ok(n) = v.parse::<u64>()
+    {
+        base_config.restart_interval = n;
     }
     // Additional isolation knobs (apply on top of any base/preset).
     if let Ok(v) = std::env::var("LAZY_HYPER") {

@@ -29,6 +29,7 @@ pub struct VMTF {
 }
 
 impl VMTF {
+    /// Construct a VMTF decision queue for `num_vars` variables.
     #[must_use]
     pub fn new(num_vars: usize) -> Self {
         let mut s = Self {
@@ -56,6 +57,7 @@ impl VMTF {
         s
     }
 
+    /// Grow the queue to cover `num_vars` variables (no-op if already large enough).
     pub fn resize(&mut self, num_vars: usize) {
         if num_vars <= self.prev.len() {
             return;
@@ -191,6 +193,7 @@ pub struct VmtfStats {
 }
 
 impl VMTF {
+    /// Return a snapshot of VMTF statistics (bump count, etc.).
     #[must_use]
     pub fn stats(&self) -> VmtfStats {
         VmtfStats {

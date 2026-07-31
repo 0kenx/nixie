@@ -32,11 +32,7 @@ fn main() {
                 let sat = clause.iter().any(|&v| {
                     let vi = v.unsigned_abs() as usize - 1;
                     let val = model.get(vi).copied().unwrap_or(oxiz_sat::LBool::Undef);
-                    if v > 0 {
-                        val.is_true()
-                    } else {
-                        val.is_false()
-                    }
+                    if v > 0 { val.is_true() } else { val.is_false() }
                 });
                 if !sat {
                     bad += 1;

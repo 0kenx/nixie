@@ -123,9 +123,7 @@ impl Solver {
                         // contradictions) that proved satisfiable formulas UNSAT.
                         let scc_members = stack.split_off(scc_start);
                         if scc_members.len() > 1 {
-                            let rep = Lit::from_code(
-                                (*scc_members.iter().min().unwrap()) as u32,
-                            );
+                            let rep = Lit::from_code((*scc_members.iter().min().unwrap()) as u32);
                             for &c in &scc_members {
                                 sub[c] = rep;
                             }
@@ -215,7 +213,8 @@ impl Solver {
                 .extend((0..num_vars).map(|v| Lit::pos(Var::new(v as u32))));
             self.equiv_subst_inited = true;
         } else {
-            self.equiv_substitution.resize(num_vars, Lit::pos(Var::new(0)));
+            self.equiv_substitution
+                .resize(num_vars, Lit::pos(Var::new(0)));
         }
         for v in 0..num_vars {
             let cur = self.equiv_substitution[v];
@@ -225,7 +224,6 @@ impl Solver {
                 eliminated += 1;
             }
         }
-
 
         // ---- Rebuild watch lists + binary implication graph. ----
         self.rebuild_watches_and_binary_graph();
@@ -255,8 +253,7 @@ impl Solver {
     /// and must not be branched on. Cheap: empty maps mean no pass ran.
     #[inline]
     pub(super) fn var_eliminated(&self, v: Var) -> bool {
-        (self.equiv_substitution.len() > v.index()
-            && self.equiv_substitution[v.index()].var() != v)
+        (self.equiv_substitution.len() > v.index() && self.equiv_substitution[v.index()].var() != v)
             || (self.bve_def.len() > v.index() && !self.bve_def[v.index()].is_empty())
     }
 

@@ -41,7 +41,9 @@ impl Solver {
         let mut occ = OccurrenceList::new();
         occ.resize(num_vars);
         for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else { continue };
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
             if c.deleted || c.lits.len() < 2 {
                 continue;
             }
@@ -157,9 +159,7 @@ impl Solver {
 
             // SatELite bounds: only eliminate if resolvents neither outnumber
             // the removed clauses nor increase the total literal count.
-            if resolvents.len() > pos_lits.len() + neg_lits.len()
-                || resolvent_lits > removed_lits
-            {
+            if resolvents.len() > pos_lits.len() + neg_lits.len() || resolvent_lits > removed_lits {
                 continue;
             }
 
@@ -170,18 +170,21 @@ impl Solver {
                 r.sort_unstable_by_key(|l| l.code());
                 r.dedup();
             }
-            resolvents.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| {
-                a.iter()
-                    .map(|l| l.code())
-                    .collect::<SmallVec<[u32; 8]>>()
-                    .cmp(&b.iter().map(|l| l.code()).collect())
-            }));
+            resolvents.sort_by(|a, b| {
+                a.len().cmp(&b.len()).then_with(|| {
+                    a.iter()
+                        .map(|l| l.code())
+                        .collect::<SmallVec<[u32; 8]>>()
+                        .cmp(&b.iter().map(|l| l.code()).collect())
+                })
+            });
             resolvents.dedup_by(|a, b| a == b);
 
             // Record positive clauses (with v stripped) for model
             // reconstruction, then retire v's clauses from the DB + occurrences.
             for pc in &pos_lits {
-                let stripped: SmallVec<[Lit; 4]> = pc.iter().copied().filter(|&l| l != pos).collect();
+                let stripped: SmallVec<[Lit; 4]> =
+                    pc.iter().copied().filter(|&l| l != pos).collect();
                 self.bve_def[v.index()].push(stripped);
             }
             for &cid in pos_ids.iter().chain(neg_ids.iter()) {
@@ -281,7 +284,7 @@ impl Solver {
     ) -> SubstOutcome {
         while let Some(lit) = queue.pop() {
             // Idempotent: skip if this literal's polarity is already forced.
-            if derived.iter().any(|&d| d == lit) {
+            if derived.contains(&lit) {
                 continue;
             }
             // If the opposite polarity was already derived, that's a conflict.
@@ -403,10 +406,8 @@ impl Solver {
                 continue;
             }
             let taut = self.clauses.get_mut(cid).is_some_and(|c| c.normalize());
-            if taut {
-                if let Some(c) = self.clauses.get_mut(cid) {
-                    c.deleted = true;
-                }
+            if taut && let Some(c) = self.clauses.get_mut(cid) {
+                c.deleted = true;
             }
         }
 
@@ -414,7 +415,9 @@ impl Solver {
         let mut occ = OccurrenceList::new();
         occ.resize(num_vars);
         for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else { continue };
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
             if c.deleted || c.lits.len() < 2 {
                 continue;
             }
@@ -518,29 +521,53 @@ impl Solver {
         let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
         for cid in ids {
             let mut lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
-                Some(c) if !c.deleted && (3..=MAX_LEN).contains(&c.lits.len()) => c.lits.iter().copied().collect(),
+                Some(c) if !c.deleted && (3..=MAX_LEN).contains(&c.lits.len()) => {
+                    c.lits.iter().copied().collect()
+                }
                 _ => continue,
             };
             let orig_len = lits.len();
             loop {
-                if lits.len() < 2 { break; }
+                if lits.len() < 2 {
+                    break;
+                }
                 let mut remove_idx: Option<usize> = None;
                 'find: for i in 0..lits.len() {
                     let li = lits[i];
                     for j in 0..lits.len() {
-                        if i == j { continue; }
-                        if self.has_binary_implication(li, lits[j]) { remove_idx = Some(i); break 'find; }
+                        if i == j {
+                            continue;
+                        }
+                        if self.has_binary_implication(li, lits[j]) {
+                            remove_idx = Some(i);
+                            break 'find;
+                        }
                     }
                 }
                 match remove_idx {
-                    Some(i) => { lits.remove(i); removed_lits += 1; }
+                    Some(i) => {
+                        lits.remove(i);
+                        removed_lits += 1;
+                    }
                     None => break,
                 }
             }
             match lits.len() {
-                0 => { self.trivially_unsat = true; return removed_lits; }
-                1 => { units.push(lits[0]); if let Some(c) = self.clauses.get_mut(cid) { c.deleted = true; } }
-                n if n < orig_len => { if let Some(c) = self.clauses.get_mut(cid) { c.lits = lits; } }
+                0 => {
+                    self.trivially_unsat = true;
+                    return removed_lits;
+                }
+                1 => {
+                    units.push(lits[0]);
+                    if let Some(c) = self.clauses.get_mut(cid) {
+                        c.deleted = true;
+                    }
+                }
+                n if n < orig_len => {
+                    if let Some(c) = self.clauses.get_mut(cid) {
+                        c.lits = lits;
+                    }
+                }
                 _ => {}
             }
         }
@@ -549,11 +576,16 @@ impl Solver {
             for lit in units {
                 match self.trail.lit_value(lit) {
                     LBool::True => {}
-                    LBool::False => { self.trivially_unsat = true; return removed_lits; }
+                    LBool::False => {
+                        self.trivially_unsat = true;
+                        return removed_lits;
+                    }
                     LBool::Undef => self.trail.assign_decision(lit),
                 }
             }
-            if self.propagate().is_some() { self.trivially_unsat = true; }
+            if self.propagate().is_some() {
+                self.trivially_unsat = true;
+            }
         }
         removed_lits
     }

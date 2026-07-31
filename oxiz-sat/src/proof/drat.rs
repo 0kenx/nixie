@@ -79,10 +79,18 @@ impl DratTracer {
     #[inline]
     fn write_varint(&mut self, mut x: u64) {
         while x & !0x7f != 0 {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(&[((x & 0x7f) | 0x80) as u8]);
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(&[((x & 0x7f) | 0x80) as u8]);
             x >>= 7;
         }
-        let _ = self.writer.get_mut().expect("proof writer").write_all(&[x as u8]);
+        let _ = self
+            .writer
+            .get_mut()
+            .expect("proof writer")
+            .write_all(&[x as u8]);
     }
 
     // -- core emission (`drat_add_clause` / `drat_delete_clause`) -----
@@ -102,7 +110,11 @@ impl DratTracer {
         if self.binary {
             self.put_binary_zero();
         } else {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"0\n");
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"0\n");
         }
     }
 
@@ -111,7 +123,11 @@ impl DratTracer {
         if self.binary {
             let _ = self.writer.get_mut().expect("proof writer").write_all(b"d");
         } else {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"d ");
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"d ");
         }
         for &lit in clause {
             if self.binary {
@@ -123,7 +139,11 @@ impl DratTracer {
         if self.binary {
             self.put_binary_zero();
         } else {
-            let _ = self.writer.get_mut().expect("proof writer").write_all(b"0\n");
+            let _ = self
+                .writer
+                .get_mut()
+                .expect("proof writer")
+                .write_all(b"0\n");
         }
     }
 
@@ -159,7 +179,13 @@ impl DratTracer {
 impl Tracer for DratTracer {
     /// `add_original_clause` — no-op for DRAT (originals come from the DIMACS
     /// file; the `redundant` flag, `witness` and `chain` are unused).
-    fn add_original_clause(&mut self, _id: i64, _redundant: bool, _clause: &[i32], _restored: bool) {
+    fn add_original_clause(
+        &mut self,
+        _id: i64,
+        _redundant: bool,
+        _clause: &[i32],
+        _restored: bool,
+    ) {
     }
 
     /// `add_derived_clause` (`id`, `redundant`, `witness` and `chain` are
@@ -226,11 +252,7 @@ mod tests {
     }
     fn decode_lit(x: u64) -> i32 {
         let idx = (x / 2) as i32;
-        if x & 1 == 1 {
-            -idx
-        } else {
-            idx
-        }
+        if x & 1 == 1 { -idx } else { idx }
     }
 
     #[test]

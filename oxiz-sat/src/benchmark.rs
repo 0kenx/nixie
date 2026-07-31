@@ -285,7 +285,7 @@ impl BenchmarkHarness {
 
             report.push_str(&format!(
                 "{:<30} {:>10} {:>12.3} {:>12}\n",
-                &result.instance,
+                result.instance,
                 result_str,
                 result.wall_time.as_secs_f64(),
                 result.stats.solver_stats().conflicts

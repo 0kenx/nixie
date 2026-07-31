@@ -41,30 +41,75 @@ fn main() {
         }
     } else {
         match std::env::var("RESTART").ok().as_deref() {
-            Some("glucose") => SolverConfig { restart_strategy: RestartStrategy::Glucose, ..SolverConfig::default() },
-            Some("geometric") => SolverConfig { restart_strategy: RestartStrategy::Geometric, ..SolverConfig::default() },
-            Some("locallbd") => SolverConfig { restart_strategy: RestartStrategy::LocalLbd, ..SolverConfig::default() },
+            Some("glucose") => SolverConfig {
+                restart_strategy: RestartStrategy::Glucose,
+                ..SolverConfig::default()
+            },
+            Some("geometric") => SolverConfig {
+                restart_strategy: RestartStrategy::Geometric,
+                ..SolverConfig::default()
+            },
+            Some("locallbd") => SolverConfig {
+                restart_strategy: RestartStrategy::LocalLbd,
+                ..SolverConfig::default()
+            },
             _ => SolverConfig::default(),
         }
     };
-    if let Some(v) = env_u64("INTERVAL") { config.restart_interval = v; }
-    if let Some(v) = env_bool("REUSE") { config.reuse_trail = v; }
-    if let Some(v) = env_bool("INPROCESS") { config.enable_inprocessing = v; }
-    if let Some(v) = env_bool("EQUIV") { config.enable_equiv_substitution = v; }
-    if let Some(v) = env_bool("BVE") { config.enable_bve = v; }
-    if let Some(v) = env_bool("STABLE") { config.enable_stabilize = v; }
-    if let Some(v) = env_u64("LUBYCAP") { config.luby_cap = v; }
-    if let Some(v) = env_bool("LUCKY") { config.enable_lucky = v; }
-    if let Some(v) = env_u64("REPHASE") { config.rephase_interval = v as u32; }
-    if let Some(v) = env_bool("VMTF") { config.use_vmtf = v; }
-    if let Some(v) = env_bool("CHB") { config.use_chb_branching = v; }
-    if let Some(v) = env_bool("LRB") { config.use_lrb_branching = v; }
-    if let Some(v) = env_bool("CHRONO") { config.enable_chronological_backtrack = v; }
-    if let Some(v) = env_bool("PROBE") { config.enable_failed_literal_probing = v; }
-    if let Some(v) = env_bool("HYPER") { config.enable_hyper_binary_probing = v; }
-    if let Some(v) = env_usize("DELTHRESH") { config.clause_deletion_threshold = v; }
-    if let Some(v) = env_f64("VARDECAY") { config.var_decay = v; }
-    if let Some(v) = env_f64("RANDOMPOL") { config.random_polarity_prob = v; }
+    if let Some(v) = env_u64("INTERVAL") {
+        config.restart_interval = v;
+    }
+    if let Some(v) = env_bool("REUSE") {
+        config.reuse_trail = v;
+    }
+    if let Some(v) = env_bool("INPROCESS") {
+        config.enable_inprocessing = v;
+    }
+    if let Some(v) = env_bool("EQUIV") {
+        config.enable_equiv_substitution = v;
+    }
+    if let Some(v) = env_bool("BVE") {
+        config.enable_bve = v;
+    }
+    if let Some(v) = env_bool("STABLE") {
+        config.enable_stabilize = v;
+    }
+    if let Some(v) = env_u64("LUBYCAP") {
+        config.luby_cap = v;
+    }
+    if let Some(v) = env_bool("LUCKY") {
+        config.enable_lucky = v;
+    }
+    if let Some(v) = env_u64("REPHASE") {
+        config.rephase_interval = v as u32;
+    }
+    if let Some(v) = env_bool("VMTF") {
+        config.use_vmtf = v;
+    }
+    if let Some(v) = env_bool("CHB") {
+        config.use_chb_branching = v;
+    }
+    if let Some(v) = env_bool("LRB") {
+        config.use_lrb_branching = v;
+    }
+    if let Some(v) = env_bool("CHRONO") {
+        config.enable_chronological_backtrack = v;
+    }
+    if let Some(v) = env_bool("PROBE") {
+        config.enable_failed_literal_probing = v;
+    }
+    if let Some(v) = env_bool("HYPER") {
+        config.enable_hyper_binary_probing = v;
+    }
+    if let Some(v) = env_usize("DELTHRESH") {
+        config.clause_deletion_threshold = v;
+    }
+    if let Some(v) = env_f64("VARDECAY") {
+        config.var_decay = v;
+    }
+    if let Some(v) = env_f64("RANDOMPOL") {
+        config.random_polarity_prob = v;
+    }
 
     let mut parser = DimacsParser::new();
     let mut solver = Solver::with_config(config);
@@ -83,17 +128,27 @@ fn main() {
     eprintln!(
         "stats decisions={dec} propagations={prop} conflicts={conf} restarts={rst} \
          learnt={lc} lits_removed={lr} chrono={ch} nonchrono={nch} avg_lbd={lbd:.2}",
-        dec = s.decisions, prop = s.propagations, conf = s.conflicts, rst = s.restarts,
-        lc = s.learned_clauses, lr = s.literals_removed, ch = s.chrono_backtracks,
+        dec = s.decisions,
+        prop = s.propagations,
+        conf = s.conflicts,
+        rst = s.restarts,
+        lc = s.learned_clauses,
+        lr = s.literals_removed,
+        ch = s.chrono_backtracks,
         nch = s.non_chrono_backtracks,
-        lbd = if s.conflicts > 0 { s.total_lbd as f64 / s.conflicts as f64 } else { 0.0 },
+        lbd = if s.conflicts > 0 {
+            s.total_lbd as f64 / s.conflicts as f64
+        } else {
+            0.0
+        },
     );
     eprintln!(
         "rate props/s={ps:.0} conf/s={cs:.0} dec/s={ds:.0} mpps={mpp:.2}M dt={dt:.3}s",
         ps = s.propagations as f64 / dt.max(1e-9),
         cs = s.conflicts as f64 / dt.max(1e-9),
         ds = s.decisions as f64 / dt.max(1e-9),
-        mpp = s.propagations as f64 / dt.max(1e-9) / 1e6, dt = dt,
+        mpp = s.propagations as f64 / dt.max(1e-9) / 1e6,
+        dt = dt,
     );
     match res {
         SolverResult::Sat => println!("s SATISFIABLE"),

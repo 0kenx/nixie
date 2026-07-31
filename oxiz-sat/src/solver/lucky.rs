@@ -112,7 +112,11 @@ impl Solver {
             .iter_ids()
             .filter_map(|id| self.clauses.get(id).map(|c| (id, c.lits.clone())))
             .collect();
-        let snap_ticks = (self.ticks_focused, self.ticks_stable, self.stats.propagations);
+        let snap_ticks = (
+            self.ticks_focused,
+            self.ticks_stable,
+            self.stats.propagations,
+        );
 
         // Try each strategy in CaDiCaL order. Each leaves the trail at level 0
         // on `Fail`, so they compose cleanly.
@@ -223,7 +227,11 @@ impl Solver {
             if self.trail.is_assigned(v) {
                 continue;
             }
-            let lit = if want_positive { Lit::pos(v) } else { Lit::neg(v) };
+            let lit = if want_positive {
+                Lit::pos(v)
+            } else {
+                Lit::neg(v)
+            };
             self.trail.new_decision_level();
             self.trail.assign_decision(lit);
             if self.propagate().is_some() {
@@ -269,11 +277,7 @@ impl Solver {
                         }
                     }
                 }
-                if satisfied {
-                    None
-                } else {
-                    Some(pick)
-                }
+                if satisfied { None } else { Some(pick) }
             });
             match chosen {
                 None => continue,
@@ -305,7 +309,11 @@ impl Solver {
             if self.trail.is_assigned(v) {
                 continue;
             }
-            let lit = if want_positive { Lit::neg(v) } else { Lit::pos(v) };
+            let lit = if want_positive {
+                Lit::neg(v)
+            } else {
+                Lit::pos(v)
+            };
             self.trail.new_decision_level();
             self.trail.assign_decision(lit);
             if self.propagate().is_some() {
@@ -342,7 +350,11 @@ impl Solver {
                 if self.trail.is_assigned(v) {
                     break;
                 }
-                let dec = if want_positive { Lit::pos(v) } else { Lit::neg(v) };
+                let dec = if want_positive {
+                    Lit::pos(v)
+                } else {
+                    Lit::neg(v)
+                };
                 match self.lucky_discrepancy(dec) {
                     Discrepancy::Ok => {} // re-check `is_assigned(v)`
                     Discrepancy::BothConflict => {

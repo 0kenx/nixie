@@ -1,9 +1,10 @@
 //! Gate-based congruence closure (AND / XOR).
 //!
 //! A *gate* defines an output literal in terms of inputs:
-//!   - AND:  `o ↔ (a ∧ b)`  ⇔  clauses `(¬a ∨ ¬b ∨ o)`, `(¬o ∨ a)`, `(¬o ∨ b)`
-//!   - XOR:  `o ↔ (a ⊕ b)`  ⇔  the four clauses
-//!           `(¬o ∨ a ∨ b)`, `(¬o ∨ ¬a ∨ ¬b)`, `(o ∨ ¬a ∨ b)`, `(o ∨ a ∨ ¬b)`
+//!
+//! - AND: `o ↔ (a ∧ b)` ⇔ clauses `(¬a ∨ ¬b ∨ o)`, `(¬o ∨ a)`, `(¬o ∨ b)`
+//! - XOR: `o ↔ (a ⊕ b)` ⇔ `(¬o ∨ a ∨ b)`, `(¬o ∨ ¬a ∨ ¬b)`, `(o ∨ ¬a ∨ b)`, `(o ∨ a ∨ ¬b)`
+//!
 //! Two gates of the same type over (congruent) inputs are *congruent* and their
 //! outputs are equivalent. This is the structural reasoning that collapses
 //! multiplier / adder circuits: the partial-product AND gates and the
@@ -111,10 +112,8 @@ impl Solver {
                     (g.ty, i2, i1)
                 };
                 if let Some(&prev) = first.get(&sig) {
-                    if uf.find(prev) != uf.find(g.out.code()) {
-                        if uf.union(prev, g.out.code()) {
-                            merged_any = true;
-                        }
+                    if uf.find(prev) != uf.find(g.out.code()) && uf.union(prev, g.out.code()) {
+                        merged_any = true;
                     }
                 } else {
                     first.insert(sig, g.out.code());
@@ -163,7 +162,9 @@ impl Solver {
         // lookup) and scanned directly for AND.
         let mut ternary: Vec<SmallVec<[Lit; 3]>> = Vec::new();
         for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else { continue };
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
             if c.deleted || c.lits.len() != 3 {
                 continue;
             }
@@ -225,7 +226,10 @@ impl Solver {
                     (o, a.negate(), b),
                     (o, a, b.negate()),
                 ];
-                if forms.iter().all(|&(x, y, z)| has_ternary(x, y, z, &ternary_set)) {
+                if forms
+                    .iter()
+                    .all(|&(x, y, z)| has_ternary(x, y, z, &ternary_set))
+                {
                     gates.push(Gate {
                         ty: GateType::Xor,
                         in1: a,

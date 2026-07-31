@@ -69,7 +69,7 @@ impl Solver {
             let mut watches = core::mem::take(self.watches.get_mut(lit));
             // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
             // sizeof(Watcher) = 8; cache_lines(n, 8) = (n*8 + 127) / 128.
-            let ticks = 1u64 + (watches.len() as u64 * 8 + 127) / 128;
+            let ticks = 1u64 + (watches.len() as u64 * 8).div_ceil(128);
             if self.stable {
                 self.ticks_stable = self.ticks_stable.saturating_add(ticks);
             } else {

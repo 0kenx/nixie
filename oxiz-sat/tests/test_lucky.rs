@@ -206,7 +206,9 @@ fn lucky_random_soundness_matches_search() {
     let rng = RefCell::new(0x1234_5678_u64);
     let next = || {
         let mut r = rng.borrow_mut();
-        *r = r.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *r = r
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *r
     };
 
