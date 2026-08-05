@@ -2103,7 +2103,18 @@ impl TheoryCallback for TheoryManager<'_> {
         // state missed. Gated on `has_app_nodes` because the divergence is
         // specific to function-bearing EUF, and pure-equality problems would be
         // unfairly penalized by the per-final_check rebuild cost.
-        if self.euf.has_app_nodes() {
+        // Eager mode only: this backstop rebuilds the incremental EUF state
+        // (which can lose a congruence/disequality across CDCL push/pop) from
+        // the deduplicated shadow `assignment_trail`. In *lazy* mode that trail
+        // is permanently empty (on_assignment queues `pending_assignments`
+        // instead, drained just above), so a replay here would reset EUF/arith
+        // and rebuild nothing -- wiping the freshly-drained shared terms
+        // (`app_argument_terms` / `interface_terms`) that the theory
+        // combination below needs, turning an entailed-congruence `unsat` into
+        // a spurious `sat` (pr28). Lazy mode has no incremental divergence to
+        // backstop (the state is rebuilt from pending every final_check), so
+        // skip it there.
+        if self.theory_mode != TheoryMode::Lazy && self.euf.has_app_nodes() {
             let replay = self.resync_theory_state();
             if let TheoryCheckResult::Conflict(conflict_lits) = replay {
                 self.statistics.theory_conflicts += 1;
