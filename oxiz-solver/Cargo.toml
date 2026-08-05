@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Main CDCL(T) Solver API for OxiZ"
 keywords = ["smt", "solver", "cdcl"]
 categories = ["algorithms"]

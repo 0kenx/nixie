@@ -13,6 +13,22 @@ impl Solver {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SatPropagation);
         while let Some(lit) = self.trail.next_to_propagate() {
+            // Preprocessing probes (`Solver::propagate_bounded`) cap how much
+            // propagation work a single probe may do, so one pathological
+            // cascade can't dominate a whole probing pass. The budget is
+            // spent one unit per literal dequeued here; `lit` has already
+            // left the queue, so an exhausted budget must requeue it before
+            // bailing — same "abandoned mid-scan" contract the conflict paths
+            // below already rely on.
+            if let Some(remaining) = self.propagate_step_limit {
+                if remaining == 0 {
+                    self.propagate_aborted = true;
+                    self.trail.requeue_last_propagated();
+                    return None;
+                }
+                self.propagate_step_limit = Some(remaining - 1);
+            }
+
             self.stats.propagations += 1;
 
             // First, propagate binary implications (faster)
@@ -64,6 +80,23 @@ impl Solver {
             // Take the current watch list, mutate it in place, then move it
             // back once propagation for this literal is finished.
             let mut watches = core::mem::take(self.watches.get_mut(lit));
+
+            // Accumulate "ticks" for the stable/focused restart schedule: a
+            // proxy for propagation work done, counted in the mode currently
+            // active. Ticks (not conflicts, and not wall-clock time) are what
+            // make the schedule's tick budgets reproducible independent of
+            // machine speed. Approximated as one unit plus the number of
+            // 64-byte cache lines the watch list occupies (each `Watcher` is
+            // 8 bytes), mirroring how a real scan's cost scales with list
+            // length.
+            let watcher_bytes = watches.len().saturating_mul(8) as u64;
+            let ticks = 1 + watcher_bytes.div_ceil(64);
+            if self.stable {
+                self.ticks_stable = self.ticks_stable.saturating_add(ticks);
+            } else {
+                self.ticks_focused = self.ticks_focused.saturating_add(ticks);
+            }
+
             let mut conflict_found: Option<ClauseId> = None;
             let mut watch_idx = 0;
 
@@ -149,9 +182,43 @@ impl Solver {
         None
     }
 
+    /// Run [`Self::propagate`] under a step budget: `limit` literals may be
+    /// dequeued from the trail before the pass is forced to bail out.
+    ///
+    /// Returns `(conflict, aborted)`. `aborted = true` means the budget ran
+    /// out before propagation reached a fixpoint — the caller has neither a
+    /// genuine conflict nor a complete, trustworthy assignment and must treat
+    /// the probe as inconclusive (bail without drawing any conclusion from
+    /// it), never as "no conflict found". Used by the inprocessing probes
+    /// (see `solver/probe.rs`) so a single densely-connected probe cannot
+    /// dominate the whole pass; the main search loop never sets a limit, so
+    /// this has no effect on ordinary solving.
+    pub(super) fn propagate_bounded(&mut self, limit: u64) -> (bool, bool) {
+        self.propagate_step_limit = Some(limit);
+        self.propagate_aborted = false;
+        let conflict = self.propagate().is_some();
+        let aborted = self.propagate_aborted;
+        self.propagate_step_limit = None;
+        self.propagate_aborted = false;
+        (conflict, aborted)
+    }
+
     /// Check for hyper-binary resolution opportunity
     /// When propagating `implied` due to `lit` being assigned, check if we can
     /// learn a binary clause by resolving the reason clauses
+    ///
+    /// Skipped outright while any proof (DRAT or LRAT) is being traced. This
+    /// runs from the *main* propagation path — gated only by
+    /// [`SolverConfig::enable_lazy_hyper_binary`] (on by default and in 6 of
+    /// the 9 presets), not by [`SolverConfig::enable_failed_literal_probing`]
+    /// — and previously had no proof awareness at all: it inserts a real
+    /// clause into the live database (`ClauseDatabase::add_learned` below)
+    /// with no corresponding `drat_add`, so a DRAT proof recorded on a
+    /// default-configured solver that happened to reach decision level 2
+    /// could already omit a clause later derivations depend on, independent
+    /// of anything this port's other mechanisms do. Gating this pass off
+    /// closes that gap the same way probing's is closed, rather than trying
+    /// to retrofit hint-chain support onto the hot propagation path.
     pub(super) fn check_hyper_binary_resolution(
         &mut self,
         _lit: Lit,
@@ -159,7 +226,7 @@ impl Solver {
         reason_id: ClauseId,
     ) {
         // Only check at higher decision levels to avoid overhead
-        if self.trail.decision_level() < 2 {
+        if self.trail.decision_level() < 2 || self.proof_tracing_active() {
             return;
         }
 
@@ -177,6 +244,23 @@ impl Solver {
 
         for &reason_lit in &reason_clause {
             if reason_lit != implied {
+                // Resolving `reason_lit` away is only sound when it is
+                // currently assigned false: the derivation below discharges it
+                // on the premise that the clause already forces `implied` once
+                // every other literal is false. `Trail::level` can return a
+                // *stale* value for a variable that is currently unassigned
+                // (the same trap `analyze_theory_conflict` guards against —
+                // backtracking here only clears `VarInfo.value`, not the whole
+                // `VarInfo`, so a leftover `.level` from a previous, since
+                // undone, assignment can misread as "false at level 0"). An
+                // explicit `is_false()` check ahead of any `level()` read
+                // closes that gap: an unassigned literal is never treated as a
+                // discharged premise, so the hyper-binary this function learns
+                // can never rest on a literal that was not actually forced
+                // false.
+                if !self.trail.lit_value(reason_lit).is_false() {
+                    return;
+                }
                 let var = reason_lit.var();
                 let level = self.trail.level(var);
                 if level == current_level {
@@ -273,11 +357,47 @@ impl Solver {
         }
     }
 
-    /// Check if a binary implication already exists
+    /// Check if a binary implication already exists.
+    ///
+    /// This reads the raw graph without verifying a live clause still backs
+    /// the edge (see the "stale edge" note on [`BinaryImplicationGraph`]
+    /// above), so it is only safe for *negative-result-tolerant* uses: a
+    /// false positive here means "skip adding a clause that may already
+    /// exist" (a missed dedup at worst, never unsound) — every current call
+    /// site is exactly that shape. Do not use this to justify *deriving* a
+    /// new fact (a gate, a hyper-binary, anything fed into substitution);
+    /// use [`Self::has_live_binary_implication`] there instead, since a stale
+    /// edge treated as a real implication would let that derivation assert
+    /// something the current formula does not actually entail.
     pub(super) fn has_binary_implication(&self, from_lit: Lit, to_lit: Lit) -> bool {
         self.binary_graph
             .get(from_lit)
             .iter()
             .any(|(lit, _)| *lit == to_lit)
+    }
+
+    /// Like [`Self::has_binary_implication`], but only counts an edge that is
+    /// either tagged [`ClauseId::NULL`] (a structural edge added by this
+    /// solve's own gate-congruence pass, trustworthy by construction — see
+    /// `solver/congruence.rs`) or still backed by a live, exactly-2-literal
+    /// clause containing both `from_lit.negate()` and `to_lit` — the same
+    /// trust check [`Self::propagate`] applies before using a binary-graph
+    /// edge. Use this whenever the answer feeds a *new* derivation (gate
+    /// detection, equivalent-literal substitution) rather than a dedup check.
+    pub(super) fn has_live_binary_implication(&self, from_lit: Lit, to_lit: Lit) -> bool {
+        self.binary_graph.get(from_lit).iter().any(|&(lit, cid)| {
+            if lit != to_lit {
+                return false;
+            }
+            if cid == ClauseId::NULL {
+                return true;
+            }
+            self.clauses.get(cid).is_some_and(|c| {
+                !c.deleted
+                    && c.lits.len() == 2
+                    && c.lits.contains(&from_lit.negate())
+                    && c.lits.contains(&to_lit)
+            })
+        })
     }
 }

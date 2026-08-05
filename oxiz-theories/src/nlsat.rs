@@ -18,12 +18,13 @@
 //! - NLSAT solver: oxiz-nlsat::solver::NlsatSolver
 //! - Integer solver: oxiz-nlsat::nia::NiaSolver
 
+use crate::nl_eval::Interpretation;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{Theory, TheoryId, TheoryResult};
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::error::Result;
 use oxiz_math::polynomial::Polynomial;
@@ -40,12 +41,45 @@ use std::collections::HashMap;
 ///
 /// `Unknown` is not included: `dispatch_*` functions return `None` to signal
 /// "fall through to CDCL(T)" instead of wrapping Unknown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// A `Sat` carries the witness that justifies it. Callers that must answer
+/// `(get-model)` / `(get-value ...)` need concrete values, and the only values
+/// that can be reported without risking a wrong answer are the ones the
+/// procedure actually found — reconstructing them afterwards from a verdict
+/// alone would be guessing. The witness may be *partial* (a decision procedure
+/// that decided the problem without pinning every leaf leaves the rest open),
+/// so a caller installing it must verify before publishing it; see
+/// [`crate::nl_eval::holds_under`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NlDispatchResult {
-    /// The constraint set is satisfiable.
-    Sat,
+    /// The constraint set is satisfiable, witnessed by this interpretation.
+    Sat(Box<Interpretation>),
     /// The constraint set is unsatisfiable.
     Unsat,
+}
+
+impl NlDispatchResult {
+    /// A `Sat` whose witness is `interp`.
+    #[must_use]
+    pub fn sat(interp: Interpretation) -> Self {
+        Self::Sat(Box::new(interp))
+    }
+
+    /// A `Sat` carrying no values at all — for a procedure that established
+    /// satisfiability without producing an assignment.
+    #[must_use]
+    pub fn sat_unwitnessed() -> Self {
+        Self::sat(Interpretation::empty())
+    }
+
+    /// The witness, or `None` for `Unsat`.
+    #[must_use]
+    pub fn witness(&self) -> Option<&Interpretation> {
+        match self {
+            Self::Sat(interp) => Some(interp),
+            Self::Unsat => None,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,11 +91,44 @@ pub enum NlDispatchResult {
 ///
 /// Maintains a cache of `TermId → polynomial variable index` so that each
 /// unique variable term receives a stable index.
+///
+/// ## Integer `div`/`mod`
+///
+/// SMT-LIB's `Ints` theory defines `div`/`mod` *Euclidean-style*: for any
+/// integers `m` and nonzero `n`, `(div m n)` and `(mod m n)` are the unique
+/// `q`, `r` satisfying `m = n·q + r` with `0 ≤ r < |n|` — the remainder is
+/// never negative, regardless of either operand's sign. (`(div 7 (- 2))` is
+/// `-3` and `(mod 7 (- 2))` is `1`: `7 = (-2)·(-3) + 1`. `(div (- 7) 2)` is
+/// `-4` and `(mod (- 7) 2)` is `1`: `-7 = 2·(-4) + 1`.) `div`/`mod` by `0`
+/// are left uninterpreted by the standard — any value is admissible, so this
+/// translator does not attempt to give them a polynomial meaning at all.
+///
+/// A polynomial has no division operator, so a `div`/`mod` occurrence with a
+/// resolvable nonzero constant divisor is instead given a meaning by
+/// introducing fresh quotient/remainder variables `q`, `r` and asserting the
+/// Euclidean identity above as ordinary polynomial side constraints —
+/// `Self::ensure_divmod_witness` does the encoding, `Self::divmod_leaf`
+/// wires it into `translate_poly`. This mirrors the *ground-lemma* Euclidean
+/// encoding `oxiz-solver`'s `arith_axioms` module asserts for the linear
+/// (simplex) arithmetic path — same convention, same divisor-constant
+/// folding (see `resolve_int_divisor`), just phrased as CAD-visible
+/// polynomial atoms instead of SAT-core clauses, for the nonlinear problems
+/// that never reach the simplex path at all.  A symbolic divisor still has no
+/// polynomial encoding (the identity `m = n·q + r` would itself be
+/// nonlinear in `n` and `q`) and is left untranslated, same as before.
 pub struct TermPolyTranslator<'a> {
     manager: &'a TermManager,
     nlsat: &'a mut NiaSolver,
     var_cache: HashMap<TermId, u32>,
     integer_mode: bool,
+    /// `(dividend, divisor) → (quotient_var, remainder_var)`, so repeated
+    /// occurrences of the same `div`/`mod` term share one pair of witnesses
+    /// (and one copy of the identity) instead of re-deriving it.
+    divmod_witnesses: HashMap<(TermId, TermId), (u32, u32)>,
+    /// Euclidean identity and range atoms collected by
+    /// [`Self::ensure_divmod_witness`], to be folded into the dispatcher's
+    /// atom set once translation of the whole problem is done.
+    divmod_side_constraints: Vec<PolyAtom>,
 }
 
 impl<'a> TermPolyTranslator<'a> {
@@ -72,16 +139,113 @@ impl<'a> TermPolyTranslator<'a> {
             nlsat,
             var_cache: HashMap::new(),
             integer_mode,
+            divmod_witnesses: HashMap::new(),
+            divmod_side_constraints: Vec::new(),
         }
     }
 
     /// Translate a term into a `Polynomial`.
     ///
     /// Returns `None` for sub-expressions that cannot be expressed as a
-    /// polynomial (e.g. division, modulo, uninterpreted functions).
+    /// polynomial (e.g. a symbolic-divisor `div`/`mod`, an uninterpreted
+    /// function application).
     pub fn translate(&mut self, term_id: TermId) -> Option<Polynomial> {
         let manager = self.manager;
         translate_poly(manager, self, term_id)
+    }
+
+    /// Euclidean `div`/`mod` side constraints collected so far (see the
+    /// struct-level doc comment). The caller folds these into the atom set
+    /// once every assertion has been translated.
+    fn take_divmod_side_constraints(&mut self) -> Vec<PolyAtom> {
+        std::mem::take(&mut self.divmod_side_constraints)
+    }
+
+    /// Give `(div dividend divisor)` / `(mod dividend divisor)` a polynomial
+    /// meaning, when the node is `Int`-sorted and `divisor` resolves to a
+    /// nonzero integer constant.
+    ///
+    /// Returns the `(quotient_var, remainder_var)` pair. `None` means the
+    /// occurrence could not be given a polynomial meaning at all — the node
+    /// is not `Int`-sorted (SMT-LIB's `/` is exact rational division and
+    /// shares this same `TermKind::Div` node when the dividend is `Real`;
+    /// only the `Ints` theory's `div`/`mod` are Euclidean, and only when the
+    /// *node itself* is `Int`-sorted, mirroring the `is_int` guard
+    /// `oxiz-solver`'s ground-lemma encoder checks for the same reason), a
+    /// symbolic divisor (the defining identity would itself be nonlinear in
+    /// the divisor), a divisor of `0` (uninterpreted per SMT-LIB — this
+    /// translator has no polynomial form of the congruence-only fact the
+    /// ground-lemma encoder uses instead), or `i64::MIN` (no representable
+    /// `|n|`) — the caller (`Self::divmod_leaf`) propagates that `None` the
+    /// same way any other untranslatable sub-term does, so the containing
+    /// atom is dropped and extraction is marked incomplete rather than
+    /// asserting a partial or wrong identity.
+    fn ensure_divmod_witness(&mut self, dividend: TermId, divisor: TermId) -> Option<(u32, u32)> {
+        if let Some(&witnesses) = self.divmod_witnesses.get(&(dividend, divisor)) {
+            return Some(witnesses);
+        }
+
+        // The Euclidean identity only holds meaning for the `Ints` theory's
+        // `div`/`mod`; `TermKind::Div` also stands for exact rational `/`
+        // when the node is `Real`-sorted (both keywords build the same node
+        // — see `oxiz-core`'s parser). Substituting an integer quotient/
+        // remainder pair for real division would silently change the
+        // node's meaning (and, since `q`/`r` are `Integer`-typed, would
+        // wrongly force the dividend to an integer value) rather than
+        // merely fail to translate it, so this must be checked before
+        // anything else.
+        let dividend_is_int = self
+            .manager
+            .get(dividend)
+            .is_some_and(|t| t.sort == self.manager.sorts.int_sort);
+        if !dividend_is_int {
+            return None;
+        }
+
+        // Resolve and validate the divisor *before* emitting anything, so a
+        // symbolic or zero divisor never leaves a partial identity behind.
+        let n = resolve_int_divisor(divisor, self.manager)?;
+        if n == 0 {
+            return None;
+        }
+        let abs_n_minus_one = n.checked_abs().and_then(|a| a.checked_sub(1))?;
+
+        let dividend_poly = self.translate(dividend)?;
+
+        let q = self.nlsat.nlsat_mut().new_arith_var();
+        let r = self.nlsat.nlsat_mut().new_arith_var();
+        self.nlsat.set_var_type(q, VarType::Integer);
+        self.nlsat.set_var_type(r, VarType::Integer);
+        let q_poly = Polynomial::from_var(q);
+        let r_poly = Polynomial::from_var(r);
+        let n_poly = Polynomial::constant(BigRational::from_integer(BigInt::from(n)));
+
+        // m = n*q + r
+        let reconstructed = Polynomial::add(&Polynomial::mul(&n_poly, &q_poly), &r_poly);
+        self.divmod_side_constraints.push(PolyAtom {
+            poly: Polynomial::sub(&dividend_poly, &reconstructed),
+            kind: AtomKind::Eq,
+            positive: true,
+            synthetic: true,
+        });
+        // 0 <= r, phrased as NOT(r < 0)
+        self.divmod_side_constraints.push(PolyAtom {
+            poly: r_poly.clone(),
+            kind: AtomKind::Lt,
+            positive: false,
+            synthetic: true,
+        });
+        // r <= |n|-1, phrased as NOT(r - (|n|-1) > 0)
+        let upper = Polynomial::constant(BigRational::from_integer(BigInt::from(abs_n_minus_one)));
+        self.divmod_side_constraints.push(PolyAtom {
+            poly: Polynomial::sub(&r_poly, &upper),
+            kind: AtomKind::Gt,
+            positive: false,
+            synthetic: true,
+        });
+
+        self.divmod_witnesses.insert((dividend, divisor), (q, r));
+        Some((q, r))
     }
 
     fn get_or_create_var(&mut self, term_id: TermId) -> u32 {
@@ -118,6 +282,11 @@ impl PolyVarSource for TermPolyTranslator<'_> {
     fn var_for(&mut self, term_id: TermId) -> u32 {
         self.get_or_create_var(term_id)
     }
+
+    fn divmod_leaf(&mut self, lhs: TermId, rhs: TermId, is_div: bool) -> Option<Polynomial> {
+        let (q, r) = self.ensure_divmod_witness(lhs, rhs)?;
+        Some(Polynomial::from_var(if is_div { q } else { r }))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,10 +294,23 @@ impl PolyVarSource for TermPolyTranslator<'_> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The one thing the two translators do differently: mint (or look up) the
-/// polynomial variable index for a term.
+/// polynomial variable index for a term, and (only `TermPolyTranslator`)
+/// give a `div`/`mod` node a polynomial meaning.
 trait PolyVarSource {
     /// The polynomial variable index standing for `term_id`.
     fn var_for(&mut self, term_id: TermId) -> u32;
+
+    /// Give `(div lhs rhs)` (`is_div`) or `(mod lhs rhs)` a polynomial
+    /// meaning. The default `None` matches `RealPolyTranslator`
+    /// unconditionally (`QF_NRA` has no `Ints`-theory `div`/`mod` at all).
+    /// `TermPolyTranslator::divmod_leaf` additionally returns `None` at
+    /// runtime, per occurrence, for a `Real`-sorted `Div` node — see
+    /// [`TermPolyTranslator::ensure_divmod_witness`]'s doc comment for why
+    /// exact rational `/` (which shares this same `TermKind::Div` node with
+    /// `Ints`' Euclidean `div`) cannot be given this encoding.
+    fn divmod_leaf(&mut self, _lhs: TermId, _rhs: TermId, _is_div: bool) -> Option<Polynomial> {
+        None
+    }
 }
 
 /// How a node's polynomial is assembled from its operands'.
@@ -213,6 +395,15 @@ fn open_poly<S: PolyVarSource>(
         Const(Polynomial),
         Var,
         Op(PolyCombine, Vec<TermId>),
+        /// `(div lhs rhs)` (`is_div`) or `(mod lhs rhs)`: not an ordinary
+        /// polynomial operator, so it bypasses `PolyFrame`/`PolyCombine`
+        /// entirely and asks the source to supply a leaf directly (see
+        /// [`PolyVarSource::divmod_leaf`]).
+        DivMod {
+            lhs: TermId,
+            rhs: TermId,
+            is_div: bool,
+        },
     }
     let shape = {
         let term = manager.get(term_id)?;
@@ -233,6 +424,16 @@ fn open_poly<S: PolyVarSource>(
             TermKind::Mul(args) => {
                 Shape::Op(PolyCombine::Mul, args.iter().rev().copied().collect())
             }
+            TermKind::Div(lhs, rhs) => Shape::DivMod {
+                lhs: *lhs,
+                rhs: *rhs,
+                is_div: true,
+            },
+            TermKind::Mod(lhs, rhs) => Shape::DivMod {
+                lhs: *lhs,
+                rhs: *rhs,
+                is_div: false,
+            },
             _ => return None,
         }
     };
@@ -244,6 +445,7 @@ fn open_poly<S: PolyVarSource>(
             pending,
             done: Vec::new(),
         }),
+        Shape::DivMod { lhs, rhs, is_div } => PolyOpened::Leaf(src.divmod_leaf(lhs, rhs, is_div)?),
     })
 }
 
@@ -366,6 +568,62 @@ fn is_const_term(term_id: TermId, manager: &TermManager) -> bool {
         .unwrap_or(false)
 }
 
+/// Maximum nesting explored while folding a `div`/`mod` divisor expression
+/// down to a constant. A divisor is a tiny expression in practice; this only
+/// bounds an adversarially deep one.
+const MAX_DIVISOR_FOLD_DEPTH: u32 = 32;
+
+/// The `i64` value of `term` if it is a *constant* integer expression, or
+/// `None` if it is not constant, does not fit `i64`, or overflows while
+/// folding.
+///
+/// Folds exactly the shapes `oxiz-solver`'s `arith_axioms::int_constant`
+/// does (`IntConst`, `Neg`, `Sub`, `Add`, `Mul`, all `i64`-checked) so this
+/// translator's notion of "the divisor is the constant `n`" can never
+/// disagree with the ground-lemma encoder's for the same term: a divisor
+/// either resolves to the identical value on both paths or is left symbolic
+/// on both. `oxiz-theories` sits below `oxiz-solver` in the dependency
+/// graph, so the two copies cannot share code; this one is instead pinned by
+/// matching tests on both paths (the folded-divisor case in
+/// `oxiz-theories/tests/pr27_nia_divmod.rs` and the equivalent one in
+/// `oxiz-solver/tests/pr27_divmod_semantics.rs`) that each exercise the
+/// identical `(- (* 2 3) 1)`-style expression -- the fold shapes, depth cap
+/// (`MAX_DIVISOR_FOLD_DEPTH`), and `i64`-checked arithmetic are deliberately
+/// kept identical between the two copies by inspection, not by a proof.
+fn resolve_int_divisor(term: TermId, manager: &TermManager) -> Option<i64> {
+    resolve_int_divisor_at(term, manager, 0)
+}
+
+fn resolve_int_divisor_at(term: TermId, manager: &TermManager, depth: u32) -> Option<i64> {
+    if depth >= MAX_DIVISOR_FOLD_DEPTH {
+        return None;
+    }
+    match &manager.get(term)?.kind {
+        TermKind::IntConst(n) => n.to_i64(),
+        TermKind::Neg(a) => resolve_int_divisor_at(*a, manager, depth + 1)?.checked_neg(),
+        TermKind::Sub(a, b) => {
+            let lhs = resolve_int_divisor_at(*a, manager, depth + 1)?;
+            let rhs = resolve_int_divisor_at(*b, manager, depth + 1)?;
+            lhs.checked_sub(rhs)
+        }
+        TermKind::Add(args) => {
+            let mut sum: i64 = 0;
+            for &a in args {
+                sum = sum.checked_add(resolve_int_divisor_at(a, manager, depth + 1)?)?;
+            }
+            Some(sum)
+        }
+        TermKind::Mul(args) => {
+            let mut product: i64 = 1;
+            for &a in args {
+                product = product.checked_mul(resolve_int_divisor_at(a, manager, depth + 1)?)?;
+            }
+            Some(product)
+        }
+        _ => None,
+    }
+}
+
 /// Whether the term mentions an operator the polynomial translation cannot
 /// express. Same shape (and same reasons for being iterative + memoised) as
 /// [`term_is_nonlinear`]: `bool` return, `check_sat` path, input-controlled
@@ -381,7 +639,24 @@ fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
             continue;
         };
         match &term.kind {
-            TermKind::Div(_, _) | TermKind::Mod(_, _) => return true,
+            // An `Int`-sorted node with a resolvable nonzero constant
+            // divisor is handled by `TermPolyTranslator::
+            // ensure_divmod_witness`'s Euclidean encoding below — not
+            // "unsupported" any more, though a symbolic or zero divisor
+            // still is, and so is a `Real`-sorted `Div` node (exact rational
+            // `/` shares this same `TermKind` but has no Euclidean meaning;
+            // see `ensure_divmod_witness`'s doc comment). Either way, when
+            // it *is* handled, both operands are still walked so a
+            // *genuinely* unsupported sub-term (nested inside the dividend,
+            // say) is still found.
+            TermKind::Div(lhs, rhs) | TermKind::Mod(lhs, rhs) => {
+                let is_int_node = term.sort == manager.sorts.int_sort;
+                if !is_int_node || resolve_int_divisor(*rhs, manager).is_none_or(|n| n == 0) {
+                    return true;
+                }
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
             TermKind::Apply { .. }
             | TermKind::Forall { .. }
             | TermKind::Exists { .. }
@@ -427,6 +702,25 @@ struct PolyAtom {
     kind: AtomKind,
     /// `true` → atom appears positively; `false` → negated literal.
     positive: bool,
+    /// `true` for a side-constraint manufactured by this module itself (the
+    /// Euclidean `div`/`mod` witness identities — see
+    /// [`TermPolyTranslator::ensure_divmod_witness`]), as opposed to an atom
+    /// translated from the input problem. See its use in
+    /// [`dispatch_nia_constraints`]'s `unsat_is_trustworthy` computation for
+    /// why the distinction matters.
+    synthetic: bool,
+}
+
+impl PolyAtom {
+    /// An atom translated directly from an input assertion.
+    fn from_problem(poly: Polynomial, kind: AtomKind, positive: bool) -> Self {
+        Self {
+            poly,
+            kind,
+            positive,
+            synthetic: false,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -466,11 +760,11 @@ fn extract_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&lp, &rp),
-                        kind: AtomKind::Eq,
-                        positive: true,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&lp, &rp),
+                        AtomKind::Eq,
+                        true,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -480,11 +774,11 @@ fn extract_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&rp, &lp),
-                        kind: AtomKind::Gt,
-                        positive: true,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&rp, &lp),
+                        AtomKind::Gt,
+                        true,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -494,11 +788,11 @@ fn extract_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&rp, &lp),
-                        kind: AtomKind::Lt,
-                        positive: false,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&rp, &lp),
+                        AtomKind::Lt,
+                        false,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -508,11 +802,11 @@ fn extract_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&lp, &rp),
-                        kind: AtomKind::Gt,
-                        positive: true,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&lp, &rp),
+                        AtomKind::Gt,
+                        true,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -522,11 +816,11 @@ fn extract_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&lp, &rp),
-                        kind: AtomKind::Lt,
-                        positive: false,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&lp, &rp),
+                        AtomKind::Lt,
+                        false,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -547,12 +841,21 @@ fn extract_poly_atoms(
 // NIA dispatch: public entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Dispatch nonlinear integer arithmetic assertions to the `NiaSolver`.
+/// Decide nonlinear integer arithmetic assertions.
 ///
 /// Returns:
 /// - `Some(NlDispatchResult::Unsat)` if the system is provably UNSAT,
-/// - `Some(NlDispatchResult::Sat)` if NiaSolver finds an integer model,
-/// - `None` if translation yields no atoms or the solver returns Unknown.
+/// - `Some(NlDispatchResult::Sat(_))` with a witness if a model was found,
+/// - `None` when neither could be established (the caller answers `unknown`).
+///
+/// This is the cell-decomposition core, and it is the only nonlinear
+/// procedure in this crate that can prove *unsatisfiability* — so a caller
+/// composing it with the search-based procedures (`nl_repair_search`,
+/// `nl_ground_reduce`, which answer `Sat` or nothing) must run this one first
+/// and treat its verdict as final. `oxiz-solver`'s `check_nlsat` is that
+/// caller; keeping the composition there rather than here is what lets the
+/// searches be budget-gated by solver configuration without this function's
+/// contract depending on it.
 ///
 /// Both linear and nonlinear assertions are passed so the solver has full context.
 pub fn dispatch_nia_constraints(
@@ -586,13 +889,33 @@ pub fn dispatch_nia_constraints(
             &mut incomplete,
         );
     }
+    // Fold in the Euclidean `div`/`mod` witness identities accumulated while
+    // translating the assertions above (see `TermPolyTranslator`'s
+    // struct-level doc comment). These are theorems of the theory — for any
+    // dividend and nonzero constant divisor an integer quotient/remainder
+    // pair satisfying the identity always exists — so asserting them changes
+    // nothing about whether the *problem* atoms are satisfiable; they exist
+    // only to give the `div`/`mod` leaves translated above a meaning CAD can
+    // reason about.
+    poly_atoms.extend(translator.take_divmod_side_constraints());
 
     if poly_atoms.is_empty() {
         return None;
     }
 
-    let unsat_is_trustworthy =
-        !has_unsupported_ops && poly_atoms.iter().all(|atom| atom.poly.is_univariate());
+    // An atom counts toward the univariate requirement below unless it is
+    // one of the synthetic witness identities just folded in: those are
+    // always safe to trust regardless of how many variables they mention,
+    // because they assert nothing beyond "some q, r exist with this
+    // relationship to variables already present elsewhere" — they cannot by
+    // themselves be the reason a genuinely satisfiable problem is declared
+    // `Unsat`. A non-synthetic (i.e. translated straight from the input)
+    // atom mentioning more than one variable still has to clear the
+    // univariate bar, unchanged from before.
+    let unsat_is_trustworthy = !has_unsupported_ops
+        && poly_atoms
+            .iter()
+            .all(|atom| atom.synthetic || atom.poly.is_univariate());
     // A `Sat` verdict is only sound when the solver saw the *entire* assertion
     // set as a conjunction of translatable atoms. If any top-level term was
     // dropped (a disjunction, an untranslatable operand, …) the solver worked
@@ -613,10 +936,94 @@ pub fn dispatch_nia_constraints(
     }
 
     match translator.nlsat.solve() {
-        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::Sat),
+        SolverResult::Sat if sat_is_trustworthy => {
+            // Belt-and-suspenders: re-check the returned model against every
+            // atom this dispatch itself asserted (problem atoms and
+            // synthetic `div`/`mod` witnesses alike) before trusting `Sat`.
+            // `sat_is_trustworthy` already established that `poly_atoms` is
+            // the *entire* problem, so a model that satisfies all of them is
+            // known-good independent of trusting the CAD search that found
+            // it — cheap (linear in the atom count) and catches any future
+            // soundness gap in the underlying solver before it reaches the
+            // caller as a wrong answer, not just the specific one this
+            // change fixed.
+            if model_satisfies_atoms(&translator, &poly_atoms) {
+                Some(NlDispatchResult::sat(witness_from_translator(&translator)))
+            } else {
+                None
+            }
+        }
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
         SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,
     }
+}
+
+/// Recover a term-level witness from the integer solver's own model.
+///
+/// The translator holds the only map from problem terms to the polynomial
+/// variable indices the solver reasons about, so this is where a solver-side
+/// assignment becomes something a caller can print or check. Variables the
+/// model left unassigned are simply absent — a partial witness, which the
+/// caller must verify before publishing (see [`NlDispatchResult`]).
+fn witness_from_translator(translator: &TermPolyTranslator<'_>) -> Interpretation {
+    let mut interp = Interpretation::empty();
+    let Some(model) = translator.nlsat.nlsat().get_model() else {
+        return interp;
+    };
+    for (&term, &poly_var) in translator.var_cache() {
+        if let Some(value) = model.arith_value(poly_var) {
+            interp.pin_num(term, value.clone());
+        }
+    }
+    interp
+}
+
+/// The real-arithmetic analogue of [`witness_from_translator`].
+fn witness_from_real_translator(translator: &RealPolyTranslator<'_>) -> Interpretation {
+    let mut interp = Interpretation::empty();
+    let Some(model) = translator.nlsat.get_model() else {
+        return interp;
+    };
+    for (&term, &poly_var) in &translator.var_cache {
+        if let Some(value) = model.arith_value(poly_var) {
+            interp.pin_num(term, value.clone());
+        }
+    }
+    interp
+}
+
+/// Re-evaluate every atom `dispatch_nia_constraints` asserted against the
+/// solver's own returned model. `false` on a missing model, a variable the
+/// model left unassigned, or an atom the model does not actually satisfy —
+/// any of which means the `Sat` this model came with must not be trusted.
+fn model_satisfies_atoms(translator: &TermPolyTranslator<'_>, poly_atoms: &[PolyAtom]) -> bool {
+    let Some(model) = translator.nlsat.nlsat().get_model() else {
+        return false;
+    };
+    let assignment: FxHashMap<u32, BigRational> = model
+        .arith_values
+        .iter()
+        .map(|(&v, r)| (v, r.clone()))
+        .collect();
+    for atom in poly_atoms {
+        let Some(value) = atom.poly.try_eval(&assignment) else {
+            return false;
+        };
+        let sign_holds = match atom.kind {
+            AtomKind::Eq => value.is_zero(),
+            AtomKind::Lt => value < BigRational::zero(),
+            AtomKind::Gt => value > BigRational::zero(),
+            // `extract_poly_atoms`/`extract_real_poly_atoms` and the
+            // Euclidean encoding above only ever build `Eq`/`Lt`/`Gt` atoms;
+            // any other kind reaching here is unexpected, so refuse to trust
+            // it rather than guessing at its semantics.
+            _ => return false,
+        };
+        if sign_holds != atom.positive {
+            return false;
+        }
+    }
+    true
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -684,11 +1091,11 @@ fn extract_real_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&lp, &rp),
-                        kind: AtomKind::Eq,
-                        positive: true,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&lp, &rp),
+                        AtomKind::Eq,
+                        true,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -697,11 +1104,11 @@ fn extract_real_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&rp, &lp),
-                        kind: AtomKind::Gt,
-                        positive: true,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&rp, &lp),
+                        AtomKind::Gt,
+                        true,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -710,11 +1117,11 @@ fn extract_real_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&rp, &lp),
-                        kind: AtomKind::Lt,
-                        positive: false,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&rp, &lp),
+                        AtomKind::Lt,
+                        false,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -723,11 +1130,11 @@ fn extract_real_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&lp, &rp),
-                        kind: AtomKind::Gt,
-                        positive: true,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&lp, &rp),
+                        AtomKind::Gt,
+                        true,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -736,11 +1143,11 @@ fn extract_real_poly_atoms(
                 if let (Some(lp), Some(rp)) =
                     (translator.translate(*lhs), translator.translate(*rhs))
                 {
-                    out.push(PolyAtom {
-                        poly: Polynomial::sub(&lp, &rp),
-                        kind: AtomKind::Lt,
-                        positive: false,
-                    });
+                    out.push(PolyAtom::from_problem(
+                        Polynomial::sub(&lp, &rp),
+                        AtomKind::Lt,
+                        false,
+                    ));
                 } else {
                     *incomplete = true;
                 }
@@ -794,7 +1201,9 @@ pub fn dispatch_nra_constraints(
     }
 
     match translator.nlsat.solve() {
-        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::Sat),
+        SolverResult::Sat if sat_is_trustworthy => Some(NlDispatchResult::sat(
+            witness_from_real_translator(&translator),
+        )),
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
         SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,
     }
@@ -1182,7 +1591,7 @@ mod tests {
         let result = dispatch_nia_constraints(&[eq], &manager, true);
         // SAT or Unknown (unknown means solver fell through)
         assert!(
-            matches!(result, Some(NlDispatchResult::Sat) | None),
+            matches!(result, Some(NlDispatchResult::Sat(_)) | None),
             "x*x=4 should be SAT or unknown, got {:?}",
             result
         );

@@ -554,6 +554,164 @@ impl ArithSolver {
         terms
     }
 
+    /// Every term this solver has interned as a shared (arithmetic-interface)
+    /// variable, in intern order.
+    ///
+    /// This is the arithmetic half of Nelson-Oppen theory combination's
+    /// "shared terms" set -- the candidate pool a combining layer probes for
+    /// entailed (dis)equalities with another theory.
+    #[must_use]
+    pub fn interface_terms(&self) -> &[TermId] {
+        &self.var_to_term
+    }
+
+    /// Probe whether `coef_a * var_a + coef_b * var_b < 0` is infeasible
+    /// under the live (already-asserted) bounds, on a scratch push/pop scope
+    /// so the tableau's real incremental state is untouched either way.
+    ///
+    /// `marker_term` seeds a throwaway reason id for the probe's own scratch
+    /// assertion; that id is excluded from the returned certificate since the
+    /// probe itself justifies nothing -- only the *live* constraints it
+    /// conflicts with do. Returns the (marker-excluded) Farkas reason ids on
+    /// infeasibility (`coef_a*var_a + coef_b*var_b < 0` is refuted, i.e. `>=
+    /// 0` is entailed), `None` when the probe is satisfiable.
+    fn probe_strict_lt_infeasible(
+        &mut self,
+        marker_term: TermId,
+        var_a: VarId,
+        coef_a: Rational64,
+        var_b: VarId,
+        coef_b: Rational64,
+    ) -> Option<Vec<u32>> {
+        self.simplex.push();
+        let marker = self.add_reason(marker_term);
+        let mut expr = LinExpr::new();
+        expr.add_term(var_a, coef_a);
+        expr.add_term(var_b, coef_b);
+        self.simplex.add_strict_lt(expr, marker);
+        let outcome = self.simplex.check();
+        self.simplex.pop();
+        match outcome {
+            Ok(()) => None,
+            Err(ids) => Some(ids.into_iter().filter(|&rid| rid != marker).collect()),
+        }
+    }
+
+    /// Resolve a set of Farkas reason ids (as returned by a scratch probe)
+    /// back into the `TermId`s they name, and release the scratch reason
+    /// slots the probe allocated above `base`.
+    ///
+    /// An empty result after resolution means the entailment holds at
+    /// decision level 0 -- forced by no live literal at all -- in which case
+    /// the full (over-approximate) unsat core is substituted so a conflict
+    /// that cites this entailment is still explainable.
+    fn resolve_and_release_reasons(&mut self, ids: Vec<u32>, base: usize) -> Vec<TermId> {
+        let mut terms: Vec<TermId> = ids
+            .into_iter()
+            .filter_map(|rid| self.reasons.get(rid as usize).copied())
+            .collect();
+        self.reasons.truncate(base);
+        self.reason_counter = base as u32;
+        terms.sort_unstable();
+        terms.dedup();
+        if terms.is_empty() {
+            terms = self.full_unsat_core();
+        }
+        terms
+    }
+
+    /// Soundly determine whether arithmetic **entails** `x = y` under the
+    /// live assertions, and if so return the reason terms whose conjunction
+    /// forces it.
+    ///
+    /// This is the arithmetic-to-EUF half of Nelson-Oppen combination: EUF's
+    /// congruence closure can only fire on an equality it has actually been
+    /// told about, but two shared terms can be forced equal by *arithmetic*
+    /// alone (e.g. `y = x + 1` together with `x = 2`) without any direct
+    /// equality atom ever being asserted between them. Left unpropagated,
+    /// the congruence that entailment should trigger (`f(y) = f(3)`) is
+    /// silently missed -- the classic non-convex-combination false-`sat`.
+    ///
+    /// Implemented as two independent infeasibility probes, each on its own
+    /// scratch scope: `x = y` is entailed iff both `x < y` and `x > y` are
+    /// infeasible. The returned reason is the union of the two Farkas
+    /// certificates, so a conflict that rests on the equality this induces in
+    /// EUF can be expanded back to the literals that actually forced it.
+    pub fn entailed_equal_reason(&mut self, x: TermId, y: TermId) -> Option<Vec<TermId>> {
+        let (Some(var_x), Some(var_y)) = (
+            self.term_to_var.get(&x).copied(),
+            self.term_to_var.get(&y).copied(),
+        ) else {
+            return None;
+        };
+        let base = self.reasons.len();
+
+        // First half: if no live assignment can make x strictly below y,
+        // then y is never above x, i.e. x >= y holds everywhere.
+        let Some(ge_ids) =
+            self.probe_strict_lt_infeasible(x, var_x, Rational64::one(), var_y, -Rational64::one())
+        else {
+            self.reasons.truncate(base);
+            self.reason_counter = base as u32;
+            return None;
+        };
+        // Second half, the symmetric probe: nothing can push x strictly
+        // above y either, so x <= y holds everywhere. Both halves together
+        // leave x = y as the only possibility.
+        let Some(le_ids) =
+            self.probe_strict_lt_infeasible(y, var_y, Rational64::one(), var_x, -Rational64::one())
+        else {
+            self.reasons.truncate(base);
+            self.reason_counter = base as u32;
+            return None;
+        };
+
+        let mut ids = ge_ids;
+        ids.extend(le_ids);
+        Some(self.resolve_and_release_reasons(ids, base))
+    }
+
+    /// Soundly determine whether arithmetic **entails** `x != y` under the
+    /// live assertions (the mirror of [`Self::entailed_equal_reason`]),
+    /// returning the reason terms that force it.
+    ///
+    /// Mirrors cvc5's `watchedVariableCannotBeZero` technique: when EUF has
+    /// (or is about to have) `x` and `y` in the same class, but arithmetic's
+    /// bounds alone already rule out `x = y`, that is an immediate
+    /// cross-theory conflict that must be raised rather than left for the
+    /// tableau to rediscover on its own once the equality is asserted into
+    /// it. `x = y` is checked jointly (`x <= y` and `y <= x` together, on one
+    /// scratch scope) rather than as two independent probes, since it is a
+    /// single proposition here, not two.
+    pub fn entailed_disequal_reason(&mut self, x: TermId, y: TermId) -> Option<Vec<TermId>> {
+        let (Some(var_x), Some(var_y)) = (
+            self.term_to_var.get(&x).copied(),
+            self.term_to_var.get(&y).copied(),
+        ) else {
+            return None;
+        };
+        let base = self.reasons.len();
+        self.simplex.push();
+        let marker = self.add_reason(x);
+        let mut le = LinExpr::new();
+        le.add_term(var_x, Rational64::one());
+        le.add_term(var_y, -Rational64::one());
+        self.simplex.add_le(le, marker);
+        let mut ge = LinExpr::new();
+        ge.add_term(var_y, Rational64::one());
+        ge.add_term(var_x, -Rational64::one());
+        self.simplex.add_le(ge, marker);
+        let outcome = self.simplex.check();
+        self.simplex.pop();
+        let Err(ids) = outcome else {
+            self.reasons.truncate(base);
+            self.reason_counter = base as u32;
+            return None;
+        };
+        let ids: Vec<u32> = ids.into_iter().filter(|&rid| rid != marker).collect();
+        Some(self.resolve_and_release_reasons(ids, base))
+    }
+
     /// Snapshot the current (integral) LP assignment of every interned Int
     /// variable into `lia_model`.  Called at an integer-feasible leaf so that
     /// `value()` reports the integral model after branch-and-bound unwinds.
@@ -1138,594 +1296,4 @@ impl ArithSolver {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use num_traits::{One, Zero};
-
-    #[test]
-    fn test_arith_basic() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let y = TermId::new(2);
-        let reason = TermId::new(100);
-
-        // x >= 0
-        solver.assert_ge(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-
-        // y >= 0
-        solver.assert_ge(
-            &[(y, Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-
-        // x + y <= 10
-        solver.assert_le(
-            &[(x, Rational64::one()), (y, Rational64::one())],
-            Rational64::from_integer(10),
-            reason,
-        );
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Sat));
-    }
-
-    #[test]
-    fn test_arith_unsat() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x >= 10
-        solver.assert_ge(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(10),
-            reason,
-        );
-
-        // x <= 5
-        solver.assert_le(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(5),
-            reason,
-        );
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Unsat(_)));
-    }
-
-    #[test]
-    fn test_arith_strict_inequality() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x > 0 (strict)
-        solver.assert_gt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-
-        // x < 10 (strict)
-        solver.assert_lt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(10),
-            reason,
-        );
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Sat));
-    }
-
-    #[test]
-    fn test_arith_strict_unsat() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x >= 5
-        solver.assert_ge(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(5),
-            reason,
-        );
-
-        // x < 5 (strict) - should be unsatisfiable with x >= 5
-        solver.assert_lt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(5),
-            reason,
-        );
-
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Unsat(_)));
-    }
-
-    #[test]
-    fn test_coefficient_normalization_lia() {
-        let mut solver = ArithSolver::lia();
-
-        let x = TermId::new(1);
-        let y = TermId::new(2);
-        let reason = TermId::new(100);
-
-        // 2x + 4y <= 10 should be normalized to x + 2y <= 5 (GCD = 2)
-        solver.assert_le(
-            &[
-                (x, Rational64::from_integer(2)),
-                (y, Rational64::from_integer(4)),
-            ],
-            Rational64::from_integer(10),
-            reason,
-        );
-
-        // The solver should handle this correctly
-        let result = solver.check().expect("test operation should succeed");
-        assert!(matches!(result, TheoryResult::Sat));
-    }
-
-    #[test]
-    fn test_coefficient_normalization_sign() {
-        let solver = ArithSolver::lra();
-
-        let _x = TermId::new(1);
-        let _y = TermId::new(2);
-
-        // Test normalization ensures first coefficient is positive
-        let mut expr = LinExpr::new();
-        expr.add_term(0, Rational64::from_integer(-3));
-        expr.add_term(1, Rational64::from_integer(2));
-
-        solver.normalize_expr(&mut expr);
-
-        // After normalization, first coefficient should be positive
-        if let Some((_, c)) = expr.terms.first() {
-            assert!(c > &Rational64::zero());
-        }
-    }
-
-    #[test]
-    fn test_gcd_computation() {
-        assert_eq!(gcd_i64(12, 8), 4);
-        assert_eq!(gcd_i64(15, 25), 5);
-        assert_eq!(gcd_i64(7, 13), 1);
-        assert_eq!(gcd_i64(0, 5), 5);
-        assert_eq!(gcd_i64(5, 0), 5);
-        assert_eq!(gcd_i64(-12, 8), 4);
-        assert_eq!(gcd_i64(12, -8), 4);
-    }
-
-    // Audit regression (theories-arith): the GCD-infeasibility path in
-    // `assert_eq` used to fabricate its contradictory bounds with a
-    // hardcoded `reason` id of `0`, so the resulting UNSAT conflict always
-    // cited whatever the FIRST reason ever added happened to be, instead of
-    // the actual assertion that caused the contradiction. Assert an
-    // unrelated, satisfiable constraint first (populating reason id `0`
-    // with an unrelated term), then a GCD-infeasible equality with a
-    // DIFFERENT reason term, and confirm the conflict cites the real
-    // culprit.
-    #[test]
-    fn audit_gcd_infeasibility_conflict_cites_real_reason() {
-        let mut solver = ArithSolver::lia();
-
-        let x = TermId::new(10);
-        let y = TermId::new(20);
-        let unrelated_reason = TermId::new(1);
-        let real_reason = TermId::new(2);
-
-        // x >= 0: satisfiable, unrelated to the GCD conflict. If the old
-        // hardcoded-reason-0 bug were still present, this becomes
-        // `self.reasons[0]`, and the GCD conflict below would wrongly cite
-        // it instead of `real_reason`.
-        solver.assert_ge(
-            &[(x, Rational64::one())],
-            Rational64::zero(),
-            unrelated_reason,
-        );
-
-        // 2y = 7 has no integer solution: gcd(2) = 2 does not divide 7.
-        solver.assert_eq(
-            &[(y, Rational64::from_integer(2))],
-            Rational64::from_integer(7),
-            real_reason,
-        );
-
-        let result = solver.check().expect("check should succeed");
-        match result {
-            TheoryResult::Unsat(conflict) => {
-                assert!(
-                    conflict.contains(&real_reason),
-                    "GCD-infeasibility conflict must cite the actual violating \
-                     assertion {real_reason:?}, got {conflict:?}"
-                );
-            }
-            other => panic!("expected Unsat (2y=7 is GCD-infeasible over integers), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_bound_tightening_lia() {
-        let solver = ArithSolver::lia();
-
-        // Upper bound tightening: x <= 5.7 -> x <= 5
-        let tightened = solver.tighten_bound(Rational64::new(57, 10), true);
-        assert_eq!(tightened, Rational64::from_integer(5));
-
-        // Lower bound tightening: x >= 2.3 -> x >= 3
-        let tightened = solver.tighten_bound(Rational64::new(23, 10), false);
-        assert_eq!(tightened, Rational64::from_integer(3));
-
-        // Integer bounds don't change
-        let tightened = solver.tighten_bound(Rational64::from_integer(5), true);
-        assert_eq!(tightened, Rational64::from_integer(5));
-    }
-
-    #[test]
-    fn test_bound_tightening_lra() {
-        let solver = ArithSolver::lra();
-
-        // No tightening for real arithmetic
-        let bound = Rational64::new(57, 10);
-        let tightened = solver.tighten_bound(bound, true);
-        assert_eq!(tightened, bound);
-    }
-
-    #[test]
-    fn test_tighten_constraints() {
-        let mut solver_lia = ArithSolver::lia();
-        let mut solver_lra = ArithSolver::lra();
-
-        // For now, this always returns false (tightening happens during assertion)
-        assert!(!solver_lia.tighten_constraints());
-        assert!(!solver_lra.tighten_constraints());
-    }
-
-    /// Test that x > 5 AND x < 6 is UNSAT for integers (no integer in open interval (5,6))
-    /// This is the bug report test case: strict inequalities must be transformed for LIA
-    #[test]
-    fn test_lia_strict_inequality_empty_interval() {
-        let mut solver = ArithSolver::lia();
-
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x > 5 (for integers, this becomes x >= 6)
-        solver.assert_gt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(5),
-            reason,
-        );
-
-        // x < 6 (for integers, this becomes x <= 5)
-        solver.assert_lt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(6),
-            reason,
-        );
-
-        // Should be UNSAT: x >= 6 AND x <= 5 is impossible
-        let result = solver.check().expect("test operation should succeed");
-        assert!(
-            matches!(result, TheoryResult::Unsat(_)),
-            "Expected UNSAT for x > 5 AND x < 6 in LIA, got {:?}",
-            result
-        );
-    }
-
-    /// Test that x > 5 AND x < 6 is SAT for reals (5.5 is a valid solution)
-    #[test]
-    fn test_lra_strict_inequality_has_solution() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x > 5
-        solver.assert_gt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(5),
-            reason,
-        );
-
-        // x < 6
-        solver.assert_lt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(6),
-            reason,
-        );
-
-        // Should be SAT for reals: x = 5.5 is a valid solution
-        let result = solver.check().expect("test operation should succeed");
-        assert!(
-            matches!(result, TheoryResult::Sat),
-            "Expected SAT for x > 5 AND x < 6 in LRA, got {:?}",
-            result
-        );
-    }
-
-    /// Test x >= 5 AND x <= 5 with strict bounds in LIA
-    #[test]
-    fn test_lia_strict_at_boundary() {
-        let mut solver = ArithSolver::lia();
-
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x >= 5
-        solver.assert_ge(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(5),
-            reason,
-        );
-
-        // x < 6 (becomes x <= 5)
-        solver.assert_lt(
-            &[(x, Rational64::one())],
-            Rational64::from_integer(6),
-            reason,
-        );
-
-        // Should be SAT: x = 5 is the only solution
-        let result = solver.check().expect("test operation should succeed");
-        assert!(
-            matches!(result, TheoryResult::Sat),
-            "Expected SAT for x >= 5 AND x < 6 in LIA, got {:?}",
-            result
-        );
-    }
-
-    // ---- Nelson-Oppen tests ----
-
-    /// x <= y AND y <= x should yield an entailed equality.
-    #[test]
-    fn test_no_entailed_equality_bidirectional() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let y = TermId::new(2);
-        let reason = TermId::new(100);
-
-        // Intern both so they appear in var_to_term.
-        solver.intern(x);
-        solver.intern(y);
-
-        // x <= y
-        solver.assert_le(
-            &[(x, Rational64::one()), (y, -Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-        // y <= x
-        solver.assert_le(
-            &[(y, Rational64::one()), (x, -Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-
-        let sat = solver.check().expect("check should succeed");
-        assert!(matches!(sat, TheoryResult::Sat), "Expected SAT");
-
-        // Both x < y and x > y should be infeasible — equality is entailed.
-        let eqs = solver.derive_shared_equalities();
-        let has_xy = eqs
-            .iter()
-            .any(|e| (e.lhs == x && e.rhs == y) || (e.lhs == y && e.rhs == x));
-        assert!(
-            has_xy,
-            "Expected entailed equality between x and y, got: {:?}",
-            eqs
-        );
-    }
-
-    /// x <= y alone should NOT yield an entailed equality (y could be > x).
-    #[test]
-    fn test_no_entailed_equality_one_direction_only() {
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let y = TermId::new(2);
-        let reason = TermId::new(100);
-
-        solver.intern(x);
-        solver.intern(y);
-
-        // x <= y only (one direction)
-        solver.assert_le(
-            &[(x, Rational64::one()), (y, -Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-
-        solver.check().expect("check should succeed");
-
-        let eqs = solver.derive_shared_equalities();
-        let has_xy = eqs
-            .iter()
-            .any(|e| (e.lhs == x && e.rhs == y) || (e.lhs == y && e.rhs == x));
-        assert!(
-            !has_xy,
-            "Should NOT derive x=y from x<=y alone; got: {:?}",
-            eqs
-        );
-    }
-
-    /// notify_equality(x, y) followed by check should enforce x = y:
-    /// asserting x < y should then be UNSAT.
-    #[test]
-    fn test_notify_equality_enforces_equality() {
-        use crate::theory::{EqualityNotification, TheoryCombination};
-
-        let mut solver = ArithSolver::lra();
-
-        let x = TermId::new(1);
-        let y = TermId::new(2);
-        let reason = TermId::new(100);
-
-        solver.intern(x);
-        solver.intern(y);
-
-        // Notify x = y
-        let eq = EqualityNotification {
-            lhs: x,
-            rhs: y,
-            reason: Some(reason),
-        };
-        let accepted = solver.notify_equality(eq);
-        assert!(accepted, "notify_equality should accept x=y");
-
-        // After asserting x=y, adding x < y should yield UNSAT.
-        solver.push();
-        solver.assert_lt(
-            &[(x, Rational64::one()), (y, -Rational64::one())],
-            Rational64::from_integer(0),
-            reason,
-        );
-        let result = solver.check().expect("check should not error");
-        assert!(
-            matches!(result, TheoryResult::Unsat(_)),
-            "Expected UNSAT when x=y is enforced and x<y is added; got {:?}",
-            result
-        );
-        solver.pop();
-    }
-
-    // ---- push/pop state-rollback regression (term_to_var / var_to_term) ----
-
-    /// `pop()` must roll back `term_to_var` in lockstep with `var_to_term`.
-    ///
-    /// Before the fix, `pop()` truncated `var_to_term` but left stale
-    /// `term_to_var` entries behind. Because the simplex recycles VarIds across
-    /// a pop, those stale entries made `intern()` replay indices that now belong
-    /// to a different (or not-yet-created) variable. This test inspects the
-    /// internal maps directly to prove the two stay consistent.
-    #[test]
-    fn regression_pop_rolls_back_term_to_var() {
-        let mut solver = ArithSolver::lra();
-        let a = TermId::new(1);
-        let b = TermId::new(2);
-        let c = TermId::new(3);
-
-        // Intern `a` at the base level.
-        let va = solver.intern(a);
-        assert_eq!(va, 0);
-
-        solver.push();
-        // Intern two more terms inside the scope.
-        let vb = solver.intern(b);
-        let vc = solver.intern(c);
-        assert_eq!(vb, 1);
-        assert_eq!(vc, 2);
-        assert_eq!(solver.var_to_term.len(), 3);
-        assert_eq!(solver.term_to_var.len(), 3);
-
-        solver.pop();
-
-        // `var_to_term` is truncated back to just `[a]`.
-        assert_eq!(solver.var_to_term.len(), 1);
-        // `term_to_var` must be rolled back in lockstep: the scope-local terms
-        // `b` and `c` are gone, only `a` remains.
-        assert_eq!(solver.term_to_var.len(), 1);
-        assert!(solver.term_to_var.contains_key(&a));
-        assert!(!solver.term_to_var.contains_key(&b));
-        assert!(!solver.term_to_var.contains_key(&c));
-
-        // The core invariant: NO surviving mapping points at a truncated
-        // (out-of-range) variable index.
-        let live = solver.var_to_term.len() as VarId;
-        for (&term, &var) in &solver.term_to_var {
-            assert!(
-                var < live,
-                "term {term:?} maps to stale var {var} >= live var count {live}"
-            );
-        }
-
-        // Re-interning the truncated terms yields FRESH valid indices.
-        let vb2 = solver.intern(b);
-        assert_eq!(vb2, 1, "re-interned `b` should take the next fresh index");
-        assert!((vb2 as usize) < solver.var_to_term.len());
-        let vc2 = solver.intern(c);
-        assert_eq!(vc2, 2, "re-interned `c` should take the next fresh index");
-        assert_ne!(vb2, vc2);
-    }
-
-    /// A fresh term interned after a pop must NOT collide with a stale-but-since-
-    /// re-interned term that used to hold the recycled index.
-    ///
-    /// This is the recycled-index hazard the fix removes, observable purely
-    /// through the public `intern()` API: intern `a`, push, intern `b`, pop —
-    /// then intern a brand-new `c` (which the simplex hands the index `b` used
-    /// to occupy) and finally re-intern `b`. With the stale mapping still
-    /// present, `intern(b)` would return the same index as `c`.
-    #[test]
-    fn regression_pop_no_recycled_index_collision() {
-        let mut solver = ArithSolver::lra();
-        let a = TermId::new(11);
-        let b = TermId::new(22);
-        let c = TermId::new(33);
-
-        let _va = solver.intern(a);
-        solver.push();
-        let _vb = solver.intern(b);
-        solver.pop();
-
-        // `c` is new: the simplex hands it the index `b` used to occupy.
-        let vc = solver.intern(c);
-        // `b` was truncated: re-interning must allocate a *different* fresh index.
-        let vb2 = solver.intern(b);
-        assert_ne!(
-            vc, vb2,
-            "recycled var index {vc} collided with re-interned truncated term"
-        );
-    }
-
-    /// Regression (GitHub issue #12): in LRA the assignment for a variable
-    /// pinned at a *strict* bound is a delta-rational `r ± δ`.  `value()` must
-    /// instantiate `δ` with a concrete positive rational, otherwise it reports
-    /// `x = 0` for `x > 0` — a witness that violates the asserted constraint.
-    #[test]
-    fn regression_lra_strict_bound_model_instantiates_delta() {
-        let mut solver = ArithSolver::lra();
-        let x = TermId::new(1);
-        let reason = TermId::new(100);
-
-        // x > 0
-        solver.assert_gt(&[(x, Rational64::one())], Rational64::zero(), reason);
-        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
-
-        let value = solver.value(x).expect("x must have a model value");
-        assert!(
-            value > Rational64::zero(),
-            "model x = {value} violates x > 0"
-        );
-    }
-
-    /// Both ends of a strict range must be respected simultaneously: the
-    /// instantiated delta has to keep `0 < x < 1/2` genuinely inside the range.
-    #[test]
-    fn regression_lra_strict_range_model_inside_bounds() {
-        let mut solver = ArithSolver::lra();
-        let x = TermId::new(1);
-        let lo = TermId::new(100);
-        let hi = TermId::new(101);
-        let half = Rational64::new(1, 2);
-
-        solver.assert_gt(&[(x, Rational64::one())], Rational64::zero(), lo);
-        solver.assert_lt(&[(x, Rational64::one())], half, hi);
-        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
-
-        let value = solver.value(x).expect("x must have a model value");
-        assert!(
-            value > Rational64::zero() && value < half,
-            "model x = {value} is outside the strict range (0, 1/2)"
-        );
-    }
-}
+mod tests;

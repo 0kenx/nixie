@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Next-Generation SMT Solver in Pure Rust"
 keywords = ["smt", "solver", "sat", "verification", "logic"]
 categories = ["algorithms", "science", "mathematics"]

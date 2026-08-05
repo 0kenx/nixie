@@ -33,6 +33,7 @@ struct Scratch {
     var_to_term: Vec<TermId>,
     derived_reasons: DerivedReasons,
     statistics: Statistics,
+    quantifier_uf_funcs: FxHashSet<oxiz_core::interner::Spur>,
 }
 
 impl Scratch {
@@ -53,6 +54,8 @@ impl Scratch {
             0,
             0,
             false,
+            false,
+            &self.quantifier_uf_funcs,
             0,
         )
     }

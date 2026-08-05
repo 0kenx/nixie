@@ -100,6 +100,12 @@ pub mod wmaxsat;
 #[cfg(feature = "std")]
 pub mod checking;
 #[cfg(feature = "std")]
+pub mod nl_eval;
+#[cfg(feature = "std")]
+pub mod nl_ground_reduce;
+#[cfg(feature = "std")]
+pub mod nl_repair_search;
+#[cfg(feature = "std")]
 pub mod nlsat;
 #[cfg(feature = "std")]
 pub mod sls;

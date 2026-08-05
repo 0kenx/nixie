@@ -111,6 +111,14 @@ impl VSIDS {
         self.increment /= self.decay;
     }
 
+    /// Look at the highest-activity variable without removing it from the
+    /// heap. Used by reuse-trail restarts to find the activity threshold a
+    /// kept decision prefix must clear, without disturbing the heap itself.
+    #[must_use]
+    pub fn peek_max(&self) -> Option<Var> {
+        self.heap.first().copied()
+    }
+
     /// Pop the variable with highest activity
     pub fn pop_max(&mut self) -> Option<Var> {
         if self.heap.is_empty() {

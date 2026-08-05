@@ -31,6 +31,29 @@ fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
 }
 
 impl Solver {
+    /// Bump every variable in `vars` in the VMTF move-to-front queue,
+    /// mirroring the same conflict-involvement signal VSIDS/CHB/LRB already
+    /// receive. A no-op unless VMTF decisions are enabled (see
+    /// [`SolverConfig::use_vmtf`]/[`SolverConfig::enable_stabilize`]) —
+    /// bumping is cheap, but there is no reason to maintain the queue's
+    /// order when nothing ever reads from it.
+    ///
+    /// `vars` is sorted by current queue recency first so that bumping
+    /// (a move-to-front) preserves whatever relative order the batch already
+    /// had, instead of imposing the batch's original collection order (which
+    /// reflects resolution-walk order, not recency) on the queue.
+    pub(super) fn vmtf_bump_batch(&mut self, vars: &[Var]) {
+        if !self.config.use_vmtf {
+            return;
+        }
+        let mut ordered: SmallVec<[Var; 16]> = vars.iter().copied().collect();
+        ordered.sort_by_key(|&v| self.vmtf.activity(v));
+        for v in ordered {
+            let assigned = self.trail.is_assigned(v);
+            self.vmtf.bump(v, assigned);
+        }
+    }
+
     /// Analyze conflict and learn clause
     pub(super) fn analyze(&mut self, conflict: ClauseId) -> (u32, SmallVec<[Lit; 16]>) {
         // Debug: print conflict info (only with analyze-debug feature)
@@ -229,6 +252,7 @@ impl Solver {
         self.vsids.bump_batch(&vars_to_bump);
         self.chb.bump_batch(&vars_to_bump);
         self.lrb.on_reason_batch(&vars_to_bump);
+        self.vmtf_bump_batch(&vars_to_bump);
 
         // Set asserting literal (p is guaranteed to be Some at this point)
         if let Some(lit) = p {
@@ -699,6 +723,7 @@ impl Solver {
         self.vsids.bump_batch(&vars_to_bump);
         self.chb.bump_batch(&vars_to_bump);
         self.lrb.on_reason_batch(&vars_to_bump);
+        self.vmtf_bump_batch(&vars_to_bump);
 
         // Set asserting literal
         if let Some(uip) = p {
@@ -725,7 +750,29 @@ impl Solver {
             }
         }
 
-        // Calculate backtrack level
+        // Calculate backtrack level: search `learnt[1..]` for the
+        // second-highest level and move it into the watched position 1.
+        //
+        // Investigated generalizing this to the same two-phase
+        // "find-the-true-max-then-the-true-second-max" routine
+        // `reorder_learnt_watches` uses for the plain-conflict path
+        // (`analyze`), on the theory that the same trail-non-monotonicity
+        // chronological backtracking introduces there could also put a
+        // higher-level literal below `learnt[0]` here. Concluded that
+        // generalization does not apply to this function: unlike `analyze`,
+        // this walk's `counter` only decrements for literals at the anchored
+        // `current_level` (the theory conflict's own max level, computed
+        // above), so the UIP `p` it settles on is by construction a
+        // `current_level` literal — `learnt[0]` already holds the clause's
+        // true maximum. This function also never calls
+        // `chrono_backtrack.compute_backtrack_level` (unlike `analyze`), so
+        // it is not part of the chronological-backtracking-aware path that
+        // motivated `reorder_learnt_watches`'s extra phase in the first
+        // place. Swapping in the fuller routine would additionally risk
+        // moving `learnt[0]` off the literal `p` picked above, changing which
+        // literal this clause propagates, with no reachable counterexample
+        // found to justify that behavior change. Left as the narrower,
+        // already-correct search.
         let backtrack_level = if self.learnt.len() == 1 {
             0
         } else {
@@ -832,6 +879,7 @@ impl Solver {
         self.vsids.bump_batch(&vars_to_bump);
         self.chb.bump_batch(&vars_to_bump);
         self.lrb.on_reason_batch(&vars_to_bump);
+        self.vmtf_bump_batch(&vars_to_bump);
 
         // Backtrack level = highest decision level among the *assigned* (false)
         // non-asserting literals; unassigned literals' stale levels are ignored.

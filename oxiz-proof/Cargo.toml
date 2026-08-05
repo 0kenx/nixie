@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Proof generation and checking for OxiZ SMT solver"
 keywords = ["smt", "proof", "drat", "alethe", "verification"]
 categories = ["algorithms", "development-tools::testing"]
@@ -16,12 +17,12 @@ rustc-hash = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 bumpalo = { workspace = true, optional = true }
-regex = "1.12"
+regex.workspace = true
 num-rational = { workspace = true, features = ["std"] }
 num-bigint = { workspace = true, features = ["std"] }
 num-traits = { workspace = true, features = ["std"] }
 oxiz-sat = { workspace = true, optional = true, features = ["std"] }
-serde = { version = "1.0", features = ["derive"], optional = true }
+serde = { workspace = true, optional = true }
 
 [features]
 default = []

@@ -151,6 +151,31 @@ impl Clause {
         self.tier = ClauseTier::Core;
     }
 
+    /// Assign this clause's tier from its LBD at the moment it is learned,
+    /// rather than waiting for [`Self::record_usage`] to promote it later.
+    ///
+    /// A freshly-learned glue-2 clause otherwise starts in `Local` and is
+    /// exposed to the aggressive per-cycle `Local` sweep before it has had a
+    /// chance to be reused even once. On formulas whose short low-glue
+    /// clauses are load-bearing from the moment they are derived (dense
+    /// propagation cascades), losing them to an early sweep measurably hurts
+    /// — so a clause this good is protected immediately instead of on
+    /// probation. The assignment only ever moves a clause to a *more*
+    /// protected tier (lower [`ClauseTier`] discriminant): it never
+    /// undoes a promotion `record_usage`/`promote_to_core` already granted.
+    pub fn assign_tier_from_lbd(&mut self) {
+        let by_lbd = if self.lbd <= 2 {
+            ClauseTier::Core
+        } else if self.lbd <= 6 {
+            ClauseTier::Mid
+        } else {
+            ClauseTier::Local
+        };
+        if (by_lbd as u8) <= (self.tier as u8) {
+            self.tier = by_lbd;
+        }
+    }
+
     /// Normalize clause: remove duplicates, sort literals, check for tautology
     /// Returns true if clause is a tautology (contains both l and ~l)
     pub fn normalize(&mut self) -> bool {
@@ -543,6 +568,25 @@ impl ClauseDatabase {
             }
         }
     }
+
+    /// Multiply every live clause's activity by `factor`, preserving their
+    /// relative order.
+    ///
+    /// The clause-activity bump increment used by the solver's clause-decay
+    /// step grows geometrically (it is divided by the decay factor on every
+    /// conflict), which is the standard trick for making "bump" cheap without
+    /// touching every clause — but left unchecked it eventually approaches
+    /// `f64::MAX`. This is the paired rescue: shrink every activity (and the
+    /// increment, by the caller) by a constant factor before that happens, an
+    /// O(n) pass that is amortized away by firing only once every ~100k+
+    /// conflicts rather than on every single one.
+    pub fn rescale_activity(&mut self, factor: f64) {
+        for clause in &mut self.clauses {
+            if !clause.deleted {
+                clause.activity *= factor;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -646,5 +690,68 @@ mod tests {
         } else {
             panic!("Expected self-subsuming resolvent");
         }
+    }
+
+    #[test]
+    fn test_pr26_assign_tier_from_lbd_promotes_glue_clauses_immediately() {
+        let mut c = Clause::learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        assert_eq!(c.tier, ClauseTier::Local);
+        c.lbd = 2;
+        c.assign_tier_from_lbd();
+        assert_eq!(
+            c.tier,
+            ClauseTier::Core,
+            "glue <= 2 must be protected immediately, not left to record_usage"
+        );
+    }
+
+    #[test]
+    fn test_pr26_assign_tier_from_lbd_mid_range() {
+        let mut c = Clause::learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        c.lbd = 5;
+        c.assign_tier_from_lbd();
+        assert_eq!(c.tier, ClauseTier::Mid);
+    }
+
+    #[test]
+    fn test_pr26_assign_tier_from_lbd_high_glue_stays_local() {
+        let mut c = Clause::learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        c.lbd = 20;
+        c.assign_tier_from_lbd();
+        assert_eq!(c.tier, ClauseTier::Local);
+    }
+
+    #[test]
+    fn test_pr26_assign_tier_from_lbd_never_demotes() {
+        // A clause already promoted to Core by usage must not be pulled back
+        // down to Mid/Local by a later, worse LBD-based assignment.
+        let mut c = Clause::learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        c.promote_to_core();
+        c.lbd = 50; // would map to Local on its own
+        c.assign_tier_from_lbd();
+        assert_eq!(
+            c.tier,
+            ClauseTier::Core,
+            "assign_tier_from_lbd must be one-way upward only"
+        );
+    }
+
+    #[test]
+    fn test_pr26_rescale_activity_preserves_relative_order() {
+        let mut db = ClauseDatabase::new();
+        let a = db.add_learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        let b = db.add_learned([Lit::pos(Var::new(2)), Lit::pos(Var::new(3))]);
+        if let Some(clause) = db.get_mut(a) {
+            clause.activity = 10.0;
+        }
+        if let Some(clause) = db.get_mut(b) {
+            clause.activity = 20.0;
+        }
+        db.rescale_activity(1e-10);
+        let act_a = db.get(a).expect("clause a").activity;
+        let act_b = db.get(b).expect("clause b").activity;
+        assert!(act_a < act_b, "relative order must survive a rescale");
+        assert!(act_a > 0.0 && act_a.is_finite());
+        assert!(act_b > 0.0 && act_b.is_finite());
     }
 }

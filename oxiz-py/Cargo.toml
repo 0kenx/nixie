@@ -47,7 +47,7 @@ doc = false
 # requested.
 [dependencies]
 oxiz = { workspace = true, features = ["full"] }
-pyo3 = { version = "0.29", features = ["num-bigint"] }
+pyo3 = { workspace = true }
 num-bigint = { workspace = true, features = ["std"] }
 num-rational = { workspace = true, features = ["std"] }
 num-traits = { workspace = true }

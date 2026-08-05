@@ -10,6 +10,7 @@ mod conflict;
 mod decide;
 mod inprocess;
 mod propagate;
+mod resample;
 
 use crate::assignment::{Assignment, Justification};
 use crate::clause::{ClauseDatabase, ClauseId, NULL_CLAUSE};
@@ -152,8 +153,6 @@ pub struct NlsatSolver {
     pub(super) propagation_queue: Vec<Literal>,
     /// Current conflict clause (if any).
     pub(super) conflict_clause: Option<ClauseId>,
-    /// Learnt clause from conflict analysis.
-    pub(super) learnt_clause: Vec<Literal>,
     /// Seen variables during conflict analysis.
     pub(super) seen: HashSet<BoolVar>,
     /// Theory-evaluation cache: memoizes the definite (`True`/`False`) value of
@@ -196,6 +195,9 @@ pub struct NlsatSolver {
     pub(super) searched: bool,
     /// Whether an explicit empty (false) clause has been added.
     pub(super) has_empty_clause: bool,
+    /// Record of the arithmetic witnesses committed so far, and the budget
+    /// for taking them back again. See [`resample::WitnessLedger`].
+    pub(super) arith_witnesses: resample::WitnessLedger,
 }
 
 impl NlsatSolver {
@@ -226,7 +228,6 @@ impl NlsatSolver {
             arith_activity_decay: 0.95,
             propagation_queue: Vec::new(),
             conflict_clause: None,
-            learnt_clause: Vec::new(),
             seen: HashSet::new(),
             eval_cache: HashMap::new(),
             theory_conflict_tracker: crate::theory_conflict::TheoryConflictTracker::new(),
@@ -245,6 +246,7 @@ impl NlsatSolver {
             saved_phase: Vec::new(),
             searched: false,
             has_empty_clause: false,
+            arith_witnesses: resample::WitnessLedger::default(),
         }
     }
 
@@ -591,6 +593,7 @@ impl NlsatSolver {
         self.propagation_queue.clear();
         self.eval_cache.clear();
         self.conflict_clause = None;
+        self.arith_witnesses.restart();
 
         // Re-derive the level-0 unit assignments from every unit clause. Learned
         // clauses are entailed by the originals, so replaying their units is
@@ -693,12 +696,39 @@ impl NlsatSolver {
                     return SolverResult::Unsat;
                 }
 
-                // Analyze conflict
-                let (learnt, backtrack_level) = self.analyze_conflict(conflict_id);
+                // Analyze conflict. A refusal means the derivation could not
+                // be completed, which licenses nothing -- not a learnt clause
+                // and certainly not a refutation.
+                let Some(analysis) = self.analyze_conflict(conflict_id) else {
+                    return SolverResult::Unknown;
+                };
 
-                if learnt.is_empty() {
+                if analysis.literals.is_empty() {
+                    // The empty clause: a refutation, but only when every
+                    // literal eliminated to reach it was eliminated by
+                    // resolution. If the arithmetic layer's own (retractable)
+                    // choices did some of that eliminating, the derivation
+                    // proves nothing about the formula -- see
+                    // `Learnt::theory_dependent`.
+                    if analysis.theory_dependent {
+                        return SolverResult::Unknown;
+                    }
                     return SolverResult::Unsat;
                 }
+
+                if !analysis.asserting {
+                    // The clause is valid but propagates nothing after
+                    // backjumping, so learning it cannot move the search
+                    // forward and re-deriving it would spin. Report the honest
+                    // non-answer instead. This happens only when two or more
+                    // current-level literals rest on assignments with no
+                    // clausal reason -- theory propagations -- which the
+                    // resolution rule has no premise to eliminate.
+                    return SolverResult::Unknown;
+                }
+
+                let learnt = analysis.literals;
+                let backtrack_level = analysis.backtrack_level;
 
                 // Compute and update LBD
                 let lbd = self.compute_lbd(&learnt);
@@ -718,16 +748,18 @@ impl NlsatSolver {
                 // Bump clause activity
                 self.clauses.bump_activity(learnt_id);
 
-                // The first literal of learned clause should be asserted
-                if !learnt.is_empty() {
+                // The first literal of the learned clause is asserting: after
+                // the backjump above it is the clause's only unassigned
+                // literal, so the clause is unit and forces it.
+                if let Some(&asserting_lit) = learnt.first() {
                     let justification = if learnt.len() == 1 {
                         Justification::Unit
                     } else {
                         Justification::Propagation(learnt_id)
                     };
-                    self.assignment.assign(learnt[0], justification);
-                    self.save_phase(learnt[0]);
-                    self.propagation_queue.push(learnt[0]);
+                    self.assignment.assign(asserting_lit, justification);
+                    self.save_phase(asserting_lit);
+                    self.propagation_queue.push(asserting_lit);
                 }
 
                 // Decay activities
@@ -788,8 +820,16 @@ impl NlsatSolver {
                     continue;
                 }
                 TheoryPropagation::Unknown => {
-                    // A theory conflict we cannot soundly explain: report
-                    // Unknown rather than learning an invalid lemma.
+                    // A theory conflict we cannot soundly explain as a lemma.
+                    // Before conceding, take back the most recent arithmetic
+                    // witness and carry on from a different point in the same
+                    // region — nothing unsound is risked (no lemma is
+                    // learned, no boolean state changes) and a conflict that
+                    // only exists because of an unlucky earlier witness turns
+                    // into a model. See `solver/resample.rs`.
+                    if self.rewind_to_untried_witness() {
+                        continue;
+                    }
                     return SolverResult::Unknown;
                 }
             }
@@ -812,8 +852,15 @@ impl NlsatSolver {
             // Need to assign arithmetic variables
             if let Some(var) = self.next_arith_var() {
                 match self.pick_arith_value(var) {
-                    ArithDecision::Value(value) => {
-                        self.assignment.set_arith(var, value);
+                    ArithDecision::Value {
+                        value,
+                        region,
+                        forced,
+                    } => {
+                        // A pinned value has no alternatives to record; only
+                        // a freely picked one carries its region onto the
+                        // ledger.
+                        self.commit_arith_witness(var, value, (!forced).then_some(region));
                         // New propagations may follow the arithmetic assignment.
                         continue;
                     }
@@ -838,13 +885,21 @@ impl NlsatSolver {
                         return SolverResult::Unknown;
                     }
                     ArithDecision::GreedyEmpty => {
-                        if self.assignment.level() == 0 {
-                            // Fully-forced infeasible arithmetic state.
-                            return SolverResult::Unsat;
+                        // Emptiness here is conditional on earlier greedy
+                        // choices, not a proof of global infeasibility --
+                        // *at any decision level, including 0*: level 0 only
+                        // means no *boolean* choice was made, but the
+                        // arithmetic witnesses committed so far are exactly
+                        // as retractable as any other greedy sample. (A
+                        // level-0 shortcut to `Unsat` here previously made
+                        // bare `x·y = 12` unsat, because the first witness
+                        // this search tries for an unconstrained variable is
+                        // `0`.) Take back the most recent coupled witness and
+                        // try another point before conceding; only a ledger
+                        // with nothing left in it falls through to `Unknown`.
+                        if self.rewind_to_untried_witness() {
+                            continue;
                         }
-                        // Emptiness is conditional on earlier greedy choices and
-                        // cannot be certified as a variable-local lemma; report
-                        // Unknown instead of looping on the same decision.
                         return SolverResult::Unknown;
                     }
                 }

@@ -1,260 +1,295 @@
-//! Variable Move-To-Front (VMTF) branching heuristic
+//! Variable Move-To-Front (VMTF) branching heuristic.
 //!
-//! VMTF is a modern branching heuristic used in state-of-the-art SAT solvers
-//! like Kissat and CaDiCaL. It maintains a doubly-linked list of variables,
-//! and when a variable is involved in a conflict, it's moved to the front.
+//! VMTF keeps every variable on a doubly-linked list ordered by recency of
+//! conflict involvement: bumping a variable moves it to the most-recent end.
+//! The next decision is simply the most-recently-bumped variable that is
+//! still unassigned, which in the common case is a cheap O(1) lookup rather
+//! than the heap pop/rebuild VSIDS needs.
 //!
-//! Compared to VSIDS:
-//! - Simpler implementation (no heap operations)
-//! - Lower overhead (constant-time operations)
-//! - Often competitive or better performance
-//! - No periodic rescaling needed
+//! # Design note: the persistent search cursor
+//!
+//! A naive implementation would rescan the list from the most-recent end on
+//! every decision to skip already-assigned variables — correct, but O(n) per
+//! decision once the search has assigned a long prefix of "recent" variables.
+//! Instead this implementation keeps a cursor (`VMTF::cursor`, a private
+//! field) that persists across decisions: it only ever moves toward the "least recent"
+//! end as decisions consume variables, and jumps back toward the
+//! "most recent" end when [`VMTF::on_unassign`] reports a freshly-freed
+//! variable that was bumped more recently than wherever the cursor currently
+//! sits. Net effect: a decision is O(1) amortized instead of O(n), and the
+//! cursor always represents "the best candidate we know about so far".
+//!
+//! Reference: this mirrors the decision-queue technique used by modern
+//! CDCL solvers such as CaDiCaL and Kissat (their `queue.cpp` / `queue.c`),
+//! generalizing the fixed-position VMTF originally described by Ryan
+//! ("Efficient algorithms for clause-learning SAT solvers", 2004).
 
 use crate::literal::Var;
-#[allow(unused_imports)]
-use crate::prelude::*;
 
-/// Node in the VMTF doubly-linked list
+/// Sentinel meaning "no such neighbour" in [`Link`]'s `prev`/`next` fields.
+/// Using a packed `u32` array (rather than `Option<Var>`) keeps a decision's
+/// hot-path list walk to plain integer loads with no enum tag to unpack.
+const NIL: u32 = u32::MAX;
+
+/// One variable's position in the move-to-front list plus the tick at which
+/// it was last bumped.
 #[derive(Debug, Clone, Copy)]
-struct VmtfNode {
-    /// Previous variable in the list (None if this is the head)
-    prev: Option<Var>,
-    /// Next variable in the list (None if this is the tail)
-    next: Option<Var>,
-    /// Timestamp when this variable was last moved to front
-    timestamp: u64,
+struct Link {
+    prev: u32,
+    next: u32,
+    /// Logical timestamp of the variable's last bump; higher = more recent.
+    /// Used to decide, in [`VMTF::on_unassign`], whether a newly-freed
+    /// variable should pull the search cursor toward it.
+    last_bump: u64,
 }
 
-impl VmtfNode {
-    fn new() -> Self {
+impl Link {
+    const fn empty() -> Self {
         Self {
-            prev: None,
-            next: None,
-            timestamp: 0,
+            prev: NIL,
+            next: NIL,
+            last_bump: 0,
         }
     }
 }
 
-/// Variable Move-To-Front (VMTF) branching heuristic
+/// Move-to-front decision queue.
 ///
-/// Maintains a doubly-linked list of all variables. When a variable
-/// is bumped (involved in a conflict), it's moved to the front of the list.
-/// Variable selection picks the first unassigned variable from the front.
+/// `oldest` is the list end holding the variable bumped longest ago (or
+/// never); `newest` is the most-recently-bumped end. Decisions are drawn by
+/// walking from `VMTF::cursor` (a private field) toward `oldest` (via `prev` links) for the
+/// first still-unassigned variable.
 #[derive(Debug, Clone)]
 pub struct VMTF {
-    /// Doubly-linked list nodes for each variable
-    nodes: Vec<VmtfNode>,
-    /// Head of the list (most recently bumped variable)
-    head: Option<Var>,
-    /// Tail of the list (least recently bumped variable)
-    tail: Option<Var>,
-    /// Current timestamp (incremented on each bump)
-    timestamp: u64,
-    /// Queue head for iteration during variable selection
-    queue_head: Option<Var>,
+    links: Vec<Link>,
+    oldest: u32,
+    newest: u32,
+    /// Persistent decision cursor; see the module-level design note.
+    cursor: u32,
+    /// Monotonic bump counter, source of [`Link::last_bump`] timestamps.
+    clock: u64,
 }
 
 impl VMTF {
-    /// Create a new VMTF instance with the given number of variables
+    /// Build a queue over `num_vars` variables, initially ordered `0, 1, 2,
+    /// ...` from oldest to newest (i.e. variable 0 starts as the *least*
+    /// preferred candidate).
     #[must_use]
     pub fn new(num_vars: usize) -> Self {
-        let mut vmtf = Self {
-            nodes: vec![VmtfNode::new(); num_vars],
-            head: None,
-            tail: None,
-            timestamp: 0,
-            queue_head: None,
+        let mut q = Self {
+            links: vec![Link::empty(); num_vars],
+            oldest: NIL,
+            newest: NIL,
+            cursor: NIL,
+            clock: 0,
         };
-
-        // Initialize the doubly-linked list with all variables
+        for i in 0..num_vars {
+            q.links[i].prev = if i == 0 { NIL } else { (i - 1) as u32 };
+            q.links[i].next = if i + 1 == num_vars {
+                NIL
+            } else {
+                (i + 1) as u32
+            };
+        }
         if num_vars > 0 {
-            vmtf.head = Some(Var::new(0));
-            vmtf.tail = Some(Var::new((num_vars - 1) as u32));
-
-            for i in 0..num_vars {
-                vmtf.nodes[i].prev = if i > 0 {
-                    Some(Var::new((i - 1) as u32))
-                } else {
-                    None
-                };
-                vmtf.nodes[i].next = if i < num_vars - 1 {
-                    Some(Var::new((i + 1) as u32))
-                } else {
-                    None
-                };
-                vmtf.nodes[i].timestamp = i as u64;
-            }
+            q.oldest = 0;
+            q.newest = (num_vars - 1) as u32;
+            q.cursor = q.newest;
         }
-
-        vmtf.queue_head = vmtf.head;
-        vmtf
+        q
     }
 
-    /// Resize the VMTF to accommodate more variables
-    pub fn resize(&mut self, new_num_vars: usize) {
-        let old_num_vars = self.nodes.len();
-        if new_num_vars <= old_num_vars {
+    /// Grow the queue to cover `num_vars` variables. A no-op if it is
+    /// already at least that large — the queue never shrinks (mirrors the
+    /// crate's other decision-order structures, `vsids::VSIDS` and
+    /// `lrb::LRB`, both in private modules: freeing a slot back down
+    /// is the caller's job via a full rebuild, see `Solver::reset`).
+    pub fn resize(&mut self, num_vars: usize) {
+        let old_len = self.links.len();
+        if num_vars <= old_len {
             return;
         }
-
-        // Add new nodes
-        self.nodes.resize(new_num_vars, VmtfNode::new());
-
-        // Link new variables to the list
-        if old_num_vars == 0 {
-            // Starting from empty, same as new()
-            self.head = Some(Var::new(0));
-            self.tail = Some(Var::new((new_num_vars - 1) as u32));
-
-            for i in 0..new_num_vars {
-                self.nodes[i].prev = if i > 0 {
-                    Some(Var::new((i - 1) as u32))
-                } else {
-                    None
-                };
-                self.nodes[i].next = if i < new_num_vars - 1 {
-                    Some(Var::new((i + 1) as u32))
-                } else {
-                    None
-                };
-                self.nodes[i].timestamp = self.timestamp;
-                self.timestamp += 1;
+        self.links.resize(num_vars, Link::empty());
+        for i in old_len..num_vars {
+            let v = i as u32;
+            self.links[i].prev = self.newest;
+            self.links[i].next = NIL;
+            if self.newest == NIL {
+                self.oldest = v;
+            } else {
+                self.links[self.newest as usize].next = v;
             }
+            self.newest = v;
+        }
+        // A freshly-grown queue had no candidates before; give the cursor
+        // something to point at.
+        if self.cursor == NIL {
+            self.cursor = self.newest;
+        }
+    }
+
+    fn unlink(&mut self, v: u32) {
+        let (prev, next) = (self.links[v as usize].prev, self.links[v as usize].next);
+        if prev == NIL {
+            self.oldest = next;
         } else {
-            // Append new variables to the existing tail
-            let old_tail = self
-                .tail
-                .expect("tail exists when extending non-empty list");
-            let first_new = Var::new(old_num_vars as u32);
-
-            // Connect old tail to first new variable
-            self.nodes[old_tail.index()].next = Some(first_new);
-
-            for i in old_num_vars..new_num_vars {
-                self.nodes[i].prev = if i == old_num_vars {
-                    Some(old_tail)
-                } else {
-                    Some(Var::new((i - 1) as u32))
-                };
-                self.nodes[i].next = if i < new_num_vars - 1 {
-                    Some(Var::new((i + 1) as u32))
-                } else {
-                    None
-                };
-                self.nodes[i].timestamp = self.timestamp;
-                self.timestamp += 1;
-            }
-
-            // Update tail
-            self.tail = Some(Var::new((new_num_vars - 1) as u32));
+            self.links[prev as usize].next = next;
+        }
+        if next == NIL {
+            self.newest = prev;
+        } else {
+            self.links[next as usize].prev = prev;
         }
     }
 
-    /// Bump a variable (move it to the front of the list)
-    ///
-    /// This is called when a variable is involved in a conflict
-    pub fn bump(&mut self, var: Var) {
-        let idx = var.index();
-        if idx >= self.nodes.len() {
-            return;
+    fn link_as_newest(&mut self, v: u32) {
+        self.links[v as usize].prev = self.newest;
+        self.links[v as usize].next = NIL;
+        if self.newest == NIL {
+            self.oldest = v;
+        } else {
+            self.links[self.newest as usize].next = v;
         }
-
-        // If already at head, just update timestamp
-        if Some(var) == self.head {
-            self.timestamp += 1;
-            self.nodes[idx].timestamp = self.timestamp;
-            return;
-        }
-
-        // Remove from current position
-        let prev = self.nodes[idx].prev;
-        let next = self.nodes[idx].next;
-
-        if let Some(prev_var) = prev {
-            self.nodes[prev_var.index()].next = next;
-        }
-        if let Some(next_var) = next {
-            self.nodes[next_var.index()].prev = prev;
-        }
-
-        // Update tail if we're removing the tail
-        if Some(var) == self.tail {
-            self.tail = prev;
-        }
-
-        // Insert at head
-        self.nodes[idx].prev = None;
-        self.nodes[idx].next = self.head;
-        self.timestamp += 1;
-        self.nodes[idx].timestamp = self.timestamp;
-
-        if let Some(old_head) = self.head {
-            self.nodes[old_head.index()].prev = Some(var);
-        }
-        self.head = Some(var);
-
-        // If list was empty, update tail
-        if self.tail.is_none() {
-            self.tail = Some(var);
-        }
-
-        // Reset queue head when we bump
-        self.queue_head = self.head;
+        self.newest = v;
     }
 
-    /// Select the next unassigned variable from the front of the list
+    /// Move `var` to the "most recent" end and stamp it with a fresh
+    /// timestamp. `assigned` reports whether `var` currently has a value on
+    /// the trail: only an *unassigned* bumped variable is eligible to be the
+    /// next decision, so the cursor only jumps to it in that case — bumping
+    /// an already-assigned variable (e.g. one on the trail from a conflict's
+    /// resolution) still records recency for when it is later freed, but
+    /// must not make it the immediate next pick.
+    pub fn bump(&mut self, var: Var, assigned: bool) {
+        let Ok(v) = u32::try_from(var.index()) else {
+            return;
+        };
+        if (v as usize) >= self.links.len() {
+            return;
+        }
+        if self.newest != v {
+            self.unlink(v);
+            self.link_as_newest(v);
+        }
+        self.clock += 1;
+        self.links[v as usize].last_bump = self.clock;
+        if !assigned {
+            self.cursor = v;
+        }
+    }
+
+    /// Draw the next decision: the most-recently-bumped variable that
+    /// `assigned` reports as still unassigned, searching from the cursor
+    /// toward the oldest end. Returns `None` only if every variable in the
+    /// queue is assigned.
     ///
-    /// Returns `None` when reaching the end of the list.
-    /// Call `reset_queue()` to start from the beginning again.
+    /// The cursor only ever *decreases in recency* through this method (it
+    /// tracks along); it is restored to a fresher position by
+    /// [`Self::on_unassign`] when backtracking frees a more-recently-bumped
+    /// variable that the cursor had already walked past.
+    pub fn next_decision<F>(&mut self, mut assigned: F) -> Option<Var>
+    where
+        F: FnMut(Var) -> bool,
+    {
+        let found = self.scan_from(self.cursor, &mut assigned);
+        let found = found.or_else(|| {
+            // The cursor had walked past every unassigned variable toward
+            // the oldest end without success — this happens when a
+            // backtrack frees variables that [`Self::on_unassign`] judged
+            // less recent than the cursor's position at the time, but which
+            // are nonetheless the only unassigned candidates left. A full
+            // rescan from the newest end is the correctness fallback; it is
+            // rare (only after a deep backtrack) so its O(n) cost is
+            // amortized away.
+            self.scan_from(self.newest, &mut assigned)
+        });
+        if let Some(v) = found {
+            self.cursor = v;
+        }
+        found.map(Var::new)
+    }
+
+    /// Read-only counterpart to [`Self::next_decision`]: which variable the
+    /// next call *would* return, without moving the cursor.
+    ///
+    /// Exists for a caller that only wants to know *where the queue's
+    /// candidate ranking currently sits* — e.g. `Solver::reuse_trail`
+    /// comparing past decisions against "whatever would be decided next" to
+    /// pick a partial-restart prefix — and must not perturb the actual
+    /// decision state to find out: the cursor's position affects every
+    /// *real* decision `next_decision` returns downstream, so a query like
+    /// this one has to be side-effect-free.
     #[must_use]
-    pub fn select(&mut self) -> Option<Var> {
-        self.queue_head
+    pub fn peek_next_decision<F>(&self, mut assigned: F) -> Option<Var>
+    where
+        F: FnMut(Var) -> bool,
+    {
+        self.scan_from(self.cursor, &mut assigned)
+            .or_else(|| self.scan_from(self.newest, &mut assigned))
+            .map(Var::new)
     }
 
-    /// Advance the queue to the next variable
-    ///
-    /// This is called after selecting a variable that was assigned.
-    /// The caller should keep calling `select()` and `advance()` until
-    /// `select()` returns an unassigned variable or `None`.
-    pub fn advance(&mut self) {
-        if let Some(current) = self.queue_head {
-            self.queue_head = self.nodes[current.index()].next;
+    fn scan_from<F>(&self, start: u32, assigned: &mut F) -> Option<u32>
+    where
+        F: FnMut(Var) -> bool,
+    {
+        let mut at = start;
+        while at != NIL {
+            if !assigned(Var::new(at)) {
+                return Some(at);
+            }
+            at = self.links[at as usize].prev;
+        }
+        None
+    }
+
+    /// Notify the queue that `var` was just unassigned (a backtrack freed
+    /// it). If `var` was bumped more recently than whatever the cursor
+    /// currently points at, pull the cursor forward to `var` so the next
+    /// decision reconsiders it instead of a rescan discovering it later.
+    pub fn on_unassign(&mut self, var: Var) {
+        let Ok(v) = u32::try_from(var.index()) else {
+            return;
+        };
+        if (v as usize) >= self.links.len() {
+            return;
+        }
+        let freed_bump = self.links[v as usize].last_bump;
+        let cursor_bump = if self.cursor == NIL {
+            0
+        } else {
+            self.links[self.cursor as usize].last_bump
+        };
+        if freed_bump > cursor_bump {
+            self.cursor = v;
         }
     }
 
-    /// Reset the queue to start iteration from the beginning
-    pub fn reset_queue(&mut self) {
-        self.queue_head = self.head;
-    }
-
-    /// Get the activity/timestamp of a variable (for statistics)
+    /// Last-bump timestamp of `var` (0 if it was never bumped or is out of
+    /// range). Exposed for diagnostics/statistics; not used by decision
+    /// logic itself.
     #[must_use]
     pub fn activity(&self, var: Var) -> u64 {
-        let idx = var.index();
-        if idx < self.nodes.len() {
-            self.nodes[idx].timestamp
-        } else {
-            0
-        }
+        self.links.get(var.index()).map_or(0, |link| link.last_bump)
     }
 
-    /// Get statistics about the VMTF state
+    /// Snapshot of queue-wide counters.
     #[must_use]
     pub fn stats(&self) -> VmtfStats {
         VmtfStats {
-            num_vars: self.nodes.len(),
-            current_timestamp: self.timestamp,
+            tracked_vars: self.links.len(),
+            total_bumps: self.clock,
         }
     }
 }
 
-/// Statistics for VMTF
-#[derive(Debug, Clone, Copy)]
+/// Point-in-time statistics for a [`VMTF`] queue.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct VmtfStats {
-    /// Number of variables being tracked
-    pub num_vars: usize,
-    /// Current timestamp value
-    pub current_timestamp: u64,
+    /// Number of variables the queue currently tracks.
+    pub tracked_vars: usize,
+    /// Total number of bumps performed since construction.
+    pub total_bumps: u64,
 }
 
 #[cfg(test)]
@@ -262,143 +297,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_vmtf_creation() {
-        let vmtf = VMTF::new(5);
-        assert_eq!(vmtf.nodes.len(), 5);
-        assert_eq!(vmtf.head, Some(Var::new(0)));
-        assert_eq!(vmtf.tail, Some(Var::new(4)));
+    fn test_pr26_vmtf_bump_promotes_to_next_decision() {
+        let mut q = VMTF::new(4);
+        q.bump(Var::new(0), false);
+        assert_eq!(q.next_decision(|_| false), Some(Var::new(0)));
     }
 
     #[test]
-    fn test_vmtf_select_sequential() {
-        let mut vmtf = VMTF::new(5);
-
-        // Initially should select variables in order 0, 1, 2, 3, 4
-        assert_eq!(vmtf.select(), Some(Var::new(0)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(1)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(2)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(3)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(4)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), None);
+    fn test_pr26_vmtf_search_pointer_skips_assigned() {
+        let mut q = VMTF::new(3);
+        q.bump(Var::new(2), false);
+        // Variable 2 is on the trail (assigned): the queue must skip it and
+        // fall through to the next-most-recent unassigned candidate.
+        let picked = q.next_decision(|v| v == Var::new(2)).expect("candidate");
+        assert_eq!(picked, Var::new(1));
     }
 
     #[test]
-    fn test_vmtf_bump() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump variable 3 - it should move to front
-        vmtf.bump(Var::new(3));
-        vmtf.reset_queue();
-
-        // Now should select 3 first
-        assert_eq!(vmtf.select(), Some(Var::new(3)));
-        vmtf.advance();
-
-        // Then the rest in original order (excluding 3)
-        assert_eq!(vmtf.select(), Some(Var::new(0)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(1)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(2)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(4)));
+    fn test_pr26_vmtf_notify_unassigned_moves_pointer() {
+        let mut q = VMTF::new(5);
+        // Bump 4 twice so it is clearly the most recent, then "assign" it
+        // (bump with assigned=true keeps the cursor from jumping to it).
+        q.bump(Var::new(4), true);
+        // Cursor sits at the initial newest (4) already from `new`; move it
+        // down by consuming decisions for 3, 2 so it lags behind.
+        assert_eq!(q.next_decision(|v| v == Var::new(4)), Some(Var::new(3)));
+        assert_eq!(
+            q.next_decision(|v| v == Var::new(4) || v == Var::new(3)),
+            Some(Var::new(2))
+        );
+        // Now free variable 4 (a backtrack). Its bump timestamp is higher
+        // than the cursor's (which sits at 2), so the pointer should jump
+        // back to it.
+        q.on_unassign(Var::new(4));
+        assert_eq!(q.next_decision(|_| false), Some(Var::new(4)));
     }
 
     #[test]
-    fn test_vmtf_multiple_bumps() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump variables in sequence: 2, 4, 1
-        vmtf.bump(Var::new(2));
-        vmtf.bump(Var::new(4));
-        vmtf.bump(Var::new(1));
-        vmtf.reset_queue();
-
-        // Should now select in order: 1, 4, 2, 0, 3
-        // (most recently bumped first)
-        assert_eq!(vmtf.select(), Some(Var::new(1)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(4)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(2)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(0)));
-        vmtf.advance();
-        assert_eq!(vmtf.select(), Some(Var::new(3)));
+    fn test_pr26_vmtf_next_decision_none_when_all_assigned() {
+        let mut q = VMTF::new(3);
+        assert_eq!(q.next_decision(|_| true), None);
     }
 
     #[test]
-    fn test_vmtf_resize() {
-        let mut vmtf = VMTF::new(3);
-        vmtf.resize(6);
-
-        assert_eq!(vmtf.nodes.len(), 6);
-        vmtf.reset_queue();
-
-        // Should be able to select all 6 variables
-        for _i in 0..6 {
-            assert!(vmtf.select().is_some());
-            vmtf.advance();
+    fn test_pr26_vmtf_resize_grows_and_stays_selectable() {
+        let mut q = VMTF::new(2);
+        q.resize(5);
+        assert_eq!(q.stats().tracked_vars, 5);
+        // Every one of the 5 variables must eventually be reachable.
+        let mut seen = [false; 5];
+        while let Some(v) = q.next_decision(|v: Var| seen[v.index()]) {
+            assert!(!seen[v.index()], "must not repeat a variable");
+            seen[v.index()] = true;
         }
-        assert_eq!(vmtf.select(), None);
+        assert!(
+            seen.iter().all(|&s| s),
+            "every variable reachable: {seen:?}"
+        );
     }
 
     #[test]
-    fn test_vmtf_activity() {
-        let mut vmtf = VMTF::new(5);
-
-        let v0_activity = vmtf.activity(Var::new(0));
-        vmtf.bump(Var::new(0));
-        let v0_activity_after = vmtf.activity(Var::new(0));
-
-        // Activity should increase after bump
-        assert!(v0_activity_after > v0_activity);
+    fn test_pr26_vmtf_resize_noop_when_shrinking_requested() {
+        let mut q = VMTF::new(5);
+        q.resize(2); // must not shrink or panic
+        assert_eq!(q.stats().tracked_vars, 5);
     }
 
     #[test]
-    fn test_vmtf_stats() {
-        let mut vmtf = VMTF::new(10);
-        let stats = vmtf.stats();
-
-        assert_eq!(stats.num_vars, 10);
-
-        // Bump a variable and check timestamp increases
-        vmtf.bump(Var::new(0));
-        let stats_after = vmtf.stats();
-        assert!(stats_after.current_timestamp > stats.current_timestamp);
+    fn test_pr26_vmtf_activity_reflects_bump_recency() {
+        let mut q = VMTF::new(3);
+        let before = q.activity(Var::new(0));
+        q.bump(Var::new(0), false);
+        assert!(q.activity(Var::new(0)) > before);
     }
 
     #[test]
-    fn test_vmtf_bump_head() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump the head variable
-        let head_var = vmtf.head.expect("test operation should succeed");
-        let timestamp_before = vmtf.activity(head_var);
-
-        vmtf.bump(head_var);
-
-        // Timestamp should increase even though it's already at head
-        assert!(vmtf.activity(head_var) > timestamp_before);
-        assert_eq!(vmtf.head, Some(head_var));
-    }
-
-    #[test]
-    fn test_vmtf_bump_tail() {
-        let mut vmtf = VMTF::new(5);
-
-        // Bump the tail variable
-        let tail_var = Var::new(4);
-        vmtf.bump(tail_var);
-
-        // Tail should move to head
-        assert_eq!(vmtf.head, Some(tail_var));
-        // New tail should be variable 3
-        assert_eq!(vmtf.tail, Some(Var::new(3)));
+    fn test_pr26_vmtf_out_of_range_bump_is_noop() {
+        let mut q = VMTF::new(2);
+        // Must not panic on a var beyond the tracked range.
+        q.bump(Var::new(10), false);
+        q.on_unassign(Var::new(10));
+        assert_eq!(q.activity(Var::new(10)), 0);
     }
 }

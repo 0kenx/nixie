@@ -35,8 +35,23 @@ use rustc_hash::{FxHashMap, FxHashSet};
 ///   conditional on those (greedy) choices and cannot be turned into a valid
 ///   variable-local lemma.
 pub(super) enum ArithDecision {
-    /// A concrete rational witness inside the feasible region.
-    Value(BigRational),
+    /// A concrete rational witness, together with the feasible region it was
+    /// drawn from and whether that region left the search any freedom at
+    /// all. The region travels with the witness so the caller can put it on
+    /// the witness ledger — this choice may need to
+    /// be revisited if a later, coupled variable turns out to have no
+    /// witness under it (see `solver/resample.rs`). `forced` is `true` only
+    /// when the region is *exactly* one point under a reliable (exact root
+    /// isolation) computation, i.e. no other real value could have been
+    /// chosen instead — see `NlsatSolver::certify_forced_chain_conflict`.
+    Value {
+        /// The committed witness.
+        value: BigRational,
+        /// The region it was drawn from.
+        region: IntervalSet,
+        /// Whether the region left no freedom (a provably unique value).
+        forced: bool,
+    },
     /// Provably infeasible over the reals; carries a valid conflict lemma.
     ProvedEmpty(Vec<Literal>),
     /// Feasible over the reals but with no rational witness (algebraic only).
@@ -150,7 +165,18 @@ impl NlsatSolver {
         if !regions.inner.is_empty()
             && let Some(value) = regions.inner.sample()
         {
-            return ArithDecision::Value(value);
+            // The region left no freedom only when its *exact* (reliable)
+            // superset agrees it is the very same single point: `inner`
+            // alone being a singleton is not enough, since `inner` is only a
+            // guaranteed subset and could omit other real witnesses that
+            // `outer` still contains.
+            let forced =
+                regions.reliable && regions.outer.as_forced_point().is_some_and(|p| p == value);
+            return ArithDecision::Value {
+                value,
+                region: regions.inner,
+                forced,
+            };
         }
 
         if self.config.early_termination {
@@ -180,7 +206,58 @@ impl NlsatSolver {
             return ArithDecision::ProvedEmpty(lemma);
         }
 
+        // Another shape `certify_sign_conflict` cannot see: no single atom
+        // here is unsatisfiable, only the linear combination of several is
+        // (`x>5 ∧ y>5 ∧ x+y<5`). Try that before falling back further.
+        if let Some(lemma) = self.certify_additive_bound_conflict() {
+            return ArithDecision::ProvedEmpty(lemma);
+        }
+
+        // A different global argument: if every arithmetic variable decided
+        // so far had *no freedom at all* (see `ArithChoice::forced`), the
+        // whole assigned-atom set has at most one candidate real assignment
+        // — the forced chain. `var` having an exactly, reliably empty region
+        // under that chain means the candidate does not extend, so no real
+        // assignment satisfies the currently-assigned atoms at all: their
+        // conjunction is unconditionally unsatisfiable, not merely "empty
+        // given an arbitrary greedy pick".
+        if let Some(lemma) = self.certify_forced_chain_conflict(&regions) {
+            return ArithDecision::ProvedEmpty(lemma);
+        }
+
         ArithDecision::GreedyEmpty
+    }
+
+    /// See the call site in [`Self::pick_arith_value`] for the argument this
+    /// certifies. Returns the disjunction of the negations of every
+    /// currently boolean-assigned atom literal (inequality and root alike)
+    /// when it applies, `None` otherwise (leaving the caller to fall back to
+    /// re-sampling or `Unknown`).
+    pub(super) fn certify_forced_chain_conflict(
+        &self,
+        regions: &ArithRegions,
+    ) -> Option<Vec<Literal>> {
+        if !regions.reliable || !regions.outer.is_empty() {
+            return None;
+        }
+        if !self.arith_witnesses.every_witness_pinned() {
+            return None;
+        }
+
+        let mut lemma = Vec::new();
+        for atom in &self.atoms {
+            let bool_var = match atom {
+                Atom::Ineq(ineq) => ineq.bool_var,
+                Atom::Root(root) => root.bool_var,
+            };
+            let value = self.assignment.bool_value(bool_var);
+            if value.is_true() {
+                lemma.push(Literal::negative(bool_var));
+            } else if value.is_false() {
+                lemma.push(Literal::positive(bool_var));
+            }
+        }
+        if lemma.len() < 2 { None } else { Some(lemma) }
     }
 
     /// Attempt to certify that the currently-assigned polynomial atoms are
@@ -225,7 +302,12 @@ impl NlsatSolver {
             let Atom::Ineq(ineq) = atom else {
                 continue;
             };
-            if ineq.factors.len() != 1 {
+            // An even-multiplicity factor contributes `p^2k` to the product,
+            // so the atom constrains `|p|`'s sign class, not `p`'s: `p^2 > 0`
+            // says `p != 0`, which is strictly weaker than the `p > 0` this
+            // abstraction would read off it. Sign reasoning over the raw
+            // polynomial is only valid for an odd-multiplicity factor.
+            if ineq.factors.len() != 1 || ineq.factors[0].is_even {
                 continue;
             }
             let val = self.assignment.bool_value(ineq.bool_var);
@@ -354,6 +436,148 @@ impl NlsatSolver {
             }
         }
 
+        None
+    }
+
+    /// Certify a conflict between single-variable lower bounds and a unit-
+    /// coefficient upper bound on their sum: `v_1 > a_1 ∧ … ∧ v_k > a_k ∧
+    /// (v_1+…+v_k) < b` (and the `>=`/`<=` variants) is unsatisfiable
+    /// whenever `Σ a_i` already reaches or exceeds `b`. No single atom in
+    /// that conjunction is inconsistent by itself — only their combination
+    /// is — so this is a companion to [`Self::certify_sign_conflict`] rather
+    /// than a replacement: that one reasons about coupling through
+    /// multiplication, this one through addition.
+    ///
+    /// Only unit (coefficient exactly `1`) linear terms are recognised; a
+    /// scaled or higher-degree term makes the atom's shape fall through
+    /// untouched; a false negative here just means the search keeps looking
+    /// (re-sampling, then `Unknown`), never a wrong answer.
+    pub(super) fn certify_additive_bound_conflict(&self) -> Option<Vec<Literal>> {
+        // Strongest lower bound known for each variable: (bound, strict, lit).
+        let mut lower_bounds: FxHashMap<Var, (BigRational, bool, Literal)> = FxHashMap::default();
+        // Unit-coefficient upper bounds on a sum of two or more variables.
+        let mut sum_upper_bounds: Vec<(Vec<Var>, BigRational, bool, Literal)> = Vec::new();
+
+        for atom in &self.atoms {
+            let Atom::Ineq(ineq) = atom else {
+                continue;
+            };
+            // Same restriction as `certify_sign_conflict`: this reads the
+            // factor's polynomial as if the atom compared *it* against zero,
+            // which an even multiplicity invalidates (`(v - a)^2 > 0` is
+            // `v != a`, not the lower bound `v > a` that would be collected
+            // here).
+            if ineq.factors.len() != 1 || ineq.factors[0].is_even {
+                continue;
+            }
+            let truth = self.assignment.bool_value(ineq.bool_var);
+            if truth.is_undef() {
+                continue;
+            }
+            let is_true = truth.is_true();
+            let lit = if is_true {
+                Literal::positive(ineq.bool_var)
+            } else {
+                Literal::negative(ineq.bool_var)
+            };
+
+            // Decompose `poly` into `(Σ unit-coefficient variables) +
+            // constant`; any other shape (a scaled coefficient, a repeated
+            // or higher-power variable, …) is left to the other certifiers.
+            let poly = &ineq.factors[0].poly;
+            let mut atom_vars: Vec<Var> = Vec::new();
+            let mut constant = BigRational::zero();
+            let mut shape_ok = true;
+            for term in poly.terms() {
+                if term.monomial.is_unit() {
+                    constant += &term.coeff;
+                    continue;
+                }
+                let powers = term.monomial.vars();
+                if powers.len() == 1 && powers[0].power == 1 && term.coeff.is_one() {
+                    atom_vars.push(powers[0].var);
+                } else {
+                    shape_ok = false;
+                    break;
+                }
+            }
+            if !shape_ok || atom_vars.is_empty() {
+                continue;
+            }
+            atom_vars.sort_unstable();
+            atom_vars.dedup();
+
+            // `poly = (Σ atom_vars) + constant`; the atom asserts `poly OP
+            // 0`, i.e. `(Σ atom_vars) OP -constant`.
+            let bound = -constant;
+            if atom_vars.len() == 1 {
+                let v = atom_vars[0];
+                let (is_lower, strict) = match (ineq.kind, is_true) {
+                    (AtomKind::Gt, true) => (true, true),
+                    (AtomKind::Lt, false) => (true, false),
+                    (AtomKind::Lt, true) => (false, true),
+                    (AtomKind::Gt, false) => (false, false),
+                    _ => continue,
+                };
+                if !is_lower {
+                    continue;
+                }
+                let stronger = lower_bounds
+                    .get(&v)
+                    .is_none_or(|(b, s, _)| bound > *b || (bound == *b && strict && !*s));
+                if stronger {
+                    lower_bounds.insert(v, (bound, strict, lit));
+                }
+            } else {
+                let (is_upper, strict) = match (ineq.kind, is_true) {
+                    (AtomKind::Lt, true) => (true, true),
+                    (AtomKind::Gt, false) => (true, false),
+                    _ => continue,
+                };
+                if is_upper {
+                    sum_upper_bounds.push((atom_vars, bound, strict, lit));
+                }
+            }
+        }
+
+        for (vars, upper, upper_strict, upper_lit) in &sum_upper_bounds {
+            if vars.len() < 2 {
+                continue;
+            }
+            let mut lower_sum = BigRational::zero();
+            let mut any_strict = false;
+            let mut lits = vec![*upper_lit];
+            let mut have_all = true;
+            for v in vars {
+                let Some((b, s, l)) = lower_bounds.get(v) else {
+                    have_all = false;
+                    break;
+                };
+                lower_sum += b;
+                any_strict |= *s;
+                lits.push(*l);
+            }
+            if !have_all {
+                continue;
+            }
+            // The bounds force `Σ vars OP_lo lower_sum` and `Σ vars OP_hi
+            // upper`; the two are jointly unsatisfiable exactly when the
+            // forced-lower interval and the asserted-upper interval do not
+            // overlap.
+            let conflict = match lower_sum.cmp(upper) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Equal => any_strict || *upper_strict,
+                std::cmp::Ordering::Less => false,
+            };
+            if conflict {
+                let mut lemma: Vec<Literal> = lits.iter().map(|l| l.negate()).collect();
+                lemma.sort_by_key(|l| l.index());
+                lemma.dedup();
+                if lemma.len() >= 2 {
+                    return Some(lemma);
+                }
+            }
+        }
         None
     }
 
@@ -1388,6 +1612,110 @@ fn poly_from_int_coeffs(
 mod tests {
     use super::*;
     use crate::types::RootAtom;
+
+    /// Install a single-factor inequality atom with the given multiplicity
+    /// parity directly on the solver, assigned `true` at the current level.
+    ///
+    /// `NlsatSolver::new_ineq_atom` hardcodes odd multiplicity, so an even
+    /// factor is unreachable through the public constructor; the certifiers
+    /// still have to be correct for one, since the atom type admits it and
+    /// every other consumer of `factors` in this crate guards on it.
+    fn install_ineq(
+        solver: &mut NlsatSolver,
+        poly: Polynomial,
+        kind: AtomKind,
+        is_even: bool,
+    ) -> BoolVar {
+        let max_var = poly.max_var();
+        if max_var != oxiz_math::polynomial::NULL_VAR {
+            while solver.num_arith_vars <= max_var {
+                solver.new_arith_var();
+            }
+        }
+        let bool_var = solver.new_bool_var();
+        solver.atoms.push(Atom::Ineq(IneqAtom {
+            kind,
+            factors: vec![crate::types::PolyFactor { poly, is_even }],
+            max_var,
+            bool_var,
+        }));
+        solver.assignment.assign(
+            Literal::positive(bool_var),
+            crate::assignment::Justification::Unit,
+        );
+        bool_var
+    }
+
+    /// `certify_additive_bound_conflict` reads a factor's polynomial as the
+    /// quantity the atom bounds. That reading is only valid at odd
+    /// multiplicity: `(v - 10)^2 > 0` says `v != 10`, not `v > 10`.
+    ///
+    /// The atom set below is `(a-10)^k > 0`, `(b-10)^k > 0`, `a+b-15 < 0`. At
+    /// `k` odd it is genuinely unsatisfiable (`a, b > 10` forces `a+b > 20`)
+    /// and the certifier must return the lemma. At `k` even it is satisfiable
+    /// (`a = b = 1`), so the same lemma would be a fabricated `unsat` — the
+    /// certifier must decline.
+    #[test]
+    fn test_additive_bound_certifier_declines_even_multiplicity_factors() {
+        let a = Polynomial::from_var(0);
+        let b = Polynomial::from_var(1);
+        let a_bound = Polynomial::sub(
+            &a,
+            &Polynomial::constant(BigRational::from_integer(10.into())),
+        );
+        let b_bound = Polynomial::sub(
+            &b,
+            &Polynomial::constant(BigRational::from_integer(10.into())),
+        );
+        let sum_bound = Polynomial::sub(
+            &Polynomial::add(&a, &b),
+            &Polynomial::constant(BigRational::from_integer(15.into())),
+        );
+
+        let mut odd = NlsatSolver::new();
+        install_ineq(&mut odd, a_bound.clone(), AtomKind::Gt, false);
+        install_ineq(&mut odd, b_bound.clone(), AtomKind::Gt, false);
+        install_ineq(&mut odd, sum_bound.clone(), AtomKind::Lt, false);
+        assert!(
+            odd.certify_additive_bound_conflict().is_some(),
+            "a>10 and b>10 and a+b<15 is a genuine additive conflict"
+        );
+
+        let mut even = NlsatSolver::new();
+        install_ineq(&mut even, a_bound, AtomKind::Gt, true);
+        install_ineq(&mut even, b_bound, AtomKind::Gt, true);
+        install_ineq(&mut even, sum_bound, AtomKind::Lt, false);
+        assert!(
+            even.certify_additive_bound_conflict().is_none(),
+            "(a-10)^2>0 only says a != 10; a = b = 1 satisfies the set"
+        );
+    }
+
+    /// The same restriction for `certify_sign_conflict`, which abstracts each
+    /// factor into a constraint on the *sign* of its monomial. `x^2 > 0` does
+    /// not force `x > 0`, so the sign abstraction may not be applied to an
+    /// even-multiplicity factor: `x^k > 0` with `x < 0` is a real conflict at
+    /// odd `k` and satisfiable (`x = -1`) at even `k`.
+    #[test]
+    fn test_sign_certifier_declines_even_multiplicity_factors() {
+        let x = Polynomial::from_var(0);
+
+        let mut odd = NlsatSolver::new();
+        install_ineq(&mut odd, x.clone(), AtomKind::Gt, false);
+        install_ineq(&mut odd, x.clone(), AtomKind::Lt, false);
+        assert!(
+            odd.certify_sign_conflict().is_some(),
+            "x>0 and x<0 is a genuine sign conflict"
+        );
+
+        let mut even = NlsatSolver::new();
+        install_ineq(&mut even, x.clone(), AtomKind::Gt, true);
+        install_ineq(&mut even, x, AtomKind::Lt, false);
+        assert!(
+            even.certify_sign_conflict().is_none(),
+            "x^2>0 only says x != 0, which x = -1 satisfies alongside x < 0"
+        );
+    }
 
     // Regression test for the item: when a root atom's index references a
     // root that doesn't exist for the current substitution (here, `x^2 + 1`

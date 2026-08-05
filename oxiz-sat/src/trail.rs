@@ -116,6 +116,28 @@ impl Trail {
             .map_or(Reason::Decision, |v| v.reason)
     }
 
+    /// Get the decision variable chosen when entering decision `level`
+    /// (1-indexed: level 0 has no decision, only unconditional facts).
+    ///
+    /// `level_starts[level]` is recorded by [`Self::new_decision_level`]
+    /// immediately before the decision literal itself is pushed, and that
+    /// position is never overwritten by a later backtrack (a rollback either
+    /// truncates the level away entirely or leaves everything at or below
+    /// its target level untouched) — so this is a plain, allocation-free
+    /// lookup. Returns `None` for level 0 or a level beyond the current
+    /// trail, and defensively if the recorded reason ever turns out not to
+    /// be a decision (should not happen; see the invariant above).
+    #[must_use]
+    pub fn decision_var_at_level(&self, level: u32) -> Option<Var> {
+        if level == 0 {
+            return None;
+        }
+        let idx = *self.level_starts.get(level as usize)?;
+        let lit = self.assignments.get(idx)?;
+        let var = lit.var();
+        matches!(self.reason(var), Reason::Decision).then_some(var)
+    }
+
     /// Start a new decision level
     pub fn new_decision_level(&mut self) {
         self.current_level += 1;

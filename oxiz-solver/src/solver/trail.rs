@@ -41,6 +41,22 @@ pub(crate) enum TrailOp {
     DtVarConstructorAdded { term: TermId },
     /// A compound term was marked as fully traversed by `track_theory_vars`
     TrackedCompoundAdded { term: TermId },
+    /// A Bool-sorted `Var` was marked as appearing in a UF-application
+    /// argument position by `abstract_compound_bool_args`.
+    BoolUfArgAdded { term: TermId },
+    /// A numeric term was marked as appearing in a UF-application argument
+    /// position by `purify_numeric_uf_args`.
+    NumericUfArgAdded { term: TermId },
+    /// A pre-purification UF-application term was aliased to its purified
+    /// counterpart by `purify_numeric_uf_args`.
+    NumericPurifyAliasAdded { term: TermId },
+    /// A term received an explicit integer case-split lemma from
+    /// `Solver::split_narrow_int_domains`.
+    CaseSplitTermAdded { term: TermId },
+    /// One triangle of the pure-equality fast path's chordal graph received
+    /// its three transitivity clauses (see `eq_skeleton`). The payload is the
+    /// triangle's three constants in ascending order.
+    EqTransitivityTriangleAdded { triangle: [TermId; 3] },
     /// A ground array-axiom instance was asserted to the SAT core
     ArrayAxiomInstanceAdded { term: TermId },
     /// A `div` / `mod` / numeric-`ite` term received its defining axioms
@@ -77,6 +93,8 @@ pub(crate) struct ContextState {
     pub(crate) num_ematch_quantifiers: usize,
     /// `has_quantifiers` flag at the time of push
     pub(crate) has_quantifiers: bool,
+    /// `quantifier_uf_funcs` set at the time of push
+    pub(crate) quantifier_uf_funcs: crate::prelude::FxHashSet<oxiz_core::interner::Spur>,
     /// `has_bv_arith_ops` flag at the time of push
     pub(crate) has_bv_arith_ops: bool,
     /// `has_array_ops` flag at the time of push
@@ -127,6 +145,7 @@ impl super::Solver {
             mbqi: _,            // SNAPSHOT: num_mbqi_quantifiers
             ematch_engine: _,   // SNAPSHOT: num_ematch_quantifiers
             has_quantifiers: _, // SNAPSHOT
+            quantifier_uf_funcs: _, // SNAPSHOT
             term_to_var: _,     // TRAIL: VarCreated
             var_to_term: _,     // SNAPSHOT: num_vars
             var_to_constraint: _, // TRAIL: ConstraintAdded
@@ -155,6 +174,9 @@ impl super::Solver {
             dt_var_constructors: _,      // TRAIL: DtVarConstructorAdded
             arith_parse_cache: _,        // INVARIANT: keyed by term structure
             tracked_compound_terms: _,   // TRAIL: TrackedCompoundAdded
+            bool_uf_arg_terms: _,        // TRAIL: BoolUfArgAdded
+            numeric_uf_arg_terms: _,     // TRAIL: NumericUfArgAdded
+            numeric_purify_aliases: _,   // TRAIL: NumericPurifyAliasAdded
             encoded_terms: _, // TRAIL: EncodedTermAdded (carries the displaced entry, so a polarity widened inside the scope is restored rather than dropped)
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
@@ -177,8 +199,26 @@ impl super::Solver {
             // let a cached verdict from before a `set-option` be matched again
             // after the pop.
             next_skolem_id: _, // INVARIANT: monotone — a popped scope's Skolem
-                               // names must never be handed out again, so this counter deliberately
-                               // survives `pop` (re-using an id would alias two distinct witnesses).
+            // names must never be handed out again, so this counter deliberately
+            // survives `pop` (re-using an id would alias two distinct witnesses).
+            case_split_terms: _,  // TRAIL: CaseSplitTermAdded
+            case_split_rounds: _, // PER-SEARCH: reset at `check_core` entry, not
+            // trail-scoped — see the field doc for why this differs from
+            // `case_split_terms`.
+            lookup_index_terms: _, // accumulates lookup-spine index terms across
+            // `assert`s; a stale entry after `pop` only makes a later
+            // `split_narrow_int_domains` round consider a term whose table no
+            // longer exists, which costs a bound lookup that finds nothing —
+            // sound to leave (cleared wholesale only by `reset`).
+            eq_transitivity_triangles: _, // TRAIL: EqTransitivityTriangleAdded
+            equality_skeleton_classes: _, // RESULT: part of the model the last
+            // `check` produced, discarded by `invalidate_results` (which
+            // `pop` calls first) and rebuilt by every pure-equality fast-path
+            // attempt, so it never outlives the verdict it describes.
+            branch_priority: _, // the `Arc` handle itself never changes after
+                                // construction (see `branch_priority`'s module doc); its
+                                // contents are a soft decision-order hint, not a soundness
+                                // invariant, so a scope boundary need not roll them back.
         } = self;
 
         debug_assert_eq!(self.trail.len(), state.trail_position);
@@ -191,6 +231,7 @@ impl super::Solver {
             state.num_ematch_quantifiers
         );
         debug_assert_eq!(self.has_quantifiers, state.has_quantifiers);
+        debug_assert_eq!(self.quantifier_uf_funcs, state.quantifier_uf_funcs);
         debug_assert_eq!(self.has_bv_arith_ops, state.has_bv_arith_ops);
         debug_assert_eq!(self.has_array_ops, state.has_array_ops);
         debug_assert_eq!(self.encode_depth_exceeded, state.encode_depth_exceeded);

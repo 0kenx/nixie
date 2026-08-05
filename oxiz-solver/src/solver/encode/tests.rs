@@ -434,6 +434,7 @@ fn skolem_candidate_found_under_xor() {
 use super::super::{SolverConfig, SolverResult};
 use num_rational::Rational64;
 use num_traits::Zero;
+use smallvec::SmallVec;
 
 /// Depth `n` chain of implications `b_n => (b_{n-1} => (... => b_0))`, built
 /// iteratively.  `mk_implies` folds only constant operands, so every level of
@@ -1062,5 +1063,199 @@ fn check_sat_only_respects_false_and_truncation_flags() {
         solver.check_sat_only(&mut manager),
         SolverResult::Unknown,
         "check_sat_only must not guess over a truncated encoding"
+    );
+}
+
+// =====================================================================
+// The boolean-constant arms of the Tseitin encoder: `encode` must return a
+// literal whose truth value *equals* the encoded term's.
+// =====================================================================
+
+/// Root-cause pin for the `TermKind::False` arm.  The arm pins its variable
+/// with the unit clause `[neg(var)]`, so the literal that *stands for* the
+/// constant is `pos(var)`; returning `neg(var)` (which evaluates to `true`)
+/// inverted every nested occurrence of `false`.
+///
+/// `assert` short-circuits a top-level `False`/`True` (see the constant checks
+/// in `Solver::assert`), so the arm is only reachable for a constant that
+/// appears *inside* a larger term.  `mk_eq` folds constant operand pairs, which
+/// makes `Distinct` over constants the natural route: `distinct(5, 2)` expands
+/// to the pairwise `mk_eq(5, 2)`, which folds to the `False` term, and the
+/// mis-polarised literal turned a satisfiable assertion into `Unsat`.
+#[test]
+fn distinct_over_constant_int_operands_is_sat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let five = manager.mk_int(5);
+    let two = manager.mk_int(2);
+    let distinct = manager.mk_distinct([five, two]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "5 and 2 are distinct integers; `Unsat` means the folded `False` pair \
+         encoded to a literal that evaluates to `true`"
+    );
+}
+
+/// Same pin with more than one pair, so the `n`-ary expansion is covered too.
+#[test]
+fn distinct_over_three_constant_int_operands_is_sat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let one = manager.mk_int(1);
+    let two = manager.mk_int(2);
+    let three = manager.mk_int(3);
+    let distinct = manager.mk_distinct([one, two, three]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "1, 2 and 3 are pairwise distinct; all three folded pairs must encode \
+         to literals that evaluate to `false`"
+    );
+}
+
+/// Companion refutation pin: the `True` arm was already correct and must stay
+/// correct.  `mk_eq` folds a syntactically identical pair to `True`, so
+/// `distinct(5, 5)` is unsatisfiable.
+#[test]
+fn distinct_over_equal_int_constants_is_unsat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let five = manager.mk_int(5);
+    let distinct = manager.mk_distinct([five, five]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Unsat,
+        "5 is not distinct from itself"
+    );
+}
+
+/// Negating the assertion must flip the verdict: a bug that reports `Unsat`
+/// for `distinct(5, 2)` reports `Sat` here, so this pins the other polarity.
+#[test]
+fn negated_distinct_over_constant_int_operands_is_unsat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let five = manager.mk_int(5);
+    let two = manager.mk_int(2);
+    let distinct = manager.mk_distinct([five, two]);
+    let negated = manager.mk_not(distinct);
+    solver.assert(negated, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Unsat,
+        "`not (distinct 5 2)` claims 5 = 2 and must be refuted"
+    );
+}
+
+/// The boolean-constant operands take the `(True, False)` fold branch of
+/// `mk_eq` rather than the `IntConst` one, and reach the same arm.
+#[test]
+fn distinct_over_constant_bool_operands_is_sat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let t = manager.mk_true();
+    let f = manager.mk_false();
+    let distinct = manager.mk_distinct([t, f]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "`true` and `false` are distinct booleans"
+    );
+}
+
+/// The `BitVecConst` fold branch of `mk_eq`, reaching the same arm.
+#[test]
+fn distinct_over_constant_bitvec_operands_is_sat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let one = manager.mk_bitvec(1i64, 2);
+    let two = manager.mk_bitvec(2i64, 2);
+    let distinct = manager.mk_distinct([one, two]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "#b01 and #b10 are distinct bitvectors"
+    );
+}
+
+/// The exact shape the `QF_BV` differential-test seed produced: the bitvector
+/// operands are *expressions*, but `mk_bv_neg`/`mk_bv_and` fold their constant
+/// arguments, so `mk_eq` still sees a `BitVecConst` pair and still folds.
+/// `bvneg #b1011` is `#b0101`, `bvand #b0100 #b0101` is `#b0100`, which is
+/// distinct from `#b0010`.
+#[test]
+fn distinct_over_folded_bitvec_expression_operands_is_sat() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+
+    let four = manager.mk_bitvec(4i64, 4);
+    let eleven = manager.mk_bitvec(11i64, 4);
+    let negated = manager.mk_bv_neg(eleven);
+    let masked = manager.mk_bv_and(four, negated);
+    let two = manager.mk_bitvec(2i64, 4);
+    let distinct = manager.mk_distinct([masked, two]);
+    solver.assert(distinct, &mut manager);
+
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "(bvand #b0100 (bvneg #b1011)) is #b0100, which is distinct from #b0010"
+    );
+}
+
+/// Guard the *non*-constant path: with a variable operand no pair folds, so
+/// this exercises the ordinary theory encoding and must keep answering by the
+/// variable's value, not by the constant arms.
+#[test]
+fn distinct_over_mixed_constant_and_variable_operands_stays_correct() {
+    // x = 2 leaves `distinct(5, x)` satisfiable.
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let int_sort = manager.sorts.int_sort;
+    let x = manager.mk_var("x", int_sort);
+    let five = manager.mk_int(5);
+    let two = manager.mk_int(2);
+    let bind = manager.mk_eq(x, two);
+    let distinct = manager.mk_distinct([five, x]);
+    solver.assert(bind, &mut manager);
+    solver.assert(distinct, &mut manager);
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "x = 2 is distinct from 5"
+    );
+
+    // x = 5 refutes it.
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let int_sort = manager.sorts.int_sort;
+    let x = manager.mk_var("x", int_sort);
+    let five = manager.mk_int(5);
+    let bind = manager.mk_eq(x, five);
+    let distinct = manager.mk_distinct([five, x]);
+    solver.assert(bind, &mut manager);
+    solver.assert(distinct, &mut manager);
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Unsat,
+        "x = 5 is not distinct from 5"
     );
 }

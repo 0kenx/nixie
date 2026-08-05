@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "High-performance CDCL SAT Solver for OxiZ"
 keywords = ["sat", "cdcl", "solver"]
 categories = ["algorithms"]
@@ -29,6 +30,16 @@ libm.workspace = true
 [dev-dependencies]
 proptest = { workspace = true }
 serde_json = { workspace = true }
+# Pure-Rust LRAT checker used by the end-to-end proof-tracing regression
+# tests (tests/pr26_lrat_proof_regressions.rs). `oxiz-proof`'s own optional
+# dependency back on this crate (its `sat-integration` feature) is not
+# enabled here, so this is not a real dependency cycle — Cargo resolves
+# dev-dependency edges like this independently of the normal graph.
+# Path-only (not `{ workspace = true }`): a dev-dep with a `version` survives
+# packaging and forces `cargo publish -p oxiz-sat` to resolve oxiz-proof from
+# crates.io — which fails, since oxiz-proof publishes in a later tier than
+# oxiz-sat. Path-only dev-deps are stripped from the published manifest.
+oxiz-proof = { path = "../oxiz-proof" }
 
 # Profile-Guided Optimization (PGO) Configuration
 #

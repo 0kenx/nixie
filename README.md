@@ -12,14 +12,36 @@ OxiZ is a high-performance Satisfiability Modulo Theories (SMT) solver written e
 
 **Pure Rust is a fundamental requirement** - no C/C++ dependencies, no FFI bindings, just clean, safe Rust code.
 
-### Implementation Status (v0.3.1)
+### Implementation Status (v0.3.2)
 
 OxiZ is under active development with core theories at production quality on its tested surface.
 
-- **Pure Rust Implementation**: 438,793 lines of production Rust code across 1,236 files (547,739 total including comments/blank lines, per `tokei . --exclude target`)
-- **Unit Tests**: 9,668 passing, 8 skipped (`cargo nextest run --workspace --all-features`, confirmed at release time), plus 110 doc-tests (`cargo test --doc --workspace --all-features`)
+- **Pure Rust Implementation**: 451,853 lines of production Rust code across 1,276 files (564,303 total including comments/blank lines, per `tokei . --exclude target`)
+- **Unit Tests**: 9,953 passing, 8 skipped (`cargo nextest run --workspace --all-features`, confirmed at release time), plus 110 doc-tests (`cargo test --doc --workspace --all-features`)
 - **Z3 Parity**: honest, non-fabricated comparison against a real `z3` 4.15.4 binary (`bench/z3_parity`): **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite under the honest comparator (an `Unknown` from either solver never counts as a match). All 19 logic families are individually at 100%, up from 154/168 with 12 Inconclusive and 2 Timeout at 0.3.0. This is 100% *of the differential parity suite* — it is not a blanket "100% Z3 compatibility" claim about the solver as a whole; see "Z3 Parity" below and [`TODO.md`](TODO.md) for what the suite does and does not cover
-- **Audit + hardening (multiple waves)**: a 2026-07-16 production-readiness audit (19 scoped agents + adversarial verification), the 0.3.0 follow-on waves, and this release's soundness sweep found and fixed soundness and honesty gaps across every crate — SMT-LIB parser coverage (now fully iterative), quantifier elimination (Ferrante-Rackoff, virtual substitution, MBI/Craig interpolants), MBQI SAT certification and completeness, Spacer MIC generalization and multi-threaded parallel PDR, IEEE-754 `fp.rem`/fused-multiply-add, proof-rule/checker validation, >64-bit bitvector arithmetic, and process-crash fixes. Re-verified status (which items are fixed vs. still open) is tracked per-item in [`TODO.md`](TODO.md); a small number of NLSAT items (notably irrational-root isolation) remain open and are called out there and in the [CHANGELOG](CHANGELOG.md#031---2026-07-31)
+- **Audit + hardening (multiple waves)**: a 2026-07-16 production-readiness audit (19 scoped agents + adversarial verification), the 0.3.0 follow-on waves, the 0.3.1 soundness sweep, and this release's issue-[#25](https://github.com/cool-japan/oxiz/issues/25)-driven soundness sweep found and fixed soundness and honesty gaps across every crate — SMT-LIB parser coverage (now fully iterative), quantifier elimination (Ferrante-Rackoff, virtual substitution, MBI/Craig interpolants), MBQI SAT certification and completeness, Spacer MIC generalization and multi-threaded parallel PDR, IEEE-754 `fp.rem`/fused-multiply-add, proof-rule/checker validation, >64-bit bitvector arithmetic, process-crash fixes, and — this release — EUF congruence closure, Bool/EUF encoding and Arithmetic⇄EUF combination false-`sat` families plus NLSAT conflict-analysis polarity bugs. Re-verified status (which items are fixed vs. still open) is tracked per-item in [`TODO.md`](TODO.md); a small number of NLSAT items (notably irrational-root isolation) remain open and are called out there and in the [CHANGELOG](CHANGELOG.md#032---2026-08-05)
+
+## What's New in 0.3.2 (2026-08-05)
+
+A soundness release driven by an external report: GitHub issue [#25](https://github.com/cool-japan/oxiz/issues/25) ran a random 50-instance QF_UF differential sample against a real z3 binary and found a 34% (17/50) wrong-answer rate. Per project policy none of the 8 pull requests the reporter subsequently opened (#26-#33) were merged directly — this project has no CLA or contribution-provenance guarantee yet — but every one was read in full for its diagnostic value, and every fix below is an independent, from-scratch reimplementation done in-house, backed by a regression test derived from a minimal repro. ~270 such tests were added in the process. Full itemized detail is in [`CHANGELOG.md`](CHANGELOG.md#032---2026-08-05); highlights:
+
+### ⚠️ Breaking change (0.x API)
+`NlDispatchResult::Sat` gained a payload (`Sat` → `Sat(Box<Interpretation>)`), so the nonlinear (QF_NIA/QF_NRA) dispatcher's `sat` verdict now carries the witness model it was checked against; and `SolverConfig` grew thirteen new public fields (`use_vmtf`, `enable_bve`, `nonlinear_model_search`, and others — all defaulting conservatively). Both are plain structs, so downstream code matching `NlDispatchResult::Sat` or constructing `SolverConfig` via full struct-literal syntax needs updating. This is internal/library-API breakage, not a CLI or SMT-LIB behavior change.
+
+### Soundness fixes
+The headline fixes:
+- **EUF congruence closure** could merge two nodes that were no longer actually congruent, because a re-canonicalized node's signature was republished without evicting its old signature-table entry — a spurious equality able to turn a `sat` formula `unsat`.
+- **Bool/EUF encoding** had three gaps that together produced a false-`sat` family (internally tracked as `firewire_tree`): a non-Bool `ite` was interned as an opaque EUF leaf with no link to its conditional-equality meaning; a Bool-sorted `(= b1 b2)` was Tseitin-encoded but never registered as an EUF constraint; and a Bool term used as a UF argument was never completed for congruence.
+- **Arithmetic⇄EUF combination**, the headline fix: when arithmetic facts entailed an equality (e.g. `x=2, y=x+1 ⊢ y=3`) but that equality never reached EUF, terms like `f(y)` and `f(3)` were treated as possibly distinct even though `y` and `3` provably aren't — so `f(y)≠f(3)` alongside those constraints reported `sat` when it should have been `unsat`. This was the headline false-`sat` family on QF_UFLIA/QF_UFIDL, fixed by purifying numeric UF arguments into arithmetic interface terms, adding cross-theory entailment probes backed by Farkas certificates, and case-splitting the remaining non-convex gap over small shared integer domains.
+- **NLSAT conflict analysis** had a wrong-polarity 1-UIP resolution bug that could produce a learned clause not actually entailed by the problem, able to refute a genuinely satisfiable formula; and a level-0 `GreedyEmpty` arithmetic decision misread as global infeasibility (a satisfiable `x·y=35` reported `Unsat`), now fixed with a witness ledger that retries a different point from the same region instead of conceding defeat.
+- **`distinct` over constants** could invert: `(assert (distinct 5 2))`, which constant-folds to `False`, reported `unsat` instead of `sat` because the Tseitin encoder's `False` arm returned the wrong-polarity literal.
+
+See [CHANGELOG.md](CHANGELOG.md#032---2026-08-05) for the rest (`define-fun` argument substitution, DIMACS empty-clause handling, two SAT preprocessing gaps, and a quantified-model verification backstop).
+
+### New capability
+A CaDiCaL-style SAT search loop ships on by default: VMTF branching is now actually wired into decisions (previously dead code) alongside VSIDS/CHB/LRB, with focused/stable mode alternation, restart-trail reuse, and phase-based rephasing. An opt-in SAT inprocessing toolkit (failed-literal probing, bounded variable elimination, equivalent-literal substitution, gate-congruence closure) ships alongside online LRAT proof production and a new pure-Rust LRAT checker. QF_NIA/QF_NRA nonlinear solving is on by default: an exact `BigRational` evaluator double-checks every candidate model, with stochastic model-repair search and array/UF grammar reduction as fallbacks when the core dispatcher can't decide.
+
+Issue #25 itself stays open: this release closes the specific bugs it led to, not the broader claim, since plain QF_UF still isn't part of the 168-benchmark parity suite (see "Z3 Parity" below).
 
 ## What's New in 0.3.1 (2026-07-31)
 
@@ -68,7 +90,7 @@ For the 0.2.4 production-readiness audit and the 0.2.3 feature set (generic `Dra
 
 ## Theory Support Status
 
-Numbers below are re-measured at release time against the current `bench/z3_parity` suite (a real `z3` 4.15.4 binary, an honest comparator that never counts `Unknown` as a match — see [`bench/z3_parity/src/comparator.rs`](bench/z3_parity/src/comparator.rs)). As of 0.3.1 every one of the 19 logic families in the suite is at 100% Correct.
+Numbers below are re-measured at release time against the current `bench/z3_parity` suite (a real `z3` 4.15.4 binary, an honest comparator that never counts `Unknown` as a match — see [`bench/z3_parity/src/comparator.rs`](bench/z3_parity/src/comparator.rs)). As of 0.3.2 every one of the 19 logic families in the suite is at 100% Correct.
 
 ### Core Logics at 100% Z3 Parity ✅
 
@@ -120,12 +142,12 @@ Numbers below are re-measured at release time against the current `bench/z3_pari
 
 `bench/z3_parity/benchmarks/` also covers `AUFLIA`, `AUFLIRA`, `QF_ABV`, `QF_ALIA`, `QF_AUFBV`, `QF_AUFLIA`, `QF_NIRA`, `QF_UFLIA`, `QF_UFLRA`, and `UFLIA`/`UFLRA` (quantified logics). Aggregate result across all 168 benchmarks: **168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** — every benchmark decisive, and every decisive answer agreeing with z3. Per-logic Correct counts for this group: `AUFLIA` 10/10, `AUFLIRA` 5/5, `QF_ABV` 5/5, `QF_ALIA` 5/5, `QF_AUFBV` 5/5, `QF_AUFLIA` 5/5, `QF_NIRA` 5/5, `QF_UFLIA` 5/5, `QF_UFLRA` 5/5, `UFLIA` 20/20, `UFLRA` 10/10.
 
-The three quantified logics that carried the whole of 0.3.0's remaining gap closed this release via the MBQI completeness work (`AUFLIA` 7/10 → 10/10, `UFLIA` 14/20 → 20/20, `UFLRA` 5/10 → 10/10); the three benchmarks that previously exhausted the 60s budget now solve in about a millisecond. This is 100% of the differential parity suite, not a blanket claim of Z3 compatibility outside it.
+The three quantified logics that carried the whole of 0.3.0's remaining gap closed at 0.3.1 via the MBQI completeness work (`AUFLIA` 7/10 → 10/10, `UFLIA` 14/20 → 20/20, `UFLRA` 5/10 → 10/10); the three benchmarks that previously exhausted the 60s budget now solve in about a millisecond. This is 100% of the differential parity suite, not a blanket claim of Z3 compatibility outside it.
 
 - **QF_UF** (Uninterpreted Functions) - E-graphs with congruence closure (not separately benchmarked; exercised indirectly by every other logic above)
 - **QF_NRA** (Nonlinear Real) - CAD-based NLSAT solver (Alpha: irrational-root isolation still open; not part of this benchmark suite, see `TODO.md`)
 - **AUFBV** (Arrays + UF + BV) - Theory combination via Nelson-Oppen (`QF_AUFBV` scores 5/5 on the parity suite)
-- **UFLIA** (Quantified LIA) - 20/20 this release: Skolem witness synthesis with CEGAR refinement decides the cases that previously fell back to `Unknown` or timed out
+- **UFLIA** (Quantified LIA) - 20/20 since 0.3.1: Skolem witness synthesis with CEGAR refinement decides the cases that previously fell back to `Unknown` or timed out
 - **UFLRA** (Quantified LRA) - 10/10 via symbolic model certification over the reals plus quasi-macro detection
 - **AUFLIA** (Quantified LIA + Arrays) - 10/10 via finite-range quantifier expansion
 - **HORN** (Horn Clauses) - PDR/IC3 engine with MIC generalization and a multi-threaded parallel portfolio; real BMC, k-induction, and init/transition SMT queries (not part of this benchmark suite)
@@ -173,24 +195,24 @@ The three quantified logics that carried the whole of 0.3.0's remaining gap clos
 | QF_UFLRA | 5/5 | ✅ 100% Correct | UF + linear real arithmetic |
 | **TOTAL** | **168/168 Correct** | **✅ 100%** | 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error — see caveats below |
 
-The original 8-logic, 88-benchmark quickstart core (QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, QF_FP) is the first eight rows above and remains 88/88. The result was verified over three consecutive full runs on an idle machine, plus a fourth after this release's repeated-`(check-sat)` work.
+The original 8-logic, 88-benchmark quickstart core (QF_LIA, QF_LRA, QF_NIA, QF_BV, QF_DT, QF_A, QF_S, QF_FP) is the first eight rows above and remains 88/88. The result was verified over three consecutive full runs on an idle machine, plus a fourth after 0.3.1's repeated-`(check-sat)` work.
 
 ### What This Means
 
 - ✅ **Every Benchmark Decisive, Every Answer Matching**: all 19 logic families reach 100% Correct, with no `Unknown`, no timeout and no process error anywhere in the run. Because the comparator refuses to score `Unknown` as a match, the score cannot be inflated by declining to answer — 168/168 means OxiZ committed to a verdict on every benchmark and z3 agreed with all of them.
 - ⚠️ **100% of the Suite, Not "100% Z3 Compatibility"**: this is a claim about the differential parity suite and nothing wider. The suite is 168 benchmarks across 19 logics; it does not cover `QF_NRA`, `HORN`, or the long tail of SMT-LIB, and a perfect score on it is not evidence that any given formula outside it will be decided. Coverage gaps are tracked in [`TODO.md`](TODO.md).
-- ⚠️ **Not a General Production-Readiness Claim**: the 2026-07-16 audit, 0.3.0's hardening waves and this release's soundness sweep found and fixed soundness gaps across the parser, quantifier elimination, MBQI, SAT conflict analysis, NLSAT, math, MaxSAT/QE, Spacer, and proof checking — but items such as NLSAT irrational-root isolation remain open; see [`TODO.md`](TODO.md) for the itemized gaps and fix status before relying on OxiZ outside this suite's scope
+- ⚠️ **Not a General Production-Readiness Claim**: the 2026-07-16 audit, 0.3.0's hardening waves, 0.3.1's soundness sweep and this release's soundness sweep found and fixed soundness gaps across the parser, quantifier elimination, MBQI, SAT conflict analysis, NLSAT, math, MaxSAT/QE, Spacer, EUF/arithmetic theory combination, and proof checking — but items such as NLSAT irrational-root isolation remain open; see [`TODO.md`](TODO.md) for the itemized gaps and fix status before relying on OxiZ outside this suite's scope
 - ✅ **Pure Rust**: Achieved without any C/C++ dependencies
 
 This snapshot validates OxiZ's arithmetic, BV, datatype, array, string, FP, combined-theory and quantified reasoning against Z3 across the whole differential suite, while being explicit that logics outside the suite remain ongoing work.
 
-## Project Statistics (v0.3.1, 2026-07-31)
+## Project Statistics (v0.3.2, 2026-08-05)
 
 | Metric | Value |
 |--------|-------|
-| Rust Lines of Code (code) | 438,793 |
-| Total Rust Lines (with comments/blanks) | 547,739 across 1,236 files |
-| Total Tests | 9,668 passing, 8 skipped (`--all-features`) at the last full nextest run, plus 110 doc-tests |
+| Rust Lines of Code (code) | 451,853 |
+| Total Rust Lines (with comments/blanks) | 564,303 across 1,276 files |
+| Total Tests | 9,953 passing, 8 skipped (`--all-features`) at the last full nextest run, plus 110 doc-tests |
 | Z3 Parity (differential suite, 168 benchmarks / 19 logics) | **168/168 (100%) Correct**, 0 Wrong / 0 Inconclusive / 0 Timeout / 0 Error, 19/19 logics at 100% |
 | Z3 Parity (quickstart core subset, 88 benchmarks) | **88/88 (100%) Correct**, 8/8 logics at 100% |
 | Crates | 17 |
@@ -250,21 +272,21 @@ For optimal performance, we recommend:
 ```toml
 # Add to your Cargo.toml
 [dependencies]
-oxiz = "0.3.1"  # Default includes solver
+oxiz = "0.3.2"  # Default includes solver
 ```
 
 Or with specific features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.3.1", features = ["nlsat", "optimization"] }
+oxiz = { version = "0.3.2", features = ["nlsat", "optimization"] }
 ```
 
 For all features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.3.1", features = ["full"] }
+oxiz = { version = "0.3.2", features = ["full"] }
 ```
 
 ### Building from Source
@@ -353,7 +375,7 @@ Status reflects results on the `bench/z3_parity` suite against a real `z3` 4.15.
 | QF_S | Strings | ✅ Complete (10/10 Correct via the ground string decision procedure) |
 | QF_FP | Floating Point | ✅ Complete (10/10 Correct via the concrete FP model finder) |
 | QF_NRA | Nonlinear Real Arithmetic | 🔶 Alpha (irrational-root isolation still open) |
-| AUFLIA / UFLIA / UFLRA | Quantified logics | ✅ Complete on the parity suite (AUFLIA 10/10, UFLIA 20/20, UFLRA 10/10 this release, via finite-range expansion, Skolem-witness CEGAR and symbolic model certification); MBQI is still incomplete in general, see `TODO.md` |
+| AUFLIA / UFLIA / UFLRA | Quantified logics | ✅ Complete on the parity suite (AUFLIA 10/10, UFLIA 20/20, UFLRA 10/10 since 0.3.1, via finite-range expansion, Skolem-witness CEGAR and symbolic model certification); MBQI is still incomplete in general, see `TODO.md` |
 | AUFLIRA | Quantified mixed Int/Real + Arrays | ✅ Complete (5/5 on the parity suite) |
 | AUFBV | Arrays + UF + BV | 🔶 Alpha (`QF_AUFBV` variant scores 5/5 on the parity suite) |
 | QF_NIRA | Nonlinear Integer + Real Arithmetic | ✅ Complete (5/5 on the parity suite) |

@@ -79,7 +79,29 @@ impl ConfigPreset {
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -106,7 +128,29 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -133,7 +177,29 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 50,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -160,7 +226,29 @@ impl ConfigPreset {
             inprocessing_interval: 3000, // More frequent
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -187,7 +275,29 @@ impl ConfigPreset {
             inprocessing_interval: 20000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -214,7 +324,29 @@ impl ConfigPreset {
             inprocessing_interval: 2000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 200,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -237,7 +369,29 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -260,7 +414,29 @@ impl ConfigPreset {
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 
@@ -283,7 +459,29 @@ impl ConfigPreset {
             inprocessing_interval: 4000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
+            use_vmtf: true,
+            luby_cap: 64,
+            enable_stabilize: true,
+            stabilize_base: 5000,
+            focused_luby_cap: 16,
+            rephase_interval: 50,
+            reuse_trail: true,
             external_branching: None,
+            // Off by default, matching `SolverConfig::default()`: sound on
+            // its own, but a probing-only pass can fully settle a
+            // small/dense instance before the main CDCL loop ever runs,
+            // changing observable solve behavior even though the verdict
+            // itself never changes. Opt-in until a caller wants that shape.
+            enable_failed_literal_probing: false,
+            // BVE / equivalent-literal substitution / gate congruence all
+            // remove variables from the live formula and are therefore only
+            // sound at the base assertion level with no incremental `push`
+            // in scope (see the doc comments on `SolverConfig`). Left
+            // opt-in in every preset until a caller has confirmed that shape
+            // and explicitly asked for the extra preprocessing power.
+            enable_bve: false,
+            enable_equiv_substitution: false,
+            enable_gate_congruence: false,
         }
     }
 

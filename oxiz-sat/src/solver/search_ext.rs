@@ -33,7 +33,27 @@ impl Solver {
     /// assignment and answers `Sat` — over a trail on which an **original** clause
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
+    ///
+    /// # LRAT tracing is unsupported here
+    ///
+    /// A theory-propagated trail literal carries [`Reason::Theory`] — no
+    /// clause backs it, so no LRAT hint chain can ever cite one no matter
+    /// how it is built (see `solver/lrat_trace.rs`'s antecedent-closure walk
+    /// — a private module, not part of this crate's public API). Rather
+    /// than emit an LRAT proof that is silently
+    /// incomplete the moment a theory conflict or propagation touches the
+    /// trail, LRAT tracing is force-disabled the instant this entry point
+    /// runs (DRAT is unaffected: it stays self-justifying for any *Boolean*
+    /// clause this loop learns, independent of what the theory layer did —
+    /// the caller is responsible for the theory layer's own proof obligations,
+    /// which are outside this crate's boundary).
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
+        self.disable_lrat_proof();
+        // See `Solver::solve`'s identical guard: a prior `add_clause` may
+        // have tried to reintroduce a bounded-variable-eliminated variable.
+        if self.fatal_error.is_some() {
+            return SolverResult::Unknown;
+        }
         if self.trivially_unsat {
             return SolverResult::Unsat;
         }
@@ -215,7 +235,7 @@ impl Solver {
                 let polarity = if self.rand_bool(self.config.random_polarity_prob) {
                     self.rand_bool(0.5)
                 } else {
-                    self.phase[var.index()]
+                    self.phase[var.index()] ^ self.phase_inverted
                 };
                 let lit = if polarity {
                     Lit::pos(var)

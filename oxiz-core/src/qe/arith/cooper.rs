@@ -1330,7 +1330,23 @@ mod tests {
                 TermKind::Add(args) => args.iter().map(|&a| int(tm, a)).sum(),
                 TermKind::Sub(a, b) => int(tm, *a) - int(tm, *b),
                 TermKind::Mul(args) => args.iter().map(|&a| int(tm, a)).product(),
-                TermKind::Mod(a, b) => int(tm, *a).rem_euclid(int(tm, *b)),
+                TermKind::Mod(a, b) => {
+                    // `rem_euclid` panics on a zero divisor, and an opaque
+                    // arithmetic panic here would read as a bug in this
+                    // evaluator rather than in what it is evaluating. Every
+                    // `mod` Cooper emits is a divisibility test whose modulus
+                    // is a least common multiple of the coefficients it just
+                    // collected, so it is positive by construction; naming
+                    // that invariant is what makes a violation of it legible.
+                    let divisor = int(tm, *b);
+                    assert!(
+                        divisor != 0,
+                        "Cooper emits `mod` only against a positive lcm modulus, \
+                         so a zero divisor means the elimination produced a term \
+                         it should not have"
+                    );
+                    int(tm, *a).rem_euclid(divisor)
+                }
                 other => panic!("unexpected int term {other:?}"),
             }
         }

@@ -49,6 +49,7 @@ pub mod lazy;
 pub mod lean;
 pub mod lean_enhanced;
 pub mod lfsc;
+pub mod lrat_check;
 pub mod merge;
 pub mod metadata;
 pub mod minimize;

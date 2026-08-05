@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "SMT-COMP benchmark infrastructure for OxiZ"
 keywords = ["smt", "benchmark", "smtcomp", "testing"]
 categories = ["development-tools::testing"]

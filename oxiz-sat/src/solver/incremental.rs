@@ -37,6 +37,23 @@ impl Solver {
     /// next probe.  `BvSolver::check()` therefore discards each probe's learned
     /// clauses, keeping only the asserted (original) clauses as the sound,
     /// reusable core.
+    ///
+    /// # A known LRAT interaction (fail-safe, not fixed)
+    ///
+    /// If the discarded range includes a learned *unit* clause, its
+    /// `lrat_unit_id` entry (see `solver/lrat_trace.rs`) is not cleared here
+    /// even though the clause itself is gone — only [`Solver::pop`] and
+    /// [`Self::restore_to_trail_size`] clear that entry, and only when the
+    /// *variable* is actually unassigned, which this method does not do (the
+    /// bit-vector embedding calls this while the variable typically stays
+    /// assigned, still justified by the surviving prefix). A hint chain
+    /// built afterward that needs this variable's justification would then
+    /// cite a deleted clause id, which the checker in `oxiz_proof::lrat_check`
+    /// rejects outright — the fail-safe direction, not a silently wrong
+    /// proof. In practice this is moot today: LRAT tracing and this
+    /// incremental-probe API are not exercised together by any caller in
+    /// this workspace, but a future one combining them should be aware a
+    /// verified proof is not guaranteed across a `forget_learned_since` call.
     pub fn forget_learned_since(&mut self, checkpoint: usize) {
         if checkpoint >= self.learned_clause_ids.len() {
             return;
@@ -51,6 +68,7 @@ impl Solver {
             // the DRAT proof (no-op unless enabled) while the literals are live.
             self.purge_binary_edges(id);
             self.drat_delete(id);
+            self.lrat_delete(id);
             self.clauses.remove(id);
         }
     }
@@ -146,6 +164,10 @@ impl Solver {
                 self.chb.insert(var);
             }
             self.lrb.unassign(var);
+            // See `Solver::pop`'s identical call for why this must happen
+            // here too: a stale unit-justification id must not outlive the
+            // trail assignment it was recorded for.
+            self.lrat_clear_unit_justification(var);
         }
     }
 }

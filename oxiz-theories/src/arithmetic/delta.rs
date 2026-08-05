@@ -213,21 +213,76 @@ impl SubAssign for DeltaRational {
     }
 }
 
+/// `a * b` with an integer fast-path.
+///
+/// QF_LIA coefficients — and, on an integer-only tableau, most simplex
+/// values — have denominator 1, but `num_rational::Ratio::mul` runs its full
+/// cross-GCD reduction unconditionally regardless: profiling a QF_UFLIA
+/// solve showed this `Mul` as the single largest contributor to simplex time.
+/// When both operands are already integers the product `a.numer() *
+/// b.numer()` over denominator `1` is already in canonical (reduced,
+/// positive-denominator) form, so `Ratio::new_raw` — which skips the
+/// reduction `Ratio::new` performs — is exact, not an approximation.
+///
+/// # The overflow fallback
+///
+/// When both denominators are `1`, `gcd(numer, 1) == 1` always, so there is
+/// *no* cross-GCD cancellation available to shrink the operands before
+/// multiplying — `num_rational`'s own `Mul`/`CheckedMul` impls degenerate to
+/// the same raw `numer * numer` product `checked_mul` above just tried.  So a
+/// `checked_mul` failure here means the exact product genuinely does not fit
+/// `i64`; falling back to plain `a * b` would re-run that same
+/// non-cross-reducible multiplication through `Ratio::mul`'s unchecked `*`
+/// operator, which panics under debug overflow checks (and silently wraps in
+/// release) instead of failing safely.
+///
+/// The fallback below widens to `i128` first — `i64::MIN * i64::MIN` is
+/// `2^126`, comfortably inside `i128`'s range, so this step itself can never
+/// overflow. If the widened product still does not fit back into `i64`, no
+/// reduction could ever have rescued it (see above), so this is a genuine
+/// precision boundary of `Rational64`'s `i64` backing, not something a
+/// cleverer algorithm could avoid; we saturate toward the correct sign
+/// instead of panicking, trading exactness at that extreme for a defined,
+/// non-crashing result. A mixed-denominator operand pair never reaches this
+/// branch at all — it takes the `a * b` path below, where `Ratio::mul`'s
+/// cross-GCD reduction applies normally.
+fn mul_r64_fast(a: Rational64, b: Rational64) -> Rational64 {
+    if *a.denom() == 1 && *b.denom() == 1 {
+        let (an, bn) = (*a.numer(), *b.numer());
+        if let Some(n) = an.checked_mul(bn) {
+            return Rational64::new_raw(n, 1);
+        }
+        let wide = i128::from(an) * i128::from(bn);
+        return match i64::try_from(wide) {
+            Ok(n) => Rational64::new_raw(n, 1),
+            Err(_) => {
+                let saturated = if wide.is_positive() {
+                    i64::MAX
+                } else {
+                    i64::MIN
+                };
+                Rational64::from_integer(saturated)
+            }
+        };
+    }
+    a * b
+}
+
 impl Mul<Rational64> for DeltaRational {
     type Output = Self;
 
     fn mul(self, rhs: Rational64) -> Self::Output {
         Self {
-            real: self.real * rhs,
-            delta: self.delta * rhs,
+            real: mul_r64_fast(self.real, rhs),
+            delta: mul_r64_fast(self.delta, rhs),
         }
     }
 }
 
 impl MulAssign<Rational64> for DeltaRational {
     fn mul_assign(&mut self, rhs: Rational64) {
-        self.real *= rhs;
-        self.delta *= rhs;
+        self.real = mul_r64_fast(self.real, rhs);
+        self.delta = mul_r64_fast(self.delta, rhs);
     }
 }
 
@@ -309,5 +364,115 @@ mod tests {
         let scaled = a * Rational64::from_integer(2);
         assert_eq!(scaled.real, Rational64::from_integer(6));
         assert_eq!(scaled.delta, Rational64::from_integer(2));
+    }
+
+    #[test]
+    fn test_mul_r64_fast_matches_ratio_mul() {
+        // Integer x integer takes the `new_raw` fast path; the result must
+        // still equal the reference `Ratio::mul` and stay canonical
+        // (denominator 1). Signs are varied across the four quadrants, and a
+        // zero operand is included on the negative side so the "0 * negative
+        // keeps a positive denominator" case is covered too.
+        let cases = [
+            (12_i64, 11_i64, 132_i64),
+            (-9, 8, -72),
+            (7, -6, -42),
+            (-6, -7, 42),
+            (0, -17, 0),
+            (1, 1, 1),
+        ];
+        for (a, b, expected) in cases {
+            let (ra, rb) = (Rational64::from_integer(a), Rational64::from_integer(b));
+            let fast = mul_r64_fast(ra, rb);
+            assert_eq!(fast, ra * rb, "{a} * {b} must match Ratio::mul");
+            assert_eq!(fast, Rational64::from_integer(expected));
+            assert_eq!(*fast.denom(), 1, "{a} * {b} must stay canonical");
+        }
+
+        // Magnitude boundary: the largest products the `checked_mul` fast path
+        // still accepts. `2^31 * 2^31 = 2^62` is the round case just under
+        // `i64::MAX`, and `i64::MAX * 1` is the exact edge.
+        //
+        // A product that genuinely overflows is deliberately NOT exercised:
+        // `mul_r64_fast` hands those to `Ratio::mul`, which multiplies the
+        // numerators directly (both denominators are 1, so its cross-GCD
+        // cancels nothing) and therefore panics under debug overflow checks.
+        // That is pre-existing `Ratio` behaviour, not something this fast path
+        // introduced -- see its doc comment.
+        let two_pow_31 = Rational64::from_integer(1 << 31);
+        assert_eq!(
+            mul_r64_fast(two_pow_31, two_pow_31),
+            Rational64::from_integer(1 << 62),
+            "2^31 * 2^31 must stay on the exact fast path"
+        );
+        let max = Rational64::from_integer(i64::MAX);
+        assert_eq!(mul_r64_fast(max, Rational64::one()), max);
+        assert_eq!(
+            mul_r64_fast(max, -Rational64::one()),
+            Rational64::from_integer(-i64::MAX)
+        );
+
+        // A fraction on either side (or both) leaves the fast path for the
+        // exact `Ratio::mul`, including the cross-reduction back to canonical
+        // form and sign normalisation onto the numerator.
+        assert_eq!(
+            mul_r64_fast(Rational64::new(3, 4), Rational64::from_integer(8)),
+            Rational64::from_integer(6)
+        );
+        assert_eq!(
+            mul_r64_fast(Rational64::from_integer(-10), Rational64::new(3, 5)),
+            Rational64::from_integer(-6)
+        );
+        assert_eq!(
+            mul_r64_fast(Rational64::new(5, 6), Rational64::new(9, 10)),
+            Rational64::new(3, 4)
+        );
+        // Reciprocal-with-sign: the product reduces all the way to -1.
+        let neg = mul_r64_fast(Rational64::new(-7, 3), Rational64::new(3, 7));
+        assert_eq!(neg, -Rational64::one());
+        assert_eq!(*neg.denom(), 1, "a reduced product must be canonical");
+    }
+
+    /// The boundary the earlier comment above flagged as "deliberately NOT
+    /// exercised" because it used to panic: two denominator-`1` operands
+    /// whose exact product overflows `i64`. Must return, not abort, even
+    /// under this workspace's default dev/test profile (`overflow-checks`
+    /// defaults on there since `[profile.dev]` never disables it).
+    #[test]
+    fn test_bonus_mul_r64_fast_overflow_no_panic() {
+        let max = Rational64::from_integer(i64::MAX);
+        let two = Rational64::from_integer(2);
+
+        // Positive * positive overflow saturates to `i64::MAX`, not a panic
+        // or a silently wrapped negative value.
+        assert_eq!(mul_r64_fast(max, two), Rational64::from_integer(i64::MAX));
+
+        // Positive * negative overflow saturates to `i64::MIN`.
+        assert_eq!(mul_r64_fast(max, -two), Rational64::from_integer(i64::MIN));
+        // And the symmetric operand order agrees.
+        assert_eq!(mul_r64_fast(-two, max), Rational64::from_integer(i64::MIN));
+
+        // `i64::MIN * i64::MIN` is the largest-magnitude product `mul_r64_fast`
+        // can ever be asked for (`2^126`, still well inside `i128`) and must
+        // not panic while computing the widened intermediate either.
+        let min = Rational64::from_integer(i64::MIN);
+        assert_eq!(mul_r64_fast(min, min), Rational64::from_integer(i64::MAX));
+
+        // Just *below* the overflow boundary the product must still come out
+        // exact, not saturated: `(MAX/2) * 2` fits `i64` (it is one short of
+        // `MAX` when `MAX` is odd), so this must take the plain `checked_mul`
+        // path rather than the widen-and-saturate fallback.
+        let half_max = Rational64::from_integer(i64::MAX / 2);
+        assert_eq!(
+            mul_r64_fast(half_max, two),
+            Rational64::from_integer((i64::MAX / 2) * 2)
+        );
+        // One step past that boundary overflows and must saturate rather
+        // than panic or wrap.
+        let half_max_plus_one = Rational64::from_integer(i64::MAX / 2 + 1);
+        assert_eq!(
+            mul_r64_fast(half_max_plus_one, two),
+            Rational64::from_integer(i64::MAX)
+        );
     }
 }

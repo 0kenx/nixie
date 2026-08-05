@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Theory Solvers (EUF, Arithmetic, BitVectors) for OxiZ"
 keywords = ["smt", "theories", "euf", "arithmetic"]
 categories = ["algorithms", "mathematics"]

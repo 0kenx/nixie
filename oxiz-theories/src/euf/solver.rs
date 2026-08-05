@@ -35,8 +35,31 @@ const EUF_EXPL_CACHE_CAPACITY: usize = 1024;
 /// Records an insertion into sig_table or fingerprint_table for undo on pop().
 #[derive(Debug, Clone)]
 enum SigTrailEntry {
-    /// Inserted key into sig_table; undo removes this key.
-    InsertedSig { key: (u32, SmallVec<[u32; 4]>) },
+    /// Inserted `key -> node` into sig_table; undo removes `key` and, if `node`
+    /// still maps to it in `sig_key_of_node`, clears that back-reference too.
+    InsertedSig {
+        key: (u32, SmallVec<[u32; 4]>),
+        node: u32,
+    },
+    /// `node`'s signature changed and its *previous* entry `old_key -> node` was
+    /// evicted from sig_table to make room for the new one; undo restores it
+    /// (both the table entry and the `sig_key_of_node` back-reference).
+    EvictedSig {
+        old_key: (u32, SmallVec<[u32; 4]>),
+        node: u32,
+    },
+    /// A *stale* entry `key -> node` was dropped defensively by
+    /// `lookup_live_sig` (see there); undo restores the table entry **only**.
+    ///
+    /// Deliberately not [`SigTrailEntry::EvictedSig`]: the defining property of
+    /// a stale entry is that `sig_key_of_node[node]` is something *other* than
+    /// `key`, so restoring the back-reference the way `EvictedSig` does would
+    /// overwrite the node's genuine live key with the stale one — turning a
+    /// harmless scope asymmetry into real e-graph corruption.
+    EvictedStaleSig {
+        key: (u32, SmallVec<[u32; 4]>),
+        node: u32,
+    },
     /// Pushed node_idx into fingerprint_table[fp]; undo removes it from the bucket.
     InsertedFingerprint { fp: ENodeFingerprint, node_idx: u32 },
 }
@@ -232,12 +255,70 @@ pub struct EufSolver {
     use_list: Vec<SmallVec<[u32; 8]>>,
     /// Signature table for congruence closure
     sig_table: FxHashMap<(u32, SmallVec<[u32; 4]>), u32>,
+    /// Back-reference from a node to the key it currently publishes in
+    /// `sig_table` (`None` for leaf nodes, and for application nodes that were
+    /// merged into an already-congruent node on intern and so never published
+    /// one of their own).
+    ///
+    /// `propagate` re-canonicalizes a use-list entry's arguments whenever the
+    /// class of one of them changes, which can change that entry's signature.
+    /// Without this back-reference the *old* `sig_table` entry has no way to be
+    /// found and removed, so it lingers keyed by representatives that are no
+    /// longer current. A later node that happens to canonicalize to that same
+    /// stale key then reads it as "already published" — either merging into a
+    /// node it is not actually congruent with (spurious equality) or, when the
+    /// stale entry's node has since moved on to a *third* signature, failing to
+    /// find the real congruence at all (missed equality). Keeping this map in
+    /// lockstep with `sig_table` (see `update_sig_entry`) closes both holes at
+    /// the source instead of masking them downstream.
+    sig_key_of_node: Vec<Option<(u32, SmallVec<[u32; 4]>)>>,
+    /// Index of the lowest-numbered function-application node currently in
+    /// `nodes`, or `None` when there is none.
+    ///
+    /// This is the O(1) backing for [`EufSolver::has_app_nodes`], which the
+    /// CDCL(T) final-check soundness backstop consults on *every* full
+    /// assignment; scanning all of `nodes` there made a hot path O(nodes).
+    ///
+    /// Correctness rests on `nodes` only ever growing by `push` and shrinking
+    /// by `truncate` to a prefix.  Recording the *first* such index (rather
+    /// than a count) is what makes both directions O(1): a `push` can only
+    /// establish the first application when there was none, and after
+    /// `truncate(n)` an index `>= n` means every application node was in the
+    /// removed suffix — because no application exists below the first one.
+    first_app_node: Option<u32>,
     /// Fingerprint table: maps fingerprint -> list of node indices with that fingerprint.
     /// Used as a fast pre-filter before full signature comparison in congruence checks.
     ///
     /// Invariant: every key of `sig_table` has its fingerprint present here, so
     /// "fingerprint absent" soundly implies "signature absent".
     fingerprint_table: FxHashMap<ENodeFingerprint, SmallVec<[u32; 4]>>,
+    /// For each equivalence-class representative, the indices (into `diseqs`)
+    /// of every disequality with an endpoint currently in that class.
+    ///
+    /// `propagate` consults `diseq_watch[loser]` at the moment a class is
+    /// absorbed into another, tests each watched disequality right there, and
+    /// carries the (still-relevant) entries over to the surviving
+    /// representative. That turns "is any disequality violated" from an
+    /// `O(diseqs)` scan repeated on every theory check into `O(1)` amortized
+    /// work charged to the merge that could actually cause a violation — the
+    /// only merges that can.
+    diseq_watch: Vec<Vec<u32>>,
+    /// Undo trail for `diseq_watch` appends: each entry is the representative
+    /// whose list one append should be popped from on `pop()`.
+    diseq_watch_trail: Vec<u32>,
+    /// Scope checkpoints into `diseq_watch_trail`, parallel to `sig_trail_limits`.
+    diseq_watch_trail_limits: Vec<usize>,
+    /// Index into `diseqs` of a disequality currently known to be violated
+    /// (both endpoints in the same class), discovered eagerly by `propagate`
+    /// or `assert_diseq`. `check_conflicts` reads this directly instead of
+    /// rescanning `diseqs`. `None` means no known violation.
+    pending_diseq_conflict: Option<u32>,
+    /// `pending_diseq_conflict` saved at each `push()`, so `pop()` can restore
+    /// exactly the value that was live when the scope opened — a violation
+    /// discovered by a merge inside the popped scope must not survive it.
+    pending_diseq_trail: Vec<Option<u32>>,
+    /// Scope checkpoints into `pending_diseq_trail`, parallel to `sig_trail_limits`.
+    pending_diseq_trail_limits: Vec<usize>,
     /// Context stack for push/pop
     context_stack: Vec<ContextState>,
     /// Proof forest: for each node, edges to explain equalities.
@@ -328,7 +409,15 @@ impl EufSolver {
             pending: Vec::new(),
             use_list: Vec::new(),
             sig_table: FxHashMap::default(),
+            sig_key_of_node: Vec::new(),
+            first_app_node: None,
             fingerprint_table: FxHashMap::default(),
+            diseq_watch: Vec::new(),
+            diseq_watch_trail: Vec::new(),
+            diseq_watch_trail_limits: Vec::new(),
+            pending_diseq_conflict: None,
+            pending_diseq_trail: Vec::new(),
+            pending_diseq_trail_limits: Vec::new(),
             context_stack: Vec::new(),
             proof_forest: Vec::new(),
             function_properties: FxHashMap::default(),
@@ -360,6 +449,7 @@ impl EufSolver {
         self.uf.add();
         self.use_list.push(SmallVec::new());
         self.proof_forest.push(SmallVec::new());
+        self.sig_key_of_node.push(None);
         self.term_to_node.insert(term, idx);
         idx
     }
@@ -404,14 +494,25 @@ impl EufSolver {
         let fp = ENodeFingerprint::compute(func, &canonical_args);
 
         let sig = (func, canonical_args);
-        let congruent = self.sig_table.get(&sig).copied();
+        let congruent = self.lookup_live_sig(&sig);
 
         let idx = self.nodes.len() as u32;
         self.nodes
             .push(ENode::app(func, flattened_args.clone(), fp, term));
+        // Maintain the `has_app_nodes` cache: `idx` is the highest index, so it
+        // becomes the first application only if there was not one already.
+        self.first_app_node.get_or_insert(idx);
         self.uf.add();
         self.use_list.push(SmallVec::new());
         self.proof_forest.push(SmallVec::new());
+        // `idx` publishes `sig` itself only when nothing congruent already did;
+        // otherwise it is folded into `congruent` by the merge below and never
+        // owns a signature of its own (mirrors the `None` on a leaf).
+        self.sig_key_of_node.push(if congruent.is_some() {
+            None
+        } else {
+            Some(sig.clone())
+        });
         self.term_to_node.insert(term, idx);
 
         // Register the application on the *representative* of each argument, so a
@@ -452,11 +553,27 @@ impl EufSolver {
 
     /// Assert a disequality
     pub fn assert_diseq(&mut self, a: u32, b: u32, reason: TermId) {
+        let diseq_idx = self.diseqs.len() as u32;
         self.diseqs.push(Diseq {
             lhs: a,
             rhs: b,
             reason,
         });
+        // Watch the new disequality on both endpoints' current representatives
+        // (read-only `find`: `propagate`'s merge-time migration keeps the watch
+        // key equal to the live representative, so no compression is needed
+        // here). If the two sides are already in the same class the
+        // disequality is violated the moment it is asserted.
+        let ra = self.uf.find_no_compress(a);
+        let rb = self.uf.find_no_compress(b);
+        self.watch_diseq(ra, diseq_idx);
+        if ra == rb {
+            if self.pending_diseq_conflict.is_none() {
+                self.pending_diseq_conflict = Some(diseq_idx);
+            }
+        } else {
+            self.watch_diseq(rb, diseq_idx);
+        }
     }
 
     /// Check if two terms are equivalent
@@ -488,9 +605,102 @@ impl EufSolver {
         self.nodes.len()
     }
 
+    /// Whether any interned node is a function application (as opposed to a
+    /// bare leaf constant/variable).
+    ///
+    /// A caller that maintains its own shadow of the asserted equalities (e.g.
+    /// `TheoryManager::resync_theory_state`) can use this to gate an expensive
+    /// from-scratch rebuild-and-recheck: the class of bug that rebuild guards
+    /// against — the live incremental congruence state quietly diverging from
+    /// what a fresh replay of the same assertions would derive — can only arise
+    /// where congruence closure actually has function applications to close
+    /// over. A pure-equality problem (leaves only) has no such divergence to
+    /// catch, so paying the rebuild cost there would be pure overhead.
+    #[must_use]
+    pub fn has_app_nodes(&self) -> bool {
+        debug_assert_eq!(
+            self.first_app_node.is_some(),
+            self.nodes.iter().any(ENode::is_app),
+            "the `first_app_node` cache disagrees with `nodes`"
+        );
+        self.first_app_node.is_some()
+    }
+
     /// Get the term associated with a node index
     pub fn node_term(&self, idx: u32) -> Option<TermId> {
         self.nodes.get(idx as usize).map(|n| n.term)
+    }
+
+    /// Every currently live (in-scope) disequality, as a pair of terms.
+    ///
+    /// `diseqs` is truncated by `pop()` to the scope's own entries, so this
+    /// is exactly the `a != b` facts asserted right now. Nelson-Oppen theory
+    /// combination uses it as one source of *care-graph* candidates: a pair
+    /// EUF already watches for disequality is a pair whose forced equality
+    /// (if arithmetic entails one) is guaranteed to produce a conflict the
+    /// moment it is merged, so it is always worth the entailment probe.
+    #[must_use]
+    pub fn live_diseq_pairs(&self) -> Vec<(TermId, TermId)> {
+        self.diseqs
+            .iter()
+            .filter_map(|d| Some((self.node_term(d.lhs)?, self.node_term(d.rhs)?)))
+            .collect()
+    }
+
+    /// Every term that occurs as an argument of some function application
+    /// currently interned in the e-graph.
+    ///
+    /// This is the structural half of the Nelson-Oppen care graph: congruence
+    /// over `f` can only ever fire on the *argument* positions of `f`'s
+    /// applications, so a shared arithmetic term that never appears in one of
+    /// these positions cannot newly trigger a congruence no matter what
+    /// equality arithmetic entails for it, and is not worth probing.
+    #[must_use]
+    pub fn app_argument_terms(&self) -> FxHashSet<TermId> {
+        let mut out: FxHashSet<TermId> = FxHashSet::default();
+        for node in &self.nodes {
+            if !node.is_app() {
+                continue;
+            }
+            for &arg in &node.args {
+                if let Some(term) = self.node_term(arg) {
+                    out.insert(term);
+                }
+            }
+        }
+        out
+    }
+
+    /// [`Self::app_argument_terms`], excluding the argument positions of any
+    /// application whose function symbol is in `forbidden_funcs` (as the raw
+    /// `u32` an interned `Spur` unwraps to -- see `intern_app`'s `func`
+    /// parameter).
+    ///
+    /// This is what lets Nelson-Oppen's care graph stay precise per function
+    /// symbol rather than falling back to a blanket skip: a caller can ask
+    /// for every UF-argument term *except* those belonging to a function
+    /// that occurs under a quantifier's binder, and get a set that is
+    /// correct for applications the current search created (e.g. an MBQI
+    /// instantiation's fresh ground `f(3)`), not just the ones present when
+    /// some earlier snapshot was taken. Computed fresh from the live node
+    /// table rather than cached for that reason.
+    #[must_use]
+    pub fn app_argument_terms_excluding_funcs(
+        &self,
+        forbidden_funcs: &FxHashSet<u32>,
+    ) -> FxHashSet<TermId> {
+        let mut out: FxHashSet<TermId> = FxHashSet::default();
+        for node in &self.nodes {
+            if !node.is_app() || forbidden_funcs.contains(&node.func) {
+                continue;
+            }
+            for &arg in &node.args {
+                if let Some(term) = self.node_term(arg) {
+                    out.insert(term);
+                }
+            }
+        }
+        out
     }
 
     /// Get the function symbol of a node (if it is a function application)
@@ -703,6 +913,13 @@ impl Theory for EufSolver {
         // Record use_list_trail checkpoint so pop() can rewind use-list appends
         // to pre-existing nodes made during this scope.
         self.use_list_trail_limits.push(self.use_list_trail.len());
+        // Record diseq_watch_trail checkpoint, and snapshot the currently-known
+        // pending violation so pop() can restore it exactly.
+        self.diseq_watch_trail_limits
+            .push(self.diseq_watch_trail.len());
+        self.pending_diseq_trail_limits
+            .push(self.pending_diseq_trail.len());
+        self.pending_diseq_trail.push(self.pending_diseq_conflict);
     }
 
     fn pop(&mut self) {
@@ -724,6 +941,13 @@ impl Theory for EufSolver {
             // pre-existing nodes' lists — those are undone via proof_trail below.
             self.use_list.truncate(num_nodes);
             self.proof_forest.truncate(num_nodes);
+            self.sig_key_of_node.truncate(num_nodes);
+            // The first application node is gone iff it sat in the truncated
+            // suffix; nothing below it can be an application.
+            if self.first_app_node.is_some_and(|i| i as usize >= num_nodes) {
+                self.first_app_node = None;
+            }
+            self.diseq_watch.truncate(num_nodes);
 
             // Rewind use_list_trail: for each append recorded during the popped
             // scope, pop exactly one entry off the recorded node's use-list.
@@ -758,6 +982,31 @@ impl Theory for EufSolver {
             // Any cached explanation may reference edges just removed; drop them.
             self.expl_cache.clear();
 
+            // Rewind diseq_watch_trail: for each append recorded during the
+            // popped scope, pop exactly one entry off the recorded
+            // representative's watch list (mirrors use_list_trail above).
+            if let Some(watch_limit) = self.diseq_watch_trail_limits.pop() {
+                while self.diseq_watch_trail.len() > watch_limit {
+                    let Some(rep) = self.diseq_watch_trail.pop() else {
+                        break;
+                    };
+                    if (rep as usize) < self.diseq_watch.len() {
+                        self.diseq_watch[rep as usize].pop();
+                    }
+                }
+            }
+            // Restore the pending-violation flag to its value at the matching
+            // push(): a violation a merge inside the popped scope discovered
+            // must retract along with that merge.
+            if let Some(pending_limit) = self.pending_diseq_trail_limits.pop() {
+                self.pending_diseq_conflict = self
+                    .pending_diseq_trail
+                    .get(pending_limit)
+                    .copied()
+                    .flatten();
+                self.pending_diseq_trail.truncate(pending_limit);
+            }
+
             // Remove term_to_node mappings that point to removed nodes.  Every
             // term maps to the node created for it (never to a borrowed congruent
             // one), and nodes are truncated in LIFO order, so this drops exactly
@@ -771,8 +1020,22 @@ impl Theory for EufSolver {
                 while self.sig_trail.len() > sig_limit {
                     if let Some(entry) = self.sig_trail.pop() {
                         match entry {
-                            SigTrailEntry::InsertedSig { key } => {
+                            SigTrailEntry::InsertedSig { key, node } => {
                                 self.sig_table.remove(&key);
+                                if let Some(slot) = self.sig_key_of_node.get_mut(node as usize) {
+                                    *slot = None;
+                                }
+                            }
+                            SigTrailEntry::EvictedSig { old_key, node } => {
+                                self.sig_table.insert(old_key.clone(), node);
+                                if let Some(slot) = self.sig_key_of_node.get_mut(node as usize) {
+                                    *slot = Some(old_key);
+                                }
+                            }
+                            SigTrailEntry::EvictedStaleSig { key, node } => {
+                                // Table entry only — see the variant's doc for
+                                // why `sig_key_of_node` must be left alone.
+                                self.sig_table.insert(key, node);
                             }
                             SigTrailEntry::InsertedFingerprint { fp, node_idx } => {
                                 if let Some(bucket) = self.fingerprint_table.get_mut(&fp) {
@@ -800,7 +1063,15 @@ impl Theory for EufSolver {
         self.pending.clear();
         self.use_list.clear();
         self.sig_table.clear();
+        self.sig_key_of_node.clear();
+        self.first_app_node = None;
         self.fingerprint_table.clear();
+        self.diseq_watch.clear();
+        self.diseq_watch_trail.clear();
+        self.diseq_watch_trail_limits.clear();
+        self.pending_diseq_conflict = None;
+        self.pending_diseq_trail.clear();
+        self.pending_diseq_trail_limits.clear();
         self.context_stack.clear();
         self.proof_forest.clear();
         self.function_properties.clear();

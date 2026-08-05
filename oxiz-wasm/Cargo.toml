@@ -44,29 +44,17 @@ crate-type = ["cdylib"]
 oxiz-core = { workspace = true, features = ["std"] }
 oxiz-solver = { workspace = true, features = ["std"] }
 wasm-bindgen = { workspace = true }
-wasm-bindgen-futures = "0.4"
+wasm-bindgen-futures.workspace = true
 js-sys = { workspace = true }
-console_error_panic_hook = "0.1"
-getrandom = { version = "0.4.3", features = ["wasm_js"] }
-getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
-web-sys = { version = "0.3", features = [
-  "console",
-  "Window",
-  "Performance",
-  "Response",
-  # Web Worker hard-preemption support (see js_api::preemptible_worker)
-  "Worker",
-  "Blob",
-  "BlobPropertyBag",
-  "Url",
-  "MessageEvent",
-  "ErrorEvent",
-] }
+console_error_panic_hook.workspace = true
+getrandom = { workspace = true }
+getrandom03 = { workspace = true }
+web-sys = { workspace = true }
 oxiarc-deflate = { workspace = true }
 oxiarc-brotli = { workspace = true }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3"
+wasm-bindgen-test.workspace = true
 criterion.workspace = true
 oxiarc-deflate = { workspace = true }
 oxiarc-brotli = { workspace = true }

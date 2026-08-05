@@ -45,7 +45,12 @@ fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
     if !(i64::MIN as i128..=i64::MAX as i128).contains(&n) || d > i64::MAX as i128 {
         return None;
     }
-    Some(Rational64::new(n as i64, d as i64))
+    // `new_raw`, not `new`: `n / g` and `d / g` above are already coprime (a
+    // division by the gcd always is) and `d` was just sign-normalized
+    // non-negative, so this pair is already in `Ratio`'s canonical form —
+    // `new`'s own gcd-reduction pass would be redundant work repeating what
+    // this function just did.
+    Some(Rational64::new_raw(n as i64, d as i64))
 }
 /// Checked rational multiplication: `a * b`, via `i128` intermediates.
 /// Returns `None` on overflow instead of silently wrapping (the `i64`-based
@@ -82,7 +87,11 @@ fn checked_neg_r64(a: Rational64) -> Option<Rational64> {
     if !(i64::MIN as i128..=i64::MAX as i128).contains(&n) {
         return None;
     }
-    Some(Rational64::new(n as i64, *a.denom()))
+    // `new_raw`: `a` is already a valid, reduced `Rational64` (the
+    // invariant every `Ratio` value carries), and negating only the
+    // numerator changes neither `gcd(|numer|, denom)` nor the
+    // denominator's sign, so the result is still in canonical form.
+    Some(Rational64::new_raw(n as i64, *a.denom()))
 }
 /// Checked rational reciprocal: `1 / a`. Returns `None` if `a` is zero.
 fn checked_recip_r64(a: Rational64) -> Option<Rational64> {
@@ -784,8 +793,14 @@ impl Simplex {
         self.update_assignment();
     }
     /// Pivot to make the solution feasible
+    ///
+    /// Precondition: the assignment is already consistent with the current
+    /// basis and bounds. `make_feasible` is private with its only caller
+    /// being [`Self::check`], which always runs [`Self::crash_basis`] (whose
+    /// last step is `update_assignment`) immediately before — so
+    /// recomputing the assignment again here was a redundant full pass on
+    /// every theory check.
     fn make_feasible(&mut self) -> Result<(), Vec<u32>> {
-        self.update_assignment();
         for _ in 0..self.max_pivots {
             let violating = self.find_violating();
             if violating.is_none() {

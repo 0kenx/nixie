@@ -6,7 +6,7 @@ Next-Generation SMT Solver in Pure Rust
 [![Documentation](https://docs.rs/oxiz/badge.svg)](https://docs.rs/oxiz)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/cool-japan/oxiz/blob/main/LICENSE)
 
-> **Version**: 0.3.1 | **Status**: Meta-crate | **Tests**: 25
+> **Version**: 0.3.2 | **Status**: Meta-crate | **Tests**: 25
 
 ## About
 
@@ -33,21 +33,21 @@ Add OxiZ to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-oxiz = "0.3.1"  # Default: std + core solver
+oxiz = "0.3.2"  # Default: std + core solver
 ```
 
 With specific features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.3.1", features = ["nlsat", "optimization"] }
+oxiz = { version = "0.3.2", features = ["nlsat", "optimization"] }
 ```
 
 All features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.3.1", features = ["full"] }
+oxiz = { version = "0.3.2", features = ["full"] }
 ```
 
 ### Basic Usage

@@ -1,6 +1,6 @@
 # OxiZ TODO
 
-Last Updated: 2026-07-31
+Last Updated: 2026-08-05
 
 ---
 
@@ -50,17 +50,17 @@ Recounted at the 0.3.1 release (2026-07-31) directly from the checkboxes under "
 
 ---
 
-## Current Statistics (v0.3.1 - 2026-07-31, re-measured at release time)
+## Current Statistics (v0.3.2 - 2026-08-05, re-measured at release time)
 
-- **Rust Lines of Code (code)**: 438,793 code lines across 1,236 files (tokei, `--exclude target`; 35,654 comment lines, 73,292 blanks)
-- **Total Rust Lines (with docs/tests)**: 547,739 (grand total across all languages: 583,520 lines in 1,443 files)
-- **Tests**: 9,668 (workspace, nextest, all-features, all passing; 8 skipped, 0 failures; 89.3s wall) plus 110 passing doc-tests (`cargo test --doc --workspace --all-features`, 0 failures)
-- **Z3 Parity (extended suite, 168 benchmarks / 19 logics, against installed z3 4.15.4)**: **168 Correct / 0 Wrong / 0 Inconclusive / 0 Timeout / 0 Error** — **100% of the differential parity suite**, with all 19 logic families at 100% Correct (AUFLIA 10/10, AUFLIRA 5/5, QF_ABV 5/5, QF_ALIA 5/5, QF_AUFBV 5/5, QF_AUFLIA 5/5, QF_NIRA 5/5, QF_UFLIA 5/5, QF_UFLRA 5/5, UFLIA 20/20, UFLRA 10/10, qf_a 10/10, qf_bv 15/15, qf_dt 10/10, qf_fp 10/10, qf_lia 16/16, qf_lra 16/16, qf_nia 1/1, qf_s 10/10 — see the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json`, which must agree on every benchmark's verdict and differ only in timings; `results.json` itself is git-ignored scratch output of the last local run). Measured under the honest comparator, which never counts `Unknown` as a match, against a real `z3 4.15.4` binary; verified over three consecutive full runs on an idle machine plus a fourth run after the repeated-check-sat resource work. This is a claim about this benchmark suite — **not** a blanket claim of 100% Z3 compatibility as a general property. Closed this release: the last quantified-logic gaps (`AUFLIA` 7→10/10, `UFLIA` 14→20/20, `UFLRA` 5→10/10) via MBQI finite-range quantifier expansion (AUFLIA), Skolem witness synthesis + CEGAR (UFLIA), and symbolic model certification over Reals + quasi-macro detection (UFLRA); the three former 60s timeouts now solve in ~1ms.
+- **Rust Lines of Code (code)**: 451,853 code lines across 1,276 files (tokei, `--exclude target`; 37,877 comment lines, 74,573 blanks)
+- **Total Rust Lines (with docs/tests)**: 564,303 (grand total across all languages: 600,702 lines in 1,483 files)
+- **Tests**: 9,953 (workspace, nextest, all-features, all passing; 8 skipped, 0 failures) plus 110 passing doc-tests (`cargo test --doc --workspace --all-features`, 0 failures)
+- **Z3 Parity (extended suite, 168 benchmarks / 19 logics, against installed z3 4.15.4)**: **168 Correct / 0 Wrong / 0 Inconclusive / 0 Timeout / 0 Error** — **100% of the differential parity suite**, with all 19 logic families at 100% Correct (AUFLIA 10/10, AUFLIRA 5/5, QF_ABV 5/5, QF_ALIA 5/5, QF_AUFBV 5/5, QF_AUFLIA 5/5, QF_NIRA 5/5, QF_UFLIA 5/5, QF_UFLRA 5/5, UFLIA 20/20, UFLRA 10/10, qf_a 10/10, qf_bv 15/15, qf_dt 10/10, qf_fp 10/10, qf_lia 16/16, qf_lra 16/16, qf_nia 1/1, qf_s 10/10 — see the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json`, which must agree on every benchmark's verdict and differ only in timings; `results.json` itself is git-ignored scratch output of the last local run). Measured under the honest comparator, which never counts `Unknown` as a match, against a real `z3 4.15.4` binary; verified over three consecutive full runs on an idle machine plus a fourth run after the repeated-check-sat resource work. This is a claim about this benchmark suite — **not** a blanket claim of 100% Z3 compatibility as a general property. Closed in 0.3.1: the last quantified-logic gaps (`AUFLIA` 7→10/10, `UFLIA` 14→20/20, `UFLRA` 5→10/10) via MBQI finite-range quantifier expansion (AUFLIA), Skolem witness synthesis + CEGAR (UFLIA), and symbolic model certification over Reals + quasi-macro detection (UFLRA); the three former 60s timeouts now solve in ~1ms.
 - **Workspace Crates**: 17 members (16 default-members; `oxiz-py` is excluded because it needs maturin, and `fuzz` is a separate harness outside the workspace)
 - **todo!/unimplemented! macros**: 0 outside test code (all Rust crates)
 - **Clippy Warnings**: 0 (`cargo clippy --workspace --all-targets --all-features`, clean in both dev and release profiles; `clippy::unwrap_used` denied in all 17 member crates)
 - **Rustdoc / cargo-deny**: `cargo doc` clean under `-D warnings`; `cargo deny check bans` clean
-- **Largest File**: 1,997 lines (`oxiz-solver/src/solver/tests.rs`) — all files under 2,000 lines; largest non-test file is 1,982 lines (`oxiz-solver/src/mbqi/model_completion.rs`)
+- **Largest File**: 1,997 lines (`oxiz-solver/src/solver/tests.rs`) — all files under 2,000 lines; largest non-test file is 1,989 lines (`oxiz-solver/src/mbqi/model_completion.rs`)
 - **Toolchain**: cargo/rustc 1.95.0
 
 ---
@@ -714,8 +714,8 @@ Refreshed for v0.3.1 (2026-07-31). The v0.3.0-era entries (hot-path profiling, p
 ---
 
 **Status**: Production Ready
-**Current Version**: v0.3.1 (2026-07-31)
-**Tests**: 9,668 passing (all-features, 8 skipped) + 110 doc-tests | **LoC**: 438,793 code (547,739 total) | **Files**: 1,236 | **Clippy**: 0 warnings
+**Current Version**: v0.3.2
+**Tests**: 9,953 passing (all-features, 8 skipped) + 110 doc-tests | **LoC**: 451,853 code (564,303 total) | **Files**: 1,276 | **Clippy**: 0 warnings
 **Z3 Parity**: 168/168 Correct on the extended 19-logic differential suite (0 Wrong / 0 Inconclusive / 0 Timeout / 0 Error, honest comparator vs z3 4.15.4)
 **Next Milestone**: v0.4.0 - JIT specialization, `recfun` support, and the remaining completeness gaps (see "Remaining (post-0.3.0 hardening)")
 **Long-term Goal**: v1.0.0 - Industry-Ready SMT Solver (Target: Q4 2026)
@@ -755,7 +755,7 @@ A full `cargo nextest run --all-features` on a 14.6 GB developer machine was ter
   - **Priority:** P3  **Scope:** small
 - [ ] **Stale comment in `oxiz-spacer/src/parser.rs`** — `oxiz-spacer/src/parser.rs:1464`-`:1466`, where `parse_sexpr_survives_deep_nesting`'s comment states that "`SExpr`'s own `Drop` is derived and recursive". That is no longer true: `impl Drop for SExpr` at `oxiz-spacer/src/parser.rs:242` is an explicit iterative teardown. Pre-existing drift, not introduced by the 2026-07-31 pass.
   - **Priority:** P3  **Scope:** small
-- [ ] **Changelog note: a test was fixed that had never exercised its stated subject** — record for the v0.3.2 changelog. `deep_sequence_simplify_and_drop_return` (`oxiz-theories`) claimed to exercise both `SeqRewriter::simplify` and the deep `Drop` of a nested `SeqExpr`, but `SeqRewriter::simplify` (`oxiz-theories/src/string/sequence/mod.rs:974`) dismantles the tower on the way down: the helper it drives, `open_simplify` (`oxiz-theories/src/string/sequence/mod.rs:1015`), does `core::mem::replace(..., placeholder())` in four arms (`:1043`, `:1052`, `:1069`, and the `SeqExpr::Reverse` arm at `:1086` that the test hits), so the drop glue only ever received a one-level shell. The tower is now built twice and dropped explicitly, so both halves run. The test was strengthened, not weakened.
+- [x] **Changelog note: a test was fixed that had never exercised its stated subject** — record for the v0.3.2 changelog. `deep_sequence_simplify_and_drop_return` (`oxiz-theories`) claimed to exercise both `SeqRewriter::simplify` and the deep `Drop` of a nested `SeqExpr`, but `SeqRewriter::simplify` (`oxiz-theories/src/string/sequence/mod.rs:974`) dismantles the tower on the way down: the helper it drives, `open_simplify` (`oxiz-theories/src/string/sequence/mod.rs:1015`), does `core::mem::replace(..., placeholder())` in four arms (`:1043`, `:1052`, `:1069`, and the `SeqExpr::Reverse` arm at `:1086` that the test hits), so the drop glue only ever received a one-level shell. The tower is now built twice and dropped explicitly, so both halves run. The test was strengthened, not weakened. — **(closed: this is a test-only strengthening, not a shipped behavior change — intentionally left out of the public CHANGELOG.md 0.3.2 entry for that reason)**
   - **Priority:** P3  **Scope:** small
 
 ## Stubs to implement (added 2026-06-12 by /cooljapan-stub-check)

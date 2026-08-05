@@ -1,0 +1,2533 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "oxiz_version": "0.3.2",
+    "z3_version": "4.15.4",
+    "os": "macos",
+    "arch": "aarch64",
+    "generated_at": "2026-08-04T22:54:29+07:00",
+    "benchmark_count": 168
+  },
+  "results": [
+    {
+      "benchmark": "array_extensionality.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 6600041
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27090000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_forall_init.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 753708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11931042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_max.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 646834
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13004667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_partition.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 516542
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15991833
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_permutation.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 870209
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9137000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_search.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1541208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12049708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_sorted.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1807583
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15364250
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_unique.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1077958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 286448917
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_unsat.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1160208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 7342459
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_update.smt2",
+      "logic": "AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 774333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9228375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_array_func.smt2",
+      "logic": "AUFLIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 6378417
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27433625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_basic_sat.smt2",
+      "logic": "AUFLIRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 347500
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12320625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_mixed_arith.smt2",
+      "logic": "AUFLIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 384291
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11460000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_quantified.smt2",
+      "logic": "AUFLIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 803208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10961625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_unsat.smt2",
+      "logic": "AUFLIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 374375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10001875
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_bv_arith.smt2",
+      "logic": "QF_ABV",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2425917
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9664959
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_contradiction.smt2",
+      "logic": "QF_ABV",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 953250
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9971958
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_overflow.smt2",
+      "logic": "QF_ABV",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 235084
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12239000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_store_chain.smt2",
+      "logic": "QF_ABV",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 881625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12743500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_store_select_sat.smt2",
+      "logic": "QF_ABV",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2391875
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12467625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_basic.smt2",
+      "logic": "QF_ALIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 367417
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 16005500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_const_array.smt2",
+      "logic": "QF_ALIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 5936208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27785916
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_sorted.smt2",
+      "logic": "QF_ALIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 443750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12075375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_sum_pattern.smt2",
+      "logic": "QF_ALIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 558042
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12053958
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_unsat.smt2",
+      "logic": "QF_ALIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 542625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11700334
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_equality.smt2",
+      "logic": "QF_AUFBV",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 737291
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13306083
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_ite_select.smt2",
+      "logic": "QF_AUFBV",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 761041
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12612833
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_multi_store.smt2",
+      "logic": "QF_AUFBV",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 7682667
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10934541
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_store_select.smt2",
+      "logic": "QF_AUFBV",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 433000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9799667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_unsat_conflict.smt2",
+      "logic": "QF_AUFBV",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1476500
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12403459
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_int.smt2",
+      "logic": "QF_AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 781625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14442792
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_int_trans.smt2",
+      "logic": "QF_AUFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1366292
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11573500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_model.smt2",
+      "logic": "QF_AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2580708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8947375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_store_func.smt2",
+      "logic": "QF_AUFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1036583
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11806000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_unsat.smt2",
+      "logic": "QF_AUFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 376125
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 7479625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_basic_sat.smt2",
+      "logic": "QF_NIRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 331625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13377708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_mixed.smt2",
+      "logic": "QF_NIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 15856958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9330541
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_product_sat.smt2",
+      "logic": "QF_NIRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 488834
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14019667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_real_poly.smt2",
+      "logic": "QF_NIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 667416
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11721625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_unsat.smt2",
+      "logic": "QF_NIRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1997208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13918166
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_basic.smt2",
+      "logic": "QF_UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1273958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14712625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_congruence.smt2",
+      "logic": "QF_UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 718541
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8957167
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_inject.smt2",
+      "logic": "QF_UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 7082042
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 26654000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_monotone.smt2",
+      "logic": "QF_UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 491958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12243042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_unsat.smt2",
+      "logic": "QF_UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 317208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12395500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_abs.smt2",
+      "logic": "QF_UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 629167
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12723625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_basic.smt2",
+      "logic": "QF_UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 339958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11851416
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_interp.smt2",
+      "logic": "QF_UFLRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 576250
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11995708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_linear.smt2",
+      "logic": "QF_UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 615250
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9448917
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_unsat.smt2",
+      "logic": "QF_UFLRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2160625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13245708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "ackermann.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 4184458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9658583
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "arith_unsat.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 439667
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9740584
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "congruence_closure.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 891375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10054792
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "division_property.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2659750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 18326292
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "forall_exists_simple.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1443000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11327250
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "forall_exists_unsat.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1140458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11266750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "idempotent.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1003208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 16375500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "injective.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 7097584
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 49781416
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "injective_unsat.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 786958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15773917
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "linear_order.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 78831917
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10190458
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "monotone_basic.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 737167
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13075625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "monotone_violation.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1269375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11593833
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "nested_quantifiers.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 635000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12719416
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "pigeonhole_3.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1767291
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12697375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "reflexivity.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 405584
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11318833
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "skolem_test.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 937000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13562750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "sum_bounds.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 530708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13307542
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "surjective.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2083625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11147542
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "trans_simple.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 3345084
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9870917
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "trans_unsat.smt2",
+      "logic": "UFLIA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 949416
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10012417
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_archimedean.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1059000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14623708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_bounds.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 682875
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10309041
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_composition.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 696166
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13768667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_convex.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 616916
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13166667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_fixed_point.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1974917
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9637166
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_identity.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 404458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10327333
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_interp.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1140292
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15024416
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_lipschitz.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2912667
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12699167
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_monotone.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2820375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15729958
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_unsat.smt2",
+      "logic": "UFLRA",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 768917
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13665375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_01.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 576167
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9108875
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_02.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2812750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13033833
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_03.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 501917
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13635875
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_04.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 737042
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9570667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_05.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 6752000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28684167
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_06.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1461333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10015041
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_07.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 800708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11072708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_08.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 399667
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8264250
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_09.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1202250
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11036208
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_10.smt2",
+      "logic": "qf_a",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 802792
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11152666
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_01.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 774708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10880000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_02.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 645292
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13991792
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_03.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 651209
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10652667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_04.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 656375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10683042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_05.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 747458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10388708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_06.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 628041
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13251583
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_07.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2174208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9102417
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_08.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 682417
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13033208
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_09.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 905583
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9212708
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_10.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 715750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14081667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_11.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2823125
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11677292
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_12.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 638375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14980833
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_13.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1149208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10627375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_14.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 621333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10593917
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_15.smt2",
+      "logic": "qf_bv",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 892541
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12519875
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_01.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 18035750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9376541
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_02.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1614875
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12505042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_03.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 766292
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8796458
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_04.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 5904125
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9373042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_05.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 116449542
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 6744042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_06.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2325084
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9393500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_07.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1859792
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15823750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_08.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 616750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11484166
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_09.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 218128542
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 6569416
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_10.smt2",
+      "logic": "qf_dt",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 14092083
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8682333
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_01.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 402000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10358000
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_02.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1561042
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11478250
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_03.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 287666
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8984541
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_04.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 423709
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12490750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_05.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 226750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15649334
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_06.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 418291
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13521167
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_07.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 522375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9620750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_08.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 849917
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12500625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_09.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 419292
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13915375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_10.smt2",
+      "logic": "qf_fp",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 297541
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9771375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_01_range.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 882375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14386458
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_02_linear_eq.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 6336708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27219750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_03_linear_ineq.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 570541
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12260834
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_04_unsat_simple.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 516333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12618750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_05_branch_bound.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 377375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14326375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_06_cutting_planes.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 731084
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13095667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_07_mixed_eq_ineq.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 424000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13654042
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_08_negative_coeffs.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 273083
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13180125
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_09_large_coeffs.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 782541
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8960584
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_10_strict_ineq.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1285833
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14189541
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_11_unsat_bounds.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 528375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12711541
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_12_many_vars.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 6388083
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 29045041
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_13_divisibility.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1460500
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12986542
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_14_sparse.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 425625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15574458
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_15_dense.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 798458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12942458
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_16_edge_zero.smt2",
+      "logic": "qf_lia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 797000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 15190666
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_01_simple.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2045416
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13445083
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_02_simplex.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1251750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11871166
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_03_rational.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 970500
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11408125
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_04_strict_ineq.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 321791
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8204625
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_05_unsat_simple.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 307041
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8771417
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_06_dense.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 270042
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14848166
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_07_sparse.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 6368375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28383167
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_08_negative.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 575167
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10522250
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_09_tight_bounds.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 715042
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13167500
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_10_infeasible.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 180375
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11286458
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_11_many_vars.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1517625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13265375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_12_small_coeffs.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 997458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 14938041
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_13_large_coeffs.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 394333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 9622250
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_14_edge_zero.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 617000
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11744459
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_15_strict_boundary.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 661750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11798750
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_16_mixed_strict.smt2",
+      "logic": "qf_lra",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 438041
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 8010083
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "nia_01_simple_mult.smt2",
+      "logic": "qf_nia",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 2209834
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13327375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_01.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1157625
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10560958
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_02.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 788708
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10194666
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_03.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 470333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 11940334
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_04.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 257959
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10828667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_05.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 570667
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 13201416
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_06.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 4011750
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 12578333
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_07.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 586250
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10220333
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_08.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Unsat",
+      "z3_result": "Unsat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 869583
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 10491667
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_09.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1648792
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 17040333
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_10.smt2",
+      "logic": "qf_s",
+      "oxiz_result": "Sat",
+      "z3_result": "Sat",
+      "oxiz_time": {
+        "secs": 0,
+        "nanos": 1131958
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 16747292
+      },
+      "match_status": "Correct"
+    }
+  ]
+}

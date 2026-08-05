@@ -279,6 +279,28 @@ impl<W: Write + Send> LratWriter<W> {
         self.add_clause(lits, &[])
     }
 
+    /// Reserve the next sequential clause id for an original (input-formula)
+    /// clause *without* writing a line into the proof stream.
+    ///
+    /// The LRAT format keeps original clauses implicit: a checker numbers
+    /// them `1..=N` from the accompanying CNF file in file order and never
+    /// expects them to appear as addition lines in the proof itself — only
+    /// *derived* clauses and deletions do. [`Self::add_original_clause`]
+    /// predates that distinction being load-bearing for this crate (it
+    /// writes every original as a hint-less addition line, which is
+    /// harmless for a checker that only reads clause ids out of the LRAT
+    /// stream itself, but wrong for one that gets its original formula
+    /// separately and expects the stream to start at the first *derived*
+    /// clause). Use this method when a caller's original-clause ids must
+    /// line up with an external CNF numbering; use
+    /// [`Self::add_original_clause`] when the LRAT file is the only source
+    /// of truth for clause content a downstream reader will consult.
+    pub fn reserve_original_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
     /// Log clause deletion
     ///
     /// # Arguments
@@ -580,6 +602,37 @@ mod tests {
 
         // Clean up
         fs::remove_file(&path).expect("test operation should succeed");
+    }
+
+    #[test]
+    fn test_lrat_reserve_original_id_does_not_write_a_line() {
+        // `reserve_original_id` exists for callers that keep original
+        // clauses implicit (numbered from an accompanying CNF, per the LRAT
+        // format's own convention) rather than writing them into the proof
+        // stream the way `add_original_clause` does.
+        let (captured, sink) = shared_sink();
+        let v0 = Var::new(0);
+        {
+            let mut proof = LratWriter::<BufWriter<SharedSink>>::with_writer(sink);
+            let id1 = proof.reserve_original_id();
+            let id2 = proof.reserve_original_id();
+            assert_eq!((id1, id2), (1, 2), "ids are still sequential");
+
+            // A real derived clause afterward continues that same sequence
+            // and *does* write a line, hinting off the reserved (but never
+            // written) id.
+            let id3 = proof
+                .add_clause(&[Lit::pos(v0)], &[id1])
+                .expect("add derived clause");
+            assert_eq!(id3, 3);
+            proof.flush().expect("flush");
+        }
+        let bytes = captured.lock().expect("lock").clone();
+        assert_eq!(
+            bytes, b"3 1 0 1 0\n",
+            "reserving ids 1 and 2 must not have written anything; only the \
+             derived clause (id 3) produces a line"
+        );
     }
 
     #[test]

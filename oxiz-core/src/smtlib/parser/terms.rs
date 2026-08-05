@@ -731,34 +731,34 @@ impl Parser<'_> {
     /// Expand an application of a `define-fun` definition by substituting the
     /// arguments for the parameters in the recorded body.
     fn expand_defined_fun(&mut self, name: &str, args: &[TermId]) -> Result<TermId> {
-        let Some((params, body)) = self.function_defs.get(name).cloned() else {
+        let Some(macro_def) = self.function_defs.get(name).cloned() else {
             return Err(OxizError::ParseError {
                 position: self.lexer.position(),
                 message: format!("internal: no definition recorded for {name}"),
             });
         };
-        if args.len() != params.len() {
+        if args.len() != macro_def.formal_vars.len() {
             return Err(OxizError::ParseError {
                 position: 0,
                 message: format!(
                     "wrong number of arguments for {}: expected {}, got {}",
                     name,
-                    params.len(),
+                    macro_def.formal_vars.len(),
                     args.len()
                 ),
             });
         }
+        // Substitute directly by the formal parameters' own `TermId`s, taken
+        // verbatim from where they were bound while the body was parsed. No
+        // sort has to be looked up or guessed here, so there is no way for
+        // this map's keys to miss the occurrences actually in the body — see
+        // `FunctionMacro::formal_vars`'s doc comment for the failure mode
+        // this sidesteps.
         let mut substitution = FxHashMap::default();
-        for ((param_name, _param_sort), &arg) in params.iter().zip(args.iter()) {
-            let param_sort = self
-                .constants
-                .get(param_name)
-                .copied()
-                .unwrap_or(self.manager.sorts.bool_sort);
-            let param_var = self.manager.mk_var(param_name, param_sort);
-            substitution.insert(param_var, arg);
+        for (&formal, &actual) in macro_def.formal_vars.iter().zip(args.iter()) {
+            substitution.insert(formal, actual);
         }
-        Ok(self.manager.substitute(body, &substitution))
+        Ok(self.manager.substitute(macro_def.expansion, &substitution))
     }
 
     /// Restore the scope a binder shadowed and build the quantifier.

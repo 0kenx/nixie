@@ -321,6 +321,84 @@ impl IntervalSet {
         None
     }
 
+    /// The first point of this set that `exclude` does not already list.
+    ///
+    /// This is what lets the search revise an arithmetic witness (see
+    /// `solver/resample.rs`): when the point an earlier variable was given
+    /// turns out to leave a later, coupled variable no room at all, the same
+    /// region is asked for a different one. Repeated calls with a growing
+    /// `exclude` therefore walk a region's points one at a time.
+    ///
+    /// The order comes from `Self::witness_candidates`, which offers
+    /// "nicer" points first — integers before fractions, small before large,
+    /// and nonzero before zero, since a first witness of `0` is exactly what
+    /// collapses a product constraint like `x·y = c` into an unsatisfiable
+    /// one. Every candidate is filtered against membership, so an offer that
+    /// falls outside the set simply does not count.
+    ///
+    /// `None` means the enumeration is spent — **not** that the set is empty.
+    /// The candidate stream is deliberately finite (an unbounded region holds
+    /// unboundedly many points, and something has to stop), so the caller must
+    /// read exhaustion as incompleteness and never as a proof.
+    pub fn sample_avoiding(&self, exclude: &[BigRational]) -> Option<BigRational> {
+        if self.is_empty() {
+            return None;
+        }
+        let spent: std::collections::HashSet<&BigRational> = exclude.iter().collect();
+        self.witness_candidates()
+            .find(|point| !spent.contains(point) && self.contains(point))
+    }
+
+    /// Every point this module is willing to offer as a witness, best first
+    /// and lazily: nothing beyond the point a caller settles on is computed.
+    ///
+    /// Candidates are only *proposed* — membership is the caller's filter, so
+    /// a stage may over-offer freely (a magnitude that misses the set, an
+    /// integer landing in an open endpoint) rather than having to be exact.
+    fn witness_candidates(&self) -> impl Iterator<Item = BigRational> + '_ {
+        // Integers of the bounded components come first because a bounded
+        // component is where the answer usually is and where the enumeration
+        // can be near-complete. The magnitude ladder then covers rays and the
+        // whole line, which have no endpoints to work inward from. Fractions
+        // are last: a region too narrow to hold an integer is real, but rare,
+        // and an integer witness keeps later polynomial arithmetic small.
+        edgewise_integers(self)
+            .chain(magnitude_ladder())
+            .chain(std::iter::once(BigRational::zero()))
+            .chain(dyadic_interior_points(self))
+            .chain(outward_along_rays(self))
+    }
+
+    /// The set's components with finite bounds on both sides, as `(lo, hi)`
+    /// pairs. Open endpoints are reported as-is; membership filtering at the
+    /// point of use is what keeps an excluded endpoint out.
+    fn bounded_components(&self) -> impl Iterator<Item = (&BigRational, &BigRational)> + '_ {
+        self.intervals
+            .iter()
+            .filter_map(|interval| match (&interval.lo, &interval.hi) {
+                (Bound::Finite(lo), Bound::Finite(hi)) => Some((lo, hi)),
+                _ => None,
+            })
+    }
+
+    /// `Some(point)` when this set is exactly one closed singleton interval,
+    /// i.e. the region leaves no freedom at all (its value was forced by the
+    /// intersected constraints rather than chosen).
+    pub fn as_forced_point(&self) -> Option<BigRational> {
+        if self.intervals.len() != 1 {
+            return None;
+        }
+        let interval = &self.intervals[0];
+        match (&interval.lo, &interval.hi) {
+            (Bound::Finite(lo), Bound::Finite(hi))
+                if lo == hi && !interval.lo_open && !interval.hi_open =>
+            {
+                Some(lo.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// Get all finite endpoints in the interval set.
     pub fn endpoints(&self) -> Vec<BigRational> {
         let mut result = Vec::new();
@@ -545,6 +623,128 @@ fn merge_intervals(mut intervals: Vec<Interval>) -> Vec<Interval> {
     result
 }
 
+/// How many integers a single bounded component may contribute, so that a
+/// component like `[0, 10^9]` costs a bounded amount of work per call rather
+/// than being walked end to end.
+///
+/// OxiZ tuning decision: large enough to enumerate the small integer boxes
+/// that dominate NIA search exhaustively, small enough that a call is cheap.
+const INTEGERS_PER_COMPONENT: u32 = 400;
+
+/// How far the ladder of small integers reaches in each direction.
+///
+/// OxiZ tuning decision: rays and the full real line have no endpoints for
+/// [`edgewise_integers`] to work from, so this is the only stage that answers
+/// them, and it has to cover the magnitudes that ordinary problems mention.
+const LADDER_REACH: i64 = 96;
+
+/// How many times a bounded component is halved by [`dyadic_interior_points`].
+///
+/// OxiZ tuning decision: depth `d` offers `2^(d-1)` new points per component,
+/// so a modest depth already supplies far more distinct witnesses than the
+/// retry allowance in `solver/resample.rs` will ever ask for.
+const DYADIC_DEPTH: u32 = 4;
+
+/// How far [`outward_along_rays`] walks past a ray's finite end.
+///
+/// OxiZ tuning decision: the steps double, so this reaches magnitude `2^n`
+/// past the endpoint — enough to escape any bound an ordinary problem writes
+/// down, at a handful of candidates.
+const RAY_STRIDES: u32 = 24;
+
+/// Integers of each bounded component, taken from its two ends inward:
+/// `first`, `last`, `first + 1`, `last - 1`, and so on.
+///
+/// Working inward from the edges rather than sweeping left to right matters
+/// when a component is wide and the cap bites: a constraint that carved this
+/// component out of a larger region did so *at* these edges, so a witness
+/// sitting next to one is the likeliest to also satisfy whatever neighbouring
+/// constraint has not been intersected in yet.
+fn edgewise_integers(set: &IntervalSet) -> impl Iterator<Item = BigRational> + '_ {
+    set.bounded_components().flat_map(|(lo, hi)| {
+        let first = lo.ceil();
+        let last = hi.floor();
+        let population = (&last - &first)
+            .to_integer()
+            .try_into()
+            .map_or(INTEGERS_PER_COMPONENT, |width: u32| {
+                width.saturating_add(1).min(INTEGERS_PER_COMPONENT)
+            });
+        // `first > last` means the component spans no integer at all; the
+        // subtraction is then negative and the conversion above fails, so the
+        // guard has to be explicit.
+        let population = if first > last { 0 } else { population };
+        (0..population).map(move |step| {
+            let inset = BigRational::from_integer((i64::from(step) / 2).into());
+            if step.is_multiple_of(2) {
+                &first + inset
+            } else {
+                &last - inset
+            }
+        })
+    })
+}
+
+/// Integers of growing magnitude, positive before negative: `1, -1, 2, -2, …`.
+///
+/// Zero is deliberately absent — [`IntervalSet::witness_candidates`] appends
+/// it after the whole ladder. A witness of `0` satisfies a product constraint
+/// `x·y = c` for no `y` at all, so it is the *worst* first guess for a
+/// variable nothing else pins down, however "simple" it looks.
+fn magnitude_ladder() -> impl Iterator<Item = BigRational> {
+    (1..=LADDER_REACH)
+        .flat_map(|magnitude| [magnitude, -magnitude])
+        .map(|n| BigRational::from_integer(n.into()))
+}
+
+/// Dyadic points inside each bounded component, coarsest first: every
+/// component's midpoint, then every component's quarter points, and so on.
+///
+/// This is the stage that answers a component too narrow to contain a single
+/// integer — a strictly-rational band left by intersecting several
+/// constraints. Going breadth-first over the depth means a set of several
+/// components offers all of their midpoints before subdividing any of them.
+fn dyadic_interior_points(set: &IntervalSet) -> impl Iterator<Item = BigRational> + '_ {
+    (1..=DYADIC_DEPTH).flat_map(move |depth| {
+        let denominator = BigRational::from_integer((1i64 << depth).into());
+        set.bounded_components().flat_map(move |(lo, hi)| {
+            let span = hi - lo;
+            let base = lo.clone();
+            let denominator = denominator.clone();
+            // Odd numerators only: an even one repeats a point some coarser
+            // depth already offered.
+            (1..(1i64 << depth)).step_by(2).map(move |numerator| {
+                &base + &span * (BigRational::from_integer(numerator.into()) / &denominator)
+            })
+        })
+    })
+}
+
+/// Points marching away from the finite end of each half-bounded component,
+/// at doubling strides: one past the end, then two, four, eight, …
+///
+/// A ray like `[1000, ∞)` is missed by every earlier stage — it holds no
+/// bounded component and no small integer — so without this it would yield no
+/// witness at all. Doubling rather than stepping by one means a retry that
+/// keeps failing escapes the neighbourhood quickly instead of inching along.
+fn outward_along_rays(set: &IntervalSet) -> impl Iterator<Item = BigRational> + '_ {
+    set.intervals.iter().flat_map(|interval| {
+        // `(origin, direction)`: where the finite end is, and which way the
+        // component extends from it. A component finite on both sides is
+        // covered by the integer stages and contributes nothing here.
+        let anchor = match (&interval.lo, &interval.hi) {
+            (Bound::Finite(lo), hi) if hi.is_pos_inf() => Some((lo.ceil(), 1i64)),
+            (lo, Bound::Finite(hi)) if lo.is_neg_inf() => Some((hi.floor(), -1i64)),
+            _ => None,
+        };
+        (0..RAY_STRIDES).filter_map(move |stride| {
+            let (origin, direction) = anchor.as_ref()?;
+            let step = BigRational::from_integer((direction << stride).into());
+            Some(origin + step)
+        })
+    })
+}
+
 impl Default for IntervalSet {
     fn default() -> Self {
         Self::reals()
@@ -614,6 +814,77 @@ mod tests {
         assert_eq!(c.num_intervals(), 1);
         assert!(c.contains(&rat(1)));
         assert!(c.contains(&rat(7)));
+    }
+
+    /// Every point `sample_avoiding` offers must be in the set and outside
+    /// `exclude`, for every stage of the candidate stream — bounded
+    /// components, the magnitude ladder, dyadic interiors and rays alike.
+    #[test]
+    fn test_sample_avoiding_only_ever_returns_fresh_members() {
+        let regions = [
+            IntervalSet::from_interval(Interval::closed(rat(0), rat(3))),
+            IntervalSet::reals(),
+            IntervalSet::ge(rat(1000)),
+            IntervalSet::le(rat(-1000)),
+            IntervalSet::from_interval(Interval::open(rat(0), rat(1))),
+            IntervalSet::from_interval(Interval::closed(rat(4), rat(4))),
+        ];
+        for region in regions {
+            let mut drawn: Vec<BigRational> = Vec::new();
+            while let Some(point) = region.sample_avoiding(&drawn) {
+                assert!(region.contains(&point), "{point} is outside {region}");
+                assert!(!drawn.contains(&point), "{point} repeated for {region}");
+                drawn.push(point);
+                if drawn.len() > 200 {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// A variable nothing constrains must not be handed `0` as its first
+    /// alternative: that is the value that makes a product equality
+    /// unsatisfiable for every value of the other factor.
+    #[test]
+    fn test_sample_avoiding_offers_a_nonzero_integer_before_zero() {
+        let reals = IntervalSet::reals();
+        let point = reals
+            .sample_avoiding(&[])
+            .expect("the real line always has a witness");
+        assert!(!point.is_zero());
+        assert!(point.is_integer(), "{point} should be a small integer");
+    }
+
+    /// A ray has no bounded component and no small integer inside it, so it
+    /// is answered only by the outward march past its finite end.
+    #[test]
+    fn test_sample_avoiding_escapes_a_far_ray() {
+        let ray = IntervalSet::ge(rat(1000));
+        let point = ray
+            .sample_avoiding(&[])
+            .expect("[1000, inf) has plenty of witnesses");
+        assert!(point >= rat(1000));
+        // And it keeps producing distinct ones as the search rejects them.
+        let second = ray
+            .sample_avoiding(std::slice::from_ref(&point))
+            .expect("a ray is not exhausted by one rejection");
+        assert_ne!(second, point);
+        assert!(second >= rat(1000));
+    }
+
+    /// A band too narrow to hold an integer still yields witnesses, from the
+    /// dyadic subdivision stage.
+    #[test]
+    fn test_sample_avoiding_subdivides_an_integer_free_band() {
+        let band = IntervalSet::from_interval(Interval::open(rat(0), rat(1)));
+        let first = band.sample_avoiding(&[]).expect("(0, 1) is not empty");
+        assert!(!first.is_integer());
+        assert!(first > rat(0) && first < rat(1));
+        let second = band
+            .sample_avoiding(std::slice::from_ref(&first))
+            .expect("(0, 1) holds more than one dyadic point");
+        assert_ne!(second, first);
+        assert!(second > rat(0) && second < rat(1));
     }
 
     #[test]

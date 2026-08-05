@@ -128,6 +128,12 @@ impl DimacsParser {
                 continue;
             }
 
+            // Some SATLIB-era generators terminate the clause section with a
+            // bare '%' line before trailing junk; stop parsing there.
+            if line.starts_with('%') {
+                break;
+            }
+
             // Parse problem line
             if line.starts_with('p') {
                 self.parse_problem_line(line)?;
@@ -142,12 +148,17 @@ impl DimacsParser {
                     .map_err(|_| DimacsError::Parse(format!("Invalid literal: {token}")))?;
 
                 if lit_val == 0 {
-                    // End of clause
-                    if !current_clause.is_empty() {
-                        solver.add_clause(current_clause.iter().copied());
-                        current_clause.clear();
-                        _clauses_read += 1;
-                    }
+                    // End of clause. The clause must always be handed to the
+                    // solver, even when empty: a lone `0` token is the DIMACS
+                    // spelling of the empty clause, i.e. an unconditionally
+                    // false constraint, and `Solver::add_clause` is what marks
+                    // the instance trivially UNSAT for it. Guarding this call
+                    // on `!current_clause.is_empty()` silently discarded empty
+                    // clauses, turning e.g. `p cnf 0 1\n0\n` into a clause-free
+                    // (and therefore falsely SAT) instance instead of UNSAT.
+                    solver.add_clause(current_clause.iter().copied());
+                    current_clause.clear();
+                    _clauses_read += 1;
                 } else {
                     // Add literal to current clause
                     let lit = self.dimacs_to_lit(lit_val)?;
@@ -429,5 +440,47 @@ mod tests {
 
         assert_eq!(parser.num_vars(), 3);
         assert_eq!(parser.num_clauses(), 3);
+    }
+
+    // Regression: a lone `0` token is the DIMACS empty clause (unconditionally
+    // false). The parser used to drop it via a `!current_clause.is_empty()`
+    // guard, so a file whose only clause is `0` parsed as clause-free and
+    // solved SAT instead of UNSAT.
+    #[test]
+    fn test_pr26_dimacs_trailing_empty_clause_is_unsat() {
+        let cnf = "p cnf 0 1\n0\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("test operation should succeed");
+        assert_eq!(solver.solve(), SolverResult::Unsat);
+    }
+
+    // Same defect, but with the empty clause sandwiched between two ordinary
+    // (individually satisfiable) clauses -- guards against a fix that only
+    // special-cases a trailing empty clause.
+    #[test]
+    fn test_pr26_dimacs_embedded_empty_clause_is_unsat() {
+        let cnf = "p cnf 1 3\n1 0\n0\n-1 0\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("test operation should succeed");
+        assert_eq!(solver.solve(), SolverResult::Unsat);
+    }
+
+    // A `%` line marks end-of-clauses in SATLIB-style files; parsing must stop
+    // there instead of choking on trailing commentary/junk that follows it.
+    #[test]
+    fn test_pr26_dimacs_percent_terminator_stops_parsing() {
+        let cnf = "p cnf 2 1\n1 2 0\n%\nsome trailing junk that is not DIMACS\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("test operation should succeed");
+        assert_eq!(solver.solve(), SolverResult::Sat);
     }
 }

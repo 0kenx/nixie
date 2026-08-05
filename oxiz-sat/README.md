@@ -96,13 +96,13 @@ The solver is optimized for:
 - Minimal allocations during solving
 - Fast unit propagation via two-watched literals
 
-## Status (v0.3.1)
+## Status (v0.3.2)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.1 |
+| Version | 0.3.2 |
 | Status | Stable |
-| Tests | 778 passing |
+| Tests | 865 passing |
 | Source files | 89 |
 | Public API items | 1,147+ |
 
@@ -111,7 +111,7 @@ learned/assertion ledgers (previously unreclaimable by clause-DB reduction,
 `forget`, or `pop`, which could grow a goal's clause count unboundedly across
 repeated push/pop+check cycles).
 
-*Last updated: 2026-07-31*
+*Last updated: 2026-08-05*
 
 ## License
 

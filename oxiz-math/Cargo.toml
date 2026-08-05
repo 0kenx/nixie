@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Mathematical foundations for OxiZ SMT solver"
 keywords = ["smt", "math", "simplex", "polynomial", "algebra"]
 categories = ["algorithms", "mathematics"]

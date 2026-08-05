@@ -2,21 +2,20 @@
 
 #[allow(unused_imports)]
 use crate::prelude::*;
-use num_rational::Rational64;
-use num_traits::{One, ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::sort::SortId;
 use oxiz_sat::{Lit, Var};
-use smallvec::SmallVec;
 
 use super::Solver;
 use super::trail::TrailOp;
-use super::types::{
-    ArithConstraintType, Constraint, NamedAssertion, ParsedArithConstraint, Polarity, UnsatCore,
-};
+use super::types::{ArithConstraintType, Constraint, NamedAssertion, Polarity, UnsatCore};
 
+mod arith_atom_parse;
+pub(super) mod bool_euf_encoding;
 mod exists_skolem;
 pub(crate) mod finite_expand;
+mod finite_map_ite;
+mod numeric_purification;
 mod skolem_candidates;
 mod track_theory_vars;
 
@@ -114,378 +113,40 @@ impl Solver {
         }
     }
 
-    /// Register a compound Int/Real-sorted term as an opaque arithmetic atom.
+    /// Mark `term` (a Bool-sorted `Var`) as appearing in a UF-application
+    /// argument position, so the `TermKind::Var` arm of `encode_depth_uncached`
+    /// registers it for Bool completion (`Constraint::BoolApp`) once it is
+    /// encoded.
     ///
-    /// Used for `div`, `mod` and conditional values: the linear solver cannot
-    /// express them as a combination of their operands, so each gets its own
-    /// theory variable (and hence a model value), and its semantics arrive
-    /// separately as the ground axioms asserted by
-    /// [`Solver::instantiate_arith_axioms`].  Non-numeric terms are ignored.
-    fn register_arith_atom(&mut self, term_id: TermId, sort: SortId, manager: &TermManager) {
-        if sort != manager.sorts.int_sort && sort != manager.sorts.real_sort {
-            return;
-        }
-        if self.arith_terms.contains(&term_id) {
-            return;
-        }
-        self.arith_terms.insert(term_id);
-        self.trail.push(TrailOp::ArithTermAdded { term: term_id });
-        self.arith.intern(term_id);
-    }
-
-    /// Parse an arithmetic comparison and extract linear expression.
-    /// Returns: (terms with coefficients, constant, constraint_type).
+    /// Bool completion merges a Bool-sorted EUF class with the canonical
+    /// true/false node by SAT-assigned value -- exactly what lets congruence
+    /// fire over a UF application that takes Bool arguments. Registering
+    /// *every* Bool variable for it unconditionally would charge that EUF
+    /// bookkeeping to every propositional variable in the problem, most of
+    /// which never appear near a UF application at all. Restricting it to
+    /// the terms `abstract_compound_bool_args` actually found in argument
+    /// position keeps the cost proportional to the UF-with-Bool-arguments
+    /// shape that needs it.
     ///
-    /// Results are cached by `reason` (the comparison term id).
-    /// `ParsedArithConstraint` is purely structural — it depends only on the
-    /// term graph — so the cache is safe to retain across CDCL backtracks.
-    pub(super) fn parse_arith_comparison(
-        &mut self,
-        lhs: TermId,
-        rhs: TermId,
-        constraint_type: ArithConstraintType,
-        reason: TermId,
-        manager: &TermManager,
-    ) -> Option<ParsedArithConstraint> {
-        // Fast path: return cached result if available.
-        if let Some(cached) = self.arith_parse_cache.get(&reason) {
-            return cached.clone();
-        }
-
-        let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-        let mut constant = Rational64::zero();
-
-        // Parse LHS (add positive coefficients)
-        let lhs_ok =
-            self.extract_linear_terms(lhs, Rational64::one(), &mut terms, &mut constant, manager);
-        if lhs_ok.is_none() {
-            self.arith_parse_cache.insert(reason, None);
-            return None;
-        }
-
-        // Parse RHS (subtract, so coefficients are negated)
-        // For lhs OP rhs, we want lhs - rhs OP 0
-        let rhs_ok =
-            self.extract_linear_terms(rhs, -Rational64::one(), &mut terms, &mut constant, manager);
-        if rhs_ok.is_none() {
-            self.arith_parse_cache.insert(reason, None);
-            return None;
-        }
-
-        // Combine like terms
-        let mut combined: FxHashMap<TermId, Rational64> = FxHashMap::default();
-        for (term, coef) in terms {
-            *combined.entry(term).or_insert(Rational64::zero()) += coef;
-        }
-
-        // Remove zero coefficients
-        let final_terms: SmallVec<[(TermId, Rational64); 4]> =
-            combined.into_iter().filter(|(_, c)| !c.is_zero()).collect();
-
-        let result = ParsedArithConstraint {
-            terms: final_terms,
-            constant: -constant, // Move constant to RHS
-            constraint_type,
-            reason_term: reason,
-        };
-
-        self.arith_parse_cache.insert(reason, Some(result.clone()));
-        Some(result)
-    }
-
-    /// Extract linear terms from an arithmetic expression.
-    /// Returns None if the term is not linear.
+    /// # Retroactive registration
     ///
-    /// # Explicit stack, not native recursion
-    ///
-    /// The walk uses an explicit work-stack.  The recursive version's frames
-    /// stacked *on top of* [`Solver::encode_depth`]'s at the leaf (the encoder
-    /// calls [`Solver::parse_arith_comparison`] from a comparison arm), so the
-    /// true worst-case native stack was `encode_depth × cap + this walk × its
-    /// own depth` — the encoder's depth cap never bounded it.  Worse, the
-    /// encoder does not descend into arithmetic operands at all: a single
-    /// shallow atom `(< deep-arith-chain 0)` reached this walk with the whole
-    /// chain, and `parse_arith_comparison` is also called from theory paths
-    /// (e.g. `TermKind::Eq`) on MBQI instantiation results that never pass the
-    /// assert-time depth gate.  A stack overflow here is a fatal process abort
-    /// no `Result` can report, and a depth cap would be dishonest: `None`
-    /// means "not linear", so a capped deep-but-linear chain would silently
-    /// drop the atom's theory meaning and gate the whole problem to `Unknown`.
-    ///
-    /// Only the `Mul` arm carries resume state: a product is linear iff at
-    /// most one factor is non-constant, so each factor is evaluated into a
-    /// *fresh* accumulation context and classified when it completes.  The
-    /// suspended parent context travels inside the `Mul` frame itself, which
-    /// makes the "stack empty at finalize" case unrepresentable — no `pop().
-    /// expect(..)` is needed anywhere.
-    ///
-    /// On failure the caller's buffers are untouched (the recursive version
-    /// left partial writes behind); the only caller,
-    /// [`Solver::parse_arith_comparison`], discards the buffers on `None`, so
-    /// this is unobservable.
-    pub(super) fn extract_linear_terms(
-        &self,
-        term_id: TermId,
-        scale: Rational64,
-        terms: &mut SmallVec<[(TermId, Rational64); 4]>,
-        constant: &mut Rational64,
-        manager: &TermManager,
-    ) -> Option<()> {
-        /// One linear-accumulation context: the `(term, coefficient)` pairs
-        /// and folded constant of the sub-expression currently being walked.
-        struct Level {
-            terms: SmallVec<[(TermId, Rational64); 4]>,
-            constant: Rational64,
-        }
-        impl Level {
-            fn new() -> Self {
-                Level {
-                    terms: SmallVec::new(),
-                    constant: Rational64::zero(),
-                }
+    /// `encode_depth_uncached`'s `TermKind::Var` arm only consults
+    /// `bool_uf_arg_terms` the *first* time `term` is encoded -- a later
+    /// occurrence hits the `encoded_terms` memo and never re-runs the arm.
+    /// If `term` was asserted (and so already encoded) by an *earlier*
+    /// assertion, before a *later* one discovers it in argument position,
+    /// the constraint would otherwise never be registered at all: `b1`
+    /// asserted directly in one `assert` call, then used as `f`'s argument in
+    /// a second one, must still be completed. So when `term` already has a
+    /// SAT variable, register the constraint here, immediately, rather than
+    /// waiting for an encode that has already happened.
+    pub(super) fn mark_bool_uf_arg(&mut self, term: TermId) {
+        if self.bool_uf_arg_terms.insert(term) {
+            self.trail.push(TrailOp::BoolUfArgAdded { term });
+            if let Some(&var) = self.term_to_var.get(&term) {
+                self.record_constraint(var, Constraint::BoolApp(term));
             }
         }
-        /// Resume state for one `Mul` node.  A product is linear iff at most
-        /// one factor is non-constant; each factor is evaluated into a fresh
-        /// [`Level`] and classified here when it completes.  The factor must
-        /// be linear-as-a-whole (exactly one variable term, no additive
-        /// constant) for the product to remain linear.
-        struct MulFrame {
-            args: SmallVec<[TermId; 4]>,
-            /// Index of the next factor to evaluate; factors `..next-1` have
-            /// been classified already, factor `next-1` (if `next > 0`) is the
-            /// one whose result is sitting in the current level.
-            next: usize,
-            const_product: Rational64,
-            /// The single non-constant factor seen so far, e.g. `x`, `(- x)`,
-            /// `(* 2 x)`.  A second one makes the product nonlinear.
-            var_factor: Option<(TermId, Rational64)>,
-            /// The scale the whole product contributes at.
-            scale: Rational64,
-            /// The suspended accumulation context of the `Mul`'s parent,
-            /// restored when the product finalizes.
-            parent: Level,
-        }
-        enum Work {
-            /// Fold `term` into the current level at the given scale.
-            Visit(TermId, Rational64),
-            /// Classify the factor that just finished (when `next > 0`) and
-            /// either evaluate the next factor or finalize the product.
-            Mul(MulFrame),
-        }
-
-        let mut cur = Level::new();
-        let mut work: Vec<Work> = vec![Work::Visit(term_id, scale)];
-
-        while let Some(item) = work.pop() {
-            match item {
-                Work::Visit(id, sc) => {
-                    let term = manager.get(id)?;
-                    match &term.kind {
-                        // Integer constant
-                        TermKind::IntConst(n) => {
-                            // BigInt too large for i64 -> not linear (honest
-                            // reject; the atom stays gated).
-                            let val = n.to_i64()?;
-                            cur.constant += sc * Rational64::from_integer(val);
-                        }
-
-                        // Rational constant
-                        TermKind::RealConst(r) => {
-                            cur.constant += sc * *r;
-                        }
-
-                        // Bitvector constant - treat as integer
-                        TermKind::BitVecConst { value, .. } => {
-                            let val = value.to_i64()?;
-                            cur.constant += sc * Rational64::from_integer(val);
-                        }
-
-                        // Variable (or bitvector variable - treat as integer variable)
-                        TermKind::Var(_) => {
-                            cur.terms.push((id, sc));
-                        }
-
-                        // Uninterpreted function application whose sort is numeric -- treat
-                        // as an opaque arithmetic variable.  This is the UFLIA / UFLRA case:
-                        // e.g. `f(k)` in `(> (f k) 10)` where `f : Int -> Int`.  By
-                        // representing `f(k)` as an arithmetic variable we ensure that
-                        //   (a) the arithmetic solver tracks it and assigns it a model value,
-                        //   (b) the constraint `f(k) > 10` is handled consistently with any
-                        //       later instantiation that produces `f(k) <= 10`.
-                        //
-                        // Nested applications (`f(f(k))`) are opaque arithmetic variables
-                        // exactly like flat ones.  Excluding them — the mirror of the old
-                        // restriction in `track_theory_vars` — did not make the solver
-                        // conservative, it made it *wrong*: failing the linear parse leaves
-                        // the whole atom without a theory meaning, so it survives as a free
-                        // boolean and the solver reports `sat` for formulas it never
-                        // satisfied.  The Nelson-Oppen equality propagation the exclusion
-                        // was waiting for is now in place and explained
-                        // (`TheoryManager::assert_explained_equality`).
-                        TermKind::Apply { .. } => {
-                            let sort = term.sort;
-                            let is_numeric =
-                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
-                            if !is_numeric {
-                                // Non-numeric Apply (e.g. uninterpreted predicate) -- not linear.
-                                return None;
-                            }
-                            cur.terms.push((id, sc));
-                        }
-
-                        // Array select with numeric sort: treat `(select a i) : Int/Real` as
-                        // an opaque arithmetic atom with the given scale coefficient.  This
-                        // allows expressions such as `(+ (select a 0) (select a 1))` to be
-                        // parsed as linear arithmetic sums.
-                        TermKind::Select(_, _) => {
-                            let sort = term.sort;
-                            let is_numeric =
-                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
-                            if !is_numeric {
-                                // Select of non-numeric sort (e.g. Bool array) -- not linear.
-                                return None;
-                            }
-                            cur.terms.push((id, sc));
-                        }
-
-                        // Datatype accessor with numeric sort: `(head l) : Int` is an opaque
-                        // arithmetic atom, exactly like `(select a i)`.  Without this the
-                        // linear parse of `(= (head l) 10)` failed, no constraint reached the
-                        // tableau, and `(= (head l) 10) ∧ (= (head l) 11)` was answered `sat`
-                        // — the accessor is one ground term and cannot hold two values.
-                        // `dt_axioms` supplies the rest of the accessor's meaning; here it
-                        // only has to be *a* variable so that two occurrences agree.
-                        TermKind::DtSelector { .. } => {
-                            let sort = term.sort;
-                            let is_numeric =
-                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
-                            if !is_numeric {
-                                // Accessor of a non-numeric field -- not a linear atom.
-                                return None;
-                            }
-                            cur.terms.push((id, sc));
-                        }
-
-                        // Addition: fold every operand at the same scale.
-                        // Children are pushed in reverse so they pop (and hence
-                        // append to `cur.terms`) left-to-right, exactly like the
-                        // recursive descent did.
-                        TermKind::Add(args) => {
-                            for &arg in args.iter().rev() {
-                                work.push(Work::Visit(arg, sc));
-                            }
-                        }
-
-                        // Subtraction
-                        TermKind::Sub(lhs, rhs) => {
-                            work.push(Work::Visit(*rhs, -sc));
-                            work.push(Work::Visit(*lhs, sc));
-                        }
-
-                        // Negation
-                        TermKind::Neg(arg) => {
-                            work.push(Work::Visit(*arg, -sc));
-                        }
-
-                        // Multiplication of linear terms.  Suspend the current
-                        // context inside the frame; each factor is evaluated
-                        // into a fresh one (matching the recursive version's
-                        // per-factor `sub_terms`/`sub_constant` buffers).
-                        TermKind::Mul(args) => {
-                            work.push(Work::Mul(MulFrame {
-                                args: args.iter().copied().collect(),
-                                next: 0,
-                                const_product: Rational64::one(),
-                                var_factor: None,
-                                scale: sc,
-                                parent: core::mem::replace(&mut cur, Level::new()),
-                            }));
-                        }
-
-                        // Integer `div`/`mod` and Int/Real-sorted `ite`: opaque arithmetic
-                        // atoms.  Their meaning is not expressible as a linear combination
-                        // of their operands, so the linear solver gets a variable and the
-                        // *definition* arrives separately as ground axioms — see
-                        // [`Solver::instantiate_arith_axioms`].  Until those axioms are
-                        // asserted the term stays in nobody's theory, which is exactly what
-                        // the honesty gate in `encode_guards` watches for.
-                        //
-                        // Real-sorted `Div` is deliberately excluded: `(/ x y)` is exact
-                        // rational division, whose defining identity `x = y * (x / y)` is
-                        // nonlinear, so it keeps failing the parse and stays gated.
-                        TermKind::Mod(_, _) if term.sort == manager.sorts.int_sort => {
-                            cur.terms.push((id, sc));
-                        }
-                        TermKind::Div(_, _) if term.sort == manager.sorts.int_sort => {
-                            cur.terms.push((id, sc));
-                        }
-                        TermKind::Ite(_, _, _)
-                            if term.sort == manager.sorts.int_sort
-                                || term.sort == manager.sorts.real_sort =>
-                        {
-                            cur.terms.push((id, sc));
-                        }
-
-                        // Not linear.  The catch-all is the honest reject
-                        // channel here — "shape the linear solver cannot
-                        // represent" — so a future `TermKind` variant fails
-                        // the parse (and the atom stays gated) rather than
-                        // being mis-folded.
-                        _ => return None,
-                    }
-                }
-                Work::Mul(mut frame) => {
-                    if frame.next > 0 {
-                        // Classify the factor whose evaluation just completed
-                        // into the current (per-factor) level.
-                        if cur.terms.is_empty() {
-                            // Pure constant factor — absorb into product.
-                            frame.const_product *= cur.constant;
-                        } else if cur.terms.len() == 1 && cur.constant.is_zero() {
-                            // Exactly one scaled variable with no additive constant,
-                            // e.g. `x`, `(- x)`, `(* 2 x)`.  Record as the variable
-                            // factor; if we already have one, the product is nonlinear.
-                            if frame.var_factor.is_some() {
-                                return None;
-                            }
-                            frame.var_factor = Some(cur.terms[0]);
-                        } else {
-                            // Either multi-variable (e.g. `(+ x y)`), or a linear
-                            // expression with a constant offset (e.g. `(+ 1 x)`).
-                            // Multiplying such a factor by another variable yields a
-                            // nonlinear product.
-                            return None;
-                        }
-                    }
-                    if frame.next < frame.args.len() {
-                        let arg = frame.args[frame.next];
-                        frame.next += 1;
-                        cur = Level::new();
-                        work.push(Work::Mul(frame));
-                        work.push(Work::Visit(arg, Rational64::one()));
-                    } else {
-                        // All factors classified: restore the parent context
-                        // and contribute the product to it.
-                        let new_scale = frame.scale * frame.const_product;
-                        cur = frame.parent;
-                        match frame.var_factor {
-                            Some((v, coef)) => cur.terms.push((v, new_scale * coef)),
-                            None => cur.constant += new_scale,
-                        }
-                    }
-                }
-            }
-        }
-
-        // The work stack is empty, so every `Mul` frame has finalized and
-        // `cur` is the root-level context again.  Only now touch the caller's
-        // buffers, preserving the recursive version's append order.
-        for pair in cur.terms {
-            terms.push(pair);
-        }
-        *constant += cur.constant;
-        Some(())
     }
 
     /// Assert a term
@@ -597,6 +258,37 @@ impl Solver {
             }
         }
 
+        // Eliminate non-Bool `ite` subterms and abstract compound Bool
+        // UF-arguments into the equisatisfiable, congruence-closure-friendly
+        // form `eliminate_nonbool_ite`/`abstract_compound_bool_args`
+        // document.  Deliberately *after* the True/False re-check above (a
+        // constant needs no rewriting) but *before* polarity collection and
+        // MBQI registration, so those two passes -- and everything from here
+        // on, including `self.assertions`' role as the thing get-assertions
+        // and the array/string/BV/FP/datatype axiom passes walk -- see the
+        // one term that is actually encoded, not a structure the SAT core's
+        // clauses have since diverged from.  `self.assertions` itself still
+        // stores the *pre*-rewrite `term` (see `record_assertion_identity`
+        // below): the rewrite is purely an encoding-time concern; a caller
+        // reading assertions back should see what it asserted.
+        // Collapse right-leaning `(ite (= idx k1) v1 (ite (= idx k2) v2 …))`
+        // lookup spines into one result constant plus flat key implications
+        // *before* the generic mux eliminator below gets to them: each
+        // nesting level would otherwise earn its own fresh mux variable,
+        // turning an O(1)-guard-depth lookup into an O(n)-deep implication
+        // chain (see `finite_map_ite`'s module doc).
+        let term_to_encode = self.flatten_lookup_spines(term_to_encode, manager);
+        let term_to_encode = self.eliminate_nonbool_ite(term_to_encode, manager);
+        let term_to_encode = self.abstract_compound_bool_args(term_to_encode, manager);
+        // Purify numeric (Int/Real) uninterpreted-function-application
+        // arguments into fresh shared variables: `track_theory_vars` does
+        // not intern a UF argument on its own, so a constant/compound
+        // argument such as `f(3)` or `f(fmt1 + 1)` is never an arithmetic
+        // interface term and an arithmetic-derived equality to it can never
+        // reach EUF (see `numeric_purification` for the full picture — this
+        // is the non-convex QF_UFLIA/QF_UFIDL false-`sat` root cause).
+        let term_to_encode = self.purify_numeric_uf_args(term_to_encode, manager);
+
         // Collect polarity information if polarity-aware encoding is enabled
         if self.polarity_aware {
             self.collect_polarities(term_to_encode, Polarity::Positive, manager);
@@ -665,6 +357,20 @@ impl Solver {
         // Replace the existentials this assertion states unconditionally by
         // their Skolemization (see `assert`).
         let term_to_encode = self.skolemize_asserted_existentials(expanded, manager);
+
+        // See `Solver::assert` for why this runs here: after skolemization,
+        // before polarity collection / MBQI registration, and without
+        // touching `self.assertions` (still `term`, pushed above). Lookup-spine
+        // flattening runs first for the same reason it does in `assert` — see
+        // that call site's comment.
+        let term_to_encode = self.flatten_lookup_spines(term_to_encode, manager);
+        let term_to_encode = self.eliminate_nonbool_ite(term_to_encode, manager);
+        let term_to_encode = self.abstract_compound_bool_args(term_to_encode, manager);
+        // See `Solver::assert` for why this runs here too: named assertions
+        // go through the same pre-pass chain, and a numeric UF argument in a
+        // named assertion needs purification just as much as an anonymous
+        // one does.
+        let term_to_encode = self.purify_numeric_uf_args(term_to_encode, manager);
 
         // Collect polarity information if polarity-aware encoding is enabled
         if self.polarity_aware {
@@ -841,18 +547,51 @@ impl Solver {
                             patterns.iter().flat_map(|p| p.iter().copied()).collect();
                         self.register_asserted_forall(current, *body, triggers, manager);
                     }
-                    TermKind::Exists { patterns, .. } => {
+                    TermKind::Exists { patterns, body, .. } => {
                         let triggers: Vec<TermId> =
                             patterns.iter().flat_map(|p| p.iter().copied()).collect();
                         self.mbqi.add_quantifier(current, manager);
                         for trigger in triggers {
                             self.mbqi.collect_ground_terms(trigger, manager);
                         }
+                        self.collect_quantifier_uf_funcs(*body, manager);
                     }
                     _ => {}
                 }
             }
             stack.extend(super::term_walk::asserted_children(&kind, positive));
+        }
+    }
+
+    /// Record every uninterpreted-function symbol occurring as the head of
+    /// an `Apply` reachable from `term` into `self.quantifier_uf_funcs`.
+    ///
+    /// Called on a quantifier's *body* (not its patterns alone) as each
+    /// quantifier is registered, so `purify_numeric_uf_args` can tell a
+    /// function that genuinely occurs under a binder apart from one that
+    /// merely coexists with an unrelated quantifier elsewhere in the
+    /// script -- see [`Solver::purify_numeric_uf_args`]'s doc comment for
+    /// why that distinction is what keeps the fix sound regardless of
+    /// assertion order. Unlike `collect_ground_subterms`, this walks *into*
+    /// nested binders (`get_children` descends through `Forall`/`Exists`/
+    /// `Let`) since a function applied under a further-nested quantifier is
+    /// exactly as e-matching-relevant as one applied directly. Iterative
+    /// with an explicit stack and a `visited` set, matching every other DAG
+    /// walk in this file.
+    fn collect_quantifier_uf_funcs(&mut self, term: TermId, manager: &TermManager) {
+        let mut stack: Vec<TermId> = vec![term];
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(t) = manager.get(current) else {
+                continue;
+            };
+            if let TermKind::Apply { func, .. } = &t.kind {
+                self.quantifier_uf_funcs.insert(*func);
+            }
+            stack.extend(oxiz_core::ast::get_children(&t.kind));
         }
     }
 
@@ -866,6 +605,8 @@ impl Solver {
         triggers: Vec<TermId>,
         manager: &mut TermManager,
     ) {
+        self.collect_quantifier_uf_funcs(body, manager);
+
         let body_is_exists = manager
             .get(body)
             .is_some_and(|t| matches!(t.kind, TermKind::Exists { .. }));
@@ -1019,10 +760,25 @@ impl Solver {
             TermKind::False => {
                 let var = self.get_or_create_var(manager.mk_false());
                 self.sat.add_clause([Lit::neg(var)]);
-                Lit::neg(var)
+                // `encode` must return a literal whose truth value *equals* the
+                // term's.  The unit clause above pins `var := false`, so the
+                // literal standing for `false` is `pos(var)` — `neg(var)` would
+                // evaluate to `true` and invert every nested occurrence of the
+                // constant (mirrors the `True` arm, which pins and returns
+                // `pos(var)`).
+                Lit::pos(var)
             }
             TermKind::Var(_) => {
                 let var = self.get_or_create_var(term);
+                // Bool completion: a Bool variable known to appear in a
+                // UF-application argument position (marked by
+                // `abstract_compound_bool_args`) must merge with the
+                // canonical true/false EUF node by SAT-assigned value, so
+                // congruence can fire over the application that uses it. Not
+                // unconditional -- see `Solver::mark_bool_uf_arg` for why.
+                if t.sort == manager.sorts.bool_sort && self.bool_uf_arg_terms.contains(&term) {
+                    self.record_constraint(var, Constraint::BoolApp(term));
+                }
                 // Track theory terms for model extraction
                 let is_int = t.sort == manager.sorts.int_sort;
                 let is_real = t.sort == manager.sorts.real_sort;
@@ -1225,6 +981,23 @@ impl Solver {
                     self.sat
                         .add_clause([lhs_lit.negate(), rhs_lit.negate(), result]);
 
+                    // ALSO register the equality as a theory constraint, so
+                    // EUF learns `lhs = lhs` too, not just the SAT-level iff.
+                    // The iff gate above is complete for pure-boolean
+                    // propagation but cannot express *congruence*: if some
+                    // Bool-returning `g` is applied to `lhs`/`rhs` elsewhere,
+                    // deriving `g(lhs) = g(rhs)` needs EUF to know `lhs = rhs`
+                    // as an asserted fact, which only `Constraint::Eq`
+                    // delivers. Without this, a Bool-sorted equality between
+                    // two UF arguments never reaches congruence closure and
+                    // `QF_UF` problems built on Bool-sorted uninterpreted
+                    // predicates can go false-`sat`. The two mechanisms are
+                    // complementary, not redundant: the iff gate pins SAT
+                    // values, `Constraint::Eq` pins the EUF class.
+                    self.record_constraint(result_var, Constraint::Eq(*lhs, *rhs));
+                    self.track_theory_vars(*lhs, manager);
+                    self.track_theory_vars(*rhs, manager);
+
                     result
                 } else {
                     // Theory equality: create a fresh boolean variable
@@ -1254,6 +1027,21 @@ impl Solver {
                             self.var_to_parsed_arith.insert(var, parsed);
                         }
                     }
+
+                    // A non-Bool `ite` in either operand denotes a
+                    // conditional value EUF cannot see through on its own
+                    // (it interns the `ite` as an opaque leaf). Add the
+                    // narrow forward-implication clauses so that, once the
+                    // SAT core pins the condition, the corresponding branch
+                    // equality is forced and reaches congruence closure. This
+                    // is a *complement* to `Solver::eliminate_nonbool_ite`
+                    // (the whole-assertion pre-pass in `assert`/
+                    // `assert_named`), not a duplicate of it: this arm also
+                    // runs on lemmas reached through `Solver::encode`
+                    // directly -- MBQI instantiation and the array/datatype/
+                    // arithmetic axiom passes -- which never go through
+                    // `assert` at all.
+                    self.encode_nonbool_ite_equality(var, *lhs, *rhs, manager, depth);
 
                     Lit::pos(var)
                 }

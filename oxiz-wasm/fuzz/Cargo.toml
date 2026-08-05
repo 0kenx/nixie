@@ -2,7 +2,11 @@
 name = "oxiz-wasm-fuzz"
 version = "0.0.0"
 publish = false
-edition = "2021"
+edition = "2024"
+license = "Apache-2.0"
+
+# Prevent this from interfering with the main workspace
+[workspace]
 
 [package.metadata]
 cargo-fuzz = true
@@ -13,7 +17,6 @@ libfuzzer-sys = "0.4"
 [dependencies.oxiz-wasm]
 path = ".."
 
-# Prevent this from being built in the workspace
 [[bin]]
 name = "fuzz_execute"
 path = "fuzz_targets/fuzz_execute.rs"

@@ -208,8 +208,26 @@ impl Preprocessor {
     ///
     /// A pure literal is one that appears only in positive or only in negative form.
     /// All clauses containing a pure literal can be satisfied and removed.
+    ///
+    /// `fixed` reports, per variable index, whether the variable already has a
+    /// permanent (level-0) value that lives on the caller's trail rather than
+    /// in `clauses`. Unit facts are typically consumed straight onto the trail
+    /// and never stored as a retrievable clause, so `build_occurrences` below
+    /// is blind to them: a variable whose only clause-level occurrences are
+    /// positive can still be forced *false* by such a trail fact. Without this
+    /// exclusion this pass would misjudge that variable "pure positive", drop
+    /// its remaining clauses, and ask the caller to fix it `true` in the final
+    /// model -- contradicting the trail value the rest of the search relied on
+    /// and producing a model that violates whatever clause forced the fact.
+    /// Passing an empty slice disables the check (treats every variable as
+    /// unfixed), matching the pre-existing behavior for callers with no trail.
+    ///
     /// Returns the number of clauses eliminated.
-    pub fn pure_literal_elimination(&mut self, clauses: &mut ClauseDatabase) -> usize {
+    pub fn pure_literal_elimination(
+        &mut self,
+        clauses: &mut ClauseDatabase,
+        fixed: &[bool],
+    ) -> usize {
         let mut eliminated = 0;
         self.build_occurrences(clauses);
 
@@ -217,6 +235,9 @@ impl Preprocessor {
         let mut pure_literals = Vec::new();
 
         for v in 0..self.num_vars {
+            if fixed.get(v).copied().unwrap_or(false) {
+                continue;
+            }
             let var = Var(v as u32);
             let pos_lit = Lit::pos(var);
             let neg_lit = Lit::neg(var);
@@ -691,8 +712,11 @@ impl Preprocessor {
 
     /// Apply all preprocessing techniques
     ///
+    /// `fixed` is forwarded to [`Self::pure_literal_elimination`]; see there
+    /// for why trail-fixed variables must be excluded from the purity check.
+    ///
     /// Returns (clauses_eliminated, vars_eliminated)
-    pub fn preprocess(&mut self, clauses: &mut ClauseDatabase) -> (usize, usize) {
+    pub fn preprocess(&mut self, clauses: &mut ClauseDatabase, fixed: &[bool]) -> (usize, usize) {
         let mut total_clauses = 0;
         let total_vars = 0;
 
@@ -701,7 +725,7 @@ impl Preprocessor {
             let mut changed = false;
 
             // Pure literal elimination
-            let pure_elim = self.pure_literal_elimination(clauses);
+            let pure_elim = self.pure_literal_elimination(clauses, fixed);
             if pure_elim > 0 {
                 total_clauses += pure_elim;
                 changed = true;
@@ -759,9 +783,39 @@ mod tests {
         clauses.add_original([Lit::pos(v0)]);
 
         let mut prep = Preprocessor::new(2);
-        let eliminated = prep.pure_literal_elimination(&mut clauses);
+        let eliminated = prep.pure_literal_elimination(&mut clauses, &[]);
 
         assert_eq!(eliminated, 2);
+    }
+
+    // Regression: a variable already fixed on the caller's trail (e.g. via a
+    // unit clause consumed straight onto the trail, never stored in
+    // `clauses`) must never be treated as "pure" from clause-level
+    // occurrences alone -- see the doc comment on `pure_literal_elimination`.
+    #[test]
+    fn test_pr26_pure_literal_elimination_skips_trail_fixed_variable() {
+        let mut clauses = ClauseDatabase::new();
+        let v0 = Var(0);
+        let v1 = Var(1);
+
+        // (x0 ∨ x1) ∧ (¬x1 ∨ x0): from clause-occurrence bookkeeping alone x0
+        // looks "pure positive" (both its occurrences here are positive) and
+        // x1 is genuinely mixed (not pure), so absent the trail exclusion x0
+        // would be eliminated. The caller reports x0 as already fixed (e.g.
+        // forced false by a unit clause that was consumed onto the trail and
+        // never became a stored clause), so it must be skipped entirely.
+        clauses.add_original([Lit::pos(v0), Lit::pos(v1)]);
+        clauses.add_original([Lit::neg(v1), Lit::pos(v0)]);
+
+        let mut prep = Preprocessor::new(2);
+        let fixed = [true, false];
+        let eliminated = prep.pure_literal_elimination(&mut clauses, &fixed);
+
+        assert_eq!(
+            eliminated, 0,
+            "trail-fixed variable must not be eliminated as pure"
+        );
+        assert!(prep.eliminated_pure_literals().is_empty());
     }
 
     #[test]

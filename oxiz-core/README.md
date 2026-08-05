@@ -2,14 +2,14 @@
 
 Core data structures and utilities for OxiZ SMT solver.
 
-## Status (v0.3.1)
+## Status (v0.3.2)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.1 |
+| Version | 0.3.2 |
 | Status | Stable |
-| Tests | 2,110 passing |
-| Release Date | 2026-07-31 |
+| Tests | 2,116 passing |
+| Release Date | 2026-08-05 |
 | Source files | 230 |
 | Public API items | 3,025 |
 

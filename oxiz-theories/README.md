@@ -89,15 +89,15 @@ solver.assert_eq(bv_term_a, bv_term_b, reason);
 let result = solver.check()?;
 ```
 
-## Status (v0.3.1)
+## Status (v0.3.2)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.1 |
+| Version | 0.3.2 |
 | Status | Stable |
-| Tests | 1,714 passing |
-| Release Date | 2026-07-31 |
-| Rust LoC | 72,158 (174 files) |
+| Tests | 1,760 passing |
+| Release Date | 2026-08-05 |
+| Rust LoC | 68,056 (142 files) |
 | Public API items | 2,758 |
 
 0.3.1 soundness fixes to the bit-vector solver: three verified >64-bit

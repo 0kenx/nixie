@@ -2,7 +2,7 @@
 
 Main CDCL(T) SMT solver orchestration for OxiZ.
 
-**Version**: 0.3.1 | **Status**: Stable | **Tests**: 1,684 passing | **LoC**: 60,175 code in `src/` (125 files) | **Public API**: 1,637 items
+**Version**: 0.3.2 | **Status**: Stable | **Tests**: 1,789 passing | **LoC**: 62,789 code in `src/` (138 files) | **Public API**: 1,637 items
 
 ## Overview
 
@@ -122,7 +122,7 @@ Model-based quantifier instantiation:
 Status below is what the `bench/z3_parity` differential suite measures against a
 real `z3` 4.15.4 binary under the honest comparator (an `Unknown` from either
 solver never counts as a match). All 19 logic families in the suite are at 100%
-Correct in 0.3.1; per-logic counts and the suite's coverage limits are in the
+Correct in 0.3.2; per-logic counts and the suite's coverage limits are in the
 root [`README.md`](../README.md) and [`TODO.md`](../TODO.md).
 
 - `QF_UF`, `QF_UFLIA`, `QF_UFLRA` - Uninterpreted functions, alone and with arithmetic

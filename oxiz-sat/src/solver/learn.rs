@@ -124,6 +124,7 @@ impl Solver {
 
             if let Some(clause) = self.clauses.get_mut(clause_id) {
                 clause.lbd = lbd;
+                clause.assign_tier_from_lbd();
             }
             self.debug_check_learned_clause_lbd(clause_id);
 
@@ -150,6 +151,7 @@ impl Solver {
 
             if let Some(clause) = self.clauses.get_mut(clause_id) {
                 clause.lbd = lbd;
+                clause.assign_tier_from_lbd();
             }
             self.debug_check_learned_clause_lbd(clause_id);
 
@@ -208,6 +210,7 @@ impl Solver {
             // clause's literals become inaccessible.
             self.purge_binary_edges(cid);
             self.drat_delete(cid);
+            self.lrat_delete(cid);
             self.clauses.remove(cid);
             self.stats.deleted_clauses += 1;
         }
@@ -311,15 +314,29 @@ impl Solver {
                 }
 
                 // Check if clause is currently a reason for any assignment
-                // (We can't delete reason clauses)
-                let is_reason = clause.lits.iter().any(|&lit| {
-                    let var = lit.var();
-                    if self.trail.is_assigned(var) {
-                        matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
-                    } else {
-                        false
-                    }
-                });
+                // (we can't delete reason clauses).
+                //
+                // Only the asserting literal (`lits[0]`) can ever be the
+                // literal a clause propagated: `propagate` always assigns
+                // whichever watched literal remains after the other one is
+                // (re)falsified, and that literal is read as `clause.lits[0]`
+                // at the moment of assignment (see `Solver::propagate`'s
+                // "make sure the false literal is at position 1" swap, which
+                // moves the *falsified* literal to index 1, never the true
+                // one out of index 0). Once `lits[0]` is the reason, its
+                // watcher's cached `blocker` is that same true literal, so
+                // every later scan of the *other* watch short-circuits on the
+                // blocker check before it could reach — let alone swap away
+                // from — index 0. So checking only `lits[0]`'s reason is
+                // exactly as precise as scanning every literal, but O(1)
+                // instead of O(clause length) — this runs once per learned
+                // clause on every database reduction pass.
+                let asserting_var = clause.lits[0].var();
+                let is_reason = self.trail.is_assigned(asserting_var)
+                    && matches!(
+                        self.trail.reason(asserting_var),
+                        Reason::Propagation(r) if r == cid
+                    );
 
                 if !is_reason {
                     match clause.tier {
@@ -353,6 +370,7 @@ impl Solver {
                 self.memory_optimizer.free(buf, num_lits);
             }
             self.drat_delete(*cid);
+            self.lrat_delete(*cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -364,6 +382,7 @@ impl Solver {
                 self.memory_optimizer.free(buf, num_lits);
             }
             self.drat_delete(*cid);
+            self.lrat_delete(*cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -375,6 +394,7 @@ impl Solver {
                 self.memory_optimizer.free(buf, num_lits);
             }
             self.drat_delete(*cid);
+            self.lrat_delete(*cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -411,7 +431,12 @@ impl Solver {
 
         if self.stats.conflicts >= self.restart_threshold {
             self.restart();
-            self.debug_check_restart_consistency();
+            // A reuse-trail restart (the default) deliberately stops above
+            // level 0, so the level-0 invariant `debug_check_restart_consistency`
+            // checks does not apply to it.
+            if !self.config.reuse_trail {
+                self.debug_check_restart_consistency();
+            }
         }
     }
 
@@ -461,6 +486,19 @@ impl Solver {
                 };
             }
         }
+
+        // Reconstruct variables removed by the inprocessing toolkit's
+        // variable-elimination mechanisms. Both overwrite unconditionally
+        // (not only when the trail-copy above left `Undef`): a variable the
+        // toolkit eliminated no longer appears in any live clause, so
+        // `pick_branch_var` should never hand it out as a decision (see the
+        // `var_eliminated` guards in `solver/decide.rs`), but nothing stops
+        // it from still carrying a *stale* value from before elimination (or
+        // an incidental one from theory/assumption bookkeeping) — the
+        // reconstruction rule, not whatever happens to already be sitting in
+        // `self.model[idx]`, is the only thing that can be trusted here.
+        self.reconstruct_equiv_eliminated_variables();
+        self.reconstruct_bve_eliminated_variables();
     }
 
     /// Safety net for the purely Boolean entry points: check that the model just
@@ -726,8 +764,13 @@ impl Solver {
 
     /// Vivification: try to strengthen clauses by checking if some literals are redundant
     /// This is an inprocessing technique that should be called periodically
+    ///
+    /// Skipped outright while LRAT tracing is active — see
+    /// [`Solver::inprocess`]'s doc comment; `remove_literal_and_rewatch`'s
+    /// DRAT-only add+delete pair applies to this entry point too, since it
+    /// is called both from here and from `inprocess`.
     pub(super) fn vivify_clauses(&mut self) {
-        if self.trail.decision_level() != 0 {
+        if self.trail.decision_level() != 0 || self.lrat.is_some() {
             return; // Only vivify at decision level 0
         }
 
@@ -809,11 +852,23 @@ impl Solver {
     }
 
     /// Perform inprocessing (apply preprocessing during search)
+    ///
+    /// Skipped outright while LRAT tracing is active. DRAT stays fully
+    /// supported here (see the pre-pass/post-pass literal snapshot below,
+    /// which already emits a correct deletion line for every clause this
+    /// retires, and `remove_literal_and_rewatch`'s own DRAT add+delete
+    /// pair for strengthening — both self-justifying, no hints needed).
+    /// LRAT is different: `strengthen_clauses_inprocessing`'s redundant-
+    /// literal check derives its shorter clause via a hypothetical
+    /// assign-and-propagate probe this module does not thread a hint chain
+    /// through, so rather than emit an LRAT addition this port cannot back
+    /// with a real chain, the whole pass — pure-literal elimination,
+    /// subsumption, and strengthening alike — steps aside for LRAT.
     pub(super) fn inprocess(&mut self) {
         use crate::Preprocessor;
 
         // Only inprocess at decision level 0
-        if self.trail.decision_level() != 0 {
+        if self.trail.decision_level() != 0 || self.lrat.is_some() {
             return;
         }
 
@@ -854,7 +909,18 @@ impl Solver {
         // polarity after the clauses were dropped, so it is only run at the base
         // assertion level (no active `push`).
         if self.assertion_levels.len() <= 1 {
-            let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses);
+            // Variables already fixed on the level-0 trail must be excluded
+            // from the purity scan: unit facts are normally consumed straight
+            // onto the trail and never stored as a clause, so
+            // `pure_literal_elimination`'s occurrence scan can't see them --
+            // without this exclusion it could misjudge a trail-forced
+            // variable "pure" in the opposite polarity, drop clauses that are
+            // only satisfied by the trail's actual value, and hand back a
+            // model that violates them.
+            let trail_fixed: Vec<bool> = (0..self.num_vars)
+                .map(|i| self.trail.is_assigned(Var::new(i as u32)))
+                .collect();
+            let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses, &trail_fixed);
             // Record each eliminated pure literal so `save_model` can fix it to
             // `true`, keeping the deleted clauses satisfied even if the search
             // later assigns the variable the opposite phase. Keep at most one

@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Optimization engine for OxiZ (MaxSMT, OMT)"
 keywords = ["smt", "maxsmt", "optimization", "omt", "maxsat"]
 categories = ["algorithms", "mathematics"]

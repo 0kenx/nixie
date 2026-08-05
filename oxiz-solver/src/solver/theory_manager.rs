@@ -3,7 +3,6 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::Rational64;
-use num_traits::ToPrimitive;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_sat::{Lit, TheoryCallback, TheoryCheckResult, Var};
 use oxiz_theories::arithmetic::ArithSolver;
@@ -19,6 +18,8 @@ use super::types::{
 
 mod conflict_clause;
 mod derived_reasons;
+mod intern;
+mod nelson_oppen;
 pub(crate) use derived_reasons::DerivedReasons;
 
 /// One entry of the theory manager's own deduplicated assignment trail.
@@ -43,26 +44,6 @@ struct TrailAtom {
     is_positive: bool,
     /// The SAT decision level at which the assignment currently holds.
     level: u32,
-}
-
-/// One pending application of an iterative EUF interning walk
-/// ([`TheoryManager::intern_term_deep`] and
-/// [`TheoryManager::intern_term_for_congruence`]).
-///
-/// The frame owns the application's operand list and the EUF nodes of the
-/// operands already interned, so the walk never needs the native call stack
-/// and never needs to re-borrow a half-finished parent.
-struct InternFrame {
-    /// The application term whose operands are being interned.
-    term: TermId,
-    /// EUF function symbol of the application (`SELECT_FUNC_ID` for `select`).
-    func_id: u32,
-    /// The application's operands, in order.
-    operands: SmallVec<[TermId; 4]>,
-    /// Index of the next operand to descend into.
-    next: usize,
-    /// EUF nodes of the operands interned so far, in order.
-    nodes: SmallVec<[u32; 4]>,
 }
 
 /// Theory manager that bridges the SAT solver with theory solvers
@@ -107,6 +88,67 @@ pub(crate) struct TheoryManager<'a> {
     /// Whether formula contains BV arithmetic operations (division/remainder)
     #[allow(dead_code)]
     has_bv_arith_ops: bool,
+    /// Whether the goal has quantifiers, i.e. is driven by an outer MBQI
+    /// search rather than a single ground CDCL(T) solve.
+    ///
+    /// [`nelson_oppen::care_graph_candidates`](TheoryManager::care_graph_candidates)
+    /// scopes its two function-agnostic candidate sources (difference
+    /// constraints, live EUF disequality pairs) out of that path: probing
+    /// either reports a theory conflict a plain `model_based_combination`
+    /// pass would not have, and each such conflict is a *different* Boolean
+    /// branch for the SAT core to explore before it reaches the next full
+    /// assignment. MBQI's counterexample search reads off whichever
+    /// assignment the core lands on, so perturbing which one that is shifts
+    /// *which* quantifier instances get generated on a re-run — the
+    /// false-positive analogue of the reason
+    /// `axiomatize_arith_constant_equalities`-style axiom passes in other
+    /// engines gate themselves on the same flag. Concretely, this was caught
+    /// by `scope_rebase_tests::re_running_the_search_on_an_unchanged_goal_converges`:
+    /// a quantified `UFLIA` goal's original-clause count kept climbing well
+    /// past the point a plain re-run settles at, because each fresh search
+    /// found a different set of the newly-detected conflicts and so drove
+    /// MBQI down a different, newly-instantiating path.
+    ///
+    /// The third candidate source -- model-equal UF-argument pairs -- is
+    /// *not* gated on this flag, only filtered by `quantifier_uf_funcs` (see
+    /// that field's doc): it is precise enough per function symbol that a
+    /// mixed script (some functions under a binder, some not) still gets
+    /// the entailed-equality exchange for the ones that are not, in any
+    /// assertion order. A fully quantified search that has nothing left
+    /// after that filter gets full soundness from
+    /// `propagate_euf_equalities_to_arith` + `model_based_combination` (the
+    /// pre-existing, already-sound direction) exactly as before; only the
+    /// *additional* entailed-equality exchange is unavailable for functions
+    /// that genuinely occur under a binder, where nothing downstream is
+    /// sensitive to which model the search happens to land on.
+    has_quantifiers: bool,
+    /// Uninterpreted-function symbols occurring inside a registered
+    /// quantifier's body (`Solver::quantifier_uf_funcs`, populated by
+    /// `Solver::collect_quantifier_uf_funcs` as each quantifier is
+    /// registered).
+    ///
+    /// [`nelson_oppen::care_graph_candidates`](TheoryManager::care_graph_candidates)
+    /// passes this to
+    /// [`EufSolver::app_argument_terms_excluding_funcs`](oxiz_theories::euf::EufSolver::app_argument_terms_excluding_funcs)
+    /// to exclude a quantifier-trigger function's arguments from its
+    /// model-value-bucketed UF-argument candidates, and only that source
+    /// stays enabled once `has_quantifiers` is true (see
+    /// [`Self::nelson_oppen_combine`]'s doc comment): a function that never
+    /// occurs under a binder gets the same entailed-equality exchange in a
+    /// mixed ground/quantified script as it would in a purely ground one,
+    /// without touching the difference-constraint and live-disequality
+    /// candidate sources that are not scoped to any one function and were
+    /// the ones actually responsible for `scope_rebase_tests`'s
+    /// MBQI-convergence regressions.
+    ///
+    /// Queried against the *live* e-graph rather than a precomputed
+    /// encode-time set, so it correctly excludes the arguments of a
+    /// quantifier-trigger function's own MBQI-instantiated ground
+    /// applications too -- those never go through
+    /// `Solver::purify_numeric_uf_args` at all, since they are interned
+    /// directly by the instantiation pipeline rather than reaching it
+    /// through `Solver::assert`.
+    quantifier_uf_funcs: &'a FxHashSet<oxiz_core::interner::Spur>,
     /// Canonical EUF node for each distinct integer constant value.
     ///
     /// Maps an integer literal value (i64) to the canonical EUF node that
@@ -184,7 +226,20 @@ pub(crate) struct TheoryManager<'a> {
     /// atom would contribute a currently-*true* literal, violating the
     /// all-literals-false convention `analyze_theory_conflict` relies on and
     /// yielding an unsound lemma.
-    assigned_polarity: FxHashMap<Var, bool>,
+    ///
+    /// Stored as two generation-stamped, direct-indexed `Vec`s rather than a
+    /// `Var -> bool` map: `on_assignment` writes this on every atom
+    /// assignment during SAT propagation, and per-write hashing was
+    /// measurable overhead there. Deliberately *not* pruned on backtrack
+    /// (`assigned_level` is the liveness authority for that — see its own
+    /// doc), so within one manager's lifetime a slot's generation stamp,
+    /// once set, never becomes stale; `assigned_pol_of` therefore reduces to
+    /// "was this var ever written", the same semantics the map had. A fresh
+    /// `TheoryManager` is built per `Solver::check`, so all three fields
+    /// start empty/at generation 1 every time.
+    assigned_pol_gen: Vec<u32>,
+    assigned_pol_val: Vec<bool>,
+    assigned_pol_cur: u32,
     /// Current SAT decision level, mirrored from `on_new_level` / `on_backtrack`.
     /// Used to stamp shadow-trail entries with the level they hold at.
     current_level: u32,
@@ -197,8 +252,8 @@ pub(crate) struct TheoryManager<'a> {
     /// Map from a theory variable to its index in `assignment_trail`, for O(1)
     /// flip detection.  Rebuilt whenever the trail is truncated on backtrack.
     trail_index: FxHashMap<Var, usize>,
-    /// Decision level at which each entry of `assigned_polarity` currently
-    /// holds, pruned on backtrack.  Unlike `assignment_trail` this is
+    /// Decision level at which each variable's current polarity holds,
+    /// pruned on backtrack.  Unlike `assignment_trail` this is
     /// maintained in *both* eager and lazy theory modes, because it backs
     /// [`Self::full_assignment_conflict_clause`] — the sound fallback used
     /// when a theory reason cannot be justified.
@@ -251,6 +306,8 @@ impl<'a> TheoryManager<'a> {
         max_conflicts: u64,
         max_decisions: u64,
         has_bv_arith_ops: bool,
+        has_quantifiers: bool,
+        quantifier_uf_funcs: &'a FxHashSet<oxiz_core::interner::Spur>,
         timeout_ms: u64,
     ) -> Self {
         #[cfg(feature = "std")]
@@ -282,6 +339,8 @@ impl<'a> TheoryManager<'a> {
             max_conflicts,
             max_decisions,
             has_bv_arith_ops,
+            has_quantifiers,
+            quantifier_uf_funcs,
             interned_int_constants: FxHashMap::default(),
             interned_bv_constants: FxHashMap::default(),
             bool_true_node: None,
@@ -290,13 +349,41 @@ impl<'a> TheoryManager<'a> {
             unjustified_conflict: false,
             #[cfg(feature = "std")]
             deadline,
-            assigned_polarity: FxHashMap::default(),
+            assigned_pol_gen: Vec::new(),
+            assigned_pol_val: Vec::new(),
+            assigned_pol_cur: 1,
             current_level: 0,
             assignment_trail: Vec::new(),
             trail_index: FxHashMap::default(),
             assigned_level: FxHashMap::default(),
             tautological_reasons: FxHashSet::default(),
         }
+    }
+
+    /// The polarity `var` is currently assigned, or `None` if `on_assignment`
+    /// / lazy `final_check` has never written it.
+    #[inline]
+    fn assigned_pol_of(&self, var: Var) -> Option<bool> {
+        let idx = var.index();
+        let stamp = *self.assigned_pol_gen.get(idx)?;
+        if stamp == self.assigned_pol_cur {
+            Some(self.assigned_pol_val[idx])
+        } else {
+            None
+        }
+    }
+
+    /// Record `var`'s current polarity (direct-indexed, generation-stamped
+    /// — see the field doc on `assigned_pol_gen`).
+    #[inline]
+    fn set_assigned_polarity(&mut self, var: Var, polarity: bool) {
+        let idx = var.index();
+        if idx >= self.assigned_pol_gen.len() {
+            self.assigned_pol_gen.resize(idx + 1, 0);
+            self.assigned_pol_val.resize(idx + 1, false);
+        }
+        self.assigned_pol_gen[idx] = self.assigned_pol_cur;
+        self.assigned_pol_val[idx] = polarity;
     }
 
     /// Returns `true` once the configured wall-clock deadline has passed.
@@ -527,28 +614,41 @@ impl<'a> TheoryManager<'a> {
             }
         }
 
-        // For each pair of arith terms, check if they are EUF-equal.
-        // `euf.intern(t)` looks up `term_to_node` first, so two terms that
-        // share the same EUF node (via congruence at intern-time) correctly
-        // return the same node index.
-        for i in 0..arith_terms.len() {
-            for j in (i + 1)..arith_terms.len() {
-                let t1 = arith_terms[i];
-                let t2 = arith_terms[j];
-                if t1 == t2 {
-                    continue;
-                }
-                // Only consider terms that have been registered in EUF.
-                let Some(n1) = self.euf.term_to_node(t1) else {
-                    continue;
-                };
-                let Some(n2) = self.euf.term_to_node(t2) else {
-                    continue;
-                };
-                if self.euf.are_equal(n1, n2)
-                    && let Some(conflict) = self.assert_explained_equality(t1, t2)
-                {
-                    return conflict;
+        // Bucket the arith terms by their EUF class representative first, then
+        // only compare terms *within* the same bucket.
+        //
+        // The previous version compared every pair of arith terms directly
+        // (`O(n^2)` in the number of arith terms EUF also knows about), even
+        // though almost every pair sits in different EUF classes and so can
+        // never be equal — `are_equal` always answers `false` for them, and the
+        // whole point of the class check is the answer that scan reaches after
+        // paying for it. Grouping by representative first (one `find` per term,
+        // `O(n)` total) turns "which pairs are even candidates" into a hash-map
+        // bucketing step, so the remaining pairwise work is confined to terms
+        // EUF has already put in the same class — exactly the pairs that can
+        // actually assert something. This is what dominated `final_check` on
+        // QF_UFLIA problems with many arithmetic terms sharing few EUF classes,
+        // since this whole scan re-runs on every full assignment.
+        let mut by_class: FxHashMap<u32, SmallVec<[TermId; 4]>> = FxHashMap::default();
+        for &term in &arith_terms {
+            // Only consider terms that have been registered in EUF.
+            let Some(node) = self.euf.term_to_node(term) else {
+                continue;
+            };
+            let root = self.euf.find(node);
+            by_class.entry(root).or_default().push(term);
+        }
+
+        for members in by_class.values() {
+            for i in 0..members.len() {
+                for j in (i + 1)..members.len() {
+                    let (t1, t2) = (members[i], members[j]);
+                    if t1 == t2 {
+                        continue;
+                    }
+                    if let Some(conflict) = self.assert_explained_equality(t1, t2) {
+                        return conflict;
+                    }
                 }
             }
         }
@@ -669,290 +769,6 @@ impl<'a> TheoryManager<'a> {
     fn add_shared_equality(&mut self, lhs: TermId, rhs: TermId, reason: Option<TermId>) {
         self.pending_equalities
             .push(EqualityNotification { lhs, rhs, reason });
-    }
-
-    /// Sentinel function ID used for array `select(array, index)` in EUF.
-    ///
-    /// `Spur::into_inner()` always returns a `NonZeroU32` (>= 1), so 0 is safe
-    /// to use as a special, collision-free function ID for the built-in select
-    /// operation.  By interning `select(a, i)` as `intern_app(term, SELECT_FUNC_ID,
-    /// [a_node, i_node])`, the EUF congruence closure engine treats select like any
-    /// other binary function application and will automatically derive
-    /// `select(a, x) = select(a, y)` whenever `x = y` is merged.
-    const SELECT_FUNC_ID: u32 = 0;
-
-    /// Intern a term into EUF, using `intern_app` for Apply terms and
-    /// `TermKind::Select` terms so that congruence closure works correctly.
-    ///
-    /// Plain `intern` creates opaque nodes with no function-symbol or argument
-    /// information, which prevents the congruence closure algorithm from firing
-    /// when argument classes are merged.
-    ///
-    /// `Select(array, index)` is treated as a binary function application with
-    /// the special function ID `SELECT_FUNC_ID` (0).  This ensures that when
-    /// `x = y` causes their EUF nodes to merge, congruence automatically
-    /// derives `select(a, x) = select(a, y)`, which in turn allows further
-    /// congruence steps (e.g., `f(select(a,x)) = f(select(a,y))`).
-    ///
-    /// Iterative: `Apply` arguments and `Select` operands are interned through
-    /// an explicit frame stack (post-order, left to right — the recursive
-    /// order), so operand nesting depth cannot overflow the native call
-    /// stack.  `euf.term_to_node` remains the cross-call memo, so shared
-    /// sub-terms of the hash-consed DAG are interned once.
-    #[allow(dead_code)]
-    fn intern_term_deep(&mut self, term: TermId, manager: &TermManager) -> u32 {
-        let mut frames: Vec<InternFrame> = Vec::new();
-        let mut current = term;
-        'open: loop {
-            // Intern `current`, descending into application operands first.
-            let mut value: u32 = loop {
-                if let Some(idx) = self.euf.term_to_node(current) {
-                    break idx;
-                }
-                match Self::intern_operands(current, manager) {
-                    Some((func_id, operands)) => match operands.first().copied() {
-                        Some(first) => {
-                            frames.push(InternFrame {
-                                term: current,
-                                func_id,
-                                operands,
-                                next: 1,
-                                nodes: SmallVec::new(),
-                            });
-                            current = first;
-                        }
-                        None => {
-                            break self.euf.intern_app(
-                                current,
-                                func_id,
-                                SmallVec::<[u32; 4]>::new(),
-                            );
-                        }
-                    },
-                    None => break self.intern_leaf_deep(current, manager),
-                }
-            };
-
-            // Hand the finished operand node to the innermost application.
-            loop {
-                let Some(mut frame) = frames.pop() else {
-                    return value;
-                };
-                frame.nodes.push(value);
-                if let Some(&child) = frame.operands.get(frame.next) {
-                    frame.next += 1;
-                    frames.push(frame);
-                    current = child;
-                    continue 'open;
-                }
-                value = self.euf.intern_app(frame.term, frame.func_id, frame.nodes);
-            }
-        }
-    }
-
-    /// The application structure of `term` for EUF interning: `Apply` uses its
-    /// function symbol, `Select(array, index)` is a binary application of the
-    /// sentinel [`Self::SELECT_FUNC_ID`] so that congruence closure fires when
-    /// the index (or array) arguments become equal.  Everything else is a leaf.
-    fn intern_operands(
-        term: TermId,
-        manager: &TermManager,
-    ) -> Option<(u32, SmallVec<[TermId; 4]>)> {
-        match manager.get(term).map(|t| &t.kind) {
-            Some(TermKind::Apply { func, args, .. }) => {
-                Some((func.into_inner().get(), args.clone()))
-            }
-            Some(TermKind::Select(array, index)) => Some((
-                Self::SELECT_FUNC_ID,
-                SmallVec::from_slice(&[*array, *index]),
-            )),
-            _ => None,
-        }
-    }
-
-    /// Intern a non-application term for [`Self::intern_term_deep`]: integer
-    /// constants get a canonical node plus pairwise disequalities, everything
-    /// else a plain opaque node.
-    fn intern_leaf_deep(&mut self, term: TermId, manager: &TermManager) -> u32 {
-        if let Some(t) = manager.get(term) {
-            if let TermKind::IntConst(n) = &t.kind {
-                // Intern the integer constant as an EUF node and maintain
-                // pairwise disequalities between *distinct* integer values.
-                //
-                // EUF has no built-in notion of numeric inequality.  Without
-                // explicit disequality edges, a congruence chain equating a
-                // node merged with `10` and one merged with `20` would not
-                // produce a conflict.  We therefore assert `10 ≠ 20` etc.
-                //
-                // Performance: we track one *canonical* EUF node per unique
-                // integer value.  When the same value appears again (e.g. as a
-                // fresh TermId created during MBQI instantiation) we merge the
-                // new node into the canonical one.  This bounds the number of
-                // entries — and therefore of pairwise disequality edges — to the
-                // number of *distinct* literal values in the formula, preventing
-                // the O(n²) blowup that arises when MBQI creates many fresh
-                // TermIds for the same integer literal across iterations.
-                if let Some(val) = n.to_i64() {
-                    let new_node = self.euf.intern(term);
-                    // Both the merge and the disequalities below carry `term`
-                    // as their reason and `term` names no literal; they are
-                    // true in every model.  Declaring that keeps
-                    // `terms_to_conflict_clause` able to distinguish "omitted
-                    // because tautological" from "justification lost".
-                    self.tautological_reasons.insert(term);
-                    if let Some(&canonical) = self.interned_int_constants.get(&val) {
-                        // This value already has a canonical node.  Merge the
-                        // new term's node into it so that congruence closure
-                        // treats them as equal (they represent the same number).
-                        // Ignore merge errors: the nodes may already be in the
-                        // same class if this term was interned before.
-                        let _ = self.euf.merge(new_node, canonical, term);
-                        return canonical;
-                    }
-                    // First time we see this value: register the canonical node
-                    // and assert disequality against every other distinct value.
-                    let diseq_targets: Vec<u32> =
-                        self.interned_int_constants.values().copied().collect();
-                    for other_node in diseq_targets {
-                        self.euf.assert_diseq(new_node, other_node, term);
-                    }
-                    self.interned_int_constants.insert(val, new_node);
-                    return new_node;
-                }
-                // BigInt too large for i64 -- fall through to plain intern.
-            }
-        }
-        self.euf.intern(term)
-    }
-
-    /// Intern a term into EUF for congruence closure, using `intern_app` for
-    /// Apply and Select terms so that congruence fires correctly.
-    ///
-    /// Unlike `intern_term_deep`, this variant does NOT add IntConst pairwise
-    /// disequality edges.  Those edges are necessary for conflict detection when
-    /// numeric constants are compared via the EUF layer, but they cause spurious
-    /// UNSAT in SAT cases where the ArithSolver is the one tracking numeric
-    /// inequalities.  This function is used exclusively inside
-    /// `process_constraint` for equality/disequality assertions so that
-    /// `f(a)=f(b)` congruence works while arithmetic stays in the ArithSolver.
-    ///
-    /// Iterative: `Apply` arguments and `Select` operands are interned through
-    /// an explicit [`InternFrame`] stack in post-order, left to right — exactly
-    /// the order the recursive version used, which matters because
-    /// `intern_app` assigns node indices in creation order.  Operand nesting
-    /// depth is therefore bounded by memory rather than by the native call
-    /// stack.  `euf.term_to_node` remains the memo, so shared sub-terms of the
-    /// hash-consed DAG are interned once.
-    fn intern_term_for_congruence(&mut self, term: TermId, manager: &TermManager) -> u32 {
-        let mut frames: Vec<InternFrame> = Vec::new();
-        let mut current = term;
-        'open: loop {
-            // Intern `current`, descending into application operands first.
-            let mut value: u32 = loop {
-                if let Some(idx) = self.euf.term_to_node(current) {
-                    break idx;
-                }
-                match Self::intern_operands(current, manager) {
-                    Some((func_id, operands)) => match operands.first().copied() {
-                        Some(first) => {
-                            frames.push(InternFrame {
-                                term: current,
-                                func_id,
-                                operands,
-                                next: 1,
-                                nodes: SmallVec::new(),
-                            });
-                            current = first;
-                        }
-                        None => {
-                            break self.euf.intern_app(
-                                current,
-                                func_id,
-                                SmallVec::<[u32; 4]>::new(),
-                            );
-                        }
-                    },
-                    None => break self.intern_leaf_for_congruence(current, manager),
-                }
-            };
-
-            // Hand the finished operand node to the innermost application.
-            loop {
-                let Some(mut frame) = frames.pop() else {
-                    return value;
-                };
-                frame.nodes.push(value);
-                if let Some(&child) = frame.operands.get(frame.next) {
-                    frame.next += 1;
-                    frames.push(frame);
-                    current = child;
-                    continue 'open;
-                }
-                value = self.euf.intern_app(frame.term, frame.func_id, frame.nodes);
-            }
-        }
-    }
-
-    /// Intern a non-application term for [`Self::intern_term_for_congruence`]:
-    /// bit-vector constants get a canonical node plus pairwise disequalities
-    /// against the other distinct constants of the same width, everything else
-    /// a plain opaque node.  Unlike [`Self::intern_leaf_deep`], integer
-    /// constants get **no** disequality edges (see the caller's docs).
-    fn intern_leaf_for_congruence(&mut self, term: TermId, manager: &TermManager) -> u32 {
-        if let Some(t) = manager.get(term) {
-            if let TermKind::BitVecConst { value, width } = &t.kind {
-                // Register the BV constant as an EUF node and maintain pairwise
-                // disequalities between *distinct* same-width constant values.
-                //
-                // EUF has no built-in notion that two different bit-vector
-                // literals are unequal.  Without explicit disequality edges, a
-                // congruence chain that equates a node merged with `#x00` and one
-                // merged with `#x01` (e.g. `g(a)=#x00`, `g(b)=#x01`, `a=b`) would
-                // not produce a conflict.  We therefore assert `#x00 ≠ #x01` etc.
-                //
-                // As with `interned_int_constants`, we keep one canonical EUF
-                // node per distinct `(value, width)` pair: when the same value
-                // reappears (a fresh TermId) we merge it into the canonical node,
-                // bounding the number of pairwise edges by the count of distinct
-                // BV literals rather than the total number of term IDs.
-                //
-                // The key carries every limb of the value.  Truncating it to
-                // the low 64 bits made `0` and `2^64` the *same* key at width
-                // 128, so the two constants were merged into one EUF class —
-                // and the merge was recorded as tautological, which is exactly
-                // what it was not.  `(distinct (g a) (g b))` over those two
-                // constants was then reported `unsat`.
-                let key = (
-                    value.iter_u64_digits().collect::<SmallVec<[u64; 2]>>(),
-                    *width,
-                );
-                let new_node = self.euf.intern(term);
-                // Every edge asserted from here carries `term` as its reason
-                // and `term` names no literal: two ids for the same constant
-                // really are equal and two distinct constants really are
-                // unequal, in every model.  Declare that so a conflict clause
-                // can omit it *knowingly*.
-                self.tautological_reasons.insert(term);
-                if let Some(&canonical) = self.interned_bv_constants.get(&key) {
-                    let _ = self.euf.merge(new_node, canonical, term);
-                    return canonical;
-                }
-                // First time we see this value: assert disequality against every
-                // other distinct constant of the SAME width (different widths are
-                // different sorts and are never merged), then register it.
-                let diseq_targets: Vec<u32> = self
-                    .interned_bv_constants
-                    .iter()
-                    .filter_map(|(&(_, w), &node)| (w == *width).then_some(node))
-                    .collect();
-                for other_node in diseq_targets {
-                    self.euf.assert_diseq(new_node, other_node, term);
-                }
-                self.interned_bv_constants.insert(key, new_node);
-                return new_node;
-            }
-        }
-        self.euf.intern(term)
     }
 
     /// Ensure canonical EUF nodes for Boolean true/false exist, with a
@@ -1518,7 +1334,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // correct (currently-false) literal for this variable, and the level it
         // holds at so `full_assignment_conflict_clause` never names a literal
         // the SAT core has since unassigned.
-        self.assigned_polarity.insert(var, is_positive);
+        self.set_assigned_polarity(var, is_positive);
         self.assigned_level.insert(var, self.current_level);
 
         // Mirror the assignment into the embedded BV solver's boolean-node
@@ -1677,7 +1493,7 @@ impl TheoryCallback for TheoryManager<'_> {
         if self.theory_mode == TheoryMode::Lazy {
             for &(lit, is_positive) in &self.pending_assignments.clone() {
                 let var = lit.var();
-                self.assigned_polarity.insert(var, is_positive);
+                self.set_assigned_polarity(var, is_positive);
                 let Some(constraint) = self.var_to_constraint.get(&var).cloned() else {
                     continue;
                 };
@@ -1723,6 +1539,88 @@ impl TheoryCallback for TheoryManager<'_> {
             return conflict;
         }
 
+        // Soundness backstop: replay the shadow trail through a freshly reset
+        // EUF/arith/BV state and recheck before trusting the incremental
+        // `check_conflicts()` above.
+        //
+        // The incremental congruence-closure state is built up piecewise across
+        // the whole CDCL search -- every `push`/`pop`, every signature update in
+        // `propagate` -- and is exactly the kind of long-lived, trail-threaded
+        // state where a narrow incremental-maintenance gap (missing one
+        // signature update, one use-list splice) makes the *live* e-graph
+        // quietly diverge from what asserting the same equalities from scratch
+        // would derive.  Such a gap can only manifest where congruence closure
+        // actually has function applications to close over -- a pure-equality
+        // problem has no congruence to get incrementally wrong -- so this is
+        // gated on `has_app_nodes()` to spend the rebuild only where it can
+        // catch something, and reuses `resync_theory_state` (already relied on
+        // elsewhere to recover from a corrupted incremental trail) rather than a
+        // second, parallel rebuild mechanism.
+        //
+        // This *replaces* the live state with the rebuilt one, not merely
+        // consults it: `resync_theory_state` resets and replays every
+        // theory-relevant atom on `assignment_trail`, which by construction is
+        // everything `on_assignment` has recorded for the current partial
+        // assignment (MBQI/array/datatype axiom instances included, since they
+        // reach EUF and arith the same way any other assertion does -- through
+        // an encoded SAT literal that gets assigned and trailed). The
+        // subsequent `propagate_euf_equalities_to_arith` and `arith.check()`
+        // below therefore run against a state that is *at least* as complete as
+        // the one they would have seen anyway, so a genuinely `Sat` instance
+        // still answers `Sat` with a model the rebuilt state supports.
+        //
+        // ## Why this is restricted to eager mode
+        //
+        // The paragraph above rests entirely on `assignment_trail` being a
+        // faithful shadow of the current partial assignment.  That holds in
+        // eager mode only: `on_assignment` returns at the `TheoryMode::Lazy`
+        // branch *before* reaching the trail-append arm, so in lazy mode
+        // `assignment_trail` is permanently EMPTY, and the lazy `final_check`
+        // loop above appends nothing to it either.  Running the backstop there
+        // would reset EUF/arith/BV and replay *nothing*, silently discarding
+        // every fact the lazy loop had just asserted — a wrong `sat` on any
+        // function-bearing problem (`x = 2 /\ y = x + 1 /\ f(y) != f(3)` came
+        // back `sat` instead of `unsat`).
+        //
+        // Does lazy mode need an equivalent safety net?  It is exposed to the
+        // same hazard in principle: lazy state is *also* incremental, not
+        // rebuilt per check — `final_check` clears `pending_assignments` once
+        // processed (so a later `final_check` at the same level replays only
+        // what arrived since), and the facts already asserted are retracted
+        // only by the scope `pop`s that `on_backtrack` performs.  Building one
+        // would mean giving lazy mode its own shadow trail, which is precisely
+        // the eager-mode bookkeeping it exists to avoid; it is left undone
+        // deliberately rather than overlooked, and lazy mode keeps the
+        // incremental behaviour it had before this backstop was introduced.
+        // The downstream model-verification gate in `Solver::check`
+        // (`model_refutes_assertions`) remains lazy mode's backstop of record.
+        //
+        // ## Why bit-vector problems are excluded
+        //
+        // `resync_theory_state` calls `bv.reset()` and then replays only the
+        // atoms carrying a `var_to_constraint` entry — it never re-mirrors the
+        // `bv.assert_bool_value` calls `on_assignment` makes for plain boolean
+        // variables, so a BV problem would come back from the rebuild having
+        // *lost* the selector values that make a BV-sorted `ite` determinate.
+        // That is the same reasoning the in-place-flip path above already
+        // applies (see its `self.bv_terms.is_empty()` guard); the backstop
+        // takes the identical, conservative gate rather than contradicting it.
+        if self.theory_mode == TheoryMode::Eager
+            && self.bv_terms.is_empty()
+            && self.euf.has_app_nodes()
+        {
+            let rebuilt = self.resync_theory_state();
+            if let TheoryCheckResult::Conflict(conflict_terms) = rebuilt {
+                self.statistics.theory_conflicts += 1;
+                self.statistics.conflicts += 1;
+                if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                    self.resource_exhausted = true;
+                    return TheoryCheckResult::Sat;
+                }
+                return TheoryCheckResult::Conflict(conflict_terms);
+            }
+        }
+
         // Propagate EUF-derived equalities into the arithmetic solver.
         // When EUF fires congruence closure and derives f(x) = f(y) because
         // x = y was asserted, the arithmetic solver is unaware of this equality.
@@ -1739,9 +1637,13 @@ impl TheoryCallback for TheoryManager<'_> {
             Ok(result) => {
                 match result {
                     oxiz_theories::TheoryCheckResult::Sat => {
-                        // Arithmetic is consistent, now check model-based theory combination
-                        // This ensures that different theories agree on shared terms
-                        self.model_based_combination()
+                        // Arithmetic is consistent: run full (bidirectional)
+                        // Nelson-Oppen theory combination so that an
+                        // arithmetic-entailed equality/disequality over a
+                        // shared UF-argument term reaches EUF, not merely the
+                        // EUF-derived-equality direction `Sat` used to check
+                        // by itself.
+                        self.nelson_oppen_combine()
                     }
                     oxiz_theories::TheoryCheckResult::Unsat(conflict_terms) => {
                         // Arithmetic conflict detected - convert to SAT conflict clause

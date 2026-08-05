@@ -229,6 +229,23 @@ impl Solver {
         // literals and the field values the passes above have already recorded.
         self.extract_datatype_model(&mut model, manager);
 
+        // Numeric-UF-argument purification aliases.  Must run after every
+        // pass above: `purify_numeric_uf_args` rewrote e.g. `f(3)` to
+        // `f(v)` (plus `v = 3`) before encoding, so only `f(v)`'s equivalence
+        // class ever received a value from the loops above -- `f(3)` itself
+        // (still what `self.assertions` and any `get-value` query name) has
+        // none. Propagate the purified twin's value back to the original
+        // term wherever one was found, so a genuinely satisfiable model
+        // resolves the term the user actually wrote.
+        for (&original, &purified) in &self.numeric_purify_aliases {
+            if model.get(original).is_some() {
+                continue;
+            }
+            if let Some(value) = model.get(purified) {
+                model.set(original, value);
+            }
+        }
+
         self.model = Some(model);
     }
 
@@ -995,8 +1012,15 @@ impl Solver {
     /// constants proven equal a *shared* abstract witness while keeping
     /// distinct constants distinct.
     pub(crate) fn euf_class_representative(&self, term: TermId) -> Option<u32> {
-        let node = self.euf.term_to_node(term)?;
-        Some(self.euf.find_immutable(node))
+        if let Some(node) = self.euf.term_to_node(term) {
+            return Some(self.euf.find_immutable(node));
+        }
+        // The pure-equality fast path decides its formulas without ever
+        // running EUF, so its partition is the only record of which
+        // uninterpreted constants it proved equal (see `eq_skeleton`). The two
+        // sources cannot both be populated for one verdict, so there is no
+        // ambiguity about which class id a caller is looking at.
+        self.equality_skeleton_classes.get(&term).copied()
     }
 
     /// Build unsat core for trivial conflicts (assertion of false)

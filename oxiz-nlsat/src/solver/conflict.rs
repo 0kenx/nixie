@@ -22,12 +22,63 @@ enum EntryOutcome {
     Explore(Vec<Literal>),
 }
 
+/// What [`NlsatSolver::analyze_conflict`] derived from a conflict.
+pub(super) struct Learnt {
+    /// The learnt clause. Every literal is false under the trail the conflict
+    /// occurred on, and the clause is entailed by the clause database.
+    pub literals: Vec<Literal>,
+    /// The level to backjump to before asserting `literals[0]`.
+    pub backtrack_level: u32,
+    /// Whether `literals[0]` is the *only* literal at the conflict level, and
+    /// therefore becomes unit after backjumping. When this is false the clause
+    /// is still valid but propagates nothing, and the caller must not assume
+    /// the search has made progress.
+    pub asserting: bool,
+    /// Whether deriving this clause dropped a literal that the arithmetic
+    /// theory — not the clause set — had forced. An empty clause from such a
+    /// derivation is not a refutation.
+    pub theory_dependent: bool,
+}
+
 impl NlsatSolver {
     // ========== Conflict Analysis ==========
 
-    /// Analyze a conflict and learn a clause.
-    pub(super) fn analyze_conflict(&mut self, conflict_id: ClauseId) -> (Vec<Literal>, u32) {
-        self.learnt_clause.clear();
+    /// Analyse a conflict and derive a learnt clause by first-UIP resolution.
+    ///
+    /// # The invariant that makes this sound
+    ///
+    /// At every point in the analysis the *resolvent* is exactly the clause
+    /// `{ ¬t : t is the trail literal of some variable in `seen` }` — one
+    /// literal per seen variable, each of them false under the current trail.
+    /// Every step preserves that invariant, and every step is a resolution
+    /// against a clause already in the database, so whatever the loop ends up
+    /// emitting is *entailed by the clause set*. That is the whole soundness
+    /// argument, and it is why literals are reconstructed from the trail here
+    /// ([`Self::falsified_literal`]) rather than copied out of the clauses
+    /// being resolved: a clause literal and its trail literal have opposite
+    /// polarity, and deriving one from the other by hand is exactly the sort
+    /// of step that silently emits a clause the solver is not entitled to.
+    ///
+    /// # What stops the resolution
+    ///
+    /// Resolution can only eliminate a variable that was *propagated by a
+    /// clause* — that clause is the other premise. A variable assigned any
+    /// other way (a decision, a unit, or the arithmetic theory) has no clausal
+    /// reason to resolve against, so the loop stops there and keeps it. The
+    /// invariant above still holds, so the clause is still entailed; it is
+    /// simply not guaranteed to be *asserting*, which the caller is told via
+    /// [`Learnt::asserting`] and must handle rather than assume.
+    ///
+    /// # Theory-justified assignments
+    ///
+    /// A literal the arithmetic layer forced is not a logical consequence of
+    /// the clause set — it reflects the arithmetic values the search happens
+    /// to have chosen, which are retractable. So while *keeping* such a
+    /// literal is always safe, *dropping* one is not, and the one place this
+    /// analysis drops literals is the standard level-0 elimination. Any such
+    /// drop sets [`Learnt::theory_dependent`], and a caller must not read an
+    /// empty clause from a theory-dependent derivation as a refutation.
+    pub(super) fn analyze_conflict(&mut self, conflict_id: ClauseId) -> Option<Learnt> {
         self.seen.clear();
 
         // Track this clause for unsat core
@@ -35,107 +86,179 @@ impl NlsatSolver {
             self.conflict_clauses.insert(conflict_id);
         }
 
-        let clause_lits: Vec<Literal> = match self.clauses.get(conflict_id) {
-            Some(c) => c.literals().to_vec(),
-            None => return (Vec::new(), 0),
-        };
-
+        let clause_lits: Vec<Literal> = self.clauses.get(conflict_id)?.literals().to_vec();
         let current_level = self.assignment.level();
-        let mut counter = 0; // Number of literals at current level
+        let mut theory_dependent = false;
+        // Variables of the resolvent that sit at the current decision level.
+        let mut open_at_current_level = 0usize;
 
-        // Process conflict clause
-        for &lit in &clause_lits {
-            let var = lit.var();
-            if !self.seen.contains(&var) {
-                self.seen.insert(var);
-                let level = self.assignment.bool_level(var);
-
+        let absorb =
+            |solver: &mut Self, var: BoolVar, open: &mut usize, theory_dependent: &mut bool| {
+                if !solver.seen.insert(var) {
+                    return;
+                }
+                let level = solver.assignment.bool_level(var);
                 if level == current_level {
-                    counter += 1;
+                    *open += 1;
+                    solver.bump_var_activity(var);
                 } else if level > 0 {
-                    self.learnt_clause.push(lit.negate());
-                    self.bump_var_activity(var);
+                    solver.bump_var_activity(var);
+                } else {
+                    // Level 0: permanently false, so resolution against its unit
+                    // reason removes it from the clause. Sound for a clausal
+                    // reason; not for one the theory supplied.
+                    solver.seen.remove(&var);
+                    if solver.is_theory_justified(var) {
+                        *theory_dependent = true;
+                    }
                 }
-            }
+            };
+
+        for &lit in &clause_lits {
+            absorb(
+                self,
+                lit.var(),
+                &mut open_at_current_level,
+                &mut theory_dependent,
+            );
         }
 
-        // Resolve until we have exactly one literal at current level
+        // Resolve current-level variables away, newest first, until one is
+        // left (the first unique implication point) or none can be resolved.
         let mut trail_idx = self.assignment.trail().len();
-        while counter > 1 && trail_idx > 0 {
-            // Find next literal to resolve
-            trail_idx -= 1;
-            let trail = self.assignment.trail();
-
-            let entry = &trail[trail_idx];
-            let lit = entry.literal;
-            let var = lit.var();
-
-            if !self.seen.contains(&var) {
-                continue;
-            }
-            self.seen.remove(&var);
-            counter -= 1;
-
-            // Get the reason clause
-            if let Justification::Propagation(reason_id) = &entry.justification {
-                // Track reason clause for unsat core
-                if self.extract_unsat_core {
-                    self.conflict_clauses.insert(*reason_id);
-                }
-
-                let reason_lits: Vec<Literal> = match self.clauses.get(*reason_id) {
-                    Some(r) => r.literals().to_vec(),
-                    None => continue,
-                };
-
-                for reason_lit in reason_lits {
-                    if reason_lit == lit {
-                        continue;
-                    }
-
-                    let reason_var = reason_lit.var();
-                    if !self.seen.contains(&reason_var) {
-                        self.seen.insert(reason_var);
-                        let level = self.assignment.bool_level(reason_var);
-
-                        if level == current_level {
-                            counter += 1;
-                        } else if level > 0 {
-                            self.learnt_clause.push(reason_lit.negate());
-                            self.bump_var_activity(reason_var);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Find the UIP (asserting literal)
-        trail_idx = self.assignment.trail().len();
-        while trail_idx > 0 {
-            trail_idx -= 1;
-            let trail = self.assignment.trail();
-            let entry = &trail[trail_idx];
-            let var = entry.literal.var();
-
-            if self.seen.contains(&var) {
-                // This is the asserting literal
-                self.learnt_clause.insert(0, entry.literal.negate());
-                self.bump_var_activity(var);
+        while open_at_current_level > 1 {
+            let Some((entry_idx, pivot)) = self.next_seen_on_trail(trail_idx, current_level) else {
                 break;
+            };
+            trail_idx = entry_idx;
+            // No clausal reason (a decision, a unit, or a theory
+            // propagation): resolution has no second premise, so `pivot`
+            // stays in the clause and the loop ends. Keeping a literal never
+            // weakens the entailment invariant, so nothing needs flagging.
+            let Some(reason_lits) = self.clausal_reason(pivot) else {
+                break;
+            };
+            self.seen.remove(&pivot);
+            open_at_current_level -= 1;
+            for reason_lit in reason_lits {
+                if reason_lit.var() == pivot {
+                    continue;
+                }
+                absorb(
+                    self,
+                    reason_lit.var(),
+                    &mut open_at_current_level,
+                    &mut theory_dependent,
+                );
             }
         }
 
-        // Compute backtrack level
-        let mut backtrack_level = 0;
-        for lit in &self.learnt_clause[1..] {
-            let level = self.assignment.bool_level(lit.var());
-            backtrack_level = backtrack_level.max(level);
+        // Materialise the resolvent, current-level literals first so the
+        // asserting one (when there is exactly one) lands at index 0.
+        let seen_vars: Vec<BoolVar> = self.seen.iter().copied().collect();
+        let mut current: Vec<Literal> = Vec::new();
+        let mut earlier: Vec<Literal> = Vec::new();
+        for var in seen_vars {
+            let Some(literal) = self.falsified_literal(var) else {
+                // A variable in the resolvent with no truth value cannot be
+                // rendered as a false literal, so the derivation cannot be
+                // completed; refusing beats emitting a clause of unknown
+                // meaning.
+                return None;
+            };
+            if self.assignment.bool_level(var) == current_level {
+                current.push(literal);
+            } else {
+                earlier.push(literal);
+            }
         }
+        // Deterministic order: the resolvent is collected from a hash set, and
+        // a learnt clause whose literal order varies run to run makes the
+        // whole search non-reproducible.
+        current.sort_unstable_by_key(|l| l.index());
+        earlier.sort_unstable_by_key(|l| l.index());
 
-        // Minimize learned clause (optional)
-        let minimized = self.minimize_clause(self.learnt_clause.clone());
+        let asserting = current.len() == 1;
+        let mut literals = current;
+        literals.extend(earlier);
 
-        (minimized, backtrack_level)
+        let backtrack_level = literals
+            .iter()
+            .skip(1)
+            .map(|l| self.assignment.bool_level(l.var()))
+            .max()
+            .unwrap_or(0);
+
+        let literals = self.minimize_clause(literals);
+        Some(Learnt {
+            literals,
+            backtrack_level,
+            asserting,
+            theory_dependent,
+        })
+    }
+
+    /// The literal of `var` that is *false* under the current assignment —
+    /// the form in which `var` belongs to a conflict clause.
+    fn falsified_literal(&self, var: BoolVar) -> Option<Literal> {
+        let value = self.assignment.bool_value(var);
+        if value.is_true() {
+            Some(Literal::negative(var))
+        } else if value.is_false() {
+            Some(Literal::positive(var))
+        } else {
+            None
+        }
+    }
+
+    /// Whether `var`'s assignment came from the arithmetic theory.
+    fn is_theory_justified(&self, var: BoolVar) -> bool {
+        self.assignment
+            .trail()
+            .iter()
+            .find(|e| e.literal.var() == var)
+            .is_some_and(|e| matches!(e.justification, Justification::Theory))
+    }
+
+    /// The literals of `var`'s reason clause, or `None` when `var` was not
+    /// propagated by a clause that is still in the database.
+    fn clausal_reason(&mut self, var: BoolVar) -> Option<Vec<Literal>> {
+        let reason_id = self
+            .assignment
+            .trail()
+            .iter()
+            .find(|e| e.literal.var() == var)
+            .and_then(|e| match e.justification {
+                Justification::Propagation(reason_id) => Some(reason_id),
+                _ => None,
+            })?;
+        let literals = self.clauses.get(reason_id)?.literals().to_vec();
+        if self.extract_unsat_core {
+            self.conflict_clauses.insert(reason_id);
+        }
+        Some(literals)
+    }
+
+    /// Scan the trail backwards from `before` for the newest entry that is in
+    /// `seen` *and* at `level`, returning its index and variable.
+    ///
+    /// The level filter is not redundant with the caller's bookkeeping even
+    /// though the trail is ordered by level: relying on that ordering to keep
+    /// the scan inside the conflict level is an invariant held somewhere else,
+    /// and resolving against a literal from an earlier level would eliminate a
+    /// variable the resolvent still needs. Checking it here makes the step
+    /// correct on its own terms.
+    fn next_seen_on_trail(&self, before: usize, level: u32) -> Option<(usize, BoolVar)> {
+        let trail = self.assignment.trail();
+        let mut idx = before.min(trail.len());
+        while idx > 0 {
+            idx -= 1;
+            let var = trail.get(idx)?.literal.var();
+            if self.seen.contains(&var) && self.assignment.bool_level(var) == level {
+                return Some((idx, var));
+            }
+        }
+        None
     }
 
     /// Minimize a learned clause by removing redundant literals.
@@ -245,8 +368,17 @@ impl NlsatSolver {
                 continue; // Skip the propagated literal itself.
             }
             let reason_var = reason_lit.var();
-            if self.assignment.bool_level(reason_var) == 0 {
-                continue; // Level 0 literals are always fine.
+            if self.assignment.bool_level(reason_var) == 0 && !self.is_theory_justified(reason_var)
+            {
+                // A level-0 literal is permanently false, so a reason that
+                // cites it needs no further justification -- provided the
+                // assignment that fixed it is a logical consequence. One the
+                // arithmetic theory forced is not (it reflects retractable
+                // arithmetic choices), so it falls through to the ordinary
+                // redundancy test below, which resolves a theory-justified
+                // variable as *not* redundant. See `analyze_conflict`'s
+                // treatment of the same distinction.
+                continue;
             }
             if clause.iter().any(|&cl| cl.var() == reason_var) {
                 continue; // Already explicit in the clause being minimized.
@@ -350,6 +482,14 @@ impl NlsatSolver {
             self.assignment.unset_arith(var);
             self.assignment.reset_feasible(var);
         }
+
+        // Every region on the witness ledger was computed against the boolean
+        // assignment this backtrack just discarded, so none of them describes
+        // a currently-valid feasible set any more; a stale one could offer a
+        // point that violates whatever the backjump assigns differently this
+        // time. `Self::next_arith_var` picks the freed variables again and
+        // the ledger repopulates from scratch.
+        self.arith_witnesses.forget_all();
 
         // Clear evaluation cache
         self.eval_cache.clear();
@@ -534,6 +674,248 @@ mod tests {
     /// for use as an `is_redundant_literal` reason clause.
     fn add_reason_clause(solver: &mut NlsatSolver, literals: Vec<Literal>) -> ClauseId {
         solver.clauses.add(literals, 0, false)
+    }
+
+    // -----------------------------------------------------------------------
+    // First-UIP conflict analysis (independent reimplementation of upstream
+    // PR #31's sound-learning work).
+    //
+    // The property under test in all of these is the one the whole search
+    // rests on: the clause `analyze_conflict` hands back must be *entailed*.
+    // Its observable signature is that every literal in it is false under the
+    // trail the conflict occurred on -- an entailed clause derived by
+    // resolution from an all-false conflict clause cannot contain a true
+    // literal. `assert_falsified_by_trail` checks exactly that, and the
+    // exact-clause assertions pin the specific derivations besides.
+    // -----------------------------------------------------------------------
+
+    /// Every literal of a derived clause must be false under the trail.
+    fn assert_falsified_by_trail(solver: &NlsatSolver, learnt: &[Literal]) {
+        for &lit in learnt {
+            assert!(
+                solver.assignment.lit_value(lit).is_false(),
+                "a resolvent literal must be false under the trail it was derived on"
+            );
+        }
+    }
+
+    /// Set up: level 1 decides `p`, which propagates `a`; level 2 decides `d`,
+    /// which propagates `b`. Returns `(a, b, p, d, conflict_clause)` for the
+    /// conflict clause `(~a | ~b)`.
+    fn two_level_conflict(
+        solver: &mut NlsatSolver,
+    ) -> (BoolVar, BoolVar, BoolVar, BoolVar, ClauseId) {
+        let a = solver.new_bool_var();
+        let b = solver.new_bool_var();
+        let p = solver.new_bool_var();
+        let d = solver.new_bool_var();
+
+        solver.assignment.push_level();
+        solver
+            .assignment
+            .assign(Literal::positive(p), Justification::Decision);
+        let reason_a = add_reason_clause(solver, vec![Literal::positive(a), Literal::negative(p)]);
+        solver
+            .assignment
+            .assign(Literal::positive(a), Justification::Propagation(reason_a));
+
+        solver.assignment.push_level();
+        solver
+            .assignment
+            .assign(Literal::positive(d), Justification::Decision);
+        let reason_b = add_reason_clause(solver, vec![Literal::positive(b), Literal::negative(d)]);
+        solver
+            .assignment
+            .assign(Literal::positive(b), Justification::Propagation(reason_b));
+
+        let conflict = add_reason_clause(solver, vec![Literal::negative(a), Literal::negative(b)]);
+        (a, b, p, d, conflict)
+    }
+
+    /// The headline soundness regression. `(~a | ~b)` conflicts with a trail
+    /// that made both true; `a` sits at level 1 and `b` at level 2, so the
+    /// first-UIP clause is `(~b | ~a)` -- both literals false, backjumping to
+    /// level 1 where it becomes unit on `~b`.
+    ///
+    /// The defect this pins: the lower-level literal used to be emitted
+    /// *negated* (`a` instead of `~a`), producing a clause that is true under
+    /// the trail and, worse, not entailed by the clause database at all. A
+    /// solver that learns non-entailed clauses can refute a satisfiable
+    /// formula.
+    #[test]
+    fn test_pr31_conflict_analysis_keeps_lower_level_literal_polarity() {
+        let mut solver = NlsatSolver::new();
+        let (a, b, _p, _d, conflict) = two_level_conflict(&mut solver);
+
+        let analysis = solver
+            .analyze_conflict(conflict)
+            .expect("a fully clause-justified conflict must analyse");
+
+        assert!(analysis.asserting, "one literal sits at the conflict level");
+        assert_eq!(analysis.backtrack_level, 1, "`~a` is the level-1 literal");
+        assert_eq!(
+            analysis.literals,
+            vec![Literal::negative(b), Literal::negative(a)],
+            "first-UIP resolvent of (~a | ~b) is itself, asserting literal first"
+        );
+        assert_falsified_by_trail(&solver, &analysis.literals);
+        assert!(!analysis.theory_dependent);
+    }
+
+    /// When every conflict literal is at the conflict level, resolution runs
+    /// all the way back to the decision, which is the unique implication
+    /// point.
+    #[test]
+    fn test_pr31_conflict_analysis_resolves_back_to_the_decision() {
+        let mut solver = NlsatSolver::new();
+        let a = solver.new_bool_var();
+        let b = solver.new_bool_var();
+        let d = solver.new_bool_var();
+
+        solver.assignment.push_level();
+        solver
+            .assignment
+            .assign(Literal::positive(d), Justification::Decision);
+        let reason_a = add_reason_clause(
+            &mut solver,
+            vec![Literal::positive(a), Literal::negative(d)],
+        );
+        solver
+            .assignment
+            .assign(Literal::positive(a), Justification::Propagation(reason_a));
+        let reason_b = add_reason_clause(
+            &mut solver,
+            vec![Literal::positive(b), Literal::negative(d)],
+        );
+        solver
+            .assignment
+            .assign(Literal::positive(b), Justification::Propagation(reason_b));
+        let conflict = add_reason_clause(
+            &mut solver,
+            vec![Literal::negative(a), Literal::negative(b)],
+        );
+
+        let analysis = solver
+            .analyze_conflict(conflict)
+            .expect("a fully clause-justified conflict must analyse");
+        assert_eq!(
+            analysis.literals,
+            vec![Literal::negative(d)],
+            "both branches trace back to the decision `d`"
+        );
+        assert!(analysis.asserting);
+        assert_eq!(analysis.backtrack_level, 0);
+        assert_falsified_by_trail(&solver, &analysis.literals);
+    }
+
+    /// A literal the arithmetic theory forced has no reason *clause*, so
+    /// resolution cannot eliminate it. It must stay in the learnt clause --
+    /// dropping it (which the previous implementation did, silently) produces
+    /// a clause that does not follow from anything.
+    #[test]
+    fn test_pr31_conflict_analysis_keeps_theory_literal_instead_of_dropping_it() {
+        let mut solver = NlsatSolver::new();
+        let a = solver.new_bool_var();
+        let b = solver.new_bool_var();
+        let d = solver.new_bool_var();
+
+        solver.assignment.push_level();
+        solver
+            .assignment
+            .assign(Literal::positive(d), Justification::Decision);
+        // `a` and `b` both forced by the theory at the conflict level: neither
+        // can be resolved away.
+        solver
+            .assignment
+            .assign(Literal::positive(a), Justification::Theory);
+        solver
+            .assignment
+            .assign(Literal::positive(b), Justification::Theory);
+        let conflict = add_reason_clause(
+            &mut solver,
+            vec![Literal::negative(a), Literal::negative(b)],
+        );
+
+        let analysis = solver
+            .analyze_conflict(conflict)
+            .expect("analysis completes even when nothing can be resolved");
+        let mut literals = analysis.literals.clone();
+        literals.sort_unstable_by_key(|l| l.index());
+        let mut expected = vec![Literal::negative(a), Literal::negative(b)];
+        expected.sort_unstable_by_key(|l| l.index());
+        assert_eq!(
+            literals, expected,
+            "both theory-forced literals must survive into the clause"
+        );
+        assert!(
+            !analysis.asserting,
+            "two conflict-level literals means the clause propagates nothing"
+        );
+        assert_falsified_by_trail(&solver, &analysis.literals);
+    }
+
+    /// Level-0 literals are dropped by resolution against their unit reasons,
+    /// which is sound for a clause-justified assignment. A *theory*-justified
+    /// level-0 assignment is a retractable arithmetic choice, not a
+    /// consequence, so dropping it must be flagged -- otherwise an empty
+    /// clause derived that way would be read as a refutation.
+    #[test]
+    fn test_pr31_conflict_analysis_flags_dropped_level_zero_theory_literal() {
+        let mut solver = NlsatSolver::new();
+        let t = solver.new_bool_var();
+        let d = solver.new_bool_var();
+
+        // Level 0: the theory forces `t`.
+        solver
+            .assignment
+            .assign(Literal::positive(t), Justification::Theory);
+        // Level 1: decide `d`.
+        solver.assignment.push_level();
+        solver
+            .assignment
+            .assign(Literal::positive(d), Justification::Decision);
+        let conflict = add_reason_clause(
+            &mut solver,
+            vec![Literal::negative(t), Literal::negative(d)],
+        );
+
+        let analysis = solver
+            .analyze_conflict(conflict)
+            .expect("analysis completes");
+        assert!(
+            analysis.theory_dependent,
+            "the level-0 literal that was dropped was theory-justified"
+        );
+        assert_eq!(analysis.literals, vec![Literal::negative(d)]);
+        assert_falsified_by_trail(&solver, &analysis.literals);
+    }
+
+    /// The control for the case above: an ordinary level-0 unit assignment is
+    /// dropped without flagging anything, because resolving it away is a real
+    /// resolution step.
+    #[test]
+    fn test_pr31_conflict_analysis_level_zero_unit_drop_is_not_flagged() {
+        let mut solver = NlsatSolver::new();
+        let u = solver.new_bool_var();
+        let d = solver.new_bool_var();
+
+        solver
+            .assignment
+            .assign(Literal::positive(u), Justification::Unit);
+        solver.assignment.push_level();
+        solver
+            .assignment
+            .assign(Literal::positive(d), Justification::Decision);
+        let conflict = add_reason_clause(
+            &mut solver,
+            vec![Literal::negative(u), Literal::negative(d)],
+        );
+
+        let analysis = solver
+            .analyze_conflict(conflict)
+            .expect("analysis completes");
+        assert!(!analysis.theory_dependent);
+        assert_eq!(analysis.literals, vec![Literal::negative(d)]);
     }
 
     // -----------------------------------------------------------------------

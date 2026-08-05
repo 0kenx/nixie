@@ -2,9 +2,11 @@
 
 pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
+pub(super) mod branch_priority;
 pub(super) mod candidates;
 pub(super) mod check_array;
 pub(super) mod check_bv;
+pub(super) mod check_core;
 pub(super) mod check_dt;
 pub(super) mod check_fp;
 pub(super) mod check_fp_model;
@@ -14,6 +16,8 @@ pub(super) mod config;
 pub(super) mod dt_axioms;
 pub(super) mod encode;
 pub(super) mod encode_guards;
+pub(super) mod eq_skeleton;
+pub(super) mod int_case_split;
 pub(super) mod model_builder;
 pub(super) mod model_eval;
 pub(super) mod pigeonhole;
@@ -81,6 +85,25 @@ pub struct Solver {
     pub(super) ematch_engine: EmatchingEngine,
     /// Whether the formula contains quantifiers
     pub(super) has_quantifiers: bool,
+    /// Uninterpreted-function symbols (`Spur`s) that occur as the head of
+    /// some `Apply` reachable from a quantifier's body, as registered by
+    /// `register_asserted_quantifiers`/`register_asserted_forall`.
+    ///
+    /// `purify_numeric_uf_args` consults this to scope its MBQI-avoidance
+    /// gate to exactly the functions that interact with e-matching, rather
+    /// than `has_quantifiers` wholesale: gating on `has_quantifiers` alone
+    /// made purification's soundness fix order-dependent on *when* a
+    /// quantifier happened to be asserted relative to an unrelated ground
+    /// UF fact -- `(assert (forall ((z Int)) (> (g z) 0))) (assert (not (=
+    /// (f y) (f 3))))` reintroduced the exact false-`sat` this module
+    /// exists to close, because `g`'s quantifier flips `has_quantifiers` to
+    /// `true` before `f`'s ground disequality is ever purified, even though
+    /// `f` never appears under a binder. Scoping per function symbol keeps
+    /// the fix sound for every function that is not itself a quantifier
+    /// trigger, in any assertion order, at the cost of the same
+    /// conservatism `has_quantifiers` already accepted for functions that
+    /// genuinely are.
+    pub(super) quantifier_uf_funcs: FxHashSet<oxiz_core::interner::Spur>,
     /// Next unused Skolem symbol id.
     ///
     /// Skolem symbols are named positionally (`sk!N` / `skf!N`) and names are
@@ -154,6 +177,33 @@ pub struct Solver {
     /// traversed by `track_theory_vars`.  Avoids redundant O(depth) re-walks
     /// when the same sub-expression appears in multiple parent constraints.
     pub(super) tracked_compound_terms: FxHashSet<TermId>,
+    /// Bool-sorted `Var` terms known to appear in a UF-application argument
+    /// position, populated by `abstract_compound_bool_args`. The
+    /// `TermKind::Var` arm of `encode_depth_uncached` consults this to decide
+    /// whether to register the variable for Bool completion
+    /// (`Constraint::BoolApp`) -- see [`Solver::mark_bool_uf_arg`] for why
+    /// this is gated rather than unconditional.
+    pub(super) bool_uf_arg_terms: FxHashSet<TermId>,
+    /// Every numeric (Int/Real) term known to appear as a direct argument of
+    /// some uninterpreted-function application, populated by
+    /// `purify_numeric_uf_args` — either a fresh purification proxy or a
+    /// term `track_theory_vars` already shares on its own (typically a bare
+    /// `Var`). This is the candidate pool for the non-convex integer
+    /// case-split refinement (`int_case_split`): a UF argument tightly
+    /// bounded to a small finite domain is exactly the shape that needs an
+    /// explicit `(or (= t v0) ...)` lemma when Nelson-Oppen equality sharing
+    /// alone cannot resolve which value the search should pick.
+    pub(super) numeric_uf_arg_terms: FxHashSet<TermId>,
+    /// Alias map from a pre-purification uninterpreted-function-application
+    /// term (still what `self.assertions` and any external `get-value`
+    /// query name) to the purified counterpart actually interned into
+    /// EUF/arithmetic, populated by `purify_numeric_uf_args`.
+    ///
+    /// `Model::eval`/`build_model` resolve an `Apply` term only by direct
+    /// `TermId` identity (an uninterpreted function has no structural
+    /// evaluation rule), so without this alias a satisfiable model could
+    /// never report a value for the original, unpurified application shape.
+    pub(super) numeric_purify_aliases: FxHashMap<TermId, TermId>,
     /// Tseitin-encoding memo: term id -> (literal returned by `encode_depth`,
     /// polarity the term's clauses were emitted under).
     ///
@@ -254,6 +304,49 @@ pub struct Solver {
     /// configuration, the unsat-core and branching switches), and carried in the
     /// goal fingerprint so a cached verdict cannot survive one of them.
     pub(super) settings_epoch: u64,
+    /// Terms already given an explicit integer case-split lemma, so the same
+    /// term is never split twice. Trail-scoped like `numeric_uf_arg_terms`
+    /// (see [`int_case_split`]) — **not** reset per `check`: the lemma clause
+    /// [`Solver::split_narrow_int_domains`] asserts survives at the live SAT
+    /// scope across a repeated `check-sat` on an unchanged goal, so the dedup
+    /// entry must too, or a no-op repeated `check` would re-emit the same
+    /// clause every time (unbounded clause-database growth — see
+    /// `scope_rebase_tests`). A `pop` retracts both together.
+    pub(super) case_split_terms: FxHashSet<TermId>,
+    /// Number of reset-and-re-solve non-convex-LIA refinement rounds spent
+    /// within the *current* `check`. Reset at the start of every
+    /// `check_core`, unlike `case_split_terms`: it bounds how many extra
+    /// solves this particular search is willing to pay for, not which terms
+    /// are already split, so a later `check` on a still-unresolved goal must
+    /// be able to spend its own round budget again.
+    pub(super) case_split_rounds: u32,
+    /// Index terms of finite-map lookup spines flattened by
+    /// [`encode::finite_map_ite`]. Fed into
+    /// [`int_case_split::Solver::split_narrow_int_domains`]'s candidate set
+    /// alongside `numeric_uf_arg_terms`, so a table index gets the same
+    /// entailed-bound case-split treatment a non-convex-LIA UF argument
+    /// already does, with no separate refinement loop to keep in sync.
+    pub(super) lookup_index_terms: FxHashSet<TermId>,
+    /// Triangles of the pure-equality fast path's chordal graph whose
+    /// transitivity clauses are already in the SAT database, keyed by their
+    /// three constants in ascending order. Trail-scoped exactly like
+    /// `case_split_terms`: the clauses live at the SAT scope they were added
+    /// at and survive a repeated `check-sat` on an unchanged goal, so without
+    /// this a no-op repeat would re-assert every triangle again. See
+    /// [`eq_skeleton`].
+    pub(super) eq_transitivity_triangles: FxHashSet<[TermId; 3]>,
+    /// Equivalence classes the pure-equality fast path proved, for the
+    /// uninterpreted-sort constants it decided. Consumed by
+    /// [`Self::euf_class_representative`] so `(get-model)` groups those
+    /// constants into `@uc_S_n` witnesses correctly even though EUF never ran.
+    /// Cleared at every fast-path attempt, so it only ever describes the most
+    /// recent verdict.
+    pub(super) equality_skeleton_classes: FxHashMap<TermId, u32>,
+    /// The shared queue backing the opt-in branch-priority heuristic (see
+    /// [`branch_priority`]). Always present; only ever read by the SAT
+    /// engine when [`SolverConfig::enable_domain_first_branching`] was set
+    /// before construction, but always safe to push into.
+    pub(super) branch_priority: branch_priority::PriorityQueue,
 }
 
 /// Maximum term-nesting depth the recursive Tseitin encoder will descend
@@ -323,11 +416,23 @@ impl Solver {
     pub fn with_config(config: SolverConfig) -> Self {
         let proof_enabled = config.proof;
 
+        // The branch-priority queue is always created so `Solver` methods
+        // can push into it unconditionally; whether the SAT engine actually
+        // consults it depends on `enable_domain_first_branching` below (see
+        // `branch_priority`'s module doc for why that has to be decided
+        // here, at construction, rather than later).
+        let (branch_priority, priority_heuristic) = branch_priority::new_priority_branching();
+
         // Build SAT solver configuration from our config
         let sat_config = SatConfig {
             restart_strategy: config.restart_strategy,
             enable_inprocessing: config.enable_inprocessing,
             inprocessing_interval: config.inprocessing_interval,
+            external_branching: if config.enable_domain_first_branching {
+                Some(priority_heuristic)
+            } else {
+                None
+            },
             ..SatConfig::default()
         };
 
@@ -352,6 +457,7 @@ impl Solver {
             mbqi: MBQIIntegration::new(),
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
             has_quantifiers: false,
+            quantifier_uf_funcs: FxHashSet::default(),
             next_skolem_id: 0,
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
@@ -384,6 +490,9 @@ impl Solver {
             dt_var_constructors: FxHashMap::default(),
             arith_parse_cache: FxHashMap::default(),
             tracked_compound_terms: FxHashSet::default(),
+            bool_uf_arg_terms: FxHashSet::default(),
+            numeric_uf_arg_terms: FxHashSet::default(),
+            numeric_purify_aliases: FxHashMap::default(),
             encoded_terms: FxHashMap::default(),
             fp_constraint_cache: FxHashMap::default(),
             encode_depth_exceeded: false,
@@ -398,6 +507,12 @@ impl Solver {
             mbqi_round_clauses: Vec::new(),
             last_check: None,
             settings_epoch: 0,
+            case_split_terms: FxHashSet::default(),
+            case_split_rounds: 0,
+            lookup_index_terms: FxHashSet::default(),
+            eq_transitivity_triangles: FxHashSet::default(),
+            equality_skeleton_classes: FxHashMap::default(),
+            branch_priority,
         }
     }
 
@@ -666,639 +781,6 @@ impl Solver {
         // cite literals belonging to a retracted scope.  This also returns the
         // absolute scope-depth counter to zero, matching the solvers.
         self.derived_reasons.clear();
-    }
-
-    /// Get a SAT variable for a term, then check satisfiability
-    fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
-        // Check for trivial unsat (false assertion)
-        if self.has_false_assertion {
-            self.build_unsat_core_trivial_false();
-            return SolverResult::Unsat;
-        }
-
-        if self.assertions.is_empty() {
-            return SolverResult::Sat;
-        }
-
-        // Honesty gate (soundness): if the Tseitin encoder refused a
-        // sub-formula because it was pathologically deep, the encoding is
-        // incomplete and any model built over it is untrustworthy.
-        //
-        // This gate is deliberately the *first* thing after the two trivial
-        // verdicts above.  `assert` sets the flag by skipping the deep term
-        // entirely (see `encode.rs`), and every stage between here and the
-        // CDCL(T) loop — the axiom instantiators, the five early-conflict
-        // collectors, and the nonlinear/FP/string model attempts — walks those
-        // same assertion terms.  Several of those walks recurse natively, so
-        // running any of them on a term already known to exceed the encoder's
-        // safe depth crashes the process instead of reaching this answer: a
-        // flat `(str.++ x1 … x5000)` aborted here via
-        // `check_string_constraints` -> `eval_ground_bool`, on a 1 MiB stack,
-        // long before the gate was consulted.
-        //
-        // Cost of the earlier position: one of those collectors could have
-        // refuted the assertion set outright, and an `Unsat` derived from a
-        // partial encoding is still sound.  That precision is given up
-        // knowingly — it only applies to inputs that carry an assertion deeper
-        // than `ENCODE_DEPTH_LIMIT`, which the gate was already going to
-        // answer `Unknown` for unless a collector happened to refute them
-        // first, and "answers `Unknown`" beats "aborts the process".
-        if self.encode_depth_exceeded {
-            return SolverResult::Unknown;
-        }
-
-        // Supply the defining axioms of every internalised `div` / `mod` /
-        // numeric-`ite` term before any stage inspects the arithmetic atoms:
-        // without them those terms are free variables and both the honesty gate
-        // and the CDCL(T) loop below would reason about a formula that has lost
-        // the terms' semantics.
-        self.instantiate_arith_axioms(manager);
-
-        // Supply the defining axioms of every datatype term as well.  Without
-        // them a selector, a tester and a constructor application are three
-        // unrelated free symbols to the CDCL(T) core, and even
-        // `(= (head l) 10) ∧ (= (head l) 11)` came back `sat`.
-        self.instantiate_dt_axioms(manager);
-
-        // Check string constraints for early conflict detection
-        if self.check_string_constraints(manager) {
-            return SolverResult::Unsat;
-        }
-
-        // Check floating-point constraints for early conflict detection
-        if self.check_fp_constraints(manager) {
-            return SolverResult::Unsat;
-        }
-
-        // Check datatype constraints for early conflict detection
-        if self.check_dt_constraints(manager) {
-            return SolverResult::Unsat;
-        }
-
-        // Check array constraints for early conflict detection
-        if self.check_array_constraints(manager) {
-            return SolverResult::Unsat;
-        }
-
-        // Check bitvector constraints for early conflict detection
-        if self.check_bv_constraints(manager) {
-            return SolverResult::Unsat;
-        }
-
-        // For NIA/NRA logics: dispatch all assertions to the full polynomial
-        // solver first (NiaSolver or NlsatSolver). This gives a definitive
-        // SAT/UNSAT for most benchmark problems without the CDCL(T) loop.
-        if let Some(nl_result) = self.dispatch_nl_solver(manager) {
-            match nl_result {
-                SolverResult::Sat => return SolverResult::Sat,
-                SolverResult::Unsat => return SolverResult::Unsat,
-                SolverResult::Unknown => {}
-            }
-        }
-
-        // Check nonlinear arithmetic constraints for early conflict detection
-        // (static pattern matching, complementary to the dispatch above).
-        if self.check_nonlinear_constraints(manager) {
-            return SolverResult::Unsat;
-        }
-
-        // Positive FP path (completeness without sacrificing soundness): before
-        // conceding `Unknown` on FP atoms below, try to construct and *verify* a
-        // concrete floating-point model.  `try_fp_model_sat` pins every FP-sorted
-        // term to a bit-exact IEEE-754 value and only reports success when every
-        // assertion evaluates to `true` under it, so the resulting `Sat` is a
-        // genuine model witness rather than a guess.
-        if self.fp_atoms_need_theory(manager) && self.try_fp_model_sat(manager) {
-            return SolverResult::Sat;
-        }
-
-        // Honesty gate (soundness): there is no complete String / FP theory
-        // wired into the CDCL(T) core — `encode.rs` maps string and FP atoms to
-        // fresh SAT variables, and the checks above only detect a fixed set of
-        // definite conflicts.  If any such atom survives without a proven
-        // conflict, we must answer `Unknown` instead of letting the SAT core
-        // treat it as a free Boolean, which would report a spurious `Sat` for
-        // formulas like `(= s "abc") ∧ (str.contains s "xyz")` or
-        // `fp.lt x y ∧ fp.lt y x`.
-        if self.string_atoms_need_theory(manager) {
-            // Before conceding, try to construct and verify a concrete string
-            // model. A verified witness is a sound `Sat` certificate; otherwise
-            // keep the honest `Unknown`.
-            if self.ground_string_model_sat(manager) {
-                return SolverResult::Sat;
-            }
-            return SolverResult::Unknown;
-        }
-        if self.fp_atoms_need_theory(manager) {
-            return SolverResult::Unknown;
-        }
-
-        // Honesty gate (soundness): an arithmetic comparison / equality atom that
-        // could not be turned into a linear constraint (it contains Div/Mod, a
-        // nonlinear product, or an out-of-range constant) has no theory
-        // constraint attached — `encode.rs` left it as a free Boolean.  Trusting
-        // the SAT layer to guess a truth value for such an atom yields a
-        // spurious Sat/Unsat.  If the nonlinear dispatch above could not decide
-        // the problem and such an atom survives, answer `Unknown`.
-        if self.arith_atoms_need_theory(manager) {
-            return SolverResult::Unknown;
-        }
-
-        // Check resource limits before starting
-        if self.config.max_conflicts > 0 && self.statistics.conflicts >= self.config.max_conflicts {
-            return SolverResult::Unknown;
-        }
-        if self.config.max_decisions > 0 && self.statistics.decisions >= self.config.max_decisions {
-            return SolverResult::Unknown;
-        }
-
-        // Seam 1 of 2: rebuild all three incremental theory solvers from the
-        // live assertion set before this check starts searching.
-        //
-        // The previous `check` on this solver ended either `Sat` — in which case
-        // it never backtracked and left the theory solvers several decision
-        // scopes deep, holding that check's branch facts — or `Unsat`, which
-        // returns from `solve_with_theory` without unwinding either.  Nothing
-        // between two `check` calls pops those scopes: `Solver::pop` is the only
-        // other place that clears them, and a script need never call it.  An
-        // interposed `(check-sat)` could therefore change the answer of the next
-        // one, which is exactly what `tests/scope_leak_hazard.rs` demonstrates.
-        //
-        // See `rebase_theory_state` for why this is a reset-and-replay rather
-        // than a scope unwind, and for the BV solver's own (older) reason to be
-        // reset here: its base-level unit facts are not wired into
-        // `Solver::push` / `pop` and would leak across a user scope as well.
-        self.rebase_theory_state();
-
-        // Wall-clock deadline for the CDCL(T)/MBQI search.  `timeout_ms == 0`
-        // means "no timeout".  The deadline is enforced (a) between MBQI
-        // rounds here and (b) mid-search inside the theory callbacks, so a
-        // single long `solve_with_theory` call cannot run past the budget.
-        #[cfg(feature = "std")]
-        let deadline: Option<std::time::Instant> = if self.config.timeout_ms > 0 {
-            std::time::Instant::now()
-                .checked_add(core::time::Duration::from_millis(self.config.timeout_ms))
-        } else {
-            None
-        };
-
-        // Run SAT solver with theory integration
-        let mut theory_manager = TheoryManager::new(
-            manager,
-            &mut self.euf,
-            &mut self.arith,
-            &mut self.bv,
-            &self.bv_terms,
-            &self.var_to_constraint,
-            &self.var_to_parsed_arith,
-            &self.term_to_var,
-            &self.var_to_term,
-            &mut self.derived_reasons,
-            self.config.theory_mode,
-            &mut self.statistics,
-            self.config.max_conflicts,
-            self.config.max_decisions,
-            self.has_bv_arith_ops,
-            self.config.timeout_ms,
-        );
-
-        // MBQI loop for quantified formulas
-        let max_mbqi_iterations = 100;
-        let mut mbqi_iteration = 0;
-
-        // Lazy array-axiom refinement rounds (see `instantiate_array_axioms`).
-        // Bounded independently of the MBQI budget; deduplication guarantees
-        // saturation well within this generous cap for realistic inputs.
-        let max_array_refinement_rounds = 256;
-        let mut array_refinement_rounds = 0;
-
-        loop {
-            // Enforce the wall-clock timeout between MBQI rounds.  Mid-`solve`
-            // enforcement lives in the theory callbacks (see TheoryManager).
-            #[cfg(feature = "std")]
-            if let Some(d) = deadline {
-                if std::time::Instant::now() >= d {
-                    return SolverResult::Unknown;
-                }
-            }
-            let sat_result = self.sat.solve_with_theory(&mut theory_manager);
-            // If a genuine theory conflict was suppressed because the conflict
-            // limit was hit, the theory manager reported `Sat` to the SAT solver
-            // to force it to stop searching.  That `Sat` is a resource-exhaustion
-            // signal, NOT a proof of satisfiability: the model on the table may
-            // violate a theory constraint whose conflict we refused to report.
-            // We must answer `Unknown` rather than trust such a `Sat`.
-            //
-            // `unjustified_conflict` is the same shape for a different cause:
-            // a theory refuted the assignment but the manager could not build a
-            // clause for it (no reason literal could be blamed), so the conflict
-            // was aborted instead of being emitted as the empty clause.  A
-            // dropped conflict never justifies `Sat` either.
-            let resource_exhausted =
-                theory_manager.resource_exhausted() || theory_manager.unjustified_conflict();
-            match sat_result {
-                SatResult::Unsat => {
-                    self.build_unsat_core();
-                    // After a theory/Boolean conflict has been turned into an
-                    // unsat core: the core must name assertions that still
-                    // exist in this context (see `check_unsat_core`).
-                    self.debug_check_invariants("check_core: after unsat-core construction");
-                    return SolverResult::Unsat;
-                }
-                SatResult::Unknown => {
-                    return SolverResult::Unknown;
-                }
-                SatResult::Sat => {
-                    if resource_exhausted {
-                        // A real theory conflict was dropped at the conflict
-                        // limit; never fabricate Sat over a suppressed conflict.
-                        self.unsat_core = None;
-                        return SolverResult::Unknown;
-                    }
-                    // If no quantifiers, we're done
-                    if !self.has_quantifiers {
-                        self.build_model(manager);
-                        // Soundness gate: never return `Sat` for a model that
-                        // provably violates an assertion (see
-                        // `model_refutes_assertions`).  This backstops the SAT
-                        // core: if it commits an inconsistent trail and reports a
-                        // full assignment that falsifies a Boolean clause the
-                        // theory layer cannot observe, we answer `Unknown`
-                        // instead of a wrong `Sat`.
-                        if self.model_refutes_assertions(manager) {
-                            self.model = None;
-                            self.unsat_core = None;
-                            return SolverResult::Unknown;
-                        }
-                        // Lazy array-axiom instantiation: the syntactic array
-                        // pre-checks and EUF congruence do not implement a
-                        // complete array decision procedure, so a candidate `Sat`
-                        // may violate read-over-write / extensionality.  Watch the
-                        // array terms in this candidate model and assert every
-                        // axiom instance it does not already satisfy as a lemma,
-                        // then re-solve.  Only genuine array models survive.
-                        if self.has_array_ops && self.instantiate_array_axioms(manager) {
-                            array_refinement_rounds += 1;
-                            if array_refinement_rounds >= max_array_refinement_rounds {
-                                // Could not saturate the array axioms within the
-                                // round budget: do not fabricate a verdict.
-                                return SolverResult::Unknown;
-                            }
-                            // A read-over-write lemma is an `ite` over the two
-                            // array values; at Int/Real sort that `ite` is a new
-                            // opaque arithmetic atom, so define it before the
-                            // re-solve or the lemma carries no numeric meaning.
-                            self.instantiate_arith_axioms(manager);
-                            // Re-solve with the freshly asserted array lemmas from
-                            // a clean state.  `add_clause` backtracked the SAT core
-                            // to root for the unit lemmas, but the incremental
-                            // theory solvers still hold the facts committed by the
-                            // just-refuted candidate model (e.g. a stale
-                            // `select = 6`) — including any left in scopes this
-                            // round's search never unwound.
-                            self.rebase_theory_state();
-                            // After backtracking to root and resetting the
-                            // theory solvers: the SAT-variable <-> term tables
-                            // and the Tseitin memo are *not* reset here, so
-                            // they must still describe the same variables the
-                            // replayed search will re-derive.
-                            self.debug_check_invariants("check_core: after array-lemma backtrack");
-                            // Re-solve with the freshly asserted array lemmas.
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.config.max_conflicts,
-                                self.config.max_decisions,
-                                self.has_bv_arith_ops,
-                                self.config.timeout_ms,
-                            );
-                            continue;
-                        }
-                        self.unsat_core = None;
-                        self.debug_check_invariants("check_core: before returning sat");
-                        return SolverResult::Sat;
-                    }
-
-                    // Build partial model for MBQI
-                    self.build_model(manager);
-
-                    // Certified `sat`: for the fragments `mbqi::model_certify`
-                    // covers, a *total* interpretation of every symbol can be
-                    // constructed from this candidate model and checked
-                    // against every assertion — quantified ones included, over
-                    // their whole infinite domain.  When that check passes we
-                    // hold a model in the ordinary semantic sense, so `sat`
-                    // follows outright and MBQI has nothing left to add.  When
-                    // it does not, nothing changes: the certifier declines and
-                    // the instantiation loop below runs exactly as before.
-                    if self.certify_quantified_sat(manager) {
-                        self.unsat_core = None;
-                        self.debug_check_invariants(
-                            "check_core: before returning sat (certified model)",
-                        );
-                        return SolverResult::Sat;
-                    }
-
-                    // Run MBQI to check quantified formulas
-                    let model_assignments = self
-                        .model
-                        .as_ref()
-                        .map(|m| m.assignments().clone())
-                        .unwrap_or_default();
-
-                    let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
-                    match mbqi_result {
-                        MBQIResult::NoQuantifiers => {
-                            self.unsat_core = None;
-                            self.debug_check_invariants(
-                                "check_core: before returning sat (no quantifiers)",
-                            );
-                            return SolverResult::Sat;
-                        }
-                        MBQIResult::Satisfied => {
-                            // All quantifiers satisfied by the current model.
-                            self.unsat_core = None;
-                            self.debug_check_invariants(
-                                "check_core: before returning sat (mbqi fixpoint)",
-                            );
-                            return SolverResult::Sat;
-                        }
-                        MBQIResult::InstantiationLimit => {
-                            // Too many instantiations - return unknown
-                            return SolverResult::Unknown;
-                        }
-                        MBQIResult::Conflict {
-                            quantifier: _,
-                            reason,
-                        } => {
-                            // Turn the reason into a blocking clause — but only
-                            // if *every* reason term names a literal.  Skipping
-                            // the ones that do not would not weaken the clause,
-                            // it would strengthen it into a claim the reason
-                            // never made: that the surviving literals alone are
-                            // contradictory.  When the reason cannot be
-                            // expressed we add nothing and let the bounded MBQI
-                            // loop run out, which costs a round rather than
-                            // correctness.
-                            let lits: Option<Vec<Lit>> = reason
-                                .iter()
-                                .map(|&t| self.term_to_var.get(&t).map(|&v| Lit::neg(v)))
-                                .collect();
-                            if let Some(lits) = lits
-                                && !lits.is_empty()
-                            {
-                                self.sat.add_clause(lits);
-                            }
-                            // Continue loop
-                        }
-                        MBQIResult::NewInstantiations(instantiations) => {
-                            // Collect ground sub-terms (especially Skolem
-                            // applications) from instantiation results so they
-                            // become MBQI candidates in subsequent rounds.
-                            for inst in &instantiations {
-                                self.collect_ground_candidates_from_term(inst.result, manager);
-                            }
-
-                            // Collect domain/disequality info for pigeonhole
-                            let mut ph_domains: FxHashMap<TermId, (i64, i64)> =
-                                FxHashMap::default();
-                            let mut ph_diseqs: Vec<(TermId, TermId)> = Vec::new();
-
-                            // Add instantiation lemmas
-                            for inst in instantiations {
-                                // If the instantiation result is definitively False
-                                // (e.g., a nested Exists with no valid witness), add an
-                                // empty clause to signal immediate UNSAT.
-                                let is_false_result = manager
-                                    .get(inst.result)
-                                    .is_some_and(|t| matches!(t.kind, TermKind::False));
-                                if is_false_result {
-                                    self.sat.add_clause([] as [Lit; 0]);
-                                    break;
-                                }
-                                // Scan for pigeonhole patterns (recurses into Implies)
-                                self.scan_for_pigeonhole(
-                                    inst.result,
-                                    manager,
-                                    &mut ph_domains,
-                                    &mut ph_diseqs,
-                                );
-                                let lit = self.encode(inst.result, manager);
-                                let ok = self.sat.add_clause([lit]);
-                                let _ = ok;
-                                self.add_arith_diseq_split(inst.result, manager);
-                                self.add_arith_eq_trichotomy(inst.result, manager);
-                                self.add_int_domain_clauses(inst.result, manager);
-                            }
-                            // Add pigeonhole exclusion clauses
-                            if !ph_diseqs.is_empty() && !ph_domains.is_empty() {
-                                self.add_pigeonhole_exclusions_from(
-                                    &ph_domains,
-                                    &ph_diseqs,
-                                    manager,
-                                );
-                            }
-
-                            // E-matching phase: find additional instantiations via trigger patterns
-                            let ematch_lemmas =
-                                self.ematch_engine.match_round(manager).unwrap_or_default();
-                            let mut new_clauses_added = 0usize;
-                            let mut ematch_unsat = false;
-                            for lemma in ematch_lemmas {
-                                let lit = self.encode(lemma, manager);
-                                if self.sat.add_clause([lit]) {
-                                    new_clauses_added += 1;
-                                } else {
-                                    ematch_unsat = true;
-                                    break;
-                                }
-                            }
-                            if ematch_unsat || new_clauses_added > 0 {
-                                // SAT solver will process newly added clauses on next iteration
-                            }
-                            // Continue loop
-                        }
-                        MBQIResult::Unknown => {
-                            // Some evaluations produced symbolic residuals.
-                            // Generate blind instantiations (simplified) once
-                            // to seed the solver with ground lemmas for array
-                            // theory reasoning (pigeonhole, bounds, etc.).
-                            if !self.mbqi.blind_tried() {
-                                self.mbqi.mark_blind_tried();
-                                // Clear dedup cache so that blind instantiations with
-                                // corrected substitution results are not filtered out
-                                // as duplicates of earlier (broken) engine results.
-                                self.mbqi.clear_dedup_cache();
-                                let blind = self.mbqi.generate_blind_instantiations(manager);
-                                let mut ph_domains: FxHashMap<TermId, (i64, i64)> =
-                                    FxHashMap::default();
-                                let mut ph_diseqs: Vec<(TermId, TermId)> = Vec::new();
-                                for inst in blind {
-                                    let is_false = manager
-                                        .get(inst.result)
-                                        .is_some_and(|t| matches!(t.kind, TermKind::False));
-                                    if is_false {
-                                        self.sat.add_clause([] as [Lit; 0]);
-                                        break;
-                                    }
-                                    // Track domains and disequalities for pigeonhole
-                                    let _ = manager.get(inst.result);
-                                    self.scan_for_pigeonhole(
-                                        inst.result,
-                                        manager,
-                                        &mut ph_domains,
-                                        &mut ph_diseqs,
-                                    );
-                                    let lit = self.encode(inst.result, manager);
-                                    let _ = self.sat.add_clause([lit]);
-                                    self.add_arith_diseq_split(inst.result, manager);
-                                    self.add_arith_eq_trichotomy(inst.result, manager);
-                                    self.add_int_domain_clauses(inst.result, manager);
-                                }
-                                // Add pigeonhole exclusion clauses directly
-                                // from the collected domains and disequalities.
-                                self.add_pigeonhole_exclusions_from(
-                                    &ph_domains,
-                                    &ph_diseqs,
-                                    manager,
-                                );
-                            }
-                            // After 2 Unknown rounds, try finite instantiation:
-                            // for quantifiers with bounded integer guards like
-                            // (i >= 0 && i <= 3), enumerate all values and add
-                            // ground instances directly.
-                            if mbqi_iteration == 2 {
-                                let finite_insts =
-                                    self.mbqi.generate_finite_domain_instantiations(manager);
-                                if !finite_insts.is_empty() {
-                                    let mut ph_d: FxHashMap<TermId, (i64, i64)> =
-                                        FxHashMap::default();
-                                    let mut ph_q: Vec<(TermId, TermId)> = Vec::new();
-                                    for inst in &finite_insts {
-                                        let simplified =
-                                            self.mbqi.deep_simplify(inst.result, manager);
-                                        // Skip tautologies
-                                        if manager
-                                            .get(simplified)
-                                            .is_some_and(|t| matches!(t.kind, TermKind::True))
-                                        {
-                                            continue;
-                                        }
-                                        self.scan_for_pigeonhole(
-                                            simplified, manager, &mut ph_d, &mut ph_q,
-                                        );
-                                        let lit = self.encode(simplified, manager);
-                                        let _ = self.sat.add_clause([lit]);
-                                        self.add_arith_diseq_split(simplified, manager);
-                                        self.add_int_domain_clauses(simplified, manager);
-                                    }
-                                    if !ph_q.is_empty() && !ph_d.is_empty() {
-                                        self.add_pigeonhole_exclusions_from(&ph_d, &ph_q, manager);
-                                    }
-                                }
-                            }
-                            if mbqi_iteration >= 10 {
-                                // After exhausting blind and finite domain
-                                // instantiation attempts, MBQI still could not
-                                // *verify* that the candidate model satisfies
-                                // every quantifier (each round returned
-                                // `Unknown`, i.e. symbolic residuals remained).
-                                //
-                                // Blindly returning Sat here would be unsound:
-                                // any UNSAT quantified formula whose refutation
-                                // needs an instantiation outside the enumerated
-                                // candidates would be wrongly declared
-                                // satisfiable.  Z3 returns `unknown` in exactly
-                                // this situation.
-                                //
-                                // We may still soundly answer Sat in one case:
-                                // when every quantifier is *trivially valid* —
-                                // its body simplifies to `True` in every model
-                                // (e.g. `forall x. f(x) = f(x)`).  Such
-                                // quantifiers add no constraint, so the model the
-                                // SAT/theory layer already found satisfies the
-                                // whole formula.  Otherwise the honest answer is
-                                // Unknown — never fabricate Sat for an unverified
-                                // quantifier.
-                                self.unsat_core = None;
-                                if self.quantifiers_trivially_valid(manager) {
-                                    self.build_model(manager);
-                                    self.debug_check_invariants(
-                                        "check_core: before returning sat (trivially valid)",
-                                    );
-                                    return SolverResult::Sat;
-                                }
-                                return SolverResult::Unknown;
-                            }
-                            // Continue MBQI loop
-                        }
-                    }
-
-                    mbqi_iteration += 1;
-                    #[cfg(test)]
-                    {
-                        self.mbqi_round_clauses.push(self.sat.num_clauses());
-                    }
-                    if mbqi_iteration >= max_mbqi_iterations {
-                        return SolverResult::Unknown;
-                    }
-
-                    // MBQI round boundary: this round encoded fresh
-                    // instantiation / e-matching lemmas through `encode`, each
-                    // of which may allocate SAT variables and extend the
-                    // Tseitin memo.  Check before the next round consumes them.
-                    self.debug_check_invariants("check_core: mbqi round boundary");
-
-                    // Seam 2 of 2: rebuild the theory solvers before the next
-                    // round searches.
-                    //
-                    // The round that just finished ended `Sat`, so it never
-                    // backtracked and left one theory scope open per decision it
-                    // took, holding that branch's facts.  The lemmas encoded
-                    // just above exist to *retract* that very branch, and the
-                    // fresh manager below would assert their consequences on top
-                    // of the facts they contradict — in scopes it cannot reach,
-                    // because it numbers its own `level_stack` from zero.  That
-                    // is the task-#26 false `unsat`.
-                    //
-                    // What the next round is entitled to survives untouched: the
-                    // ground assertions and every kept instantiation / e-matching
-                    // lemma live in the SAT clause database with their unit
-                    // consequences committed at the root, and the replay below
-                    // re-derives the theory state from exactly those.  Nothing is
-                    // re-encoded, so no clause is duplicated.
-                    self.rebase_theory_state();
-                    theory_manager = TheoryManager::new(
-                        manager,
-                        &mut self.euf,
-                        &mut self.arith,
-                        &mut self.bv,
-                        &self.bv_terms,
-                        &self.var_to_constraint,
-                        &self.var_to_parsed_arith,
-                        &self.term_to_var,
-                        &self.var_to_term,
-                        &mut self.derived_reasons,
-                        self.config.theory_mode,
-                        &mut self.statistics,
-                        self.config.max_conflicts,
-                        self.config.max_decisions,
-                        self.has_bv_arith_ops,
-                        self.config.timeout_ms,
-                    );
-                }
-            }
-        }
     }
 
     /// Check satisfiability under assumptions
@@ -1640,6 +1122,7 @@ impl Solver {
             num_mbqi_quantifiers: self.mbqi.num_quantifiers(),
             num_ematch_quantifiers: self.ematch_engine.num_quantifiers(),
             has_quantifiers: self.has_quantifiers,
+            quantifier_uf_funcs: self.quantifier_uf_funcs.clone(),
             has_bv_arith_ops: self.has_bv_arith_ops,
             has_array_ops: self.has_array_ops,
             encode_depth_exceeded: self.encode_depth_exceeded,
@@ -1735,6 +1218,47 @@ impl Solver {
                             // too or the sub-terms would never be re-registered.
                             self.tracked_compound_terms.remove(&term);
                         }
+                        TrailOp::BoolUfArgAdded { term } => {
+                            // The assertion that put this Bool variable in a
+                            // UF-argument position is retracted with the
+                            // scope's clauses, so it must stop being
+                            // completed too -- otherwise a later, unrelated
+                            // scope would pay EUF bookkeeping for a variable
+                            // that no longer appears near any UF application.
+                            self.bool_uf_arg_terms.remove(&term);
+                        }
+                        TrailOp::NumericUfArgAdded { term } => {
+                            // Mirrors `BoolUfArgAdded`: the assertion that put
+                            // this numeric term in a UF-argument position is
+                            // gone, so it must stop being an int-case-split
+                            // candidate for it too.
+                            self.numeric_uf_arg_terms.remove(&term);
+                        }
+                        TrailOp::NumericPurifyAliasAdded { term } => {
+                            // The purification that produced this alias is
+                            // retracted with the scope's clauses; a later,
+                            // unrelated scope must not resolve `term`'s model
+                            // value through a purified twin that no longer
+                            // exists.
+                            self.numeric_purify_aliases.remove(&term);
+                        }
+                        TrailOp::EqTransitivityTriangleAdded { triangle } => {
+                            // The three clauses this entry stands for lived at
+                            // the scope now retracted, so the dedup entry has
+                            // to go with them — otherwise a later search would
+                            // believe the triangle is still constrained when
+                            // its clauses are gone.
+                            self.eq_transitivity_triangles.remove(&triangle);
+                        }
+                        TrailOp::CaseSplitTermAdded { term } => {
+                            // The case-split lemma clause for this term lived
+                            // at the scope now retracted, so the dedup entry
+                            // must go too — otherwise a later, still-live
+                            // search would believe the term already has a
+                            // case-split disjunction in the clause database
+                            // when it does not.
+                            self.case_split_terms.remove(&term);
+                        }
                         TrailOp::ArrayAxiomInstanceAdded { term } => {
                             // The lemma clause for this instance is retracted
                             // with the scope's clauses, so its dedup entry must
@@ -1803,6 +1327,7 @@ impl Solver {
             self.ematch_engine
                 .truncate_quantifiers(state.num_ematch_quantifiers);
             self.has_quantifiers = state.has_quantifiers;
+            self.quantifier_uf_funcs = state.quantifier_uf_funcs.clone();
 
             // Sticky encoder flags derived from the retracted assertions.
             self.has_bv_arith_ops = state.has_bv_arith_ops;
@@ -1886,6 +1411,7 @@ impl Solver {
         self.mbqi = MBQIIntegration::new();
         self.ematch_engine = EmatchingEngine::new(EmatchingConfig::default());
         self.has_quantifiers = false;
+        self.quantifier_uf_funcs.clear();
         #[cfg(feature = "std")]
         {
             self.nlsat = None;
@@ -1912,6 +1438,9 @@ impl Solver {
         self.dt_var_constructors.clear();
         self.arith_parse_cache.clear();
         self.tracked_compound_terms.clear();
+        self.bool_uf_arg_terms.clear();
+        self.numeric_uf_arg_terms.clear();
+        self.numeric_purify_aliases.clear();
         self.encoded_terms.clear();
         self.fp_constraint_cache.clear();
         self.encode_depth_exceeded = false;
@@ -1922,6 +1451,21 @@ impl Solver {
         // would license a finite-range expansion the new formula never asserts.
         self.entailed_int_consts.clear();
         self.entailed_int_consts_upto = 0;
+        self.case_split_terms.clear();
+        self.case_split_rounds = 0;
+        self.lookup_index_terms.clear();
+        // The clauses those triangles stand for went with the SAT core the
+        // reset discarded, and the classes describe a formula that no longer
+        // exists.
+        self.eq_transitivity_triangles.clear();
+        self.equality_skeleton_classes.clear();
+        // `branch_priority` is a live handle the installed SAT-engine
+        // heuristic (if any) shares with this `Solver`; clearing its
+        // contents (not replacing the `Arc`) drops stale hints from the
+        // formula `reset` just discarded without disturbing that wiring.
+        if let Ok(mut queue) = self.branch_priority.lock() {
+            queue.clear();
+        }
         self.debug_check_invariants("after reset");
     }
 

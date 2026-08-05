@@ -773,3 +773,365 @@ fn add_clause_general_all_false_at_level_zero_is_a_genuine_conflict() {
     assert!(!solver.add_clause([Lit::pos(a), Lit::pos(b), Lit::pos(c)]));
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
+
+// ---------------------------------------------------------------------
+// PR #26 search-core port: VMTF wiring, reuse-trail, stable/focused
+// restarts, rephasing. See `Solver::pick_branch_var`, `Solver::reuse_trail`,
+// `Solver::check_stabilize`, `Solver::restart`.
+// ---------------------------------------------------------------------
+
+/// Encode the classic pigeonhole-principle UNSAT instance: `pigeons` items
+/// into `holes` slots, `pigeons > holes`. Variable `p*holes + h + 1` (1-based
+/// DIMACS) means "pigeon p is in hole h".
+fn add_pigeonhole(solver: &mut Solver, pigeons: usize, holes: usize) {
+    for _ in 0..pigeons * holes {
+        solver.new_var();
+    }
+    let var = |p: usize, h: usize| (p * holes + h + 1) as i32;
+    // Every pigeon is in some hole.
+    for p in 0..pigeons {
+        let clause: Vec<i32> = (0..holes).map(|h| var(p, h)).collect();
+        solver.add_clause_dimacs(&clause);
+    }
+    // No hole holds two pigeons.
+    for h in 0..holes {
+        for p1 in 0..pigeons {
+            for p2 in (p1 + 1)..pigeons {
+                solver.add_clause_dimacs(&[-var(p1, h), -var(p2, h)]);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_pr26_default_config_solves_pigeonhole_unsat() {
+    // With the new defaults (VMTF + stable/focused restarts + reuse-trail
+    // all on), the 4-pigeons-into-3-holes instance must still be refuted.
+    let mut solver = Solver::new();
+    add_pigeonhole(&mut solver, 4, 3);
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+}
+
+#[test]
+fn test_pr26_default_config_solves_sat_with_valid_model() {
+    let mut solver = Solver::new();
+    for _ in 0..6 {
+        solver.new_var();
+    }
+    solver.add_clause_dimacs(&[1, 2, 3]);
+    solver.add_clause_dimacs(&[-1, 4]);
+    solver.add_clause_dimacs(&[-2, 5]);
+    solver.add_clause_dimacs(&[-3, 6]);
+    solver.add_clause_dimacs(&[-4, -5, -6]);
+
+    assert_eq!(solver.solve(), SolverResult::Sat);
+    let val = |i: i32| solver.model_value(Var::new((i - 1) as u32));
+    let lit_true = |i: i32| {
+        if i > 0 {
+            val(i).is_true()
+        } else {
+            val(-i).is_false()
+        }
+    };
+    assert!(
+        lit_true(1) || lit_true(2) || lit_true(3),
+        "clause (1 v 2 v 3) must be satisfied by the returned model"
+    );
+    assert!(!lit_true(1) || lit_true(4));
+    assert!(!lit_true(2) || lit_true(5));
+    assert!(!lit_true(3) || lit_true(6));
+    assert!(!lit_true(4) || !lit_true(5) || !lit_true(6));
+}
+
+#[test]
+fn test_pr26_reuse_trail_always_makes_progress() {
+    // Manually build a 4-level decision trail with VSIDS activities such
+    // that every decision variable's activity is >= the next-to-decide
+    // variable's -- the pathological case that could otherwise make
+    // `reuse_trail` return the current level itself (a no-op restart).
+    //
+    // Forces the VSIDS branch explicitly (`use_vmtf: false`,
+    // `enable_stabilize: false`): `Solver::new()`'s default config would
+    // otherwise run this same setup through VMTF instead (see the SK-6
+    // gatekeeper fix and `test_pr26_gatekeeper_sk6_reuse_trail_uses_vmtf_ranking_when_vmtf_is_deciding`,
+    // which exercises that branch), and this test's own VSIDS bumps would
+    // then have no bearing on `reuse_trail`'s VMTF-ranking answer at all.
+    let mut solver = Solver::with_config(SolverConfig {
+        use_vmtf: false,
+        enable_stabilize: false,
+        ..SolverConfig::default()
+    });
+    for _ in 0..5 {
+        solver.new_var();
+    }
+    for i in 0..5u32 {
+        solver.vsids.bump_batch(&[Var::new(i)]);
+    }
+    for level in 0..4u32 {
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(Var::new(level)));
+    }
+    let level_before = solver.trail.decision_level();
+    let reuse = solver.reuse_trail();
+    assert!(
+        reuse < level_before,
+        "reuse_trail must always back off at least one level (got {reuse} at level {level_before})"
+    );
+}
+
+#[test]
+fn test_pr26_gatekeeper_sk6_reuse_trail_uses_vmtf_ranking_when_vmtf_is_deciding() {
+    // Default config (`enable_stabilize` and `use_vmtf` both on, search
+    // starting in focused mode) means VMTF, not VSIDS, is the heuristic
+    // `pick_branch_var` is actually drawing decisions from right now -- see
+    // its own mode switch. Wire up VSIDS and VMTF rankings that *disagree*
+    // on purpose:
+    //
+    // - VSIDS: var 0 is bumped to the single highest activity in the whole
+    //   heap (so `vsids.peek_max()` returns var 0 itself -- note this is a
+    //   raw heap-top lookup with no assignment filtering, so an *already
+    //   decided* variable can legitimately be its own answer). Comparing
+    //   the level-1 decision (var 0) against that threshold trivially
+    //   succeeds (a variable is never less active than itself), so the old,
+    //   VSIDS-only `reuse_trail` would have kept level 1 (reuse == 1).
+    // - VMTF: only var 4 (the undecided candidate) is ever bumped, so every
+    //   decided variable's VMTF timestamp (0, never bumped) sits strictly
+    //   below var 4's. The fixed, heuristic-aware `reuse_trail` must use
+    //   *this* ranking while VMTF is active and stop at the very first
+    //   level (reuse == 0).
+    let mut solver = Solver::new();
+    assert!(!solver.stable, "search starts in focused mode");
+    assert!(solver.config.use_vmtf);
+    assert!(solver.config.enable_stabilize);
+    for _ in 0..5 {
+        solver.new_var();
+    }
+
+    solver.vsids.bump_batch(&[Var::new(0)]);
+    solver.vsids.bump_batch(&[Var::new(0)]);
+    solver.vsids.bump_batch(&[Var::new(0)]);
+    solver.vsids.bump_batch(&[Var::new(1)]);
+
+    solver.vmtf.bump(Var::new(4), false);
+
+    for level in 0..4u32 {
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(Var::new(level)));
+    }
+
+    assert_eq!(
+        solver.reuse_trail(),
+        0,
+        "reuse_trail must rank decisions by VMTF's timestamp while VMTF is \
+         the active heuristic, not by VSIDS's (disagreeing) activity"
+    );
+}
+
+#[test]
+fn test_pr26_reuse_trail_disabled_by_config_returns_zero() {
+    let config = SolverConfig {
+        reuse_trail: false,
+        ..SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    for _ in 0..3 {
+        solver.new_var();
+    }
+    for level in 0..3u32 {
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(Var::new(level)));
+    }
+    assert_eq!(solver.reuse_trail(), 0);
+}
+
+#[test]
+fn test_pr26_reuse_trail_zero_at_shallow_levels() {
+    let mut solver = Solver::new();
+    let _ = solver.new_var();
+    // Decision level 0 (no decisions) and level 1 both short-circuit to 0
+    // (nothing meaningful to keep below a single decision).
+    assert_eq!(solver.reuse_trail(), 0);
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::pos(Var::new(0)));
+    assert_eq!(solver.reuse_trail(), 0);
+}
+
+#[test]
+fn test_pr26_check_stabilize_switches_mode_and_grows_budget() {
+    let mut solver = Solver::new();
+    assert!(!solver.stable, "search starts in focused mode");
+    assert_eq!(solver.stabphases, 0);
+
+    // First switch is conflict-gated.
+    solver.stats.conflicts = solver.config.stabilize_base;
+    solver.check_stabilize();
+    assert!(solver.stable, "first switch must enter stable mode");
+    assert_eq!(solver.stabphases, 1);
+    let first_budget = solver.lim_stabilize;
+    assert!(first_budget > 0);
+
+    // Second switch is tick-gated; feed enough ticks to cross the budget.
+    solver.ticks_stable = first_budget;
+    solver.check_stabilize();
+    assert!(!solver.stable, "second switch must return to focused mode");
+    assert_eq!(solver.stabphases, 2);
+    assert!(
+        solver.lim_stabilize > 0,
+        "each phase gets a fresh (quadratically larger) budget"
+    );
+}
+
+#[test]
+fn test_pr26_check_stabilize_noop_when_disabled() {
+    let config = SolverConfig {
+        enable_stabilize: false,
+        ..SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    solver.stats.conflicts = solver.config.stabilize_base * 10;
+    solver.check_stabilize();
+    assert!(!solver.stable, "disabled schedule must never switch modes");
+    assert_eq!(solver.stabphases, 0);
+}
+
+#[test]
+fn test_pr26_rephase_disabled_by_default() {
+    // Matches the PR's own default: rephasing is an opt-in tuned per preset,
+    // not a blanket default.
+    assert_eq!(SolverConfig::default().rephase_interval, 0);
+
+    let mut solver = Solver::new();
+    for _ in 0..4 {
+        solver.new_var();
+    }
+    for _ in 0..20 {
+        solver.restart();
+    }
+    assert!(
+        !solver.phase_inverted,
+        "rephase_interval == 0 must never flip the phase-inversion flag"
+    );
+}
+
+#[test]
+fn test_pr26_rephase_fires_only_in_stable_mode() {
+    let config = SolverConfig {
+        rephase_interval: 1, // fire on every restart, once armed
+        ..SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    for _ in 0..4 {
+        solver.new_var();
+    }
+
+    // Focused mode: rephase must not fire even though the interval matches.
+    solver.stable = false;
+    solver.stats.restarts = 0;
+    solver.restart();
+    assert!(
+        !solver.phase_inverted,
+        "focused-mode restarts must not rephase"
+    );
+
+    // Stable mode: now it must.
+    solver.stable = true;
+    let inverted_before = solver.phase_inverted;
+    let best_before = solver.best_trail_size;
+    solver.restart();
+    // Either the phase got inverted, or (if a best-phase snapshot exists)
+    // restored -- either way `rephase_count` must have advanced.
+    assert_eq!(solver.rephase_count, 1);
+    let _ = (inverted_before, best_before); // silence unused warnings on some paths
+}
+
+#[test]
+fn test_pr26_vmtf_drives_decisions_in_focused_mode() {
+    // Disable the stable/focused schedule so `use_vmtf` alone decides the
+    // heuristic, and bump one variable so VMTF's recency order disagrees
+    // with VSIDS's all-zero tie-break (which picks in insertion order).
+    let config = SolverConfig {
+        enable_stabilize: false,
+        use_vmtf: true,
+        ..SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    for _ in 0..3 {
+        solver.new_var();
+    }
+    let v2 = Var::new(2);
+    solver.vmtf.bump(v2, false);
+
+    let picked = solver.pick_branch_var().expect("a candidate exists");
+    assert_eq!(
+        picked, v2,
+        "VMTF's most-recently-bumped variable must be picked first"
+    );
+}
+
+#[test]
+fn test_pr26_vmtf_falls_back_to_vsids_when_queue_empty_of_candidates() {
+    // Every variable VMTF would offer is already assigned; VSIDS must still
+    // find the one unassigned variable outside VMTF's queue (a solver that
+    // grew `num_vars` without a matching `vmtf.resize` would otherwise stall).
+    let config = SolverConfig {
+        enable_stabilize: false,
+        use_vmtf: true,
+        ..SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    for _ in 0..2 {
+        solver.new_var();
+    }
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::pos(Var::new(0)));
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::pos(Var::new(1)));
+    let new_var = solver.new_var(); // freshly resized into both VMTF and VSIDS
+
+    let picked = solver.pick_branch_var();
+    assert_eq!(picked, Some(new_var));
+}
+
+#[test]
+fn test_pr26_decay_clause_activity_stays_finite_over_long_runs() {
+    let mut solver = Solver::new();
+    for _ in 0..2 {
+        solver.new_var();
+    }
+    let cid = solver
+        .clauses
+        .add_learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+    if let Some(c) = solver.clauses.get_mut(cid) {
+        c.activity = 1.0;
+    }
+    // Enough iterations to overflow the naive growing-increment scheme at
+    // the default 0.999 decay (~1/ln(1/0.999) conflicts per decade) several
+    // times over, without actually running a multi-minute test.
+    for _ in 0..2_000_000u32 {
+        solver.decay_clause_activity();
+    }
+    assert!(
+        solver.clause_bump_increment.is_finite(),
+        "the growing increment must be rescaled before it overflows"
+    );
+    let activity = solver.clauses.get(cid).expect("clause still live").activity;
+    assert!(activity.is_finite() && activity >= 0.0);
+}
+
+#[test]
+fn test_pr26_vmtf_reset_on_solver_reset_avoids_stale_queue() {
+    let mut solver = Solver::new();
+    for _ in 0..8 {
+        solver.new_var();
+    }
+    solver.reset();
+    // After a reset, the queue must be empty and safe to resize from
+    // scratch -- growing it again for a much smaller problem must not
+    // panic or return a stale, out-of-range variable.
+    for _ in 0..2 {
+        solver.new_var();
+    }
+    let picked = solver.pick_branch_var();
+    assert!(picked.is_some());
+    assert!(picked.expect("checked above").index() < 2);
+}

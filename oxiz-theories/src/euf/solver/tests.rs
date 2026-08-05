@@ -87,6 +87,43 @@ fn test_euf_congruence() {
     assert!(solver.are_equal(fa, fb));
 }
 
+/// [`EufSolver::app_argument_terms_excluding_funcs`] must drop exactly the
+/// arguments of a forbidden function's applications and nothing else --
+/// this predicate is what lets Nelson-Oppen's care graph stay sound under a
+/// mixed ground/quantified script (`oxiz-solver`'s
+/// `TheoryManager::care_graph_candidates` filters by it), so it earns a
+/// direct pin rather than relying only on the end-to-end
+/// `oxiz-solver/tests/pr30_soundness.rs` coverage.
+#[test]
+fn test_app_argument_terms_excluding_funcs_drops_only_the_forbidden_function() {
+    let mut solver = EufSolver::new();
+
+    let a = solver.intern(TermId::new(1));
+    let b = solver.intern(TermId::new(2));
+
+    // f(a) with func id 0, h(b) with func id 1.
+    let _fa = solver.intern_app(TermId::new(3), 0, [a]);
+    let _hb = solver.intern_app(TermId::new(4), 1, [b]);
+
+    let none_forbidden: FxHashSet<u32> = FxHashSet::default();
+    assert_eq!(
+        solver.app_argument_terms_excluding_funcs(&none_forbidden),
+        solver.app_argument_terms(),
+        "an empty forbidden set must behave exactly like `app_argument_terms`"
+    );
+
+    let f_forbidden: FxHashSet<u32> = [0].into_iter().collect();
+    let remaining = solver.app_argument_terms_excluding_funcs(&f_forbidden);
+    assert!(
+        remaining.contains(&TermId::new(2)),
+        "h(b)'s argument must survive: h is not forbidden"
+    );
+    assert!(
+        !remaining.contains(&TermId::new(1)),
+        "f(a)'s argument must be dropped: f is forbidden"
+    );
+}
+
 #[test]
 fn test_use_list_append_undone_by_pop() {
     // Regression (audit theories-p3, deferral a): an application interned in a
@@ -882,4 +919,280 @@ fn conflict_core_always_names_the_violated_disequality() {
     let core = solver.check_conflicts().expect("conflict");
     assert!(core.contains(&TermId::new(70)));
     assert!(core.contains(&TermId::new(71)));
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PR28-1: sig_table must never keep an entry keyed by an argument
+// representative a node has since moved on from.
+// ──────────────────────────────────────────────────────────────────
+
+/// After the class of `f(a)`'s argument re-canonicalizes (a merge makes some
+/// other node the representative), the *old* `sig_table` entry keyed by `a`
+/// must be gone, not left behind as a second, dead mapping to the same node.
+///
+/// Direction is pinned deterministically via `UnionFind::union`'s tie-break
+/// (equal rank: the *second* argument's root becomes the child), so this does
+/// not depend on which side happens to win.
+#[test]
+fn test_pr28_sig_table_stale_merge() {
+    let mut solver = EufSolver::new();
+    let a = solver.intern(TermId::new(1));
+    let b = solver.intern(TermId::new(2));
+    let f = 1u32;
+    let fa = solver.intern_app(TermId::new(3), f, [a]);
+
+    assert_eq!(
+        solver.sig_table.get(&(f, smallvec::smallvec![a])),
+        Some(&fa),
+        "f(a) must initially publish (f, [a])"
+    );
+
+    // merge(b, a): equal rank -> the second argument's root (a) is absorbed.
+    solver.merge(b, a, TermId::new(10)).expect("merge b=a");
+    let new_root = solver.find(a);
+    assert_eq!(new_root, b, "a must have been absorbed into b's class");
+
+    assert!(
+        !solver.sig_table.contains_key(&(f, smallvec::smallvec![a])),
+        "the old key (f, [a]) must be evicted once fa's argument re-canonicalizes \
+         to b -- a stale entry here is exactly the bug PR28-1 fixes: it lingers \
+         keyed by a representative that no longer exists, ready to mislead a \
+         later lookup that happens to land on the same key"
+    );
+    assert_eq!(
+        solver.sig_table.get(&(f, smallvec::smallvec![b])),
+        Some(&fa),
+        "the live key must be the new canonical signature (f, [b])"
+    );
+    assert_eq!(
+        solver.sig_table_len(),
+        1,
+        "fa must publish exactly one live signature, never two"
+    );
+}
+
+/// A node whose argument's representative changes repeatedly (without any
+/// intervening `pop`) must still publish exactly one live signature: each
+/// re-canonicalization must retire the previous entry, not merely add another.
+/// Left unfixed, `sig_table` would accumulate one dead entry per merge that
+/// happens to touch this node's argument class -- unbounded growth over a long
+/// incremental session even though the live e-graph never grows.
+#[test]
+fn test_pr28_sig_table_bounded_across_resig_chain() {
+    let mut solver = EufSolver::new();
+    let a = solver.intern(TermId::new(1)); // 0
+    let f = 7u32;
+    let fa = solver.intern_app(TermId::new(2), f, [a]); // 1
+    let b = solver.intern(TermId::new(3)); // 2
+    let d = solver.intern(TermId::new(4)); // 3
+    let e = solver.intern(TermId::new(5)); // 4
+
+    // merge(b, a): a (equal rank) is absorbed into b. fa's use-list entry
+    // rides along with a's class and gets re-signed to (f, [b]).
+    solver.merge(b, a, TermId::new(10)).expect("merge b=a");
+    assert_eq!(solver.find(a), b);
+
+    // Build a second rank-1 class (e absorbs d) so it can out-rank b's class.
+    solver.merge(e, d, TermId::new(11)).expect("merge e=d");
+
+    // merge(e, b): equal rank (both 1) -> b's class is absorbed into e's.
+    // fa's use-list entry, now living under b, moves again and re-signs a
+    // second time, to (f, [e]).
+    solver.merge(e, b, TermId::new(12)).expect("merge e=b");
+    let final_root = solver.find(a);
+    assert_eq!(final_root, e, "a's class must now be rooted at e");
+
+    assert!(!solver.sig_table.contains_key(&(f, smallvec::smallvec![a])));
+    assert!(!solver.sig_table.contains_key(&(f, smallvec::smallvec![b])));
+    assert_eq!(
+        solver.sig_table.get(&(f, smallvec::smallvec![e])),
+        Some(&fa)
+    );
+    assert_eq!(
+        solver.sig_table_len(),
+        1,
+        "two re-canonicalizations of the same node's argument must still \
+         leave exactly one live sig_table entry, not three"
+    );
+}
+
+/// `pop()` must restore `sig_table` to *exactly* its pre-scope contents after
+/// a signature change is retracted -- not merely to a state that happens to
+/// look consistent. Exercises the `EvictedSig` trail entry (the undo half of
+/// `update_sig_entry`) directly.
+#[test]
+fn test_pr28_sig_table_pop_restores_evicted_entry() {
+    let mut solver = EufSolver::new();
+    let a = solver.intern(TermId::new(1));
+    let f = 3u32;
+    let fa = solver.intern_app(TermId::new(2), f, [a]);
+    let before: std::collections::BTreeMap<_, _> = solver
+        .sig_table
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+
+    solver.push();
+    let b = solver.intern(TermId::new(3));
+    solver.merge(b, a, TermId::new(10)).expect("merge b=a");
+    // Mid-scope: the signature really did move.
+    assert_eq!(
+        solver.sig_table.get(&(f, smallvec::smallvec![b])),
+        Some(&fa)
+    );
+    solver.pop();
+
+    let after: std::collections::BTreeMap<_, _> = solver
+        .sig_table
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    assert_eq!(
+        before, after,
+        "pop() must restore sig_table to exactly its pre-scope contents"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PR28-3: the disequality watch-list must detect a violation exactly at
+// the merge that causes it, and retract it exactly at the pop that undoes
+// that merge -- no scan, and no leaked conflict flag.
+// ──────────────────────────────────────────────────────────────────
+
+/// A disequality violated by a merge made inside a scope must stop being
+/// reported the moment that scope is popped. Detection alone is the easy
+/// half; a `pending_diseq_conflict` flag that survives its causing merge's
+/// retraction would make `check_conflicts()` report a conflict that no
+/// longer exists -- the failure mode the eager watch-list design has to get
+/// right, not just "does it ever catch a real one".
+#[test]
+fn test_pr28_diseq_watch_pop_retracts_pending_conflict() {
+    let mut solver = EufSolver::new();
+    let a = solver.intern(TermId::new(1));
+    let b = solver.intern(TermId::new(2));
+    solver.assert_diseq(a, b, TermId::new(90));
+    assert!(solver.check_conflicts().is_none());
+
+    solver.push();
+    solver.merge(a, b, TermId::new(91)).expect("merge a=b");
+    assert!(
+        solver.check_conflicts().is_some(),
+        "the merge inside the scope violates the watched disequality"
+    );
+    solver.pop();
+
+    assert!(
+        solver.check_conflicts().is_none(),
+        "popping the scope that caused the violation must retract the \
+         pending-conflict flag along with the merge that raised it"
+    );
+    // And the disequality is still live and re-detectable afterward.
+    solver
+        .merge(a, b, TermId::new(92))
+        .expect("merge a=b again");
+    assert!(solver.check_conflicts().is_some());
+}
+
+/// The watch-list must survive being carried across more than one merge: a
+/// disequality watched on a class that later gets absorbed into a third,
+/// still-unrelated class must still be found when *that* merge is what
+/// finally violates it. Exercises the `watch_diseq(new_root, ..)` migration
+/// step in `propagate`, not just the immediate-neighbor case.
+#[test]
+fn test_pr28_diseq_watch_migrates_across_chained_merges() {
+    let mut solver = EufSolver::new();
+    let a = solver.intern(TermId::new(1));
+    let b = solver.intern(TermId::new(2));
+    let c = solver.intern(TermId::new(3));
+    let d = solver.intern(TermId::new(4));
+
+    // a != d, watched on both a's and d's (currently singleton) classes.
+    solver.assert_diseq(a, d, TermId::new(50));
+    assert!(solver.check_conflicts().is_none());
+
+    // a -- b -- c: neither merge touches d, so no violation yet.
+    solver.merge(a, b, TermId::new(51)).expect("merge a=b");
+    assert!(solver.check_conflicts().is_none());
+    solver.merge(b, c, TermId::new(52)).expect("merge b=c");
+    assert!(solver.check_conflicts().is_none());
+
+    // Only now does c's class (which the a-diseq-watch has ridden along
+    // into, two merges removed from a itself) reach d.
+    solver.merge(c, d, TermId::new(53)).expect("merge c=d");
+    let core = solver
+        .check_conflicts()
+        .expect("a=b=c=d contradicts a != d");
+    assert!(core.contains(&TermId::new(50)));
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PR28-4: the proof forest is a genuine spanning forest (one proof edge
+// pair per applied union, added only when the union is applied), so
+// `try_explain_equality`'s search never has more than one candidate path
+// to choose between. Ported as an explicit invariant check rather than a
+// stamped bottleneck search: see the module-level design note below for
+// why the search itself needs no change.
+// ──────────────────────────────────────────────────────────────────
+
+/// Every applied union adds exactly one edge pair to the proof forest
+/// (`propagate` appends both directed edges only after confirming
+/// `root_a != root_b`, immediately before the one `uf.union` call site in
+/// the whole solver -- see `oxiz-theories/src/euf/solver/congruence.rs`).
+/// That makes the forest a genuine spanning forest: for any class of `n`
+/// nodes, exactly `n - 1` unions were needed to build it, so exactly
+/// `2 * (n - 1)` directed edges exist among its members. A second path
+/// between the same two nodes -- the precondition a stamped search would be
+/// needed to arbitrate -- is therefore structurally unreachable, through
+/// direct merges, congruence-triggered merges, and push/pop alike.
+#[test]
+fn test_pr28_proof_forest_is_a_spanning_forest_after_mixed_merges() {
+    let mut solver = EufSolver::new();
+    let f = 1u32;
+    let a = solver.intern(TermId::new(1));
+    let b = solver.intern(TermId::new(2));
+    let c = solver.intern(TermId::new(3));
+    let d = solver.intern(TermId::new(4));
+    let fa = solver.intern_app(TermId::new(10), f, [a]);
+    let fb = solver.intern_app(TermId::new(11), f, [b]);
+    let fc = solver.intern_app(TermId::new(12), f, [c]);
+
+    // A mix of direct-assertion and congruence-triggered merges, with a
+    // push/pop of one of them in between.
+    solver.merge(a, b, TermId::new(20)).expect("merge a=b"); // also merges fa=fb by congruence
+    solver.push();
+    solver.merge(c, d, TermId::new(21)).expect("merge c=d");
+    solver.merge(b, c, TermId::new(22)).expect("merge b=c"); // also merges fb=fc by congruence
+    assert!(solver.are_equal(fa, fc));
+    solver.pop();
+    // c, d, and the fb=fc congruence edge are retracted; a=b (and fa=fb)
+    // survive because they predate the push.
+    assert!(solver.are_equal(a, b));
+    assert!(solver.are_equal(fa, fb));
+    assert!(!solver.are_equal(a, d));
+
+    for class_rep in [a, fa] {
+        let members = solver.class_members(class_rep);
+        let expected_edges = 2 * (members.len() - 1);
+        let actual_edges: usize = members
+            .iter()
+            .map(|&m| solver.proof_forest[m as usize].len())
+            .sum();
+        assert_eq!(
+            actual_edges, expected_edges,
+            "class {members:?} must have exactly one proof-forest tree \
+             (2*(n-1) directed edges for n members), not a denser graph \
+             that could offer try_explain_equality more than one path"
+        );
+    }
+
+    // And the explanation the unique-path search returns is exactly the
+    // live reasons -- no more, no fewer.
+    let expl = solver
+        .try_explain_eq(fa, fb)
+        .expect("fa=fb has a complete explanation");
+    assert!(expl.contains(&TermId::new(20)));
+    assert!(
+        !expl.contains(&TermId::new(22)),
+        "the retracted merge must not appear"
+    );
 }

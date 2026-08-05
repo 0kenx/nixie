@@ -118,6 +118,22 @@ impl EufSolver {
         }
     }
 
+    /// Add `diseq_idx` to representative `rep`'s watch list, growing
+    /// `diseq_watch` to cover it if needed (reps are node indices, so the
+    /// vector is parallel to `nodes`/`use_list`). Trailed so `pop()` can undo
+    /// the append.
+    #[inline]
+    pub(super) fn watch_diseq(&mut self, rep: u32, diseq_idx: u32) {
+        let rep_ix = rep as usize;
+        if rep_ix >= self.diseq_watch.len() {
+            self.diseq_watch.resize_with(rep_ix + 1, Vec::new);
+        }
+        self.diseq_watch[rep_ix].push(diseq_idx);
+        if !self.diseq_watch_trail_limits.is_empty() {
+            self.diseq_watch_trail.push(rep);
+        }
+    }
+
     /// Publish `node` under the signature `(func, args)` with fingerprint `fp`.
     ///
     /// The caller must have established that the key is **absent** — the undo
@@ -144,6 +160,7 @@ impl EufSolver {
             // Clone before the key is moved into the insert below.
             self.sig_trail.push(SigTrailEntry::InsertedSig {
                 key: (func, args.clone()),
+                node,
             });
         }
         self.sig_table.insert((func, args), node);
@@ -152,6 +169,89 @@ impl EufSolver {
             self.sig_trail
                 .push(SigTrailEntry::InsertedFingerprint { fp, node_idx: node });
         }
+    }
+
+    /// Look up `sig` in `sig_table`, returning the node registered there only
+    /// if that node's *live* signature (per `sig_key_of_node`) still equals
+    /// `sig`.  See the `sig_key_of_node` field doc for why an entry can go
+    /// stale and why trusting one unconditionally is unsound: a bare
+    /// `sig_table.get` can hand back a node this term is not actually
+    /// congruent to (spurious merge) or hide a congruence behind a key the
+    /// real match no longer uses (missed merge).  Evicts a stale hit so it
+    /// cannot mislead a later lookup either.
+    ///
+    /// # The eviction is unreachable, and still trailed
+    ///
+    /// Since `update_sig_entry` began retiring a node's old key in the same
+    /// step that publishes its new one, `sig_table` and `sig_key_of_node` are
+    /// kept mutually consistent and the stale branch below cannot be taken —
+    /// hence the `debug_assert!`, which turns any future regression of that
+    /// invariant into a loud test failure rather than a silent recovery.
+    ///
+    /// The defensive removal is nevertheless kept for release builds (a stale
+    /// entry that *did* somehow exist is unsound to hand back, so dropping it
+    /// is the right recovery), and it is **trailed**.  An untrailed removal
+    /// here would be a latent scope asymmetry: a stale entry created before the
+    /// current scope and dropped inside it would not come back on `pop`, so the
+    /// e-graph after `push`/`pop` would differ from the one before it.  That is
+    /// precisely the class of long-lived incremental divergence the whole PR28
+    /// effort is about, so the recovery path is made scope-symmetric rather
+    /// than left as "unreachable, therefore harmless".
+    pub(super) fn lookup_live_sig(&mut self, sig: &(u32, SmallVec<[u32; 4]>)) -> Option<u32> {
+        let node = self.sig_table.get(sig).copied()?;
+        let live = self
+            .sig_key_of_node
+            .get(node as usize)
+            .is_some_and(|k| k.as_ref() == Some(sig));
+        if live {
+            Some(node)
+        } else {
+            debug_assert!(
+                false,
+                "stale sig_table entry {sig:?} -> {node}: `update_sig_entry` is supposed to \
+                 retire a node's old key when it publishes a new one, so this is unreachable"
+            );
+            if !self.sig_trail_limits.is_empty() {
+                self.sig_trail.push(SigTrailEntry::EvictedStaleSig {
+                    key: sig.clone(),
+                    node,
+                });
+            }
+            self.sig_table.remove(sig);
+            None
+        }
+    }
+
+    /// Re-publish `user` under `new_key`, retiring whatever key it previously
+    /// published (if any) so `sig_table` never accumulates an entry keyed by
+    /// representatives `user` has since moved on from.
+    ///
+    /// This is the fix for the stale-signature bug: `propagate` calls it every
+    /// time a use-list entry's canonical arguments change instead of calling
+    /// `insert_signature` directly, so the *old* mapping is always retired in
+    /// the same step that the new one is published. The caller has already
+    /// established (via `lookup_live_sig`/the fingerprint pre-filter) that
+    /// `new_key` is not currently live, so the insert below cannot clobber a
+    /// different node's entry.
+    fn update_sig_entry(&mut self, user: u32, new_key: (u32, SmallVec<[u32; 4]>)) {
+        let in_scope = !self.sig_trail_limits.is_empty();
+        if let Some(Some(old_key)) = self.sig_key_of_node.get(user as usize).cloned() {
+            self.sig_table.remove(&old_key);
+            if in_scope {
+                self.sig_trail.push(SigTrailEntry::EvictedSig {
+                    old_key,
+                    node: user,
+                });
+            }
+        }
+        if in_scope {
+            self.sig_trail.push(SigTrailEntry::InsertedSig {
+                key: new_key.clone(),
+                node: user,
+            });
+        }
+        self.sig_table.insert(new_key.clone(), user);
+        self.sig_key_of_node[user as usize] = Some(new_key);
     }
 
     /// Enqueue the congruence `node == other` and run it to a fixed point.
@@ -226,6 +326,28 @@ impl EufSolver {
             // Congruence closure: check for new merges
             let other_root = if new_root == root_a { root_b } else { root_a };
 
+            // Eager disequality check: `other_root`'s class just merged into
+            // `new_root`, so every disequality watched on `other_root` now has
+            // an endpoint in `new_root`'s class. Test each one right here —
+            // this merge is the only place a watched disequality could newly
+            // become violated — and carry the watch over to `new_root` so a
+            // later merge keeps testing it. This is what lets `check_conflicts`
+            // read a flag instead of scanning every asserted disequality.
+            let watch_len = self
+                .diseq_watch
+                .get(other_root as usize)
+                .map_or(0, Vec::len);
+            for i in 0..watch_len {
+                let d_idx = self.diseq_watch[other_root as usize][i];
+                if self.pending_diseq_conflict.is_none() {
+                    let d = &self.diseqs[d_idx as usize];
+                    if self.uf.find_no_compress(d.lhs) == self.uf.find_no_compress(d.rhs) {
+                        self.pending_diseq_conflict = Some(d_idx);
+                    }
+                }
+                self.watch_diseq(new_root, d_idx);
+            }
+
             // --- Optimization 1: Index-based use-list iteration ---
             // Instead of cloning the entire use-list, iterate by index.
             // We snapshot the length so we only process existing entries.
@@ -299,10 +421,23 @@ impl EufSolver {
                     }
                 }
 
-                // No congruence match; publish this node under its new signature so
-                // the *next* use-list entry in this very scan can congruence-match
-                // against it.
-                self.insert_signature(func, canon_buf.clone(), user, new_fp);
+                // No congruence match; publish this node under its new signature
+                // so the *next* use-list entry in this very scan can
+                // congruence-match against it. Goes through `update_sig_entry`
+                // (not `insert_signature`) because `user` may already publish an
+                // *older* signature from before this merge changed its
+                // arguments' representatives — that stale entry must be retired
+                // in the same step, or it lingers in `sig_table` forever and can
+                // later dedup an unrelated term against `user` by accident (see
+                // `sig_key_of_node`'s field doc).
+                self.update_sig_entry(user, (func, canon_buf.clone()));
+                self.fingerprint_table.entry(new_fp).or_default().push(user);
+                if !self.sig_trail_limits.is_empty() {
+                    self.sig_trail.push(SigTrailEntry::InsertedFingerprint {
+                        fp: new_fp,
+                        node_idx: user,
+                    });
+                }
             }
 
             // Enqueue congruence merges

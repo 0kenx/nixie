@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::Rational64;
+use num_traits::{CheckedEuclid, Zero};
 use oxiz_core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use oxiz_sat::{Lit, RestartStrategy, Var};
 use smallvec::SmallVec;
@@ -269,6 +270,20 @@ pub struct SolverConfig {
     pub enable_inprocessing: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
+    /// Run the model-repair and grammar-reduction searches on nonlinear
+    /// problems the cell-decomposition core leaves undecided (see
+    /// `oxiz_theories::nl_repair_search` and
+    /// `oxiz_theories::nl_ground_reduce`).
+    ///
+    /// These searches can only ever turn an `unknown` into a `sat`: they have
+    /// no way to derive `unsat`, and every `sat` they produce carries a witness
+    /// that is re-checked against the original assertions in exact arithmetic
+    /// before the verdict leaves the solver. So the flag is not a soundness
+    /// switch — it is a *budget* switch, for a caller who would rather have a
+    /// fast `unknown` than spend the search budget.
+    ///
+    /// Default: `true`.
+    pub nonlinear_model_search: bool,
     /// Cap on the number of ground instances a single bounded-integer
     /// quantifier may be expanded into at assert time (`0` disables the
     /// expansion entirely).
@@ -283,6 +298,27 @@ pub struct SolverConfig {
     ///
     /// Default: 64 (`DEFAULT_FINITE_EXPANSION_BUDGET`).
     pub finite_expansion_budget: usize,
+    /// Install the branch-priority heuristic (see
+    /// `crate::solver::branch_priority`) that decides a flattened
+    /// lookup-table index's key equalities before falling back to
+    /// VSIDS/LRB/CHB, once `flatten_lookup_spines` has populated it.
+    ///
+    /// Only takes effect through [`Solver::with_config`] — `oxiz-sat`'s
+    /// external-branching slot is set once at construction and cannot be
+    /// retargeted by a later [`Solver::set_config`] call (see
+    /// `branch_priority`'s module doc).
+    ///
+    /// Default: `false`. Turning this on makes `oxiz-sat`'s
+    /// `pick_branch_var` build its full unassigned-variable candidate list
+    /// on *every* decision for the lifetime of this `Solver` — the price of
+    /// using its pre-existing external-branching hook at all, independent of
+    /// whether any lookup table ever actually appears — so it is not safe to
+    /// default on for formulas in general; enable it for workloads that are
+    /// specifically table-index-heavy.
+    ///
+    /// [`Solver::with_config`]: crate::solver::Solver::with_config
+    /// [`Solver::set_config`]: crate::solver::Solver::set_config
+    pub enable_domain_first_branching: bool,
 }
 
 impl Default for SolverConfig {
@@ -317,6 +353,8 @@ impl SolverConfig {
             inprocessing_interval: 0,
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
+            nonlinear_model_search: true,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -345,6 +383,8 @@ impl SolverConfig {
             inprocessing_interval: 10000,
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
+            nonlinear_model_search: true,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -373,6 +413,8 @@ impl SolverConfig {
             inprocessing_interval: 5000, // More frequent inprocessing
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
+            nonlinear_model_search: true,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -400,8 +442,11 @@ impl SolverConfig {
             enable_inprocessing: false,
             inprocessing_interval: 0,
             // `minimal()` disables every optional rewrite; the caller asked for
-            // full control, so quantifiers keep their plain MBQI path.
+            // full control, so quantifiers keep their plain MBQI path and the
+            // nonlinear searches do not spend their budget either.
             finite_expansion_budget: 0,
+            nonlinear_model_search: false,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -670,6 +715,22 @@ impl Model {
                         }
                         None => break manager.mk_mul(Vec::<TermId>::new()),
                     },
+                    TermKind::Div(lhs, rhs) => {
+                        frames.push(EvalFrame::DivModLhs {
+                            term: current,
+                            rhs,
+                            is_div: true,
+                        });
+                        current = lhs;
+                    }
+                    TermKind::Mod(lhs, rhs) => {
+                        frames.push(EvalFrame::DivModLhs {
+                            term: current,
+                            rhs,
+                            is_div: false,
+                        });
+                        current = lhs;
+                    }
 
                     // For other operations, just return the term (the model
                     // was already consulted above).
@@ -910,6 +971,24 @@ impl Model {
                         memo.insert(term, v);
                         value = v;
                     }
+                    EvalFrame::DivModLhs { term, rhs, is_div } => {
+                        frames.push(EvalFrame::DivModRhs {
+                            term,
+                            lhs_val: value,
+                            is_div,
+                        });
+                        current = rhs;
+                        continue 'open;
+                    }
+                    EvalFrame::DivModRhs {
+                        term,
+                        lhs_val,
+                        is_div,
+                    } => {
+                        let v = fold_div_mod(lhs_val, value, is_div, manager);
+                        memo.insert(term, v);
+                        value = v;
+                    }
                 }
             }
         }
@@ -991,6 +1070,90 @@ enum EvalFrame {
     SubLhs { term: TermId, rhs: TermId },
     /// Binary `-` — waiting on the right operand.
     SubRhs { term: TermId, lhs_val: TermId },
+    /// `div` (`is_div`) or `mod` — waiting on the dividend.
+    DivModLhs {
+        term: TermId,
+        rhs: TermId,
+        is_div: bool,
+    },
+    /// `div` (`is_div`) or `mod` — waiting on the divisor.
+    DivModRhs {
+        term: TermId,
+        lhs_val: TermId,
+        is_div: bool,
+    },
+}
+
+/// Fold a `div`/`mod` (`is_div` selects which) node from its already-evaluated
+/// operands.
+///
+/// SMT-LIB's `Ints` theory defines `div`/`mod` *Euclidean*-style: for a
+/// nonzero divisor `n`, `(div m n)` and `(mod m n)` are the unique `q`, `r`
+/// satisfying `m = n·q + r` with `0 ≤ r < |n|` — the remainder is never
+/// negative regardless of either operand's sign (`(div 7 (- 2)) = -3`,
+/// `(mod 7 (- 2)) = 1`; `(div (- 7) 2) = -4`, `(mod (- 7) 2) = 1`). This is
+/// exactly [`num_traits::CheckedEuclid`]'s convention, already the shared
+/// vocabulary for this fact across the workspace — see
+/// `oxiz_core::rewrite::arith`'s constant folder, `oxiz_core`'s model
+/// evaluator, and this crate's own `check_array::eval_int` (which cites the
+/// same two others). `checked_div_euclid`/`checked_rem_euclid` return `None`
+/// at a zero divisor, which is also the right answer here: division and
+/// modulo by zero are left *uninterpreted* by SMT-LIB (any value is
+/// admissible, so this evaluator must not invent one), and folding is
+/// skipped in favour of rebuilding the (by-then operand-evaluated) node.
+///
+/// A `Real`-sorted `Div` (SMT-LIB's `/`) is exact rational division instead —
+/// selected by the *operand's* sort, since the shared [`TermKind::Div`] node
+/// carries both meanings. `Mod` is Int-only in SMT-LIB, so no such split
+/// applies to it.
+fn fold_div_mod(lhs: TermId, rhs: TermId, is_div: bool, manager: &mut TermManager) -> TermId {
+    // `Model::eval`'s own `Add`/`Sub`/`Mul`/`Neg` handling above rebuilds a
+    // compound arithmetic operand structurally (e.g. `(* 2 3)` stays
+    // `(* 2 3)`, not `6`) rather than numerically folding it — that is
+    // `TermManager::simplify`'s job, run by the caller *after* `eval`
+    // returns. A divisor written as an expression rather than a bare
+    // literal (`(mod x (- (* 2 3) 1))`) would otherwise reach here still
+    // unfolded and always take the `rebuild` fallback below, even though it
+    // is perfectly constant. Simplifying both operands first — cheap and
+    // idempotent for the already-constant case this function exists for —
+    // closes that gap without waiting for the caller's later pass.
+    let lhs = manager.simplify(lhs);
+    let rhs = manager.simplify(rhs);
+    match (
+        manager.get(lhs).map(|t| t.kind.clone()),
+        manager.get(rhs).map(|t| t.kind.clone()),
+    ) {
+        (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) if !b.is_zero() => {
+            let folded = if is_div {
+                a.checked_div_euclid(&b)
+            } else {
+                a.checked_rem_euclid(&b)
+            };
+            match folded {
+                Some(v) => manager.mk_int(v),
+                // Only reachable at the one overflowing edge case
+                // (`BigInt` never actually overflows, but `CheckedEuclid`'s
+                // contract allows `None` generically); rebuild rather than
+                // fabricate a value.
+                None => rebuild_div_mod(lhs, rhs, is_div, manager),
+            }
+        }
+        (Some(TermKind::RealConst(a)), Some(TermKind::RealConst(b))) if is_div && !b.is_zero() => {
+            manager.mk_real(a / b)
+        }
+        _ => rebuild_div_mod(lhs, rhs, is_div, manager),
+    }
+}
+
+/// Rebuild a `div`/`mod` node from its (possibly already-evaluated) operands
+/// without folding — the divisor is zero, symbolic, or the operands are not
+/// both constants of the same evaluable shape.
+fn rebuild_div_mod(lhs: TermId, rhs: TermId, is_div: bool, manager: &mut TermManager) -> TermId {
+    if is_div {
+        manager.mk_div(lhs, rhs)
+    } else {
+        manager.mk_mod(lhs, rhs)
+    }
 }
 
 impl Default for Model {

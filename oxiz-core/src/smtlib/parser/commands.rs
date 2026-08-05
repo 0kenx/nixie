@@ -730,9 +730,15 @@ impl<'a> Parser<'a> {
 
                 // Create placeholder vars for parameters, reusing the
                 // already-resolved sort rather than re-parsing it from text.
+                // The minted `TermId`s are kept in declaration order below —
+                // expansion at the call site substitutes by walking this
+                // exact list, never by recreating a `Var` from the bare name
+                // (see `FunctionMacro::formal_vars`'s doc comment).
+                let mut formal_vars: Vec<TermId> = Vec::with_capacity(params.len());
                 for ((pname, _psort), &sort_id) in params.iter().zip(param_sort_ids.iter()) {
                     let param_term = self.manager.mk_var(pname, sort_id);
                     self.bindings.insert(pname.clone(), param_term);
+                    formal_vars.push(param_term);
                 }
 
                 // Parse body
@@ -748,8 +754,14 @@ impl<'a> Parser<'a> {
                 }
 
                 // Register function definition
-                self.function_defs
-                    .insert(name.clone(), (params.clone(), body));
+                self.function_defs.insert(
+                    name.clone(),
+                    super::FunctionMacro {
+                        formal_vars,
+                        formal_decls: params.clone(),
+                        expansion: body,
+                    },
+                );
 
                 // For nullary define-fun, inline it directly as a binding.
                 // Because that inlining is a *substitution* at every later

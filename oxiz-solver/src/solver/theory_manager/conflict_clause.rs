@@ -175,11 +175,12 @@ impl TheoryManager<'_> {
     ///
     /// A term that names no SAT variable at all is not a literal and cannot go
     /// stale — it resolves through the tautology / derived-equality cases
-    /// instead, so it counts as live here.  `assigned_level` (not
-    /// `assigned_polarity`) is the authority: it is the map pruned on backtrack,
-    /// so an entry means the assignment still holds.  `assigned_polarity` is
-    /// deliberately *not* pruned and therefore outlives the assignment it
-    /// describes; reading it would call a retracted literal live.
+    /// instead, so it counts as live here.  `assigned_level` (not the
+    /// generation-stamped polarity table) is the authority: it is the map
+    /// pruned on backtrack, so an entry means the assignment still holds.
+    /// The polarity table is deliberately *not* pruned and therefore
+    /// outlives the assignment it describes; reading it would call a
+    /// retracted literal live.
     fn reason_literal_is_live(&self, term: TermId) -> bool {
         match self.term_to_var.get(&term) {
             Some(var) => self.assigned_level.contains_key(var),
@@ -195,17 +196,17 @@ impl TheoryManager<'_> {
     /// application assigned false all store their term as a theory reason.
     #[inline]
     fn false_literal_of(&self, var: Var) -> Lit {
-        match self.assigned_polarity.get(&var) {
+        match self.assigned_pol_of(var) {
             // Atom currently true  → its false literal is ¬var.
             Some(true) => Lit::neg(var),
             // Atom currently false → its false literal is var.
             Some(false) => Lit::pos(var),
             // Polarity unknown.  Unreachable from `terms_to_conflict_clause`,
             // which now rejects any reason atom missing from `assigned_level`,
-            // and `on_assignment` writes both maps together — so an entry in
-            // `assigned_level` implies one in `assigned_polarity`.  Kept as a
-            // total fallback for `full_assignment_conflict_clause`, matching
-            // legacy behaviour rather than introducing a panic path.
+            // and `on_assignment` writes both tables together — so an entry
+            // in `assigned_level` implies one in the polarity table.  Kept as
+            // a total fallback for `full_assignment_conflict_clause`,
+            // matching legacy behaviour rather than introducing a panic path.
             None => Lit::neg(var),
         }
     }
@@ -281,6 +282,7 @@ mod tests {
         var_to_term: Vec<TermId>,
         derived_reasons: DerivedReasons,
         statistics: Statistics,
+        quantifier_uf_funcs: FxHashSet<oxiz_core::interner::Spur>,
     }
 
     impl Fixture {
@@ -297,6 +299,7 @@ mod tests {
                 var_to_term: Vec::new(),
                 derived_reasons: DerivedReasons::default(),
                 statistics: Statistics::new(),
+                quantifier_uf_funcs: FxHashSet::default(),
             }
         }
 
@@ -317,6 +320,8 @@ mod tests {
                 0,
                 0,
                 false,
+                false,
+                &self.quantifier_uf_funcs,
                 0,
             )
         }
@@ -353,9 +358,9 @@ mod tests {
         let true_var = Var::new(0);
         let false_var = Var::new(1);
         manager.assigned_level.insert(true_var, 0);
-        manager.assigned_polarity.insert(true_var, true);
+        manager.set_assigned_polarity(true_var, true);
         manager.assigned_level.insert(false_var, 0);
-        manager.assigned_polarity.insert(false_var, false);
+        manager.set_assigned_polarity(false_var, false);
 
         let clause = manager
             .full_assignment_conflict_clause()

@@ -116,6 +116,24 @@ pub enum Command {
     Simplify(TermId),
 }
 
+/// A recorded `define-fun` macro, ready for call-site expansion.
+///
+/// See the doc comment on [`Parser::function_defs`] for why `formal_vars`
+/// must hold the parameters' actual interned `TermId`s rather than anything
+/// that has to be re-derived (name, declared sort text, …) at the call site.
+#[derive(Debug, Clone)]
+pub(super) struct FunctionMacro {
+    /// Each formal parameter's `Var` term, in declaration order, exactly as
+    /// bound while `expansion` was parsed.
+    pub(super) formal_vars: Vec<TermId>,
+    /// `(name, sort-string)` pairs, kept for `Command::DefineFun` /
+    /// introspection use — not consulted by expansion itself.
+    #[allow(dead_code)]
+    pub(super) formal_decls: Vec<(String, String)>,
+    /// The function body, possibly mentioning `formal_vars`.
+    pub(super) expansion: TermId,
+}
+
 /// Parser state
 pub struct Parser<'a> {
     pub(super) lexer: Lexer<'a>,
@@ -129,8 +147,19 @@ pub struct Parser<'a> {
     pub(super) functions: FxHashMap<String, (Vec<SortId>, SortId)>,
     /// Sort aliases from define-sort
     pub(super) sort_aliases: FxHashMap<String, (Vec<String>, String)>,
-    /// Function definitions from define-fun
-    pub(super) function_defs: FxHashMap<String, (Vec<(String, String)>, TermId)>,
+    /// Function definitions from define-fun.
+    ///
+    /// Call-site expansion (see [`Parser::expand_defined_fun`] in `terms.rs`)
+    /// substitutes each formal parameter for its actual argument by walking
+    /// [`FunctionMacro::formal_vars`], the *exact* `TermId`s minted while the
+    /// body was parsed. Re-deriving a parameter's `Var` term from its bare
+    /// name at expansion time is unsafe: [`TermManager::mk_var`] hash-conses
+    /// on the `(name, sort)` pair, so recovering the wrong sort for the name
+    /// (a same-named global constant of a different sort, or no sort
+    /// information at all) mints a *different* term that the body never
+    /// mentions — the substitution then silently no-ops and the parameter
+    /// stays free in the expanded body.
+    pub(super) function_defs: FxHashMap<String, FunctionMacro>,
     /// Term annotations (term -> attributes)
     pub(super) annotations: FxHashMap<TermId, Vec<Attribute>>,
     /// Error recovery mode enabled

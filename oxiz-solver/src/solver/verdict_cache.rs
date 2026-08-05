@@ -172,6 +172,12 @@ impl Solver {
         self.model = None;
         self.unsat_core = None;
         self.last_check = None;
+        // Part of the model, not of the formula: the pure-equality fast path's
+        // partition describes the assertion stack the discarded verdict was
+        // computed on, and grouping a *different* stack's constants by it
+        // would hand `(get-model)` witnesses that share a name for constants
+        // nothing equates.
+        self.equality_skeleton_classes.clear();
         if let Some(proof) = self.proof.as_mut() {
             *proof = Proof::new();
         }

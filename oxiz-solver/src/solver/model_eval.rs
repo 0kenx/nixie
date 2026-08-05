@@ -37,7 +37,38 @@ use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::{CheckedAdd, CheckedMul, CheckedSub, ToPrimitive};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_core::interner::Spur;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::collections::hash_map::Entry;
+
+/// A definite model value in hashable form, for the congruence half of
+/// [`Solver::quantified_model_refutes_ground_assertions`].
+///
+/// [`EvalVal`] cannot serve directly: it holds a [`Rational64`] and derives
+/// only `PartialEq`, while grouping applications by their arguments needs
+/// `Eq + Hash`.  A `Rational64` is always kept in canonical form (reduced,
+/// positive denominator), so its `(numer, denom)` pair is a faithful key —
+/// equal pairs mean equal rationals and vice versa.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ArgKey {
+    Bool(bool),
+    /// Numerator and denominator of a canonical [`Rational64`].
+    Num(i64, i64),
+}
+
+impl ArgKey {
+    /// The key for a definite outcome; `None` for anything the model did not
+    /// pin, which makes the caller skip the application entirely rather than
+    /// key on an incomplete argument tuple.
+    fn from_outcome(outcome: EvalOutcome) -> Option<Self> {
+        match outcome {
+            EvalOutcome::Value(EvalVal::Bool(b)) => Some(Self::Bool(b)),
+            EvalOutcome::Value(EvalVal::Num(n)) => Some(Self::Num(*n.numer(), *n.denom())),
+            EvalOutcome::Undetermined | EvalOutcome::Unrepresentable => None,
+        }
+    }
+}
 
 /// What evaluating a term under a candidate model produced.
 ///
@@ -588,6 +619,154 @@ impl Solver {
                     return true;
                 }
                 _ => {}
+            }
+        }
+        false
+    }
+
+    /// The quantified-search counterpart of [`Self::model_refutes_assertions`]:
+    /// `true` iff the candidate model definitely falsifies a **ground**
+    /// assertion, *or* is definitely not a function on the ground
+    /// uninterpreted applications those assertions contain.
+    ///
+    /// Both jobs are one question — "is the thing we are about to report
+    /// actually a model of the input's ground part?" — and both are needed;
+    /// see the two sections below.
+    ///
+    /// # Why the quantified `Sat` exits need a gate at all
+    ///
+    /// The ground search path has run [`Self::model_refutes_assertions`] before
+    /// reporting `Sat` since it was introduced; the quantified exits
+    /// (`certify_quantified_sat`, `MBQIResult::Satisfied`,
+    /// `MBQIResult::NoQuantifiers`) had none, and reported whatever the MBQI
+    /// loop concluded.  That is not merely a missing belt-and-braces check: the
+    /// numeric UF-argument purification that closes the ground false-`sat`
+    /// (see `encode::numeric_purification`) deliberately *skips* the arguments
+    /// of any function that also occurs under a binder, so on a formula like
+    ///
+    /// ```smtlib
+    /// (assert (forall ((z Int)) (>= (f z) 0)))
+    /// (assert (= x 2)) (assert (= y (+ x 1)))
+    /// (assert (not (= (f y) (f 3))))
+    /// ```
+    ///
+    /// the ground disequality's `f(3)` is never purified, arithmetic's entailed
+    /// `y = 3` has nothing on the EUF side to attach to, the congruence
+    /// `f(y) = f(3)` is never derived — and MBQI, which is only asked about the
+    /// `forall`, happily reports its fixpoint.  The result was a wrong `sat` on
+    /// a formula whose ground part alone is unsatisfiable.
+    ///
+    /// # Why only ground assertions, and why only a definite `false`
+    ///
+    /// Two deliberate restrictions, both of which make this gate *weaker* than
+    /// the ground path's:
+    ///
+    /// * **Ground assertions only.**  A quantified assertion has no value in a
+    ///   candidate model — the evaluator has no way to range over an infinite
+    ///   domain — so it comes back [`EvalOutcome::Undetermined`] at best and
+    ///   [`EvalOutcome::Unrepresentable`] at worst.  Deciding quantified
+    ///   assertions is MBQI's job, not this gate's, and including them would
+    ///   downgrade essentially every quantified problem to `Unknown`.
+    /// * **Only [`EvalOutcome::Value`]`(`[`EvalVal::Bool`]`(false))` counts.**
+    ///   Unlike the ground path, `Unrepresentable` is *not* treated as a
+    ///   refutation here.  On the quantified path `build_model` produces an
+    ///   explicitly *partial* model (see its call site in `check_core`), so an
+    ///   assertion the evaluator cannot fold is the normal case rather than the
+    ///   danger sign it is once a total ground model has been built.  Treating
+    ///   it as refutation would trade a rare wrong `sat` for a routine
+    ///   `Unknown`.  The narrower trigger still catches the shape above, where
+    ///   the ground contradiction is fully concrete.
+    ///
+    /// # Why a congruence check is needed on top of that
+    ///
+    /// Evaluating the assertions alone does **not** catch the repro above, and
+    /// the reason is worth stating precisely.  This evaluator treats an
+    /// uninterpreted application as an *opaque leaf*, looked up in the model by
+    /// term identity (see the fallback arm of [`Self::open_in_model`]).  On the
+    /// repro it returns the model's `f(y) = 1` and `f(3) = 0`, so
+    /// `(not (= (f y) (f 3)))` evaluates to `true` and nothing is refuted —
+    /// even though the same model says `y = 3`, which makes `f(y)` and `f(3)`
+    /// the *same application* and those two values a contradiction.
+    ///
+    /// The model is therefore not a function, and that — not any individual
+    /// assertion's truth value — is the witness that it is not a model.  So the
+    /// second half of this gate groups every ground application by its function
+    /// symbol together with the *evaluated* values of its arguments, and
+    /// refuses the verdict when one group holds two different definite values.
+    ///
+    /// Deliberately not fixed in [`Self::open_in_model`] itself: making the
+    /// evaluator congruence-aware would change the answer of every `Apply` on
+    /// the ground path too, which is protected by purification and has no such
+    /// gap — a large behavioural change for no extra coverage here.
+    ///
+    /// Both halves stay conservative in the same direction: a group contributes
+    /// nothing unless *every* argument evaluated to a definite value (a partial
+    /// key would group applications that are not in fact congruent), and two
+    /// members conflict only when both application values are definite and
+    /// unequal.
+    ///
+    /// A `true` answer makes the caller report `Unknown` rather than `Sat`:
+    /// always a legal verdict, and the honest one when the model on the table
+    /// contradicts the input's own ground part.
+    pub(super) fn quantified_model_refutes_ground_assertions(&self, manager: &TermManager) -> bool {
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+
+        // Applications already seen, keyed by function symbol plus evaluated
+        // argument values.  The stored value is the first definite value found
+        // for that key; a later member disagreeing with it is the violation.
+        let mut congruence: FxHashMap<(Spur, SmallVec<[ArgKey; 4]>), ArgKey> = FxHashMap::default();
+
+        for &assertion in &self.assertions {
+            if super::encode::finite_expand::contains_quantifier(assertion, manager) {
+                continue;
+            }
+            if matches!(
+                self.eval_in_model_outcome(assertion, model, manager, 0),
+                EvalOutcome::Value(EvalVal::Bool(false))
+            ) {
+                return true;
+            }
+
+            // `collect_ground_subterms` is the shared iterative (heap-stack)
+            // walk and never descends into a binder, so everything it yields is
+            // ground by construction — no native recursion, and no risk of
+            // keying on a term containing a bound variable.
+            for sub in super::encode::bool_euf_encoding::collect_ground_subterms(assertion, manager)
+            {
+                let Some(node) = manager.get(sub) else {
+                    continue;
+                };
+                let TermKind::Apply { func, args } = &node.kind else {
+                    continue;
+                };
+                let Some(arg_key) = args
+                    .iter()
+                    .map(|&a| {
+                        ArgKey::from_outcome(self.eval_in_model_outcome(a, model, manager, 0))
+                    })
+                    .collect::<Option<SmallVec<[ArgKey; 4]>>>()
+                else {
+                    continue; // at least one argument is not pinned
+                };
+                let Some(value) =
+                    ArgKey::from_outcome(self.eval_in_model_outcome(sub, model, manager, 0))
+                else {
+                    continue; // the application itself is not pinned
+                };
+                match congruence.entry((*func, arg_key)) {
+                    Entry::Vacant(slot) => {
+                        slot.insert(value);
+                    }
+                    Entry::Occupied(slot) => {
+                        if *slot.get() != value {
+                            // Same function, same argument values, two
+                            // different results: not a function.
+                            return true;
+                        }
+                    }
+                }
             }
         }
         false

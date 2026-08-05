@@ -1,13 +1,21 @@
 //! CDCL SAT Solver
 
+mod add_clause;
+mod bve;
+mod config;
 mod conflict;
+mod congruence;
 mod decide;
+mod equiv;
 pub mod heuristic;
 mod incremental;
 mod learn;
+mod lrat_trace;
+mod probe;
 mod propagate;
 mod search_ext;
 
+pub use config::{RestartStrategy, SolverConfig};
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
 use crate::chb::CHB;
@@ -18,7 +26,9 @@ use crate::lrb::LRB;
 use crate::memory_opt::{MemoryAction, MemoryOptimizer};
 #[allow(unused_imports)]
 use crate::prelude::*;
+use crate::restart_model::{LubyClock, ModeLbdTrackers};
 use crate::trail::{Reason, Trail};
+use crate::vmtf::VMTF;
 use crate::vsids::VSIDS;
 use crate::watched::{WatchLists, Watcher};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -108,132 +118,52 @@ pub enum SolverResult {
     Unknown,
 }
 
-/// Outcome of [`Solver::pre_check_effective_unit`], resolved *before* any
-/// watches are chosen for a new clause in [`Solver::add_clause`].
-enum PreAttachOutcome {
-    /// Already satisfied by the current assignment, or simply not
-    /// effectively unit (2+ literals still undefined). Either way, nothing
-    /// special is needed: add and watch the clause normally.
-    Ordinary,
-    /// Every literal is false and, after resolving level-0-only facts via
-    /// [`Solver::backtrack_to_root`] where needed, still is: an
-    /// unconditional (level-0) conflict. The caller must set
-    /// `trivially_unsat` and return `false` without adding the clause.
-    UnconditionalConflict,
-    /// The clause is an effective unit (every literal false except this one,
-    /// which is undefined) and every false literal is confirmed to be a
-    /// permanent level-0 fact. The caller must force this literal via
-    /// `Trail::assign_propagation_at(_, clause_id, 0)` once the clause has
-    /// been inserted and its `ClauseId` is known (not yet, at the point this
-    /// outcome is produced).
-    ForceUnitAtLevelZero(Lit),
+/// A condition [`Solver`] cannot recover from soundly, distinct from an
+/// ordinary `Unsat`/`Unknown` verdict.
+///
+/// Recorded on the solver (see [`Solver::error`]) rather than threaded
+/// through [`Solver::add_clause`]'s or [`Solver::solve_with_assumptions`]'s
+/// existing return types: both are long-established public signatures used
+/// well beyond this crate, and every legitimate caller of either one hits
+/// this only in the one narrow situation each variant documents — changing
+/// their shape for that would be a far larger blast radius than one more
+/// field to check. Once set, [`Solver::solve`], [`Solver::solve_with_assumptions`],
+/// and [`Solver::solve_with_theory`] all refuse to report `Sat` or `Unsat`
+/// (either could be wrong) and answer [`SolverResult::Unknown`] instead,
+/// until [`Solver::reset`] clears it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SolverError {
+    /// A clause or assumption named a variable that [`Solver::var_eliminated`]
+    /// reports as bounded-variable-eliminated: its defining clauses were
+    /// resolved away and replaced by their resolvents (see
+    /// `bounded_variable_elimination`, a private method not part of this
+    /// crate's public API), and this port does not reintroduce such a
+    /// variable's original definition back into the live search on demand
+    /// the way CaDiCaL's extension-stack replay does.
+    /// Equivalent-literal-substituted variables do not hit this: they are
+    /// rewritten through the substitution map instead (still logically the
+    /// same variable, just expressed via its class representative), which is
+    /// sound without any reconstruction at all.
+    EliminatedVariableReintroduction {
+        /// The variable a later clause or assumption tried to reintroduce.
+        var: Var,
+    },
 }
 
-/// Solver configuration
-#[derive(Clone)]
-pub struct SolverConfig {
-    /// Restart interval (number of conflicts)
-    pub restart_interval: u64,
-    /// Restart multiplier for geometric restarts
-    pub restart_multiplier: f64,
-    /// Clause deletion threshold
-    pub clause_deletion_threshold: usize,
-    /// Variable decay factor
-    pub var_decay: f64,
-    /// Clause decay factor
-    pub clause_decay: f64,
-    /// Random polarity probability (0.0 to 1.0)
-    pub random_polarity_prob: f64,
-    /// Restart strategy: "luby" or "geometric"
-    pub restart_strategy: RestartStrategy,
-    /// Enable lazy hyper-binary resolution
-    pub enable_lazy_hyper_binary: bool,
-    /// Use CHB instead of VSIDS for branching
-    pub use_chb_branching: bool,
-    /// Use LRB (Learning Rate Branching) for branching
-    pub use_lrb_branching: bool,
-    /// Enable inprocessing (periodic preprocessing during search)
-    pub enable_inprocessing: bool,
-    /// Inprocessing interval (number of conflicts between inprocessing)
-    pub inprocessing_interval: u64,
-    /// Enable chronological backtracking
-    pub enable_chronological_backtrack: bool,
-    /// Chronological backtracking threshold (max distance from assertion level)
-    pub chrono_backtrack_threshold: u32,
-    /// Optional external branching heuristic. When `Some`, called before built-in
-    /// VSIDS/LRB/CHB; returning `None` from the heuristic falls back to built-in.
-    /// Default: `None` (pure built-in strategy).
-    pub external_branching: Option<BoxedBranchingHeuristic>,
-}
-
-impl core::fmt::Debug for SolverConfig {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("SolverConfig")
-            .field("restart_interval", &self.restart_interval)
-            .field("restart_multiplier", &self.restart_multiplier)
-            .field("clause_deletion_threshold", &self.clause_deletion_threshold)
-            .field("var_decay", &self.var_decay)
-            .field("clause_decay", &self.clause_decay)
-            .field("random_polarity_prob", &self.random_polarity_prob)
-            .field("restart_strategy", &self.restart_strategy)
-            .field("enable_lazy_hyper_binary", &self.enable_lazy_hyper_binary)
-            .field("use_chb_branching", &self.use_chb_branching)
-            .field("use_lrb_branching", &self.use_lrb_branching)
-            .field("enable_inprocessing", &self.enable_inprocessing)
-            .field("inprocessing_interval", &self.inprocessing_interval)
-            .field(
-                "enable_chronological_backtrack",
-                &self.enable_chronological_backtrack,
-            )
-            .field(
-                "chrono_backtrack_threshold",
-                &self.chrono_backtrack_threshold,
-            )
-            .field(
-                "external_branching",
-                &self
-                    .external_branching
-                    .as_ref()
-                    .map(|_| "<BranchingHeuristic>"),
-            )
-            .finish()
-    }
-}
-
-/// Restart strategy
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestartStrategy {
-    /// Luby sequence restarts
-    Luby,
-    /// Geometric restarts
-    Geometric,
-    /// Glucose-style dynamic restarts based on LBD
-    Glucose,
-    /// Local restarts based on LBD trail
-    LocalLbd,
-}
-
-impl Default for SolverConfig {
-    fn default() -> Self {
-        Self {
-            restart_interval: 100,
-            restart_multiplier: 1.5,
-            clause_deletion_threshold: 10000,
-            var_decay: 0.95,
-            clause_decay: 0.999,
-            random_polarity_prob: 0.02,
-            restart_strategy: RestartStrategy::Luby,
-            enable_lazy_hyper_binary: true,
-            use_chb_branching: false,
-            use_lrb_branching: false,
-            enable_inprocessing: false,
-            inprocessing_interval: 5000,
-            enable_chronological_backtrack: true,
-            chrono_backtrack_threshold: 100,
-            external_branching: None,
+impl std::fmt::Display for SolverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EliminatedVariableReintroduction { var } => write!(
+                f,
+                "variable {var:?} was eliminated by bounded variable elimination and cannot be \
+                 reintroduced by a later add_clause/assumption in this port; avoid mentioning it \
+                 again, or disable SolverConfig::enable_bve for incremental use"
+            ),
         }
     }
 }
+
+impl std::error::Error for SolverError {}
 
 /// Statistics for the solver
 #[derive(Debug, Default, Clone)]
@@ -370,6 +300,9 @@ pub struct Solver {
     pub(super) watches: WatchLists,
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
+    /// VMTF move-to-front decision queue, used in focused mode when
+    /// [`SolverConfig::use_vmtf`] is set (see [`Solver::pick_branch_var`]).
+    pub(super) vmtf: VMTF,
     /// CHB branching heuristic
     pub(super) chb: CHB,
     /// LRB branching heuristic
@@ -396,8 +329,51 @@ pub struct Solver {
     pub(super) trivially_unsat: bool,
     /// Phase saving: last polarity assigned to each variable
     pub(super) phase: Vec<bool>,
+    /// Global polarity inversion applied on top of `phase` by rephasing.
+    /// Toggled periodically (see [`Solver::restart`]) so a restart explores
+    /// the complementary phase region instead of re-deriving the trail it
+    /// just abandoned.
+    pub(super) phase_inverted: bool,
+    /// Polarities captured from the longest trail reached so far (without a
+    /// conflict at its final assignment), restored by some rephase rounds to
+    /// refocus the search on the best region found instead of a blind flip.
+    pub(super) best_phase: Vec<bool>,
+    /// Length of the trail that produced `best_phase` (0 until captured).
+    pub(super) best_trail_size: usize,
+    /// Rephase round counter; alternates which rephase action fires (restore
+    /// best vs. invert) on successive rounds.
+    pub(super) rephase_count: u64,
     /// Luby sequence index for restarts
     pub(super) luby_index: u64,
+    /// Stable/focused search mode. `false` (focused) favors frequent
+    /// Glucose-EMA restarts and VMTF decisions; `true` (stable) favors rare
+    /// reluctant-doubling restarts, VSIDS decisions, and rephasing. See
+    /// [`Solver::check_stabilize`].
+    pub(super) stable: bool,
+    /// Number of stable/focused switches performed so far; drives the
+    /// quadratic growth of each phase's tick budget.
+    pub(super) stabphases: u64,
+    /// Per-mode LBD trackers for the currently-active mode, swapped with
+    /// `glue_saved` on every stable/focused switch so each mode judges
+    /// restarts only against samples gathered while it was active.
+    pub(super) glue_current: ModeLbdTrackers,
+    /// Per-mode LBD trackers for the *other* mode, held here while it is
+    /// inactive.
+    pub(super) glue_saved: ModeLbdTrackers,
+    /// Reluctant-doubling (Luby) restart clock, armed only in stable mode.
+    pub(super) reluctant: LubyClock,
+    /// Accumulated propagation "ticks" (a cache-line-count proxy for work
+    /// done, not wall-clock time) while in focused mode.
+    pub(super) ticks_focused: u64,
+    /// Accumulated propagation ticks while in stable mode.
+    pub(super) ticks_stable: u64,
+    /// Next conflict count at which the focused-mode Glucose restart
+    /// condition is re-checked (checked every couple of conflicts, not every
+    /// single one, to keep the check itself cheap).
+    pub(super) lim_restart: u64,
+    /// Tick count (in whichever mode is about to become active) at which the
+    /// next stable/focused switch is due.
+    pub(super) lim_stabilize: u64,
     /// Level marks for LBD computation
     pub(super) level_marks: Vec<u32>,
     /// Current mark counter for LBD computation
@@ -453,6 +429,81 @@ pub struct Solver {
     /// derived. `None` (the default) means no proof is produced and every DRAT
     /// hook is a no-op, so proof logging costs nothing when unused.
     pub(super) drat: Option<crate::proof::DratWriter>,
+    /// Optional LRAT proof tracer. When `Some`, every original clause and
+    /// every clause the main CDCL loop learns is registered with an LRAT id
+    /// and (for learned clauses) an explicit RUP hint chain; every clause
+    /// this crate deletes is retracted by id. See `solver/lrat_trace.rs` for
+    /// the hint-chain construction and the mechanisms that gate themselves
+    /// off rather than run without sound hint coverage while this is set.
+    pub(super) lrat: Option<crate::proof::LratWriter>,
+    /// `ClauseId -> LRAT id` for every clause LRAT tracing has registered,
+    /// indexed by `ClauseId.0`. `0` (never a real `LratWriter` id) marks an
+    /// unregistered slot. Empty and untouched whenever `lrat` is `None`.
+    pub(super) clause_lrat_id: Vec<u64>,
+    /// `Var::index() -> LRAT id` of the original unit clause that justifies
+    /// a variable's level-0 value when [`Solver::add_clause`]'s unit-clause
+    /// path installed it via a plain decision (no [`ClauseId`] exists for
+    /// such a fact — see `solver/lrat_trace.rs`'s module doc comment for why
+    /// this separate table is necessary). `0` marks "no such justification
+    /// recorded" (a genuine branching decision, or LRAT tracing is off).
+    pub(super) lrat_unit_id: Vec<u64>,
+    /// One-shot latch: this incarnation's LRAT proof has already emitted (or
+    /// been given, as a literal empty original clause) its conclusion.
+    /// Prevents every `solve()` UNSAT exit path from independently trying to
+    /// emit a second, redundant empty-clause line.
+    pub(super) lrat_unsat_finalized: bool,
+    /// One-shot latch: the pre-search inprocessing toolkit (probing / BVE /
+    /// equivalent-literal substitution) has already run for this incarnation
+    /// of the solver. Cleared by [`Solver::reset`] and by popping back to the
+    /// base assertion level, so a reused incremental solver re-runs the
+    /// toolkit against its new formula rather than silently skipping it.
+    pub(super) bve_latched: bool,
+    /// Same one-shot latch as `bve_latched`, for equivalent-literal substitution.
+    pub(super) equiv_fold_latched: bool,
+    /// Per-literal representative map built by equivalent-literal
+    /// substitution, indexed by [`Lit::code`]. Identity (`sub[l] == l`) for
+    /// every literal not folded into another's equivalence class. See
+    /// [`Solver::fold_equivalent_literals`].
+    pub(super) equiv_substitution: Vec<Lit>,
+    /// Whether `equiv_substitution` has been sized/initialized to identity for
+    /// the current `num_vars`. Distinguishes "never ran" from "ran and found
+    /// no equivalences" (both leave the map's *content* looking like the
+    /// identity map, but only the former should skip the reconstruction pass
+    /// entirely).
+    pub(super) equiv_substitution_sized: bool,
+    /// Per-eliminated-variable definitional clauses recorded by bounded
+    /// variable elimination, keyed by [`Var::index`]: the clauses that
+    /// contained the variable positively, with that literal stripped off,
+    /// captured *before* the originals were deleted. Empty for a variable
+    /// that was never eliminated. Used by [`Solver::save_model`] to derive
+    /// the eliminated variable's correct value — see
+    /// [`Solver::bounded_variable_elimination`].
+    pub(super) bve_def: Vec<Vec<SmallVec<[Lit; 4]>>>,
+    /// Variables eliminated by bounded variable elimination, in elimination
+    /// order. Reconstructed in reverse (see [`Solver::save_model`]) because a
+    /// variable eliminated earlier in the pass can only be defined in terms of
+    /// variables eliminated later (once removed, a variable can no longer
+    /// appear in a subsequent resolvent).
+    pub(super) bve_order: Vec<Var>,
+    /// Set once and never cleared except by [`Solver::reset`]: a later
+    /// `add_clause`/assumption tried to reintroduce a bounded-variable-
+    /// eliminated variable with no sound way to honor it (see
+    /// [`SolverError::EliminatedVariableReintroduction`]). Every `solve*`
+    /// entry point checks this before doing any work and answers
+    /// [`SolverResult::Unknown`] rather than a verdict that might be wrong.
+    pub(super) fatal_error: Option<SolverError>,
+    /// Propagation step budget consulted by [`Solver::propagate`] when
+    /// `Some`; decremented per watch-list/binary-edge visit and, on
+    /// exhaustion, aborts the in-flight propagation early (see
+    /// [`Solver::propagate_bounded`]). `None` means unbounded (the default
+    /// search path). Used by probing so a single pathological cascade cannot
+    /// dominate the whole pass.
+    pub(super) propagate_step_limit: Option<u64>,
+    /// Set by [`Solver::propagate`] when a bounded propagation
+    /// ([`Solver::propagate_bounded`]) hit `propagate_step_limit` before
+    /// reaching a fixpoint. The caller must treat the probe as inconclusive —
+    /// neither a genuine conflict nor a complete model.
+    pub(super) propagate_aborted: bool,
 }
 
 impl Default for Solver {
@@ -482,6 +533,7 @@ impl Solver {
             trail: Trail::new(0),
             watches: WatchLists::new(0),
             vsids: VSIDS::new(0),
+            vmtf: VMTF::new(0),
             chb: CHB::new(0),
             lrb: LRB::new(0),
             stats: SolverStats::default(),
@@ -494,7 +546,20 @@ impl Solver {
             model: Vec::new(),
             trivially_unsat: false,
             phase: Vec::new(),
+            phase_inverted: false,
+            best_phase: Vec::new(),
+            best_trail_size: 0,
+            rephase_count: 0,
             luby_index: 0,
+            stable: false,
+            stabphases: 0,
+            glue_current: ModeLbdTrackers::new(),
+            glue_saved: ModeLbdTrackers::new(),
+            reluctant: LubyClock::default(),
+            ticks_focused: 0,
+            ticks_stable: 0,
+            lim_restart: 0,
+            lim_stabilize: 0,
             level_marks: Vec::new(),
             lbd_mark: 0,
             learned_clause_ids: Vec::new(),
@@ -514,6 +579,19 @@ impl Solver {
             interrupt: None,
             max_conflicts: None,
             drat: None,
+            lrat: None,
+            clause_lrat_id: Vec::new(),
+            lrat_unit_id: Vec::new(),
+            lrat_unsat_finalized: false,
+            bve_latched: false,
+            equiv_fold_latched: false,
+            equiv_substitution: Vec::new(),
+            equiv_substitution_sized: false,
+            bve_def: Vec::new(),
+            bve_order: Vec::new(),
+            fatal_error: None,
+            propagate_step_limit: None,
+            propagate_aborted: false,
         }
     }
 
@@ -649,11 +727,13 @@ impl Solver {
         self.watches.resize(self.num_vars);
         self.binary_graph.resize(self.num_vars);
         self.vsids.insert(var);
+        self.vmtf.resize(self.num_vars);
         self.chb.insert(var);
         self.lrb.resize(self.num_vars);
         self.seen.resize(self.num_vars, false);
         self.model.resize(self.num_vars, LBool::Undef);
         self.phase.resize(self.num_vars, false); // Default phase: negative
+        self.best_phase.resize(self.num_vars, false);
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
@@ -668,345 +748,134 @@ impl Solver {
         }
     }
 
-    /// Scan `clause_lits` against the *current* trail: is any literal true,
-    /// what is the highest level among the false literals (0 if there are
-    /// none), and which literals are still undefined.
+    /// Decay every learned clause's activity and grow the bump increment
+    /// (MiniSat-style: cheap "bump" via a growing increment instead of
+    /// touching every clause on every conflict), then guard against the
+    /// increment overflowing `f64`.
     ///
-    /// Read-only. Used by [`Solver::pre_check_effective_unit`] both before
-    /// and (when it backtracks) after a `backtrack_to_root()` call, so it
-    /// must not itself assume anything about levels.
-    fn scan_clause_for_attach(&self, clause_lits: &[Lit]) -> (bool, u32, SmallVec<[Lit; 4]>) {
-        let mut has_true = false;
-        let mut max_false_level = 0u32;
-        let mut undefined: SmallVec<[Lit; 4]> = SmallVec::new();
-        for &lit in clause_lits {
-            let value = self.trail.lit_value(lit);
-            if value.is_true() {
-                has_true = true;
-                break;
-            } else if value.is_false() {
-                max_false_level = max_false_level.max(self.trail.level(lit.var()));
-            } else {
-                undefined.push(lit);
-            }
+    /// The increment is divided by `clause_decay` (< 1) on every conflict, so
+    /// after enough conflicts on a long run it would approach `f64::MAX` and
+    /// start producing `inf`/`NaN` activities — silently breaking the
+    /// tier/reduction heuristic's ordering (never soundness: activity only
+    /// picks which learned clauses survive deletion). Rescaling every
+    /// activity and the increment itself by a small constant factor resets
+    /// the growth without changing any clause's *relative* activity order.
+    /// The rescale threshold is far below `f64::MAX` so this always fires
+    /// before precision is actually lost, and is rare enough (roughly every
+    /// ~10^5-10^6 conflicts at the default 0.999 decay) that its O(n) cost is
+    /// amortized away.
+    pub(super) fn decay_clause_activity(&mut self) {
+        self.clauses.decay_activity(self.config.clause_decay);
+        self.clause_bump_increment /= self.config.clause_decay;
+        const RESCALE_THRESHOLD: f64 = 1e100;
+        const RESCALE_FACTOR: f64 = 1e-100;
+        if self.clause_bump_increment > RESCALE_THRESHOLD {
+            self.clauses.rescale_activity(RESCALE_FACTOR);
+            self.clause_bump_increment *= RESCALE_FACTOR;
         }
-        (has_true, max_false_level, undefined)
-    }
-
-    /// Resolve `clause_lits`'s conflict / effective-unit status against the
-    /// current trail, performing any necessary backtrack, *before* the
-    /// caller chooses which literals to watch.
-    ///
-    /// # Why this must run before watch selection
-    ///
-    /// The two-watched-literal ranking (`watch_rank` and its call sites in
-    /// `add_clause`) is computed against whatever the trail looks like when
-    /// it runs. A `backtrack_to_root()` performed *after* that ranking would
-    /// silently invalidate it: literals the ranking saw as false may now be
-    /// undefined, so the "watch the two latest-falsified literals" choice it
-    /// made is no longer meaningful. Running this check first, and letting
-    /// its backtrack (if any) land before ranking ever executes, keeps the
-    /// two steps consistent with each other.
-    ///
-    /// # Why "effectively unit" needs the same treatment as "all false"
-    ///
-    /// A clause is only safe to attach as-is when every literal that is
-    /// currently false is false *permanently* (at level 0). A literal false
-    /// above level 0 can be unassigned by a future backtrack while some
-    /// *other* disjunct of the clause survives (in particular, an implied
-    /// literal this same function forces at the wrong level would -- see the
-    /// history of this function for the bug that motivated this rewrite):
-    /// the clause is then silently reopened, with no live watcher able to
-    /// notice, because watch/graph registration only fires on a literal's
-    /// *next* transition, not because of anything a backtrack does. This is
-    /// true whether the clause is fully false (a conflict) or has exactly
-    /// one literal left undefined (an effective unit) -- both are handled by
-    /// the same rule here.
-    ///
-    /// `backtrack_to_root()` resolves the ambiguity outright: every literal
-    /// false above level 0 becomes undefined, so a mandatory re-scan
-    /// afterward finds either 2+ undefined literals (ordinary watching is
-    /// then correct and sufficient -- the clause is genuinely open again) or
-    /// still at most one undefined literal, with every remaining false
-    /// literal now unconditionally at level 0 (forced at level 0, which
-    /// survives every future backtrack by construction).
-    fn pre_check_effective_unit(&mut self, clause_lits: &[Lit]) -> PreAttachOutcome {
-        let (has_true, max_false_level, undefined) = self.scan_clause_for_attach(clause_lits);
-        if has_true || undefined.len() >= 2 {
-            return PreAttachOutcome::Ordinary;
-        }
-
-        if max_false_level > 0 {
-            self.backtrack_to_root();
-            // Mandatory re-scan: the sets computed above are now stale.
-            let (has_true, _post_backtrack_max_level, undefined) =
-                self.scan_clause_for_attach(clause_lits);
-            debug_assert!(
-                !has_true,
-                "backtrack_to_root() cannot turn a false/undefined literal true"
-            );
-            return if undefined.is_empty() {
-                PreAttachOutcome::UnconditionalConflict
-            } else if undefined.len() == 1 {
-                PreAttachOutcome::ForceUnitAtLevelZero(undefined[0])
-            } else {
-                PreAttachOutcome::Ordinary
-            };
-        }
-
-        if undefined.is_empty() {
-            PreAttachOutcome::UnconditionalConflict
-        } else {
-            PreAttachOutcome::ForceUnitAtLevelZero(undefined[0])
-        }
-    }
-
-    /// Add a clause
-    pub fn add_clause(&mut self, lits: impl IntoIterator<Item = Lit>) -> bool {
-        let mut clause_lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
-
-        // Ensure we have all variables
-        for lit in &clause_lits {
-            let var_idx = lit.var().index();
-            if var_idx >= self.num_vars {
-                self.ensure_vars(var_idx + 1);
-            }
-        }
-
-        // Remove duplicates and check for tautology
-        clause_lits.sort_by_key(|l| l.code());
-        clause_lits.dedup();
-
-        // Check for tautology (x and ~x in same clause)
-        for i in 0..clause_lits.len() {
-            for j in (i + 1)..clause_lits.len() {
-                if clause_lits[i] == clause_lits[j].negate() {
-                    return true; // Tautology - always satisfied
-                }
-            }
-        }
-
-        // Handle special cases
-        match clause_lits.len() {
-            0 => {
-                self.trivially_unsat = true;
-                return false; // Empty clause - unsat
-            }
-            1 => {
-                // Unit clause - enqueue at decision level 0
-                // Unit clauses must be assigned at level 0 to survive backtracking.
-                // After solve(), current_level may be > 0, so we must backtrack first.
-                let lit = clause_lits[0];
-
-                if self.trail.lit_value(lit).is_false() {
-                    // The literal conflicts with the current trail.
-                    // Check if the conflict is at decision level 0 (permanent constraint)
-                    // or from a previous solve (can be retried after backtrack).
-                    let var = lit.var();
-                    let level = self.trail.level(var);
-                    if level == 0 {
-                        // Conflict with a level-0 assignment - truly UNSAT
-                        self.trivially_unsat = true;
-                        return false;
-                    } else {
-                        // Conflict with higher-level assignment from previous solve.
-                        // Backtrack to root and assign the new unit literal at level 0.
-                        self.backtrack_to_root();
-                        self.trail.assign_decision(lit);
-                        return true;
-                    }
-                }
-
-                if self.trail.lit_value(lit).is_true() {
-                    // Already satisfied - check if at level 0
-                    let var = lit.var();
-                    let level = self.trail.level(var);
-                    if level == 0 {
-                        // Already assigned at level 0, nothing to do
-                        return true;
-                    }
-                    // Assigned at higher level - backtrack and reassign at level 0
-                    self.backtrack_to_root();
-                    self.trail.assign_decision(lit);
-                    return true;
-                }
-
-                // Variable is unassigned - backtrack to level 0 first to ensure
-                // the assignment is at level 0 (survives future backtracks)
-                if self.trail.decision_level() > 0 {
-                    self.backtrack_to_root();
-                }
-                self.trail.assign_decision(lit);
-                return true;
-            }
-            2 => {
-                // Binary clause - check if it conflicts with current assignment
-                let lit0 = clause_lits[0];
-                let lit1 = clause_lits[1];
-                let val0 = self.trail.lit_value(lit0);
-                let val1 = self.trail.lit_value(lit1);
-
-                // If clause is satisfied, just add it
-                if val0.is_true() || val1.is_true() {
-                    // Clause already satisfied by current assignment
-                    let clause_id = self.clauses.add_original(clause_lits.iter().copied());
-                    if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
-                        current_level_clauses.push(clause_id);
-                    }
-                    self.binary_graph.add(lit0.negate(), lit1, clause_id);
-                    self.binary_graph.add(lit1.negate(), lit0, clause_id);
-                    self.watches
-                        .add(lit0.negate(), Watcher::new(clause_id, lit1));
-                    self.watches
-                        .add(lit1.negate(), Watcher::new(clause_id, lit0));
-                    return true;
-                }
-
-                // Resolve conflict / effective-unit status *before*
-                // attaching the clause -- see `pre_check_effective_unit`'s
-                // doc comment for the full reasoning (in particular why an
-                // "effectively unit" binary clause, not just an "all false"
-                // one, needs its level bookkeeping resolved this way: the
-                // watches registered below cannot be trusted to discover it
-                // on their own, since they only fire on a literal's *next*
-                // transition -- a level-0 fact from earlier in this
-                // incremental session was already dequeued long ago and will
-                // never be dequeued again).
-                let outcome = self.pre_check_effective_unit(&clause_lits);
-                if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
-                    self.trivially_unsat = true;
-                    return false;
-                }
-
-                let clause_id = self.clauses.add_original(clause_lits.iter().copied());
-                if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
-                    current_level_clauses.push(clause_id);
-                }
-                self.binary_graph.add(lit0.negate(), lit1, clause_id);
-                self.binary_graph.add(lit1.negate(), lit0, clause_id);
-                self.watches
-                    .add(lit0.negate(), Watcher::new(clause_id, lit1));
-                self.watches
-                    .add(lit1.negate(), Watcher::new(clause_id, lit0));
-
-                if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
-                    self.trail.assign_propagation_at(forced, clause_id, 0);
-                }
-                return true;
-            }
-            _ => {}
-        }
-
-        // Add clause (3+ literals)
-        // Resolve conflict / effective-unit status *before* choosing watches
-        // -- see `pre_check_effective_unit`'s doc comment. Must run before
-        // the `watch_rank` selection below: a `backtrack_to_root()` decided
-        // on afterward would silently invalidate whatever ranking that
-        // selection just computed.
-        let outcome = self.pre_check_effective_unit(&clause_lits);
-        if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
-            self.trivially_unsat = true;
-            return false;
-        }
-
-        // Choose the two watch literals *before* storing the clause, following
-        // MiniSat's attachClause invariant: watch the two literals that are the
-        // last to become false under the current assignment. Ranking prefers a
-        // true literal, then an unassigned one, and only then a false literal at
-        // the highest decision level (see `watch_rank`).
-        //
-        // The previous code unconditionally watched `clause_lits[0..2]`. After a
-        // prior `solve()` left a full trail (with `prop_head == len`), a clause
-        // whose two lowest-code literals are false-but-already-propagated would
-        // have both watches on false literals; those watch events never fire
-        // again, so the clause could be silently falsified. A later `solve()`
-        // could then return Sat on a model violating the clause, or miss a
-        // conflict on an actually-UNSAT formula. Watching the two
-        // latest-falsified literals restores the invariant that a watched
-        // literal becoming false always re-examines the clause.
-        //
-        // Safe to run *after* `pre_check_effective_unit` above: any
-        // `backtrack_to_root()` it performed has already happened, so this
-        // ranking sees the final, post-backtrack trail state rather than one
-        // that gets invalidated out from under it.
-        let n = clause_lits.len();
-        let mut best = 0;
-        for i in 1..n {
-            if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[best]) {
-                best = i;
-            }
-        }
-        clause_lits.swap(0, best);
-        let mut second = 1;
-        for i in 2..n {
-            if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[second]) {
-                second = i;
-            }
-        }
-        clause_lits.swap(1, second);
-
-        let clause_id = self.clauses.add_original(clause_lits.iter().copied());
-
-        // Track clause for incremental solving
-        if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
-            current_level_clauses.push(clause_id);
-        }
-
-        let lit0 = clause_lits[0];
-        let lit1 = clause_lits[1];
-
-        self.watches
-            .add(lit0.negate(), Watcher::new(clause_id, lit1));
-        self.watches
-            .add(lit1.negate(), Watcher::new(clause_id, lit0));
-
-        // `pre_check_effective_unit` already determined -- against the exact
-        // pre-watch-selection trail state, before anything here could shift
-        // it -- whether this clause needs its sole undefined literal forced,
-        // and confirmed every false literal is a permanent level-0 fact when
-        // it did. Apply that decision now that `clause_id` exists.
-        if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
-            self.trail.assign_propagation_at(forced, clause_id, 0);
-        }
-
-        true
-    }
-
-    /// Rank a literal for two-watched-literal selection; a higher rank is a
-    /// better watch. A true literal is best (the clause is satisfied through it),
-    /// then an unassigned literal, and finally a false literal — and among false
-    /// literals the one assigned at the highest decision level (falsified latest)
-    /// is preferred. Watching the two highest-ranked literals mirrors MiniSat's
-    /// attachClause invariant so a watch always fires when a watched literal is
-    /// (re)falsified.
-    fn watch_rank(&self, l: Lit) -> (u8, u32) {
-        let v = self.trail.lit_value(l);
-        if v.is_true() {
-            (2, u32::MAX)
-        } else if v.is_false() {
-            (0, self.trail.level(l.var()))
-        } else {
-            (1, u32::MAX)
-        }
-    }
-
-    /// Add a clause from DIMACS literals
-    pub fn add_clause_dimacs(&mut self, lits: &[i32]) -> bool {
-        self.add_clause(lits.iter().map(|&l| Lit::from_dimacs(l)))
     }
 
     /// Solve the SAT problem
     pub fn solve(&mut self) -> SolverResult {
+        // A prior `add_clause` tried to reintroduce a bounded-variable-
+        // eliminated variable with no sound way to honor it (see
+        // `SolverError::EliminatedVariableReintroduction`). Answering `Sat`
+        // or `Unsat` here could be wrong in either direction — refuse rather
+        // than guess. `self.error()` explains why to a caller that checks.
+        if self.fatal_error.is_some() {
+            return SolverResult::Unknown;
+        }
+
         // Check if trivially unsatisfiable
         if self.trivially_unsat {
             self.drat_emit_empty();
+            // Always a no-op in practice by this point: every path that can
+            // set `trivially_unsat` before `solve()` is even called (every
+            // branch of `add_clause`) already finalized the LRAT proof of
+            // its own accord — see `lrat_emit_empty_from`'s idempotency
+            // guard. Called anyway for defensive completeness, mirroring
+            // `drat_emit_empty` immediately above.
+            self.lrat_emit_empty_from(&[], 0);
             return SolverResult::Unsat;
         }
 
         // Initial propagation
-        if self.propagate().is_some() {
+        if let Some(conflict) = self.propagate() {
             self.drat_emit_empty();
+            let seed_lits: SmallVec<[Lit; 8]> = self
+                .clauses
+                .get(conflict)
+                .map(|c| c.lits.iter().copied().collect())
+                .unwrap_or_default();
+            let final_id = self.lrat_id_of(conflict).unwrap_or(0);
+            self.lrat_emit_empty_from(&seed_lits, final_id);
             return SolverResult::Unsat;
+        }
+
+        // One-shot inprocessing toolkit, run once before search proper
+        // starts. Each mechanism below is individually opt-in (see the
+        // `SolverConfig` fields it checks) and latches itself so calling it
+        // here unconditionally is safe even when disabled or already run —
+        // see each one's own doc comment for its guard conditions. Bundled
+        // together in one place because their guards and effects compose:
+        // probing can only add facts (never removes a variable, so it is
+        // safe to run regardless of what the other two decide), while
+        // equivalent-literal substitution and bounded variable elimination
+        // are mutually exclusive with each other by construction (see
+        // `Solver::fold_equivalent_literals`'s doc comment). Bails out
+        // immediately on any UNSAT verdict rather than running the remaining
+        // mechanisms against an already-contradictory formula.
+        if self.config.enable_failed_literal_probing {
+            self.failed_literal_probing();
+            self.probe_hyper_binaries();
+            if self.trivially_unsat {
+                self.drat_emit_empty();
+                // Unreachable while any proof is being traced: probing
+                // gates itself off entirely in that case (see
+                // `Solver::failed_literal_probing`). Present for defensive
+                // completeness, not because this path is expected to run.
+                self.lrat_emit_empty_from(&[], 0);
+                return SolverResult::Unsat;
+            }
+        }
+        if matches!(
+            self.fold_equivalent_literals(),
+            equiv::PreprocessOutcome::Unsat
+        ) {
+            self.trivially_unsat = true;
+            self.drat_emit_empty();
+            // Unreachable while any proof is being traced (ELS gates itself
+            // off — see `Solver::fold_equivalent_literals`); present
+            // for defensive completeness only.
+            self.lrat_emit_empty_from(&[], 0);
+            return SolverResult::Unsat;
+        }
+        self.bounded_variable_elimination();
+        if self.trivially_unsat {
+            self.drat_emit_empty();
+            // Unreachable while any proof is being traced (BVE gates itself
+            // off — see `Solver::bounded_variable_elimination`); present for
+            // defensive completeness only.
+            self.lrat_emit_empty_from(&[], 0);
+            return SolverResult::Unsat;
+        }
+        // BVE's resolvents commonly subsume an original clause they were
+        // derived from (or each other); sweep them with the existing
+        // subsumption pass so the pass actually shrinks the database instead
+        // of just replacing clauses one-for-one. Investigated whether this
+        // needs its own reason-clause guard the way the PR's equivalent pass
+        // has one: it does not, here — `ClauseDatabase::add` never reuses a
+        // freed slot and a clause marked `deleted` keeps its literals intact
+        // forever (see its doc comment), so a reason lookup for an
+        // already-made trail assignment stays valid even after the clause it
+        // points to is marked deleted. Only run when BVE has eliminated at
+        // least one variable (in this call or an earlier one on the same
+        // solver), skipping the `Preprocessor` allocation and clause scan on
+        // every ordinary solve where BVE is disabled or found nothing to do.
+        if !self.bve_order.is_empty() {
+            let mut preprocessor = crate::Preprocessor::new(self.num_vars);
+            preprocessor.subsumption_elimination(&mut self.clauses);
+            self.rebuild_propagation_index();
         }
 
         loop {
@@ -1027,6 +896,13 @@ impl Solver {
                     // Conflict under only level-0 (unconditional) facts: the empty
                     // clause is derivable, completing the DRAT proof of UNSAT.
                     self.drat_emit_empty();
+                    let seed_lits: SmallVec<[Lit; 8]> = self
+                        .clauses
+                        .get(conflict)
+                        .map(|c| c.lits.iter().copied().collect())
+                        .unwrap_or_default();
+                    let final_id = self.lrat_id_of(conflict).unwrap_or(0);
+                    self.lrat_emit_empty_from(&seed_lits, final_id);
                     return SolverResult::Unsat;
                 }
 
@@ -1041,8 +917,23 @@ impl Solver {
                 if learnt_clause.is_empty() {
                     self.trivially_unsat = true;
                     self.drat_emit_empty();
+                    let seed_lits: SmallVec<[Lit; 8]> = self
+                        .clauses
+                        .get(conflict)
+                        .map(|c| c.lits.iter().copied().collect())
+                        .unwrap_or_default();
+                    let final_id = self.lrat_id_of(conflict).unwrap_or(0);
+                    self.lrat_emit_empty_from(&seed_lits, final_id);
                     return SolverResult::Unsat;
                 }
+
+                // Compute the LRAT hint chain *before* backtracking: it
+                // walks the trail as it stands right now, and backtracking
+                // is about to unassign exactly the literals a non-trivial
+                // backtrack level was computed to discard — often the same
+                // literals this chain needs to cite. `None` when LRAT
+                // tracing is off.
+                let lrat_hints = self.lrat_hints_for_conflict(conflict, &learnt_clause);
 
                 // Backtrack with phase saving
                 self.backtrack_with_phase_saving(backtrack_level);
@@ -1052,11 +943,31 @@ impl Solver {
                 // the current database by construction of 1-UIP learning). Covers
                 // both the unit and general learned-clause branches below.
                 self.drat_add(&learnt_clause);
+                // Same clause, registered with LRAT using the hint chain
+                // captured above — a no-op returning `None` when LRAT
+                // tracing is off. The returned id is stashed here and
+                // attached to whichever `clause_id` ClauseDatabase assigns
+                // below (unit or general branch).
+                let learned_lrat_id =
+                    lrat_hints.and_then(|hints| self.lrat_finish_learn(&learnt_clause, &hints));
 
                 // Learn clause
                 if learnt_clause.len() == 1 {
                     // Store unit learned clause in database for persistence
                     let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+                    if let Some(id) = learned_lrat_id {
+                        self.lrat_set_clause_id(clause_id, id);
+                        // `assert_learned_clause` below installs this fact via
+                        // `Trail::assign_unit_fact`, which — like
+                        // `add_clause`'s own unit-clause path — records
+                        // `Reason::Decision` rather than
+                        // `Reason::Propagation(clause_id)` (a unit fact has
+                        // no watched literals to propagate through). Without
+                        // this, `lrat_hint_chain`'s trail replay would see a
+                        // plain decision here and cite no justification at
+                        // all for a variable that is very much not free.
+                        self.lrat_set_unit_justification(learnt_clause[0].var(), id);
+                    }
                     self.stats.learned_clauses += 1;
                     self.stats.unit_clauses += 1;
                     self.learned_clause_ids.push(clause_id);
@@ -1077,6 +988,19 @@ impl Solver {
                     self.global_lbd_sum += u64::from(lbd);
                     self.global_lbd_count += 1;
 
+                    // Feed the active mode's glue trackers (the stable/focused
+                    // schedule's own quality signal, independent of the
+                    // legacy `recent_lbd_sum`/`global_lbd_sum` counters above)
+                    // and advance the stable-mode reluctant-doubling clock —
+                    // it ticks once per conflict regardless of which mode is
+                    // active so its sequence position stays meaningful across
+                    // a focused stretch, ready to resume the instant stable
+                    // mode is re-entered.
+                    let glue = f64::from(lbd);
+                    self.glue_current.recent.observe(glue);
+                    self.glue_current.baseline.observe(glue);
+                    self.reluctant.tick();
+
                     // Reset recent LBD tracking periodically
                     if self.recent_lbd_count >= 5000 {
                         self.recent_lbd_sum /= 2;
@@ -1084,6 +1008,9 @@ impl Solver {
                     }
 
                     let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
+                    if let Some(id) = learned_lrat_id {
+                        self.lrat_set_clause_id(clause_id, id);
+                    }
                     self.stats.learned_clauses += 1;
 
                     // Set LBD score for the clause
@@ -1118,9 +1045,7 @@ impl Solver {
                 self.chb.decay();
                 self.lrb.decay();
                 self.lrb.on_conflict();
-                self.clauses.decay_activity(self.config.clause_decay);
-                // Increase clause bump increment (inverse of decay)
-                self.clause_bump_increment /= self.config.clause_decay;
+                self.decay_clause_activity();
 
                 // Track conflicts for clause deletion
                 self.conflicts_since_deletion += 1;
@@ -1140,10 +1065,46 @@ impl Solver {
                     }
                 }
 
-                // Check for restart
-                if self.stats.conflicts >= self.restart_threshold {
+                // Stable/focused mode switch (see `Solver::check_stabilize`).
+                // Checked before the restart decision so the *new* mode (if a
+                // switch just happened) governs this restart's condition.
+                self.check_stabilize();
+
+                // Restart decision: the stable/focused schedule, when enabled,
+                // replaces the plain threshold check with a per-mode condition
+                // (focused: Glucose EMA divergence; stable: reluctant-doubling
+                // clock). With the schedule disabled, fall back to the legacy
+                // per-strategy threshold (`restart_threshold`, computed by
+                // `Solver::restart`'s `match` on `restart_strategy`).
+                let should_restart = if self.config.enable_stabilize {
+                    if self.stable {
+                        self.reluctant.due()
+                    } else {
+                        // The Glucose EMA condition is cheap but not free;
+                        // check it only once every couple of conflicts rather
+                        // than on every single one.
+                        if self.stats.conflicts < self.lim_restart {
+                            false
+                        } else {
+                            self.lim_restart = self.stats.conflicts.saturating_add(2);
+                            let slow = self.glue_current.baseline.get();
+                            let fast = self.glue_current.recent.get();
+                            // 10% margin against the baseline; guard the
+                            // all-zero startup state (no samples yet).
+                            slow > 0.0 && fast >= 1.10 * slow
+                        }
+                    }
+                } else {
+                    self.stats.conflicts >= self.restart_threshold
+                };
+                if should_restart {
                     self.restart();
-                    self.debug_check_restart_consistency();
+                    // Reuse-trail restarts stop above level 0 by design, so
+                    // the level-0 invariant `debug_check_restart_consistency`
+                    // checks does not apply to them.
+                    if !self.config.reuse_trail {
+                        self.debug_check_restart_consistency();
+                    }
                 }
 
                 // Periodic inprocessing
@@ -1162,13 +1123,16 @@ impl Solver {
                     self.stats.decisions += 1;
                     self.trail.new_decision_level();
 
-                    // Use phase saving with random polarity
+                    // Use phase saving with random polarity, flipped by the
+                    // rephase inversion flag so a restart following a rephase
+                    // round explores the complementary region instead of
+                    // re-deriving the trail it just abandoned.
                     let polarity = if self.rand_bool(self.config.random_polarity_prob) {
                         // Random polarity
                         self.rand_bool(0.5)
                     } else {
-                        // Saved phase
-                        self.phase[var.index()]
+                        // Saved phase, optionally inverted by rephasing
+                        self.phase[var.index()] ^ self.phase_inverted
                     };
                     let lit = if polarity {
                         Lit::pos(var)
@@ -1197,10 +1161,40 @@ impl Solver {
     ///
     /// # Returns
     /// * `(SolverResult, Option<Vec<Lit>>)` - Result and unsat core (if UNSAT)
+    ///
+    /// # LRAT tracing is unsupported here
+    ///
+    /// This entry point's clause-learning goes through `Solver::learn_clause`
+    /// (a private method, not part of this crate's public API) rather than
+    /// the plain [`Solver::solve`] loop's hint-chain-aware inline
+    /// path, and an assumption literal is installed without going through
+    /// [`Solver::add_clause`] (so it has no original-clause LRAT id to be
+    /// justified by regardless). Rather than emit an LRAT proof this port
+    /// cannot back with a real hint chain, LRAT tracing is force-disabled the
+    /// instant this entry point runs (DRAT is unaffected — `learn_clause`
+    /// already emits it correctly, self-justifying, independent of this gap).
+    ///
+    /// # Unsat core is expressed in the caller's own literals
+    ///
+    /// Internally, an assumption may be rewritten before it is decided on
+    /// (see `resolve_reintroduced_literal`, a private method not part of
+    /// this crate's public API: an equivalent-literal-substituted variable
+    /// becomes its class representative). A core drawn from those *resolved*
+    /// literals is translated back to the caller's originals (via
+    /// `translate_core_to_original`, likewise private) before this method
+    /// returns, so `core ⊆ assumptions` — a genuine subset of exactly what
+    /// was passed in — always holds, matching what a MaxSAT-style caller
+    /// keying relaxations on its own selector literals expects.
     pub fn solve_with_assumptions(
         &mut self,
         assumptions: &[Lit],
     ) -> (SolverResult, Option<Vec<Lit>>) {
+        self.disable_lrat_proof();
+        // See `Solver::solve`'s identical guard: a prior `add_clause` may
+        // have tried to reintroduce a bounded-variable-eliminated variable.
+        if self.fatal_error.is_some() {
+            return (SolverResult::Unknown, None);
+        }
         if self.trivially_unsat {
             return (SolverResult::Unsat, Some(Vec::new()));
         }
@@ -1211,6 +1205,30 @@ impl Solver {
                 self.new_var();
             }
         }
+
+        // Resolve each assumption literal exactly like a fresh `add_clause`
+        // literal (see `Self::resolve_reintroduced_literal`): an
+        // equivalent-literal-substituted variable is rewritten to its class
+        // representative — still the same constraint, since the map exists
+        // only because that equivalence was already proven — and a
+        // bounded-variable-eliminated one has no sound rewrite available and
+        // poisons the solver instead of guessing (see `SolverError`).
+        // Everything below decides on and analyzes these *resolved*
+        // literals, but any unsat core handed back to the caller is
+        // translated back to `original_assumptions` (see
+        // `Self::translate_core_to_original`) before it is returned: a
+        // caller of this MaxSAT-style API expects the core to be a genuine
+        // subset of exactly what it passed in, not a class representative it
+        // never mentioned.
+        let original_assumptions = assumptions;
+        let mut resolved_assumptions: Vec<Lit> = Vec::with_capacity(assumptions.len());
+        for &lit in assumptions {
+            match self.resolve_reintroduced_literal(lit) {
+                Some(resolved) => resolved_assumptions.push(resolved),
+                None => return (SolverResult::Unknown, None),
+            }
+        }
+        let assumptions: &[Lit] = &resolved_assumptions;
 
         // A prior solve() may have returned Sat while leaving its full model on the
         // trail (decisions at levels > 0). Fully restart the search state by
@@ -1247,6 +1265,8 @@ impl Solver {
                 // Conflict with assumption - extract core from conflicting assumptions
                 let core = self.extract_assumption_core(assumptions, i);
                 self.backtrack(assumption_level_start);
+                let core =
+                    Self::translate_core_to_original(core, assumptions, original_assumptions);
                 return (SolverResult::Unsat, Some(core));
             }
 
@@ -1260,6 +1280,8 @@ impl Solver {
                 // contributing assumptions from the conflict clause.
                 let core = self.analyze_assumption_conflict(assumptions, conflict);
                 self.backtrack(assumption_level_start);
+                let core =
+                    Self::translate_core_to_original(core, assumptions, original_assumptions);
                 return (SolverResult::Unsat, Some(core));
             }
         }
@@ -1284,6 +1306,8 @@ impl Solver {
                     // Conflict forces backtracking past assumptions - UNSAT
                     let core = self.analyze_assumption_conflict(assumptions, conflict);
                     self.backtrack(assumption_level_start);
+                    let core =
+                        Self::translate_core_to_original(core, assumptions, original_assumptions);
                     return (SolverResult::Unsat, Some(core));
                 }
 
@@ -1297,6 +1321,8 @@ impl Solver {
                 if learnt_clause.is_empty() {
                     let core = self.analyze_assumption_conflict(assumptions, conflict);
                     self.backtrack(assumption_level_start);
+                    let core =
+                        Self::translate_core_to_original(core, assumptions, original_assumptions);
                     return (SolverResult::Unsat, Some(core));
                 }
 
@@ -1318,7 +1344,7 @@ impl Solver {
                     let polarity = if self.rand_bool(self.config.random_polarity_prob) {
                         self.rand_bool(0.5)
                     } else {
-                        self.phase.get(var.index()).copied().unwrap_or(false)
+                        self.phase.get(var.index()).copied().unwrap_or(false) ^ self.phase_inverted
                     };
                     let lit = if polarity {
                         Lit::pos(var)
@@ -1336,6 +1362,30 @@ impl Solver {
                 }
             }
         }
+    }
+
+    /// Translate a core drawn from `resolved` (the literals
+    /// [`Self::solve_with_assumptions`] actually decided on) back to the
+    /// caller's `original` assumption literals it corresponds to.
+    ///
+    /// `resolved[i]` is what `original[i]` became after
+    /// [`Self::resolve_reintroduced_literal`]; a core literal that does not
+    /// match any position in `resolved` (should not happen — every core
+    /// literal comes from `resolved` in the first place) is passed through
+    /// unchanged rather than dropped, so a coding error here fails toward
+    /// "core has an unexpected literal" rather than silently shrinking the
+    /// core. First occurrence wins on a duplicate resolved literal, matching
+    /// how `analyze_final_core`'s own `assumption_of` map is built from this
+    /// same `resolved` list.
+    fn translate_core_to_original(core: Vec<Lit>, resolved: &[Lit], original: &[Lit]) -> Vec<Lit> {
+        core.into_iter()
+            .map(|lit| {
+                resolved
+                    .iter()
+                    .position(|&r| r == lit)
+                    .map_or(lit, |i| original[i])
+            })
+            .collect()
     }
 
     /// Get the model (if sat)
@@ -1435,6 +1485,7 @@ impl Solver {
                     // Record the retraction in the DRAT proof (if enabled) before
                     // the clause's literals become inaccessible.
                     self.drat_delete(clause_id);
+                    self.lrat_delete(clause_id);
 
                     // Remove from clause database
                     self.clauses.remove(clause_id);
@@ -1471,6 +1522,11 @@ impl Solver {
                         self.chb.insert(var);
                     }
                     self.lrb.unassign(var);
+                    // A stale unit-justification id for a now-unassigned
+                    // variable must not survive to (wrongly) back whatever
+                    // this variable is reassigned to next — see
+                    // `Self::lrat_clear_unit_justification`.
+                    self.lrat_clear_unit_justification(var);
                 }
             }
 
@@ -1522,6 +1578,15 @@ impl Solver {
         self.watches.clear();
         self.vsids.clear();
         self.chb.clear();
+        // `VMTF` (like `LRB`) only ever *grows* on `resize` — it has no
+        // in-place `clear()`, because a shrink-then-regrow would leave stale
+        // links pointing at variable indices the fresh problem may never
+        // recreate. Rebuilding it empty here is the only safe way to make
+        // `new_var` repopulate it from scratch after `num_vars` is reset to 0
+        // below; otherwise a decision could return a variable index beyond
+        // the new (smaller) problem's range, which every var-indexed array
+        // downstream would then index out of bounds.
+        self.vmtf = VMTF::new(0);
         self.stats = SolverStats::default();
         self.learnt.clear();
         self.seen.clear();
@@ -1537,7 +1602,20 @@ impl Solver {
         self.restart_threshold = self.config.restart_interval;
         self.trivially_unsat = false;
         self.phase.clear();
+        self.phase_inverted = false;
+        self.best_phase.clear();
+        self.best_trail_size = 0;
+        self.rephase_count = 0;
         self.luby_index = 0;
+        self.stable = false;
+        self.stabphases = 0;
+        self.glue_current = ModeLbdTrackers::new();
+        self.glue_saved = ModeLbdTrackers::new();
+        self.reluctant = LubyClock::default();
+        self.ticks_focused = 0;
+        self.ticks_stable = 0;
+        self.lim_restart = 0;
+        self.lim_stabilize = 0;
         self.level_marks.clear();
         self.lbd_mark = 0;
         self.learned_clause_ids.clear();
@@ -1553,6 +1631,26 @@ impl Solver {
         // Drop any proof logger: its clause ids refer to the now-cleared database,
         // so continuing to emit against it would produce a meaningless proof.
         self.drat = None;
+        self.lrat = None;
+        self.clause_lrat_id.clear();
+        self.lrat_unit_id.clear();
+        self.lrat_unsat_finalized = false;
+        // Drop the inprocessing toolkit's one-shot latches and reconstruction
+        // maps along with everything else. Without this a solver reused via
+        // `reset()` would keep `bve_latched`/`equiv_fold_latched` set from the
+        // *previous* problem, so the toolkit would silently never run again,
+        // and any surviving `equiv_substitution`/`bve_def` entries — indexed
+        // by the old problem's variables — would overwrite the new problem's
+        // live variables with garbage during `save_model`.
+        self.bve_latched = false;
+        self.equiv_fold_latched = false;
+        self.equiv_substitution.clear();
+        self.equiv_substitution_sized = false;
+        self.bve_def.clear();
+        self.bve_order.clear();
+        self.fatal_error = None;
+        self.propagate_step_limit = None;
+        self.propagate_aborted = false;
     }
 
     /// Get the current trail (for theory solvers)

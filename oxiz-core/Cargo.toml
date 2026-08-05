@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Core AST, Sorts, and Traits for OxiZ SMT Solver"
 keywords = ["smt", "ast", "logic"]
 categories = ["algorithms", "data-structures"]

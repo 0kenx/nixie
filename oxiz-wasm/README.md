@@ -2,11 +2,11 @@
 
 WebAssembly bindings for the OxiZ SMT solver, enabling high-performance SMT solving directly in web browsers and Node.js.
 
-## Status (v0.3.1)
+## Status (v0.3.2)
 
 | Metric | Value |
 |:-------|:------|
-| Version | 0.3.1 |
+| Version | 0.3.2 |
 | Status | Stable |
 | Tests | 155 passing (`cargo nextest run -p oxiz-wasm --all-features`) |
 | Source files | 30 |

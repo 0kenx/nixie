@@ -17,7 +17,6 @@ target
 # Root-anchored on purpose: per-crate lockfiles (fuzz, bench/z3_parity) stay tracked.
 /Cargo.lock
 /bench/z3_parity/results.json
-/bench/z3_parity/results.*.json
 
 # claude
 .claude/

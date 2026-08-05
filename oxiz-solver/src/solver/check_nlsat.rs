@@ -17,11 +17,26 @@ use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::{One, ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
+use oxiz_theories::nl_eval::{Interpretation, holds_under};
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints, dispatch_nra_constraints};
 use smallvec::SmallVec;
 
 use super::Solver;
-use super::types::SolverResult;
+use super::types::{Model, SolverResult};
+
+/// Narrow an exact rational witness to the fixed-width rational the term
+/// language stores, or `None` when it does not fit.
+///
+/// Refusing is the point: a `Real` value that has no exact `Rational64` form
+/// must not be rounded into one, because the rounded value would then be
+/// reported by `(get-value ...)` as *the* solution while satisfying none of
+/// the constraints the real one did.
+fn narrow_rational(value: &num_rational::BigRational) -> Option<num_rational::Rational64> {
+    use num_traits::ToPrimitive;
+    let numerator = value.numer().to_i64()?;
+    let denominator = value.denom().to_i64()?;
+    (denominator != 0).then(|| num_rational::Rational64::new(numerator, denominator))
+}
 
 /// A polynomial atom extracted from an assertion.
 /// Represents: `coeff * square_term OP constant`
@@ -67,25 +82,152 @@ impl Solver {
     /// - `x * y`, `x * y * z` (products of distinct variables)
     /// - `x * x` (squares / higher powers via repeated multiplication)
     /// - `(x + 1) * (y - 2)` (products of linear expressions)
-    pub(super) fn dispatch_nl_solver(&self, manager: &TermManager) -> Option<SolverResult> {
+    ///
+    /// # The model
+    ///
+    /// A `Sat` from these procedures arrives with the witness that justifies
+    /// it, and [`Self::adopt_nl_witness`] turns that witness into the
+    /// `Solver`'s own model so a following `(get-model)` / `(get-value ...)`
+    /// can answer. The verdict does not depend on whether that succeeds: the
+    /// procedures' own trust conditions decide `Sat`, and a witness this
+    /// solver cannot represent (an irrational NRA root, a rational too wide
+    /// for the value type) simply leaves the model unset, which is exactly the
+    /// behaviour before witnesses existed. What must never happen — and does
+    /// not — is publishing a model that has not been re-checked against the
+    /// assertions it claims to satisfy.
+    pub(super) fn dispatch_nl_solver(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
         let logic = self.logic.as_deref()?;
 
         let is_nia = logic.contains("NIA") || (logic.contains("NIRA") && !logic.contains("NRA"));
         let is_nra = logic.contains("NRA") && !is_nia;
 
-        if is_nia {
-            dispatch_nia_constraints(&self.assertions, manager, true).map(|r| match r {
-                NlDispatchResult::Sat => SolverResult::Sat,
-                NlDispatchResult::Unsat => SolverResult::Unsat,
-            })
+        let dispatched = if is_nia {
+            dispatch_nia_constraints(&self.assertions, manager, true)
         } else if is_nra {
-            dispatch_nra_constraints(&self.assertions, manager).map(|r| match r {
-                NlDispatchResult::Sat => SolverResult::Sat,
-                NlDispatchResult::Unsat => SolverResult::Unsat,
-            })
+            dispatch_nra_constraints(&self.assertions, manager)
         } else {
-            None
+            return None;
+        };
+
+        if let Some(dispatched) = dispatched {
+            return match dispatched {
+                NlDispatchResult::Sat(witness) => {
+                    // The verdict is the dispatcher's, decided by its own trust
+                    // conditions; installing a model is a separate, best-effort
+                    // step that may decline a witness it cannot represent.
+                    let adopted = self.adopt_nl_witness(&witness, manager);
+                    // Declining for representational reasons (an Int-sorted
+                    // term with a fractional witness, a real with no exact
+                    // narrow form) is ordinary. Declining because the witness
+                    // does not *satisfy the assertions* is not: the dispatcher
+                    // has just claimed `Sat` on the strength of that very
+                    // witness, so a re-check that disagrees means one of the
+                    // two is wrong. Release behaviour is unchanged — the
+                    // verdict stands, modelless — but a debug build must not
+                    // let a signal that strong pass in silence.
+                    debug_assert!(
+                        adopted
+                            || witness.num_count() == 0
+                            || holds_under(&self.assertions, manager, &witness),
+                        "the cell-decomposition dispatcher reported Sat with a witness \
+                         that does not satisfy the assertions"
+                    );
+                    Some(SolverResult::Sat)
+                }
+                NlDispatchResult::Unsat => Some(SolverResult::Unsat),
+            };
         }
+
+        // The cell-decomposition core had no verdict, which is where the
+        // search-based procedures come in. Both of them answer `Sat` or
+        // nothing -- neither can derive `unsat` -- so running them here can
+        // only turn an `unknown` into a `sat`, never change a verdict the core
+        // had already reached. That is why they run second, and why gating
+        // them off is a budget decision rather than a soundness one.
+        if !(is_nia && self.config.nonlinear_model_search) {
+            return None;
+        }
+        let effort = oxiz_theories::nl_repair_search::Effort::default();
+        let assertions = self.assertions.clone();
+
+        // Model repair over the arithmetic as written.
+        if let Some(witness) =
+            oxiz_theories::nl_repair_search::find_integer_model(&assertions, manager, effort)
+            && self.adopt_nl_witness(&witness, manager)
+        {
+            return Some(SolverResult::Sat);
+        }
+
+        // Failing that, the problem may simply have been invisible: an array
+        // read or an uninterpreted application in an arithmetic position has
+        // no polynomial translation, so the atom containing it was dropped and
+        // what the engines solved was a weaker formula. The grammar reduction
+        // abstracts those foreign terms into arithmetic unknowns and searches
+        // the result. Its rewrite is not trusted -- only a witness verified
+        // against the untouched assertions licenses the verdict.
+        if let Some(witness) =
+            oxiz_theories::nl_ground_reduce::find_ground_model(&assertions, manager, effort)
+            && self.adopt_nl_witness(&witness, manager)
+        {
+            return Some(SolverResult::Sat);
+        }
+        None
+    }
+
+    /// Install `witness` as this solver's model, but only if it really is one.
+    ///
+    /// The witness is re-evaluated against every current assertion by
+    /// [`oxiz_theories::nl_eval::holds_under`] — in exact `BigRational`
+    /// arithmetic, from the leaves up, over the *original* assertion terms
+    /// rather than any rewritten form. Only a complete positive result
+    /// installs anything; a partial witness (one that leaves a leaf the
+    /// assertions mention unassigned) fails that check and leaves the model
+    /// unset rather than reporting values that do not add up.
+    ///
+    /// Values are stored as ordinary constant terms, so the existing
+    /// `(get-value ...)` path reads them with no special case. A value outside
+    /// [`Rational64`]'s range has no such term and is skipped — which makes
+    /// the whole install fail the completeness check below, again leaving no
+    /// model rather than a partial one.
+    ///
+    /// Returns whether a model was installed, which a caller may use as its
+    /// licence to report `Sat`. Reading `self.model.is_some()` instead would
+    /// be wrong: that field can still hold the previous check's model, so a
+    /// witness rejected here would inherit someone else's verdict.
+    fn adopt_nl_witness(&mut self, witness: &Interpretation, manager: &mut TermManager) -> bool {
+        if witness.num_count() == 0 {
+            return false;
+        }
+        if !holds_under(&self.assertions, manager, witness) {
+            return false;
+        }
+        let int_sort = manager.sorts.int_sort;
+        let mut model = Model::new();
+        for (term, value) in witness.numeric_entries() {
+            let is_integer_sorted = manager.get(term).is_some_and(|t| t.sort == int_sort);
+            let value_term = if is_integer_sorted {
+                if !value.is_integer() {
+                    return false;
+                }
+                manager.mk_int(value.to_integer())
+            } else {
+                let Some(exact) = narrow_rational(value) else {
+                    return false;
+                };
+                manager.mk_real(exact)
+            };
+            model.set(term, value_term);
+        }
+        for (term, value) in witness.truth_entries() {
+            let value_term = if value {
+                manager.mk_true()
+            } else {
+                manager.mk_false()
+            };
+            model.set(term, value_term);
+        }
+        self.model = Some(model);
+        true
     }
 
     /// Check nonlinear arithmetic constraints for early UNSAT detection.
