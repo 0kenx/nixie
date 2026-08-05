@@ -155,6 +155,17 @@ pub struct Solver {
     /// z3-style triangle axiomatization can target exactly them, keeping the
     /// added boolean structure small.
     pub(super) ite_result_terms: FxHashSet<TermId>,
+    /// Function symbols that appear inside an asserted quantifier (the body or
+    /// a trigger of a `forall`/`exists`). `purify_numeric_uf_args` skips
+    /// abstracting the numeric arguments of any function in this set, so a
+    /// quantified goal's ground pins (`(= (g 0) 10)`) reach MBQI / model-
+    /// certification as clean `Eq` nodes rather than the mangled
+    /// `And(g v 10, v 0)` the certifier cannot certify. Per-function (not
+    /// global) so an *unrelated* quantifier over `g` does not suppress `f`'s
+    /// purification. Accumulates across `assert`s; a stale entry after `pop`
+    /// only over-conservatively skips a sound purification, so it is left in
+    /// place (cleared wholesale by `reset`).
+    pub(super) quantifier_uf_funcs: FxHashSet<oxiz_core::interner::Spur>,
     /// Care-graph split pairs for trailed dedup.
     pub(super) care_split_pairs: FxHashSet<(TermId, TermId)>,
     /// Grammar-driven arithmetic purification state (QF_ANIA): rewrites
@@ -439,6 +450,7 @@ impl Solver {
             has_bv_arith_ops: false,
             arith_terms: FxHashSet::default(),
             ite_result_terms: FxHashSet::default(),
+            quantifier_uf_funcs: FxHashSet::default(),
             care_split_pairs: FxHashSet::default(),
             arith_purify: purify_arith::PurifyState::new(),
             table_index_terms: FxHashSet::default(),

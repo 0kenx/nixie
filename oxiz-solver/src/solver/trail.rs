@@ -161,6 +161,10 @@ impl super::Solver {
             // a stale entry after `pop` only makes `axiomatize_arith_constant_
             // equalities` re-emit a *valid* (redundant) triangle axiom, so it is
             // sound to leave it (cleared wholesale only by `reset`).
+            quantifier_uf_funcs: _, // accumulates function symbols seen inside
+            // asserted quantifiers; a stale entry after `pop` only makes
+            // `purify_numeric_uf_args` over-conservatively skip a *sound*
+            // purification, so it is left in place (cleared only by `reset`).
             table_index_terms: _, // accumulates equality-ite table indices across
             // `assert`s; a stale entry after `pop` only makes
             // `eager_table_index_case_split` re-emit a *valid* (redundant)

@@ -1571,7 +1571,14 @@ impl Solver {
             if matches!(t.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
                 return term;
             }
-            if let TermKind::Apply { args, .. } = &t.kind {
+            if let TermKind::Apply { func, args } = &t.kind {
+                // Per-function gate: never purify the numeric arguments of a
+                // function that appears in a quantifier — its ground pins must
+                // reach MBQI/model-certification as clean `Eq`. An unrelated
+                // quantifier over another function does not suppress this one.
+                if self.quantifier_uf_funcs.contains(func) {
+                    continue;
+                }
                 for &arg in args {
                     let Some(at) = manager.get(arg) else { continue };
                     let numeric = at.sort == int_sort || at.sort == real_sort;
