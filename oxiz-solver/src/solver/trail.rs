@@ -205,6 +205,9 @@ impl super::Solver {
             arith_defined_terms: _, // TRAIL: ArithDefinedTermAdded
             arith_const_axiom_pairs: _, // TRAIL: ArithConstAxiomAdded
             care_split_pairs: _, // TRAIL: CareSplitAdded
+            numeric_eq_split_pairs: _, // dedup across `check`s; SAT base
+            // clauses survive `pop`, so a stale entry only suppresses re-emitting
+            // a clause that is still present (sound).
             dt_axiom_instances: _, // TRAIL: DtAxiomInstanceAdded
             dt_axioms_incomplete: _, // SNAPSHOT
             entailed_int_consts: _, // cleared wholesale by `pop` (see the field doc); empty = re-fold, never stale

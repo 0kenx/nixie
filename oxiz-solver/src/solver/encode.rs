@@ -971,13 +971,11 @@ impl Solver {
     /// solver SEE the equality, enabling the combination to reason about array
     /// select results.
     pub(super) fn ensure_numeric_equality_splits(&mut self, manager: &mut TermManager) {
-        use rustc_hash::FxHashSet;
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;
-        let mut seen: FxHashSet<(TermId, TermId)> = FxHashSet::default();
-        // Collect pairs first (avoids holding &self.assertions across &mut self).
+        // Collect the assertion spine first (avoids holding &self.assertions
+        // across the &mut self clause emission below).
         let assertions: Vec<TermId> = self.assertions.clone();
-        let mut pairs: Vec<(TermId, TermId)> = Vec::new();
         for &assertion in &assertions {
             for st in collect_subterms(assertion, manager) {
                 let Some(t) = manager.get(st) else { continue };
@@ -996,11 +994,15 @@ impl Solver {
                 let nb = manager.get(b).is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
                 if !na || !nb { continue; }
                 let pair = if a < b { (a, b) } else { (b, a) };
-                if seen.insert(pair) { pairs.push((a, b)); }
+                // Dedup across `check`s: the trichotomy clause persists in the
+                // SAT core (it only backtracks to root, never removes base
+                // clauses), so re-emitting the same pair every `check`
+                // accumulated duplicates forever (scope_rebase). `insert`
+                // returns false for a pair seen this call OR a prior call.
+                if self.numeric_eq_split_pairs.insert(pair) {
+                    self.add_arith_trichotomy_clause(a, b, manager);
+                }
             }
-        }
-        for (a, b) in pairs {
-            self.add_arith_trichotomy_clause(a, b, manager);
         }
     }
 

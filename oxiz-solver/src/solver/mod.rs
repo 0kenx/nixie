@@ -168,6 +168,15 @@ pub struct Solver {
     pub(super) quantifier_uf_funcs: FxHashSet<oxiz_core::interner::Spur>,
     /// Care-graph split pairs for trailed dedup.
     pub(super) care_split_pairs: FxHashSet<(TermId, TermId)>,
+    /// Numeric-equality trichotomy pairs already emitted by
+    /// `ensure_numeric_equality_splits`. The trichotomy clauses persist in the
+    /// SAT core across `check`s (the core only backtracks to root, it does not
+    /// remove base clauses), so re-emitting them every `check` accumulated
+    /// duplicates forever (scope_rebase: counts climbed [28,36,44,…]). Dedup
+    /// across `check`s here. Accumulates like `care_split_pairs`-style sets;
+    /// a stale entry after `pop` only suppresses re-emitting a clause that is
+    /// still present (SAT base clauses survive `pop`), so it is sound to leave.
+    pub(super) numeric_eq_split_pairs: FxHashSet<(TermId, TermId)>,
     /// Grammar-driven arithmetic purification state (QF_ANIA): rewrites
     /// non-polynomial numeric subterms (select, compound, …) under arith
     /// operators into fresh shared vars so NIA sees pure polynomials.
@@ -452,6 +461,7 @@ impl Solver {
             ite_result_terms: FxHashSet::default(),
             quantifier_uf_funcs: FxHashSet::default(),
             care_split_pairs: FxHashSet::default(),
+            numeric_eq_split_pairs: FxHashSet::default(),
             arith_purify: purify_arith::PurifyState::new(),
             table_index_terms: FxHashSet::default(),
             table_index_domain_eqs: FxHashMap::default(),
