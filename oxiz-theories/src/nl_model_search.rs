@@ -110,12 +110,15 @@ pub fn try_model_based_nia_search(
         return None;
     }
     // A handful of free Booleans: enumerate their 2^k truth assignments and
-    // run the core search on each substituted case. The original formula is
-    // SAT iff some case is SAT, and UNSAT iff every case is provably UNSAT
-    // (here: every case's linear relaxation is infeasible), so this is sound
-    // in both directions. Each reported `Sat` is concretely verified.
+    // run the core (sat-only) search on each substituted case. The original
+    // formula is SAT iff some case yields a concretely-verified model, which
+    // we report.  We do NOT aggregate the cases into an `Unsat`: per-case
+    // relaxation-infeasibility is an *uncertified* refutation (see
+    // `nia_search_core`), and the project's soundness standard requires a
+    // definite `Unsat` for nonlinear integer arithmetic to come from the
+    // certified CAD/B&B core that dispatch falls through to, not from this
+    // relaxation.  An undecided split therefore returns `None`.
     let n = free_bools.len();
-    let mut all_unsat = true;
     for bits in 0u32..(1u32 << n) {
         let mut sub: FxHashMap<TermId, TermId> = FxHashMap::default();
         for (i, &v) in free_bools.iter().enumerate() {
@@ -133,16 +136,16 @@ pub fn try_model_based_nia_search(
             .map(|&a| manager.substitute(a, &sub))
             .collect();
         match nia_search_core(&cased, manager, &mut nodes) {
+            // `nia_search_core` is sat-only (see the relaxation note there):
+            // it never returns `Unsat`.  A `None` means "no certified
+            // verdict"; keep the whole Boolean split honest by declining to
+            // decide rather than aggregating relaxation-infeasibility into an
+            // uncertified `Unsat`.
             r @ Some(NlDispatchResult::Sat(_)) => return r,
-            Some(NlDispatchResult::Unsat) => {}
-            None => all_unsat = false,
+            _ => {}
         }
     }
-    if all_unsat {
-        Some(NlDispatchResult::Unsat)
-    } else {
-        None
-    }
+    None
 }
 
 /// Core model-based search on a single, already Boolean-grounded (and
@@ -172,9 +175,19 @@ fn nia_search_core(
         return None;
     }
     let mut s = Relaxation::build(&atom_conjuncts, &int_vars, manager)?;
-    // Linear-relaxation-infeasible ⇒ original UNSAT.
+    // Linear-relaxation-infeasible is, in principle, a sound refutation (the
+    // monomial-variable linearisation is a true relaxation, so an infeasible
+    // relaxation has no original model).  We do NOT report `Unsat` from here:
+    // this is the *uncertified* relaxation, and the project's soundness
+    // standard for nonlinear integer arithmetic requires a definite `Unsat`
+    // to come from the certified CAD/B&B core (`dispatch_nia_constraints`'s
+    // `NiaSolver` arm under `unsat_is_trustworthy`), not from this relaxation
+    // — which has been the source of false-`Unsat` regressions (see
+    // `audit_solver_p3c::nonlinear_atom_is_not_spuriously_decided`).  Returning
+    // `None` routes the goal to that certified core, which either proves
+    // `Unsat` or honestly answers `Unknown`.
     if s.simplex.check().is_err() {
-        return Some(NlDispatchResult::Unsat);
+        return None;
     }
     // Bounded concrete enumeration over a heuristic box: many industrial QF_NIA
     // SAT instances (termination VCs) have small models, so enumerating a small
