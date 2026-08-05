@@ -44,7 +44,7 @@ fn test_qf_nira_int_square_with_real_half_is_sat() {
     let eq_y = manager.mk_eq(y, three_halves);
 
     // integer_mode = true mirrors the QF_NIRA routing in the solver.
-    let result = dispatch_nia_constraints(&[eq_sq, eq_y], &manager, true);
+    let result = dispatch_nia_constraints(&[eq_sq, eq_y], &mut manager, true);
 
     assert_ne!(
         result,
@@ -83,7 +83,7 @@ fn test_qf_nira_sat_requires_non_integral_real() {
     let x_gt_0 = manager.mk_gt(x, zero);
     let x_lt_1 = manager.mk_lt(x, one);
 
-    let result = dispatch_nia_constraints(&[eq_y_sq, x_gt_0, x_lt_1], &manager, true);
+    let result = dispatch_nia_constraints(&[eq_y_sq, x_gt_0, x_lt_1], &mut manager, true);
 
     assert_ne!(
         result,
@@ -107,7 +107,7 @@ fn test_qf_nia_pure_integer_square_still_sat() {
     let four = manager.mk_int(4);
     let eq = manager.mk_eq(square, four);
 
-    let result = dispatch_nia_constraints(&[eq], &manager, true);
+    let result = dispatch_nia_constraints(&[eq], &mut manager, true);
     assert!(
         matches!(result, Some(NlDispatchResult::Sat(_))),
         "x*x=4 with x:Int is SAT (x=±2)"
@@ -139,7 +139,7 @@ fn test_nia_dropped_disjunction_does_not_fabricate_sat() {
     let y_eq_100 = manager.mk_eq(y, hundred);
     let disj = manager.mk_or(vec![x_eq_100, y_eq_100]);
 
-    let result = dispatch_nia_constraints(&[eq_prod, disj], &manager, true);
+    let result = dispatch_nia_constraints(&[eq_prod, disj], &mut manager, true);
 
     assert!(
         !matches!(result, Some(NlDispatchResult::Sat(_))),
@@ -167,7 +167,7 @@ fn test_nra_dropped_disjunction_does_not_fabricate_sat() {
     let x_eq_7 = manager.mk_eq(x, seven);
     let disj = manager.mk_or(vec![x_eq_5, x_eq_7]);
 
-    let result = dispatch_nra_constraints(&[eq_sq, disj], &manager);
+    let result = dispatch_nra_constraints(&[eq_sq, disj], &mut manager);
 
     assert!(
         !matches!(result, Some(NlDispatchResult::Sat(_))),
@@ -196,7 +196,7 @@ fn test_nia_untranslatable_operand_does_not_fabricate_sat() {
     let three = manager.mk_int(3);
     let eq_div = manager.mk_eq(div_xy, three);
 
-    let result = dispatch_nia_constraints(&[eq_sq, eq_div], &manager, true);
+    let result = dispatch_nia_constraints(&[eq_sq, eq_div], &mut manager, true);
 
     assert!(
         !matches!(result, Some(NlDispatchResult::Sat(_))),
