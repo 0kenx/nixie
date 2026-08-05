@@ -29,7 +29,7 @@
 
 use crate::solver::Solver;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
-use oxiz_sat::{Lit, Var};
+use oxiz_sat::{LBool, Lit, Var};
 use rustc_hash::FxHashMap;
 use std::collections::BTreeSet;
 
@@ -55,10 +55,79 @@ impl Solver {
                     self.unsat_core = None;
                     return super::SolverResult::Unknown;
                 }
+                // The chordal-Sparse path decides pure equality logic with
+                // plain SAT and never drives the EUF theory, so without this
+                // `get_model` would mint distinct `@uc` witnesses for
+                // constants the user asserted equal. Re-derive the equality
+                // classes from the SAT model into EUF — the independent
+                // union-find backstop for the pure-equality fragment.
+                self.reconcile_euf_from_equality_model(manager);
                 self.unsat_core = None;
                 super::SolverResult::Sat
             }
             oxiz_sat::SolverResult::Unknown => super::SolverResult::Unknown,
+        }
+    }
+
+    /// Collect every equality atom `(= a b)` (with leaf operands) reachable
+    /// from `term`, recording `(eq_term, a, b, var)`. Mirrors
+    /// `collect_eq_edges` but retains each atom individually (with its term and
+    /// SAT variable) instead of deduplicating into an edge map, for use by the
+    /// model->EUF reconciliation below.
+    fn gather_eq_atoms(
+        term: TermId,
+        manager: &TermManager,
+        term_to_var: &FxHashMap<TermId, Var>,
+        out: &mut Vec<(TermId, TermId, TermId, Var)>,
+    ) {
+        let Some(t) = manager.get(term) else { return };
+        match &t.kind {
+            TermKind::True | TermKind::False => {}
+            TermKind::Not(inner) => Self::gather_eq_atoms(*inner, manager, term_to_var, out),
+            TermKind::And(ts) | TermKind::Or(ts) => {
+                for &c in ts {
+                    Self::gather_eq_atoms(c, manager, term_to_var, out);
+                }
+            }
+            TermKind::Eq(a, b) => {
+                // Only the pure-equality fragment reaches this path; operands
+                // are leaf (Var-kind) terms.
+                let ok = manager
+                    .get(*a)
+                    .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
+                    && manager
+                        .get(*b)
+                        .is_some_and(|x| matches!(x.kind, TermKind::Var(_)));
+                if ok {
+                    if let Some(&var) = term_to_var.get(&term) {
+                        out.push((term, *a, *b, var));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Pure-equality `Sat` backstop: drive the SAT model's equality-atom
+    /// polarities into the EUF congruence closure so `get_model` gives equal
+    /// constants a shared witness. See `solve_equality_via_sat`.
+    fn reconcile_euf_from_equality_model(&mut self, manager: &TermManager) {
+        let mut atoms: Vec<(TermId, TermId, TermId, Var)> = Vec::new();
+        for &assertion in &self.assertions {
+            Self::gather_eq_atoms(assertion, manager, &self.term_to_var, &mut atoms);
+        }
+        for &(eq, a, b, var) in &atoms {
+            let na = self.euf.intern(a);
+            let nb = self.euf.intern(b);
+            match self.sat.model_value(var) {
+                LBool::True => {
+                    let _ = self.euf.merge(na, nb, eq);
+                }
+                LBool::False => {
+                    self.euf.assert_diseq(na, nb, eq);
+                }
+                LBool::Undef => {}
+            }
         }
     }
 
