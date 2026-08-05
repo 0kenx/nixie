@@ -545,18 +545,17 @@ impl Solver {
         // UF-arg rewrite would mangle the array `select`s the NIA ground search
         // evaluates directly (regressed the QF_ANIA CE cases to Unknown).
         //
-        // Also gated OFF once any quantifier is on the stack: purification turns
-        // a clean ground pin like `g(0) = 10` into `g(v) = 10 ∧ v = 0`, which
-        // `mbqi::model_certify` then cannot certify (its bounded interpretation
-        // search sees mangled `And`/fresh-`Var` ground facts instead of `Eq`).
-        // v0.3.2 has no such purification and certifies these instantly; this
-        // gate restores that for quantified goals so MBQI/model-certification
-        // see the assertions in their original form.
-        let skip_uf_purify = self.has_quantifiers
-            || matches!(
-                self.logic.as_deref(),
-                Some(l) if l.contains("NIA") || l.contains("NRA") || l.contains("NIRA")
-            );
+        // Purification of a quantifier-relevant function's numeric arguments
+        // turns a clean ground pin like `g(0) = 10` into `g(v) = 10 ∧ v = 0`,
+        // which `mbqi::model_certify` cannot certify. That case is handled
+        // PER-FUNCTION inside `purify_numeric_uf_args` (it skips any function
+        // recorded in `quantifier_uf_funcs`), so an *unrelated* quantifier over
+        // `g` does not suppress `f`'s purification (pr30). Only the NIA family
+        // is gated globally here.
+        let skip_uf_purify = matches!(
+            self.logic.as_deref(),
+            Some(l) if l.contains("NIA") || l.contains("NRA") || l.contains("NIRA")
+        );
         let term = if skip_uf_purify {
             term
         } else {
@@ -1224,11 +1223,13 @@ impl Solver {
                     TermKind::Forall { patterns, body, .. } => {
                         let triggers: Vec<TermId> =
                             patterns.iter().flat_map(|p| p.iter().copied()).collect();
+                        self.collect_quantifier_funcs(*body, manager);
                         self.register_asserted_forall(current, *body, triggers, manager);
                     }
-                    TermKind::Exists { patterns, .. } => {
+                    TermKind::Exists { patterns, body, .. } => {
                         let triggers: Vec<TermId> =
                             patterns.iter().flat_map(|p| p.iter().copied()).collect();
+                        self.collect_quantifier_funcs(*body, manager);
                         self.mbqi.add_quantifier(current, manager);
                         for trigger in triggers {
                             self.mbqi.collect_ground_terms(trigger, manager);
@@ -1238,6 +1239,21 @@ impl Solver {
                 }
             }
             stack.extend(super::term_walk::asserted_children(&kind, positive));
+        }
+    }
+
+    /// Record every uninterpreted-function symbol (`Apply.func`) appearing in a
+    /// quantifier body, so `purify_numeric_uf_args` can skip abstracting those
+    /// functions' numeric arguments (the per-function gate that protects
+    /// MBQI/model-certification without suppressing an unrelated function's
+    /// purification).
+    fn collect_quantifier_funcs(&mut self, body: TermId, manager: &TermManager) {
+        for st in oxiz_core::ast::collect_subterms(body, manager) {
+            if let Some(t) = manager.get(st) {
+                if let TermKind::Apply { func, .. } = &t.kind {
+                    self.quantifier_uf_funcs.insert(*func);
+                }
+            }
         }
     }
 
