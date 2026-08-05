@@ -544,10 +544,19 @@ impl Solver {
         // the grammar-driven `purify_arith` below owns purification, and this
         // UF-arg rewrite would mangle the array `select`s the NIA ground search
         // evaluates directly (regressed the QF_ANIA CE cases to Unknown).
-        let skip_uf_purify = matches!(
-            self.logic.as_deref(),
-            Some(l) if l.contains("NIA") || l.contains("NRA") || l.contains("NIRA")
-        );
+        //
+        // Also gated OFF once any quantifier is on the stack: purification turns
+        // a clean ground pin like `g(0) = 10` into `g(v) = 10 ∧ v = 0`, which
+        // `mbqi::model_certify` then cannot certify (its bounded interpretation
+        // search sees mangled `And`/fresh-`Var` ground facts instead of `Eq`).
+        // v0.3.2 has no such purification and certifies these instantly; this
+        // gate restores that for quantified goals so MBQI/model-certification
+        // see the assertions in their original form.
+        let skip_uf_purify = self.has_quantifiers
+            || matches!(
+                self.logic.as_deref(),
+                Some(l) if l.contains("NIA") || l.contains("NRA") || l.contains("NIRA")
+            );
         let term = if skip_uf_purify {
             term
         } else {
