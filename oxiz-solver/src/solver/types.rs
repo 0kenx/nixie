@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::Rational64;
+use num_traits::{CheckedEuclid, Zero};
 use oxiz_core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use oxiz_sat::{Lit, RestartStrategy, Var};
 use smallvec::SmallVec;
@@ -670,6 +671,22 @@ impl Model {
                         }
                         None => break manager.mk_mul(Vec::<TermId>::new()),
                     },
+                    TermKind::Div(lhs, rhs) => {
+                        frames.push(EvalFrame::DivModLhs {
+                            term: current,
+                            rhs,
+                            is_div: true,
+                        });
+                        current = lhs;
+                    }
+                    TermKind::Mod(lhs, rhs) => {
+                        frames.push(EvalFrame::DivModLhs {
+                            term: current,
+                            rhs,
+                            is_div: false,
+                        });
+                        current = lhs;
+                    }
 
                     // For other operations, just return the term (the model
                     // was already consulted above).
@@ -910,6 +927,24 @@ impl Model {
                         memo.insert(term, v);
                         value = v;
                     }
+                    EvalFrame::DivModLhs { term, rhs, is_div } => {
+                        frames.push(EvalFrame::DivModRhs {
+                            term,
+                            lhs_val: value,
+                            is_div,
+                        });
+                        current = rhs;
+                        continue 'open;
+                    }
+                    EvalFrame::DivModRhs {
+                        term,
+                        lhs_val,
+                        is_div,
+                    } => {
+                        let v = fold_div_mod(lhs_val, value, is_div, manager);
+                        memo.insert(term, v);
+                        value = v;
+                    }
                 }
             }
         }
@@ -991,6 +1026,60 @@ enum EvalFrame {
     SubLhs { term: TermId, rhs: TermId },
     /// Binary `-` — waiting on the right operand.
     SubRhs { term: TermId, lhs_val: TermId },
+    /// `div` (`is_div`) or `mod` — waiting on the dividend.
+    DivModLhs {
+        term: TermId,
+        rhs: TermId,
+        is_div: bool,
+    },
+    /// `div` (`is_div`) or `mod` — waiting on the divisor.
+    DivModRhs {
+        term: TermId,
+        lhs_val: TermId,
+        is_div: bool,
+    },
+}
+
+/// Fold a constant `div`/`mod` (Euclidean semantics) for `Model::eval`; rebuild
+/// the term structurally when either operand is not a literal constant. Ports
+/// v0.3.2's get-value fix so `(get-value ((div 7 2)))` evaluates to `3` instead
+/// of echoing the term.
+fn fold_div_mod(lhs: TermId, rhs: TermId, is_div: bool, manager: &mut TermManager) -> TermId {
+    // `Model::eval`'s own `Add`/`Sub`/`Mul`/`Neg` handling rebuilds a compound
+    // arithmetic operand structurally rather than numerically folding it; a
+    // divisor written as an expression (`(mod x (- (* 2 3) 1))`) would otherwise
+    // reach here still unfolded. Simplifying both operands first closes that.
+    let lhs = manager.simplify(lhs);
+    let rhs = manager.simplify(rhs);
+    match (
+        manager.get(lhs).map(|t| t.kind.clone()),
+        manager.get(rhs).map(|t| t.kind.clone()),
+    ) {
+        (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) if !b.is_zero() => {
+            let folded = if is_div {
+                a.checked_div_euclid(&b)
+            } else {
+                a.checked_rem_euclid(&b)
+            };
+            match folded {
+                Some(v) => manager.mk_int(v),
+                None => rebuild_div_mod(lhs, rhs, is_div, manager),
+            }
+        }
+        (Some(TermKind::RealConst(a)), Some(TermKind::RealConst(b))) if is_div && !b.is_zero() => {
+            manager.mk_real(a / b)
+        }
+        _ => rebuild_div_mod(lhs, rhs, is_div, manager),
+    }
+}
+
+/// Structural fallback for `fold_div_mod` when the operands are not constant.
+fn rebuild_div_mod(lhs: TermId, rhs: TermId, is_div: bool, manager: &mut TermManager) -> TermId {
+    if is_div {
+        manager.mk_div(lhs, rhs)
+    } else {
+        manager.mk_mod(lhs, rhs)
+    }
 }
 
 impl Default for Model {
