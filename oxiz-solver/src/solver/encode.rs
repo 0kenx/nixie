@@ -4,8 +4,8 @@
 use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::{One, ToPrimitive, Zero};
-use oxiz_core::ast::{collect_subterms, TermId, TermKind, TermManager};
-use oxiz_core::sort::SortId;
+use oxiz_core::ast::{collect_subterms, get_children, TermId, TermKind, TermManager};
+use oxiz_core::sort::{SortId, SortKind};
 use oxiz_sat::{Lit, Var};
 use smallvec::SmallVec;
 
@@ -22,6 +22,82 @@ mod track_theory_vars;
 
 #[cfg(test)]
 mod tests;
+
+/// Whether an `ite` of sort `sort` is [`Solver::eliminate_nonbool_ite`]'s
+/// business at all.
+///
+/// EUF is the theory that treats a non-Bool `ite` as an opaque leaf with no
+/// way back to its conditional-equality meaning, so hoisting it out to a
+/// fresh, EUF-visible constant is only the *right* fix for a sort EUF
+/// actually owns: an uninterpreted sort, or (redundantly but harmlessly,
+/// since `arith_axioms.rs` already axiomatises these) `Int`/`Real`.
+///
+/// `BitVec`, `Array`, `String` and `FloatingPoint` sorts each have their own
+/// theory-specific encoder that recurses through `ite` directly as part of
+/// bit-blasting / axiom instantiation / ground solving -- and, critically,
+/// some bit-vector operators (`bvsmod`, `bvcomp`, the rotates,
+/// `zero_extend`/`sign_extend`) are *desugared into a `BitVec`-sorted `ite`*
+/// by the term builder itself, so a real assertion can easily contain one
+/// without the user ever writing `ite`. Replacing that `ite` with a fresh
+/// opaque variable before the bit-blaster ever sees it deletes the very
+/// structure the blaster recurses on: this was caught by
+/// `test_bvsmod_symbolic_divisor_operand_unsat` going from correct to a
+/// false `sat` (the model no longer matched the operation's reference
+/// semantics) the first time this pass ran unconditionally on BitVec.
+pub(super) fn needs_ite_elimination(sort: SortId, manager: &TermManager) -> bool {
+    if sort == manager.sorts.bool_sort {
+        return false;
+    }
+    match manager.sorts.get(sort) {
+        Some(s) => !(
+            s.is_bitvec()
+                || s.is_string()
+                || s.is_float()
+                || matches!(s.kind, SortKind::Array { .. })
+        ),
+        None => false,
+    }
+}
+
+/// Collect every subterm of `term` reachable *without* descending into a
+/// quantifier's bound body (`Forall`/`Exists`) or a `let`'s bindings/body.
+///
+/// [`Solver::eliminate_nonbool_ite`] replaces a subterm with a fresh,
+/// unbound variable. That is unsound under a binder: a subterm that
+/// mentions the bound variable denotes a different value at every
+/// instantiation, so one global replacement cannot stand in for all of
+/// them. Treating a binder as opaque here means the pass never looks inside
+/// one -- whatever ground instances MBQI produces from it are handled when
+/// *they* are encoded (through [`Solver::encode_nonbool_ite_equality`],
+/// which runs on every encoded equality regardless of how it was reached).
+///
+/// Order is a stable pre-order (children pushed in reverse so they pop
+/// left-to-right), matching this crate's other explicit-stack term walks.
+pub(super) fn collect_ground_subterms(term: TermId, manager: &TermManager) -> Vec<TermId> {
+    use rustc_hash::FxHashSet;
+    let mut out = Vec::new();
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    let mut stack = vec![term];
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        out.push(t);
+        let Some(node) = manager.get(t) else {
+            continue;
+        };
+        if matches!(
+            node.kind,
+            TermKind::Forall { .. } | TermKind::Exists { .. } | TermKind::Let { .. }
+        ) {
+            continue; // opaque: never descend into a binder's scope
+        }
+        for child in get_children(&node.kind).into_iter().rev() {
+            stack.push(child);
+        }
+    }
+    out
+}
 
 impl Solver {
     pub(super) fn get_or_create_var(&mut self, term: TermId) -> Var {
@@ -1380,7 +1456,11 @@ impl Solver {
             let TermKind::Ite(cond, then_br, else_br) = &bt.kind else {
                 continue;
             };
-            if bt.sort == manager.sorts.bool_sort {
+            // Same scope as `eliminate_nonbool_ite`: only sorts EUF owns
+            // (uninterpreted / Int / Real). BitVec/Array/String/Float ite is
+            // the theory encoder's business (it recurses through `ite`
+            // directly when bit-blasting / axiomatising).
+            if !needs_ite_elimination(bt.sort, manager) {
                 continue;
             }
             // Clone out of the immutable borrow before mutating `manager`.
@@ -1416,17 +1496,22 @@ impl Solver {
         term: TermId,
         manager: &mut TermManager,
     ) -> TermId {
-        use oxiz_core::ast::collect_subterms;
         use rustc_hash::FxHashMap;
 
-        let bool_sort = manager.sorts.bool_sort;
         let mut map: FxHashMap<TermId, TermId> = FxHashMap::default();
-        // First pass: assign a fresh var to each non-Bool ite subterm.
-        for st in collect_subterms(term, manager) {
+        // First pass: assign a fresh var to each ite subterm whose sort the
+        // pass actually owns (see `needs_ite_elimination`). BitVec/Array/
+        // String/Float ite must be left intact: their theory encoders recurse
+        // through `ite` directly (bit-blasting a mux), and several BV ops are
+        // desugared into a BitVec ite, so eliminating them would delete the
+        // structure the blaster recurses on and yield a false `sat`.
+        // The walk also stops at binders: a fresh global variable cannot
+        // stand in for a subterm mentioning a bound variable.
+        for st in collect_ground_subterms(term, manager) {
             let Some(t) = manager.get(st) else {
                 continue;
             };
-            if matches!(t.kind, TermKind::Ite(..)) && t.sort != bool_sort {
+            if matches!(t.kind, TermKind::Ite(..)) && needs_ite_elimination(t.sort, manager) {
                 let v = manager.mk_var(&format!("__oxiz_ite_{}", st.0), t.sort);
                 self.ite_result_terms.insert(v);
                 map.insert(st, v);
