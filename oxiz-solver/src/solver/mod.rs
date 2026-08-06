@@ -1283,6 +1283,16 @@ impl Solver {
                     // Build partial model for MBQI
                     self.build_model(manager);
 
+                    // Congruence backstop: a quantified candidate `sat` whose
+                    // model violates EUF congruence (e.g. `f(y) != f(3)` while
+                    // `y = 3`) cannot certify the goal; answer `Unknown` rather
+                    // than a wrong `Sat` (pr30#3).
+                    if self.model_violates_euf_congruence(manager) {
+                        self.unsat_core = None;
+                        self.model = None;
+                        return SolverResult::Unknown;
+                    }
+
                     // Certified `sat`: for the fragments `mbqi::model_certify`
                     // covers, a *total* interpretation of every symbol can be
                     // constructed from this candidate model and checked
@@ -1675,6 +1685,73 @@ impl Solver {
         };
         let assignments = model.assignments().clone();
         crate::mbqi::model_certify::certify(&self.assertions, &assignments, manager)
+    }
+
+    /// Congruence-consistency backstop for a quantified candidate `sat` model.
+    ///
+    /// The SAT core can accept a trail where two function applications
+    /// `f(a)`, `f(b)` with `a = b` (under the model) are assigned *different*
+    /// results — a model that violates EUF congruence and therefore cannot
+    /// certify the quantified goal. When that happens the sound verdict is
+    /// `Unknown`, not `Sat` (pr30#3: a quantifier over `f` left `f` un-purified,
+    /// so the literal argument `3` never reached the care graph and the
+    /// congruence `f(y) = f(3)` was not derived during the search).
+    ///
+    /// Returns `true` iff some function has two applications whose arguments
+    /// all map to equal model values but whose results differ.
+    fn model_violates_euf_congruence(&self, manager: &TermManager) -> bool {
+        use rustc_hash::FxHashMap;
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+        let asg = model.assignments();
+        let chase = |mut t: TermId| -> TermId {
+            for _ in 0..16 {
+                match asg.get(&t) {
+                    Some(&w) if w != t => t = w,
+                    _ => break,
+                }
+            }
+            t
+        };
+        let mut groups: FxHashMap<(u32, Vec<TermId>), TermId> = FxHashMap::default();
+        let is_const = |t: TermId| -> bool {
+            manager.get(t).is_some_and(|n| {
+                matches!(
+                    n.kind,
+                    TermKind::IntConst(_)
+                        | TermKind::RealConst(_)
+                        | TermKind::BitVecConst { .. }
+                )
+            })
+        };
+        for &assertion in &self.assertions {
+            for st in oxiz_core::ast::collect_subterms(assertion, manager) {
+                let Some(t) = manager.get(st) else { continue };
+                let TermKind::Apply { func, args } = &t.kind else { continue };
+                // Only consider applications whose arguments AND result the
+                // model resolves to concrete constants. Applications whose
+                // result is not in the model (chase does not move) would
+                // otherwise compare the app term to itself and flag every pair.
+                let key_args: Vec<TermId> = args.iter().map(|&a| chase(a)).collect();
+                if !key_args.iter().all(|&a| is_const(a)) {
+                    continue;
+                }
+                let result = chase(st);
+                if result == st || !is_const(result) {
+                    continue;
+                }
+                let key = (func.into_inner().get(), key_args);
+                if let Some(existing) = groups.get(&key) {
+                    if *existing != result {
+                        return true;
+                    }
+                } else {
+                    groups.insert(key, result);
+                }
+            }
+        }
+        false
     }
 
     /// Sound sufficient check used only at the MBQI incompleteness fallback.
