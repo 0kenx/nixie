@@ -1286,8 +1286,15 @@ impl Solver {
                     // Congruence backstop: a quantified candidate `sat` whose
                     // model violates EUF congruence (e.g. `f(y) != f(3)` while
                     // `y = 3`) cannot certify the goal; answer `Unknown` rather
-                    // than a wrong `Sat` (pr30#3).
-                    if self.model_violates_euf_congruence(manager) {
+                    // than a wrong `Sat` (pr30#3).  Also refuse the verdict
+                    // when a *ground* assertion evaluates false under the model
+                    // — the ground part is independent of instantiation, so its
+                    // violation means the candidate contradicts the input
+                    // itself (mirrors v0.3.2's
+                    // `quantified_model_refutes_ground_assertions`).
+                    if self.model_violates_euf_congruence(manager)
+                        || self.ground_assertion_false_in_model(manager)
+                    {
                         self.unsat_core = None;
                         self.model = None;
                         return SolverResult::Unknown;
