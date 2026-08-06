@@ -166,6 +166,14 @@ pub struct Solver {
     /// only over-conservatively skips a sound purification, so it is left in
     /// place (cleared wholesale by `reset`).
     pub(super) quantifier_uf_funcs: FxHashSet<oxiz_core::interner::Spur>,
+    /// Numeric-argument purification proxies: maps each abstracted numeric
+    /// argument term to its fresh proxy variable (`(f 3)` -> `(f v)` records
+    /// `3 -> v`). Used by `eval_in_model` so `(get-value ((f 3)))` resolves the
+    /// original application to its purified twin's model value instead of
+    /// echoing it (pr30: purification_preserves_get_value_on_original_application).
+    /// Accumulates across `assert`s; a stale entry only makes eval try a proxy
+    /// that is no longer asserted (harmless — eval falls back to the original).
+    pub(super) numarg_proxies: FxHashMap<TermId, TermId>,
     /// Care-graph split pairs for trailed dedup.
     pub(super) care_split_pairs: FxHashSet<(TermId, TermId)>,
     /// Numeric-equality trichotomy pairs already emitted by
@@ -460,6 +468,7 @@ impl Solver {
             arith_terms: FxHashSet::default(),
             ite_result_terms: FxHashSet::default(),
             quantifier_uf_funcs: FxHashSet::default(),
+            numarg_proxies: FxHashMap::default(),
             care_split_pairs: FxHashSet::default(),
             numeric_eq_split_pairs: FxHashSet::default(),
             arith_purify: purify_arith::PurifyState::new(),

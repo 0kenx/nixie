@@ -1642,6 +1642,9 @@ impl Solver {
             side.push(manager.mk_eq(*v, *arg));
         }
         let rewritten = manager.substitute(term, &map);
+        // Record the arg->proxy map so `(get-value ((f 3)))` can resolve the
+        // original application to its purified twin's model value (pr30).
+        self.numarg_proxies.extend(map);
         let mut parts = side;
         parts.insert(0, rewritten);
         manager.mk_and(parts)

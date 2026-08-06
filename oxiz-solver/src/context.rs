@@ -465,8 +465,23 @@ impl Context {
         if self.last_result != Some(SolverResult::Sat) {
             return None;
         }
-        let value = self.solver.model()?.eval(term, &mut self.terms);
-        Some(value)
+        // Purification rewrites e.g. `(f 3)` -> `(f v)` (plus `v = 3`) at encode
+        // time, so the model holds `f(v)`, not `f(3)`. Resolve the queried term
+        // through the arg->proxy map first; if that yields a concrete value use
+        // it, otherwise evaluate the original (a non-proxied term) (pr30:
+        // purification_preserves_get_value_on_original_application).
+        let proxies = self.solver.numarg_proxies.clone();
+        let model = self.solver.model()?;
+        if !proxies.is_empty() {
+            let proxied = self.terms.substitute(term, &proxies);
+            if proxied != term {
+                let v = model.eval(proxied, &mut self.terms);
+                if v != proxied {
+                    return Some(v);
+                }
+            }
+        }
+        Some(model.eval(term, &mut self.terms))
     }
 
     /// Push a context level

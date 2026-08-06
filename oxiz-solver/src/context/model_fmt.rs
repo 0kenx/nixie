@@ -842,12 +842,35 @@ impl Context {
                 } else {
                     self.terms.substitute(term, &completion)
                 };
+                // Purification rewrites e.g. `(f 3)` -> `(f v)` (plus `v = 3`)
+                // at encode time, so the model holds `f(v)`, not `f(3)`. Resolve
+                // through the arg->proxy map first; fall back to the original if
+                // the proxy does not yield a concrete value (a non-proxied term)
+                // (pr30: purification_preserves_get_value_on_original_application).
                 // `Model::eval` substitutes and folds the Boolean structure but
                 // leaves arithmetic/bit-vector applications of the substituted
-                // constants unreduced (`(+ x 1)` → `(+ 0 1)`), so run the
+                // constants unreduced (`(+ x 1)` -> `(+ 0 1)`), so run the
                 // rewriter over the result to reach an actual value.
-                let value = model.eval(completed, &mut self.terms);
-                let value = self.terms.simplify(value);
+                let proxies = self.solver.numarg_proxies.clone();
+                let value = if !proxies.is_empty() {
+                    let proxied = self.terms.substitute(completed, &proxies);
+                    if proxied != completed {
+                        let ev = model.eval(proxied, &mut self.terms);
+                        let pv = self.terms.simplify(ev);
+                        if pv != proxied {
+                            pv
+                        } else {
+                            let ev2 = model.eval(completed, &mut self.terms);
+                            self.terms.simplify(ev2)
+                        }
+                    } else {
+                        let ev = model.eval(completed, &mut self.terms);
+                        self.terms.simplify(ev)
+                    }
+                } else {
+                    let ev = model.eval(completed, &mut self.terms);
+                    self.terms.simplify(ev)
+                };
                 oxiz_core::smtlib::Printer::new(&self.terms).print_term(value)
             };
             let term_str = oxiz_core::smtlib::Printer::new(&self.terms).print_term(term);
