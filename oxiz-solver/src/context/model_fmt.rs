@@ -836,6 +836,13 @@ impl Context {
                 // A bare unconstrained constant: report exactly what
                 // `(get-model)` reports for it, witnesses included.
                 value
+            } else if let Some(value) = model.get(term) {
+                // The term is directly pinned in the model (e.g. an NL-search
+                // select read whose value was installed via the dispatch
+                // model). `Model::eval` would instead re-evaluate it
+                // structurally (and, for an array read, rebuild the array
+                // interpretation), so prefer the direct assignment.
+                oxiz_core::smtlib::Printer::new(&self.terms).print_term(value)
             } else {
                 let completed = if completion.is_empty() {
                     term

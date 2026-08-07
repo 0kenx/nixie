@@ -860,6 +860,74 @@ fn extract_poly_atoms(
 /// - `None` if translation yields no atoms or the solver returns Unknown.
 ///
 /// Both linear and nonlinear assertions are passed so the solver has full context.
+/// Verify array-select congruence under `model` and return the select-term
+/// -> value pairs the model should be augmented with. Returns `None` on a
+/// congruence conflict (a spurious relaxation Sat): any two `select(A, idx1)`,
+/// `select(A, idx2)` whose indices evaluate equal under `model` must
+/// themselves evaluate equal. The relaxation pins the purified spur variable,
+/// not the `select` term, so each read's value is read via its `c = select(A,i)`
+/// interface def; the returned map lets a caller's get-value resolve the read.
+fn select_congruence_holds(
+    assertions: &[TermId],
+    model: &std::collections::HashMap<TermId, num_rational::BigRational>,
+    manager: &TermManager,
+) -> Option<std::collections::HashMap<TermId, num_rational::BigRational>> {
+    use oxiz_core::ast::{collect_subterms, TermKind};
+    use rustc_hash::FxHashMap;
+    // The relaxation's model pins the purified interface variable `c`, not the
+    // `select(A,i)` term itself, so map each select to its defining variable
+    // via the `c = select(A,i)` equalities the encoder emitted (nested anywhere).
+    let mut select_to_var: FxHashMap<TermId, TermId> = FxHashMap::default();
+    // The relaxation's model pins the purified interface variable `c`, not the
+    // `select(A,i)` term itself, so map each select to its defining variable
+    // via the `c = select(A,i)` equalities the encoder emitted (nested anywhere).
+    for &a in assertions {
+        for st in collect_subterms(a, manager) {
+            let Some(n) = manager.get(st) else { continue };
+            if let TermKind::Eq(l, r) = n.kind {
+                for (v, sel) in [(l, r), (r, l)] {
+                    if manager.get(v).is_some_and(|vn| matches!(vn.kind, TermKind::Var(_)))
+                        && manager
+                            .get(sel)
+                            .is_some_and(|sn| matches!(sn.kind, TermKind::Select(..)))
+                    {
+                        select_to_var.insert(sel, v);
+                    }
+                }
+            }
+        }
+    }
+    let mut cells: FxHashMap<(TermId, num_rational::BigRational), num_rational::BigRational> =
+        FxHashMap::default();
+    let mut select_values: std::collections::HashMap<TermId, num_rational::BigRational> =
+        std::collections::HashMap::new();
+    for &a in assertions {
+        for st in collect_subterms(a, manager) {
+            let Some(t) = manager.get(st) else { continue };
+            let TermKind::Select(arr, idx) = t.kind else { continue };
+            let value_term = select_to_var.get(&st).copied().unwrap_or(st);
+            let Some(sel_val) = model.get(&value_term).cloned() else { continue };
+            // Augment the model with the read's value (read via its spur) so a
+            // caller's get-value resolves `select(A,i)` even when the index `i`
+            // is unconstrained and absent from the relaxation's model.
+            select_values.insert(st, sel_val.clone());
+            // Congruence is only checkable when the index is pinned: two reads
+            // of the same (array, index-value) cell must agree, else the Sat is
+            // spurious (the relaxation treated the reads as independent).
+            if let Some(idx_val) = model.get(&idx).cloned() {
+                match cells.get(&(arr, idx_val.clone())) {
+                    Some(existing) if existing != &sel_val => return None,
+                    None => {
+                        cells.insert((arr, idx_val), sel_val);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Some(select_values)
+}
+
 pub fn dispatch_nia_constraints(
     assertions: &[TermId],
     manager: &mut TermManager,
@@ -991,6 +1059,19 @@ pub fn dispatch_nia_constraints(
     match translator.nlsat.solve() {
         SolverResult::Sat if sat_is_trustworthy => {
             let model = extract_nia_model(&translator);
+            // The relaxation treats purified array reads as independent
+            // polynomial unknowns, so it can witness a Sat that violates
+            // select congruence (select(A,i) and select(A,j) reading the
+            // same cell under i=j but given different values). Verify the
+            // candidate the way v0.3.2's nl_eval does: two reads of the
+            // same (array, index-value) cell must agree. If they do not,
+            // the Sat is spurious -- defer to CDCL(T), where EUF catches
+            // the congruence (Sat-only: only a Sat is ever withheld here).
+            let mut model = model;
+            match select_congruence_holds(assertions, &model, manager) {
+                Some(select_values) => model.extend(select_values),
+                None => return None,
+            }
             Some(NlDispatchResult::sat_with(model))
         }
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
