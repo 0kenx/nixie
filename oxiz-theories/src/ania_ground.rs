@@ -333,12 +333,17 @@ fn realize_interfaces(
         let Some(interp) = arrays.get(&iface.array) else {
             return false;
         };
-        let sel = interp
+        // Read-over-write: a written index resolves; an unwritten index on an
+        // unknown base (default = None) does not, so leave the interface
+        // unbound and let a later round / the search retry — never fabricate.
+        if let Some(sel) = interp
             .entries
             .get(&i64v)
             .cloned()
-            .unwrap_or_else(|| interp.default.clone());
-        env.insert(iface.const_var, sel);
+            .or_else(|| interp.default.clone())
+        {
+            env.insert(iface.const_var, sel);
+        }
     }
     // Definitional eqs from nullary define-fun: `P = (* (select A i) …)`.
     // Evaluate rhs once its free vars are bound; bind lhs.
@@ -549,7 +554,14 @@ fn search_rec(
 
 #[derive(Clone, Debug)]
 pub(crate) struct ArrayInterp {
-    default: BigInt,
+    /// `None` = unknown base (a declared array variable the interpretation
+    /// does not constrain). Reads of unwritten indices then have no value,
+    /// which propagates as a deferred (`None`) evaluation — Sat-only: a model
+    /// can be witnessed when every read hits a written index, but no `Unsat`
+    /// may rest on an index the interpretation never wrote. Mirrors v0.3.2's
+    /// `nl_eval::Value::Mapping` `read_root` returning `None` for an unknown
+    /// root, and the same discipline as `try_model_based_nia_search` (34e854fc).
+    default: Option<BigInt>,
     entries: HashMap<i64, BigInt>,
 }
 
@@ -828,13 +840,13 @@ pub(crate) fn eval_int(
             let i = eval_int(*idx, manager, arrays, env)?;
             let i64v = i.to_i64()?;
             let interp = arrays.get(arr)?;
-            Some(
-                interp
-                    .entries
-                    .get(&i64v)
-                    .cloned()
-                    .unwrap_or_else(|| interp.default.clone()),
-            )
+            // Written index -> its value; else the base default, which is None
+            // for an unknown array -> propagate None (defer, Sat-only).
+            interp
+                .entries
+                .get(&i64v)
+                .cloned()
+                .or_else(|| interp.default.clone())
         }
         TermKind::Ite(c, a, b) => {
             if eval_bool(*c, manager, arrays, env)? {
@@ -1054,7 +1066,7 @@ fn is_array_var(manager: &TermManager, t: TermId) -> bool {
         .is_some_and(|n| matches!(n.kind, TermKind::Var(_)) && is_array_sorted(manager, t))
 }
 
-fn eval_array_def(term: TermId, manager: &TermManager) -> Option<ArrayInterp> {
+pub(crate) fn eval_array_def(term: TermId, manager: &TermManager) -> Option<ArrayInterp> {
     let mut cur = term;
     let mut entries_rev: Vec<(i64, BigInt)> = Vec::new();
     loop {
@@ -1075,15 +1087,46 @@ fn eval_array_def(term: TermId, manager: &TermManager) -> Option<ArrayInterp> {
                         entries.insert(i, v);
                     }
                     return Some(ArrayInterp {
-                        default: BigInt::from(d),
+                        default: Some(BigInt::from(d)),
                         entries,
                     });
                 }
                 return None;
             }
+            // A store tower (or bare read) bottoming out at a declared array
+            // variable: keep the written entries and mark the base unknown.
+            // Read-over-write still resolves written indices; unwritten ones
+            // have no value (defer, Sat-only). Mirrors v0.3.2's
+            // `nl_eval::Value::Mapping` with an unknown root.
+            TermKind::Var(_) => {
+                let mut entries = HashMap::new();
+                for (i, v) in entries_rev.into_iter().rev() {
+                    entries.insert(i, v);
+                }
+                return Some(ArrayInterp {
+                    default: None,
+                    entries,
+                });
+            }
             _ => return None,
         }
     }
+}
+
+/// Evaluate a `select` over a store tower at a ground integer index
+/// (read-over-write) to a definite integer. Returns `None` when the read
+/// hits an unwritten index of an unknown base (a declared array var), or the
+/// term is not such a `select` — Sat-only: callers must defer rather than
+/// fabricate a value. Used by `nl_model_search` to fold array reads into the
+/// arithmetic search (porting v0.3.2's `nl_eval` select handling).
+pub(crate) fn eval_select_term(select: TermId, manager: &TermManager) -> Option<BigInt> {
+    let t = manager.get(select)?;
+    let TermKind::Select(arr, idx) = t.kind else {
+        return None;
+    };
+    let i = eval_ground_int(idx, manager)?;
+    let interp = eval_array_def(arr, manager)?;
+    interp.entries.get(&i).cloned().or_else(|| interp.default.clone())
 }
 
 pub(crate) fn eval_ground_int(term: TermId, manager: &TermManager) -> Option<i64> {

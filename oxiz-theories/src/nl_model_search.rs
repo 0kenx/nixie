@@ -119,6 +119,37 @@ pub(crate) fn assertions_have_symbolic_divmod(assertions: &[TermId], manager: &T
     false
 }
 
+/// Fold resolvable `select`-over-store-tower reads (at a ground integer
+/// index) into their integer values throughout `assertions`, returning the
+/// rewritten assertions. Unresolvable reads — an unwritten index of an
+/// unknown base (a declared array var) — are left in place; `fully_evaluable`
+/// then rejects the goal and the search defers, so no `Sat` is fabricated on
+/// an unread index (Sat-only; cf. 34e854fc). Ports v0.3.2's `nl_eval`
+/// select handling into the model-based search.
+fn fold_array_reads(assertions: Vec<TermId>, manager: &mut TermManager) -> Vec<TermId> {
+    // Collect resolvable (select_term, value) pairs first, to keep the
+    // immutable collect/eval borrows separate from the mutable `mk_int`.
+    let mut resolved: Vec<(TermId, BigInt)> = Vec::new();
+    for &a in &assertions {
+        for st in oxiz_core::ast::collect_subterms(a, manager) {
+            if let Some(val) = crate::ania_ground::eval_select_term(st, manager) {
+                resolved.push((st, val));
+            }
+        }
+    }
+    if resolved.is_empty() {
+        return assertions;
+    }
+    let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+    for (st, val) in resolved {
+        subst.insert(st, manager.mk_int(val));
+    }
+    assertions
+        .into_iter()
+        .map(|a| manager.substitute(a, &subst))
+        .collect()
+}
+
 pub fn try_model_based_nia_search(
     assertions: &[TermId],
     manager: &mut TermManager,
@@ -142,6 +173,11 @@ pub fn try_model_based_nia_search(
     // search never runs. Substitution is semantics-preserving; the concrete
     // verification at the end remains the soundness backstop.
     let grounded = ground_bool_interface_eqs(assertions, manager);
+    // Fold resolvable array reads (select over a store tower at a constant
+    // index) into their values, so the relaxation sees `8*n = 72` rather than
+    // `(select (store A 3 8) 3) * n = 72`. Unresolvable reads stay put and
+    // `fully_evaluable` bails -> defer (Sat-only). Ports v0.3.2's `nl_eval`.
+    let grounded = fold_array_reads(grounded, manager);
     let free_bools = free_bool_vars_in(&grounded, manager);
     // Shared branch-and-bound node budget across every case so the total work
     // of the (potentially 2^k-sized) Boolean split stays bounded.
