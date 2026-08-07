@@ -83,10 +83,56 @@ const MAX_FREE_BOOL_CASESPLIT: usize = 8;
 /// `Some(Unsat)` when the linear relaxation is infeasible (or, when free
 /// Boolean variables are case-split, when every case is provably unsat), or
 /// `None` to fall through to the CAD-based dispatch.
+/// Whether any `div`/`mod` subterm across `assertions` has a symbolic
+/// (non-constant) divisor — the case [`try_model_based_nia_search`] must
+/// defer to CDCL(T) rather than guess on.
+pub(crate) fn assertions_have_symbolic_divmod(assertions: &[TermId], manager: &TermManager) -> bool {
+    use oxiz_core::ast::{collect_subterms, TermKind};
+    // A divisor is "constant" iff it evaluates to a definite integer, so a
+    // folded expression like `(2*3)-1` or `-4` counts (matches v0.3.2's
+    // `resolve_int_divisor`); a variable or any non-ground term does not.
+    let divisor_is_constant =
+        |d: TermId| crate::ania_ground::eval_ground_int(d, manager).is_some();
+    for &a in assertions {
+        for st in collect_subterms(a, manager) {
+            if let Some(t) = manager.get(st) {
+                match t.kind {
+                    TermKind::Div(_, d) | TermKind::Mod(_, d) => {
+                        // Real-sorted division uses exact-rational semantics,
+                        // not the Euclidean integer identity this dispatcher
+                        // encodes; deferring it avoids a spurious (Euclidean)
+                        // `Unsat`. Symbolic (non-constant) divisor likewise has
+                        // no polynomial encoding. Either way -> CDCL(T).
+                        let is_real = manager
+                            .sorts
+                            .get(t.sort)
+                            .is_some_and(|s| matches!(s.kind, oxiz_core::sort::SortKind::Real));
+                        if is_real || !divisor_is_constant(d) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn try_model_based_nia_search(
     assertions: &[TermId],
     manager: &mut TermManager,
 ) -> Option<NlDispatchResult> {
+    // Defer to CDCL(T) when any `div`/`mod` carries a symbolic (non-constant)
+    // divisor: the defining identity `a = q*n + r` is itself nonlinear in `n`,
+    // so neither this relaxation nor the search can soundly encode it. Without
+    // this gate the search would treat the `mod`/`div` application as an
+    // opaque free variable, solve the rest, and return a `Sat` that ignores
+    // the division constraint entirely (an unsound guess). Matches v0.3.2's
+    // `ensure_divmod_witness` deferral via `resolve_int_divisor`.
+    if assertions_have_symbolic_divmod(assertions, manager) {
+        return None;
+    }
     // Ground Boolean interface equalities `(= spur φ)` introduced by
     // purification / Tseitin preprocessing: substitute each Boolean spur
     // variable by its defining formula throughout, so the residual formula

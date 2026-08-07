@@ -1086,11 +1086,28 @@ fn eval_array_def(term: TermId, manager: &TermManager) -> Option<ArrayInterp> {
     }
 }
 
-fn eval_ground_int(term: TermId, manager: &TermManager) -> Option<i64> {
+pub(crate) fn eval_ground_int(term: TermId, manager: &TermManager) -> Option<i64> {
     let n = manager.get(term)?;
     match &n.kind {
         TermKind::IntConst(k) => k.to_i64(),
         TermKind::Neg(inner) => Some(-eval_ground_int(*inner, manager)?),
+        TermKind::Add(terms) => {
+            let mut sum = 0_i64;
+            for t in terms {
+                sum = sum.checked_add(eval_ground_int(*t, manager)?)?;
+            }
+            Some(sum)
+        }
+        TermKind::Sub(a, b) => Some(
+            eval_ground_int(*a, manager)?.checked_sub(eval_ground_int(*b, manager)?)?,
+        ),
+        TermKind::Mul(terms) => {
+            let mut prod = 1_i64;
+            for t in terms {
+                prod = prod.checked_mul(eval_ground_int(*t, manager)?)?;
+            }
+            Some(prod)
+        }
         _ => None,
     }
 }

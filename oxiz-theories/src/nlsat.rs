@@ -874,6 +874,16 @@ pub fn dispatch_nia_constraints(
         return None;
     }
 
+    // A `div`/`mod` with a symbolic (non-constant) divisor has no polynomial
+    // encoding (the defining identity is itself nonlinear in the divisor), so
+    // every path below would treat it as an opaque free variable and could
+    // report a `Sat`/`Unsat` that ignores the division constraint. Defer the
+    // whole goal to CDCL(T) instead. Matches v0.3.2's `ensure_divmod_witness`
+    // deferral via `resolve_int_divisor`.
+    if has_divmod && crate::nl_model_search::assertions_have_symbolic_divmod(assertions, manager) {
+        return None;
+    }
+
     // Optional CDCL(T) search (z3-style theory_arith_nl port): Tseitin CNF over
     // arithmetic atoms + 1-UIP lemma learning + Simplex theory. Opt-in via
     // `OXIZ_NIA_CDCL` so the default path is unaffected; soundness-safe (Sat
