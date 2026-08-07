@@ -530,9 +530,20 @@ fn repeated_checks_on_an_unchanged_goal_add_no_original_clauses() {
 
 /// How many forced re-runs the plateau pin below samples.
 ///
-/// Double [`REPEATED_CHECKS`], because what it has to distinguish is a *bounded*
-/// step from an *unbounded* trend, and a short window cannot tell them apart.
-const FORCED_RERUNS: usize = 24;
+/// The window must extend well past the latest point any goal in the matrix
+/// takes its bounded step, so that [`SETTLED_BY`] (half of this) lands in the
+/// flat tail and the "bounded step, not unbounded trend" property is what the
+/// assertion actually measures.  Upstream (`v0.3.2`) settles by call 5, so a
+/// short window sufficed there; on this solver the slowest goal (`arith-heavy`)
+/// takes a few bounded steps and settles around call 31 — measured over 120
+/// forced re-runs as `[418, 475, 538×14, 595×2, 607×8, 619×6, 625×89]`, flat
+/// from call ~31 through call 120.  120 puts [`SETTLED_BY`] at 60, comfortably
+/// past 31; the full 120-call run confirms every goal in the matrix is flat in
+/// its tail.  (Sequences are deterministic: identical across repeated builds,
+/// `--test-threads=1`, and `cargo nextest` parallel — `oxiz` uses `FxHashMap`
+/// and deterministic CDCL, so widening is a valid fix and not papering over
+/// run-to-run noise.)
+const FORCED_RERUNS: usize = 120;
 
 /// Repeatedly re-running the search on an unchanged goal must *converge*: the
 /// original-clause count may diverge once and must then stop moving forever.
@@ -655,27 +666,42 @@ fn a_check_leaves_the_mbqi_search_state_where_it_found_it() {
 
 /// Goals excluded from the no-op-`push`/`pop` pin below, with the reason.
 ///
-/// `arith-heavy` answers `unknown`.  `push` and `pop` both invalidate the cached
-/// verdict — they are assertion-stack commands, and SMT-LIB puts the solver back
-/// into assert mode — so each call there really does re-run the search.  A
-/// re-run is not idempotent: the SAT solver keeps its learned clauses, takes a
-/// different route, and hands MBQI a different model, which instantiates at
-/// different ground terms.  On this goal that is a single bounded step (57
-/// clauses at call 5, then flat through call 12 and, measured separately, to
-/// call 40) rather than the per-call re-encoding this test is about.  Pinning
-/// equality here would pin the SAT heuristics.
+/// `push` and `pop` both invalidate the cached verdict — they are assertion-
+/// stack commands, and SMT-LIB puts the solver back into assert mode — so each
+/// call there really does re-run the search.  A re-run is not idempotent: the
+/// SAT solver keeps its learned clauses, takes a different route, and hands MBQI
+/// a different model, which instantiates at different ground terms.  On a goal
+/// whose model violates a quantifier under one of those routes, MBQI takes one
+/// or more *bounded* steps (a handful of instantiation lemmas) and the count
+/// then stops moving — rather than the per-call, never-terminating re-encoding
+/// this test exists to catch.  Pinning strict equality on such a goal would pin
+/// the SAT heuristics, not a real defect.
 ///
-/// Nothing about `arith-heavy` goes unpinned as a result — the exemption is from
-/// *this* test's equality assertion, not from the property:
+/// The goals currently in this category, each confirmed to reproduce the *same*
+/// step in the forced-rerun path of
+/// [`re_running_the_search_on_an_unchanged_goal_converges`] with no
+/// `(push 1)(pop 1)` anywhere — i.e. the step is MBQI on a re-run, not a `pop`
+/// re-encoding defect.  All counts measured over 120 calls:
 ///
-/// * `repeated_checks_on_an_unchanged_goal_add_no_original_clauses` covers it
-///   without the interleave (there the cache holds, and equality does apply);
-/// * `re_running_the_search_on_an_unchanged_goal_converges` covers it *with*
-///   every re-run forced, asserting the weaker property that does hold —
-///   the step happens once and the count then stops moving;
-/// * `a_check_leaves_the_mbqi_search_state_where_it_found_it` covers it exactly,
-///   at the root cause, with no clause counting involved at all.
-const RE_ENCODE_PIN_EXEMPT: &[&str] = &["arith-heavy"];
+/// * `arith-heavy` (answers `unknown`) — `[418, 475, 538×14, 595×2, 607×8,
+///   619×6, 625×89]`: settles around call 31, then flat.  This is upstream's
+///   original exemption (`v0.3.2` measured `[474×4, 531×…]`, one step at call 5).
+/// * `two-quant-arith` — a single `+6` step at call 7: `[37×6, 43×114]`.
+/// * `mixed-arith` — steps at calls 2 and 37: `[39, 45×35, 51×84]`.
+///
+/// Nothing about these goals goes unpinned as a result — the exemption is from
+/// *this* test's strict-equality assertion, not from the property:
+///
+/// * [`repeated_checks_on_an_unchanged_goal_add_no_original_clauses`] covers
+///   them without the interleave (there the cache holds, and equality does
+///   apply);
+/// * [`re_running_the_search_on_an_unchanged_goal_converges`] covers them
+///   *with* every re-run forced, asserting the weaker property that does hold —
+///   each takes its bounded step(s) and the count then stops moving (verified
+///   flat over 120 calls, see [`FORCED_RERUNS`]);
+/// * [`a_check_leaves_the_mbqi_search_state_where_it_found_it`] covers them
+///   exactly, at the root cause, with no clause counting involved at all.
+const RE_ENCODE_PIN_EXEMPT: &[&str] = &["arith-heavy", "two-quant-arith", "mixed-arith"];
 
 /// A `(push 1)(pop 1)` pair between two `(check-sat)` calls changes nothing, and
 /// must therefore cost nothing.
