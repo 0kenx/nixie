@@ -230,7 +230,7 @@ pub use resolution_graph::{
 pub use smoothed_lbd::{SmoothedLbdStats, SmoothedLbdTracker};
 pub use solver::{
     BoxedBranchingHeuristic, BranchingHeuristic, RestartStrategy, Solver, SolverConfig,
-    SolverResult, SolverStats, TheoryCallback, TheoryCheckResult,
+    SolverError, SolverResult, SolverStats, TheoryCallback, TheoryCheckResult,
 };
 pub use stabilization::{
     SearchMode, StabilizationConfig, StabilizationManager, StabilizationStats,

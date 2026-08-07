@@ -256,9 +256,33 @@ impl Solver {
     /// True if `v` was folded away by equivalent-literal substitution or BVE
     /// and must not be branched on. Cheap: empty maps mean no pass ran.
     #[inline]
-    pub(super) fn var_eliminated(&self, v: Var) -> bool {
+    pub fn var_eliminated(&self, v: Var) -> bool {
         (self.equiv_substitution.len() > v.index() && self.equiv_substitution[v.index()].var() != v)
             || (self.bve_def.len() > v.index() && !self.bve_def[v.index()].is_empty())
+    }
+
+    /// Rewrite a literal a later `add_clause`/assumption tries to reintroduce
+    /// through the equivalent-literal-substitution map, so a variable ELS
+    /// folded away is soundly replaced by its class representative (the
+    /// equivalence was already proven) instead of being branched on as a free
+    /// variable -- the gatekeeper fix for the SK-1 false-`sat` (a reintroduced
+    /// ELS variable, no longer constrained by its equivalence, could be
+    /// assigned freely and break the model). A literal whose variable was
+    /// *not* ELS-substituted is returned unchanged. (BVE-eliminated variables
+    /// have no sound on-demand rewrite here; main's BVE eliminates no
+    /// variables under its sound literal-count bound, so that path is moot.)
+    #[inline]
+    pub(super) fn resolve_reintroduced_literal(&self, lit: Lit) -> Lit {
+        let v = lit.var();
+        if self.equiv_substitution.len() > v.index() {
+            let rep = self.equiv_substitution[v.index()];
+            if rep.var() != v {
+                // `v` was folded into `rep.var()`; `lit`'s polarity carries
+                // over (pos(v) == rep, neg(v) == neg(rep)).
+                return if lit.is_pos() { rep } else { rep.negate() };
+            }
+        }
+        lit
     }
 
     /// Rebuild the two-watched-literal structures and the binary implication

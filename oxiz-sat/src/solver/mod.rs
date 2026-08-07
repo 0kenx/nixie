@@ -479,11 +479,33 @@ impl SolverStats {
     }
 }
 
+/// Soundness error from reintroducing a variable the inprocessing toolkit
+/// (bounded variable elimination) already eliminated: its defining clauses
+/// were resolved away, so there is no sound on-demand rewrite the way
+/// equivalent-literal substitution has. ELS-substituted variables are
+/// rewritten through the substitution map instead and never produce this.
+///
+/// Ported from v0.3.2's gatekeeper fix. main's BVE eliminates no variables
+/// under its sound literal-count bound, so this is currently unreachable in
+/// practice; it exists for correctness and to keep the contract honest.
+#[derive(Debug, Clone)]
+pub enum SolverError {
+    /// A later `add_clause` or assumption named a BVE-eliminated variable.
+    EliminatedVariableReintroduction {
+        /// The variable a later clause or assumption tried to reintroduce.
+        var: Var,
+    },
+}
+
 /// CDCL SAT Solver
 #[derive(Debug)]
 pub struct Solver {
     /// Configuration
     pub(super) config: SolverConfig,
+    /// A prior `add_clause`/assumption reintroduced a BVE-eliminated variable
+    /// (see [`SolverError`]); once set, `solve*` answers `Unknown` rather
+    /// than risk a wrong `Sat`/`Unsat`. Read via [`Solver::error`].
+    pub(super) fatal_error: Option<SolverError>,
     /// Number of variables
     pub(super) num_vars: usize,
     /// Clause database
@@ -729,6 +751,7 @@ impl Solver {
         Self {
             restart_threshold: config.restart_interval,
             config,
+            fatal_error: None,
             num_vars: 0,
             clauses: ClauseDatabase::new(),
             trail: Trail::new(0),
@@ -1472,6 +1495,16 @@ impl Solver {
     pub fn add_clause(&mut self, lits: impl IntoIterator<Item = Lit>) -> bool {
         let mut clause_lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
 
+        // Gatekeeper (SK-1): if equivalent-literal substitution folded a
+        // variable away, rewrite any reintroduced mention of it through the
+        // substitution map to its class representative. Without this a later
+        // clause naming an ELS-eliminated variable would branch on it as a
+        // free variable (the equivalence is no longer in the live clause set),
+        // yielding a false `Sat`. No-op when ELS has not run (empty map).
+        for lit in clause_lits.iter_mut() {
+            *lit = self.resolve_reintroduced_literal(*lit);
+        }
+
         // Ensure we have all variables
         for lit in &clause_lits {
             let var_idx = lit.var().index();
@@ -1742,7 +1775,20 @@ impl Solver {
     }
 
     /// Solve the SAT problem
+    /// The fatal soundness error set by a prior `add_clause`/assumption that
+    /// reintroduced a BVE-eliminated variable (`None` when none has). When
+    /// `Some`, `solve*` returns `Unknown` rather than guess.
+    #[must_use]
+    pub fn error(&self) -> Option<&SolverError> {
+        self.fatal_error.as_ref()
+    }
+
     pub fn solve(&mut self) -> SolverResult {
+        // A prior `add_clause` reintroduced a BVE-eliminated variable with no
+        // sound way to honor it: refuse rather than risk a wrong verdict.
+        if self.fatal_error.is_some() {
+            return SolverResult::Unknown;
+        }
         // Check if trivially unsatisfiable
         if self.trivially_unsat {
             self.drat_emit_empty(None);
@@ -2095,6 +2141,18 @@ impl Solver {
         &mut self,
         assumptions: &[Lit],
     ) -> (SolverResult, Option<Vec<Lit>>) {
+        // Gatekeeper (SK-1): refuse to answer once a BVE-eliminated variable
+        // was reintroduced (no sound way to honor it).
+        if self.fatal_error.is_some() {
+            return (SolverResult::Unknown, None);
+        }
+        // Rewrite any assumption literal naming an ELS-eliminated variable
+        // through the substitution map (same sound fix as `add_clause`).
+        let mut assumptions: Vec<Lit> = assumptions.to_vec();
+        for l in assumptions.iter_mut() {
+            *l = self.resolve_reintroduced_literal(*l);
+        }
+        let assumptions = assumptions.as_slice();
         if self.trivially_unsat {
             return (SolverResult::Unsat, Some(Vec::new()));
         }
