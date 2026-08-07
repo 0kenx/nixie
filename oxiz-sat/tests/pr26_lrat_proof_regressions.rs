@@ -224,7 +224,6 @@ fn test_pr26_lrat_direct_empty_original_clause_needs_no_derivation() {
 }
 
 #[ignore = "main's LRAT chain for a unit-clause contradiction does not derive the empty clause the checker expects"]
-#[ignore = "LRAT chain: main's proof tracer does not derive the conflict the v0.3.2 checker expects for unit-clause contradictions"]
 #[test]
 fn test_pr26_lrat_unit_clause_contradicting_existing_fact_proof_verifies() {
     let path = unique_lrat_path("unit_contradiction");
@@ -288,8 +287,7 @@ fn test_pr26_lrat_equiv_substitution_gate_still_yields_verifiable_proof() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-#[ignore = "propagation fixpoint violation after gate-congruence inprocessing (hanging unit clause, stale watches)"]
-#[ignore = "propagation fixpoint violation after gate-congruence (hanging unit clause)"]
+#[ignore = "PRE-EXISTING main bug: inprocessing pipeline (Preprocessor in inprocess()) produces a wrong Sat for pigeonhole(6,5). Confirmed with enable_equiv_substitution: false, so gate-congruence is NOT the cause. The bug is in the Preprocessor clause-management interaction, not in this integration. Default config (enable_inprocessing: false) is unaffected."]
 #[test]
 fn test_pr26_lrat_inprocessing_gate_still_yields_verifiable_proof() {
     let config = SolverConfig {
@@ -414,7 +412,6 @@ fn test_pr26_lrat_valid_proof_is_not_accidentally_rejected_by_corruption_helpers
 // ---------------------------------------------------------------------
 
 #[ignore = "main's LRAT proof stream for a unit contradiction does not properly contain the empty clause (same root as unit_clause_contradicting)"]
-#[ignore = "LRAT chain (same root): proof stream for a unit contradiction lacks the empty clause"]
 #[test]
 fn test_pr26_lrat_writer_is_inert_after_unsat_finalization() {
     // A reused (incremental) solver that keeps adding clauses and

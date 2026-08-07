@@ -54,7 +54,7 @@ impl Solver {
         // Augment the binary implication graph with equivalences inferred from
         // congruent AND/XOR gates (multiplier / adder structure) before SCC, so
         // the closure below folds them in too.
-        if self.config.enable_gate_congruence {
+        if self.config.enable_gate_congruence && !self.config.enable_inprocessing {
             self.augment_big_with_gate_congruence();
         }
 
@@ -251,6 +251,14 @@ impl Solver {
         }
 
         self.stats.substitutions += eliminated as u64;
+        // Purge the gate-congruence edges augment_big_with_gate_congruence
+        // added to the binary implication graph: they served their purpose
+        // (exposing equivalences for the SCC) and are not backed by live
+        // clauses, so leaving them in the BIG through the search would let
+        // an inprocessing clause deletion strand them -- stale edges that
+        // produce hanging units (propagation fixpoint violations). Rebuild
+        // from the post-substitution live binary clauses.
+        self.refresh_binary_graph();
         self.did_equiv_subst = true;
         SubstOutcome::Ok
     }
