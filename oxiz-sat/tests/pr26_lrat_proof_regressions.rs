@@ -287,8 +287,23 @@ fn test_pr26_lrat_equiv_substitution_gate_still_yields_verifiable_proof() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-#[ignore = "PRE-EXISTING main bug: inprocessing pipeline (Preprocessor in inprocess()) produces a wrong Sat for pigeonhole(6,5). Confirmed with enable_equiv_substitution: false, so gate-congruence is NOT the cause. The bug is in the Preprocessor clause-management interaction, not in this integration. Default config (enable_inprocessing: false) is unaffected."]
 #[test]
+// Inprocessing mutates the live clause set (subsumption, pure-literal
+// elimination, on-the-fly strengthening) in ways the tracer cannot back
+// with sound LRAT addition/deletion lines, so `Solver::inprocess` steps
+// aside entirely while an LRAT tracer is attached (faithful port of
+// v0.3.2's `|| self.lrat.is_some()` early-return gate — main had dropped
+// it). This test pins that gate: with inprocessing *requested* and LRAT
+// tracing *on*, the solve must fall back to the plain CDCL path and still
+// emit a verifiable proof. If the gate regresses, inprocess runs under
+// LRAT, the proof stream and the search diverge, and this fails.
+//
+// NOTE (not under test here): inprocessing with LRAT *off* is a separate,
+// pre-existing upstream (v0.3.2) unsoundness — see
+// `INTEGRATION_NOTES.md` §1. Verified by transplant: v0.3.2 fails the
+// identical pigeonhole(6,5) inprocessing-on/no-LRAT case with the same
+// propagation-fixpoint invariant ("hanging unit"). This test does not
+// exercise that path (LRAT is on), so it is unaffected by it.
 fn test_pr26_lrat_inprocessing_gate_still_yields_verifiable_proof() {
     let config = SolverConfig {
         enable_inprocessing: true,

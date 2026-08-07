@@ -1257,8 +1257,16 @@ impl Solver {
     pub(super) fn inprocess(&mut self) {
         use crate::Preprocessor;
 
-        // Only inprocess at decision level 0
-        if self.trail.decision_level() != 0 {
+        // Only inprocess at decision level 0. LRAT tracing steps aside entirely:
+        // `strengthen_clauses_inprocessing`'s redundant-literal check derives its
+        // shorter clause via a hypothetical assign-and-propagate probe this
+        // module does not thread a hint chain through (and the subsumption /
+        // pure-literal-elimination passes rewrite the live clause set in ways the
+        // tracer cannot back with sound addition/deletion lines), so rather than
+        // emit proof steps this port cannot justify, the whole pass is skipped
+        // while an LRAT tracer is attached. Faithful port of v0.3.2's
+        // `|| self.lrat.is_some()` gate (main's `lrat` is a `bool`).
+        if self.trail.decision_level() != 0 || self.lrat {
             return;
         }
 
