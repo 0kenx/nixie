@@ -2072,4 +2072,94 @@ mod tests {
             "model x = {value} is outside the strict range (0, 1/2)"
         );
     }
+
+    #[test]
+    fn test_pr30_entailed_disequal_reason_declines_unknown_terms() {
+        let x = TermId::new(1);
+        let stranger = TermId::new(9_999);
+        let bound = TermId::new(101);
+
+        let mut solver = ArithSolver::lra();
+        solver.intern(x);
+        solver.assert_ge(
+            &[(x, Rational64::one())],
+            Rational64::from_integer(3),
+            bound,
+        );
+        solver.assert_le(
+            &[(x, Rational64::one())],
+            Rational64::from_integer(3),
+            bound,
+        );
+        solver.check().expect("check should succeed");
+
+        assert!(
+            solver.entailed_disequal_reason(x, stranger).is_none(),
+            "an uninterned term must never yield an entailed disequality"
+        );
+    }
+
+    #[test]
+    fn test_pr30_entailed_disequal_reason_fires_only_on_disjoint_bounds() {
+        let x = TermId::new(1);
+        let y = TermId::new(2);
+        let x_lo = TermId::new(101);
+        let x_hi = TermId::new(102);
+        let y_lo = TermId::new(103);
+        let y_hi = TermId::new(104);
+
+        let mut solver = ArithSolver::lra();
+        solver.intern(x);
+        solver.intern(y);
+        solver.assert_ge(&[(x, Rational64::one())], Rational64::from_integer(3), x_lo);
+        solver.assert_le(&[(x, Rational64::one())], Rational64::from_integer(3), x_hi);
+        solver.assert_ge(&[(y, Rational64::one())], Rational64::from_integer(5), y_lo);
+        solver.assert_le(&[(y, Rational64::one())], Rational64::from_integer(5), y_hi);
+
+        assert!(
+            matches!(
+                solver.check().expect("check should succeed"),
+                TheoryResult::Sat
+            ),
+            "the bounds themselves are consistent; only x = y is not"
+        );
+
+        let reason = solver
+            .entailed_disequal_reason(x, y)
+            .expect("x in [3,3] and y in [5,5] entails x != y");
+        assert!(
+            !reason.is_empty(),
+            "an entailed disequality must be justified by the bound atoms"
+        );
+        assert!(
+            reason.iter().all(|t| [x_lo, x_hi, y_lo, y_hi].contains(t)),
+            "the reason must name only the asserted bound atoms, got: {reason:?}"
+        );
+        assert!(
+            reason.contains(&x_hi) || reason.contains(&x_lo),
+            "the reason must cite a bound on x, got: {reason:?}"
+        );
+        assert!(
+            reason.contains(&y_hi) || reason.contains(&y_lo),
+            "the reason must cite a bound on y, got: {reason:?}"
+        );
+
+        // Overlapping ranges: y in [2, 5] admits y = 3 = x.
+        let mut solver = ArithSolver::lra();
+        solver.intern(x);
+        solver.intern(y);
+        solver.assert_ge(&[(x, Rational64::one())], Rational64::from_integer(3), x_lo);
+        solver.assert_le(&[(x, Rational64::one())], Rational64::from_integer(3), x_hi);
+        solver.assert_ge(&[(y, Rational64::one())], Rational64::from_integer(2), y_lo);
+        solver.assert_le(&[(y, Rational64::one())], Rational64::from_integer(5), y_hi);
+        assert!(matches!(
+            solver.check().expect("check should succeed"),
+            TheoryResult::Sat
+        ));
+
+        assert!(
+            solver.entailed_disequal_reason(x, y).is_none(),
+            "x = 3 lies inside y's range [2, 5], so x != y is NOT entailed"
+        );
+    }
 }
