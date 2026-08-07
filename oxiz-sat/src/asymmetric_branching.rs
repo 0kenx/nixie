@@ -282,9 +282,22 @@ impl AsymmetricBranching {
                 if let Some(new_lits) = self.strengthen_clause(&lits, clauses)
                     && new_lits.len() < lits.len()
                 {
-                    // Remove old clause and add strengthened version
+                    // Remove old clause and add strengthened version. This is
+                    // an off-line pass with no trail access (see the module
+                    // doc), so `compute_lbd` is unavailable; carry the
+                    // predecessor's LBD instead. Strengthening only removes
+                    // literals, so the distinct-level count cannot grow — the
+                    // old LBD is a sound upper bound, clamped to the new
+                    // length (LBD <= len) and to >= 1 (the invariant every
+                    // other `add_learned` site satisfies).
+                    let old_lbd = clauses.get(id).map(|c| c.lbd).unwrap_or(1);
+                    let new_len = new_lits.len() as u32;
                     clauses.remove(id);
-                    clauses.add_learned(new_lits);
+                    let new_id = clauses.add_learned(new_lits);
+                    let new_lbd = old_lbd.min(new_len).max(1);
+                    if let Some(c) = clauses.get_mut(new_id) {
+                        c.lbd = new_lbd;
+                    }
                     strengthened_count += 1;
                 }
             }

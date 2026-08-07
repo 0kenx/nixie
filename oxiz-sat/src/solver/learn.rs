@@ -1148,6 +1148,19 @@ impl Solver {
                 continue;
             }
             let id = self.clauses.add_learned([r.negate(), q]);
+            // Set the LBD this hyper-binary-resolution clause actually has.
+            // Every other `add_learned` site computes and stores it (see the
+            // sibling HBR path in `propagate.rs` and its design note: a stuck
+            // LBD of 0 at `Clause::learned`'s default gave every HBR clause an
+            // artificially easy path into permanent Core retention via
+            // `record_usage`'s `lbd <= 2` promote, regardless of quality).
+            // This site used to be the exception — the LBD-0 invariant
+            // (debug) caught it on the pigeonhole case.
+            let lbd = self.compute_lbd(&[r.negate(), q]);
+            if let Some(clause) = self.clauses.get_mut(id) {
+                clause.lbd = lbd;
+            }
+            self.debug_check_learned_clause_lbd(id);
             self.binary_graph.add(r, q, id);
             self.binary_graph.add(q.negate(), r.negate(), id);
             self.watches.add(r, Watcher::new(id, q));
