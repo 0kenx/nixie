@@ -864,6 +864,7 @@ pub fn dispatch_nia_constraints(
     assertions: &[TermId],
     manager: &mut TermManager,
     integer_mode: bool,
+    model_search: bool,
 ) -> Option<NlDispatchResult> {
     let has_nl = assertions.iter().any(|&a| term_is_nonlinear(a, manager));
     let has_divmod = assertions.iter().any(|&a| term_contains_divmod(a, manager));
@@ -903,8 +904,12 @@ pub fn dispatch_nia_constraints(
     // Simplex vars, solve the relaxation (sound Unsat on infeasibility), then
     // bounded concrete enumeration that verifies the full formula before Sat.
     // Catches the industrial QF_NIA termination-VC SAT instances the CAD core
-    // bails on.
-    if let Some(r) = crate::nl_model_search::try_model_based_nia_search(assertions, manager) {
+    // bails on. Gated by the caller's `model_search` config (a budget
+    // decision, never a soundness one — the search can only turn `unknown`
+    // into `sat`).
+    if model_search
+        && let Some(r) = crate::nl_model_search::try_model_based_nia_search(assertions, manager)
+    {
         return Some(r);
     }
 
@@ -1587,7 +1592,7 @@ mod tests {
         let square = manager.mk_mul(vec![x, x]);
         let four = manager.mk_int(4);
         let eq = manager.mk_eq(square, four);
-        let result = dispatch_nia_constraints(&[eq], &mut manager, true);
+        let result = dispatch_nia_constraints(&[eq], &mut manager, true, true);
         // SAT or Unknown (unknown means solver fell through)
         assert!(
             matches!(result, Some(NlDispatchResult::Sat(_)) | None),
@@ -1605,7 +1610,7 @@ mod tests {
         let square = manager.mk_mul(vec![x, x]);
         let neg_one = manager.mk_int(-1);
         let eq = manager.mk_eq(square, neg_one);
-        let result = dispatch_nia_constraints(&[eq], &mut manager, true);
+        let result = dispatch_nia_constraints(&[eq], &mut manager, true, true);
         assert!(
             matches!(result, Some(NlDispatchResult::Unsat) | None),
             "x*x=-1 should be UNSAT or unknown, got {:?}",

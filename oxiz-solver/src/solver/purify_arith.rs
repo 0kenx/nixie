@@ -406,7 +406,7 @@ mod tests {
             .into_iter()
             .map(|t| purify_assertion(t, &mut tm, &mut state).term)
             .collect();
-        let r = dispatch_nia_constraints(&purified, &mut tm, true);
+        let r = dispatch_nia_constraints(&purified, &mut tm, true, true);
         assert_eq!(
             r,
             Some(NlDispatchResult::Unsat),

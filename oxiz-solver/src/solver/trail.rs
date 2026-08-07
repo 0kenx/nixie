@@ -123,6 +123,7 @@ impl super::Solver {
         let super::Solver {
             config: _,          // INVARIANT: user configuration
             sat: _,             // SCOPED: SatSolver::push/pop
+            branch_priority: _,  // NOT trailed: empty queue is sound
             euf: _,             // SCOPED: reset by `rebase_theory_state`
             arith: _,           // SCOPED: reset by `rebase_theory_state`
             bv: _,              // SCOPED: reset by `rebase_theory_state`

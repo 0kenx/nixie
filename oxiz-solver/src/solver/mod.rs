@@ -62,6 +62,11 @@ pub struct Solver {
     pub(super) config: SolverConfig,
     /// SAT solver core
     pub(super) sat: SatSolver,
+    /// Shared "decide these first" queue for opt-in domain-first branching
+    /// (`SolverConfig::enable_domain_first_branching`). Populated by
+    /// `push_branch_priority`; read by the SAT engine's external branching
+    /// heuristic when installed.
+    pub(super) branch_priority: branch_priority::PriorityQueue,
     /// EUF theory solver
     pub(super) euf: EufSolver,
     /// Arithmetic theory solver
@@ -408,11 +413,25 @@ impl Solver {
     pub fn with_config(config: SolverConfig) -> Self {
         let proof_enabled = config.proof;
 
+        // Opt-in domain-first branching: build the shared priority queue and
+        // the branching heuristic that reads it, and hand the heuristic to the
+        // SAT engine iff the caller asked for it. The queue stays empty until
+        // `Solver::push_branch_priority` populates it (e.g. from flattened
+        // lookup tables); with the heuristic installed the engine consults it
+        // on every decision, with the heuristic absent it never does.
+        let (branch_priority, priority_heuristic) =
+            branch_priority::new_priority_branching();
+
         // Build SAT solver configuration from our config
         let sat_config = SatConfig {
             restart_strategy: config.restart_strategy,
             enable_inprocessing: config.enable_inprocessing,
             inprocessing_interval: config.inprocessing_interval,
+            external_branching: if config.enable_domain_first_branching {
+                Some(priority_heuristic)
+            } else {
+                None
+            },
             ..SatConfig::default()
         };
 
@@ -428,6 +447,7 @@ impl Solver {
         Self {
             config,
             sat: SatSolver::with_config(sat_config),
+            branch_priority,
             euf: EufSolver::new(),
             arith: ArithSolver::lra(),
             bv: BvSolver::new(),
@@ -2331,5 +2351,6 @@ impl Solver {
 
 #[cfg(test)]
 mod scope_rebase_tests;
+mod branch_priority;
 #[cfg(test)]
 mod tests;

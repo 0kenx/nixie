@@ -284,6 +284,16 @@ pub struct SolverConfig {
     ///
     /// Default: 64 (`DEFAULT_FINITE_EXPANSION_BUDGET`).
     pub finite_expansion_budget: usize,
+    /// Run the search-based nonlinear (NIA) model procedure when the
+    /// cell-decomposition core returns no verdict. The search can only turn
+    /// an `unknown` into a `sat` (never the reverse), so gating it off is a
+    /// budget decision rather than a soundness one. Default `true`;
+    /// `minimal()` disables it. (Ported from v0.3.2.)
+    pub nonlinear_model_search: bool,
+    /// Opt-in domain-first branching: feed the branch-priority queue to the
+    /// SAT engine as an external branching oracle so theory-relevant
+    /// variables are decided first. Default `false`. (Ported from v0.3.2.)
+    pub enable_domain_first_branching: bool,
 }
 
 impl Default for SolverConfig {
@@ -318,6 +328,8 @@ impl SolverConfig {
             inprocessing_interval: 0,
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
+            nonlinear_model_search: true,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -346,6 +358,8 @@ impl SolverConfig {
             inprocessing_interval: 10000,
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
+            nonlinear_model_search: true,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -374,6 +388,8 @@ impl SolverConfig {
             inprocessing_interval: 5000, // More frequent inprocessing
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
+            nonlinear_model_search: true,
+            enable_domain_first_branching: false,
         }
     }
 
@@ -403,6 +419,8 @@ impl SolverConfig {
             // `minimal()` disables every optional rewrite; the caller asked for
             // full control, so quantifiers keep their plain MBQI path.
             finite_expansion_budget: 0,
+            nonlinear_model_search: false,
+            enable_domain_first_branching: false,
         }
     }
 
