@@ -223,8 +223,16 @@ fn test_pr26_lrat_direct_empty_original_clause_needs_no_derivation() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-#[ignore = "main's LRAT chain for a unit-clause contradiction does not derive the empty clause the checker expects"]
 #[test]
+// Pins the `add_clause`-level unit-contradiction LRAT derivation. When a
+// unit clause directly contradicts an existing level-0 fact, the empty
+// clause must be derived with a real RUP chain (`[id of {a}, id of {¬a}]`),
+// not emitted with an empty chain. Previously main deferred to
+// `solve()`'s `drat_emit_empty(None)`, producing an empty chain the checker
+// rejects; now `add_clause`'s contradiction branches call
+// `drat_emit_empty_from_seed` (ported from v0.3.2's `lrat_emit_empty_from`),
+// which builds the chain from the contradicting clause's own literals + id.
+// v0.3.2 passes this test identically.
 fn test_pr26_lrat_unit_clause_contradicting_existing_fact_proof_verifies() {
     let path = unique_lrat_path("unit_contradiction");
     let mut solver = Solver::new();
@@ -403,7 +411,6 @@ fn test_pr26_lrat_truncated_proof_missing_conclusion_is_rejected() {
     );
 }
 
-#[ignore = "LRAT chain (same root): main's proof generation produces chains the checker rejects"]
 #[test]
 fn test_pr26_lrat_valid_proof_is_not_accidentally_rejected_by_corruption_helpers() {
     // Sanity check on the two corruption helpers themselves: applied to a
@@ -426,8 +433,14 @@ fn test_pr26_lrat_valid_proof_is_not_accidentally_rejected_by_corruption_helpers
 // Gatekeeper SK-5: the writer must go inert once the proof is finalized.
 // ---------------------------------------------------------------------
 
-#[ignore = "main's LRAT proof stream for a unit contradiction does not properly contain the empty clause (same root as unit_clause_contradicting)"]
 #[test]
+// Gatekeeper SK-5: the proof writer must go inert once finalized. Two
+// things had been missing in main and are now ported from v0.3.2: (1) the
+// empty-clause derivation itself (same root as
+// `unit_clause_contradicting`, fixed by `drat_emit_empty_from_seed`), and
+// (2) an immediate flush at finalization so a caller that reads the proof
+// file before dropping the solver sees the concluded proof (v0.3.2's
+// `lrat_emit_empty_from` does `writer.flush()`).
 fn test_pr26_lrat_writer_is_inert_after_unsat_finalization() {
     // A reused (incremental) solver that keeps adding clauses and
     // re-solving after an `Unsat` verdict must not keep appending lines to

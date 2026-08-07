@@ -1224,6 +1224,49 @@ impl Solver {
         if self.lrat {
             self.build_chain_for_empty(conflict);
         }
+        self.finalize_empty_clause();
+    }
+
+    /// Emit the empty clause whose derivation is seeded by an explicit,
+    /// already-fully-falsified clause given as literals + its LRAT `final_id`.
+    ///
+    /// This is the `add_clause`-level counterpart of [`Self::drat_emit_empty`]:
+    /// the contradiction is detected *before* the offending clause is attached
+    /// to the clause database (so no `ClauseId` exists yet for
+    /// [`Self::build_chain_for_empty`] to read), but the clause is fully
+    /// falsified at decision level 0 — every literal's negation is a level-0
+    /// unit with a known LRAT id — so the RUP chain is simply
+    /// `[unit id of each literal's negation] ++ [final_id]`, which is exactly
+    /// what `build_chain_for_empty(Some(cid))` computes for a stored clause.
+    /// Faithful port of v0.3.2's `lrat_emit_empty_from(seed_lits, final_id)`;
+    /// v0.3.2's general `lrat_build_hint_chain` reduces to this same chain for
+    /// a level-0-falsified clause (no deeper antecedents to recurse into).
+    pub(super) fn drat_emit_empty_from_seed(&mut self, seed_lits: &[Lit], final_id: i64) {
+        if self.proof.is_none() || self.lrat_finalized {
+            return;
+        }
+        if self.lrat {
+            // Same per-literal walk as `build_chain_for_empty`, but driven by
+            // the explicit seed literals + id rather than a stored ClauseId.
+            debug_assert!(
+                self.lrat_chain.is_empty(),
+                "lrat_chain must be clean before seeding the empty-clause chain"
+            );
+            for lit in seed_lits {
+                // `lit` is falsified; its negation is the level-0 unit fixing it.
+                self.lrat_chain
+                    .push(self.proof_unit_id(lit.negate().to_dimacs()));
+            }
+            self.lrat_chain.push(final_id);
+        }
+        self.finalize_empty_clause();
+    }
+
+    /// Shared tail of the two empty-clause emitters above: allocate the id,
+    /// drain `lrat_chain` as the RUP hints (empty for DRAT-only), append the
+    /// derived empty clause, and mark the proof finalized so every subsequent
+    /// proof hook is a no-op.
+    fn finalize_empty_clause(&mut self) {
         let id = self.proof_next_id();
         let chain = if self.lrat {
             std::mem::take(&mut self.lrat_chain)
@@ -1237,7 +1280,11 @@ impl Solver {
         // The empty clause finalizes the proof: no further additions can
         // affect verification (a checker stops reading at the empty clause),
         // and a caller reusing the solver must not keep appending to a
-        // concluded proof. Mirrors v0.3.2's finalization.
+        // concluded proof. Mirrors v0.3.2's finalization. Flush immediately
+        // so a caller that reads the proof file before dropping the solver
+        // (and so before BufWriter's drop-flush) sees the concluded proof —
+        // matches v0.3.2's `writer.flush()` in `lrat_emit_empty_from`.
+        self.flush_proof();
         self.lrat = false;
         self.lrat_finalized = true;
     }
@@ -1587,8 +1634,17 @@ impl Solver {
                     let var = lit.var();
                     let level = self.trail.level(var);
                     if level == 0 {
-                        // Conflict with a level-0 assignment - truly UNSAT
+                        // Conflict with a level-0 assignment - truly UNSAT.
+                        // The new unit clause and the existing level-0 fact it
+                        // contradicts together already contain the empty
+                        // clause: emit it now, seeded by this clause's own
+                        // literal (fully falsified) and id, rather than
+                        // deferring to `solve()`'s `drat_emit_empty(None)`
+                        // (which would emit an empty, unverifiable chain).
+                        // Faithful port of v0.3.2's `add_clause` unit-conflict
+                        // branch.
                         self.trivially_unsat = true;
+                        self.drat_emit_empty_from_seed(&[lit], proof_oid);
                         return false;
                     } else {
                         // Conflict with higher-level assignment from previous solve.
@@ -1657,7 +1713,12 @@ impl Solver {
                 // never be dequeued again).
                 let outcome = self.pre_check_effective_unit(&clause_lits);
                 if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
+                    // This just-registered binary clause is itself fully
+                    // falsified at level 0 — seed the empty-clause derivation
+                    // from its own literals + id (faithful port of v0.3.2's
+                    // binary branch).
                     self.trivially_unsat = true;
+                    self.drat_emit_empty_from_seed(&clause_lits, proof_oid);
                     return false;
                 }
 
@@ -1689,7 +1750,11 @@ impl Solver {
         // selection just computed.
         let outcome = self.pre_check_effective_unit(&clause_lits);
         if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
+            // This just-registered 3+-literal clause is itself fully
+            // falsified at level 0 — seed the empty-clause derivation from
+            // its own literals + id (faithful port of v0.3.2's 3+ branch).
             self.trivially_unsat = true;
+            self.drat_emit_empty_from_seed(&clause_lits, proof_oid);
             return false;
         }
 
