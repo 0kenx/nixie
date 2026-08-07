@@ -697,6 +697,11 @@ pub struct Solver {
     /// `unit_clauses_idx`) and RUP-chain assembly in conflict analysis. DRAT-only
     /// proofs leave this `false` — DRAT needs neither ids nor chains.
     pub(super) lrat: bool,
+    /// True once drat_emit_empty has concluded the proof with the empty
+    /// clause. Guards against double finalization (a second UNSAT solve
+    /// emitting a second empty clause). Ported from v0.3.2's
+    /// `lrat_unsat_finalized`.
+    pub(super) lrat_finalized: bool,
     /// Monotonic clause-id counter (`clause_id` in upstream). Original clauses
     /// draw ids `1..K` in file order; derived clauses draw the rest. Maintained
     /// only while a proof is active.
@@ -757,6 +762,7 @@ impl Solver {
             restart_threshold: config.restart_interval,
             config,
             fatal_error: None,
+            lrat_finalized: false,
             num_vars: 0,
             clauses: ClauseDatabase::new(),
             trail: Trail::new(0),
@@ -853,6 +859,7 @@ impl Solver {
             proof.close(false);
         }
         self.lrat = false;
+        self.lrat_finalized = true;
     }
 
     /// Back-compat alias for [`Solver::disable_proof`].
@@ -1211,7 +1218,7 @@ impl Solver {
     /// Emit the empty clause (unconditional UNSAT). For LRAT this first builds
     /// the empty clause's RUP chain from the current conflict.
     pub(super) fn drat_emit_empty(&mut self, conflict: Option<ClauseId>) {
-        if self.proof.is_none() {
+        if self.proof.is_none() || self.lrat_finalized {
             return;
         }
         if self.lrat {
@@ -1232,6 +1239,7 @@ impl Solver {
         // and a caller reusing the solver must not keep appending to a
         // concluded proof. Mirrors v0.3.2's finalization.
         self.lrat = false;
+        self.lrat_finalized = true;
     }
 
     /// Purge every binary-implication-graph edge belonging to `clause_id`.
