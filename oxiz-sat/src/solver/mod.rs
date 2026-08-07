@@ -191,6 +191,10 @@ pub struct SolverConfig {
     /// Enable for one-shot solving of binary-heavy formulas where collapsing
     /// equivalences is expected to pay off.
     pub enable_equiv_substitution: bool,
+    /// Whether equivalent-literal substitution augments the binary
+    /// implication graph with congruences inferred from AND/XOR gates
+    /// (multiplier / adder structure) before SCC. Default `true`.
+    pub enable_gate_congruence: bool,
     /// Enable bounded variable elimination (BVE / SatELite) as a one-shot
     /// pre-search pass. Eliminates variables by resolving their clauses when
     /// the resolvents don't grow the formula, with model reconstruction. The
@@ -328,6 +332,7 @@ impl Default for SolverConfig {
             use_lrb_branching: false,
             enable_inprocessing: false,
             enable_equiv_substitution: false,
+            enable_gate_congruence: true,
             enable_bve: false,
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
@@ -931,6 +936,11 @@ impl Solver {
     /// Enable **text** LRAT proof logging to `path`.
     pub fn enable_lrat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         self.connect_lrat(path, false)
+    }
+
+    /// Disable LRAT proof logging, dropping the proof tracer.
+    pub fn disable_lrat_proof(&mut self) {
+        self.proof = None;
     }
 
     /// Enable **binary** LRAT proof logging to `path`.

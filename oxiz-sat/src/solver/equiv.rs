@@ -54,7 +54,9 @@ impl Solver {
         // Augment the binary implication graph with equivalences inferred from
         // congruent AND/XOR gates (multiplier / adder structure) before SCC, so
         // the closure below folds them in too.
-        self.augment_big_with_gate_congruence();
+        if self.config.enable_gate_congruence {
+            self.augment_big_with_gate_congruence();
+        }
 
         // `sub[code(l)]` = representative literal equivalent to `l` (itself if
         // `l` is in no non-trivial SCC). Members are set directly to the rep,
