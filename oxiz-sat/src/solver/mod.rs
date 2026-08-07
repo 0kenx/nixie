@@ -1227,6 +1227,11 @@ impl Solver {
             proof.add_derived_empty_clause(id, &chain);
         }
         self.lrat_chain.clear();
+        // The empty clause finalizes the proof: no further additions can
+        // affect verification (a checker stops reading at the empty clause),
+        // and a caller reusing the solver must not keep appending to a
+        // concluded proof. Mirrors v0.3.2's finalization.
+        self.lrat = false;
     }
 
     /// Purge every binary-implication-graph edge belonging to `clause_id`.

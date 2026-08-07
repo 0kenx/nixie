@@ -223,7 +223,8 @@ fn test_pr26_lrat_direct_empty_original_clause_needs_no_derivation() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-#[ignore = "v0.3.2 LRAT chain: main's proof for a unit-clause contradiction does not derive the conflict the checker expects (proof-system difference)"]
+#[ignore = "main's LRAT chain for a unit-clause contradiction does not derive the empty clause the checker expects"]
+#[ignore = "LRAT chain: main's proof tracer does not derive the conflict the v0.3.2 checker expects for unit-clause contradictions"]
 #[test]
 fn test_pr26_lrat_unit_clause_contradicting_existing_fact_proof_verifies() {
     let path = unique_lrat_path("unit_contradiction");
@@ -287,7 +288,8 @@ fn test_pr26_lrat_equiv_substitution_gate_still_yields_verifiable_proof() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-#[ignore = "main debug LBD-0 invariant fires on the inprocessing-gate path (a third add_learned-without-LBD site, same class as 17b77e4d)"]
+#[ignore = "propagation fixpoint violation after gate-congruence inprocessing (hanging unit clause, stale watches)"]
+#[ignore = "propagation fixpoint violation after gate-congruence (hanging unit clause)"]
 #[test]
 fn test_pr26_lrat_inprocessing_gate_still_yields_verifiable_proof() {
     let config = SolverConfig {
@@ -388,7 +390,7 @@ fn test_pr26_lrat_truncated_proof_missing_conclusion_is_rejected() {
     );
 }
 
-#[ignore = "v0.3.2 corruption-helper API: main's LRAT checker does not expose the same hooks"]
+#[ignore = "LRAT chain (same root): main's proof generation produces chains the checker rejects"]
 #[test]
 fn test_pr26_lrat_valid_proof_is_not_accidentally_rejected_by_corruption_helpers() {
     // Sanity check on the two corruption helpers themselves: applied to a
@@ -411,7 +413,8 @@ fn test_pr26_lrat_valid_proof_is_not_accidentally_rejected_by_corruption_helpers
 // Gatekeeper SK-5: the writer must go inert once the proof is finalized.
 // ---------------------------------------------------------------------
 
-#[ignore = "v0.3.2 finalized-state: main's lrat_proof_enabled() does not flip to false after UNSAT finalization"]
+#[ignore = "main's LRAT proof stream for a unit contradiction does not properly contain the empty clause (same root as unit_clause_contradicting)"]
+#[ignore = "LRAT chain (same root): proof stream for a unit contradiction lacks the empty clause"]
 #[test]
 fn test_pr26_lrat_writer_is_inert_after_unsat_finalization() {
     // A reused (incremental) solver that keeps adding clauses and
