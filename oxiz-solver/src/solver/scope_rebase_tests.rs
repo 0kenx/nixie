@@ -536,7 +536,7 @@ fn repeated_checks_on_an_unchanged_goal_add_no_original_clauses() {
 /// assertion actually measures.  Upstream (`v0.3.2`) settles by call 5, so a
 /// short window sufficed there; on this solver the slowest goal (`arith-heavy`)
 /// takes a few bounded steps and settles around call 31 — measured over 120
-/// forced re-runs as `[418, 475, 538×14, 595×2, 607×8, 619×6, 625×89]`, flat
+/// forced re-runs as `[418, 475, 538×14, 595×2, 607×7, 619×6, 625×89]`, flat
 /// from call ~31 through call 120.  120 puts [`SETTLED_BY`] at 60, comfortably
 /// past 31; the full 120-call run confirms every goal in the matrix is flat in
 /// its tail.  (Sequences are deterministic: identical across repeated builds,
@@ -683,7 +683,7 @@ fn a_check_leaves_the_mbqi_search_state_where_it_found_it() {
 /// `(push 1)(pop 1)` anywhere — i.e. the step is MBQI on a re-run, not a `pop`
 /// re-encoding defect.  All counts measured over 120 calls:
 ///
-/// * `arith-heavy` (answers `unknown`) — `[418, 475, 538×14, 595×2, 607×8,
+/// * `arith-heavy` (answers `unknown`) — `[418, 475, 538×14, 595×2, 607×7,
 ///   619×6, 625×89]`: settles around call 31, then flat.  This is upstream's
 ///   original exemption (`v0.3.2` measured `[474×4, 531×…]`, one step at call 5).
 /// * `two-quant-arith` — a single `+6` step at call 7: `[37×6, 43×114]`.
