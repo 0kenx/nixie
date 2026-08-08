@@ -73,6 +73,16 @@ pinning — this can only make the check *lenient* (more `sat`), never a false
 `unsat`, because `(asserts ∧ pinned-constants)` unsat already implies no
 function extension rescues the formula.
 
+**Two oracle limits to read the numbers with** (full detail in
+`VALIDATED_RESCORE.md`): (1) `sat_model_invalid` is a **lower bound** — leniency
+on partial/function models means a wrong model whose only error is in a skipped
+function value passes as `valid`; (2) oxiz's *internal* model-verification gate
+(`model_refutes_assertions`) shares `arith.value` with `build_model`, so where
+a wrong model surfaces as a numeric-equality collision the gate returns
+`Undetermined` by construction — **a clean internal gate is not evidence of
+model correctness in the theory-combination case.** Neither limit lets a
+`sat_model_valid` row be read as a correctness proof.
+
 ## As a PR gate
 
 For any PR touching the solver core (`oxiz-solver`, `oxiz-theories`,

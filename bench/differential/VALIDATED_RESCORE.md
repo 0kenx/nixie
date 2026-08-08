@@ -148,6 +148,47 @@ is unsat, so no model exists); the 2 agreeing-sat rows (DLX1C0, 1659) are the
 construction defect's confirmed floor. Treat none of these numbers as exact
 ceilings.
 
+### Second oracle limit: the internal gate shares `arith.value` with `build_model`
+
+A *clean* `model_refutes_assertions` gate is **not** evidence the model is
+correct in the theory-combination case. The gate's evaluator
+(`Solver::eval_in_model_outcome`) reads numeric `Var` values from
+`self.arith.value(term)` — the **same source `build_model` uses** — so when the
+arithmetic solver's model is itself the bug (see defect B below), the gate
+evaluates the assertions with the same wrong values and, where the violation
+surfaces as a numeric-equality collision, returns `Undetermined` by
+construction (collisions are the gate's deliberate blind spot, because LP
+collisions are legitimate). Acting on collisions would mass-downgrade correct
+`sat`s, so the gate cannot be cheaply strengthened here. **Two oracle limits
+now sit next to the numbers: (1) leniency on partial/function models, (2) the
+gate shares `arith.value` with what it validates.** Neither lets a reader
+infer `sat_model_valid` is a correctness proof.
+
+## Defect B re-scoping (diagnostic, not the false-sat root cause)
+
+Defect B was briefly suspected to be the root cause of main's remaining
+unsound sats (a Nelson-Oppen failure: EUF entails an equality between two
+arithmetic terms; the arith solver never receives it; simplex picks values
+violating the implied bound → false `sat`). A cheap instrumentation diagnostic
+(dump EUF congruence classes + the arith assignment at the final sat) **refutes
+that for the named false-sat guards**:
+
+- **`storecomm_t3`** (QF_AUFLIA, false sat): **zero arith terms** at the sat —
+  its wrong verdict is UF/array-mediated, not arith. Different bug.
+- **`xs_8_13`** (QF_UFLIA, false sat): arith present, but all 20 EUF classes are
+  value-consistent (0 with divergent arith values) — the direct missing-
+  propagation signature is absent. Format/LIA structure; unattributed to B.
+- **`DLX1C0`** (QF_UFIDL, *correct* sat, wrong model): the only instance with
+  B's flavor — arith returns values violating a transitively-**entailed**
+  bound; EUF classes are themselves consistent.
+
+So B does **not** unify the false sats and does **not** retire the pinned
+guards. B stays a bounded **arithmetic model-layer** follow-up (the arith
+solver returns infeasible values for a congruence-class the formula
+transitively constrains); `storecomm_t3` and `xs_8_13` are **separate**
+soundness investigations (array/UF and format/LIA respectively). B was
+*not* staffed as a high-priority root cause on the strength of this diagnostic.
+
 ## Caveat on the family-neighbour flag
 
 The family flag is conservative by design (it exists to catch the ANIA shared-
