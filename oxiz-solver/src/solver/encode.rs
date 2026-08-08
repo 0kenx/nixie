@@ -60,16 +60,27 @@ pub(super) fn needs_ite_elimination(sort: SortId, manager: &TermManager) -> bool
 }
 
 /// Collect every subterm of `term` reachable *without* descending into a
-/// quantifier's bound body (`Forall`/`Exists`) or a `let`'s bindings/body.
+/// quantifier's bound body (`Forall`/`Exists`).
+///
+/// `let` is descended into: a `let`-bound name is a fixed alias for its
+/// value (there is no per-instantiation variation the way a quantifier's
+/// bound variable has), so a non-Bool `ite` under a `let` is exactly as
+/// ground as one at the top level and must be hoisted by
+/// [`Solver::eliminate_nonbool_ite`] just the same. Stopping at `let`
+/// (an earlier, over-conservative reading of "binder") silently dropped
+/// the mux axioms for every `ite` inside a wrapping `let` — e.g. the
+/// QF_UFIDL `vhard7` instance is one big `(let (...) (and … ite …))`, and
+/// skipping its body turned a sound `unknown` into a wrong `sat`. (v0.3.2
+/// carries that same wrong `sat`; this is a main-side fix beyond upstream.)
 ///
 /// [`Solver::eliminate_nonbool_ite`] replaces a subterm with a fresh,
-/// unbound variable. That is unsound under a binder: a subterm that
-/// mentions the bound variable denotes a different value at every
-/// instantiation, so one global replacement cannot stand in for all of
-/// them. Treating a binder as opaque here means the pass never looks inside
-/// one -- whatever ground instances MBQI produces from it are handled when
-/// *they* are encoded (through [`Solver::encode_nonbool_ite_equality`],
-/// which runs on every encoded equality regardless of how it was reached).
+/// unbound variable. That is unsound under a *quantifier* binder: a
+/// subterm that mentions the bound variable denotes a different value at
+/// every instantiation, so one global replacement cannot stand in for all
+/// of them. Quantifiers stay opaque here; whatever ground instances MBQI
+/// produces from one are handled when *they* are encoded (through
+/// [`Solver::encode_nonbool_ite_equality`], which runs on every encoded
+/// equality regardless of how it was reached).
 ///
 /// Order is a stable pre-order (children pushed in reverse so they pop
 /// left-to-right), matching this crate's other explicit-stack term walks.
@@ -86,12 +97,10 @@ pub(super) fn collect_ground_subterms(term: TermId, manager: &TermManager) -> Ve
         let Some(node) = manager.get(t) else {
             continue;
         };
-        if matches!(
-            node.kind,
-            TermKind::Forall { .. } | TermKind::Exists { .. } | TermKind::Let { .. }
-        ) {
-            continue; // opaque: never descend into a binder's scope
+        if matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+            continue; // opaque: never descend into a quantifier's scope
         }
+        // `Let` is NOT opaque here — see the function doc comment.
         for child in get_children(&node.kind).into_iter().rev() {
             stack.push(child);
         }
@@ -1505,8 +1514,8 @@ impl Solver {
         // through `ite` directly (bit-blasting a mux), and several BV ops are
         // desugared into a BitVec ite, so eliminating them would delete the
         // structure the blaster recurses on and yield a false `sat`.
-        // The walk also stops at binders: a fresh global variable cannot
-        // stand in for a subterm mentioning a bound variable.
+        // The walk (`collect_ground_subterms`) stops at quantifier binders but
+        // descends into `let` — see its doc comment.
         for st in collect_ground_subterms(term, manager) {
             let Some(t) = manager.get(st) else {
                 continue;
