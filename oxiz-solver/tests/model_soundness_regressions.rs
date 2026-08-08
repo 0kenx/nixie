@@ -315,12 +315,10 @@ fn iso_brn1083_model_is_actually_valid() {
     }
 }
 
-#[ignore = "Model::eval evaluator defect: iso_brn1083's model is correct (z3 \
-            accepts it — see iso_brn1083_model_is_actually_valid) but \
-            Context::eval_in_model reports assertions as not-true. This makes \
-            (get-value)/(get-model) and the CLI's --validate-model unreliable \
-            for UF. Un-ignore when eval_in_model returns true for every \
-            assertion z3 confirms the model satisfies."]
+// Defect A (Model::eval `let` handling) is FIXED: this is now live. Model::eval
+// had no `Let` arm, so a `(let ((?v_0 ...) ...) body)` assertion was an opaque
+// leaf and eval_in_model reported it not-true. Now the bindings are substituted
+// into the body before evaluation. Guarded alongside iso_brn1083_model_is_actually_valid.
 #[test]
 fn iso_brn1083_eval_in_model_does_not_false_alarm() {
     let Some(orig) =

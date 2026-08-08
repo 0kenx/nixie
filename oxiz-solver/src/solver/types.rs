@@ -655,6 +655,24 @@ impl Model {
                         frames.push(EvalFrame::EqLhs { term: current, rhs });
                         current = lhs;
                     }
+                    // `(let ((n v) ...) body)`: substitute the bindings into
+                    // the body and evaluate that. encode.rs leaves `let`
+                    // un-expanded (it encodes the body with the bound vars
+                    // free), so without this arm a let-wrapped assertion is
+                    // an opaque leaf to the evaluator — `(get-value)`/
+                    // `(get-model)` and the CLI `--validate-model` then can't
+                    // reduce it (false-alarm). Each level substitutes one
+                    // `let`'s bindings and moves to its body, so this always
+                    // makes progress (terms are finite).
+                    TermKind::Let { bindings, body } => {
+                        let mut substituted = body;
+                        for (name, value) in bindings.iter().rev() {
+                            substituted = oxiz_core::tactic::quantifier::substitute_single_var(
+                                manager, substituted, *name, *value,
+                            );
+                        }
+                        current = substituted;
+                    }
                     TermKind::Neg(arg) => {
                         frames.push(EvalFrame::Neg { term: current });
                         current = arg;

@@ -38,6 +38,7 @@ mod matching;
 mod predicates;
 mod skolemization;
 mod subst;
+pub use subst::substitute_single_var;
 mod universal_elim;
 
 #[cfg(test)]

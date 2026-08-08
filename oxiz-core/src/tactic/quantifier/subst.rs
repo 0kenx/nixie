@@ -89,7 +89,7 @@ use crate::prelude::*;
 /// [`TermManager::free_vars_including_patterns`]: a variable occurring only in
 /// a quantifier's trigger is still a live occurrence, and the retired walk did
 /// substitute into patterns, so skipping them here would under-substitute.
-pub(super) fn substitute_single_var(
+pub fn substitute_single_var(
     manager: &mut TermManager,
     term_id: TermId,
     var_name: Spur,
