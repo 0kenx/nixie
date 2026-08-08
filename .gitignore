@@ -48,5 +48,17 @@ __pycache__/
 fuzz/corpus/
 fuzz/artifacts/
 
+# --- Benchmark corpora are NOT tracked in git ---
+# smt-lib / satlib / satcomp are multi-hundred-thousand-file external
+# benchmark suites (SMT-LIB, SATLIB, SAT Competition). Fetch them out of band
+# (see bench/differential/README.md) and keep them as plain working-tree data;
+# do not commit them. Tests that consume specific instances
+# (oxiz-solver/tests/known_unsound_regressions.rs) and the differential harness
+# (bench/differential/) skip cleanly when a file is absent.
+/smt-lib/
+/satlib/
+/satcomp2024/
+/satcomp2025/
+
 # Rustc ICE dumps
 rustc-ice-*.txt

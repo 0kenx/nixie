@@ -85,6 +85,13 @@ def main():
 
     sample = json.loads(SAMPLE.read_text())
     insts = sample["instances"]
+    # The corpus is .gitignore'd external data — fail fast with instructions
+    # rather than reporting 270 misleading ERR/unknown rows.
+    missing_root = next((REPO / it["path"] for it in insts if not (REPO / it["path"]).exists()), None)
+    if missing_root is not None:
+        sys.exit(f"error: corpus file not present: {missing_root}\n"
+                 f"       smt-lib is .gitignore'd benchmark data, not tracked. "
+                 f"Fetch the SMT-LIB corpus under smt-lib/ before running (see README.md).")
     outdir = Path(args.out) if args.out else HERE / "results" / args.label
     outdir.mkdir(parents=True, exist_ok=True)
 

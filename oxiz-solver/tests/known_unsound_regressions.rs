@@ -10,6 +10,12 @@
 //! sound answer. Pinning `!= sat` is the soundness bar; reaching `unsat` is a
 //! separate completeness goal (see INTEGRATION_NOTES.md).
 //!
+//! **Corpus not in git.** The `smt-lib/` instances these read are external
+//! benchmark data and are `.gitignore`d (see `.gitignore`). Fetch the SMT-LIB
+//! corpus out of band before running; if an instance is absent the test logs
+//! `skipping …` and passes (it cannot guard without the data, so CI that cares
+//! about these guards must provision the corpus).
+//!
 //! The instances and their status (differential run vs z3, sample seed
 //! 20260807, release builds) at the time these were added:
 //!

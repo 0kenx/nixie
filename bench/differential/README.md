@@ -5,6 +5,10 @@ passing unit tests did not (see `../../INTEGRATION_NOTES.md`). It runs an oxiz
 binary over a **pinned** SMT-LIB sample and diffs every verdict against z3, so
 two builds / two PRs are compared over exactly the same instances.
 
+**The `smt-lib/` corpus is not in git** (`.gitignore`d — it is ~100k external
+benchmark files). Fetch SMT-LIB under `smt-lib/` before running; the harness
+fails fast with instructions if it is absent.
+
 ## The pinned sample
 
 `sample/selected.json` — 270 instances, ≤30 per QF_* logic, sampled with

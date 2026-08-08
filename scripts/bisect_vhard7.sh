@@ -4,6 +4,7 @@
 set -e
 export PATH=/nix/store/gr0i02za09y1hif1japlzg1qpd5xsg49-rust-default-1.97.1/bin:$PATH
 VHARD=/media/data/proj/oxiz/smt-lib/non-incremental/QF_UFIDL/mathsat/EufLaArithmetic/vhard/vhard7.smt2
+if [[ ! -f "$VHARD" ]]; then echo "SKIP: $VHARD not present (smt-lib corpus is gitignored; fetch it out of band)"; exit 125; fi
 cargo build --release -p oxiz-cli >/tmp/bisect_build.log 2>&1 || { echo "SKIP: build failed"; tail -5 /tmp/bisect_build.log; exit 125; }
 out=$(timeout 30 /media/data/proj/oxiz/target/release/oxiz -q "$VHARD" 2>/dev/null || true)
 if echo "$out" | grep -q '^sat'; then
