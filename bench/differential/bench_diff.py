@@ -404,7 +404,13 @@ def _summary(rows, args, fam_counts):
 def _regression(baseline_path, summary, rows):
     bl = json.loads(Path(baseline_path).read_text())
     msgs = []
-    if summary["agree_z3"] < bl.get("agree_z3", summary["agree_z3"]):
+    # trusted_total is the primary completeness metric when model validation
+    # ran (it is what the solver can actually back up). agree_z3 is the fallback
+    # for bare-gate runs that did not call z3.
+    if "trusted_total" in bl and "trusted_total" in summary:
+        if summary["trusted_total"] < bl["trusted_total"]:
+            msgs.append(f"trusted_total regressed: {bl['trusted_total']} -> {summary['trusted_total']}")
+    elif summary["agree_z3"] < bl.get("agree_z3", summary["agree_z3"]):
         msgs.append(f"agree_z3 regressed: {bl.get('agree_z3')} -> {summary['agree_z3']}")
     if summary["disagree_soundness"] > bl.get("disagree_soundness", 0):
         msgs.append(f"disagree_soundness increased: {bl.get('disagree_soundness')} -> {summary['disagree_soundness']}")
@@ -413,15 +419,23 @@ def _regression(baseline_path, summary, rows):
 
 def _print_summary(summary, unsound, fam_counts, outdir):
     print("\n# SUMMARY")
-    print(f"solved={summary['solved']} agree_z3={summary['agree_z3']} "
-          f"disagree(soundness)={summary['disagree_soundness']} "
+    if "trusted_total" in summary:
+        # trusted_total is the primary, honest number: what the solver can
+        # actually back up with a model. solved/agree_z3 overstate it.
+        print(f"TRUSTED_TOTAL={summary['trusted_total']} "
+              f"(sat_trusted={summary['sat_trusted']} + unsat_trusted={summary['unsat_trusted']})  "
+              f"<-- primary metric")
+        print(f"  solved={summary['solved']} agree_z3={summary['agree_z3']} "
+              f"(secondary; solved overstates by counting unjustified sats)")
+    else:
+        print(f"solved={summary['solved']} agree_z3={summary['agree_z3']} "
+              f"(bare gate; run --validate-models for the trusted_total headline)")
+    print(f"  disagree(soundness)={summary['disagree_soundness']} "
           f"timeout/unknown={summary['timeout_or_unknown']} par2={summary['par2']:.2f}")
     if "sat_model_valid" in summary:
         print(f"  sat: total={summary['sat_total']} model_valid={summary['sat_model_valid']} "
               f"model_invalid={summary['sat_model_invalid']} emit_failed={summary['sat_model_emit_failed']} "
               f"family_suspect={summary['sat_family_suspect']} sat_trusted={summary['sat_trusted']}")
-        print(f"  trusted_total (sat_trusted + unsat_trusted)={summary['trusted_total']}  "
-              f"<-- the number to plan ports against")
     if unsound:
         print(f"# {len(unsound)} UNSOUND (oxiz disagrees with z3 on a sat/unsat):")
         for r in unsound:

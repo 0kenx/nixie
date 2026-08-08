@@ -94,6 +94,26 @@ main trust-solves **16** that oz does not. Breakdown:
 So main is a net **+16** on trusted solves vs oz, and oz's apparent +31
 solved-edge is almost entirely unsoundness + bogus models.
 
+## Validator limits (read the sat_model_invalid column as a lower bound)
+
+The z3-based check builds `(asserts ∧ pinned-constants)` and asks z3.
+- **Sound in the unsat⇒bad direction:** if z3 says `unsat`, no function
+  extension rescues the formula under those constants, so oziz's claimed model
+  (which uses those constants) cannot satisfy the asserts ⇒ the model is
+  genuinely bogus. So every `sat_model_invalid` row is a *real* defect — there
+  are no false accusations from this path.
+- **Lenient on partial / function models:** function models are skipped during
+  pinning (only top-level constants are pinned), and a partial model can let
+  z3 find *some* consistent extension even when oziz's specific model is wrong.
+  So a `sat_model_valid` row means "consistent," not "provably correct."
+
+Consequence: **`sat_model_invalid` is a lower bound on the true count of
+unjustified sats.** main's 8 (4 on agreeing sats + the 4 known-unsound) could
+be more — a model whose only error is in a skipped function value would pass
+as `valid`. The 4 known-unsound rows are flagged for certain (their instance
+is unsat, so no model exists); the 4 agreeing-sat rows are the construction
+  defect's confirmed floor. Treat none of these numbers as exact ceilings.
+
 ## Caveat on the family-neighbour flag
 
 The family flag is conservative by design (it exists to catch the ANIA shared-

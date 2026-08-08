@@ -103,31 +103,40 @@ python3 bench/differential/z3_screen.py            # -> results/z3_screen.jsonl
 
 ## Baseline numbers (measured with this harness)
 
-Differential run vs z3 4.16.0, sample seed 20260807, release builds, τ=10 s.
-The `integrate-d293d91d` row is **measured** by this script on the branch tip
-after the vhard7 fix; the `oz`/`main` rows are from the original screening run
-(reproducible by passing those binaries with `--label`).
+**The primary metric is `trusted_total`** (run with `--validate-models`): the
+number of solves the solver can actually back up with a model that satisfies
+the formula. `solved`/`agree_z3` overstate it — they count `sat` answers whose
+emitted model z3 rejects. Differential run vs z3 4.16.0, sample seed 20260807,
+release builds, τ=10 s, `--validate-models`:
+
+| build | solved | agree_z3 | disagree | sat_model_invalid | sat_trusted | unsat_trusted | **trusted_total** |
+|-------|-------:|---------:|---------:|------------------:|------------:|--------------:|------------------:|
+| main (`965285b`)                | 125 | 121 |  4 |  8 | 43 | 61 | **104** |
+| oz (v0.3.2 `7fb36aab`)          | 156 | 140 | 16 | 52 | 44 | 53 |  **97** |
+
+oz solves 31 more than main but is **less trusted** (97 < 104): 52 of its 103
+`sat` answers emit a model contradicting the assertions, and it is 4×
+unsounder. Every oz-over-main "win" beyond 3 confirmed solves + the
+`bench_679` soundness fix is unsound, bogus-model, or family-suspect. Full
+analysis: `VALIDATED_RESCORE.md`. **`trusted_total` is the number the gate
+defends** (`--baseline` keys on it when the run used `--validate-models`).
+
+The pre-validation verdict-only table (for continuity with older notes):
 
 | build | solved | agree z3 | disagree (soundness) | timeout/unknown |
 |-------|-------:|---------:|---------------------:|----------------:|
 | oz (v0.3.2 `7fb36aab`)           | 159 | 143 | **16** | 95 |
 | main (`ebbced38`)                | 123 | 119 |  4    | 147 |
-| integrate pre-vhard7-fix (`bd380ec0`) | 125 | 120 |  5    | 145 |
-| **integrate post-fix (`d293d91db`)**  | **124** | **120** | **4** | **146** |
+| integrate post-vhard7-fix (`d293d91db`) | 124 | 120 | 4 | 146 |
 
-The only delta from pre- to post-fix is `vhard7` moving from a wrong `sat`
-(counted as solved, but unsound) to a `timeout` — a soundness correction, not a
-collateral completeness loss: no other solved instance was pushed over τ and no
-new disagreement appeared. The 4 remaining disagreements (`storecomm_t3`,
-`bench_679`, `ext_con_064`, `xs_8_13`) are all pre-existing on `main` and are
-pinned as `#[ignore]`d guards in
-`oxiz-solver/tests/known_unsound_regressions.rs` — which is why the gate's
-non-zero exit (it reports those 4) is acceptable for merge: every disagreement
-is already a documented guard, satisfying the gate rule below.
+The 4 disagreements on main (`storecomm_t3`, `bench_679`, `ext_con_064`,
+`xs_8_13`) are pre-existing on `main`, pinned as `#[ignore]`d guards in
+`oxiz-solver/tests/known_unsound_regressions.rs`, so the gate's non-zero exit
+(those 4) is acceptable for merge: every disagreement is a documented guard.
 
-Two strategic reads from these numbers (full discussion in
-`../../INTEGRATION_NOTES.md`): (1) v0.3.2 is **not** the gold standard — it is
-~4× less sound than main on this sample, so "faithful to v0.3.2" is not a
-soundness argument; (2) the opportunity next to this integration is
-completeness/perf (33 instances oz solves that main times out on), not more
-v0.3.2 porting.
+Strategic read: v0.3.2 is **not** the gold standard — it is a net *regression*
+on trusted solves (97 < 104), so "faithful to v0.3.2" is a statement about
+mechanism, never a soundness justification. The validated portable ceiling is
++3 solves (qlock, RC-10, sum10_i_12) + the `bench_679` soundness fix; the real
+completeness gap (145 main timeouts; QF_NIA 1/30 for every build) is not in
+v0.3.2.
