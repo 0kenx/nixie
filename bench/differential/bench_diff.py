@@ -40,14 +40,16 @@ REPO = HERE.parent.parent  # oxiz/ repo root (bench/differential/ -> repo)
 
 
 def parse_status(text: str, rc: int, dt: float, timeout: float) -> str:
-    res = "UNKNOWN"
+    res = "unknown"
     for line in text.lower().splitlines():
         s = line.strip()
         if s == "sat": res = "sat"
         elif s == "unsat": res = "unsat"
         elif s == "unknown": res = "unknown"
-    if res == "UNKNOWN" and (rc == 124 or dt >= timeout - 0.05):
-        res = "TIMEOUT"
+    # No explicit verdict + killed by timeout => "timeout". Keep all verdicts
+    # lowercase so the summary's set-membership checks are case-consistent.
+    if res == "unknown" and (rc == 124 or dt >= timeout - 0.05):
+        res = "timeout"
     return res
 
 
@@ -114,7 +116,7 @@ def main():
     solved = sum(1 for r in rows if r["res"] in ("sat", "unsat"))
     agree = sum(1 for r in rows if r["res"] == r["z3_res"])
     disagree = sum(1 for r in rows if r["res"] in ("sat", "unsat") and r["z3_res"] in ("sat", "unsat") and r["res"] != r["z3_res"])
-    to = sum(1 for r in rows if r["res"] in ("TIMEOUT", "UNKNOWN"))
+    to = sum(1 for r in rows if r["res"] in ("timeout", "unknown"))
     par2 = sum(r["s"] if r["res"] in ("sat", "unsat") else 2 * args.timeout for r in rows)
     summary = {"label": args.label, "n": len(rows), "solved": solved,
                "agree_z3": agree, "disagree_soundness": disagree, "timeout_or_unknown": to,

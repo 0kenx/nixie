@@ -247,7 +247,19 @@ at the time it was added (z3 4.16.0, τ=10 s):
 
 Post-vhard7-fix, integrate drops to 4 disagreements, **all pre-existing on
 main** — so the branch introduces no net new soundness regression once vhard7
-is resolved. The headline for the PR is therefore *120/125 agreeing with z3,
-4 unsound — all pre-existing on main*, plus +2 solved over main and gmean
-1.01× vs z3 on its correct subset (speed is fine; the gap is what it can't
-finish — see the strategic note in the PR description).
+is resolved. **Measured** on the post-fix tip (`d293d91db`, this script):
+
+| build | solved | agree z3 | disagree (soundness) | timeout/unknown |
+|-------|-------:|---------:|---------------------:|----------------:|
+| oz (v0.3.2 `7fb36aab`) | 159 | 143 | **16** | 95 |
+| main (`ebbced38`)      | 123 | 119 |  4    | 147 |
+| integrate pre-fix (`bd380ec0`)  | 125 | 120 |  5    | 145 |
+| **integrate post-fix (`d293d91db`)** | **124** | **120** | **4** | **146** |
+
+The only pre→post-fix delta is `vhard7` (wrong `sat` → `timeout`): a
+soundness correction, not a collateral completeness loss — no other solved
+instance was pushed over τ and no new disagreement appeared. The headline for
+the PR is therefore *124 solved, 120 agreeing with z3, 4 unsound — all
+pre-existing on main, none introduced by the branch*, +1 solved over main on
+the sound subset and gmean 1.01× vs z3 on it (speed is fine; the gap is what it
+can't finish — see the strategic note in the PR description).
