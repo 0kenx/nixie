@@ -148,3 +148,30 @@ volume → wiring is a pattern-copy. Almost none → the sparseness is intrinsic
 qlock's encoding and qlock needs something else; worth knowing before building
 the plumbing.
 
+
+## De-risk result: DL propagation yields useful volume on qlock (wire it)
+
+Standalone check of the DL propagation rule on qlock's 7,518 extracted
+difference atoms (greedily-built consistent partial assignments; "atom
+x-y<=c implied TRUE iff its negation y-x<=-c-1 conflicts", via diff_logic's
+public `would_conflict`):
+
+| consistent subset | unasserted | implied | % |
+|------------------:|-----------:|--------:|---:|
+| 40                | 7,478      | 500     | 7% |
+| 60                | 7,458      | 1,029   | 14%|
+| 80                | 7,438      | 1,331   | 18%|
+
+Volume rises with subset size — exactly the dense pruning CDCL needs to
+converge on a Boolean-structured DL theory. So the sparseness is NOT intrinsic
+to qlock's encoding; wiring propagation is worth it.
+
+Implementation path (pattern-copy, not a framework feature): the propagation
+check belongs in `TheoryManager` (which holds the DL atom vocabulary via
+`var_to_parsed_arith`), using `diff_logic`'s `would_conflict` for the
+implication test, returning `TheoryCheckResult::Propagated` exactly like
+`derive_arith_propagations` (theory_manager.rs:1000) — same channel
+(search_ext.rs:120/307), same reason-lits construction, same statistics. The
+open cost concern is O(unasserted-atoms) per check; if that is too slow it
+needs diff_logic to expose single-source shortest-path bounds so the check is
+O(1) per atom rather than a `would_conflict` recompute.
