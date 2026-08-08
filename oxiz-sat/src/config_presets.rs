@@ -3,6 +3,35 @@
 //! Pre-configured solver profiles optimized for different problem classes.
 //! These presets are based on extensive empirical testing and competition
 //! results from modern SAT solvers.
+//!
+//! # Soundness caveat: inprocessing-enabled presets
+//!
+//! Five presets — [`ConfigPreset::Industrial`], [`ConfigPreset::Cryptographic`],
+//! [`ConfigPreset::Hardware`], [`ConfigPreset::Conservative`], and
+//! [`ConfigPreset::CaDiCaL`] — set `enable_inprocessing: true`. The inprocessing
+//! pipeline (`Solver::inprocess`) carries a **pre-existing soundness defect
+//! inherited from upstream v0.3.2**: its clause-management passes (subsumption,
+//! pure-literal elimination, on-the-fly strengthening) do not fully rebuild the
+//! watch lists, so a clause can be left as a "hanging unit" at a propagation
+//! fixpoint. In a `debug` build the propagation-fixpoint invariant fires and
+//! panics; in a `release` build the invariant is compiled out and, on some
+//! instance/interval combinations, the solver returns a wrong verdict
+//! (verified: `pigeonhole(7,6)` with `inprocessing_interval: 1` returns `Sat`
+//! on an UNSAT instance). At the presets' own intervals (2000–10000) no wrong
+//! verdict was reproduced on the tested slice, but the underlying corruption
+//! still occurs whenever inprocessing fires, so the exposure is open-ended.
+//!
+//! This is **not** a regression introduced by the 0.3.2 integration: a v0.3.2
+//! worktree fails the identical debug invariant, and the root cause (the
+//! "simplified approach" watch-rebuild comment at the end of `inprocess()`)
+//! is present in v0.3.2 too. Fixing it would require inventing a fix beyond
+//! upstream, so it is tracked rather than repaired here.
+//!
+//! **For guaranteed soundness, use a preset with `enable_inprocessing: false`**
+//! ([`ConfigPreset::Default`], [`ConfigPreset::Glucose`],
+//! [`ConfigPreset::MiniSat`], [`ConfigPreset::Random`],
+//! [`ConfigPreset::Aggressive`]). See `INTEGRATION_NOTES.md` §1 for the full
+//! blast-radius measurements and the preset-disposition discussion.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
