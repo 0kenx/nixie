@@ -1,0 +1,132 @@
+# Validated re-score of v0.3.2 (oz) under model validation
+
+Run with the upgraded `bench_diff.py --validate-models` (z3-based model
+consistency check + family-neighbour flag), τ=10 s, release builds, sample
+seed 20260807 (270 instances). z3 4.16.0 is the oracle. The validator is
+**z3-based, not oziz's own** `eval_in_model` — measured to false-alarm on
+genuinely-satisfiable UF instances (e.g. `iso_brn1083`: oziz "FAILED 5/19"
+where z3 confirms sat), so it cannot be the oracle. See `README.md` §Trust model.
+
+Raw per-instance results: `results/oz-v032/`, `results/main-validated/`
+(gitignored run artefacts; reproducible by re-running the harness).
+
+## Headline (validated)
+
+| build | solved | agree_z3 | disagree | sat_mod_valid | sat_mod_invalid | sat_trusted | unsat_trusted | **trusted_total** |
+|-------|-------:|---------:|---------:|--------------:|----------------:|------------:|--------------:|------------------:|
+| **main** (`965285b`)    | 125 | 121 |  4 | 56 |  8 | 43 | 61 | **104** |
+| **oz** (`v0.3.2`=`7fb36aab`) | 156 | 140 | 16 | 51 | **52** | 44 | 53 | **97** |
+
+oz solves more (156 vs 125) and agrees more (140 vs 121), but is **less
+trusted** (97 vs 104). Two reasons, both concentrated:
+
+1. **oz's model construction is severely broken.** 52 of its 103 `sat`
+   answers emit a model that *contradicts* the assertions (z3:
+   `asserts ∧ model` = unsat). Of its 87 *agreeing* sats (correct verdict),
+   **36 emit a bogus model**. main has 8 such cases. This is the single
+   biggest deflator.
+2. **oz is 4× unsounder** (16 vs 4), all in the same direction (z3 unsat,
+   oz sat) — the over-eager-sat mechanism. Per family:
+
+   | family | disagree | (also sat_invalid in family) |
+   |--------|---------:|------:|
+   | QF_AUFLIA/storecomm | 5 | 5 |
+   | QF_LIA/rings | 3 | 3 |
+   | QF_UFLIA/mathsat (xs_*) | 2 | 13 |
+   | QF_ANIA/GrandProduct-Ozdemir | 1 | 6 |
+   | QF_AUFLIA/Rodin, QF_BV/bruttomesso, QF_IDL/job_shop, QF_UFIDL/mathsat, QF_UFLIA/wisas | 1 each | — |
+
+   The GrandProduct and `xs_*`/storecomm/rings clusters are exactly the
+   one-mechanism-scores-and-errs pattern the family check exists to catch.
+
+oz's briefed "159" → **97 trusted**. The brief's claim that "the true ceiling
+from porting v0.3.2 is well below it" is confirmed — and the ceiling is below
+main's own trusted count.
+
+## What is actually portable (oz trusted, main does not solve)
+
+Per-instance diff of the two validated runs:
+
+**Genuinely-new solves — oz trust-solves, main does not solve at all (3):**
+
+| instance | logic | oz | main | z3 | oz time |
+|----------|-------|----|------|----|--------:|
+| `qlock/qlock-4-10-7.base.cvc.smt2` | QF_IDL | unsat | timeout | unsat | 1.38 s |
+| `20220307-SMPT/Diffusion2D-PT-D50N010/RC-10.smt2` | QF_LIA | sat | timeout | sat | 1.41 s |
+| `20190429-UltimateAutomizerSvcomp2019/sum10_..i_12.smt2` | QF_ANIA | sat | unknown | sat | 0.02 s |
+
+All three re-verified by direct invocation (qlock unsat 1.38 s, RC-10 sat
+1.41 s, sum10_i_12 sat 0.02 s; main times out / returns unknown on each).
+These are the confirmed-genuine targets. qlock is the unsat-direction one
+(can't be faked); the other two are sat-direction but isolated (no family
+disagreement, valid model) so they survive every filter.
+
+**Soundness fix opportunity — oz sound where main is not (1):**
+
+| instance | logic | oz | main | z3 |
+|----------|-------|----|------|----|
+| `QF_BV/sage/app9/bench_679.smt2` | QF_BV | **unsat** | sat (unsound) | unsat |
+
+v0.3.2 answers correctly; main's bvule/bvshl path is unsound. Porting v0.3.2's
+BV comparison/shift handling here fixes a main soundness bug (already pinned as
+`#[ignore]`d guard `bench_679_is_not_sat`). This is a *soundness* win, not
+completeness.
+
+(The other 5 "oz-trusted / main-solves-but-untrusted" rows are `QF_BV/sage`
+sats that main solves *correctly with valid models* — they are flagged only
+because the family check collateralises the whole `sage/` family for
+`bench_679`'s unsoundness. They are not real converts; see caveat below.)
+
+## Reverse — main trusted, oz not (16)
+
+main trust-solves **16** that oz does not. Breakdown:
+
+- **main is sounder where oz is wrong:** storecomm (4), rings (1), xs-06-15
+  (1), jobshop (1), smt8591 (1) — oz says `sat` with an invalid model (or
+  unsound) where main correctly says `unsat`.
+- **main solves instances oz can't:** `DTP_k2_n35_c210_s1/s14` (QF_IDL),
+  `gensys_icl785` (QF_UF), `hash_uns_03_16` (QF_UFLIA) — oz returns no
+  verdict (timeout/unknown); main solves them.
+- **main emits valid models where oz's are bogus:** `hash_sat_05_06/05_12/
+  08_03`, `sorted_list_insert_noalloc0`, `smt5695` — same verdict, but oz's
+  model is invalid where main's is valid (and the family is clean for these).
+
+So main is a net **+16** on trusted solves vs oz, and oz's apparent +31
+solved-edge is almost entirely unsoundness + bogus models.
+
+## Caveat on the family-neighbour flag
+
+The family flag is conservative by design (it exists to catch the ANIA shared-
+mechanism pattern, where over-flagging is cheap and missing it is costly). It
+over-flags in families where the disagreement is an *isolated* bug rather than
+a shared mechanism — e.g. `QF_BV/sage` is flagged wholesale because of the
+single `bench_679` unsoundness, collateralising 5 otherwise-clean sats. This
+affects the `sat_family_suspect` column and the exact `sat_trusted` counts,
+but **not** the headline (main 104 vs oz 97) and **not** the portable set of
+3 (those are defined by "main does not solve," which is family-independent).
+
+## Calibration answer
+
+**Mining v0.3.2 is barely worth it.** The validated, portable ceiling is:
+
+- **+3 genuinely-new solves** (qlock, RC-10, sum10_i_12) — small, concrete,
+  each verifiable in isolation.
+- **+1 soundness fix** (bench_679: port v0.3.2's BV handling to retire a main
+  `#[ignore]`d guard).
+
+…and nothing else. Every other oz-over-main "win" is unsound (16), a bogus
+model (36 agreeing sats), or family-suspect. Meanwhile main is +16 trusted
+over oz. v0.3.2 is a **net regression on trusted solves** (97 < 104).
+
+**Recommendation:** take the 3 confirmed solves + the bench_679 soundness fix
+(step 3 of the plan, now precisely bounded — one mechanism at a time, gate
+after each), then **stop mining v0.3.2**. The real completeness gap is
+elsewhere and v0.3.2 does not address it:
+
+- **Timeout clusters:** 145 main timeouts / 114 oz timeouts — oz barely dents
+  these (it trades 31 timeouts for solves, but 28 of those are unsound/bogus).
+- **QF_NIA:** 1/30 for *every* build including oz. Nothing in v0.3.2 fixes
+  nonlinear integer arithmetic; that is separate, larger work.
+
+So: bounded v0.3.2 ports first (cheap, confirmed), then the effort belongs on
+the timeout/NIA clusters directly.
