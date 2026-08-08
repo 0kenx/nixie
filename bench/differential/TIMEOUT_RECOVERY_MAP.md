@@ -112,3 +112,34 @@ qlock's atoms ARE real 2-var differences (diff was fed ~17 k of them), not free
 variables. (A synthetic `(let (...) (assert ...))` form — let *wrapping* a
 command, non-standard — does mis-parse to `sat`, but that is malformed input,
 not qlock's cause and not the standard `(assert (let ...))` form qlock uses.)
+
+## Deeper wall: the CDCL(T) framework has no theory-propagation path
+
+Investigating the `propagate()` stub surfaced the real gate. `oxiz-sat`'s
+`TheoryCallback` trait (`oxiz-sat/src/solver/mod.rs:111`) exposes only
+`on_assignment`, `final_check`, `on_new_level`, `on_backtrack` — **there is no
+method for a theory to assert an implied literal**. The framework is
+DPLL-plus-checker: theories react to SAT assignments and report conflicts, but
+cannot proactively propagate. That is why a difference-logic theory over a
+Boolean structure (qlock) cannot converge — it can only hand CDCL the sparse
+conflicts that happen to form, never the dense implied-literal propagation that
+makes CDCL(T) efficient on structured theories.
+
+Landing qlock (and unblocking theory propagation generally) therefore requires
+implementing theory propagation across the stack, not just in `diff_logic`:
+
+1. `oxiz-sat/src/solver/mod.rs:111` — add a propagation method to
+   `TheoryCallback` (e.g. return implied `Lit`s with their reason).
+2. `oxiz-sat`'s CDCL propagation loop — enqueue theory-implied literals at the
+   current level with reason tracking, so conflict analysis can explain them.
+3. `oxiz-theories/src/diff_logic/solver.rs:258` — implement the actual
+   propagation (track the unasserted DL atoms; derive implied polarities from
+   the Bellman-Ford shortest-path distances).
+4. `oxiz-solver/src/solver/theory_manager.rs` — wire diff's implied literals
+   into the new callback.
+
+This is a major, soundness-critical, multi-crate feature (it upgrades the
+solver from DPLL+checker to full CDCL(T)), not a port or a wiring task. It is
+the named next effort for the IDL/timeouts pivot; the detection work is done
+and sound, and every shallower dead end (let-stub, lazy/eager, conflict-drop)
+is ruled out by experiment above.
