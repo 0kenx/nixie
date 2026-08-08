@@ -13,17 +13,20 @@
 //!
 //! * **Construction** (`Solver::build_model`): the emitted model violates the
 //!   formula on a *correct* `sat` verdict. z3 rejects `asserts ∧ model`.
-//!   Pinned `#[ignore]`d below (DLX1C0, 21.lp, 3.lp, 1659).
+//!   **2 confirmed instances** (DLX1C0 QF_UFIDL; 1659 QF_NIA), pinned
+//!   `#[ignore]`d below. (An earlier run counted 4 — `21.lp`/`3.lp` were a
+//!   validator quoting bug in the harness, since fixed; their models are valid.)
 //! * **Evaluator** (`Model::eval`, behind `Context::eval_in_model`): on a
 //!   *correct* model it false-alarms (reports an assertion unsatisfied that
 //!   z3 confirms is satisfied) — so `(get-value)`/`(get-model)` and the CLI's
 //!   `--validate-model` are unreliable. Pinned `#[ignore]`d below (iso_brn1083).
 //!
-//! The two were disambiguated with z3 as an independent oracle: the
-//! construction cases have a *genuinely wrong* model (z3 rejects it); the
-//! evaluator case has a *correct* model (z3 accepts it) that the evaluator
-//! mis-reads. They are in different components (`build_model` vs `Model::eval`)
-//! and fixing one does not fix the other.
+//! The two were disambiguated with z3 as an independent oracle AND with
+//! declaration-accurate symbol quoting in the validator (the quoting bug that
+//! false-flagged `21.lp`/`3.lp` is the cautionary tale: a validator artifact
+//! that looked exactly like a construction defect until re-checked). They are
+//! in different components (`build_model` vs `Model::eval`) and fixing one does
+//! not fix the other.
 //!
 //! Tests skip (pass) when the `smt-lib/` corpus or `z3` is unavailable, so CI
 //! without the corpus/z3 is not broken; CI that cares about these guards must
@@ -127,24 +130,62 @@ fn nullary_defines(model: &str) -> Vec<(String, String, String)> {
     out
 }
 
+/// Declared nullary symbols, keyed by the *unquoted* name -> the EXACT token
+/// the file uses (incl. SMT-LIB `|...|` quoting). A model pin must use the
+/// file's exact token or it references a disconnected fresh symbol — pinning
+/// `hc(18,17)` bare while the file declares `|hc(18,17)|` makes z3 parse the
+/// pin as the application `hc (18 17)` and return a spurious verdict. This is
+/// the harness quoting bug that once false-flagged 21.lp/3.lp as bad models.
+fn declared_nullary_tokens(orig: &str) -> std::collections::HashMap<String, String> {
+    let mut decl = std::collections::HashMap::new();
+    for ln in orig.lines() {
+        let t = ln.trim_start();
+        let inner = if let Some(r) = t.strip_prefix("(declare-fun ") {
+            r.strip_suffix(')').unwrap_or(r)
+        } else if let Some(r) = t.strip_prefix("(declare-const ") {
+            r.strip_suffix(')').unwrap_or(r)
+        } else {
+            continue;
+        };
+        let mut it = inner.split_whitespace();
+        let Some(tok) = it.next() else { continue };
+        // nullary fun: the next token must be "()"; const has no args marker.
+        let next = it.next();
+        let nullary = next == Some("()");
+        if nullary || t.starts_with("(declare-const ") {
+            decl.insert(tok.trim_matches('|').to_string(), tok.to_string());
+        }
+    }
+    decl
+}
+
 /// Build `(asserts ∧ model-pins)` and ask z3. Returns:
 ///   `Some(true)`  — model consistent with the assertions (good),
 ///   `Some(false)` — model contradicts the assertions (BAD),
 ///   `None`        — z3 unavailable.
 ///
-/// Function models are skipped (only top-level constants are pinned): this can
-/// only make the check *lenient*, never a false `false`, because
-/// `(asserts ∧ pinned-constants)` unsat already implies no function extension
-/// rescues the formula — see `bench/differential/VALIDATED_RESCORE.md`.
+/// Each nullary define-fun is pinned to its value with the file's EXACT
+/// declared token (declaration-accurate quoting); model names not present as
+/// declared nullary symbols are skipped. Function models are skipped (only
+/// top-level constants are pinned): this can only make the check *lenient*,
+/// never a false `false`, because `(asserts ∧ pinned-constants)` unsat already
+/// implies no function extension rescues the formula — see
+/// `bench/differential/VALIDATED_RESCORE.md`.
 fn model_validates(orig: &str, model: &str) -> Option<bool> {
     if !z3_available() {
         return None;
     }
     let mut head = strip_trailing_checksat(orig).to_string();
-    let defs = nullary_defines(model);
-    for (name, sort, value) in &defs {
-        // Declare any oziz-internal uninterpreted witnesses (e.g. `@uc_I_4`)
-        // that appear in the value, so z3 accepts the pin.
+    let decl = declared_nullary_tokens(orig);
+    let declared: std::collections::HashSet<&str> =
+        decl.values().map(String::as_str).collect();
+    let mut extra_decl: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut pins = Vec::new();
+    for (name, sort, value) in nullary_defines(model) {
+        let key = name.trim_matches('|');
+        let Some(tok) = decl.get(key) else {
+            continue; // not a declared nullary user symbol
+        };
         let mut rest = value.as_str();
         while let Some(at) = rest.find('@').or_else(|| rest.find('!')) {
             let tail = &rest[at + 1..];
@@ -152,15 +193,16 @@ fn model_validates(orig: &str, model: &str) -> Option<bool> {
                 .find(|c: char| !c.is_alphanumeric() && c != '_')
                 .unwrap_or(tail.len());
             let ident = format!("{}{}", &rest[at..at + 1], &tail[..end]);
-            if !head.contains(&format!("declare-const {ident} "))
-                && !head.contains(&format!("declare-fun {ident} "))
-            {
+            if !declared.contains(ident.as_str()) && !extra_decl.contains(&ident) {
+                extra_decl.insert(ident.clone());
                 head.push_str(&format!("\n(declare-const {ident} {sort})"));
             }
             rest = &tail[end..];
         }
-        head.push_str(&format!("\n(assert (= {name} {value}))"));
+        pins.push(format!("(assert (= {tok} {value}))"));
     }
+    head.push_str("\n");
+    head.push_str(&pins.join("\n"));
     head.push_str("\n(check-sat)\n");
     let out = std::process::Command::new("z3")
         .arg("-in")
@@ -214,9 +256,12 @@ fn assert_model_valid(label: &str, rel: &str) {
 }
 
 // ─── Defect B: build_model emits a model that violates the formula ────────
-// All four solve to a CORRECT `sat` (z3 agrees sat) but emit a model z3
-// rejects. `#[ignore]`d until the construction defect is fixed; un-ignore is
-// the acceptance criterion.
+// Both solve to a CORRECT `sat` (z3 agrees sat) but emit a model z3 rejects.
+// `#[ignore]`d until the construction defect is fixed; un-ignore is the
+// acceptance criterion.
+//
+// (An earlier version of this file also pinned 21.lp and 3.lp here. Those
+// were a HARNESS validator quoting bug — the models are valid; removed.)
 
 #[ignore = "build_model construction defect: DLX1C0 (QF_UFIDL) emits negative \
             Int values (impl.fdType=-4 …) where z3's model is non-negative; \
@@ -231,29 +276,9 @@ fn dlx1c0_model_satisfies_assertions() {
     );
 }
 
-#[ignore = "build_model construction defect: 21.lp (QF_LIA, hamiltonian circuit) \
-            emits a Boolean assignment that violates the formula (z3: pin the \
-            Bool model, Int free => unsat). Correct sat, wrong witness."]
-#[test]
-fn hamiltonian_21_model_satisfies_assertions() {
-    assert_model_valid(
-        "21.lp",
-        "smt-lib/non-incremental/QF_LIA/2019-cmodelsdiff/hamiltonianCircuit/21.lp.smt2",
-    );
-}
-
-#[ignore = "build_model construction defect: 3.lp (QF_LIA, hamiltonian circuit); \
-            same family as 21.lp. Correct sat, wrong witness."]
-#[test]
-fn hamiltonian_3_model_satisfies_assertions() {
-    assert_model_valid(
-        "3.lp",
-        "smt-lib/non-incremental/QF_LIA/2019-cmodelsdiff/hamiltonianCircuit/3.lp.smt2",
-    );
-}
-
 #[ignore = "build_model construction defect: 1659 (QF_NIA, VeryMax/SAT14) emits \
-            a model z3 rejects. Correct sat, wrong witness."]
+            a model z3 rejects (482/482 declared symbols pinned, declaration- \
+            accurate quoting). Correct sat, wrong witness. Un-ignore when fixed."]
 #[test]
 fn verymax_1659_model_satisfies_assertions() {
     assert_model_valid(

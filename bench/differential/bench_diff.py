@@ -159,33 +159,65 @@ def parse_define_funs(model_text: str):
             for m in _DEF_RE.finditer(model_text)]
 
 
+# Declared nullary symbols, preserving the EXACT token the file uses (incl.
+# SMT-LIB |...| quoting). A model pin must use the file's exact token or it
+# references a disconnected fresh symbol: `hc(18,17)` pinned bare while the
+# file declares `|hc(18,17)|` makes z3 parse the pin as the application
+# `hc (18 17)` and return a spurious verdict. Keyed by the *unquoted* name.
+_DECL_FUN_RE = re.compile(r"\(declare-fun\s+(\S+)\s+\(\)\s")
+_DECL_CONST_RE = re.compile(r"\(declare-const\s+(\S+)\s")
+
+
+def _declared_nullary_tokens(orig_text: str):
+    decl = {}
+    for rx in (_DECL_FUN_RE, _DECL_CONST_RE):
+        for m in rx.finditer(orig_text):
+            tok = m.group(1)
+            decl[tok.strip("|")] = tok
+    return decl
+
+
 def build_z3_consistency_script(orig_text: str, defs) -> str:
-    """Build (asserts ∧ model) for z3. For each nullary define-fun we pin the
-    constant to its value via (assert (= name val)); unknown idents in val
-    (e.g. oziz's @uc_I_N uninterpreted witnesses) are declared. Function
-    models are SKIPPED — this can only make the check *lenient* (more 'sat'),
-    never a false 'unsat', because (G_constants ∧ F) unsat already implies no
-    function extension rescues F, hence oziz's claimed model can't satisfy F.
+    """Build (asserts ∧ model) for z3. Each nullary define-fun is pinned to its
+    value via (assert (= TOKEN val)) where TOKEN is the *exact* declared symbol
+    (matching the file's |...| quoting); model names not present as declared
+    nullary symbols are skipped (internal auxiliaries, not user variables).
+    Unknown idents in val (e.g. oziz's @uc_I_N uninterpreted witnesses) are
+    declared. Function models are SKIPPED — this can only make the check
+    *lenient* (more 'sat'), never a false 'unsat', because (G_constants ∧ F)
+    unsat already implies no function extension rescues F, hence oziz's claimed
+    model can't satisfy F.
     """
     head = orig_text
     i = head.rfind("(check-sat)")
     if i != -1:
         head = head[:i]
-    # also drop a trailing (exit) if it survived (no (check-sat) after it)
-    declared = set(re.findall(r"declare-(?:const|fun)\s+(\S+)", orig_text))
+    decl = _declared_nullary_tokens(orig_text)
+    declared = set(decl.values())
     extra_decl = set()
     pins = []
     skipped_fn = 0
+    skipped_undeclared = 0
     for name, args, sort, val in defs:
         if args:
             skipped_fn += 1
             continue
+        key = name.strip("|")
+        if key not in decl:
+            # Not a declared nullary user symbol (internal aux / function
+            # arg). Pinning it by a bare name would risk the quoting bug; skip.
+            skipped_undeclared += 1
+            continue
+        tok = decl[key]
         for ident in re.findall(r"[@!][A-Za-z0-9_]+", val):
             if ident not in declared and ident not in extra_decl:
                 extra_decl.add(ident)
                 head += f"\n(declare-const {ident} {sort})"
-        pins.append(f"(assert (= {name} {val}))")
-    body = head + "\n" + "\n".join(pins) + f"\n; skipped {skipped_fn} function model(s)\n(check-sat)\n"
+        pins.append(f"(assert (= {tok} {val}))")
+    body = (head + "\n" + "\n".join(pins)
+            + f"\n; pinned {len(pins)} declared nullary symbol(s); "
+            f"skipped {skipped_fn} function model(s), {skipped_undeclared} undeclared\n"
+            "(check-sat)\n")
     return body
 
 

@@ -111,15 +111,19 @@ release builds, τ=10 s, `--validate-models`:
 
 | build | solved | agree_z3 | disagree | sat_model_invalid | sat_trusted | unsat_trusted | **trusted_total** |
 |-------|-------:|---------:|---------:|------------------:|------------:|--------------:|------------------:|
-| main (`965285b`)                | 125 | 121 |  4 |  8 | 43 | 61 | **104** |
-| oz (v0.3.2 `7fb36aab`)          | 156 | 140 | 16 | 52 | 44 | 53 |  **97** |
+| main (`965285b`)                | 125 | 121 |  4 |  6 | 45 | 61 | **106** |
+| oz (v0.3.2 `7fb36aab`)          | 156 | 140 | 16 | 50 | 46 | 53 |  **99** |
 
-oz solves 31 more than main but is **less trusted** (97 < 104): 52 of its 103
+oz solves 31 more than main but is **less trusted** (99 < 106): 50 of its 103
 `sat` answers emit a model contradicting the assertions, and it is 4×
-unsounder. Every oz-over-main "win" beyond 3 confirmed solves + the
-`bench_679` soundness fix is unsound, bogus-model, or family-suspect. Full
-analysis: `VALIDATED_RESCORE.md`. **`trusted_total` is the number the gate
-defends** (`--baseline` keys on it when the run used `--validate-models`).
+unsounder. Re-scoring also surfaced **main's own model-layer defects** (6
+unjustified sats; 2 are a `build_model` construction bug on correct-verdict
+sats, plus a `Model::eval` false-alarm) — pinned in
+`oxiz-solver/tests/model_soundness_regressions.rs`. Every oz-over-main "win"
+beyond 3 confirmed solves + the `bench_679` soundness fix is unsound,
+bogus-model, or family-suspect. Full analysis: `VALIDATED_RESCORE.md`.
+**`trusted_total` is the number the gate defends** (`--baseline` keys on it
+when the run used `--validate-models`).
 
 The pre-validation verdict-only table (for continuity with older notes):
 

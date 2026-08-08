@@ -10,21 +10,20 @@ where z3 confirms sat), so it cannot be the oracle. See `README.md` §Trust mode
 Raw per-instance results: `results/oz-v032/`, `results/main-validated/`
 (gitignored run artefacts; reproducible by re-running the harness).
 
-## Headline (validated)
+## Headline (validated, declaration-accurate quoting)
 
 | build | solved | agree_z3 | disagree | sat_mod_valid | sat_mod_invalid | sat_trusted | unsat_trusted | **trusted_total** |
 |-------|-------:|---------:|---------:|--------------:|----------------:|------------:|--------------:|------------------:|
-| **main** (`965285b`)    | 125 | 121 |  4 | 56 |  8 | 43 | 61 | **104** |
-| **oz** (`v0.3.2`=`7fb36aab`) | 156 | 140 | 16 | 51 | **52** | 44 | 53 | **97** |
+| **main** (`965285b`)    | 125 | 121 |  4 | 58 |  6 | 45 | 61 | **106** |
+| **oz** (`v0.3.2`=`7fb36aab`) | 156 | 140 | 16 | 53 | **50** | 46 | 53 | **99** |
 
 oz solves more (156 vs 125) and agrees more (140 vs 121), but is **less
-trusted** (97 vs 104). Two reasons, both concentrated:
+trusted** (99 vs 106). Two reasons, both concentrated:
 
-1. **oz's model construction is severely broken.** 52 of its 103 `sat`
+1. **oz's model construction is severely broken.** 50 of its 103 `sat`
    answers emit a model that *contradicts* the assertions (z3:
-   `asserts ∧ model` = unsat). Of its 87 *agreeing* sats (correct verdict),
-   **36 emit a bogus model**. main has 8 such cases. This is the single
-   biggest deflator.
+   `asserts ∧ model` = unsat). main has 6 such cases (see defect inventory
+   below). This is the single biggest deflator.
 2. **oz is 4× unsounder** (16 vs 4), all in the same direction (z3 unsat,
    oz sat) — the over-eager-sat mechanism. Per family:
 
@@ -39,9 +38,43 @@ trusted** (97 vs 104). Two reasons, both concentrated:
    The GrandProduct and `xs_*`/storecomm/rings clusters are exactly the
    one-mechanism-scores-and-errs pattern the family check exists to catch.
 
-oz's briefed "159" → **97 trusted**. The brief's claim that "the true ceiling
+oz's briefed "159" → **99 trusted**. The brief's claim that "the true ceiling
 from porting v0.3.2 is well below it" is confirmed — and the ceiling is below
 main's own trusted count.
+
+### main's model layer — the bigger catch (2 real defects, pinned)
+
+Re-scoring oz surfaced that **main's own model layer is unsound**: 6 of its 64
+`sat` answers emit a model z3 rejects. Two are the known-unsound verdict bugs
+(`bench_679`, `ext_con_064`, `storecomm_t3`, `xs_8_13` — wrong verdict, so any
+model is bad); the other **2 are correct-verdict sats with a genuinely
+unsatisfying witness** — a `build_model` construction defect:
+
+| instance | logic | z3 | main | symptom |
+|----------|-------|----|------|---------|
+| `UCLID-pred/DLX/DLX1C0.smt2` | QF_UFIDL | sat | sat | emits negative Int (`impl.fdType=-4`) where z3's model is non-negative |
+| `VeryMax/SAT14/1659.smt2` | QF_NIA | sat | sat | emits a model z3 rejects (482/482 symbols pinned, declaration-accurate) |
+
+A separate **evaluator defect** (`Model::eval`, behind `Context::eval_in_model`)
+false-alarms on a *correct* model: `iso_brn1083` (z3 accepts the model) but
+`eval_in_model` reports assertions unsatisfied — so `(get-value)`/`(get-model)`
+and the CLI's `--validate-model` are unreliable for UF. Both defects are pinned
+as `#[ignore]`d guards in `oxiz-solver/tests/model_soundness_regressions.rs`,
+distinct from each other (different components: `build_model` vs `Model::eval`).
+
+### Correction log: validator quoting bug
+
+An earlier version of these numbers (main 8 / oz 52 `sat_invalid`; main 104 /
+oz 97 trusted) counted **4** main construction defects. Re-checking with
+nondeterminism and declaration-accurate symbol quoting showed `21.lp` and
+`3.lp` were a **harness validator quoting bug**: the validator pinned symbol
+names bare (`(assert (= hc(18,17) false))`) while the file declares them
+quoted (`|hc(18,17)|`), so the pin referenced a disconnected token and z3
+returned a spurious `unsat`. Fixed in `bench_diff.py` (pins now use the file's
+exact declared token); both builds re-validated offline (`revalidate.py`). The
+real-defect count dropped 4 → 2; trusted totals rose to 106 / 99. The lesson —
+recorded in the test module doc — is the one the review flagged: a validator
+artifact looks exactly like a construction defect until re-checked.
 
 ## What is actually portable (oz trusted, main does not solve)
 
@@ -108,11 +141,12 @@ The z3-based check builds `(asserts ∧ pinned-constants)` and asks z3.
   So a `sat_model_valid` row means "consistent," not "provably correct."
 
 Consequence: **`sat_model_invalid` is a lower bound on the true count of
-unjustified sats.** main's 8 (4 on agreeing sats + the 4 known-unsound) could
+unjustified sats.** main's 6 (2 on agreeing sats + the 4 known-unsound) could
 be more — a model whose only error is in a skipped function value would pass
 as `valid`. The 4 known-unsound rows are flagged for certain (their instance
-is unsat, so no model exists); the 4 agreeing-sat rows are the construction
-  defect's confirmed floor. Treat none of these numbers as exact ceilings.
+is unsat, so no model exists); the 2 agreeing-sat rows (DLX1C0, 1659) are the
+construction defect's confirmed floor. Treat none of these numbers as exact
+ceilings.
 
 ## Caveat on the family-neighbour flag
 
