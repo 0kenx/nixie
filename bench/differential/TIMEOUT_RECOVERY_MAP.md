@@ -113,33 +113,38 @@ variables. (A synthetic `(let (...) (assert ...))` form — let *wrapping* a
 command, non-standard — does mis-parse to `sat`, but that is malformed input,
 not qlock's cause and not the standard `(assert (let ...))` form qlock uses.)
 
-## Deeper wall: the CDCL(T) framework has no theory-propagation path
+## CORRECTION: theory propagation IS plumbed (the real wall is diff_logic only)
 
-Investigating the `propagate()` stub surfaced the real gate. `oxiz-sat`'s
-`TheoryCallback` trait (`oxiz-sat/src/solver/mod.rs:111`) exposes only
-`on_assignment`, `final_check`, `on_new_level`, `on_backtrack` — **there is no
-method for a theory to assert an implied literal**. The framework is
-DPLL-plus-checker: theories react to SAT assignments and report conflicts, but
-cannot proactively propagate. That is why a difference-logic theory over a
-Boolean structure (qlock) cannot converge — it can only hand CDCL the sparse
-conflicts that happen to form, never the dense implied-literal propagation that
-makes CDCL(T) efficient on structured theories.
+A prior draft of this section claimed the CDCL(T) framework has no
+theory-propagation path. That was wrong. Propagation is delivered by the
+return value, not a separate callback method, and that channel is fully built
+and exercised in production:
 
-Landing qlock (and unblocking theory propagation generally) therefore requires
-implementing theory propagation across the stack, not just in `diff_logic`:
+- oxiz-sat/src/solver/mod.rs:106 — TheoryCheckResult::Propagated(Vec<(Lit,
+  SmallVec<[Lit; 8]>)>), literal plus reason clause.
+- oxiz-sat/src/solver/search_ext.rs:120 and :307 — the mid-search and
+  post-final_check paths match Propagated and install them soundly:
+  unconditional facts (empty reason) become level-0 units via
+  install_theory_units; reasoned ones become two-watched explanation clauses
+  via add_theory_reason_clause + trail.assign_propagation (theory_processed
+  clamped on backtrack).
+- oxiz-solver/src/solver/theory_manager.rs:751 (derive_arith_propagations) and
+  :2210 (ite-const axiom propagation) already return Propagated.
 
-1. `oxiz-sat/src/solver/mod.rs:111` — add a propagation method to
-   `TheoryCallback` (e.g. return implied `Lit`s with their reason).
-2. `oxiz-sat`'s CDCL propagation loop — enqueue theory-implied literals at the
-   current level with reason tracking, so conflict analysis can explain them.
-3. `oxiz-theories/src/diff_logic/solver.rs:258` — implement the actual
-   propagation (track the unasserted DL atoms; derive implied polarities from
-   the Bellman-Ford shortest-path distances).
-4. `oxiz-solver/src/solver/theory_manager.rs` — wire diff's implied literals
-   into the new callback.
+So the solver is CDCL(T) with working theory propagation, including
+reason/level bookkeeping for conflict analysis. The only real wall is
+**oxiz-theories/src/diff_logic/solver.rs:258 propagate() — a stub** (validates
+distances, clears pending, returns empty). Landing qlock means implementing the
+DL propagation rule there (track unasserted DL atoms; for each, check whether
+the current shortest-path distances already imply its polarity — x - y ≤ c is
+implied when dist[y] - dist[x] ≤ c — emitting the path edges as the reason) and
+returning Propagated from process_constraint, copying derive_arith_propagations
+as the template. One crate's algorithm plus a pattern that exists two files
+over — not a multi-crate framework feature.
 
-This is a major, soundness-critical, multi-crate feature (it upgrades the
-solver from DPLL+checker to full CDCL(T)), not a port or a wiring task. It is
-the named next effort for the IDL/timeouts pivot; the detection work is done
-and sound, and every shallower dead end (let-stub, lazy/eager, conflict-drop)
-is ruled out by experiment above.
+De-risk before wiring: standalone, check whether the DL propagation rule yields
+a useful volume of implied literals on qlock's ~17k difference atoms. Useful
+volume → wiring is a pattern-copy. Almost none → the sparseness is intrinsic to
+qlock's encoding and qlock needs something else; worth knowing before building
+the plumbing.
+
