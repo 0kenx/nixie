@@ -4,15 +4,38 @@ Branch `integrate/0.3.2`. This document records the judgment calls behind the
 open items, with the measurements that back them, so a reviewer does not have
 to read 22+ commit messages to find them.
 
-**Baseline verified (default features, debug):** `9858 passed / 0 failed / 36
-ignored` on `2ace7dd8` (HEAD after items 1–2 below). The briefed baseline was
-`9746 / 0 / 40`; the deltas are tree drift plus the four tests this pass moved
-from `#[ignore]` to passing. `cargo test --workspace --all-features` does **not**
-compile on this tree: the `profiling` feature of `oxiz-theories` threads a
-non-`Sync` `TermManager` through `std::thread::spawn_scoped`
-(`nl_model_search.rs:301`). That is a pre-existing workspace issue unrelated to
-this integration; the default-feature suite (how the 9858 number is obtained)
-is unaffected. Flagged for the maintainer.
+**Baseline verified (default features, debug):** `9859 passed / 0 failed / 40
+ignored` on `ef731000` (branch HEAD after the post-review fixes). The briefed
+baseline was `9746 / 0 / 40`; the deltas are tree drift plus the tests this
+pass moved from `#[ignore]` to passing plus the new soundness guards. `cargo
+test --workspace --all-features` does **not** compile on this tree: the
+`profiling` feature of `oxiz-theories` threads a non-`Sync` `TermManager`
+through `std::thread::spawn_scoped` (`nl_model_search.rs:301`). That is a
+pre-existing workspace issue unrelated to this integration; the default-feature
+suite is unaffected. Flagged for the maintainer.
+
+## §0. Post-review correction — the branch DID introduce a soundness regression
+
+An earlier draft of these notes (and the §1 framing) claimed the inprocessing
+unsoundness was the only soundness concern and was "pre-existing in v0.3.2, not
+a main regression." A differential benchmark against z3 (§4) disproved the
+spirit of that: the branch introduced a **new** wrong-`Sat` on
+`smt-lib/.../QF_UFIDL/.../vhard7.smt2` (z3: unsat). `git bisect` localized it
+to `0c526e9c` ("gate eliminate_nonbool_ite out of BV/Array/String/Float
+sorts"), whose ported `collect_ground_subterms` treats `let` as opaque — so the
+mux axioms for the `ite`s inside vhard7's wrapping `let` were never emitted.
+**Fixed in `bb73c30c`** (descend into `let`, keep `Forall`/`Exists` opaque);
+pinned by `oxiz-solver/tests/known_unsound_regressions.rs::vhard7_is_not_sat`.
+
+This is an **imported upstream bug** (oz = v0.3.2 returns the same wrong
+`sat`; main timed out), but it is still a regression by the branch's own
+standard — main did not return `sat` here, the branch did. The lesson, now
+encoded in §1's preset decision and §3's coverage caveat: **v0.3.2 is not the
+gold standard** (it is ~4× less sound than main on the differential sample — 16
+vs 4 disagreements), so "faithful to v0.3.2" is right for *mechanism* but is
+**not** a soundness argument. Port-don't-invent stays the rule for how to
+implement a fix; it is no longer the justification for whether a v0.3.2
+behavior should be kept.
 
 ## Open items
 
@@ -85,20 +108,18 @@ mirroring the `audit_sat_p3` style `interval: 1`) is directly exposed; the
 shipped preset intervals (2000–10000) are exposed in principle but no wrong
 verdict was reproduced on the tested slice.
 
-**Disposition (this integration).** Kept the preset values exactly as v0.3.2
-(changing them would diverge from upstream *and* break `test_industrial_config`
-/ `test_conservative_config`, which pin `enable_inprocessing == true`). Added a
-loud soundness caveat to the `config_presets.rs` module doc recommending the
-inprocessing-off presets (`Default`, `Glucose`, `MiniSat`, `Random`,
-`Aggressive`) for guaranteed soundness. The debug propagation-fixpoint
-invariant remains the CI safety net: any future change that worsens this will
-panic in the test suite, not silently ship.
-
-**Decision deferred to maintainer.** If you want a stronger default, the
-options are (a) flip `enable_inprocessing: false` in the five presets (one-line
-each + update the two pinning tests), or (b) make `inprocess()` itself a no-op
-until the watch-rebuild is implemented. Both are sound; neither is a faithful
-v0.3.2 port, so I did not take them unilaterally.
+**Disposition (resolved post-review).** Inprocessing is now **disabled in all
+presets** (`bbf9ff9cc`): Industrial, Cryptographic, Hardware, Conservative,
+and CaDiCaL all set `enable_inprocessing: false`, with `test_industrial_config`
+updated to match and the module doc rewritten. A differential benchmark
+against z3 (see §4) settled the previously-open preset question: upstream
+v0.3.2 disagrees with z3 on 16/270 sampled instances vs main's 4 — matching
+upstream's inprocessing-on presets is matching a solver ~4× less sound on a
+pipeline already proven to have a wrong-verdict path, so the fidelity argument
+does not survive the data. Callers who want inprocessing and accept the known
+unsoundness can still opt in via `SolverConfig`; no preset turns it on by
+default. The real fix — a correct watch rebuild in `inprocess()` — is the
+follow-up ticket, now well-scoped since the mechanism is named.
 
 ### 2. LRAT hint-chain gap — fixed (faithful port of v0.3.2)
 
@@ -190,3 +211,43 @@ The honest coverage claim for the PR: **every v0.3.2 behavior its own test
 suite pins is now on main, or is documented as a known gap with a root cause.**
 Behavior v0.3.2 changed without test coverage (perf/refactor/invariant) is not
 enumerated item-by-item; bucket C above is the residual.
+
+**§3 addendum (the audit's blind spot, now empirically instantiated).** The
+v0.3.2-test-suite audit cannot see a v0.3.2 behavior that no v0.3.2 test pins.
+The differential bench instantiated exactly that: `bench_679` (QF_BV,
+bvule/bvshl-heavy) is wrong on main (`sat` where z3 says `unsat`), unchanged by
+24 commits of behavior porting — because no v0.3.2 test covers that BV path —
+yet v0.3.2 itself answers it correctly. So `bench_679` is a concrete **port
+candidate** (diff main vs v0.3.2 on the BV comparison/shift encoding) and a
+free win; it is pinned as an `#[ignore]`d guard in
+`known_unsound_regressions.rs` until that port lands. The other three
+pre-existing disagreements (`ext_con_064`, `storecomm_t3`, `xs_8_13`) are wrong
+on v0.3.2 too and are tracked, not port candidates.
+
+## §4. Differential benchmark (soundness + perf vs z3)
+
+The pinned-sample differential run that found vhard7 is checked in at
+`bench/differential/` (`bench_diff.py` + `sample/selected.json`, seed 20260807,
+270 instances). Run it as a PR gate for any change touching the solver core:
+
+```
+cargo build --release -p oxiz-cli && \
+  python3 bench/differential/bench_diff.py --bin target/release/oxiz --label pr
+```
+
+It exits non-zero on any soundness disagreement (oxiz `sat`/`unsat` ≠ z3 on a
+sat/unsat instance); timeouts/`unknown` do not fail the gate. Baseline numbers
+at the time it was added (z3 4.16.0, τ=10 s):
+
+| build | solved | agree z3 | disagree (soundness) | timeout/unknown |
+|-------|-------:|---------:|---------------------:|----------------:|
+| oz (v0.3.2 `7fb36aab`) | 159 | 143 | **16** | 95 |
+| main (`ebbced38`)      | 123 | 119 |  4    | 147 |
+| integrate pre-vhard7-fix (`bd380ec0`) | 125 | 120 |  5 | 145 |
+
+Post-vhard7-fix, integrate drops to 4 disagreements, **all pre-existing on
+main** — so the branch introduces no net new soundness regression once vhard7
+is resolved. The headline for the PR is therefore *120/125 agreeing with z3,
+4 unsound — all pre-existing on main*, plus +2 solved over main and gmean
+1.01× vs z3 on its correct subset (speed is fine; the gap is what it can't
+finish — see the strategic note in the PR description).
