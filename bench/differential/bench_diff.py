@@ -111,7 +111,7 @@ def run_one(cmd, path, timeout, stdin_text=None):
             except ProcessLookupError: pass
             try: p.communicate(timeout=1)
             except Exception: pass
-            return timeout, "TIMEOUT", 124
+            return timeout, "timeout", 124
         dt = time.perf_counter() - t0
         text = (out or "") + "\n" + (err or "")
         return dt, parse_status(text, p.returncode, dt, timeout), p.returncode
