@@ -1,0 +1,1628 @@
+{
+  "seed": 20260807,
+  "max_per_logic": 30,
+  "timeout_bench_s": 10,
+  "n": 270,
+  "instances": [
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_6.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.024976
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/UltimateAutomizer/cs_lazy_false-unreach-call.i.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "unsat",
+      "z3_s": 0.027985
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/floppy2_true-unreach-call_true-termination.i.cil.c_5.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.031097
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg20_true-unreach-call.i_5.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.035598
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg20_true-unreach-call.i_2.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.035928
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/UltimateAutomizer/cs_dekker_true-unreach-call.i.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "unsat",
+      "z3_s": 0.042685
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_1.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.044706
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_2.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.049292
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/floppy2_true-unreach-call_true-termination.i.cil.c_2.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.057281
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_4.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.057608
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg20_true-unreach-call.i_4.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.059427
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_3.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.069284
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg20_true-unreach-call.i_3.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.076221
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_9.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.080053
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/floppy2_true-unreach-call_true-termination.i.cil.c_9.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.095
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_12.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.109147
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/floppy2_true-unreach-call_true-termination.i.cil.c_3.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.117772
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20230321-UltimateAutomizerSvcomp2023/floppy2.i.cil.c_4.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.176239
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20230321-UltimateAutomizerSvcomp2023/floppy2.i.cil.c_3.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.19407
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/sum10_true-unreach-call_true-termination.i_0.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.215767
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/sound/diff/3.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "unsat",
+      "z3_s": 0.238819
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg20_true-unreach-call.i_6.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.262899
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/unsound/diff/4.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 0.497607
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20230321-UltimateAutomizerSvcomp2023/lcm2.c_AllErrorsAtOnce_Iteration3_0.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "unsat",
+      "z3_s": 0.971207
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/floppy2_true-unreach-call_true-termination.i.cil.c_7.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 1.048269
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/unsound/same/5.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 1.104938
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/unsound/diff/6.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 1.822799
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/unsound/same/7.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 2.167011
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/unsound/same/6.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "sat",
+      "z3_s": 2.271178
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg40_true-unreach-call.i_AllErrorsAtOnce_Iteration17_TraceCheck_0.smt2",
+      "logic": "QF_ANIA",
+      "z3_res": "unsat",
+      "z3_s": 3.752936
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt7565714320681306474.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.019166
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t1_pp_nf_ni_00020_001.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.019596
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt5695631438254231329.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.020672
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt6900099572485246069.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.021439
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt182987599385075282.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.022418
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_pp_sf_ni_00020_009.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.023119
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt2349554521575265533.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.023278
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t3_pp_sf_ni_00050_002.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.025388
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_pp_nf_ai_00050_008.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.028042
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt8591958557635707797.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.029418
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/swap/swap_invalid_t3_pp_nf_ai_00010_003.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.029755
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t3_np_sf_ni_00010_001.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.030322
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/swap/swap_invalid_t3_pp_sf_ai_00003_007.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.030663
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t1_pp_nf_ni_00020_008.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.034029
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt4574461499410346282.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.034266
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_np_nf_ni_00040_002.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.034617
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/swap/swap_t1_pp_sf_ai_00004_003.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.03611
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt8078846980698793773.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.036968
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_np_nf_ni_00020_006.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.0371
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/swap/swap_invalid_t3_pp_nf_ai_00009_008.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.039166
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_pp_nf_ai_00020_009.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.04009
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt1286129643722180277.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.040793
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t1_pp_nf_ni_00050_001.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.043458
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t3_pp_nf_ai_00020_001.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.043605
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt5491752019313122314.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.048168
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_t3_pp_nf_ai_00060_004.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.050488
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_np_nf_ni_00020_008.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.051537
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t3_pp_nf_ai_00060_002.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.051962
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storecomm/storecomm_invalid_t1_pp_sf_ai_00050_005.cvc.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.061109
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt1269517447706381031.smt2",
+      "logic": "QF_AUFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.075635
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_3009.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.023899
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_4508.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.029439
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_536.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.030026
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app8/bench_3220.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.03537
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_177.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.037992
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app8/bench_3608.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.044124
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app7/bench_5934.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.045044
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app9/bench_1723.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.045228
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app9/bench_679.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.047009
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app9/bench_1770.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.049682
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app7/bench_3520.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.049978
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app2/bench_955.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.055672
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app8/bench_161.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.056305
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/dwp_formulas/try5_small_noof_functions_dwp_printf.quoting_options_from_style.il.dwp.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.074832
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_605.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.077003
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t1.i59.9ffe52e8.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.100438
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/dwp_formulas/try5_small_noof_functions_flanagansaxe_rmdir.quoting_options_from_style.il.flanagansaxe.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.104081
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_5484.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.122474
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app11/bench_587.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.134423
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app9/bench_1063.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.13786
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t1.i28.13cbf1f6.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.172002
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_315.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.226227
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app7/bench_8480.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.257253
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app7/bench_573.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.271972
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t4.i15.cbe7a13d.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.398711
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app7/bench_6.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 0.444478
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app12/bench_134.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 0.594041
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/Sage2/bench_4683.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 1.268943
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/bruttomesso/core/ext_con_064_002_0512.smt2",
+      "logic": "QF_BV",
+      "z3_res": "unsat",
+      "z3_s": 1.729619
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_BV/sage/app1/bench_66.smt2",
+      "logic": "QF_BV",
+      "z3_res": "sat",
+      "z3_s": 1.978388
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/Averest/fast_max/FastMax_safe_blmc000.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.021151
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/Averest/sorting_network/SortingNetwork4_live_blmc000.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.021496
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/Averest/partition/Partition_live_blmc000.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.025083
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/DTP/DTP_k2_n35_c210_s19.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.030818
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/job_shop/jobshop4-2-2-2-4-4-11.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.032424
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/sal/bakery/inf-bakery-mutex-3.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.032551
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/Averest/binary_search/BinarySearch_live_blmc002.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.033146
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/DTP/DTP_k2_n35_c210_s5.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.040879
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/Averest/buble_sort/BubbleSort_live_bgmc006.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.045014
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/DTP/DTP_k2_n35_c210_s14.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.049139
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/DTP/DTP_k2_n35_c210_s1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.050271
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/queens_bench/super_queen/super_queen37-1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.053662
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/qlock/qlock-4-10-7.base.cvc.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.067475
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/queens_bench/super_queen/super_queen30-1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.073605
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/queens_bench/super_queen/super_queen38-1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.077956
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/Averest/insertion_sort/InsertionSort_live_bgmc010.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.112835
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/planning/plan-30.cvc.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.260518
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/qlock/qlock-4-10-11.base.cvc.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.281105
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/planning/plan-33.cvc.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.31007
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/mathsat/fischer/FISCHER8-8-ninc.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.330542
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/queens_bench/n_queen/queen54-1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.435102
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/schedulingIDL/j7_per20_1_mkspan1002.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 0.462574
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/qlock/qlock-4-10-32.induction.cvc.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.619943
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/asp/HamiltonianPath/gryzzles.37.lp.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.621723
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/queens_bench/super_queen/super_queen46-1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.722753
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/asp/HamiltonianPath/gryzzles.39.lp.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 0.881218
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/asp/SchurNumbers/20.6.schur.lp.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 1.092333
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/queens_bench/super_queen/super_queen97-1.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "sat",
+      "z3_s": 2.882807
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/schedulingIDL/j6_per0_0_mkspan1054.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 3.327459
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_IDL/asp/Sokoban/duthen-990602.37.steps.10.asp.smt2",
+      "logic": "QF_IDL",
+      "z3_res": "unsat",
+      "z3_s": 3.605714
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/SwimmingPool-PT-07/RF-12.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.018694
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-00500/RC-05.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.021017
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-05000/RF-04.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.02163
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT2048DC0512/RC-14.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.021679
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/Kanban-PT-00500/RF-09.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.022331
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D10N200/RF-00.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.026948
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/Kanban-PT-10000/RF-11.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.028851
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-01000/RF-08.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.030623
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/IOTPpurchase-PT-C01M01P01D01/RC-03.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.032276
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT2048DC0512/RF-09.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.03678
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/NeighborGrid-PT-d2n3m1t12/RF-01.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.037041
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/ERK-PT-100000/RC-04.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.037447
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/Referendum-PT-1000/RF-01.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.041247
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/rings/ring_2exp14_9vars_0ite_unsat.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.055281
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/30-vars/problem__014.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.056247
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/dillig/15-6.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.067138
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/2019-cmodelsdiff/hamiltonianCircuit/3.lp.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.077812
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_real_LIA/ex2520_2400_100.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.078082
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_real_LIA/ex4300_2400_100.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.083021
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/rings/ring_2exp8_3vars_2ite_unsat.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.083653
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/2019-cmodelsdiff/hamiltonianCircuit/21.lp.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.11396
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/rings/ring_2exp6_9vars_0ite_unsat.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.11597
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/35-vars/problem_2__011.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.127912
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass/prp-39-46.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 0.14273
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D50N010/RC-10.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.267052
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/RwMutex-PT-r0100w0010/RF-00.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.287559
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/nec-smt/med/checkpass_pwd/prp-21-28.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 0.760958
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/nec-smt/large/bftpd_login/prp-64-49.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 1.903023
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-8-34.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "sat",
+      "z3_s": 3.408749
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_LIA/nec-smt/large/handler_sigchld/prp-22-50.smt2",
+      "logic": "QF_LIA",
+      "z3_res": "unsat",
+      "z3_s": 3.434438
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/SAT14/510.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.029754
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/SAT14/1659.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.037825
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/SAT14/459.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.042967
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/AProVE/aproveSMT1021654105853853383.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.055779
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/SAT14/1527.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.063053
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__Round3.jar-obl-8__term_unfeasibility_0_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.069399
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__ex36.t2__p29355_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.241006
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__slayer-3-new.t2__p22109_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.443413
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20210219-Dartagnan/ReachSafety-Loops/ps4-ll_valuebound50-O0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.454245
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/CInteger/Stroeder_15__ChenFlurMukhopadhyay-SAS2012-Ex2.11_false-termination.c__p21283_terminationG_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.484871
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20210219-Dartagnan/ReachSafety-Loops/geo1-ll-O0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.509278
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/SAT14/489.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.576478
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__juHashMapCreateIsEmpty.jar-obl-10__p2529_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.6358
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/CInteger/Stroeder_15__NO_23.c__terminationS_0_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.695181
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__juLinkedListCreateAddAllAt.jar-obl-17__p9015_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.738764
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__ex36.t2__p29585_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.744819
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__ex36.t2__p25601_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.814916
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__n-12.t2_fixed__p3456_edge_closing_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 0.840537
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__polyrank2.t2__p7394_terminationG_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.954116
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__ex36.t2_fixed__p23678_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 0.98381
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__juLinkedListCreateAddAllAt.jar-obl-17__p7687_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 1.081709
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/AProVE/aproveSMT6898324571769686213.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 1.204925
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/AProVE/aproveSMT6423264120294870431.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 1.426664
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__Flatten.jar-obl-10__p29372_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 1.702985
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__LinkedList.jar-obl-10__p10067_safety_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 1.773839
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__apchild-accepted.t2_fixed__p16117_terminationG_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 1.775018
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/AProVE/aproveSMT8614527046801779518.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 2.003391
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_T2__n-5.t2_fixed__p4574_terminationG_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "sat",
+      "z3_s": 3.32236
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20210219-Dartagnan/ReachSafety-Loops/array_1-1-O0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 3.756293
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__Test6.jar-obl-13__terminationS_29_0.smt2",
+      "logic": "QF_NIA",
+      "z3_res": "unsat",
+      "z3_s": 4.622316
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/20170829-Rodin/smt1300175744189082250.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.01362
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/2018-Goel-hwbench/QF_UF_iprotocol.3.prop1_ab_reg_max.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.014538
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_icl1049.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.021856
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_icl1011.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.022706
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/NEQ/NEQ032_size3.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.02302
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_brn1082.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.03002
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/2018-Goel-hwbench/QF_UF_lup.4.prop1_ab_reg_max.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.034167
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_brn1083.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.034514
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_brn298.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.039766
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_brn740.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.044151
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_brn945.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.045802
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_icl684.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.047719
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/loops6/iso_icl050.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.051455
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_icl1026.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.051964
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_brn1008.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.057769
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_brn215.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.082395
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/2018-Goel-hwbench/QF_UF_telephony.3.prop1_ab_reg_max.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.085246
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl381.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.085468
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_icl871.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.087002
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/iso_brn653.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.089616
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl1270.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.097701
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl507.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.176277
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl203.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.201687
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl429.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.332327
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/loops6/iso_brn056.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.34573
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/2018-Goel-hwbench/QF_UF_peg_solitaire.4.prop1_ab_fp_max.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.35558
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl785.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.516558
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg7/gensys_icl_sk004.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.554536
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_brn109.smt2",
+      "logic": "QF_UF",
+      "z3_res": "sat",
+      "z3_s": 0.566074
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UF/QG-classification/qg5/gensys_icl192.smt2",
+      "logic": "QF_UF",
+      "z3_res": "unsat",
+      "z3_s": 0.821188
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c10_s.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.034475
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/RDS/sorted_list_insert_noalloc0.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.034534
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c9idw_s.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.042663
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/mathsat/EufLaArithmetic/vhard/vhard7.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.045715
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/DLX/DLX1C0.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.058599
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/RDS/set_union4.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.068645
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c10ni_s.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.072041
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c10_i.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.07873
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/bakery/LamportBakery2.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.096336
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/RDS/sorted_list_insert_noalloc1.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.110819
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/ibm_cache/ibm_cache_full_q_unbounded2.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.115088
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/bakery/LamportBakery4.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.11513
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete/cxs-bp.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.142571
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c7b_i.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.142993
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/bakery/LamportBakery8.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.165132
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/aodv/aodv5.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.193807
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c10b_i.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.217809
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/uclid/elf.rf8.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.246146
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/f6bid.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.247726
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c6idw.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.288409
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/ibm_cache/ibm_cache_full_q_unbounded12.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 0.309221
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/RDS/sorted_list_insert_noalloc9.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.377311
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete/9stage-flush.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 0.836629
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/20210312-Bouvier/vlsat3_l10.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 1.070862
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/20210312-Bouvier/vlsat3_l63.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 1.695002
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/uclid2/ooo.tag19.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 2.699595
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c10nid_i.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 3.237139
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/20210312-Bouvier/vlsat3_l84.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 4.032047
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c10idw.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "unsat",
+      "z3_s": 4.41338
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFIDL/20210312-Bouvier/vlsat3_l61.smt2",
+      "logic": "QF_UFIDL",
+      "z3_res": "sat",
+      "z3_s": 4.842896
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_06_17.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.02425
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_08_16.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.026118
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_uns_04_06.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.030485
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-20-12-3-1-5-2.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.031142
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_uns_03_16.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.03322
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/EufLaArithmetic/medium/medium7.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.034904
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_08_03.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.035891
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_06_19.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.037097
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-06-15-4-1-4-1.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.037499
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-17-13-4-4-2-1.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.041479
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-08-2-2-4-5.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.043446
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_05_06.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.044055
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_09_17.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.044716
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_08_19.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.046286
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-17-09-4-3-5-5.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.047174
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_uns_03_06.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.04733
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-06-17-2-2-4-1.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.050565
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Hash/hash_sat_05_12.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.052499
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-06-10-1-4-2-5.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.054839
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-20-09-1-5-4-2.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.054912
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-08-20-3-2-4-5.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.061169
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-13-10-4-3-1-3.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.065858
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_15_15.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.067438
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "unsat",
+      "z3_s": 0.06926
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_28_48.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.175846
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_25_25.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.350381
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_40_50.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 0.406779
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_30_50.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 1.319612
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/20230314-Jaroslav-Bendik-Certora/38347_092cc73601c78e45f4f9_58_QF_UFLIA.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 1.449663
+    },
+    {
+      "path": "smt-lib/non-incremental/QF_UFLIA/20230314-Jaroslav-Bendik-Certora/41958_32933c5a1384696720a2_63_QF_UFLIA.smt2",
+      "logic": "QF_UFLIA",
+      "z3_res": "sat",
+      "z3_s": 3.446783
+    }
+  ]
+}
