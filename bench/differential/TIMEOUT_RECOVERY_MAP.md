@@ -635,3 +635,24 @@ conflicts where z3's converge shallowly.  The encoding audit is therefore
 **deprioritized**; the lever is a CDCL focus/learning heuristic (resist
 fresh-atom drift, or a conflict-depth-aware restart/learning policy), not
 encoding and not theory.
+
+## LRB/CHB prototype: neither resists qlock's fresh-atom drift
+
+Switched the branching heuristic (cadical-style VMTF/VSIDS is the default) to
+LRB (`use_lrb_branching=true`) then CHB (`use_chb_branching=true`) — the two
+cadical heuristics designed to focus on productive variables and resist exactly
+the fresh-atom drift identified above.  **Both still time out on qlock-4-10-7**
+(30 s); the conflicts stay deep.  So no available branching heuristic in oxiz
+(VMTF/VSIDS/LRB/CHB), nor disabling chronological backtracking, nor theory-atom
+activity boosting, shallows qlock's theory conflicts.
+
+**Final conclusion of the conflict-depth chase.**  qlock's deep (level ~140)
+theory conflicts are robust to every CDCL-side intervention tested.  The
+fresh-atom drift (each conflict introduces a never-bumped atom) is intrinsic to
+how oxiz's CDCL(T) interacts with qlock's spread-out difference-logic unsat.
+Closing qlock is not a config/heuristic toggle — it would need a structural
+change (a dedicated QF_IDL decision procedure that doesn't rely on generic
+CDCL(T) conflict-driven search, or a fundamentally different theory-propagation
+strategy that pre-focuses the conflict atom set).  That is beyond theory wiring
+or branching tuning.  The two net-positive DL improvements (+1 solve, +1 agree)
+stand regardless.
