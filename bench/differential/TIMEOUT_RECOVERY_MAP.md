@@ -504,10 +504,13 @@ difference-logic procedure (`diff_logic`) was not the lever.  The DL work landed
 sound, incremental, and net-positive (+1 solve, +1 agree), but qlock needs an
 **incremental bound-tracking layer in the arithmetic solver** (or a dedicated
 QF_IDL tactic with cheap bound propagation) — a major arithmetic-solver effort,
-not theory wiring.  oxiz's `diff_logic` *could* supply cheap difference-bound
-propagation for the pure-DL fragment (its Bellman-Ford distances ARE incremental
-bounds), but only if the entailment query is rewired to use it instead of the
-per-atom simplex probe — i.e., route `comparison_entailed_reason` for 2-var
-differences through `DiffLogicSolver::entailed_from_sssp` (O(1) lookup against
-the maintained distances).  That is the single most promising concrete next
-step.
+not theory wiring.  NOTE: that routing already exists — `derive_diff_propagations` queries
+`DiffLogicSolver::entailed_from_sssp` (O(1) against the maintained distances)
+and *does* fire densely on qlock (~14k propagations).  Yet qlock's conflicts stay
+at level ~140.  So cheap DL bound propagation alone does NOT force the shallow
+(level ~2) conflicts z3 gets.  The deepest remaining blocker is therefore the
+**CDCL branching heuristic**: z3's branching reaches qlock's DL-inconsistent
+combinations at decision level ~2; oxiz's reaches them at ~140, regardless of
+how densely the theory propagates.  Closing qlock needs branching that
+prioritizes conflict-relevant (inequality) atoms — a SAT-engine investigation,
+not more theory wiring.
