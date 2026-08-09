@@ -688,3 +688,37 @@ vs z3's ~2).  Candidate fixes, in order of cheapness: (1) lower `stabilize_base`
 (5000→~500) so stable VSIDS engages sooner — keeps the dual-mode design; (2)
 per-logic VSIDS preference for QF_IDL/QF_LIA.  Both need differential-suite A/B
 validation before landing.
+
+## VSIDS A/B on the differential suite: NET REGRESSION — do not ship VSIDS as default
+
+The VSIDS breakthrough above (`d703a32`) solves qlock-4-10-7, but only **slowly
+(~58 s)**, and the differential-suite A/B (270-instance pinned sample,
+`--timeout 10`, VMTF-default vs pure-VSIDS binaries) shows VSIDS is a **net
+regression**:
+
+| metric               | VMTF (default) | VSIDS   | delta |
+|----------------------|---------------:|--------:|------:|
+| solved               |            127 |     124 |   −3  |
+| agree_z3             |            123 |     119 |   −4  |
+| disagree_soundness   |              4 |       5 |  +1 ⚠️ |
+| timeout_or_unknown   |            143 |     146 |  +3   |
+| PAR-2                |        2969.24 | 2995.10 | +25.9 |
+
+Per-instance trade: VSIDS **gains 2** (QF_AUFLIA/storecomm unsat ✓; QF_UFLIA/
+mathsat xs-08-20-3-2-4-5 — but oxiz=sat vs z3=unsat, the new soundness
+disagreement) and **loses 5** (QF_IDL/queens_bench, QF_UFIDL/RDS ×2, QF_UFLIA/
+mathsat ×2).  Note qlock-4-10-7 is **not** in the 270-sample, so this is
+VSIDS's effect on the *general* suite — and it **regresses other QF_IDL/UFIDL
+instances** (queens_bench, RDS) even while it helps qlock-4-10-7.
+
+**Conclusions:**
+- Pure VSIDS is **ruled out** as a default (−3 solved, +1 soundness
+  disagreement, worse PAR-2).
+- VSIDS is **inconsistent within QF_IDL** (helps qlock-4-10-7, hurts
+  queens_bench) — so per-logic VSIDS for QF_IDL is *not* obviously safe either.
+- The new soundness disagreement (mathsat xs-08-20-3-2-4-5: oxiz sat, z3 unsat)
+  needs model validation — likely a latent issue surfaced by the different
+  search path, not a VSIDS-introduced unsoundness, but unconfirmed.
+- The qlock-4-10-7 solve (58 s) is real but isolated and not worth the suite
+  cost.  `stabilize_base` tuning (keeps dual-mode) is still untested and may
+  avoid the regression, but VSIDS-pure is dead.
