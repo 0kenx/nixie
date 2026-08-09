@@ -17,6 +17,10 @@ use super::types::{
     ArithConstraintType, Constraint, ParsedArithConstraint, Statistics, TheoryMode,
 };
 
+/// Run difference-logic theory propagation every N-th arithmetic-atom
+/// assignment (uses the incrementally-maintained `self.diff`, no rebuild).
+const DL_PROP_PERIOD: u64 = 8;
+
 
 mod conflict_clause;
 mod derived_reasons;
@@ -103,6 +107,24 @@ fn is_plain_numeric_term(td: &oxiz_core::ast::Term) -> bool {
     )
 }
 
+/// The `(x, y, c, strict)` bound whose entailment is equivalent to DL atom
+/// `dla` holding at polarity `pol` (non-equality atoms).  In lock-step with
+/// `feed_dl_atom_inc`.
+fn diff_test_bound(dla: &DlAtom, pol: bool) -> Option<(TermId, TermId, Rational64, bool)> {
+    use ArithConstraintType::*;
+    let (x, y, c) = (dla.x, dla.y, dla.c);
+    Some(match (dla.ctype, pol) {
+        (Le, true) => (x, y, c, false),
+        (Lt, true) => (x, y, c, true),
+        (Ge, true) => (y, x, -c, false),
+        (Gt, true) => (y, x, -c, true),
+        (Le, false) => (y, x, -c, true),
+        (Lt, false) => (y, x, -c, false),
+        (Ge, false) => (x, y, c, true),
+        (Gt, false) => (x, y, c, false),
+    })
+}
+
 /// One pending application of an iterative EUF interning walk
 /// ([`TheoryManager::intern_term_deep`] and
 /// [`TheoryManager::intern_term_for_congruence`]).
@@ -159,6 +181,8 @@ pub(crate) struct TheoryManager<'a> {
     level_stack: Vec<usize>,
     /// Number of processed assignments
     processed_count: usize,
+    /// Throttle counter for difference-logic theory propagation.
+    dl_prop_counter: u64,
     /// Theory checking mode
     theory_mode: TheoryMode,
     /// Pending assignments for lazy theory checking
@@ -359,6 +383,7 @@ impl<'a> TheoryManager<'a> {
             derived_reasons,
             level_stack: vec![0],
             processed_count: 0,
+            dl_prop_counter: 0,
             theory_mode,
             pending_assignments: Vec::new(),
             pending_equalities: Vec::new(),
@@ -1156,6 +1181,110 @@ impl<'a> TheoryManager<'a> {
             return Some(self.conflict_from_terms(&cycle_terms));
         }
         None
+    }
+
+    /// Difference-logic theory propagation using the incrementally-maintained
+    /// `self.diff` (no per-call rebuild — the cost that made the old on-demand
+    /// version 97% of theory time).  For each unassigned DL atom, test
+    /// entailment via `sssp_from`/`entailed_from_sssp` over `self.diff`'s
+    /// graph (per-source SSSP, amortised via a per-call cache).  SOUND only
+    /// for pure-DL formulas (defect 3); the caller gates on that.
+    fn derive_diff_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
+        use oxiz_theories::DiffVar;
+        // Collect DL atoms + the pure-DL flag (clone out of shared maps).
+        let mut dl_atoms: Vec<DlAtom> = Vec::new();
+        for (&var, parsed) in self.var_to_parsed_arith.iter() {
+            if parsed.terms.len() != 2 {
+                continue;
+            }
+            let mut x = None;
+            let mut y = None;
+            let mut ok = true;
+            for &(t, c) in &parsed.terms {
+                if c == Rational64::from_integer(1) {
+                    x = Some(t);
+                } else if c == Rational64::from_integer(-1) {
+                    y = Some(t);
+                } else {
+                    ok = false;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let (Some(xt), Some(yt)) = (x, y) else { continue; };
+            let mut plain = true;
+            for t in [xt, yt] {
+                let Some(td) = self.manager.get(t) else { plain = false; break; };
+                if !is_plain_numeric_term(td) { plain = false; break; }
+                let Some(sort) = self.manager.sorts.get(td.sort) else { plain = false; break; };
+                if !sort.is_int() && !sort.is_real() { plain = false; break; }
+            }
+            if !plain { continue; }
+            let Some(constraint) = self.var_to_constraint.get(&var) else { continue; };
+            let (is_eq, ctype) = match constraint {
+                Constraint::Eq(_, _) => (true, parsed.constraint_type),
+                Constraint::Le(_, _) => (false, ArithConstraintType::Le),
+                Constraint::Lt(_, _) => (false, ArithConstraintType::Lt),
+                Constraint::Ge(_, _) => (false, ArithConstraintType::Ge),
+                Constraint::Gt(_, _) => (false, ArithConstraintType::Gt),
+                _ => continue,
+            };
+            dl_atoms.push(DlAtom { var, x: xt, y: yt, c: parsed.constant, is_eq, ctype });
+        }
+        if dl_atoms.is_empty() || dl_atoms.len() != self.var_to_parsed_arith.len() {
+            return None; // no DL atoms, or not pure-DL (defect 3)
+        }
+        let mut sssp_cache:
+            FxHashMap<DiffVar, Option<(HashMap<DiffVar, Rational64>, HashMap<DiffVar, usize>)>> =
+            FxHashMap::default();
+        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        'next_atom: for dla in &dl_atoms {
+            if self.trail_index.contains_key(&dla.var) {
+                continue;
+            }
+            let polarities: &[bool] = if dla.is_eq { &[true] } else { &[true, false] };
+            for &pol in polarities {
+                let reason_terms = if dla.is_eq {
+                    let c = dla.c;
+                    let Some(xv) = self.diff.get_diff_var(dla.x) else { continue; };
+                    let Some(yv) = self.diff.get_diff_var(dla.y) else { continue; };
+                    let cached_xy = sssp_cache.entry(yv).or_insert_with(|| self.diff.sssp_from(yv));
+                    let Some((dist, pred)) = cached_xy else { continue; };
+                    let Some(mut r1) = self.diff.entailed_from_sssp(xv, yv, c, false, dist, pred)
+                    else { continue; };
+                    let cached_yx = sssp_cache.entry(xv).or_insert_with(|| self.diff.sssp_from(xv));
+                    let Some((dist2, pred2)) = cached_yx else { continue; };
+                    let Some(mut r2) = self.diff.entailed_from_sssp(yv, xv, -c, false, dist2, pred2)
+                    else { continue; };
+                    r1.append(&mut r2);
+                    r1
+                } else {
+                    let Some((xt, yt, c, strict)) = diff_test_bound(dla, pol) else { continue; };
+                    let Some(xv) = self.diff.get_diff_var(xt) else { continue; };
+                    let Some(yv) = self.diff.get_diff_var(yt) else { continue; };
+                    let cached = sssp_cache.entry(yv).or_insert_with(|| self.diff.sssp_from(yv));
+                    let Some((dist, pred)) = cached else { continue; };
+                    let Some(r) = self.diff.entailed_from_sssp(xv, yv, c, strict, dist, pred) else {
+                        continue;
+                    };
+                    r
+                };
+                let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
+                let mut ok = true;
+                for &r in &reason_terms {
+                    let Some(&rv) = self.term_to_var.get(&r) else { ok = false; break; };
+                    let Some(&idx) = self.trail_index.get(&rv) else { ok = false; break; };
+                    let pol_r = self.assignment_trail[idx].is_positive;
+                    reason_lits.push(if pol_r { Lit::pos(rv) } else { Lit::neg(rv) });
+                }
+                if ok {
+                    props.push((if pol { Lit::pos(dla.var) } else { Lit::neg(dla.var) }, reason_lits));
+                    continue 'next_atom;
+                }
+            }
+        }
+        if props.is_empty() { None } else { Some(props) }
     }
 
 
@@ -2174,11 +2303,19 @@ impl TheoryCallback for TheoryManager<'_> {
             }
         }
 
-        // (The expensive on-demand `diff_theory_check` that lived here was the
-        // ~97% theory-time cost on qlock — it rebuilt a DL solver from the
-        // whole trail every Nth assignment.  Conflict detection is now done
-        // incrementally in `process_constraint` via `diff_primary_conflict`;
-        // propagation is deferred until a cheap per-source form exists.)
+        // Throttled difference-logic theory propagation using the incrementally-
+        // maintained `self.diff` (no per-call rebuild).  Pure-DL only (sound).
+        if matches!(result, TheoryCheckResult::Sat)
+            && self.var_to_parsed_arith.contains_key(&var)
+        {
+            self.dl_prop_counter = self.dl_prop_counter.wrapping_add(1);
+            if self.dl_prop_counter % DL_PROP_PERIOD == 0
+                && let Some(props) = self.derive_diff_propagations()
+            {
+                self.statistics.theory_propagations += props.len() as u64;
+                return TheoryCheckResult::Propagated(props);
+            }
+        }
 
         result
     }
