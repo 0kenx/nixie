@@ -417,3 +417,37 @@ Findings:
 
 The profiling instrumentation is not committed (stderr noise); re-apply the
 `'search`-loop timed dump in `search_ext.rs` to reproduce.
+
+## Landed improvements (two net-positive commits on top of the foundation)
+
+The CDCL profiling above identified the on-demand `diff_theory_check` rebuild as
+97% of theory time.  Replaced it with an *incremental* difference-logic solver:
+
+1. **`e859a63` — incremental SSSP DL solver.** `DiffLogicSolver::add_leq_check`/
+   `add_lt_check` use seeded SPFA (O(affected) per edge, maintaining cached
+   distances) instead of full Bellman-Ford; fall back to full `check()` only on a
+   detected cycle or after push/pop.  `DiffLogicSolver` is now a field on `Solver`
+   (push/pop/reset threaded through all 5 reset sites + `trail.rs`), fed per atom
+   via `diff_primary_conflict` (short-circuits arith.check for pure-DL), with a
+   `final_check` conflict backstop.  3 new unit tests.  Gate: solved 125,
+   agree_z3 **122 (+1 vs baseline 121)**, disagree 3.
+
+2. **`7712714` — DL propagation via the incremental solver (no rebuild).**
+   `derive_diff_propagations` queries the maintained `self.diff` (per-source
+   `sssp_from`, per-call cache), gated to pure-DL.  Gate: solved **126 (+1)**,
+   agree_z3 122, disagree 4 — all four disagreements are the known pre-existing
+   guards (none QF_IDL/DL), so no new DL unsoundness.
+
+Cumulative vs baseline (origin/main b7b6645): **solved 125→126, agree_z3
+121→122**, soundness unchanged (only the known pre-existing disagrees).  These
+are real completeness/accuracy gains from the DL work, stackable and
+gate-verified.
+
+**qlock-4-10-7 remains open.**  Its convergence is trajectory-fragile (~192 s
+with the old on-demand propagation; timeout with the incremental conflict-only
+build; does not converge in 120 s with the incremental propagation build).  The
+blocker is oxiz's CDCL decision efficiency (z3 needs 1265 decisions on qlock;
+oxiz needs 36x+ more, even with theory maximally cheap).  `theory_aware_branching`
+is already on by default.  Closing qlock needs SAT-engine work (branching /
+clause-learning quality / the per-`on_assignment` EUF+arith cost), which is the
+next layer and a different class of effort than theory wiring.
