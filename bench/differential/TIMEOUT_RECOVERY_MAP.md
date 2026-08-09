@@ -294,3 +294,41 @@ the sound primitive in `diff_logic` stays.
 - Note the asymmetry for future work: DL conflicts are safe to wire ungated
   (always sound); DL propagation must be gated to pure-DL (or made
   final-check-complete) or it manufactures wrong sats on mixed formulas.
+
+## Incremental DL-as-primary experiment (built, 0 conflicts, reverted)
+
+Hypothesis: arith's general simplex is the slow path on qlock; a Bellman-Ford
+DL solver fed *incrementally* in `process_constraint` and checked *before*
+`arith.check()` would catch difference-logic conflicts faster and close qlock.
+
+Built it: `DiffLogicSolver` field on `Solver`, `&mut` to `TheoryManager`, fed in
+`process_constraint`'s Lt/Le/Gt/Ge and Eq arms (correct eq-constant + plain-
+operand + Int/Real gate), `push`/`pop` at theory scopes, `reset` at all 5 sites,
+`trail.rs` destructure updated.  Per-atom `diff.check()` before `arith.check()`.
+
+**Result: 0 DL conflicts on qlock, ever.** Instrumented feed+check trajectory
+(fed=4000 in 12 s, dense graph: 4573 constraints / 176 vars) — `check()` AND an
+independent all-pairs `sssp_from` scan both report **zero negative cycles** at
+every partial assignment CDCL explores.  Yet arith (same difference constraints)
+does find conflicts (that is how the sound on-demand version reached `unsat` in
+~192 s).
+
+**Root cause of the 0:** qlock's partial-assignment DL graphs are genuinely
+consistent.  Its unsat requires the *full* assignment — or, equivalently, the
+EUF-derived transitive equalities that arith receives via
+`propagate_euf_equalities_to_arith` / `assert_explained_equality` but the DL
+solver does not.  DL's own Bellman-Ford derives transitive difference bounds,
+but only over the *directly asserted* atoms; it does not see the EUF congruence
+merges arith gets.  So DL is complete only over its asserted fragment, and on
+qlock that fragment stays feasible until the full assignment.
+
+Reverted (the per-atom Bellman-Ford is pure overhead at 0 conflicts; net-
+harmful).  The sound foundation (on-demand `diff_theory_check`, commit ebaf571)
+stays.
+
+**Next layer to close qlock via DL** (not done): feed EUF-derived equalities
+into the DL graph too — i.e., when `propagate_euf_equalities_to_arith` asserts
+`t1 = t2` to arith, also feed `t1 - t2 <= 0 ∧ t2 - t1 <= 0` to DL (when both are
+plain Int/Real terms).  Then DL's graph would carry the same transitive
+equalities arith has, and its Bellman-Ford would detect the same conflicts
+faster.  This is the EUF×DL integration layer; unverified.
