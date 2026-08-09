@@ -502,6 +502,29 @@ pub enum SolverError {
     },
 }
 
+/// Which branching strategy supplied the variable returned by the most
+/// recent [`Solver::pick_branch_var`]. Recorded so a decision tracer (see
+/// `Solver::trace_decision`, gated on `OXIZ_TRACE_DECISIONS`) can report the
+/// source alongside each decision — the key diagnostic for whether any
+/// theory-aware path is actually steering the search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BranchSource {
+    /// `domain_priority` finite-domain table-index equalities.
+    Domain,
+    /// `config.external_branching` heuristic (the `branch_priority` queue).
+    External,
+    /// Learning-rate branching.
+    Lrb,
+    /// Conflict-history branching.
+    Chb,
+    /// VMTF move-to-front queue (cadical focused mode).
+    Vmtf,
+    /// VSIDS / EVSIDS heap (cadical stable mode).
+    Vsids,
+    /// Exhausted-heap linear scan fallback.
+    Fallback,
+}
+
 /// CDCL SAT Solver
 #[derive(Debug)]
 pub struct Solver {
@@ -564,6 +587,10 @@ pub struct Solver {
     pub(super) propagate_step_limit: Option<u64>,
     /// Set by `propagate` when it bailed early due to `propagate_step_limit`.
     pub(super) propagate_aborted: bool,
+    /// Which branching strategy supplied the last decision variable. See
+    /// [`BranchSource`]; set inside [`Solver::pick_branch_var`], read by the
+    /// optional decision tracer.
+    pub(super) last_branch_source: BranchSource,
     /// Phase saving: last polarity assigned to each variable
     pub(super) phase: Vec<bool>,
     /// Global polarity flip applied on top of saved phases (rephasing). Toggled
@@ -784,6 +811,7 @@ impl Solver {
             trivially_unsat: false,
             propagate_step_limit: None,
             propagate_aborted: false,
+            last_branch_source: BranchSource::Fallback,
             phase: Vec::new(),
             phase_inverted: false,
             best_phase: Vec::new(),

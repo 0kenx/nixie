@@ -21,6 +21,21 @@ use super::types::{
 /// assignment (uses the incrementally-maintained `self.diff`, no rebuild).
 const DL_PROP_PERIOD: u64 = 8;
 
+/// Whether theory-conflict tracing is enabled (`OXIZ_TRACE_DECISIONS`, shared
+/// with the SAT-side decision/conflict tracer). Read once and cached. Used by
+/// `diff_primary_conflict` to tag each DL (difference-logic) conflict so the
+/// SAT-side `oxiz-conflict` lines (which report the detection *point* but not
+/// the theory) can be attributed to a theory.
+#[cfg(feature = "std")]
+fn theory_trace_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_TRACE_DECISIONS")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
 
 mod conflict_clause;
 mod derived_reasons;
@@ -1178,6 +1193,10 @@ impl<'a> TheoryManager<'a> {
         if let DiffLogicResult::Conflict(cycle_terms) =
             feed_dl_atom_inc(&mut *self.diff, &dla, is_positive, origin)
         {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!("oxiz-tconf\tdiff");
+            }
             return Some(self.conflict_from_terms(&cycle_terms));
         }
         None

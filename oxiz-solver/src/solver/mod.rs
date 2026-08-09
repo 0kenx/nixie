@@ -829,6 +829,63 @@ impl Solver {
     }
 
     /// Get a SAT variable for a term, then check satisfiability
+    /// Debug aid for the qlock deep-conflict investigation. When the env var
+    /// `OXIZ_TRACE_DECISIONS` is set, emit one line per SAT variable mapping it
+    /// to the coarse kind of its term: `oxiz-varlegend <var> <kind>`. Join on
+    /// `<var>` with the `oxiz-dec ... <var> ...` lines the SAT engine emits per
+    /// decision (see `oxiz_sat::Solver::trace_decision`) to see whether the
+    /// search is branching on inequality atoms (`ineq`) or only on boolean
+    /// structure (`bool`). No-op otherwise.
+    #[cfg(feature = "std")]
+    fn dump_var_legend_if_tracing(&self, manager: &TermManager) {
+        if !std::env::var("OXIZ_TRACE_DECISIONS")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+        {
+            return;
+        }
+        for (var_idx, &term) in self.var_to_term.iter().enumerate() {
+            let tag = manager
+                .get(term)
+                .map(|t| Self::term_kind_tag(&t.kind))
+                .unwrap_or("none");
+            eprintln!("oxiz-varlegend\t{var_idx}\t{tag}");
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn dump_var_legend_if_tracing(&self, _manager: &TermManager) {}
+
+    /// Coarse term-kind bucket for the decision legend. The split that matters
+    /// for the qlock/QF_IDL case is `ineq` (the DL conflict-relevant atoms)
+    /// versus everything else.
+    #[cfg(feature = "std")]
+    fn term_kind_tag(kind: &TermKind) -> &'static str {
+        match kind {
+            TermKind::Lt(_, _) | TermKind::Le(_, _) | TermKind::Gt(_, _) | TermKind::Ge(_, _) => {
+                "ineq"
+            }
+            TermKind::Eq(_, _) | TermKind::Distinct(_) => "eq",
+            TermKind::True
+            | TermKind::False
+            | TermKind::Var(_)
+            | TermKind::Not(_)
+            | TermKind::And(_)
+            | TermKind::Or(_)
+            | TermKind::Xor(_, _)
+            | TermKind::Implies(_, _)
+            | TermKind::Ite(_, _, _) => "bool",
+            TermKind::IntConst(_)
+            | TermKind::RealConst(_)
+            | TermKind::Neg(_)
+            | TermKind::Add(_)
+            | TermKind::Sub(_, _)
+            | TermKind::Mul(_)
+            | TermKind::Div(_, _)
+            | TermKind::Mod(_, _) => "arith",
+            _ => "other",
+        }
+    }
+
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
         // Per-search case-split bookkeeping: each CDCL search starts with a
         // fresh dedup set and round counter.  The case-split lemmas are added
@@ -1055,6 +1112,12 @@ impl Solver {
         // so CDCL can branch on shared-term arrangements during the single
         // search, before borrowing the theory solvers out to the TheoryManager.
         self.pre_encode_care_graph_atoms(manager);
+
+        // Debug: dump the SAT-var -> term-kind legend before the theory
+        // solvers are borrowed out to `theory_manager` (after which `self` is
+        // partially borrowed for the whole CDCL search). See
+        // `dump_var_legend_if_tracing`.
+        self.dump_var_legend_if_tracing(manager);
 
         // Run SAT solver with theory integration
         let mut theory_manager = TheoryManager::new(

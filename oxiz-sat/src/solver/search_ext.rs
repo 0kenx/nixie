@@ -75,6 +75,7 @@ impl Solver {
                     return SolverResult::Unsat;
                 }
 
+                self.trace_conflict("bool", self.trail.decision_level(), learnt_clause.len());
                 theory.on_backtrack(backtrack_level);
                 // Clamp the theory cursor to the rollback boundary, not to the
                 // trail length: chronological backtracking re-appends the
@@ -144,6 +145,11 @@ impl Solver {
                         return SolverResult::Unsat;
                     }
 
+                    self.trace_conflict(
+                        "theory-assign",
+                        self.trail.decision_level(),
+                        learnt_clause.len(),
+                    );
                     theory.on_backtrack(backtrack_level);
                     self.backtrack_with_phase_saving(backtrack_level);
                     let boundary = self.trail.assignments().len();
@@ -217,6 +223,11 @@ impl Solver {
                             return SolverResult::Unsat;
                         }
 
+                        self.trace_conflict(
+                            "theory-prop",
+                            self.trail.decision_level(),
+                            learnt_clause.len(),
+                        );
                         theory.on_backtrack(backtrack_level);
                         self.backtrack_with_phase_saving(backtrack_level);
                         let boundary = self.trail.assignments().len();
@@ -264,6 +275,7 @@ impl Solver {
                     Lit::neg(var)
                 };
                 self.trail.assign_decision(lit);
+                self.trace_decision(var, new_level, polarity);
             } else {
                 // All variables assigned - do final theory check
                 match theory.final_check() {
@@ -294,6 +306,11 @@ impl Solver {
                             return SolverResult::Unsat;
                         }
 
+                        self.trace_conflict(
+                            "final-check",
+                            self.trail.decision_level(),
+                            learnt_clause.len(),
+                        );
                         theory.on_backtrack(backtrack_level);
                         self.backtrack_with_phase_saving(backtrack_level);
                         let boundary = self.trail.assignments().len();

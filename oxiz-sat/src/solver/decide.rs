@@ -2,6 +2,27 @@
 
 use super::*;
 
+/// Whether decision/conflict tracing is enabled (env var `OXIZ_TRACE_DECISIONS`).
+///
+/// Read once and cached in a `OnceLock` so the per-decision cost when *off*
+/// is a single load. Truthy unless the value is empty, `"0"`, or `"false"`
+/// (case-insensitive). Only meaningful under the `std` feature (env access +
+/// stderr both need it); without `std` tracing is always disabled.
+#[cfg(feature = "std")]
+fn trace_decisions_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_TRACE_DECISIONS")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
+#[cfg(not(feature = "std"))]
+fn trace_decisions_enabled() -> bool {
+    false
+}
+
 impl Solver {
     /// Pick next variable to branch on
     pub(super) fn pick_branch_var(&mut self) -> Option<Var> {
@@ -9,6 +30,7 @@ impl Solver {
         if !self.domain_priority.is_empty() {
             for &v in &self.domain_priority {
                 if !self.trail.is_assigned(v) && !self.var_eliminated(v) {
+                    self.last_branch_source = BranchSource::Domain;
                     return Some(v);
                 }
             }
@@ -24,6 +46,7 @@ impl Solver {
             if let Ok(mut h) = ext.lock()
                 && let Some(chosen) = h.select(&candidates, &scores)
             {
+                self.last_branch_source = BranchSource::External;
                 return Some(chosen);
             }
         }
@@ -33,6 +56,7 @@ impl Solver {
             while let Some(var) = self.lrb.select() {
                 if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
                     self.lrb.on_assign(var);
+                    self.last_branch_source = BranchSource::Lrb;
                     return Some(var);
                 }
             }
@@ -45,6 +69,7 @@ impl Solver {
 
             while let Some(var) = self.chb.pop_max() {
                 if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
+                    self.last_branch_source = BranchSource::Chb;
                     return Some(var);
                 }
             }
@@ -71,11 +96,13 @@ impl Solver {
                     .vmtf
                     .next_decision(|v| trail.is_assigned(v) || eliminated(v))
                 {
+                    self.last_branch_source = BranchSource::Vmtf;
                     return Some(var);
                 }
             }
             while let Some(var) = self.vsids.pop_max() {
                 if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
+                    self.last_branch_source = BranchSource::Vsids;
                     return Some(var);
                 }
             }
@@ -94,15 +121,77 @@ impl Solver {
         // total makes `None` mean what its callers assume it means. With the
         // heaps kept in repair by `backtrack`, this scan is a fallback that
         // essentially never runs.
-        (0..self.num_vars)
+        let fallback = (0..self.num_vars)
             .map(|i| Var::new(i as u32))
             .find(|&var| !self.trail.is_assigned(var))
             .inspect(|&var| {
                 if self.config.use_lrb_branching {
                     self.lrb.on_assign(var);
                 }
-            })
+            });
+        if fallback.is_some() {
+            self.last_branch_source = BranchSource::Fallback;
+        }
+        fallback
     }
+
+    /// Emit one decision-trace line to stderr when the `OXIZ_TRACE_DECISIONS`
+    /// environment variable is set.
+    ///
+    /// Tab-separated format, one line per decision:
+    /// `oxiz-dec <decision#> <level> <var> <src> <pol>`
+    /// where `<src>` is the [`BranchSource`] (`pick_branch_var` set
+    /// `last_branch_source`) and `<pol>` is `1` for positive / `0` for
+    /// negative. Correlate `<var>` with the `oxiz-varlegend` lines the SMT
+    /// solver emits (see `oxiz-solver`) to classify each decision's atom.
+    ///
+    /// When the env var is unset this is a single cached-`bool` check and an
+    /// early return — safe to call on every decision in a release build.
+    #[cfg(feature = "std")]
+    pub(super) fn trace_decision(&self, var: Var, level: u32, polarity: bool) {
+        if !trace_decisions_enabled() {
+            return;
+        }
+        eprintln!(
+            "oxiz-dec\t{}\t{}\t{}\t{:?}\t{}",
+            self.stats.decisions,
+            level,
+            var.index(),
+            self.last_branch_source,
+            u8::from(polarity),
+        );
+    }
+
+    #[cfg(not(feature = "std"))]
+    pub(super) fn trace_decision(&self, _var: Var, _level: u32, _polarity: bool) {}
+
+    /// Emit one conflict-trace line when `OXIZ_TRACE_DECISIONS` is set.
+    ///
+    /// `path` identifies which of the CDCL(T) loop's conflict branches fired,
+    /// i.e. *where* the conflict was detected — the key diagnostic for the
+    /// qlock bound-propagation question:
+    ///
+    /// * `bool`          - pure boolean BCP conflict.
+    /// * `theory-assign` - theory conflict from `on_assignment` (incremental /
+    ///   "propagated"; surfaces at the level where the triggering literal was
+    ///   assigned — shallow when the theory propagates eagerly).
+    /// * `theory-prop`   - boolean conflict caused by a theory-derived
+    ///   propagation (also shallow).
+    /// * `final-check`   - theory conflict from `final_check` (the theory only
+    ///   noticed the inconsistency once the full assignment was reached — deep).
+    ///
+    /// Tab-separated: `oxiz-conflict <path> <level> <learnt_len>`. `level` is
+    /// the decision level at the moment of conflict (before backtrack).
+    #[cfg(feature = "std")]
+    pub(super) fn trace_conflict(&self, path: &str, level: u32, learnt_len: usize) {
+        if !trace_decisions_enabled() {
+            return;
+        }
+        eprintln!("oxiz-conflict\t{path}\t{level}\t{learnt_len}");
+    }
+
+    #[cfg(not(feature = "std"))]
+    pub(super) fn trace_conflict(&self, _path: &str, _level: u32, _learnt_len: usize) {}
 
     /// Backtrack with phase saving
     ///
