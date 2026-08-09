@@ -180,14 +180,19 @@ impl Solver {
     /// * `final-check`   - theory conflict from `final_check` (the theory only
     ///   noticed the inconsistency once the full assignment was reached — deep).
     ///
-    /// Tab-separated: `oxiz-conflict <path> <level> <learnt_len>`. `level` is
-    /// the decision level at the moment of conflict (before backtrack).
+    /// Tab-separated: `oxiz-conflict <path> <level> <learnt_len> <props>` where
+    /// `level` is the decision level at the moment of conflict (before
+    /// backtrack) and `<props>` is the running propagation count (so the BCP
+    /// power metric `propagations/conflict` = last `<props>` / #conflicts).
     #[cfg(feature = "std")]
     pub(super) fn trace_conflict(&self, path: &str, level: u32, learnt_len: usize) {
         if !trace_decisions_enabled() {
             return;
         }
-        eprintln!("oxiz-conflict\t{path}\t{level}\t{learnt_len}");
+        eprintln!(
+            "oxiz-conflict\t{path}\t{level}\t{learnt_len}\t{}",
+            self.stats.propagations
+        );
     }
 
     #[cfg(not(feature = "std"))]
