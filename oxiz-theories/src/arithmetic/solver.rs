@@ -1,6 +1,6 @@
 //! Arithmetic Theory Solver
 
-use super::simplex::{LinExpr, Simplex, VarId};
+use super::simplex::{LinExpr, Simplex, SimplexOptStatus, VarId};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
@@ -527,6 +527,40 @@ impl ArithSolver {
 
     
     
+    /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
+    /// current feasible region, by minimizing then maximizing the term with the
+    /// primal simplex (`optimize_linexpr`).  Returns `None` if `term` is not a
+    /// simplex variable or either side is unbounded (no finite range).
+    ///
+    /// This is the difference-bound derivation that the per-variable interval
+    /// fixpoint and simplex bound-propagation cannot do: a term like
+    /// `D = fmt1 - fmt0 - 2`, bounded to `{0..4}` only through a bounded
+    /// *difference* of free variables, gets its exact LP-implied range here.
+    /// Mirrors z3's `opt_solver::maximize_objective` bound-inference path.
+    ///
+    /// **Sound** for integer case-splitting: the LP min ≤ every feasible value,
+    /// so `ceil(min)` ≤ the least feasible integer; symmetrically `floor(max)`
+    /// ≥ the greatest.  `[ceil(min), floor(max)]` is a superset of the true
+    /// integer range, so the case-split `(or (= t lo) … (= t hi))` never
+    /// excludes a value the term can take.
+    #[must_use]
+    pub fn lp_int_bounds(&mut self, term: TermId) -> Option<(i64, i64)> {
+        let &var = self.term_to_var.get(&term)?;
+        let lo_real = match self.simplex.optimize_linexpr(&LinExpr::var(var)) {
+            SimplexOptStatus::Optimal(v) => v,
+            _ => return None,
+        };
+        let neg_max = match self.simplex.optimize_linexpr(&LinExpr {
+            terms: smallvec::smallvec![(var, Rational64::from_integer(-1))],
+            constant: Rational64::zero(),
+        }) {
+            SimplexOptStatus::Optimal(v) => v,
+            _ => return None,
+        };
+        let hi_real = -neg_max;
+        Some((lo_real.ceil().to_integer(), hi_real.floor().to_integer()))
+    }
+
     /// Status of the equality `a = b` from arithmetic's current bounds.
     /// Covers the `equalsConstant` / point-bounded case.  Individually
     /// classifies 0/14637 on pete2 (IDL terms are difference-linked, not

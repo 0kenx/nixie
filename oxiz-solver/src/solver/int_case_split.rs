@@ -141,7 +141,23 @@ impl Solver {
         }
 
         let uf_args = self.collect_int_uf_args(manager);
-        let bounds = self.compute_int_bounds();
+        let mut bounds = self.compute_int_bounds();
+        // LP-optimization fallback for UF-arguments whose finite range comes
+        // from a bounded *difference* of free variables — invisible to both the
+        // per-variable interval fixpoint above and to simplex bound propagation
+        // (e.g. `D = fmt1 - fmt0 - 2 ∈ {0..4}`).  Minimize then maximize each
+        // such term over the simplex feasible region (`ArithSolver::lp_int_bounds`,
+        // mirroring z3's `opt_solver::maximize_objective`) to get its exact
+        // LP-implied integer range.  Sound: `[ceil(min), floor(max)]` is a
+        // superset of the true integer range, so the case-split never excludes
+        // a reachable value (this is the QF_UFLIA false-SAT fix).
+        for &t in &uf_args {
+            if bounds.get(&t).is_none() {
+                if let Some((lo, hi)) = self.arith.lp_int_bounds(t) {
+                    bounds.insert(t, (Some(lo), Some(hi)));
+                }
+            }
+        }
 
         let mut candidates: Vec<(TermId, i64, i64)> = Vec::new();
         for t in &uf_args {

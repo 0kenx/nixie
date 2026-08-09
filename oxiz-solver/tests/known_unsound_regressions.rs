@@ -25,9 +25,9 @@
 //! | bench_679         | QF_BV    | unsat | sat | sat | pre-existing main BV bug (bvule/bvshl path); v0.3.2 correct → port candidate; `#[ignore]` |
 //! | ext_con_064_002_0512 | QF_BV  | unsat | sat | sat | pre-existing main BV bug; `#[ignore]` |
 //! | storecomm_t3_np_sf_ni_00010_001 | QF_AUFLIA | unsat | sat | sat | pre-existing main bug; `#[ignore]` |
-//! | xs_8_13           | QF_UFLIA | unsat | sat | sat | pre-existing main bug; `#[ignore]` |
+//! | xs_8_13           | QF_UFLIA | unsat | sat | **unsat** | FIXED by LP-optimization case-split (`ArithSolver::lp_int_bounds`); guard now LIVE |
 //!
-//! The four `#[ignore]`d tests are pre-existing on `main` (not introduced by
+//! The three remaining `#[ignore]`d tests are pre-existing on `main` (not introduced by
 //! the 0.3.2 integration) and are kept as documented known-failing guards:
 //! un-ignoring them is the acceptance criterion for the respective follow-up
 //! fix, not something this integration owes.
@@ -139,9 +139,6 @@ fn storecomm_t3_is_not_sat() {
     );
 }
 
-#[ignore = "pre-existing main soundness bug: xs_8_13 (QF_UFLIA) returns sat \
-            where z3 says unsat. Also wrong on integrate and v0.3.2. \
-            Un-ignore when fixed."]
 #[test]
 fn xs_8_13_is_not_sat() {
     assert_not_sat(
