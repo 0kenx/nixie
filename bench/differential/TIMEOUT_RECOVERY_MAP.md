@@ -618,3 +618,20 @@ data — theory-assign 72% (DL, mean level ~147), theory-prop 0%, final-check 0%
 theory-prop 0% is structurally expected: a sound forward propagator derives only
 entailed literals, which by definition cannot conflict — so it carries no
 actionable signal, consistent with z3's theory being idle.)
+
+## BCP-power measurement: encoding is not the deep-conflict cause either — it's CDCL dynamics
+
+The encoding lead above (oxiz 4450 vs z3 2896 bool vars) suggested oxiz's
+encoding might be BCP-poor.  Measured directly via the tracer's new
+propagation count (commit `02490fc`): oxiz does **229 propagations/conflict**
+on qlock vs z3's **305** — comparable (oxiz ~25% lower), not an order of
+magnitude.  And z3 stays shallow (1.94 dec/conflict) even at 3550 vars with
+elimination disabled.  So neither var count nor BCP power explains the gap.
+
+This narrows the qlock blocker to **CDCL dynamics** alone: oxiz's
+conflict-learning/branching fails to *focus* on qlock's structure (the
+fresh-atom drift of `bf70532`), producing deep (~147), non-converging
+conflicts where z3's converge shallowly.  The encoding audit is therefore
+**deprioritized**; the lever is a CDCL focus/learning heuristic (resist
+fresh-atom drift, or a conflict-depth-aware restart/learning policy), not
+encoding and not theory.
