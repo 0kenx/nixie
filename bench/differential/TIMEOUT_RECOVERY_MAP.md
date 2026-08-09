@@ -175,3 +175,122 @@ implication test, returning `TheoryCheckResult::Propagated` exactly like
 open cost concern is O(unasserted-atoms) per check; if that is too slow it
 needs diff_logic to expose single-source shortest-path bounds so the check is
 O(1) per atom rather than a `would_conflict` recompute.
+
+## SOUNDNESS CORRECTION: the de-risk's `would_conflict` is unsound as an implication test
+
+The de-risk above greenlit wiring on the strength of "7-18% implied" measured
+with `DiffLogicSolver::would_conflict`.  That test is **unsound** as an
+implication oracle and over-counts by ~10x; the greenlight was partly built on
+sand.  Re-derived and re-measured:
+
+`would_conflict(x, y, c, strict)` reduces to `dist[x] - dist[y] <= c`, where
+`dist` is the virtual-source Bellman-Ford distance.  That quantity is only a
+**lower bound** on the true shortest path `d(y, x)` (the tightest derivable
+bound on `x - y`), so it reports "implied" for bounds that are *not* entailed.
+Decisive counter-example: a single asserted edge `a - b <= 5` gives
+`dist[a] = dist[b] = 0`, which the test accepts as implying `a - b <= 3` —
+false.  A controlled re-de-risk on qlock's 2,135 extracted DL atoms (consistent
+partial assignments, sound all-pairs Bellman-Ford implication test) measured:
+
+| consistent subset | unasserted | SOUND implied | unsound (`would_conflict`) |
+|------------------:|-----------:|--------------:|---------------------------:|
+| 40                | 2,095      | 1.5% (ineq) / 18.6% (incl. eq-TRUE) | 53.0% |
+| 160               | 1,975      | 6.0% (ineq) / 55.7% (incl. eq-TRUE) | 68.9% |
+
+The sound volume is real **only after including equality-TRUE propagation**
+(transitive equality closure), which main does *not* currently theory-propagate
+to CDCL (`propagate_equalities` shares EUF<->arith internally but returns
+`Sat`/`Conflict`, never `Propagated`).  Pure *inequality* sound volume is
+1-13%, rising with assignment density.  `would_conflict` is retained only for
+its (sound) conflict-prediction use; its doc now warns it is not an implication
+test.
+
+## LANDED: sound `entailed_reason` / `sssp_from` primitive (diff_logic)
+
+`oxiz-theories/src/diff_logic/solver.rs` now exposes the sound primitive the
+chase identified as the single unblocked move:
+
+- `sssp_from(src) -> Option<(dist, pred_edge)>` — real single-source shortest
+  path from `src` over the asserted constraint edges (SPFA), with predecessor
+  tracking.  This is the SOUND basis: the true `d(src, node)`, not the
+  virtual-source difference.
+- `entailed_from_sssp(xv, yv, c, strict, dist_from_y, pred_from_y)` — O(1)+path
+  entailment test against a precomputed SSSP tree, for amortised propagation.
+- `entailed_reason(x, y, c, strict)` — convenience wrapper.
+- `get_diff_var(term)` — term->DiffVar lookup.
+
+All sound (require the actual `d(y, x) <= c`), unit-tested (counter-example,
+transitive chain, integer strict tightening, bidirectional equality).  **No
+solver-path callers** — the primitive is landed and ready for a future sound
+wiring; it does not affect any solve today.
+
+## WIRING ATTEMPT (built, found 3 defects, reverted)
+
+A full CDCL(T) wiring was built on top of the primitive (on-demand
+`diff_theory_check` in `TheoryManager`, throttled in `on_assignment`,
+reporting DL negative-cycle conflicts via `conflict_from_terms` AND
+entailment propagations via `entailed_from_sssp`).  It found three defects,
+each fixed; the third was not closeable and the wiring was reverted.
+
+**qlock DID reach `unsat` — but only unsoundly.**  Reporting the DL
+negative-cycle conflicts (handover rail #1) closed qlock-4-10-7 in ~0.06 s on
+an early build.  That result was **unsound**: it relied on defect (1) below.
+After fixing (1), the sound wiring needs **~192 s** on qlock (a timeout in the
+10 s gate), so qlock-4-10-7 is **not** closed soundly within budget.
+
+1. **Equality-constant feeding bug** (false refutations).  `feed_dl_atom` fed
+   every equality as `x - y <= 0 ∧ y - x <= 0` (constant ZERO), ignoring the
+   atom's parsed constant.  qlock has 713 difference-equalities with non-zero
+   constant (`(= (- a b) k)`, k != 0); DLX1C0 / QF_UFIDL likewise.  Feeding the
+   wrong constant manufactured spurious negative cycles → false `unsat` on
+   SAT instances.  Fix: feed `x - y <= c ∧ y - x <= -c`.  (This fix is what
+   turned qlock from 0.06 s to 192 s: the 0.06 s was the unsound run.)
+2. **Bit-vector sort bug** (false refutations).  `encode.rs` stores `bvule`/
+   `bvult` comparisons in `var_to_parsed_arith` as `Le`; the wiring mis-read
+   them as integer difference edges → spurious cycles → false `unsat`/crash on
+   `gryzzles.*` (QF_BV) and others.  Fix: gate to Int/Real-sorted operands only.
+3. **Propagation unsound for DL-fragments-in-larger-formulas** (false `sat`).
+   ISOLATED and verified.  `xs-08-20-3-2-4-5` (QF_UFLIA, z3=unsat) answered
+   `sat` under the wiring; baseline answers timeout (sound).  Controlled tests:
+     - period=1 (DL check every assignment): timeout (sound).
+     - period=8 (throttled) + final-check conflict backstop: `sat` (unsound).
+     - propagation DISABLED (conflict-only), period=8: timeout (sound).
+     - Each individual propagation passes an independent re-derivation check
+       (rebuild a DL graph from only its reason atoms; the reason re-derives
+       the propagated literal), and the wrong-`sat` full assignment is itself
+       DL-consistent (the final-check backstop finds no negative cycle).
+   ROOT CAUSE: the 34 DL atoms in xs-08-20 are a *pure-DL fragment* (plain Int
+   variables, not UF applications) embedded in a larger QF_UFLIA formula.  DL
+   **conflicts** are always sound (a negative cycle is a pure arithmetic
+   refutation in any theory combination).  DL **propagation** is sound only
+   when DL is the COMPLETE theory for the formula: when the DL atoms are a
+   fragment, propagation (even with individually-sound reasons) *steers the
+   search* toward a DL-consistent-but-globally-inconsistent full assignment
+   that the incomplete UF/arith final-check then accepts as `sat`.  Without
+   propagation the search does not commit to that branch and times out.
+   SOUND GATE: enable propagation only when every arithmetic atom is a DL
+   atom (`dl_atoms.len() == var_to_parsed_arith.len()`), i.e. pure difference
+   logic; otherwise conflict-only.
+
+With (1)+(2) fixed AND propagation gated to pure-DL, the gate is SOUND (4
+unsound = exactly the pre-existing known guards, zero regressions) and
+NET-NEUTRAL (solved 125, agree 121 — identical to baseline).  The full-wiring's
+apparent +4 solves (125->129) were on mixed UF+IDL formulas where propagation
+is unsound; gating them out removes both the gains and the unsoundness, landing
+at neutral.  qlock-4-10-7 still times out (192 s).  The whole `TheoryManager`
+wiring was reverted (net-neutral, does not meet the qlock bar, adds complexity);
+the sound primitive in `diff_logic` stays.
+
+## What a sound, budget-closing wiring still needs
+
+- A sound propagation gate is known (pure-DL only); the open problem is
+  *completeness*: even sound, the on-demand rebuild + per-call all-pairs SSSP
+  is too slow to densify conflicts enough for qlock (192 s vs 10 s budget).
+  A budget-closing wiring likely needs *incremental* difference-logic
+  maintenance (feed in `process_constraint`, push/pop at scopes — the chase's
+  original design) with incremental shortest-path update (Cotton-Maler), not
+  on-demand rebuild.  The landed `sssp_from`/`entailed_from_sssp` primitive is
+  the right query layer for that.
+- Note the asymmetry for future work: DL conflicts are safe to wire ungated
+  (always sound); DL propagation must be gated to pure-DL (or made
+  final-check-complete) or it manufactures wrong sats on mixed formulas.

@@ -375,7 +375,17 @@ impl DiffLogicSolver {
         explanation
     }
 
-    /// Check if a potential constraint would cause a conflict
+    /// Check if a potential constraint would cause a conflict.
+    ///
+    /// **Unsound as an implication test — do not use for theory propagation.**
+    /// This reduces to `dist[x] - dist[y] <= c` where `dist` are the virtual-
+    /// source Bellman-Ford distances. That quantity is only a *lower bound* on
+    /// the true shortest path `d(y, x)`, so it over-reports: e.g. a single
+    /// asserted edge `a - b <= 5` gives `dist[a] = dist[b] = 0`, which this
+    /// test accepts as implying `a - b <= 3` — false. A controlled re-de-risk
+    /// measured the over-count at ~10x (53-69% "implied" vs 1-6% soundly
+    /// implied on inequality atoms). For sound theory propagation use
+    /// [`Self::entailed_reason`], which computes the actual shortest path.
     pub fn would_conflict(&mut self, x: TermId, y: TermId, c: Rational64, strict: bool) -> bool {
         // Quick check: get current bounds and see if new constraint conflicts
         if !self.distances_valid
@@ -421,6 +431,199 @@ impl DiffLogicSolver {
             }
             _ => false,
         }
+    }
+
+    /// Look up the difference-logic variable for a term, if registered.
+    pub fn get_diff_var(&self, term: TermId) -> Option<DiffVar> {
+        self.graph.get_var(term)
+    }
+
+    /// Run single-source shortest path from `src` over the constraint edges.
+    ///
+    /// Returns `(dist, pred_edge)` where `pred_edge[node]` is the constraint
+    /// index whose edge last improved `dist[node]` (for path reconstruction).
+    /// Returns `None` if a negative cycle is reachable from `src` — under
+    /// normal CDCL(T) use [`Self::check`] has already turned that into a
+    /// `Conflict`, so `None` here only means the caller should not propagate.
+    ///
+    /// This is the SOUND foundation for theory propagation: the true
+    /// shortest-path distance `d(src, node)` over asserted edges, not the
+    /// virtual-source distance difference (a lower bound — see
+    /// [`Self::would_conflict`]).  Exposed so a propagation pass can compute
+    /// it once per distinct source and amortize the cost over many atom
+    /// queries ([`Self::entailed_from_sssp`]).
+    pub fn sssp_from(
+        &self,
+        src: DiffVar,
+    ) -> Option<(HashMap<DiffVar, Rational64>, HashMap<DiffVar, usize>)> {
+        let zero = Rational64::from_integer(0);
+        let inf = Rational64::from_integer(i64::MAX);
+        let mut dist: HashMap<DiffVar, Rational64> = HashMap::new();
+        let mut pred: HashMap<DiffVar, usize> = HashMap::new();
+        dist.insert(src, zero);
+
+        // SPFA (Shortest Path Faster Algorithm): a queue-driven Bellman-Ford
+        // that relaxes an edge only when its source node's distance just
+        // improved.  On the sparse difference-logic graphs encountered during
+        // theory propagation this is near O(E) per source — orders of
+        // magnitude faster than the |V|-passes-over-all-edges textbook
+        // Bellman-Ford (which dominated runtime and prevented convergence on
+        // qlock-4-10-7).  Edges from the virtual SOURCE are skipped: they are
+        // not asserted constraints and are unreachable from a real `src`.
+        let n = self.graph.num_vars() as u32 + 1;
+        let mut queue: VecDeque<DiffVar> = VecDeque::new();
+        let mut in_queue: HashMap<DiffVar, bool> = HashMap::new();
+        let mut count: HashMap<DiffVar, u32> = HashMap::new();
+        queue.push_back(src);
+        in_queue.insert(src, true);
+        while let Some(u) = queue.pop_front() {
+            in_queue.insert(u, false);
+            let Some(&du) = dist.get(&u) else {
+                continue;
+            };
+            for edge in self.graph.get_edges(u) {
+                let nd = du + edge.weight;
+                let cur = dist.get(&edge.to).copied().unwrap_or(inf);
+                if nd < cur {
+                    dist.insert(edge.to, nd);
+                    pred.insert(edge.to, edge.constraint_idx);
+                    if !in_queue.get(&edge.to).copied().unwrap_or(false) {
+                        queue.push_back(edge.to);
+                        in_queue.insert(edge.to, true);
+                        let c = count.entry(edge.to).or_insert(0);
+                        *c += 1;
+                        // A node dequeued more than |V| times is on a negative
+                        // cycle reachable from `src`.
+                        if *c > n {
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        Some((dist, pred))
+    }
+
+    /// Reconstruct the asserted-atom origins on the predecessor path
+    /// `src -> ... -> x`, in path order. Returns an empty `Vec` if `x == src`
+    /// (a trivial path has no asserted atom on it) so callers can treat an
+    /// empty reason as "not derived": the SAT core installs an empty-reason
+    /// propagation as a level-0 unit (see `search_ext::install_theory_units`),
+    /// which is unsound for a mid-search propagated literal.
+    fn reason_path(&self, src: DiffVar, x: DiffVar, pred: &HashMap<DiffVar, usize>) -> Vec<TermId> {
+        if x == src {
+            return Vec::new();
+        }
+        let mut path = Vec::new();
+        let mut cur = x;
+        let mut guard = 0;
+        let max_steps = self.graph.num_constraints() + 1;
+        while cur != src {
+            let Some(&edge_idx) = pred.get(&cur) else {
+                break;
+            };
+            let Some(constraint) = self.graph.get_constraint(edge_idx) else {
+                break;
+            };
+            path.push(constraint.origin);
+            // The edge for `x_c - y_c <= c` runs y_c -> x_c; having improved
+            // `dist[cur == x_c]`, its predecessor node is y_c.
+            cur = constraint.y;
+            guard += 1;
+            if guard > max_steps {
+                break;
+            }
+        }
+        path
+    }
+
+    /// **Sound** theory-propagation reason, given a precomputed single-source
+    /// shortest-path tree from `yv` ([`Self::sssp_from`]).
+    ///
+    /// This is the amortized core of [`Self::entailed_reason`]: a propagation
+    /// pass computes one SSSP tree per distinct source, then queries many
+    /// `(xv, yv, c)` bounds against it in O(1) plus path-reconstruction cost.
+    ///
+    /// Semantics and SOUNDNESS are identical to [`Self::entailed_reason`]:
+    /// returns the asserted-atom origins on the path entailing `xv - yv ≤ c`
+    /// (or `< c` if `strict`), requiring the ACTUAL `d(yv, xv) ≤ c_eff`, or
+    /// `None`.  Integer tightening applies for `strict`.  Returns `None` for an
+    /// empty reason path (a trivial bound not derived from asserted atoms —
+    /// see [`Self::entailed_reason`]).
+    pub fn entailed_from_sssp(
+        &self,
+        xv: DiffVar,
+        yv: DiffVar,
+        c: Rational64,
+        strict: bool,
+        dist_from_y: &HashMap<DiffVar, Rational64>,
+        pred_from_y: &HashMap<DiffVar, usize>,
+    ) -> Option<Vec<TermId>> {
+        let c_eff = if strict && self.is_integer() {
+            c - Rational64::from_integer(1)
+        } else {
+            c
+        };
+        let inf = Rational64::from_integer(i64::MAX);
+        let Some(&dx) = dist_from_y.get(&xv) else {
+            return None;
+        };
+        if dx == inf {
+            return None;
+        }
+        let entailed = if strict && !self.is_integer() {
+            dx < c
+        } else {
+            dx <= c_eff
+        };
+        if !entailed {
+            return None;
+        }
+        let path = self.reason_path(yv, xv, pred_from_y);
+        if path.is_empty() {
+            None
+        } else {
+            Some(path)
+        }
+    }
+
+    /// **Sound** theory-propagation reason.
+    ///
+    /// Returns the asserted atoms on a shortest path entailing `x - y ≤ c`
+    /// (or `x - y < c` when `strict`), or `None` if the bound is not entailed
+    /// by the currently-asserted difference constraints.
+    ///
+    /// SOUNDNESS: entailment of `x - y ≤ c` requires the ACTUAL shortest-path
+    /// distance `d(y, x) ≤ c` over the asserted edges — the quantity that
+    /// determines the tightest derivable bound on `x - y`. This computes
+    /// `d(y, x)` by a single-source Bellman-Ford from `y` ([`Self::sssp_from`]).
+    /// It is NOT the virtual-source distance difference `dist[x] - dist[y]`,
+    /// which is only a lower bound on `d(y, x)` and over-reports implications
+    /// (see [`Self::would_conflict`]).
+    ///
+    /// Integer tightening: for an integer solver, `x - y < c` is equivalent to
+    /// `x - y ≤ c - 1`, applied here so callers pass the raw constant.
+    ///
+    /// Returns `None` (does *not* propagate) when the reason path is empty —
+    /// i.e. when the bound holds trivially (`x == y`) rather than being
+    /// derived from asserted atoms — because an empty reason is installed by
+    /// the SAT core as a level-0 unit, which is unsound for a mid-search
+    /// propagated literal.
+    ///
+    /// For a propagation pass querying many atoms, prefer
+    /// [`Self::entailed_from_sssp`] with a per-source SSSP cache.
+    pub fn entailed_reason(
+        &self,
+        x: TermId,
+        y: TermId,
+        c: Rational64,
+        strict: bool,
+    ) -> Option<Vec<TermId>> {
+        let xv = self.graph.get_var(x)?;
+        let yv = self.graph.get_var(y)?;
+        let (dist, pred) = self.sssp_from(yv)?;
+        self.entailed_from_sssp(xv, yv, c, strict, &dist, &pred)
     }
 
     /// Number of variables
@@ -638,5 +841,116 @@ mod tests {
         // x - y < 0.5 (remains strict for reals)
         let result = solver.add_lt(x, y, Rational64::new(1, 2), origin);
         assert!(matches!(result, DiffLogicResult::Ok));
+    }
+
+    // ---- entailed_reason soundness tests ----
+    //
+    // These pin the SOUND behaviour that distinguishes `entailed_reason` from
+    // the unsound `would_conflict` approximation (see that method's doc).
+
+    #[test]
+    fn entailed_reason_counterexample_not_implied() {
+        // The decisive counter-example: a single asserted edge `a - b <= 5`
+        // must NOT entail `a - b <= 3`. (`would_conflict` would wrongly say
+        // implied: dist[a]-dist[b] = 0 <= 3.)
+        let mut s = DiffLogicSolver::new(true);
+        let a = term(1);
+        let b = term(2);
+        s.add_leq(a, b, Rational64::from_integer(5), term(100));
+        s.check();
+        assert_eq!(
+            s.entailed_reason(a, b, Rational64::from_integer(3), false),
+            None,
+            "a-b<=3 is NOT entailed by a-b<=5"
+        );
+        // But a-b<=5 (the asserted bound itself) and any looser bound ARE.
+        assert!(
+            s.entailed_reason(a, b, Rational64::from_integer(5), false)
+                .is_some(),
+            "a-b<=5 is entailed by the asserted a-b<=5"
+        );
+        assert!(
+            s.entailed_reason(a, b, Rational64::from_integer(6), false)
+                .is_some(),
+            "a-b<=6 is entailed (looser than asserted)"
+        );
+    }
+
+    #[test]
+    fn entailed_reason_transitive_chain() {
+        // a-b<=0, b-c<=0  =>  a-c<=0 entailed (reason = the two origins).
+        let mut s = DiffLogicSolver::new(true);
+        let a = term(1);
+        let b = term(2);
+        let c = term(3);
+        s.add_leq(a, b, Rational64::from_integer(0), term(10));
+        s.add_leq(b, c, Rational64::from_integer(0), term(11));
+        s.check();
+        let reason = s.entailed_reason(a, c, Rational64::from_integer(0), false);
+        assert!(reason.is_some(), "a-c<=0 entailed by chain");
+        let reason = reason.unwrap();
+        assert_eq!(reason.len(), 2, "reason is the two edge origins");
+        // a-c<=-1 must NOT be entailed (the chain only gives <=0).
+        assert_eq!(
+            s.entailed_reason(a, c, Rational64::from_integer(-1), false),
+            None
+        );
+    }
+
+    #[test]
+    fn entailed_reason_strict_integer_tightening() {
+        // a-b<=2 asserted. a-b<3 (int) = a-b<=2 entailed; a-b<2 (int) = a-b<=1 NOT.
+        let mut s = DiffLogicSolver::new(true);
+        let a = term(1);
+        let b = term(2);
+        s.add_leq(a, b, Rational64::from_integer(2), term(10));
+        s.check();
+        assert!(
+            s.entailed_reason(a, b, Rational64::from_integer(3), true).is_some(),
+            "a-b<3 == a-b<=2 entailed"
+        );
+        assert_eq!(
+            s.entailed_reason(a, b, Rational64::from_integer(2), true),
+            None,
+            "a-b<2 == a-b<=1 NOT entailed by a-b<=2"
+        );
+    }
+
+    #[test]
+    fn entailed_reason_negative_bound_via_reverse() {
+        // a-b<=0 asserted. The reverse direction b-a<=0 is NOT entailed, but
+        // b-a<=k for any k>=0 also not; b-a<=0 would need b<=a. Check a few:
+        let mut s = DiffLogicSolver::new(true);
+        let a = term(1);
+        let b = term(2);
+        s.add_leq(a, b, Rational64::from_integer(0), term(10)); // a <= b
+        s.check();
+        // b - a <= 0 is NOT entailed (a<=b does not imply b<=a).
+        assert_eq!(
+            s.entailed_reason(b, a, Rational64::from_integer(0), false),
+            None
+        );
+    }
+
+    #[test]
+    fn entailed_reason_equality_bidirectional() {
+        // Equality a=b is fed as two edges (a-b<=0 and b-a<=0). Then both
+        // a-b<=0 and b-a<=0 are entailed, and a-b<=-1 / b-a<=-1 are NOT.
+        let mut s = DiffLogicSolver::new(true);
+        let a = term(1);
+        let b = term(2);
+        s.add_leq(a, b, Rational64::from_integer(0), term(10));
+        s.add_leq(b, a, Rational64::from_integer(0), term(11));
+        s.check();
+        assert!(s
+            .entailed_reason(a, b, Rational64::from_integer(0), false)
+            .is_some());
+        assert!(s
+            .entailed_reason(b, a, Rational64::from_integer(0), false)
+            .is_some());
+        assert_eq!(
+            s.entailed_reason(a, b, Rational64::from_integer(-1), false),
+            None
+        );
     }
 }
