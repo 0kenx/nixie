@@ -514,3 +514,31 @@ combinations at decision level ~2; oxiz's reaches them at ~140, regardless of
 how densely the theory propagates.  Closing qlock needs branching that
 prioritizes conflict-relevant (inequality) atoms — a SAT-engine investigation,
 not more theory wiring.
+
+## Branching investigation: `theory_aware_branching` is a no-op; boosting theory atoms doesn't shallow conflicts
+
+Read the decision path (`pick_branch_var`, `decide.rs`): cadical-style
+VMTF/VSIDS with focused/stable modes, domain priority, optional external/LRB/CHB.
+**`theory_aware_branching` is set `true` by default but is never passed to the
+SAT solver nor consulted in `pick_branch_var`** — it is a no-op.  The only
+theory influence on branching is encode-time `bump_decision_hint` (care-graph
+atoms) and an `ite_table` activity bump; there is no mid-search theory-driven
+branching.
+
+Tested the obvious fix — boost every theory-atom var's VSIDS activity once before
+search (prioritize theory atoms over qlock's 48 Bool vars).  qlock **still times
+out**; the conflict level did not shallow.  So prioritizing theory atoms alone
+does not break the deep-conflict (level ~140) dynamic.  The atoms that form
+qlock's 2-3-literal neg-cycle conflicts get *assigned* at deep levels regardless
+of activity — the deep-conflict behaviour is a property of oxiz's CDCL dynamics
+on qlock's Boolean+DL structure, not a simple branching-order issue.
+
+**Conclusion of the qlock chase.**  Across every layer — DL procedure (sound,
+incremental, +1 solve/+1 agree landed), DL/arith conflict detection (redundant),
+DL propagation (fires 14k, conflicts stay deep), arith bound-propagation (per-
+atom simplex probe, finds nothing), CDCL branching (theory_aware_branching is a
+no-op; theory-atom boost doesn't help) — qlock's closure is blocked by oxiz's
+CDCL producing conflicts at decision level ~140 where z3 produces them at ~2.
+This is a deep SAT-engine characteristic (conflict-depth / learning dynamics on
+this formula class), not addressable by theory wiring.  The DL improvements that
+landed are real and stand on their own.
