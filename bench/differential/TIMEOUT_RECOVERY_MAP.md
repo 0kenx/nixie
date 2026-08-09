@@ -542,3 +542,36 @@ CDCL producing conflicts at decision level ~140 where z3 produces them at ~2.
 This is a deep SAT-engine characteristic (conflict-depth / learning dynamics on
 this formula class), not addressable by theory wiring.  The DL improvements that
 landed are real and stand on their own.
+
+## Conflict-depth root cause: qlock's theory conflicts are *diverse* — each involves a fresh (unfocused) atom
+
+Instrumented `analyze_theory_conflict` (conflict.rs) to dump, per theory
+conflict, the backtrack level and the VSIDS activity of the learnt-clause atoms:
+
+| n | level | size | min_act | avg_act |
+|--:|------:|-----:|--------:|--------:|
+| 0 |  51 | 3 | **1.00** | 1.00 |
+| 3 |  85 | 3 | **1.17** | 2.22 |
+| 6 | 145 | 3 | **1.36** | 3.64 |
+| 9 | 179 | 3 | **1.59** | 5.30 |
+
+`min_act` stays ≈ 1.0 (VSIDS baseline — an atom never bumped before) across the
+first 10 conflicts, even though `avg_act` rises (the repeated atoms do get
+bumped).  **Every theory conflict involves at least one fresh, never-bumped
+atom.**  That fresh atom is low-priority, so it is decided late (deep), and the
+conflict only forms once it is finally assigned.  Theory conflicts DO VSIDS-bump
+their atoms (`vsids.bump_batch`, conflict.rs:1067) — the problem is that qlock's
+~3k atoms mean each conflict introduces yet another fresh atom, so the
+branching can never focus on a small conflict-relevant set the way z3 does
+(z3: 1265 decisions, level-~2 conflicts → focused).
+
+**This is the conflict-depth root cause and it is fundamental**: qlock's
+difference-logic unsat spreads its refutable combinations across many atoms, and
+oxiz's CDCL produces diverse (non-focusing) theory conflicts as a result.  No
+tweak tested changes it: chronological-backtracking off (assertion level itself
+is deep), theory-atom activity boost, dense DL propagation (14k, equality-
+focused).  Closing qlock needs the CDCL to *focus* — e.g. a learning-rate /
+conflict-history heuristic that resists fresh-atom drift, or a dedicated QF_IDL
+search that bounds the conflict atom set — a SAT-engine research problem, not
+theory wiring.  The DL improvements that landed (+1 solve, +1 agree) are
+unaffected and stand on their own.
