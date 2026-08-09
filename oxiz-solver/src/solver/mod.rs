@@ -73,6 +73,8 @@ pub struct Solver {
     pub(super) arith: ArithSolver,
     /// Bitvector theory solver
     pub(super) bv: BvSolver,
+    /// Difference-logic solver (incremental SSSP; primary for pure integer DL).
+    pub(super) diff: oxiz_theories::DiffLogicSolver,
     /// Explanations for theory assertions tagged with a *derived* equality.
     ///
     /// Owned here rather than by the `TheoryManager` because the theory solvers
@@ -451,6 +453,7 @@ impl Solver {
             euf: EufSolver::new(),
             arith: ArithSolver::lra(),
             bv: BvSolver::new(),
+            diff: oxiz_theories::DiffLogicSolver::new(true),
             derived_reasons: theory_manager::DerivedReasons::default(),
             #[cfg(feature = "std")]
             nlsat: None,
@@ -817,6 +820,7 @@ impl Solver {
         // `Solver::push` / `pop` at all and would otherwise outlive both the
         // check and a user `pop` — a stale `x = 5` refuting a later `(= x 6)`.
         self.bv.reset();
+        self.diff.reset();
         // The tableau these explanations were read out of is gone, and so are
         // the equalities they justified; keeping them would let a later conflict
         // cite literals belonging to a retracted scope.  This also returns the
@@ -1058,6 +1062,7 @@ impl Solver {
             &mut self.euf,
             &mut self.arith,
             &mut self.bv,
+            &mut self.diff,
             &self.bv_terms,
             &self.var_to_constraint,
             &self.var_to_parsed_arith,
@@ -1160,11 +1165,13 @@ impl Solver {
                                 self.euf.reset();
                                 self.arith.reset();
                                 self.bv.reset();
+                                self.diff.reset();
                                 theory_manager = TheoryManager::new(
                                     manager,
                                     &mut self.euf,
                                     &mut self.arith,
                                     &mut self.bv,
+                                    &mut self.diff,
                                     &self.bv_terms,
                                     &self.var_to_constraint,
                                     &self.var_to_parsed_arith,
@@ -1215,11 +1222,13 @@ impl Solver {
                             self.euf.reset();
                             self.arith.reset();
                             self.bv.reset();
+                            self.diff.reset();
                             theory_manager = TheoryManager::new(
                                 manager,
                                 &mut self.euf,
                                 &mut self.arith,
                                 &mut self.bv,
+                                &mut self.diff,
                                 &self.bv_terms,
                                 &self.var_to_constraint,
                                 &self.var_to_parsed_arith,
@@ -1279,6 +1288,7 @@ impl Solver {
                                 &mut self.euf,
                                 &mut self.arith,
                                 &mut self.bv,
+                                &mut self.diff,
                                 &self.bv_terms,
                                 &self.var_to_constraint,
                                 &self.var_to_parsed_arith,
@@ -1611,6 +1621,7 @@ impl Solver {
                         &mut self.euf,
                         &mut self.arith,
                         &mut self.bv,
+                        &mut self.diff,
                         &self.bv_terms,
                         &self.var_to_constraint,
                         &self.var_to_parsed_arith,
@@ -2282,6 +2293,7 @@ impl Solver {
         self.euf.reset();
         self.arith.reset();
         self.bv.reset();
+        self.diff.reset();
         self.derived_reasons.clear();
         // Quantifier reasoning state must be cleared too: leaving the previous
         // problem's quantifiers, e-matching triggers, Skolem candidates, and the

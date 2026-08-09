@@ -99,6 +99,17 @@ pub struct DiffLogicSolver {
     term_to_constraint: HashMap<TermId, Vec<usize>>,
 }
 
+/// Outcome of an incremental edge add (see [`DiffLogicSolver::add_leq_check`]).
+enum IncAdd {
+    /// Immediate self-conflict (x == y, c < 0).
+    Conflict(Vec<TermId>),
+    /// Edge added; run the seeded SPFA from this source node.
+    Ok(DiffVar),
+    /// Distances are stale or a new variable appeared — fall back to a full
+    /// [`DiffLogicSolver::check`].
+    FullCheck,
+}
+
 impl DiffLogicSolver {
     /// Create a new solver with default configuration
     pub fn new(is_integer: bool) -> Self {
@@ -252,6 +263,126 @@ impl DiffLogicSolver {
         }
 
         conflict
+    }
+
+    /// Add a constraint edge WITHOUT invalidating the cached distances, and
+    /// report whether an incremental check is usable.
+    fn add_constraint_inc(
+        &mut self,
+        x_term: TermId,
+        y_term: TermId,
+        c: Rational64,
+        constraint_type: ConstraintType,
+        origin: TermId,
+    ) -> IncAdd {
+        self.stats.constraints_added += 1;
+        let x = self.graph.get_or_create_var(x_term);
+        let y = self.graph.get_or_create_var(y_term);
+        // A brand-new variable has no cached distance: must recompute fully.
+        let new_var = !self.distances.contains_key(&x)
+            || !self.distances.contains_key(&y);
+        let mut constraint = match constraint_type {
+            ConstraintType::LeqConst => DiffConstraint::new_leq(x, y, c, origin),
+            ConstraintType::LtConst => DiffConstraint::new_lt(x, y, c, origin),
+        };
+        constraint.level = self.current_level;
+        constraint.asserted = true;
+        // Immediate self-conflict (matches `add_constraint_internal`).
+        if x == y && c < Rational64::from_integer(0) {
+            self.stats.conflicts += 1;
+            self.distances_valid = false;
+            return IncAdd::Conflict(vec![origin]);
+        }
+        let idx = self.graph.add_constraint(constraint);
+        self.term_to_constraint.entry(origin).or_default().push(idx);
+        self.pending.push(idx);
+        if new_var || !self.distances_valid {
+            self.distances_valid = false;
+            return IncAdd::FullCheck;
+        }
+        IncAdd::Ok(y)
+    }
+
+    /// Seeded SPFA from `src`: update the cached distances over the asserted
+    /// edges and detect a negative cycle.  O(affected nodes), far cheaper than
+    /// a full Bellman-Ford on a sparse graph.  On a detected cycle, falls back
+    /// to [`Self::check`] to extract the conflict terms (rare path).
+    fn check_incremental_from(&mut self, src: DiffVar) -> DiffLogicResult {
+        let inf = Rational64::from_integer(i64::MAX);
+        let n = self.graph.num_vars() as u32 + 1;
+        let mut queue: VecDeque<DiffVar> = VecDeque::new();
+        let mut in_queue: HashMap<DiffVar, bool> = HashMap::new();
+        let mut count: HashMap<DiffVar, u32> = HashMap::new();
+        queue.push_back(src);
+        in_queue.insert(src, true);
+        while let Some(u) = queue.pop_front() {
+            in_queue.insert(u, false);
+            let Some(&du) = self.distances.get(&u) else {
+                continue;
+            };
+            if du == inf {
+                continue;
+            }
+            // Collect this node's edges first so the immutable borrow of
+            // `self.graph` ends before we mutate `self.distances` below.
+            let edges: Vec<(DiffVar, Rational64)> = self
+                .graph
+                .get_edges(u)
+                .filter(|e| e.from != DiffVar::SOURCE)
+                .map(|e| (e.to, e.weight))
+                .collect();
+            for (to, weight) in edges {
+                let nd = du + weight;
+                let cur = self.distances.get(&to).copied().unwrap_or(inf);
+                if nd < cur {
+                    self.distances.insert(to, nd);
+                    if !in_queue.get(&to).copied().unwrap_or(false) {
+                        queue.push_back(to);
+                        in_queue.insert(to, true);
+                        let cnt = count.entry(to).or_insert(0);
+                        *cnt += 1;
+                        // A node pushed more than |V| times lies on a negative
+                        // cycle reachable from `src`.
+                        if *cnt > n {
+                            self.stats.conflicts += 1;
+                            return self.check();
+                        }
+                    }
+                }
+            }
+        }
+        DiffLogicResult::Ok
+    }
+
+    /// Add `x - y ≤ c` and incrementally check for a negative cycle
+    /// (seeded SPFA, O(affected)).  See [`Self::check_incremental_from`].
+    pub fn add_leq_check(
+        &mut self,
+        x: TermId,
+        y: TermId,
+        c: Rational64,
+        origin: TermId,
+    ) -> DiffLogicResult {
+        match self.add_constraint_inc(x, y, c, ConstraintType::LeqConst, origin) {
+            IncAdd::Conflict(t) => DiffLogicResult::Conflict(t),
+            IncAdd::Ok(src) => self.check_incremental_from(src),
+            IncAdd::FullCheck => self.check(),
+        }
+    }
+
+    /// Add `x - y < c` and incrementally check (see [`Self::add_leq_check`]).
+    pub fn add_lt_check(
+        &mut self,
+        x: TermId,
+        y: TermId,
+        c: Rational64,
+        origin: TermId,
+    ) -> DiffLogicResult {
+        match self.add_constraint_inc(x, y, c, ConstraintType::LtConst, origin) {
+            IncAdd::Conflict(t) => DiffLogicResult::Conflict(t),
+            IncAdd::Ok(src) => self.check_incremental_from(src),
+            IncAdd::FullCheck => self.check(),
+        }
     }
 
     /// Propagate implied bounds
@@ -647,6 +778,12 @@ impl DiffLogicSolver {
     }
 }
 
+impl Default for DiffLogicSolver {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,6 +978,45 @@ mod tests {
         // x - y < 0.5 (remains strict for reals)
         let result = solver.add_lt(x, y, Rational64::new(1, 2), origin);
         assert!(matches!(result, DiffLogicResult::Ok));
+    }
+
+    // ---- incremental check (add_*_check) tests ----
+
+    #[test]
+    fn incremental_check_detects_negative_cycle() {
+        // Add the 3-edge negative cycle one edge at a time via the incremental
+        // API; the third edge must report Conflict (same as full `check`).
+        let mut s = DiffLogicSolver::new(true);
+        let (a, b, c) = (term(1), term(2), term(3));
+        assert!(matches!(s.add_leq_check(a, b, Rational64::from_integer(-1), term(10)), DiffLogicResult::Ok));
+        assert!(matches!(s.add_leq_check(b, c, Rational64::from_integer(-1), term(11)), DiffLogicResult::Ok));
+        // a-b<=-1, b-c<=-1, c-a<=-1  =>  cycle sum -3 < 0
+        assert!(
+            matches!(s.add_leq_check(c, a, Rational64::from_integer(-1), term(12)), DiffLogicResult::Conflict(_)),
+            "incremental check must detect the negative cycle"
+        );
+    }
+
+    #[test]
+    fn incremental_check_stays_ok_when_consistent() {
+        let mut s = DiffLogicSolver::new(true);
+        let (a, b, c) = (term(1), term(2), term(3));
+        // a-b<=3, b-c<=2, c-a<=1  =>  cycle sum 6 >= 0, consistent
+        assert!(matches!(s.add_leq_check(a, b, Rational64::from_integer(3), term(10)), DiffLogicResult::Ok));
+        assert!(matches!(s.add_leq_check(b, c, Rational64::from_integer(2), term(11)), DiffLogicResult::Ok));
+        assert!(matches!(s.add_leq_check(c, a, Rational64::from_integer(1), term(12)), DiffLogicResult::Ok));
+    }
+
+    #[test]
+    fn incremental_check_matches_full_after_push_pop() {
+        // After a push/pop, distances are invalidated; incremental must fall back
+        // to full check and still detect the cycle.
+        let mut s = DiffLogicSolver::new(true);
+        let (a, b) = (term(1), term(2));
+        s.add_leq_check(a, b, Rational64::from_integer(0), term(10));
+        s.push();
+        // b-a<=-1 + a-b<=0  => cycle -1
+        assert!(matches!(s.add_leq_check(b, a, Rational64::from_integer(-1), term(11)), DiffLogicResult::Conflict(_)));
     }
 
     // ---- entailed_reason soundness tests ----
