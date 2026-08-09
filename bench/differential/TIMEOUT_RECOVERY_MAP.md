@@ -371,3 +371,49 @@ efficiency work in oxiz (the ~4800x per-search gap vs z3), which is a different
 class of effort than theory wiring.  The sound DL primitive + on-demand check
 (commits ebaf571 / e174b75) remain as a sound, net-neutral foundation usable by
 future pure-DL tactics; they just do not close qlock.
+
+## CDCL profiling on qlock (where the ~4800x gap lives)
+
+Instrumented the search loop (decisions/conflicts/propagations/restarts + per-phase
+time).  z3's qlock recipe for reference: **1265 decisions, 601 conflicts, 183 193
+propagations, 5 restarts, 0.04 s** (propagation-dominated, tiny search).
+
+oxiz on qlock (foundation build, 3 s samples):
+
+| config | decisions/3s | conflicts/3s | propagations/3s | restarts | theory% |
+|--------|-------------:|-------------:|----------------:|---------:|--------:|
+| foundation (DL on-demand check) | 189 | 7 | 2 418 | 0 | 99% |
+| DL check disabled | 7 448 | 480 | 12 836 | 4 | 96% |
+| DL disabled + `arith.check()` disabled | 27 166 | 1 327 | 116 271 | 13 | 81% |
+
+Findings:
+- **The theory layer is 81-99% of runtime** on qlock (SAT propagate ~=0%).  The
+  per-`on_assignment` theory work (EUF intern/merge + arith assert/check + the DL
+  check) is ~100-200x slower per call than z3's theory.
+- **The foundation's on-demand `diff_theory_check` is ~97% of theory time** — it
+  rebuilds a fresh DL solver from the whole trail every Nth assignment (O(trail)
+  per call).  Disabling it speeds the search **40x** (189->7448 decisions/3s) and
+  restarts begin firing.
+- **But disabling the DL check makes qlock STOP converging** (times out at 30s
+  instead of the foundation's 192s -> unsat).  The DL check, though slow, supplies
+  the pruning (DL conflicts/propagation) that lets CDCL converge.  So it is a
+  trade-off, not pure harm: the foundation keeps it because 192s->unsat beats
+  timeout.
+- `arith.check()` is a further ~3.6x per-search cost (necessary — it supplies the
+  conflicts; skipping it loses convergence).
+- **The fundamental blocker**: even with theory maximally cheap (DL+arith.check
+  off), oxiz does **46 013 decisions in 9s without converging** vs z3's 1265.
+  oxiz's CDCL needs ~36x more decisions on qlock's Boolean structure (branching /
+  clause-learning quality).
+
+**What closing qlock actually needs** (all three, in priority order):
+1. Cheap DL pruning: replace the on-demand rebuild with *incremental* DL
+   maintenance + incremental SSSP (Cotton-Maler), so the pruning that drives
+   convergence costs O(affected) not O(trail).  This is the single biggest win
+   (the rebuild is 97% of theory time).
+2. Cut the EUF+arith per-`on_assignment` cost (the residual 81-96%).
+3. Improve CDCL decision efficiency (the 36x decision gap vs z3) — the deepest,
+   least-localized issue.
+
+The profiling instrumentation is not committed (stderr noise); re-apply the
+`'search`-loop timed dump in `search_ext.rs` to reproduce.
