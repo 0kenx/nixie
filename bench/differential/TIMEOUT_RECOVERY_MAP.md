@@ -332,3 +332,42 @@ into the DL graph too — i.e., when `propagate_euf_equalities_to_arith` asserts
 plain Int/Real terms).  Then DL's graph would carry the same transitive
 equalities arith has, and its Bellman-Ford would detect the same conflicts
 faster.  This is the EUF×DL integration layer; unverified.
+
+## z3/cvc5 reference + profiling: qlock's bottleneck is the CDCL search, not any theory procedure
+
+Consulted the z3 and cvc5 source trees (`/media/data/proj/temp/{z3,cvc5}`) and z3's
+runtime stats on qlock-4-10-7:
+
+- z3 solves qlock in **0.04 s** via the standard **SMT tactic (CDCL + theory_arith)** —
+  no difference-logic-specific tactic (its `diff_neq_tactic` targets a bounded
+  `k<=x / x<=k / x-y!=k` fragment that qlock's equalities don't fit; `-v` shows
+  restarts/decisions/clauses = the SMT engine).  cvc5 likewise has no dedicated DL
+  solver (simplex only).
+- z3's effort: **1265 decisions, 601 conflicts, 183 193 propagations (124 k binary),
+  64 simplex pivots, 295 row-summations, 5 restarts.**  It is propagation-dominated
+  with a tiny search and a nearly-free simplex.
+
+Controlled experiments on oxiz (all reverted; foundation `diff_theory_check` stays):
+
+| change | qlock (30 s cap) |
+|--------|------------------|
+| baseline (arith simplex) | timeout |
+| + sound DL conflict+propagation (foundation) | ~192 s → unsat |
+| + incremental DL as primary (feed every atom, check before simplex) | timeout |
+| + raise arith-propagation gate (1024→20000) + run it mid-search | timeout |
+| **skip `arith.check()` entirely in the Lt/Le/Gt/Ge arm** | **timeout** |
+
+The last row is decisive: removing the simplex check entirely does not speed qlock
+up, so `arith.check()` is **not** the bottleneck.  DL wiring, arith propagation,
+and DL-primary all fail to converge in budget.  Combined with z3 converging in
+1265 decisions / 0.04 s, the bottleneck is **oxiz's CDCL search efficiency itself**
+on qlock's Boolean structure (branching / restarts / clause learning), not a missing
+or slow theory procedure.
+
+**Conclusion / redirect.**  The difference-logic procedure (the chase's focus) is
+sound and correctly wired (it detects the same negative cycles arith does — verified
+`CONFLICT_AGREE`), but it is **not** qlock's lever.  Closing qlock needs CDCL/search-
+efficiency work in oxiz (the ~4800x per-search gap vs z3), which is a different
+class of effort than theory wiring.  The sound DL primitive + on-demand check
+(commits ebaf571 / e174b75) remain as a sound, net-neutral foundation usable by
+future pure-DL tactics; they just do not close qlock.
