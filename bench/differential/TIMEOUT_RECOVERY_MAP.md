@@ -796,3 +796,30 @@ This is substantial, soundness-critical arithmetic-solver work (and must be
 validated for the false-UNSAT the single-variable guard was protecting against),
 not a localized patch.  The false-SAT remains open; `xs_8_13` stays `#[ignore]`d
 and `xs-08-20-3-2-4-5` is a second instance of the same class.
+
+## QF_UFLIA false-SAT FIXED — LP-optimization case-split (commit `8784060`)
+
+The xs_* QF_UFLIA wrong-sat traced above is **fixed**.  Added
+`ArithSolver::lp_int_bounds(term)`: minimize then maximize the term over the
+simplex feasible region (`optimize_linexpr`, primal simplex / Bland's rule) to
+get its exact LP-implied integer range `[ceil(min), floor(max)]`, mirroring z3's
+`opt_solver::maximize_objective` bound-infer path.  `refine_int_case_split`
+queries it as the fallback for UF-args the interval fixpoint cannot bound (the
+bounded-difference case, e.g. `D = fmt1-fmt0-2 ∈ {0..4}`).
+
+Sound: `[ceil(min), floor(max)]` is a superset of the true integer range, so the
+case-split never excludes a reachable value — the false-UNSAT the single-
+variable guard protected against cannot occur (and did not, in validation).
+
+**Validated:**
+- `xs_8_13` (QF_UFLIA): now **unsat** (was sat); its `known_unsound_regressions`
+  guard un-ignored and **passes live**.
+- Differential suite (270 inst, `--timeout 10`): `disagree_soundness` 4→**3**,
+  `agree_z3` 123→**124**, `solved` 127 unchanged, PAR-2 flat (+3.3), **zero**
+  new soundness disagreements (no false-UNSAT), **zero** solved losses.
+- `xs-08-20-3-2-4-5` (larger sibling): now **timeout** instead of wrong-sat
+  (soundness fixed; completeness on the largest instance is a separate goal).
+
+This supersedes the "remains open / needs difference-bound machinery" note in
+the trace above (`877acc3`) — option (A), per-term LP optimization, is what
+landed.  Option (B) (difference-bound propagation) was not needed.
