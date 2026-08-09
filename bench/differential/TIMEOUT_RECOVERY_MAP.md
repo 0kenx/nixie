@@ -479,3 +479,35 @@ propagation that forces those bounds densely — neither of which the current
 VSIDS + equality-DL-propagation provides.  This is the deepest, least-localized
 remaining blocker and a different class of effort than the theory wiring that
 already landed (+1 solve, +1 agree).
+
+## Deepest root cause: oxiz's arith entailment is per-atom simplex probing, not incremental bounds
+
+Option (b) — enable `derive_arith_propagations` (the existing arith bound
+propagation) for qlock — produced **zero** propagations: it is called but
+`comparison_entailed_reason` returns `None` for every atom (or is too expensive
+to run densely).
+
+Why: `ArithSolver::comparison_entailed_reason` is a *sound per-atom simplex
+probe* — for each candidate atom it pushes the atom's negation, runs
+`simplex.check()`, pops.  That is O(simplex-check) per atom, so a full pass over
+qlock's ~3k atoms is ~3k simplex solves — exactly why the method is capped at
+1024 atoms.  Enabling the cap for qlock makes each pass too slow to fire densely
+(and at the sparse points it does fire, no atom is yet forced).  z3/cvc5 close
+qlock via `arith-bound-prop` driven by **incremental bound tracking** (each
+assertion tightens variable bounds in O(1); a cheap sweep infers implied bounds),
+not per-atom re-solving.  oxiz's general simplex has no incremental bound layer,
+so it cannot do the dense bound propagation that (a) supplies z3's 183k
+propagations and (b) forces the shallow (level ~2) conflicts.
+
+**This is the real qlock blocker**, and it reframes the whole chase: the
+difference-logic procedure (`diff_logic`) was not the lever.  The DL work landed
+sound, incremental, and net-positive (+1 solve, +1 agree), but qlock needs an
+**incremental bound-tracking layer in the arithmetic solver** (or a dedicated
+QF_IDL tactic with cheap bound propagation) — a major arithmetic-solver effort,
+not theory wiring.  oxiz's `diff_logic` *could* supply cheap difference-bound
+propagation for the pure-DL fragment (its Bellman-Ford distances ARE incremental
+bounds), but only if the entailment query is rewired to use it instead of the
+per-atom simplex probe — i.e., route `comparison_entailed_reason` for 2-var
+differences through `DiffLogicSolver::entailed_from_sssp` (O(1) lookup against
+the maintained distances).  That is the single most promising concrete next
+step.
