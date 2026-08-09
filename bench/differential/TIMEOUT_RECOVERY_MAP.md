@@ -575,3 +575,46 @@ conflict-history heuristic that resists fresh-atom drift, or a dedicated QF_IDL
 search that bounds the conflict atom set — a SAT-engine research problem, not
 theory wiring.  The DL improvements that landed (+1 solve, +1 agree) are
 unaffected and stand on their own.
+
+## z3 A/B proof: bound-propagation and simplification are NOT qlock's levers — it's CDCL + encoding
+
+The preceding sections *inferred* that qlock's deep conflicts are a CDCL
+characteristic, not a theory gap.  Traced against z3 4.16 (source at
+`/media/data/proj/temp/z3`) to settle it definitively — and the
+theory/simplification levers are now **disproven by direct A/B**, not just
+inferred.
+
+z3 solves qlock-4-10-7 in 0.04 s (unsat): 601 conflicts / 1265 decisions =
+**2.1 decisions/conflict** (shallow).  Its arith theory is a bystander:
+`:num-checks 1`, `:arith-conflicts ≈ 5` of ~600 — qlock is a *boolean-CDCL*
+problem for z3.  Disabling the suspected levers one at a time:
+
+| z3 config                                     | conflicts | decisions | dec/conflict |
+|-----------------------------------------------|----------:|----------:|-------------:|
+| baseline                                      |       601 |      1265 |         2.10 |
+| `arith.propagation-mode=0` (bound-prop OFF)   |       544 |      1287 |         2.36 |
+| elim-unconstrained + solve-eqs OFF            |       566 |      1096 |         1.94 |
+| simplification OFF                            |       601 |      1265 |         2.10 |
+
+Shallow conflicts survive **every** disabling.  Conclusions:
+
+- **Bound propagation is not the lever** — the "needs an incremental bound
+  layer" framing (`d4fdd30`) is disproven; do not pursue it for qlock.
+- **Simplification / variable elimination is not the lever either.**
+- The theory path is irrelevant to z3's win (theory check runs once).
+
+This converts the "CDCL characteristic" conclusion from inference to **proof**:
+the gap is on the SAT/encoding side.  The one concrete lead the trace surfaced
+is **encoding size** — z3 internalizes qlock to **2896** bool vars; oxiz to
+**4450** (+54%), with z3 emitting a binary-clause-heavy core
+(`:mk-clause-binary 12799`) that gives BCP the power to conflict shallowly.
+Combined with the fresh-atom conflict drift above, the actionable directions are
+(a) an encoding audit to close the 2896-vs-4450 var gap, and (b) a CDCL
+learning/focus heuristic that resists fresh-atom drift — both SAT-engine work,
+neither theory.
+
+(The `OXIZ_TRACE_DECISIONS` tracer, commit `37cf44d`, produced the oxiz-side
+data — theory-assign 72% (DL, mean level ~147), theory-prop 0%, final-check 0%.
+theory-prop 0% is structurally expected: a sound forward propagator derives only
+entailed literals, which by definition cannot conflict — so it carries no
+actionable signal, consistent with z3's theory being idle.)
