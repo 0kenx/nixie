@@ -743,3 +743,56 @@ real cost is the perf regression (−3 solved / −4 agree / worse PAR-2), not
 soundness.  `xs-08-20-3-2-4-5` can be added as a second guard for the existing
 `xs_8_13` QF_UFLIA bug class if desired, but it is not a regression caused by
 the branching change.
+
+## QF_UFLIA false-SAT (xs_8_13 / xs-08-20-3-2-4-5): full root-cause trace — fix needs difference-bound machinery
+
+Traced the `xs_*` QF_UFLIA wrong-sat to a precise mechanism.  **The fix is not a
+patch**: it needs arithmetic machinery oxiz currently lacks (difference-bound
+propagation or per-term LP optimization).  Trace below.
+
+**Symptom.** oxiz answers `sat` (0 conflicts, no model, honesty-gate blind) on
+`xs-08-20-3-2-4-5` / `xs_8_13` (QF_UFLIA, z3 unsat w/ proof, `:status unsat`).
+A format-string counter: `arg1 = arg0 + 4*s_count(D) + 4*x_count(D)`,
+`D = (fmt1-2)-fmt0`, with `s_count`/`x_count` `ite`-defined over indices `0..5`
+and arithmetic forcing `s_count(D)+x_count(D) >= 5` (infeasible).  Adding an
+**explicit** `(or (= D 0) … (= D 4))` makes oxiz say **unsat** (confirmed on the
+let-expanded form).  So oxiz is complete *given* D's domain — it just never
+*derives* D's domain.
+
+**Why the existing fix is blind to it.** `refine_int_case_split`
+(`int_case_split.rs`) already targets exactly this bug (its doc comment says so):
+it collects integer UF-args (`collect_int_uf_args`), bounds them
+(`compute_int_bounds`), and emits `(or (= t lo) … (= t hi))`.  But:
+
+1. `compute_int_bounds` (line ~254) **only uses single-variable facts**
+   (`parsed.terms.len() != 1` → skip) — a deliberate soundness guard ("multi-var
+   equalities can pin a term to the candidate model's value → false-UNSAT on
+   WiSA").  D is defined by the 3-var equality `D - fmt1 + fmt0 = -2`, so it is
+   excluded.
+2. Even *relaxing* that filter would not help: D's `{0..4}` range comes from a
+   **bounded difference** `fmt1-fmt0 ∈ [2,6]`, where both `fmt0`/`fmt1` are
+   individually free.  The per-variable interval fixpoint cannot derive a
+   difference-bound (it needs one absolutely-bounded variable to start).
+3. The **simplex doesn't have it either**: instrumented probe showed D's proxy
+   *is* in `arith.term_to_var` (so it is registered), but the simplex has **no
+   propagated bounds** for it — standard simplex bound propagation also cannot
+   derive a bound on a free difference.  So querying the simplex (attempted via a
+   `provable_int_bounds(term)` mirror of `value()`) returns `None`.
+
+**The fix** therefore needs arithmetic machinery that derives D's `{0..4}` soundly:
+
+- **(A) Per-term LP optimization** in the refinement: for each integer UF-arg
+  with no propagated bound, run two simplex objective solves (min / max the term
+  s.t. the asserted constraints) to get its implied integer range.  Correct but
+  ~2 LP solves per candidate per refine round — budget-gate it.
+- **(B) Difference-bound propagation** (Fourier–Motzkin eliminate `fmt0`/`fmt1`,
+  or a difference-bound matrix) feeding `compute_int_bounds`.  Cheaper if the
+  variable graph is sparse, more code.
+- Either feeds the resulting `[lo,hi]` into the existing case-split emit, which
+  then makes CDCL branch on D and the `unsat` falls out (as the manual-split test
+  proved).
+
+This is substantial, soundness-critical arithmetic-solver work (and must be
+validated for the false-UNSAT the single-variable guard was protecting against),
+not a localized patch.  The false-SAT remains open; `xs_8_13` stays `#[ignore]`d
+and `xs-08-20-3-2-4-5` is a second instance of the same class.
