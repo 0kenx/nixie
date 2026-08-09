@@ -722,3 +722,24 @@ instances** (queens_bench, RDS) even while it helps qlock-4-10-7.
 - The qlock-4-10-7 solve (58 s) is real but isolated and not worth the suite
   cost.  `stabilize_base` tuning (keeps dual-mode) is still untested and may
   avoid the regression, but VSIDS-pure is dead.
+
+## mathsat xs-08-20-3-2-4-5 wrong-sat VALIDATED — it is the KNOWN xs_* QF_UFLIA bug, not VSIDS-introduced
+
+The "+1 soundness disagreement" flagged in the VSIDS A/B above (`159596f`) is
+**not a new or VSIDS-introduced unsoundness.**  Validated:
+
+- `xs-08-20-3-2-4-5` (QF_UFLIA, mathsat/Wisa): oxiz **sat** (1.14 s, **zero
+  conflicts**, no model, no honesty-gate trigger); z3 **unsat** (with proof);
+  `:status unsat`.  Failure mode = QF_UFLIA encoding-completeness gap (immediate
+  sat, no search).
+- It is a **sibling of the already-pinned** `xs_8_13` (QF_UFLIA, in
+  `known_unsound_regressions.rs`, `#[ignore]`d as a pre-existing main bug).
+- `xs_8_13` itself wrong-sats under **both** VMTF and VSIDS → the bug is
+  **branching-independent**; VSIDS merely reaches the sibling instance within
+  the 10 s bench timeout (VMTF times out at 90 s on that specific file).
+
+**Conclusion:** VSIDS introduces **no new soundness issue**.  The VSIDS A/B's
+real cost is the perf regression (−3 solved / −4 agree / worse PAR-2), not
+soundness.  `xs-08-20-3-2-4-5` can be added as a second guard for the existing
+`xs_8_13` QF_UFLIA bug class if desired, but it is not a regression caused by
+the branching change.
