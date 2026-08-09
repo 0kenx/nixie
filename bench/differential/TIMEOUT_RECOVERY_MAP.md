@@ -451,3 +451,31 @@ oxiz needs 36x+ more, even with theory maximally cheap).  `theory_aware_branchin
 is already on by default.  Closing qlock needs SAT-engine work (branching /
 clause-learning quality / the per-`on_assignment` EUF+arith cost), which is the
 next layer and a different class of effort than theory wiring.
+
+## CDCL decision/branching profiling on qlock — deep conflicts (level ~140 vs z3's 2)
+
+Instrumented conflict backtrack-level + learnt-clause size.  z3's qlock: ~2
+decisions per conflict (shallow conflicts, aggressive learning).  oxiz (current
+incremental-DL build, 3 s samples):
+
+| t | decisions | conflicts | avg conflict level | avg clause size |
+|--:|----------:|----------:|-------------------:|----------------:|
+| 3 | 189 | 7  | **91**   | 3.0 |
+| 9 | 502 | 21 | **140**  | 2.8 |
+
+**oxiz's conflicts are at decision level ~140** (z3's are at ~2).  The learnt
+clauses are short (good, ~3 lits) but learned at deep levels, so each conflict
+backtracks only slightly and the search stays deep — it churns ~27 decisions
+per conflict vs z3's ~2.  The theory detects the *same* conflicts as arith
+(verified `CONFLICT_AGREE`); DL propagation fires (≈14 k propagations over 400
+calls), but it is equality-focused and does not steer toward the shallow
+*inequality*-bound conflicts the way z3's bound propagation does.
+
+**Root cause = search guidance, not theory capability.**  z3's branching +
+bound propagation reach qlock's DL-inconsistent combinations at decision level
+~2; oxiz reaches them at ~140.  Closing qlock therefore needs CDCL-side work —
+branching that prioritizes conflict-relevant (inequality) atoms, or theory
+propagation that forces those bounds densely — neither of which the current
+VSIDS + equality-DL-propagation provides.  This is the deepest, least-localized
+remaining blocker and a different class of effort than the theory wiring that
+already landed (+1 solve, +1 agree).
