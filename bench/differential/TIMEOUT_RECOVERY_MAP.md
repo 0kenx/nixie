@@ -656,3 +656,35 @@ CDCL(T) conflict-driven search, or a fundamentally different theory-propagation
 strategy that pre-focuses the conflict atom set).  That is beyond theory wiring
 or branching tuning.  The two net-positive DL improvements (+1 solve, +1 agree)
 stand regardless.
+
+## BREAKTHROUGH: the qlock "CDCL wall" was the branching heuristic — VSIDS solves qlock-4-10-7
+
+The "deep SAT-engine characteristic / unfixable CDCL wall" conclusion
+(`a409238`, `bf70532`) is **disproven**: it was the branching heuristic.
+Systematic A/B across branching modes (made trivial by the committed
+`OXIZ_TRACE_DECISIONS` tracer, `37cf44d`/`02490fc`):
+
+| branching (oxiz config)        | qlock-4-10-7   | mean conflict level | qlock-4-10-10 level |
+|--------------------------------|----------------|--------------------:|--------------------:|
+| VMTF focused (current default) | timeout        |               ~147  |               ~147   |
+| CHB                            | timeout        |               ~211  |               —      |
+| **VSIDS**                      | **✅ unsat**    |              **36.6** |             106.8   |
+
+**VSIDS solves the target instance** (exit 0) and shallows conflicts 147→37.
+It is not a blanket cure (4-10-10/14/17 still time out, though VSIDS improves
+them: 147→107), but the central blocker is broken.
+
+**Root cause:** oxiz defaults to VMTF-focused (`enable_stabilize: true` +
+`use_vmtf: true`), which *should* periodically switch to stable VSIDS
+(cadical-style dual mode), but on qlock the baseline trace was **100% Vmtf** —
+the stabilize switch (gated by `stabilize_base: 5000` ticks) never effectively
+engages within the timeout.  z3/cadical lean on stable VSIDS, which is exactly
+what fixes it.
+
+**Caveats — do NOT blindly flip the default:** oxiz ships VMTF-focused for a
+reason (avg/SATcomp performance); a blanket VSIDS flip could regress the
+differential suite, and VSIDS doesn't fully close the gap (4-10-10 still ~107
+vs z3's ~2).  Candidate fixes, in order of cheapness: (1) lower `stabilize_base`
+(5000→~500) so stable VSIDS engages sooner — keeps the dual-mode design; (2)
+per-logic VSIDS preference for QF_IDL/QF_LIA.  Both need differential-suite A/B
+validation before landing.
