@@ -1107,6 +1107,14 @@ impl<'a> TheoryManager<'a> {
         let candidates: Vec<(Var, Vec<(TermId, Rational64)>, Rational64, bool, bool)> =
             self.var_to_constraint.iter().filter_map(|(&var, _)| {
                 if self.assigned_pol_of(var).is_some() { return None; }
+                // Skip equality-constrained atoms: `var_to_parsed_arith` carries
+                // an `Le` placeholder for them, so probing `x <= y` and
+                // propagating the equality `x = y` would be unsound (`x <= y`
+                // does not force `x = y`; `x != y` is the disjunction `x<y ∨
+                // x>y`, not a single comparison). See encode.rs `TermKind::Eq`.
+                if matches!(self.var_to_constraint.get(&var), Some(Constraint::Eq(..))) {
+                    return None;
+                }
                 let parsed = self.var_to_parsed_arith.get(&var)?;
                 let (less, strict) = match parsed.constraint_type {
                     ArithConstraintType::Lt => (true, true),
