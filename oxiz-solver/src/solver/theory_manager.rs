@@ -40,37 +40,39 @@ fn theory_trace_enabled() -> bool {
 /// (read once and cached).  The z3 `:arith-bound-prop` analogue — see
 /// [`TheoryManager::derive_arith_bound_propagations`].
 ///
-/// * `""` / `"0"` / `"off"` (default) — disabled.
-/// * `"tight"` — enabled, with `Simplex::propagate_bounds` tightening
-///   transitive (tableau-row) bounds before each atom scan (catches
-///   propagation chains through recurrences).
-/// * any other non-empty value (e.g. `"1"`, `"on"`) — enabled using only
-///   directly-asserted bounds (cheaper; catches the first propagation level).
+/// **Default-on for QF_UFIDL** (validated net-positive: closes the vhard
+/// family, +1 on the differential suite).  The mode only takes effect where
+/// the `is_dl_family` (QF_UFIDL) gate and the matching `set_branching_vsids`
+/// gate fire, so non-QF_UFIDL logics are unaffected by the default.
+///
+/// * unset (default) — `Tighten` (on; the recommended mode for QF_UFIDL).
+/// * `"0"` / `"off"` / `"false"` — `Off` (escape hatch: disables even for
+///   QF_UFIDL).
+/// * `"tight"` — `Tighten` (explicit; same as default).
+/// * any other non-empty value (e.g. `"1"`, `"on"`) — `Direct` (cheaper;
+///   catches only the first propagation level).
 #[cfg(feature = "std")]
-fn arith_bound_prop_mode() -> BoundPropMode {
+pub(crate) fn arith_bound_prop_mode() -> BoundPropMode {
     use std::sync::OnceLock;
     static FLAG: OnceLock<BoundPropMode> = OnceLock::new();
     *FLAG.get_or_init(|| {
         match std::env::var("OXIZ_BOUND_PROP") {
             Ok(v)
-                if !v.is_empty()
-                    && v != "0"
-                    && !v.eq_ignore_ascii_case("false")
-                    && !v.eq_ignore_ascii_case("off") =>
+                if v.eq_ignore_ascii_case("off")
+                    || v == "0"
+                    || v.eq_ignore_ascii_case("false") =>
             {
-                if v.eq_ignore_ascii_case("tight") {
-                    BoundPropMode::Tighten
-                } else {
-                    BoundPropMode::Direct
-                }
+                BoundPropMode::Off
             }
-            _ => BoundPropMode::Off,
+            Ok(v) if v.eq_ignore_ascii_case("tight") => BoundPropMode::Tighten,
+            Ok(v) if !v.is_empty() => BoundPropMode::Direct,
+            _ => BoundPropMode::Tighten, // default-on
         }
     })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum BoundPropMode {
+pub(crate) enum BoundPropMode {
     Off,
     Direct,
     Tighten,

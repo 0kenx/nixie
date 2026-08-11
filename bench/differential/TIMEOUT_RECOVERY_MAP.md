@@ -1054,3 +1054,28 @@ Both modes stay env-gated (default off) per the handover's caution; `=tight` is
 net-positive and the recommended setting for QF_UFIDL.  The QF_UFIDL-only VSIDS
 gate is the key: it captures the vhard win without the QF_IDL regressions that
 made the prior agent's *global* VSIDS experiment net-negative.
+
+## Default-on for QF_UFIDL (validated net-positive -> no longer env-gated)
+
+Per the handover's process ("land env-gated, validate, default-enable if
+net-positive"), VSIDS+tight bound-prop is now **default-on for QF_UFIDL**
+(`OXIZ_BOUND_PROP` unset → `Tighten`; `=off` is the escape hatch).  vhard7 now
+closes in normal operation (no env flag needed).
+
+Validation (270-instance differential, 8 s, default-on vs `=off`):
+- **Sound**: 2 disagreements both ways — the pre-existing `storecomm_t3` /
+  `bench_679` (unchanged).  Zero new.
+- **Net-neutral at 8 s** (solved 122 both): vhard7 timeout→unsat (+1, definite,
+  closes in 1.7 s) offset by a `storecomm_invalid` (QF_AUFLIA) sat→timeout that
+  is pure run-to-run variance — it is QF_AUFLIA, which the QF_UFIDL-only gate
+  does not touch, so the solver is byte-identical there (confirmed `sat` on
+  3/3 repeat runs).
+- **+16 at 25 s**: the vhard family (18/19 vs baseline 2/19) — the gains
+  manifest above the 8 s differential window.
+- The 29 non-vhard QF_UFIDL instances in the sample (RDS etc.) are unaffected
+  (no regressions); tests 1417 + 1035 pass.
+
+So the handover's vhard7 goal is **achieved by default**: QF_UFIDL instances now
+get VSIDS + tight bound propagation automatically, closing the vhard family
+soundly with no suite regression.  `OXIZ_BOUND_PROP=off` restores the prior
+VMTF/no-bound-prop behaviour if needed.
