@@ -76,19 +76,6 @@ enum BoundPropMode {
     Tighten,
 }
 
-/// Whether the diagnostic per-assertion comparison-probe propagator is enabled
-/// (`OXIZ_ARITH_PROBE`).  Read once and cached.
-#[cfg(feature = "std")]
-fn arith_probe_prop_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| {
-        std::env::var("OXIZ_ARITH_PROBE")
-            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
-    })
-}
-
-
 mod conflict_clause;
 mod derived_reasons;
 pub(crate) use derived_reasons::DerivedReasons;
@@ -1205,14 +1192,6 @@ impl<'a> TheoryManager<'a> {
     fn derive_arith_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         const MAX_ATOMS: usize = 1024;
         if self.var_to_constraint.len() > MAX_ATOMS {
-            #[cfg(feature = "std")]
-            if theory_trace_enabled() {
-                eprintln!(
-                    "oxiz-aprobe\tcap_hit\tatoms={}\tmax={}",
-                    self.var_to_constraint.len(),
-                    MAX_ATOMS
-                );
-            }
             return None;
         }
         let candidates: Vec<(Var, Vec<(TermId, Rational64)>, Rational64, bool, bool)> =
@@ -1255,16 +1234,8 @@ impl<'a> TheoryManager<'a> {
             }
         }
         if props.is_empty() {
-            #[cfg(feature = "std")]
-            if theory_trace_enabled() {
-                eprintln!("oxiz-aprobe\temit\t0");
-            }
             None
         } else {
-            #[cfg(feature = "std")]
-            if theory_trace_enabled() {
-                eprintln!("oxiz-aprobe\temit\t{}", props.len());
-            }
             Some(props)
         }
     }
@@ -1440,16 +1411,8 @@ impl<'a> TheoryManager<'a> {
             }
         }
         if props.is_empty() {
-            #[cfg(feature = "std")]
-            if theory_trace_enabled() {
-                eprintln!("oxiz-bprop\temit\t0");
-            }
             None
         } else {
-            #[cfg(feature = "std")]
-            if theory_trace_enabled() {
-                eprintln!("oxiz-bprop\temit\t{}", props.len());
-            }
             Some(props)
         }
     }
@@ -2579,10 +2542,6 @@ impl TheoryCallback for TheoryManager<'_> {
                 if self.assignment_trail[idx].is_positive != is_positive
                     && self.bv_terms.is_empty() =>
             {
-                #[cfg(feature = "std")]
-                if theory_trace_enabled() {
-                    eprintln!("oxiz-flip");
-                }
                 self.assignment_trail[idx] = TrailAtom {
                     var,
                     is_positive,
@@ -2639,17 +2598,6 @@ impl TheoryCallback for TheoryManager<'_> {
 
         let result = self.process_constraint(var, constraint, is_positive, self.manager);
 
-        #[cfg(feature = "std")]
-        if arith_probe_prop_enabled() && theory_trace_enabled() {
-            let kind = match &result {
-                TheoryCheckResult::Sat => "sat",
-                TheoryCheckResult::Conflict(_) => "conf",
-                TheoryCheckResult::Propagated(_) => "prop",
-            };
-            let has_arith = self.var_to_parsed_arith.contains_key(&var);
-            eprintln!("oxiz-aprobe\tres\t{kind}\thas_arith\t{has_arith}");
-        }
-
         // Track theory conflicts
         if matches!(result, TheoryCheckResult::Conflict(_)) {
             self.statistics.theory_conflicts += 1;
@@ -2680,27 +2628,6 @@ impl TheoryCallback for TheoryManager<'_> {
                 && let Some(props) =
                     self.derive_arith_bound_propagations(mode == BoundPropMode::Tighten)
             {
-                self.statistics.theory_propagations += props.len() as u64;
-                return TheoryCheckResult::Propagated(props);
-            }
-        }
-
-        // Diagnostic: per-assertion call of the sound comparison-probe
-        // propagator (`comparison_entailed_reason`, the push-negation simplex
-        // test).  Gated on `OXIZ_ARITH_PROBE`; used to measure whether vhard7's
-        // atoms are forceable at all (the expr-bound path is defeated by the
-        // simplex's slack-row encoding, which keeps no direct bounds on the
-        // original variables).
-        #[cfg(feature = "std")]
-        if matches!(result, TheoryCheckResult::Sat)
-            && arith_probe_prop_enabled()
-            && self.var_to_parsed_arith.contains_key(&var)
-        {
-            #[cfg(feature = "std")]
-            if theory_trace_enabled() {
-                eprintln!("oxiz-aprobe\tcall");
-            }
-            if let Some(props) = self.derive_arith_propagations() {
                 self.statistics.theory_propagations += props.len() as u64;
                 return TheoryCheckResult::Propagated(props);
             }

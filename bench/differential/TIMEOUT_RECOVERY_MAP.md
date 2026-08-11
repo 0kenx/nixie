@@ -930,3 +930,41 @@ for the QF_IDL/QF_UFIDL family (closes vhard4, the first new vhard beyond
 baseline's vhard2-3, with zero soundness regressions).  Closing vhard7 soundly
 is gated on part (B) lazy theory propagation + the incremental (per-assert)
 bound layer — both documented above and the clear next steps.
+
+## Follow-up: ruled out eager-clause / has_units bottlenecks; bound-prop shallows but vhard7 conflicts stay deep
+
+A second pass measured whether the eager-watched-clause install path (the
+handover's part-B motivation) is actually the vhard7 bottleneck.  It is not:
+
+- **Theory-reason-clause accumulation is negligible.**  Instrumented
+  `add_theory_reason_clause`: only **3** theory-reason clauses are created over
+  6 s on vhard7 (`OXIZ_BOUND_PROP=1`).  The bound-propagated literals mostly
+  drive *conflicts* (via the theory check), not permanent clause installs — so
+  the eager-clause DB is not cluttered and part (B) lazy propagation would NOT
+  speed up vhard7.  (Part B is still the right design for *sound* propagation on
+  dense logics, but it is not vhard7's lever.)
+- **The `has_units` mixed-batch discard is not the cause.**  Instrumented the
+  `search_ext` `has_units` branch (which backtracks to level 0 and discards
+  reasoned propagations when a unit appears): **0** hits on vhard7.  The
+  bound-prop's reasoned propagations are not being starved by units.
+
+**What bound-prop DOES do on vhard7 (measured, 6 s):**
+
+| config | conflicts | mean conflict level |
+|--------|----------:|--------------------:|
+| `OXIZ_BOUND_PROP` off (baseline) | 1145 | 96.7 |
+| `OXIZ_BOUND_PROP=1` (gated) | 959 | **81.1** |
+
+So the propagator **does shallow conflicts (96.7 → 81.1)** — it is helping — but
+vhard7's conflicts remain at level ~81 where z3's sit at ~2.  This is the same
+*deep-conflict CDCL characteristic* the qlock chase hit: even with sound forward
+propagation firing (~750 propagated literals over the search), oxiz's CDCL
+reaches the DL-inconsistent combinations at decision level ~81, not ~2.
+Closing vhard7 therefore needs the deeper levers the qlock chase identified for
+that class — (a) much denser propagation (the incremental per-assert bound
+layer that derives *transitive* recurrence bounds, not just direct single-var
+bounds), and/or (b) CDCL branching/learning that finds the shallow conflicts —
+neither of which the current prop tracker (direct single-var bounds only)
+provides.  The landed propagator is a real, sound improvement (closes vhard4,
+shallows vhard7 conflicts by 16 levels) and the right foundation; vhard7 itself
+is a deeper CDCL/incremental-bound problem on top of it.
