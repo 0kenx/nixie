@@ -823,3 +823,110 @@ variable guard protected against cannot occur (and did not, in validation).
 This supersedes the "remains open / needs difference-bound machinery" note in
 the trace above (`877acc3`) — option (A), per-term LP optimization, is what
 landed.  Option (B) (difference-bound propagation) was not needed.
+
+## Incremental bound propagation for vhard (QF_UFIDL) — built, SOUND on the DL family, gated; vhard7 still open
+
+The handover's central premise was validated and refuted in part by direct
+measurement.  Implementing the z3 `:arith-bound-prop` analogue for oxiz's
+arithmetic solver.
+
+**Premise validated.**  vhard7 is genuinely bound-prop-dependent (UNLIKE qlock,
+where the prior chase proved bound-prop is not the lever).  z3 A/B on vhard7:
+
+| z3 config | decisions | conflicts | arith-conflicts |
+|-----------|----------:|----------:|----------------:|
+| baseline | 1374 | 556 | 330 |
+| `arith.propagation-mode=0` (bound-prop OFF) | 21770 | 2169 | 1788 |
+
+Disabling bound-prop inflates z3's decisions 16× on vhard7 (the *opposite* of
+qlock, where it barely moved).  oxiz's conflicts sit at decision level ~96 (max
+327) vs z3's ~2; learnt clauses are short (mean 3.1) but learned deep.  So
+forward-propagating forced arith atoms to CDCL at low levels is the right lever
+for vhard7.
+
+**What landed (env-gated `OXIZ_BOUND_PROP`, default off; SOUND).**
+
+1. **Propagation-only single-variable bound tracker** in `ArithSolver`
+   (`prop_lower`/`prop_upper` + undo trail, push/pop-scoped).  oxiz's simplex
+   encodes every constraint as a *slack row* with the bound on the slack, so its
+   `lower`/`upper` arrays carry **no** bound on the original variables — which
+   defeats cheap bound propagation.  The tracker records the direct
+   single-variable constant bound each `assert_le/ge/lt/gt` implies, plus
+   `note_fixed_var` for **genuine** `term = constant` equalities only
+   (`genuine_fixed_var`: rhs a numeric constant, lhs a non-constant Int/Real
+   term).  Used for propagation only — never by `check()`/feasibility.
+
+2. **`ArithSolver::derive_expr_bound_reasons`** — the cheap (`O(expr)`, no LP
+   solve) Dutertre–de Oliveira bound derivation lifted to an arbitrary atom
+   expression, reading the tracker (with a slack-derived fallback when
+   `tighten`).  SOUND: a relaxation never tighter than the true bound, so any
+   atom it forces is genuinely forced.
+
+3. **`TheoryManager::derive_arith_bound_propagations`** — scans unassigned
+   `Le/Lt/Ge/Gt` atoms (Eq excluded — the placeholder landmine), derives each
+   expression bound, and emits forced polarities as `TheoryCheckResult::Propagated`
+   via the existing eager-watched-clause install path.
+
+**Two soundness bugs found & fixed during validation (z3-oracle + 270-instance
+differential A/B):**
+
+- **Constant-threshold bug.**  The force check initially passed the atom's RHS
+  `constant` *into* the expression derivation and compared to `constant`,
+  reading `e + c ◦ c` ≡ `e ◦ 0` instead of `e ◦ c`.  Correct only for `c == 0`
+  atoms (why vhard7's `x > 0` ite-conditions appeared to work).  Produced
+  false-UNSAT on every atom with a non-zero threshold (QF_LIA SMPT, etc.).
+  Fixed: derive the bound on `e` (constant 0), compare to the threshold.
+
+- **Derived-reason insufficiency on dense / UF-mixed logics.**  The tracker's
+  single-atom bounds cannot summarize the multi-atom (EUF-congruence /
+  tableau-derived) justifications the simplex's Farkas proof uses, so a
+  derived-only reason clause can be over-strong.  Measured: 19–21 false-UNSAT
+  disagreements on QF_LIA/UFLIA/ANIA.  **Crucially, 0 disagreements on
+  QF_IDL/QF_UFIDL** (60-instance sample) — the derived reason is sound on the
+  difference-logic family.  So the propagator is **gated to QF_IDL/QF_UFIDL**
+  (`is_dl_family`), where it is sound, and disabled elsewhere.
+
+**Soundness gate (270-instance differential, `--timeout 8`, baseline vs
+`OXIZ_BOUND_PROP=1` vs `=tight`):**
+
+| config | solved | agree_z3 | disagree_soundness |
+|--------|-------:|---------:|-------------------:|
+| baseline | 121 | 119 | 2 (pre-existing storecomm/bench_679) |
+| `OXIZ_BOUND_PROP=1` (gated) | 121 | 119 | 2 (same pre-existing) |
+| `OXIZ_BOUND_PROP=tight` (gated) | 115 | 113 | 2 (same; net-negative: O(tableau) cost) |
+
+`OXIZ_BOUND_PROP=1` is **net-neutral on the suite and SOUND** (zero new
+disagreements — the DL-family gate confines it to where the derived reason is
+valid).  It closes **vhard4** (+1 vs baseline's vhard2-3); super_queen30-1 and
+LamportBakery8 stay correctly `sat`.
+
+**vhard7 remains open (soundly).**  The SOUND derived-reason propagator fires
+(~750 propagations over the search, conflicts shallow 96→~80) but does not
+converge in timeout.  Three reasons, in priority order:
+
+1. **No transitive/recurrence bounds.**  The tracker holds only direct
+   single-variable constant bounds.  vhard7's recurrence (`x1 = Sum(...)`)
+   needs the bound on `x1` *derived through the tableau row* once `x0`/`Sum`
+   are pinned.  `=tight` runs `Simplex::propagate_bounds` to add these, but it
+   is net-negative (O(tableau) per assertion) and still does not close vhard7.
+   Closing it needs the *incremental* bound layer (Dutertre–de Oliveira
+   per-assert bound tightening, O(affected)) — the handover's part (A) proper —
+   not the per-call `propagate_bounds`.
+2. **Eager watched clauses lose pruning.**  A SOUND reason is necessarily
+   larger (the complete Farkas antecedent set), so the eager
+   `add_theory_reason_clause` materializes larger permanent clauses → less
+   pruning → more conflicts.  This is exactly the eager-vs-lazy gap the
+   handover's part (B) addresses: **lazy `Reason::Theory` propagation**
+   (`trail.assign_theory` + on-demand explanation in `conflict.rs`'s
+   `Reason::Theory` arm, currently a `break` stub).  Implementing part (B) is
+   the single highest-leverage next step — it makes sound propagation cheap
+   (no permanent clause) and is required for vhard7.
+3. The unsound (constant-bug / ungated-derived-reason) variant closed vhard7-20
+   in <0.3 s — *do not restore it*; the speed came from spurious propagations
+   that happened to prune a genuinely-unsat formula.
+
+**Net.**  A SOUND, env-gated incremental bound-propagation capability is landed
+for the QF_IDL/QF_UFIDL family (closes vhard4, the first new vhard beyond
+baseline's vhard2-3, with zero soundness regressions).  Closing vhard7 soundly
+is gated on part (B) lazy theory propagation + the incremental (per-assert)
+bound layer — both documented above and the clear next steps.

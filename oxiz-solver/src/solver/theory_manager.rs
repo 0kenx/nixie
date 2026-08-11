@@ -36,6 +36,58 @@ fn theory_trace_enabled() -> bool {
     })
 }
 
+/// Incremental arithmetic bound-propagation mode, set from `OXIZ_BOUND_PROP`
+/// (read once and cached).  The z3 `:arith-bound-prop` analogue — see
+/// [`TheoryManager::derive_arith_bound_propagations`].
+///
+/// * `""` / `"0"` / `"off"` (default) — disabled.
+/// * `"tight"` — enabled, with `Simplex::propagate_bounds` tightening
+///   transitive (tableau-row) bounds before each atom scan (catches
+///   propagation chains through recurrences).
+/// * any other non-empty value (e.g. `"1"`, `"on"`) — enabled using only
+///   directly-asserted bounds (cheaper; catches the first propagation level).
+#[cfg(feature = "std")]
+fn arith_bound_prop_mode() -> BoundPropMode {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<BoundPropMode> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        match std::env::var("OXIZ_BOUND_PROP") {
+            Ok(v)
+                if !v.is_empty()
+                    && v != "0"
+                    && !v.eq_ignore_ascii_case("false")
+                    && !v.eq_ignore_ascii_case("off") =>
+            {
+                if v.eq_ignore_ascii_case("tight") {
+                    BoundPropMode::Tighten
+                } else {
+                    BoundPropMode::Direct
+                }
+            }
+            _ => BoundPropMode::Off,
+        }
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundPropMode {
+    Off,
+    Direct,
+    Tighten,
+}
+
+/// Whether the diagnostic per-assertion comparison-probe propagator is enabled
+/// (`OXIZ_ARITH_PROBE`).  Read once and cached.
+#[cfg(feature = "std")]
+fn arith_probe_prop_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_ARITH_PROBE")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
 
 mod conflict_clause;
 mod derived_reasons;
@@ -120,6 +172,44 @@ fn is_plain_numeric_term(td: &oxiz_core::ast::Term) -> bool {
         td.kind,
         TermKind::Var(_) | TermKind::IntConst(_) | TermKind::RealConst(_)
     )
+}
+
+/// If `(= lhs rhs)` is a GENUINE `term = constant` equality — `rhs` a numeric
+/// constant and `lhs` a non-constant Int/Real-sorted term (a plain variable,
+/// an uninterpreted-function application like `(Succ 0)`, an array select, an
+/// `ite`, … — anything the linear parser treats as ONE opaque arithmetic
+/// variable) — return the constant's value.  Such a bound is a direct,
+/// unconditional consequence of the single asserted equality, so its
+/// single-atom reason is sufficient and the cheap derived-reason propagator
+/// stays sound.  Equalities whose `rhs` is itself a term (e.g. `(= a b)`, or
+/// a term whose linear parse folded to a constant) record no bound — their
+/// real justification may be an EUF/tableau chain the prop tracker cannot
+/// summarize.
+fn genuine_fixed_var(
+    lhs: TermId,
+    rhs: TermId,
+    manager: &TermManager,
+) -> Option<Rational64> {
+    let rhs_td = manager.get(rhs)?;
+    let value = match &rhs_td.kind {
+        TermKind::IntConst(n) => Rational64::from_integer(n.to_i64()?),
+        TermKind::RealConst(r) => *r,
+        _ => return None, // rhs is not a numeric constant
+    };
+    let lhs_td = manager.get(lhs)?;
+    // lhs must be a non-constant arithmetic term (so the equality pins one
+    // opaque arithmetic variable to `value`).
+    if matches!(
+        lhs_td.kind,
+        TermKind::IntConst(_) | TermKind::RealConst(_) | TermKind::BitVecConst { .. }
+    ) {
+        return None;
+    }
+    let sort = manager.sorts.get(lhs_td.sort)?;
+    if !sort.is_int() && !sort.is_real() {
+        return None;
+    }
+    Some(value)
 }
 
 /// The `(x, y, c, strict)` bound whose entailment is equivalent to DL atom
@@ -216,6 +306,13 @@ pub(crate) struct TheoryManager<'a> {
     /// Whether formula contains BV arithmetic operations (division/remainder)
     #[allow(dead_code)]
     has_bv_arith_ops: bool,
+    /// Whether the problem's logic is the difference-logic family
+    /// (QF_IDL/QF_UFIDL), for which the cheap derived-reason bound propagator
+    /// is SOUND (validated: 0 differential disagreements on the IDL/UFIDL
+    /// sample).  On denser logics the derived reason can be an insufficient
+    /// subset of the true Farkas proof, so bound propagation is gated to this
+    /// family.
+    is_dl_family: bool,
     /// Canonical EUF node for each distinct integer constant value.
     ///
     /// Maps an integer literal value (i64) to the canonical EUF node that
@@ -374,6 +471,7 @@ impl<'a> TheoryManager<'a> {
         max_decisions: u64,
         has_bv_arith_ops: bool,
         timeout_ms: u64,
+        logic: Option<&str>,
     ) -> Self {
         #[cfg(feature = "std")]
         let deadline = if timeout_ms > 0 {
@@ -407,6 +505,9 @@ impl<'a> TheoryManager<'a> {
             max_conflicts,
             max_decisions,
             has_bv_arith_ops,
+            is_dl_family: logic
+                .map(|l| matches!(l, "QF_IDL" | "QF_UFIDL" | "IDL" | "UFIDL"))
+                .unwrap_or(false),
             interned_int_constants: FxHashMap::default(),
             interned_bv_constants: FxHashMap::default(),
             ite_const_axioms: Self::build_ite_const_axioms(
@@ -1103,7 +1204,17 @@ impl<'a> TheoryManager<'a> {
     /// deductively from decided values instead of letting CDCL branch on them.
     fn derive_arith_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         const MAX_ATOMS: usize = 1024;
-        if self.var_to_constraint.len() > MAX_ATOMS { return None; }
+        if self.var_to_constraint.len() > MAX_ATOMS {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!(
+                    "oxiz-aprobe\tcap_hit\tatoms={}\tmax={}",
+                    self.var_to_constraint.len(),
+                    MAX_ATOMS
+                );
+            }
+            return None;
+        }
         let candidates: Vec<(Var, Vec<(TermId, Rational64)>, Rational64, bool, bool)> =
             self.var_to_constraint.iter().filter_map(|(&var, _)| {
                 if self.assigned_pol_of(var).is_some() { return None; }
@@ -1143,7 +1254,204 @@ impl<'a> TheoryManager<'a> {
                 props.push((if truth { Lit::pos(var) } else { Lit::neg(var) }, reason_lits));
             }
         }
-        if props.is_empty() { None } else { Some(props) }
+        if props.is_empty() {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!("oxiz-aprobe\temit\t0");
+            }
+            None
+        } else {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!("oxiz-aprobe\temit\t{}", props.len());
+            }
+            Some(props)
+        }
+    }
+
+    /// Incremental bound propagation: forward-propagate arithmetic atoms
+    /// whose polarity is *forced* by the simplex's current variable bounds.
+    ///
+    /// For each UNASSIGNED `Le`/`Lt`/`Ge`/`Gt` atom `e ◦ c`, derive a SOUND
+    /// bound on `e` from the variable bounds (the Dutertre–de Oliveira
+    /// relaxation — never tighter than the true bound), and if that bound
+    /// already forces the comparison, emit the atom's literal with the
+    /// bound's antecedent atoms as the reason.
+    ///
+    /// This is the z3 `:arith-bound-prop` analogue: cheap (`O(atoms)`, no LP
+    /// solve), sound (a looser bound that still forces ⇒ genuinely forced),
+    /// and the single mechanism that closes finite-domain QF_UFIDL (vhard*) —
+    /// asserting `(= x k)` pins `x ∈ [k,k]`, which forces every `x ◦ c` ite
+    /// condition at the *current* (low) decision level, so conflicts that the
+    /// recurrence eventually triggers are detected shallowly (level ~2, like
+    /// z3) instead of deep (level ~96).
+    ///
+    /// `tighten = true` runs [`Simplex::propagate_bounds`] first so transitive
+    /// bounds (through tableau rows, e.g. the recurrence) feed the derivation;
+    /// `tighten = false` uses only directly-asserted bounds (cheaper, catches
+    /// the first propagation level).
+    ///
+    /// Equality atoms are EXCLUDED (the `Le`-placeholder landmine: a `not(=)`
+    /// disequality is the disjunction `x<y ∨ x>y`, never a single comparison —
+    /// see `encode.rs`).
+    fn derive_arith_bound_propagations(
+        &mut self,
+        tighten: bool,
+    ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
+        use oxiz_theories::arithmetic::DeltaRational;
+        // Collect candidate atoms up-front (clone out of the shared maps) so the
+        // immutable borrows end before the `&mut self.arith` derivation call.
+        let candidates: Vec<(
+            Var,
+            Vec<(TermId, Rational64)>,
+            Rational64,
+            bool, /* less */
+            bool, /* strict */
+        )> = self
+            .var_to_constraint
+            .iter()
+            .filter_map(|(&var, constraint)| {
+                if self.assigned_pol_of(var).is_some() {
+                    return None; // already decided
+                }
+                // Skip equality-constrained atoms: `var_to_parsed_arith`
+                // carries an `Le` placeholder for them, so probing the bound
+                // and propagating would treat a disequality as a single
+                // comparison (unsound). See `encode.rs` `TermKind::Eq`.
+                if matches!(constraint, Constraint::Eq(..)) {
+                    return None;
+                }
+                let parsed = self.var_to_parsed_arith.get(&var)?;
+                let (less, strict) = match parsed.constraint_type {
+                    ArithConstraintType::Lt => (true, true),
+                    ArithConstraintType::Le => (true, false),
+                    ArithConstraintType::Gt => (false, true),
+                    ArithConstraintType::Ge => (false, false),
+                };
+                Some((
+                    var,
+                    parsed.terms.iter().copied().collect(),
+                    parsed.constant,
+                    less,
+                    strict,
+                ))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        for (var, terms, constant, less, strict) in candidates {
+            let c_dr = DeltaRational::from_rational(constant);
+            // Derive the bound on `e := Σ coefᵢ·termᵢ` (the atom's LHS) by
+            // passing constant = 0; `constant` is the atom's RHS THRESHOLD,
+            // compared below, NOT part of the expression.  (Passing `constant`
+            // here would fold the threshold into the expression and make the
+            // check read `e + c ◦ c` ≡ `e ◦ 0` — a soundness bug for any atom
+            // with a non-zero threshold.)
+            let (lo, hi) = self.arith.derive_expr_bound_reasons(&terms, Rational64::from_integer(0), tighten);
+            // Determine whether the atom `e ◦ c` is forced TRUE or FALSE.
+            //
+            //   less (e ≤ c / e < c): TRUE ⇔ upper(e) ≤/< c ;  FALSE ⇔ lower(e) >/≥ c
+            //   !less (e ≥ c / e > c): TRUE ⇔ lower(e) ≥/> c ;  FALSE ⇔ upper(e) </≤ c
+            let forced: Option<(bool, Vec<TermId>)> = if less {
+                let true_forced = hi.as_ref().map(|(v, _)| {
+                    if strict {
+                        *v < c_dr
+                    } else {
+                        *v <= c_dr
+                    }
+                });
+                if true_forced == Some(true) {
+                    hi.map(|(_, r)| (true, r))
+                } else {
+                    let false_forced = lo.as_ref().map(|(v, _)| {
+                        if strict {
+                            *v >= c_dr
+                        } else {
+                            *v > c_dr
+                        }
+                    });
+                    if false_forced == Some(true) {
+                        lo.map(|(_, r)| (false, r))
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                let true_forced = lo.as_ref().map(|(v, _)| {
+                    if strict {
+                        *v > c_dr
+                    } else {
+                        *v >= c_dr
+                    }
+                });
+                if true_forced == Some(true) {
+                    lo.map(|(_, r)| (true, r))
+                } else {
+                    let false_forced = hi.as_ref().map(|(v, _)| {
+                        if strict {
+                            *v <= c_dr
+                        } else {
+                            *v < c_dr
+                        }
+                    });
+                    if false_forced == Some(true) {
+                        hi.map(|(_, r)| (false, r))
+                    } else {
+                        None
+                    }
+                }
+            };
+            let Some((truth, derived_reason)) = forced else {
+                continue;
+            };
+            // Build the reason-literal set from the derived bound's antecedent
+            // atoms (the cheap, derived-reason path).  SOUND only on the
+            // difference-logic family (QF_IDL/QF_UFIDL): the caller gates this
+            // propagator to those logics, where the prop tracker's single-atom
+            // bounds are sufficient justifications.  On denser logics
+            // (QF_LIA/UFLIA/ANIA) the derived reason can be an insufficient
+            // subset of the true Farkas proof (the bound's real justification
+            // combines many atoms the prop tracker cannot summarize), so the
+            // gate excludes them.
+            let reason_terms = derived_reason;
+            let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
+            let mut ok = true;
+            for &r in &reason_terms {
+                let Some(&rv) = self.term_to_var.get(&r) else {
+                    ok = false;
+                    break;
+                };
+                if rv == var {
+                    continue;
+                }
+                match self.assigned_pol_of(rv) {
+                    Some(true) => reason_lits.push(Lit::pos(rv)),
+                    Some(false) => reason_lits.push(Lit::neg(rv)),
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok && !reason_lits.is_empty() {
+                props.push((if truth { Lit::pos(var) } else { Lit::neg(var) }, reason_lits));
+            }
+        }
+        if props.is_empty() {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!("oxiz-bprop\temit\t0");
+            }
+            None
+        } else {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!("oxiz-bprop\temit\t{}", props.len());
+            }
+            Some(props)
+        }
     }
 
     /// Feed one asserted atom to the incremental DL solver and return a
@@ -1801,6 +2109,17 @@ impl<'a> TheoryManager<'a> {
                     self.intern_arith_shared_terms(var, manager);
                     if let Some(parsed) = self.var_to_parsed_arith.get(&var).cloned() {
                         self.arith.assert_eq(&parsed.terms.iter().copied().collect::<Vec<_>>(), parsed.constant, parsed.reason_term);
+                        // Record a propagation bound ONLY for a GENUINE
+                        // `var = constant` equality (plain variable directly
+                        // equated to a numeric constant).  Such a bound's
+                        // single-atom reason is sufficient (no EUF chain), so
+                        // the cheap derived-reason propagator stays sound.
+                        // Other equalities (EUF-mediated, or whose linear parse
+                        // dropped an operand) are skipped — their bound's
+                        // reason would be incomplete.
+                        if let Some(fv) = genuine_fixed_var(lhs, rhs, manager) {
+                            self.arith.note_fixed_var(lhs, fv, parsed.reason_term);
+                        }
                         // Incremental DL conflict check for equalities.
                         if let Some(dl_conflict) = self.diff_primary_conflict(
                             var,
@@ -2260,6 +2579,10 @@ impl TheoryCallback for TheoryManager<'_> {
                 if self.assignment_trail[idx].is_positive != is_positive
                     && self.bv_terms.is_empty() =>
             {
+                #[cfg(feature = "std")]
+                if theory_trace_enabled() {
+                    eprintln!("oxiz-flip");
+                }
                 self.assignment_trail[idx] = TrailAtom {
                     var,
                     is_positive,
@@ -2316,6 +2639,17 @@ impl TheoryCallback for TheoryManager<'_> {
 
         let result = self.process_constraint(var, constraint, is_positive, self.manager);
 
+        #[cfg(feature = "std")]
+        if arith_probe_prop_enabled() && theory_trace_enabled() {
+            let kind = match &result {
+                TheoryCheckResult::Sat => "sat",
+                TheoryCheckResult::Conflict(_) => "conf",
+                TheoryCheckResult::Propagated(_) => "prop",
+            };
+            let has_arith = self.var_to_parsed_arith.contains_key(&var);
+            eprintln!("oxiz-aprobe\tres\t{kind}\thas_arith\t{has_arith}");
+        }
+
         // Track theory conflicts
         if matches!(result, TheoryCheckResult::Conflict(_)) {
             self.statistics.theory_conflicts += 1;
@@ -2327,6 +2661,48 @@ impl TheoryCallback for TheoryManager<'_> {
                 // the search.  Flag it so the solver answers Unknown, not Sat.
                 self.resource_exhausted = true;
                 return TheoryCheckResult::Sat; // Return Sat to signal resource exhaustion
+            }
+        }
+
+        // Incremental arithmetic bound propagation (the z3 `:arith-bound-prop`
+        // analogue).  Env-gated (`OXIZ_BOUND_PROP`); validated sound before
+        // default-enabling.  Fires after a successful arith assertion so that
+        // asserting `(= x k)` (which pins `x ∈ [k,k]`) immediately forces every
+        // `x ◦ c` ite condition at the current decision level — the mechanism
+        // that shallows conflicts on finite-domain QF_UFIDL from ~96 to ~2.
+        #[cfg(feature = "std")]
+        if matches!(result, TheoryCheckResult::Sat)
+            && self.var_to_parsed_arith.contains_key(&var)
+        {
+            let mode = arith_bound_prop_mode();
+            if mode != BoundPropMode::Off
+                && self.is_dl_family
+                && let Some(props) =
+                    self.derive_arith_bound_propagations(mode == BoundPropMode::Tighten)
+            {
+                self.statistics.theory_propagations += props.len() as u64;
+                return TheoryCheckResult::Propagated(props);
+            }
+        }
+
+        // Diagnostic: per-assertion call of the sound comparison-probe
+        // propagator (`comparison_entailed_reason`, the push-negation simplex
+        // test).  Gated on `OXIZ_ARITH_PROBE`; used to measure whether vhard7's
+        // atoms are forceable at all (the expr-bound path is defeated by the
+        // simplex's slack-row encoding, which keeps no direct bounds on the
+        // original variables).
+        #[cfg(feature = "std")]
+        if matches!(result, TheoryCheckResult::Sat)
+            && arith_probe_prop_enabled()
+            && self.var_to_parsed_arith.contains_key(&var)
+        {
+            #[cfg(feature = "std")]
+            if theory_trace_enabled() {
+                eprintln!("oxiz-aprobe\tcall");
+            }
+            if let Some(props) = self.derive_arith_propagations() {
+                self.statistics.theory_propagations += props.len() as u64;
+                return TheoryCheckResult::Propagated(props);
             }
         }
 

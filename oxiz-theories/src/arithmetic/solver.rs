@@ -1,6 +1,8 @@
 //! Arithmetic Theory Solver
 
+use super::delta::DeltaRational;
 use super::simplex::{LinExpr, Simplex, SimplexOptStatus, VarId};
+use smallvec::SmallVec;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
@@ -89,6 +91,25 @@ pub struct ArithSolver {
     /// that per-equation GCD reasoning and pure branch-and-bound over unbounded
     /// variables miss.  Push/pop-scoped via `ContextState`.
     int_equalities: Vec<IntEquation>,
+    /// Propagation-only single-variable constant bounds, maintained in
+    /// parallel with the simplex.  The simplex encodes every constraint
+    /// (`add_le`/`add_eq`) as a *slack row* with the bound on the slack, so its
+    /// `lower`/`upper` arrays carry **no** bound on the original variables —
+    /// which defeats cheap bound propagation.  This tracker records the direct
+    /// single-variable constant bound each `assert_*` implies on its variable
+    /// (e.g. `assert_eq([(x,1)], k)` ⇒ `x ∈ [k,k]`), so
+    /// [`Self::derive_expr_bound_reasons`] can force atoms without an LP solve.
+    ///
+    /// SOUND: every entry is a direct consequence of one asserted atom (its
+    /// `reason` id).  Push/pop-scoped via the `prop_undo` trail (parallel to
+    /// the simplex's own trail).  Used for propagation only — never consulted
+    /// by `check()`/feasibility, so it cannot affect soundness of the solve.
+    prop_lower: Vec<Option<PropBoundEntry>>,
+    /// See [`Self::prop_lower`].
+    prop_upper: Vec<Option<PropBoundEntry>>,
+    /// Undo trail for `prop_lower`/`prop_upper`, with a `Scope` marker pushed
+    /// at every `push()` and replayed at every `pop()`.
+    prop_undo: Vec<PropBoundUndo>,
 }
 
 /// A linear equality over the integers: `sum(coeff_i · var_i) = rhs`.
@@ -96,6 +117,33 @@ pub struct ArithSolver {
 struct IntEquation {
     terms: Vec<(VarId, i64)>,
     rhs: i64,
+}
+
+/// A propagation-only single-variable constant bound (see
+/// `ArithSolver::prop_lower`).
+#[derive(Debug, Clone, Copy)]
+struct PropBoundEntry {
+    value: DeltaRational,
+    reason: u32,
+}
+
+/// One undo step for the propagation-bound trail.
+#[derive(Debug, Clone, Copy)]
+enum PropBoundUndo {
+    Lower(VarId, Option<PropBoundEntry>),
+    Upper(VarId, Option<PropBoundEntry>),
+    /// Scope marker: the index in `prop_undo` at the matching `push()`.
+    Scope(usize),
+}
+
+/// Comparison flavour for [`ArithSolver::record_prop_bound`].
+#[derive(Debug, Clone, Copy)]
+enum PropCmp {
+    Le,
+    Ge,
+    Lt,
+    Gt,
+    Eq,
 }
 
 /// Outcome of exploring a single branch-and-bound child node.
@@ -139,6 +187,9 @@ impl ArithSolver {
             shared_equalities: Vec::new(),
             lia_model: FxHashMap::default(),
             int_equalities: Vec::new(),
+            prop_lower: Vec::new(),
+            prop_upper: Vec::new(),
+            prop_undo: Vec::new(),
         }
     }
 
@@ -269,13 +320,134 @@ impl ArithSolver {
         expr.terms.sort_by_key(|(v, _)| *v);
     }
 
+    /// Ensure the propagation-bound arrays cover `var`.
+    fn prop_ensure(&mut self, var: VarId) {
+        let idx = var as usize;
+        if idx >= self.prop_lower.len() {
+            self.prop_lower.resize(idx + 1, None);
+            self.prop_upper.resize(idx + 1, None);
+        }
+    }
+
+    /// Record a propagation lower bound `var ≥ value` (with `reason`), keeping
+    /// the tightest (monotonic).  Sound: a valid consequence of one atom.
+    fn prop_set_lower(&mut self, var: VarId, value: DeltaRational, reason: u32) {
+        self.prop_ensure(var);
+        let idx = var as usize;
+        let tighten = match self.prop_lower[idx] {
+            None => true,
+            Some(cur) => value > cur.value,
+        };
+        if tighten {
+            self.prop_undo
+                .push(PropBoundUndo::Lower(var, self.prop_lower[idx]));
+            self.prop_lower[idx] = Some(PropBoundEntry { value, reason });
+        }
+    }
+
+    /// Record a propagation upper bound `var ≤ value` (with `reason`), keeping
+    /// the tightest (monotonic).  Sound: a valid consequence of one atom.
+    fn prop_set_upper(&mut self, var: VarId, value: DeltaRational, reason: u32) {
+        self.prop_ensure(var);
+        let idx = var as usize;
+        let tighten = match self.prop_upper[idx] {
+            None => true,
+            Some(cur) => value < cur.value,
+        };
+        if tighten {
+            self.prop_undo
+                .push(PropBoundUndo::Upper(var, self.prop_upper[idx]));
+            self.prop_upper[idx] = Some(PropBoundEntry { value, reason });
+        }
+    }
+
+    /// Propagation lower bound for `var`, if any.
+    fn prop_get_lower(&self, var: VarId) -> Option<PropBoundEntry> {
+        self.prop_lower.get(var as usize).copied().flatten()
+    }
+
+    /// Propagation upper bound for `var`, if any.
+    fn prop_get_upper(&self, var: VarId) -> Option<PropBoundEntry> {
+        self.prop_upper.get(var as usize).copied().flatten()
+    }
+
+    /// Record the single-variable constant bound implied by a one-term LHS
+    /// `coef·x ◦ rhs` on its variable `x`, where the comparison is given by
+    /// `kind` and a δ gap encodes strict (`Lt`/`Gt`) bounds for LRA (LIA
+    /// strict bounds are already folded to non-strict `±1` by the callers).
+    ///
+    /// No-op for `coef == 0`.  SOUND: a direct consequence of one atom.
+    fn record_prop_bound(
+        &mut self,
+        var: VarId,
+        coef: Rational64,
+        rhs: Rational64,
+        kind: PropCmp,
+        reason: u32,
+    ) {
+        if coef.is_zero() {
+            return;
+        }
+        // bound on x:  coef·x ◦ rhs  ⟺  x ◦' rhs/coef  (comparison flips when coef<0).
+        let ratio = rhs / coef;
+        let flip = coef.is_negative();
+        match kind {
+            PropCmp::Le => {
+                // coef·x ≤ rhs
+                if flip {
+                    self.prop_set_lower(var, DeltaRational::from_rational(ratio), reason);
+                } else {
+                    self.prop_set_upper(var, DeltaRational::from_rational(ratio), reason);
+                }
+            }
+            PropCmp::Ge => {
+                // coef·x ≥ rhs
+                if flip {
+                    self.prop_set_upper(var, DeltaRational::from_rational(ratio), reason);
+                } else {
+                    self.prop_set_lower(var, DeltaRational::from_rational(ratio), reason);
+                }
+            }
+            PropCmp::Lt => {
+                // coef·x < rhs
+                if flip {
+                    // x > ratio  ⇒  lower (ratio, +δ)
+                    self.prop_set_lower(var, DeltaRational::new(ratio, Rational64::one()), reason);
+                } else {
+                    // x < ratio  ⇒  upper (ratio, -δ)
+                    self.prop_set_upper(var, DeltaRational::new(ratio, -Rational64::one()), reason);
+                }
+            }
+            PropCmp::Gt => {
+                // coef·x > rhs
+                if flip {
+                    // x < ratio  ⇒  upper (ratio, -δ)
+                    self.prop_set_upper(var, DeltaRational::new(ratio, -Rational64::one()), reason);
+                } else {
+                    // x > ratio  ⇒  lower (ratio, +δ)
+                    self.prop_set_lower(var, DeltaRational::new(ratio, Rational64::one()), reason);
+                }
+            }
+            PropCmp::Eq => {
+                // coef·x = rhs  ⇒  both bounds.
+                let dr = DeltaRational::from_rational(ratio);
+                self.prop_set_lower(var, dr, reason);
+                self.prop_set_upper(var, dr, reason);
+            }
+        }
+    }
+
     /// Assert: lhs <= rhs
     pub fn assert_le(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
         let mut expr = LinExpr::new();
-
+        let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
             expr.add_term(var, *coef);
+            single = match single {
+                None => Some((var, *coef)),
+                Some(_) => None, // more than one term
+            };
         }
         expr.add_constant(-rhs);
 
@@ -285,15 +457,22 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         self.simplex.add_le(expr, reason_id);
+        if let Some((var, coef)) = single {
+            self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason_id);
+        }
     }
 
     /// Assert: lhs >= rhs
     pub fn assert_ge(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
         let mut expr = LinExpr::new();
-
+        let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
             expr.add_term(var, *coef);
+            single = match single {
+                None => Some((var, *coef)),
+                Some(_) => None,
+            };
         }
         expr.add_constant(-rhs);
 
@@ -302,6 +481,9 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         self.simplex.add_ge(expr, reason_id);
+        if let Some((var, coef)) = single {
+            self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason_id);
+        }
     }
 
     /// Assert: lhs = rhs
@@ -313,7 +495,6 @@ impl ArithSolver {
     /// Example: 2x + 2y = 7 is infeasible because gcd(2,2) = 2 doesn't divide 7.
     pub fn assert_eq(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
         let mut expr = LinExpr::new();
-
         for (term, coef) in lhs {
             let var = self.intern(*term);
             expr.add_term(var, *coef);
@@ -393,6 +574,30 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         self.simplex.add_eq(expr, reason_id);
+        // NOTE: no `record_prop_bound` here.  An equality's single-variable
+        // constant bound is only sound for propagation when it is a GENUINE
+        // `var = constant` (a plain variable directly equated to a numeric
+        // constant).  Equalities reached through EUF congruence — or whose
+        // linear parse dropped a non-constant operand — would record a bound
+        // whose single-atom reason is insufficient (the real justification is
+        // an equality chain the prop tracker does not see), yielding unsound
+        // propagation.  Genuine `var = const` equalities are recorded by the
+        // caller ([`Self::note_fixed_var`]) which can distinguish them.
+    }
+
+    /// Record the propagation bound implied by a GENUINE `term = value`
+    /// equality (a plain variable directly equated to a numeric constant),
+    /// for use by cheap bound propagation.  SOUND: the bound is a direct,
+    /// unconditional consequence of the asserted equality whose `reason` term
+    /// is supplied — no EUF chain is involved, so the single-atom reason is
+    /// sufficient.  Callers MUST verify the equality is genuine
+    /// (`Var = IntConst/RealConst`) before calling.
+    pub fn note_fixed_var(&mut self, term: TermId, value: Rational64, reason: TermId) {
+        let var = self.intern(term);
+        let reason_id = self.add_reason(reason);
+        let dr = DeltaRational::from_rational(value);
+        self.prop_set_lower(var, dr, reason_id);
+        self.prop_set_upper(var, dr, reason_id);
     }
 
     /// Assert: lhs < rhs (strict inequality)
@@ -410,10 +615,14 @@ impl ArithSolver {
         // For reals, use delta-rationals
         // lhs < rhs is equivalent to lhs - rhs < 0
         let mut expr = LinExpr::new();
-
+        let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
             expr.add_term(var, *coef);
+            single = match single {
+                None => Some((var, *coef)),
+                Some(_) => None,
+            };
         }
         expr.add_constant(-rhs);
 
@@ -423,6 +632,9 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         self.simplex.add_strict_lt(expr, reason_id);
+        if let Some((var, coef)) = single {
+            self.record_prop_bound(var, coef, rhs, PropCmp::Lt, reason_id);
+        }
     }
 
     /// Assert: lhs > rhs (strict inequality)
@@ -442,11 +654,15 @@ impl ArithSolver {
         // We build rhs - lhs directly instead of negating lhs - rhs
         // This avoids issues with normalize_expr which ensures positive first coefficient
         let mut expr = LinExpr::new();
-
+        let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
             // Add negative coefficient since we want rhs - lhs
             expr.add_term(var, -(*coef));
+            single = match single {
+                None => Some((var, *coef)),
+                Some(_) => None,
+            };
         }
         // Add +rhs (since we want rhs - lhs, not lhs - rhs)
         expr.add_constant(rhs);
@@ -458,6 +674,9 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         self.simplex.add_strict_lt(expr, reason_id);
+        if let Some((var, coef)) = single {
+            self.record_prop_bound(var, coef, rhs, PropCmp::Gt, reason_id);
+        }
     }
 
     /// Get the current value of a variable
@@ -1088,6 +1307,9 @@ impl Theory for ArithSolver {
             num_int_equalities: self.int_equalities.len(),
         });
         self.simplex.push();
+        // Propagation-bound scope marker: `pop` replays `prop_undo` back to
+        // this index, undoing every bound recorded inside this scope.
+        self.prop_undo.push(PropBoundUndo::Scope(self.prop_undo.len()));
     }
 
     fn pop(&mut self) {
@@ -1122,6 +1344,23 @@ impl Theory for ArithSolver {
             // successful `check()`, so drop it on backtrack.
             self.lia_model.clear();
             self.simplex.pop();
+            // Replay the propagation-bound undo trail back to the scope marker.
+            while let Some(entry) = self.prop_undo.pop() {
+                match entry {
+                    PropBoundUndo::Scope(_) => break,
+                    PropBoundUndo::Lower(var, prev) => {
+                        let idx = var as usize;
+                        if idx < self.prop_lower.len() {
+                            self.prop_lower[idx] = prev;
+                        }
+                    }
+                    PropBoundUndo::Upper(var, prev) => {
+                        if (var as usize) < self.prop_upper.len() {
+                            self.prop_upper[var as usize] = prev;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1135,6 +1374,9 @@ impl Theory for ArithSolver {
         self.shared_equalities.clear();
         self.lia_model.clear();
         self.int_equalities.clear();
+        self.prop_lower.clear();
+        self.prop_upper.clear();
+        self.prop_undo.clear();
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {
@@ -1435,6 +1677,122 @@ impl ArithSolver {
         out.dedup();
         if out.is_empty() { out = self.full_unsat_core(); }
         out
+    }
+
+    /// Soundly derive lower/upper bounds on a linear expression `Σ coefᵢ·termᵢ
+    /// + constant` from the simplex's current per-variable bounds, returning
+    /// the reason `TermId`s (the atoms whose assertions produced the bounds).
+    ///
+    /// Each direction is `None` when some variable lacks the needed bound
+    /// direction.  This is the cheap (`O(expr)`, no LP solve) Dutertre–de
+    /// Oliveira bound derivation: a *relaxation* that is never tighter than
+    /// the true bound, so any atom it forces is genuinely forced (sound).
+    ///
+    /// Optionally tighten the tableau's variable bounds first via
+    /// [`Simplex::propagate_bounds`] (`tighten = true`) so derived (transitive)
+    /// bounds feed the expression derivation — needed to catch propagation
+    /// chains through tableau rows (e.g. finite-domain recurrences).
+    #[must_use]
+    pub fn derive_expr_bound_reasons(
+        &mut self,
+        terms: &[(TermId, Rational64)],
+        constant: Rational64,
+        tighten: bool,
+    ) -> (
+        Option<(DeltaRational, Vec<TermId>)>,
+        Option<(DeltaRational, Vec<TermId>)>,
+    ) {
+        if tighten {
+            self.simplex.propagate_bounds();
+        }
+        let mut var_terms: Vec<(VarId, Rational64)> = Vec::with_capacity(terms.len());
+        for &(term, coef) in terms {
+            let Some(&var) = self.term_to_var.get(&term) else {
+                return (None, None);
+            };
+            var_terms.push((var, coef));
+        }
+        // Derive the expression bound from the propagation-only single-variable
+        // tracker (`prop_lower`/`prop_upper`), falling back to the simplex's own
+        // bounds (slack-derived, via `propagate_bounds`) so transitive bounds
+        // also feed the derivation when `tighten` was requested.  Each bound's
+        // antecedent is its `reason` id; collecting all of them yields a sound
+        // explanation of the derived expression bound.
+        let map_reasons = |rids: &SmallVec<[u32; 4]>| -> Vec<TermId> {
+            let mut out: Vec<TermId> = Vec::with_capacity(rids.len());
+            for &rid in rids {
+                if let Some(&t) = self.reasons.get(rid as usize) {
+                    out.push(t);
+                }
+            }
+            out.sort_unstable();
+            out.dedup();
+            out
+        };
+        // Lower bound of e = Σ coefᵢ·varᵢ + constant.
+        let mut lo_val = DeltaRational::from_rational(constant);
+        let mut lo_reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut lo_ok = true;
+        for &(var, coef) in &var_terms {
+            if coef.is_zero() {
+                continue;
+            }
+            let bound = if coef.is_positive() {
+                // needs lower(var): tracker first, then simplex
+                self.prop_get_lower(var).map(|e| (e.value, e.reason))
+                    .or_else(|| self.simplex.get_lower(var).map(|b| (b.value, b.reason)))
+            } else {
+                self.prop_get_upper(var).map(|e| (e.value, e.reason))
+                    .or_else(|| self.simplex.get_upper(var).map(|b| (b.value, b.reason)))
+            };
+            let Some((bv, br)) = bound else {
+                lo_ok = false;
+                break;
+            };
+            lo_val += bv * coef;
+            lo_reasons.push(br);
+            if let Some(b) = self.simplex.get_lower(var) {
+                lo_reasons.extend(b.aux_reasons.iter().copied());
+            }
+            if let Some(b) = self.simplex.get_upper(var) {
+                lo_reasons.extend(b.aux_reasons.iter().copied());
+            }
+        }
+        // Upper bound of e.
+        let mut hi_val = DeltaRational::from_rational(constant);
+        let mut hi_reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut hi_ok = true;
+        for &(var, coef) in &var_terms {
+            if coef.is_zero() {
+                continue;
+            }
+            let bound = if coef.is_positive() {
+                self.prop_get_upper(var).map(|e| (e.value, e.reason))
+                    .or_else(|| self.simplex.get_upper(var).map(|b| (b.value, b.reason)))
+            } else {
+                self.prop_get_lower(var).map(|e| (e.value, e.reason))
+                    .or_else(|| self.simplex.get_lower(var).map(|b| (b.value, b.reason)))
+            };
+            let Some((bv, br)) = bound else {
+                hi_ok = false;
+                break;
+            };
+            hi_val += bv * coef;
+            hi_reasons.push(br);
+            if let Some(b) = self.simplex.get_lower(var) {
+                hi_reasons.extend(b.aux_reasons.iter().copied());
+            }
+            if let Some(b) = self.simplex.get_upper(var) {
+                hi_reasons.extend(b.aux_reasons.iter().copied());
+            }
+        }
+        lo_reasons.sort_unstable();
+        lo_reasons.dedup();
+        hi_reasons.sort_unstable();
+        hi_reasons.dedup();
+        let lower = lo_ok.then_some((lo_val, map_reasons(&lo_reasons)));
+        let upper = hi_ok.then_some((hi_val, map_reasons(&hi_reasons)));
+        (lower, upper)
     }
 
     /// Sound disequality-entailment probe.  Returns `Some(reason)` iff

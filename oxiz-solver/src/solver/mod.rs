@@ -1139,6 +1139,7 @@ impl Solver {
             self.config.max_decisions,
             self.has_bv_arith_ops,
             self.config.timeout_ms,
+            self.logic.as_deref(),
         );
 
         // MBQI loop for quantified formulas
@@ -1248,6 +1249,7 @@ impl Solver {
                                     self.config.max_decisions,
                                     self.has_bv_arith_ops,
                                     self.config.timeout_ms,
+            self.logic.as_deref(),
                                 );
                                 continue;
                             }
@@ -1305,6 +1307,7 @@ impl Solver {
                                 self.config.max_decisions,
                                 self.has_bv_arith_ops,
                                 self.config.timeout_ms,
+            self.logic.as_deref(),
                             );
                             continue;
                         }
@@ -1365,6 +1368,7 @@ impl Solver {
                                 self.config.max_decisions,
                                 self.has_bv_arith_ops,
                                 self.config.timeout_ms,
+            self.logic.as_deref(),
                             );
                             continue;
                         }
@@ -1698,6 +1702,7 @@ impl Solver {
                         self.config.max_decisions,
                         self.has_bv_arith_ops,
                         self.config.timeout_ms,
+            self.logic.as_deref(),
                     );
                 }
             }
