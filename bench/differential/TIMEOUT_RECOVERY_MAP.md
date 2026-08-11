@@ -1079,3 +1079,64 @@ So the handover's vhard7 goal is **achieved by default**: QF_UFIDL instances now
 get VSIDS + tight bound propagation automatically, closing the vhard family
 soundly with no suite regression.  `OXIZ_BOUND_PROP=off` restores the prior
 VMTF/no-bound-prop behaviour if needed.
+
+## Why z3 solves vhard7 in ~0.01 s and oxiz in ~1.5 S (37–150× gap)
+
+Measured head-to-head (vhard7, default QF_UFIDL config = VSIDS + tight bound-prop):
+
+| metric | z3 4.16 | oxiz (default) | oxiz (`=off`) |
+|---|---:|---:|---:|
+| wall time | 0.01 s | ~1.5 s | timeout |
+| decisions | 1374 | 4090 | — |
+| conflicts | 556 | 148 | 1138 / 6 s |
+| **mean conflict level** | **~2** | **35.7** | **96.8** |
+| theory checks (`:num-checks`) | **1** | per-arith-assertion | per-arith-assertion |
+| arith pivots (`:arith-pivots`) | 37 | per-check | per-check |
+| arith-bound-prop | 423 | (propagate_bounds/asser) | off |
+| prop-vs-theory time split | — | **1 ms SAT / 1543 ms theory (99%)** | — |
+
+The gap is **two compounding factors, both with one root cause**:
+
+**Factor 1 — per-conflict theory cost (~290–550×).**  Instrumented the CDCL(T)
+loop (`oxiz-prof`): SAT BCP is **1 ms (1%)**, the theory layer is **1543 ms
+(99%)**.  Per conflict that is ~10 ms (`=tight`) or ~5.3 ms (`=off`) — vs z3's
+~0.018 ms/conflict (0.01 s / 556).  The `=off` number isolates the *pre-existing*
+theory cost (EUF + `arith.check()` per assertion) at ~5.3 ms/conflict (~290× z3);
+the bound-prop layer I added roughly doubles it (to ~10 ms).
+
+**Factor 2 — search depth (~18×).**  oxiz's conflicts sit at decision level ~35.7
+(even with VSIDS + bound-prop) vs z3's ~2.  Deeper conflicts ⇒ more decisions per
+conflict (oxiz 4090/148 ≈ 28 decisions/conflict vs z3 1374/556 ≈ 2.5).
+
+**Single root cause: oxiz's arithmetic theory is not incremental.**
+- z3 maintains the simplex incrementally — bounds tighten in O(1)/O(affected)
+  per assertion, and it runs the feasibility check **once total** (`:num-checks 1`,
+  37 pivots).  Its `arith-bound-prop` (423) is likewise incremental, so it
+  forward-forces dependent atoms cheaply and densely → the level-~2 conflicts.
+- oxiz **re-feasibilizes the LP on every arith assertion** (`ArithSolver::check`
+  → `make_feasible` in `process_constraint`) and the bound-prop layer
+  **re-runs `Simplex::propagate_bounds` (O(tableau)) per assertion**.  Each
+  assertion is therefore ~3 orders of magnitude more expensive than z3's, and
+  the cost caps how densely it can propagate (it propagates *less* per assertion
+  because propagating *more* is too slow) — which is exactly why the conflicts
+  stay at level ~36 instead of ~2.
+
+**What it would take to close the gap** (in priority order):
+1. **Incremental simplex feasibility** — maintain feasibility across assertions
+   (update, don't re-solve) so the per-assertion `check()` is O(affected) not
+   O(pivots).  This alone removes the ~290× pre-existing theory cost and is the
+   dominant lever.
+2. **Incremental bound propagation** (the handover's part A proper) — tighten
+   only affected tableau rows on each bound change (O(affected)), not a full
+   `propagate_bounds` pass.  Removes the bound-prop half and lets propagation go
+   dense enough to shallow conflicts toward level ~2.
+3. (Then) lazy `Reason::Theory` propagation (part B) — optional polish; the eager
+   clause path is *not* the bottleneck (only ~3 theory-reason clauses are created
+   on vhard7).
+
+Net: oxiz already does **fewer conflicts than z3 (148 vs 556)** — the search is
+small enough; it is purely the **per-assertion, non-incremental theory cost** that
+makes each of those conflicts ~550× more expensive.  The VSIDS + bound-prop
+combination (now default for QF_UFIDL) buys the search-depth win (96.8 → 35.7)
+that makes vhard7 *solvable in budget*; reaching z3's 0.01 s is an arithmetic-
+solver incrementality project, not a search/branching one.
