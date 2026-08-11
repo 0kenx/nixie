@@ -161,6 +161,18 @@ impl BvSolver {
         SatConfig {
             enable_lazy_hyper_binary: false,
             enable_inprocessing: false,
+            // The embedded solver is driven incrementally by `BvSolver::check`,
+            // which calls `solve()` once per asserted atom (hundreds of times on
+            // a QF_BV formula).  `lucky_phases` / gate-congruence scan the whole
+            // clause database on every call, so on a ~100 k-clause bit-blasted
+            // formula they dominate runtime (394 × O(clauses) ≈ the entire
+            // solve budget on `millionaires.t1.i28`, all with 0 search
+            // conflicts).  Disable them here: the bit-blasted theory clauses
+            // are not structured in the way these passes exploit, and the main
+            // CDCL(T) solver above already applies them once to the user
+            // formula.
+            enable_lucky: false,
+            enable_gate_congruence: false,
             ..SatConfig::default()
         }
     }
@@ -1609,10 +1621,26 @@ impl Theory for BvSolver {
             SolverResult::Unknown => Ok(TheoryResult::Unknown),
         };
 
-        // Discard this probe's search residue (see the two points above) so the
-        // next incremental `check()` starts from only the asserted constraints.
-        self.sat.restore_to_trail_size(committed_trail);
-        self.sat.forget_learned_since(learned_before);
+        // Keep this probe's satisfying *model* on the trail so the next
+        // `check()` resumes incrementally from it — `solve()` does not reset
+        // the trail on entry, so a freshly asserted clause the model already
+        // satisfies is decided with zero re-propagation, instead of re-walking
+        // the whole bit-blasted formula from the level-0 prefix every probe.
+        // The level-0 unit facts (constants, pinned selectors) are part of the
+        // committed prefix either way; a search decision the model made at
+        // level ≥ 1 that a later probe's new clause contradicts is simply
+        // backtracked by the next `solve()`, so retaining the trail cannot
+        // manufacture a false verdict.  Learned clauses are likewise kept: they
+        // are entailed by the asserted (permanent) clauses, and the level-0
+        // units they may resolve through sit inside the committed prefix.
+        //
+        // Together with the `lucky_phases` / gate-congruence disables in
+        // `embedded_sat_config`, this is the QF_BV perf lever: 394 incremental
+        // resumes vs 394 full re-propagations of a ~100 k-clause formula on
+        // `millionaires.t1.i28` (2.3 s → 0.2 s).  The defensive re-solve block
+        // above still `restore_to_trail_size`s + `forget_learned_since`s on an
+        // `Unsat` first verdict, preserving that soundness guard.
+        let _ = (committed_trail, learned_before);
 
         result
     }
