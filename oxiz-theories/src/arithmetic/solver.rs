@@ -600,6 +600,35 @@ impl ArithSolver {
         self.prop_set_upper(var, dr, reason_id);
     }
 
+    /// Tighten the simplex's tableau variable bounds to a fixpoint by running
+    /// [`Simplex::propagate_bounds`] until it stops changing anything (bounded
+    /// iterations).  This populates the simplex's `lower`/`upper` with the
+    /// *transitive* bounds derived through tableau rows (e.g. a recurrence
+    /// `x1 = f(x0)` derives `x1`'s bound once `x0` is pinned) — the bounds the
+    /// cheap single-variable prop tracker cannot see.
+    ///
+    /// Call ONCE per assertion (not per atom) so the O(tableau) cost is paid
+    /// once, then [`Self::derive_expr_bound_reasons`] reads the populated
+    /// bounds cheaply.  SOUND: `propagate_bounds` only tightens (monotonic),
+    /// with proper antecedent reasons, and is push/pop-scoped.
+    pub fn tighten_tableau_bounds(&mut self) {
+        // `propagate_bounds` derives basic-variable bounds from non-basic in one
+        // pass; loop to a fixpoint so chains (x<-y<-z) fully propagate.  Cap
+        // iterations to avoid pathological non-termination on cyclic tightenings.
+        for _ in 0..16 {
+            let before = self.simplex.num_original_vars();
+            self.simplex.propagate_bounds();
+            // propagate_bounds does not report whether it changed anything;
+            // use the propagated-vector length as a cheap change signal.  It
+            // clears+repopulates `propagated` each call, so a non-empty result
+            // means at least one derivation fired this pass.
+            if self.simplex.get_propagated().is_empty() {
+                break;
+            }
+            let _ = before;
+        }
+    }
+
     /// Assert: lhs < rhs (strict inequality)
     /// For LRA, uses infinitesimals: lhs <= rhs - δ
     /// For LIA, transforms to: lhs <= rhs - 1 (since no integer exists between k and k+1)
@@ -1702,9 +1731,13 @@ impl ArithSolver {
         Option<(DeltaRational, Vec<TermId>)>,
         Option<(DeltaRational, Vec<TermId>)>,
     ) {
-        if tighten {
-            self.simplex.propagate_bounds();
-        }
+        // NOTE: `tighten` is accepted for API stability but the tableau
+        // tightening is now done ONCE per assertion by the caller
+        // ([`Self::tighten_tableau_bounds`]) rather than per-atom here —
+        // running `propagate_bounds` (O(tableau)) inside this per-atom method
+        // made `=tight` O(tableau × atoms × assertions), far too slow.  The
+        // populated simplex bounds are read below regardless.
+        let _ = tighten;
         let mut var_terms: Vec<(VarId, Rational64)> = Vec::with_capacity(terms.len());
         for &(term, coef) in terms {
             let Some(&var) = self.term_to_var.get(&term) else {

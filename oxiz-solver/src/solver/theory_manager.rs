@@ -1311,6 +1311,14 @@ impl<'a> TheoryManager<'a> {
         if candidates.is_empty() {
             return None;
         }
+        // Tighten the tableau's variable bounds ONCE (to a fixpoint) so the
+        // per-atom derivation below sees transitive (recurrence-derived)
+        // bounds cheaply.  Done here rather than inside `derive_expr_bound_reasons`
+        // (which runs per atom) so the O(tableau) cost is paid once per
+        // assertion, not per atom × per assertion.
+        if tighten {
+            self.arith.tighten_tableau_bounds();
+        }
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
         for (var, terms, constant, less, strict) in candidates {
             let c_dr = DeltaRational::from_rational(constant);

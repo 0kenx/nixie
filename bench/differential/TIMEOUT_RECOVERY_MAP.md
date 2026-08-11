@@ -968,3 +968,35 @@ neither of which the current prop tracker (direct single-var bounds only)
 provides.  The landed propagator is a real, sound improvement (closes vhard4,
 shallows vhard7 conflicts by 16 levels) and the right foundation; vhard7 itself
 is a deeper CDCL/incremental-bound problem on top of it.
+
+## Restructure: tighten tableau bounds ONCE per assertion (not per atom) — closes vhard4,5,8,10,12
+
+The `=tight` mode (which runs `Simplex::propagate_bounds` to derive *transitive*
+tableau bounds) was O(tableau × atoms × assertions): `propagate_bounds` ran
+*inside* the per-atom `derive_expr_bound_reasons`.  Restructured so the caller
+(`derive_arith_bound_propagations`) runs the new `ArithSolver::tighten_tableau_bounds`
+(= `propagate_bounds` to a fixpoint, ≤16 passes) ONCE per assertion, then scans
+atoms cheaply.
+
+**Result on the vhard family (QF_UFIDL, all unsat, 12 s timeout):**
+
+| | baseline (`off`) | `OXIZ_BOUND_PROP=tight` |
+|---|---|---|
+| closes | vhard2,3 | **vhard2,3,4,5,8,10,12** |
+
+So `=tight` closes **5 more vhard instances** than baseline (vhard4,5,8,10,12),
+soundly (0 disagreements on the 60-instance IDL/UFIDL sample; 0 new
+disagreements on the full 270-instance differential).  vhard7 — the specific
+handover target — still times out: it is a particularly hard member of the
+family (vhard8/10/12 close while vhard6/7/9/11/13+ do not; difficulty is
+non-monotonic in the index).  Its conflicts remain deep (~level 98 even with
+transitive bounds) — the same CDCL-dynamics characteristic; closing it needs
+the full incremental per-assert bound layer (O(affected), not O(tableau)) and/or
+CDCL branching work.
+
+**Suite impact (270-instance differential, 8 s):** `=tight` is net-negative
+(solved 118 vs baseline 121) because the vhard gains manifest only at 10–25 s
+(they are timeouts, not yet solved, at 8 s) while the O(tableau) tightening cost
+is paid on every DL assertion.  Hence both modes stay **env-gated, default
+off**; `=tight` is the recommended setting for the QF_UFIDL/vhard family where
+the slower convergence is worthwhile, `=1` for a lighter touch.
