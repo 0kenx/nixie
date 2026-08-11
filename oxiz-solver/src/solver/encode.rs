@@ -600,6 +600,14 @@ impl Solver {
             self.record_assertion_identity(term, None, index);
             return;
         }
+        // Eliminate every `(let ((x e) ...) body)` node by substituting its
+        // bindings into its body, repeating to a fixpoint for nested lets.
+        // This MUST run before any theory encoder or model evaluator sees the
+        // assertion: those passes treat a `let`-bound name as an opaque free
+        // variable, so a `let`-bound bit-vector (e.g. `?v_0` bound to
+        // `(extract 255 64 a)`) loses its link to its definition and an
+        // unsatisfiable formula reads as satisfiable.  See `expand_lets`.
+        let term = self.expand_lets(term, manager);
         // Replace inlined nullary define-fun bodies with their named consts
         // (parser expands bindings at parse time).  Prevents re-flattening
         // Discord/EM/R on every later assert that mentions them.
@@ -1088,6 +1096,100 @@ impl Solver {
                 }
             }
         }
+    }
+
+    /// Eliminate every `TermKind::Let` node in `term` by substituting its
+    /// bindings into its body, repeating to a fixpoint so nested `let`s are
+    /// fully removed.
+    ///
+    /// # Why this lives in `assert`
+    ///
+    /// The Tseitin encoder (`encode_depth`) and every theory encoder /
+    /// model evaluator downstream hold only an immutable `&TermManager`,
+    /// whereas capture-avoiding substitution needs `&mut`.  More importantly,
+    /// those passes treat a `let`-bound *name* as an opaque free variable:
+    /// `encode_depth`'s `Let` arm encodes the body directly and discards the
+    /// bindings, and the bit-vector encoder bit-blasts a `let`-bound
+    /// bit-vector as a fresh unconstrained `BvVar`.  A `let`-bound
+    /// bit-vector such as `?v_0` (bound to `(extract 255 64 a)`) therefore
+    /// loses its link to its definition, so a formula whose only `let`-free
+    /// reading is UNSAT reads as SAT — e.g. `bench_679.smt2` and
+    /// `ext_con_064_002_0512.smt2` (both `:status unsat`) were answered
+    /// `sat`.
+    ///
+    /// Expanding `let` here — before the assertion is stored and before any
+    /// encoder runs — guarantees no downstream pass ever observes a `Let`
+    /// node, so each `let`-bound name is replaced by its definition
+    /// everywhere it is used.
+    ///
+    /// # Algorithm
+    ///
+    /// Fixpoint: each iteration finds one `Let` node (explicit-stack DFS,
+    /// stack-safe), substitutes its bindings into its body with the
+    /// capture-avoiding `TermManager::substitute`, then replaces that `Let`
+    /// node with the expanded body.  An outer `let` whose body contains an
+    /// inner `let` takes two iterations: the first removes the outer node
+    /// (applying the outer bindings, which preserves the inner `let` as a
+    /// rebuilt node), the second removes the inner one.  The number of
+    /// iterations is bounded by the `let`-nesting depth, which is itself
+    /// bounded by `ENCODE_DEPTH_LIMIT` (the depth guard in `assert` already
+    /// diverted deeper assertions), so the loop always terminates.
+    fn expand_lets(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
+        let mut current = term;
+        loop {
+            // Find the first `Let` node reachable from `current` (DFS,
+            // explicit stack, cycle-safe via `visited`).
+            let mut stack: Vec<TermId> = vec![current];
+            let mut visited: FxHashSet<TermId> = FxHashSet::default();
+            let mut found: Option<TermId> = None;
+            while let Some(tid) = stack.pop() {
+                if !visited.insert(tid) {
+                    continue;
+                }
+                let Some(node) = manager.get(tid) else {
+                    continue;
+                };
+                if matches!(node.kind, TermKind::Let { .. }) {
+                    found = Some(tid);
+                    break;
+                }
+                for child in get_children(&node.kind) {
+                    stack.push(child);
+                }
+            }
+            let Some(let_term) = found else {
+                break; // no `Let` remains
+            };
+            // Build the binding substitution: `Var(name)` (at the binding
+            // value's sort) -> value.  SMT-LIB `let` bindings are parallel
+            // (binding values are evaluated in the *enclosing* scope), so a
+            // single `substitute` call applying all of them at once is
+            // correct; `substitute` is capture-avoiding and drops an entry
+            // when it descends into a nested binder that re-binds the name.
+            let node = manager.get(let_term).expect("checked above");
+            let TermKind::Let { bindings, body } = &node.kind else {
+                break;
+            };
+            // Clone the binding data out of the immutable borrow of `manager`
+            // before the mutable `intern_term` / `substitute` calls below.
+            let bindings = bindings.clone();
+            let body = *body;
+            let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+            for (name, value) in bindings {
+                let Some(value_term) = manager.get(value) else {
+                    continue;
+                };
+                let sort = value_term.sort;
+                let var = manager.intern_term(TermKind::Var(name), sort);
+                subst.insert(var, value);
+            }
+            let expanded = manager.substitute(body, &subst);
+            // Replace this `Let` node with its expansion throughout `current`.
+            let mut rewrite: FxHashMap<TermId, TermId> = FxHashMap::default();
+            rewrite.insert(let_term, expanded);
+            current = manager.substitute(current, &rewrite);
+        }
+        current
     }
 
     pub fn assert_named(&mut self, term: TermId, name: &str, manager: &mut TermManager) {

@@ -1480,6 +1480,29 @@ impl BvSolver {
         }
         self.sat.model().get(idx).is_some_and(|v| v.is_true())
     }
+
+    /// Whether every bit of `term`'s bit-vector has a *defined* value (true or
+    /// false, not `Undef`) in the model snapshot — i.e. the solver actually
+    /// assigned this leaf, as opposed to leaving it free.
+    ///
+    /// The model-verification gate uses this to distinguish a genuinely
+    /// determined bit-vector value (safe to refute with) from a defaulted-to-0
+    /// free variable (which must stay inconclusive, lest a real `Sat` be turned
+    /// into a spurious `Unknown`).  Returns `false` for a term that was never
+    /// bit-blasted.
+    #[must_use]
+    pub fn bits_all_determined(&self, term: TermId) -> bool {
+        let Some(bv) = self.term_to_bv.get(&term) else {
+            return false;
+        };
+        bv.bits.iter().all(|&v| {
+            self.last_sat_model
+                .get(v.index())
+                .is_some_and(|l| l.is_defined())
+                || self.sat.model().get(v.index()).is_some_and(|l| l.is_defined())
+        })
+    }
+
 }
 
 impl Theory for BvSolver {

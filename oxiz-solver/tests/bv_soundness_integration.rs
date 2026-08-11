@@ -1613,3 +1613,110 @@ fn test_bv_ite_bool_variable_controls_stay_sat() {
         ),
     ]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// `let`-expansion regressions (audit: QF_BV soundness, 2025-08).
+//
+// The Tseitin encoder used to encode the *body* of a `(let ((x e)) body)` and
+// silently discard the bindings, so a `let`-bound bit-vector (`?v` bound to
+// `(extract … a)`) became an unconstrained free variable.  Formulas whose only
+// `let`-free reading is UNSAT were answered `sat` — `bench_679.smt2` and
+// `ext_con_064_002_0512.smt2` (both `:status unsat`).  These pin the
+// `expand_lets` preprocessing pass in `Solver::assert`.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A `let`-bound bit-vector that loses its definition reads as free, so the
+/// conjunction becomes satisfiable.  With `let` expansion it is UNSAT: `?v`
+/// *is* `(extract 15 8 a)`, so `?v = 0` clashes with `(extract 15 8 a) = 255`.
+#[test]
+fn bv_let_bound_extract_must_equal_definition_unsat() {
+    let script = r#"
+(set-logic QF_BV)
+(declare-fun a () (_ BitVec 16))
+(assert (let ((?v ((_ extract 15 8) a)))
+  (and (= ?v (_ bv0 8)) (= ((_ extract 15 8) a) (_ bv255 8)))))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Unsat);
+}
+
+/// Nested `let` whose inner binding references an outer one.  Both bindings
+/// must be substituted; discarding either turns this UNSAT formula into `sat`.
+#[test]
+fn bv_nested_let_bindings_propagate_unsat() {
+    let script = r#"
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 8))
+(assert (let ((?a (bvadd x (_ bv1 8)))) (let ((?b (bvadd ?a (_ bv1 8))))
+  (and (= ?b x) (not (= ?a x))))))
+(check-sat)
+"#;
+    // ?a = x+1, ?b = x+2.  ?b = x ⇒ x+2 = x (mod 256) ⇒ 2 = 0, false.  UNSAT.
+    assert_eq!(run_script(script), SolverResult::Unsat);
+}
+
+/// A `let`-bound variable shadowed inside a nested `let` must not leak the
+/// outer binding into the inner scope.  Satisfiable — pins capture-avoidance.
+#[test]
+fn bv_let_shadowing_stays_sat() {
+    let script = r#"
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 8))
+(assert (let ((?v (_ bv1 8))) (let ((?v (_ bv2 8))) (= ?v (_ bv2 8)))))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Sat);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Model-verification gate regressions (audit: QF_BV soundness, 2025-08).
+//
+// When the SAT core commits an inconsistent Boolean trail over abstracted
+// bit-vector atoms and reports a candidate `Sat`, the model-verification gate
+// (`model_refutes_assertions`) must refute a model that concretely violates a
+// bit-vector assertion.  These pin the bit-vector evaluation added to
+// `eval_in_model_outcome` / `eval_bv_value`.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A disjunction of bit-vector (dis)equalities whose unsatisfiability is only
+/// exposed by concretely evaluating the bit-vector atoms against the candidate
+/// model (the Boolean abstraction is satisfiable, and the per-atom bit-blast
+/// does not derive the conflict during search).  Minimised from
+/// `ext_con_064_002_0512.smt2`.  Before the model-verification gate learned to
+/// evaluate bit-vector terms this answered a spurious `sat`.
+#[test]
+fn bv_disjunction_requires_concrete_model_eval_unsat() {
+    let script = r#"
+(set-logic QF_BV)
+(declare-fun a () (_ BitVec 512))
+(declare-fun v1 () (_ BitVec 512))
+(declare-fun v2 () (_ BitVec 512))
+(declare-fun dummy1 () (_ BitVec 64))
+(declare-fun dummy2 () (_ BitVec 64))
+(assert
+  (and
+    (or (not (= ((_ extract 191 128) v1) ((_ extract 127 64) v1))) (not (= ((_ extract 447 384) v1) ((_ extract 383 320) v1))))
+    (or (not (= ((_ extract 191 128) v2) ((_ extract 127 64) v2))) (not (= ((_ extract 447 384) v2) ((_ extract 383 320) v2))))
+    (or
+      (and (= ((_ extract 255 64) a) (concat ((_ extract 255 128) v1) dummy1)) (= ((_ extract 191 0) a) (concat dummy1 ((_ extract 127 0) v1))) (= ((_ extract 511 320) a) (concat ((_ extract 511 384) v1) dummy2)) (= ((_ extract 447 256) a) (concat dummy2 ((_ extract 383 256) v1))))
+      (and (= ((_ extract 255 64) a) (concat ((_ extract 255 128) v2) dummy1)) (= ((_ extract 191 0) a) (concat dummy1 ((_ extract 127 0) v2))) (= ((_ extract 511 320) a) (concat ((_ extract 511 384) v2) dummy2)) (= ((_ extract 447 256) a) (concat dummy2 ((_ extract 383 256) v2)))))))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Unsat);
+}
+
+/// A genuinely-satisfiable disequality over two *free* bit-vectors must stay
+/// `sat`: the gate must not false-refute it by reading a defaulted model value.
+/// (This was the regression the conservative `bits_all_determined` check
+/// guards against.)
+#[test]
+fn bv_free_var_disequality_stays_sat() {
+    let script = r#"
+(set-logic QF_BV)
+(declare-const x (_ BitVec 8))
+(declare-const y (_ BitVec 8))
+(assert (not (= x y)))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Sat);
+}
