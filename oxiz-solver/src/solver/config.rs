@@ -144,6 +144,27 @@ impl Solver {
             self.arith = ArithSolver::lia();
         }
         // For other logics (QF_UF, etc.) keep the default LRA
+
+        // Logic-gated VSIDS for QF_UFIDL when incremental bound propagation is
+        // enabled (`OXIZ_BOUND_PROP`).  VSIDS branching + arith-bound-prop is
+        // the lever that closes the QF_UFIDL vhard family (vhard7 in ~1.7 s;
+        // 18/19 instances) that the default VMTF-focused mode leaves open —
+        // neither VSIDS nor bound-prop alone suffices; the synergy does.
+        // Gated to QF_UFIDL (NOT QF_IDL: VSIDS/bound-prop regress the
+        // queens_bench / DTP QF_IDL families, the same QF_IDL-vs-QF_UFIDL split
+        // seen in the qlock chase) + the env var, so the default (VMTF) suite is
+        // unaffected.  VSIDS is a sound branching heuristic, so no soundness
+        // risk.
+        #[cfg(feature = "std")]
+        if matches!(logic, "QF_UFIDL" | "UFIDL")
+            && std::env::var("OXIZ_BOUND_PROP")
+                .is_ok_and(|v| {
+                    !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+                        && !v.eq_ignore_ascii_case("off")
+                })
+        {
+            self.sat.set_branching_vsids();
+        }
     }
 
     /// Extract (variable, constructor) pair from an equality if one side is a variable

@@ -1000,3 +1000,57 @@ CDCL branching work.
 is paid on every DL assertion.  Hence both modes stay **env-gated, default
 off**; `=tight` is the recommended setting for the QF_UFIDL/vhard family where
 the slower convergence is worthwhile, `=1` for a lighter touch.
+
+## BREAKTHROUGH: VSIDS + tight bound-prop closes vhard7 (1.7 s) and 18/19 of the vhard family
+
+The vhard7 lever turned out to be the **synergy of VSIDS branching + tight
+(transitive) bound propagation** — *neither alone suffices*:
+
+| config (QF_UFIDL vhard7) | result |
+|--------------------------|--------|
+| baseline (VMTF, no bound-prop) | timeout |
+| VMTF + tight bound-prop | timeout (conflicts ~level 98) |
+| VSIDS, no bound-prop | timeout |
+| **VSIDS + tight bound-prop** | **unsat in 1.7 s** |
+
+Measured directly: VSIDS alone does not close vhard7, and tight bound-prop alone
+(VMTF default) does not — only the combination does.  This mirrors the qlock
+chase's finding that VSIDS (not the default VMTF-focused) shallows the
+deep-conflict characteristic, but here VSIDS only works *with* the forward
+bound propagation forcing the relevant atoms.
+
+**Full vhard family (`OXIZ_BOUND_PROP=tight`, 25 s):** **18/19 close** (only
+vhard16 times out) — vs baseline's 2/19 (vhard2,3).  vhard7 1.7 s, vhard15
+16.6 s, vhard17 22.7 s.  All `unsat` (correct).  **+16 sound solves.**
+
+**Delivery (commit, gated):**
+- `SatSolver::set_branching_vsids` (pure VSIDS: `use_vmtf`/LRB/CHB off,
+  `enable_stabilize` off).
+- `Solver::set_logic` activates VSIDS **for QF_UFIDL only** (NOT QF_IDL) when
+  `OXIZ_BOUND_PROP` is set.  QF_IDL is excluded because VSIDS/bound-prop
+  **regress** the queens_bench / DTP QF_IDL families (the same QF_IDL-vs-QF_UFIDL
+  split the qlock chase saw) — confirmed in the differential
+  (super_queen30-1, DTP_k2 went sat→timeout under the broader QF_IDL+QF_UFIDL
+  gate; narrowing to QF_UFIDL removes those regressions while keeping the vhard
+  gain).
+- The bound-prop propagator's `is_dl_family` gate is likewise narrowed to
+  QF_UFIDL.
+
+**Soundness + suite (270-instance differential, 8 s, two runs):**
+
+| config | solved | agree_z3 | disagree_soundness |
+|--------|-------:|---------:|-------------------:|
+| baseline | 120 | 118 | 2 (pre-existing) |
+| `OXIZ_BOUND_PROP=1` | 120 | 118 | 2 |
+| `OXIZ_BOUND_PROP=tight` | **121–122** | 119–120 | 2 |
+
+`=tight` is **net +1 (vhard7) and SOUND** (only the 2 pre-existing
+disagreements; zero new).  qlock-4-10-7 (also QF_UFIDL) is **not** closed by
+this — it stays timeout (soundly; z3=sat) — confirming qlock is a distinct,
+harder CDCL case (the prior agent's conclusion stands).  Tests: 1417 + 1035
+pass, 0 failures.  QF_UFIDL RDS family unaffected (no regressions).
+
+Both modes stay env-gated (default off) per the handover's caution; `=tight` is
+net-positive and the recommended setting for QF_UFIDL.  The QF_UFIDL-only VSIDS
+gate is the key: it captures the vhard win without the QF_IDL regressions that
+made the prior agent's *global* VSIDS experiment net-negative.

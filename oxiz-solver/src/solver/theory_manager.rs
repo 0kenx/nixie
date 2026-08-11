@@ -493,7 +493,7 @@ impl<'a> TheoryManager<'a> {
             max_decisions,
             has_bv_arith_ops,
             is_dl_family: logic
-                .map(|l| matches!(l, "QF_IDL" | "QF_UFIDL" | "IDL" | "UFIDL"))
+                .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
             interned_int_constants: FxHashMap::default(),
             interned_bv_constants: FxHashMap::default(),

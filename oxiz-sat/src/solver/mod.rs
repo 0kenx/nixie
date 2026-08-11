@@ -2436,6 +2436,22 @@ impl Solver {
         self.num_vars
     }
 
+    /// Switch the branching heuristic to pure VSIDS (disable VMTF and the
+    /// cadical-style focused/stable dual mode).  Used for logic-gated
+    /// configurations where VSIDS is the lever (e.g. QF_IDL/QF_UFIDL with
+    /// bound propagation: VSIDS + arith-bound-prop closes the vhard family
+    /// that the default VMTF-focused mode leaves open).  Must be called before
+    /// search begins (from `set_logic`); a mid-search switch would leave the
+    /// VMTF/LRB/CHB heaps stale, but `pick_branch_var` re-checks the flags on
+    /// every decision so the VSIDS heap (kept warm by conflict bumping
+    /// regardless of mode) is always current.
+    pub fn set_branching_vsids(&mut self) {
+        self.config.use_vmtf = false;
+        self.config.use_lrb_branching = false;
+        self.config.use_chb_branching = false;
+        self.config.enable_stabilize = false;
+    }
+
     /// Get number of clauses
     /// Soundness gate: does the current trail falsify a live clause?
     ///
