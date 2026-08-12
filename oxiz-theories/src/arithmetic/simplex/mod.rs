@@ -1714,6 +1714,23 @@ impl Simplex {
         self.resource_limit = false;
         self.assignment_current = true;
     }
+    /// Current decision-level depth of the bound trail (number of live push
+    /// scopes); `0` at the assertion/base level.
+    #[must_use]
+    pub fn scope_depth(&self) -> usize {
+        self.trail_limits.len().saturating_sub(1)
+    }
+
+    /// Pop the bound trail back to the assertion/base level (scope 0),
+    /// discarding every decision-level bound.  Used by optimisation queries
+    /// that must range over the *asserted* constraints alone (see
+    /// `ArithSolver::lp_int_bounds`).
+    pub fn pop_to_base(&mut self) {
+        while self.scope_depth() > 0 {
+            self.pop();
+        }
+    }
+
     /// Push a new decision level
     pub fn push(&mut self) {
         self.trail_limits.push(self.trail.len());

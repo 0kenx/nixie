@@ -172,6 +172,9 @@ impl Solver {
         self.model = None;
         self.unsat_core = None;
         self.last_check = None;
+        // Drop the cached feature snapshot: the assertion stack moved, so the
+        // features (and the knob decisions derived from them) are stale.
+        self.last_features = None;
         if let Some(proof) = self.proof.as_mut() {
             *proof = Proof::new();
         }

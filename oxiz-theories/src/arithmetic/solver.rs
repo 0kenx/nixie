@@ -794,6 +794,19 @@ impl ArithSolver {
     #[must_use]
     pub fn lp_int_bounds(&mut self, term: TermId) -> Option<(i64, i64)> {
         let &var = self.term_to_var.get(&term)?;
+        // Range over the ASSERTED (level-0) constraints only.  After a
+        // satisfiable search the simplex still carries the model's
+        // decision-level bounds (e.g. a decided `(= z -4)`); optimising over
+        // that state returns the model's value as the range — a *subset* of
+        // the true level-0 range — so the case-split `(t = lo ∨ … ∨ t = hi)`
+        // would exclude reachable values and become an unsound permanent
+        // clause (the `state_hygiene_audit` / `scope_rebase_adversarial`
+        // inter-check `sat → unsat` regressions).  Popping to base leaves only
+        // the asserted facts, which is the soundness criterion the case-split
+        // needs.  Destructive, but `refine_int_case_split` is immediately
+        // followed by a full `reset()`, so the discarded decision-level bounds
+        // are re-derived by the re-solve.
+        self.simplex.pop_to_base();
         let lo_real = match self.simplex.optimize_linexpr(&LinExpr::var(var)) {
             SimplexOptStatus::Optimal(v) => v,
             _ => return None,

@@ -145,22 +145,57 @@ impl Solver {
         }
         // For other logics (QF_UF, etc.) keep the default LRA
 
-        // Logic-gated VSIDS for QF_UFIDL, default-on (with `OXIZ_BOUND_PROP=off`
-        // escape hatch).  VSIDS branching + arith-bound-prop is the lever that
-        // closes the QF_UFIDL vhard family (vhard7 in ~1.7 s; 18/19 instances)
-        // that the default VMTF-focused mode leaves open — neither VSIDS nor
-        // bound-prop alone suffices; the synergy does.  Gated to QF_UFIDL (NOT
-        // QF_IDL: VSIDS/bound-prop regress the queens_bench / DTP QF_IDL
-        // families — the same QF_IDL-vs-QF_UFIDL split the qlock chase saw).
-        // VSIDS is a sound branching heuristic, so no soundness risk.
-        #[cfg(feature = "std")]
-        if matches!(logic, "QF_UFIDL" | "UFIDL")
-            && crate::solver::theory_manager::arith_bound_prop_mode()
-                != crate::solver::theory_manager::BoundPropMode::Off
-        {
+        // NOTE: the VSIDS + arith-bound-prop configuration that previously gated
+        // on `matches!(logic, "QF_UFIDL")` is now applied from the *features*
+        // of the asserted formula in [`Self::apply_feature_routing`]
+        // (`is_diff_logic() && has_uf()`), the `CFG_AUTO` analogue of Z3's
+        // `setup_QF_UFIDL(static_features&)`.  It cannot run here because the
+        // assertions are not available at `set-logic` time.
+    }
+
+    /// Feature-driven search-knob routing — the `CFG_AUTO` half of Z3's
+    /// `smt_setup.cpp`.
+    ///
+    /// Called once per [`Solver::check_core`] after [`StaticFeatures`] are
+    /// collected.  Each decision here mirrors a knob a Z3
+    /// `setup_QF_X(static_features & st)` routine sets from the formula rather
+    /// than the file name; the declared logic remains the coarse router (it
+    /// picked the arithmetic solver in [`Self::set_logic`], and
+    /// [`crate::solver::static_features::is_dl_logic`] gates the DL family).
+    ///
+    /// `ufidl_shape` is `is_diff_logic(st) && has_uf(st) && logic-allows-DL` —
+    /// the shape `setup_QF_UFIDL(st)` fires on.
+    ///
+    /// # Soundness
+    ///
+    /// Every switch flipped here is a search heuristic (branching order); none
+    /// of them changes the sat/unsat verdict, so feature-misclassification only
+    /// ever costs performance, never correctness.
+    pub(super) fn apply_feature_routing(&mut self, ufidl_shape: bool) {
+        self.route_branching_from_features(ufidl_shape);
+    }
+
+    /// VSIDS branching for the difference-logic + UF shape (Z3's
+    /// `setup_QF_UFIDL(st)`), gated on the formula features instead of the
+    /// logic name.  VSIDS + incremental arith-bound-propagation is the lever
+    /// that closes the finite-domain UFIDL `vhard` family; Z3 reaches the same
+    /// configuration from `is_diff_logic(st)` + UF counts rather than from
+    /// `m_logic == "QF_UFIDL"`.
+    ///
+    /// Gating on features fixes the two failure modes of the old logic-string
+    /// gate: a benchmark that *declares* `QF_UFIDL` but is not actually
+    /// difference logic no longer gets the unsound derived-reason path, and one
+    /// that declares no logic but is UFIDL-shaped still does.
+    #[cfg(feature = "std")]
+    fn route_branching_from_features(&mut self, ufidl_shape: bool) {
+        use crate::solver::theory_manager::{arith_bound_prop_mode, BoundPropMode};
+        if arith_bound_prop_mode() != BoundPropMode::Off && ufidl_shape {
             self.sat.set_branching_vsids();
         }
     }
+
+    #[cfg(not(feature = "std"))]
+    fn route_branching_from_features(&mut self, _ufidl_shape: bool) {}
 
     /// Extract (variable, constructor) pair from an equality if one side is a variable
     /// and the other is a DtConstructor

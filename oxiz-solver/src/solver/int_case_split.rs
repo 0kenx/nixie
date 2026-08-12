@@ -141,6 +141,15 @@ impl Solver {
         }
 
         let uf_args = self.collect_int_uf_args(manager);
+        // Snapshot each candidate's value in the model the theory just built
+        // BEFORE `lp_int_bounds` runs: that call pops the simplex to the
+        // base scope (to range over asserted facts only), which discards the
+        // decision-level assignment `ArithSolver::value` would otherwise read.
+        // The guard below compares the derived range against this model value.
+        let model_vals: FxHashMap<TermId, Option<i64>> = uf_args
+            .iter()
+            .map(|&t| (t, self.arith.value(t).and_then(|r| r.to_i64())))
+            .collect();
         let mut bounds = self.compute_int_bounds();
         // LP-optimization fallback for UF-arguments whose finite range comes
         // from a bounded *difference* of free variables — invisible to both the
@@ -154,7 +163,20 @@ impl Solver {
         for &t in &uf_args {
             if bounds.get(&t).is_none() {
                 if let Some((lo, hi)) = self.arith.lp_int_bounds(t) {
-                    bounds.insert(t, (Some(lo), Some(hi)));
+                    // A single-value LP range `[v, v]` would make the case-split
+                    // a permanent unit `(t = v)`.  That is only sound when `t` is
+                    // genuinely pinned to `v` by the *asserted* constraints; the
+                    // level-0 simplex state can still spuriously pin a free term
+                    // (a purification proxy whose only bound is a search-decided
+                    // equality recorded at the base scope), and the resulting
+                    // unit leaks across checks as a spurious `unsat`
+                    // (`state_hygiene_audit`, `scope_rebase_adversarial`).  A
+                    // term truly pinned to one value is derived by CDCL + the
+                    // arithmetic solver directly, so dropping the degenerate
+                    // single-value LP split costs no completeness.
+                    if lo != hi {
+                        bounds.insert(t, (Some(lo), Some(hi)));
+                    }
                 }
             }
         }
@@ -170,7 +192,7 @@ impl Solver {
             if hi < lo || hi - lo > MAX_INT_CASE_RANGE {
                 continue;
             }
-            if let Some(val) = self.arith.value(*t).and_then(|r| r.to_i64()) {
+            if let Some(val) = model_vals.get(t).and_then(|v| *v) {
                 if val < lo || val > hi {
                     // Derived range excludes the model the theory just built —
                     // our bounds are wrong for this term; do not prune.

@@ -21,7 +21,9 @@ pub(super) mod model_builder;
 pub(super) mod model_eval;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
+pub(super) mod static_features;
 pub(super) mod term_walk;
+pub(super) use static_features::StaticFeatures;
 pub(super) mod theory_bv_encode;
 pub(super) mod theory_manager;
 pub(super) mod trail;
@@ -346,6 +348,13 @@ pub struct Solver {
     /// case-splitting within the current `check`.  Capped by
     /// [`MAX_CASE_SPLIT_ROUNDS`] in `int_case_split`.
     pub(super) case_split_rounds: u32,
+    /// Static formula features collected from `self.assertions` at the start of
+    /// the most recent [`Solver::check_core`] — the oxiz port of Z3's
+    /// `ast/static_features`.  `None` before the first check (or after the goal
+    /// changed via [`Solver::invalidate_results`]); feature-driven knob
+    /// decisions (VSIDS, the difference-logic bound-propagation family) re-read
+    /// it on every check.  See [`self::static_features`].
+    pub(super) last_features: Option<StaticFeatures>,
 }
 
 /// Maximum term-nesting depth the recursive Tseitin encoder will descend
@@ -522,6 +531,7 @@ impl Solver {
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
+            last_features: None,
         }
     }
 
@@ -905,6 +915,56 @@ impl Solver {
         if self.assertions.is_empty() {
             return SolverResult::Sat;
         }
+
+        // Collect static formula features once for this goal (cached on
+        // `self.last_features`, dropped by `invalidate_results` whenever the
+        // assertion stack moves).  This is the oxiz port of Z3's
+        // `ast/static_features` walk; the feature-driven knob decisions below
+        // — the difference-logic bound-propagation family gate and the VSIDS
+        // branching heuristic — read it instead of the declared logic string,
+        // because the logic string is only the coarse half of Z3's router
+        // (CFG_LOGIC); the real configuration comes from the formula (CFG_AUTO).
+        //
+        // Z3's `CFG_AUTO` uses the declared logic to pick the setup *family*
+        // and lets features refine the knobs within it, so a DL knob applies
+        // when the formula is difference-logic-shaped AND the logic is a DL
+        // logic (or is absent — the `setup_unknown(st)` path, classified purely
+        // from features).  See `solver::static_features` for the mapping to
+        // `smt_setup.cpp`.  The `Copy` predicates are read inside a block so
+        // the `&mut` borrow of `self.last_features` ends before
+        // `apply_feature_routing` takes `&mut self`.
+        let ufidl_shape = {
+            let features = self
+                .last_features
+                .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions));
+            // VSIDS is a pure branching heuristic — always sound — so it may
+            // follow the features (Z3's `setup_QF_UFIDL(st)` shape: difference
+            // logic + uninterpreted functions).  The declared logic still gates
+            // the family when present (`is_dl_logic`), the `CFG_AUTO` split.
+            // (The bound-propagation `is_dl_family` gate stays logic-driven in
+            // `TheoryManager::new` — it is soundness-sensitive and oxiz's
+            // derived-reason variant is only validated on declared-DL input.)
+            //
+            // The feature signal is collected on the *preprocessed* assertions
+            // (after `assert` runs `purify_numeric_uf_args`, `ite`-elim, …), so
+            // a numeric constant purified into a fresh `__oxiz_numarg_N`
+            // variable turns a difference atom `(+ x c) ≤ k` into the
+            // 2-variable `(+ x __oxiz_numarg) ≤ k`, which `is_diff_atom`
+            // correctly rejects.  That obscures the DL shape of real QF_UFIDL
+            // inputs (e.g. the mathsat `vhard` family) and would drop VSIDS,
+            // regressing them ~10⁴×.  Because VSIDS is sound, the gate falls
+            // back to the declared logic as a second signal: a declared
+            // `QF_UFIDL`/`UFIDL` (the validated DL+UF family) also gets VSIDS —
+            // exactly the pre-feature logic-string route — so no real QF_UFIDL
+            // input loses the heuristic to a purification artifact.
+            features.has_uf()
+                && (features.is_diff_logic()
+                    || matches!(
+                        self.logic.as_deref(),
+                        Some("QF_UFIDL") | Some("UFIDL")
+                    ))
+        };
+        self.apply_feature_routing(ufidl_shape);
 
         // Honesty gate (soundness): if the Tseitin encoder refused a
         // sub-formula because it was pathologically deep, the encoding is
