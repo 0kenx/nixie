@@ -1144,12 +1144,28 @@ impl ArithSolver {
     ///
     /// Precondition: the LP relaxation is feasible and not resource-limited.
     fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
-        // Cheap, sound integer-equality consistency check first — resolves
-        // cross-constraint parity infeasibility that branch-and-bound over
-        // unbounded variables would otherwise only be able to report as Unknown.
-        // The Diophantine check is a pure function of `int_equalities` and is
-        // O(rows·cols), so its result is memoised in `int_eq_infeasible_cache`
-        // (invalidated only when an equality is asserted or retracted by `pop`).
+        // Branch-and-bound first.  It is the common path: on saturated integer
+        // inputs the LP optimum is almost always already integral, so B&B exits
+        // at its first node (`find_fractional_int_var` returns `None`) and
+        // reports `Sat` without ever touching the equality system.
+        let int_vars = self.interned_int_vars();
+        let mut nodes: usize = 0;
+        let result = self.bnb_recurse(&int_vars, 0, &mut nodes)?;
+        match result {
+            TheoryResult::Unknown => {}
+            other => return Ok(other),
+        }
+        // B&B gave up (unbounded variables, or its node/depth budget).  Try the
+        // sound Diophantine parity check as a fallback: it resolves the
+        // cross-constraint integer-infeasibility that branch-and-bound over
+        // unbounded variables cannot (e.g. `y = 2x ∧ y = 2z + 1`), converting a
+        // would-be `Unknown` into a proven `Unsat`.  It only ever strengthens
+        // (never weakens) the verdict, so running it here instead of ahead of
+        // B&B is sound — and it avoids re-running an O(rows·cols) fraction-free
+        // Gaussian elimination on every theory check when B&B already decided.
+        // The check is a pure function of `int_equalities`, so its result is
+        // memoised in `int_eq_infeasible_cache` (invalidated only when an
+        // equality is asserted or retracted by `pop`).
         let infeasible = match self.int_eq_infeasible_cache {
             Some(v) => v,
             None => {
@@ -1161,9 +1177,7 @@ impl ArithSolver {
         if infeasible {
             return Ok(TheoryResult::Unsat(self.full_unsat_core()));
         }
-        let int_vars = self.interned_int_vars();
-        let mut nodes: usize = 0;
-        self.bnb_recurse(&int_vars, 0, &mut nodes)
+        Ok(TheoryResult::Unknown)
     }
 
     /// Recursive branch-and-bound over integer variables.
