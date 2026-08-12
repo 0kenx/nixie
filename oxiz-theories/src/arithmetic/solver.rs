@@ -91,6 +91,17 @@ pub struct ArithSolver {
     /// that per-equation GCD reasoning and pure branch-and-bound over unbounded
     /// variables miss.  Push/pop-scoped via `ContextState`.
     int_equalities: Vec<IntEquation>,
+    /// Cached result of [`Self::int_equalities_infeasible`].  That Diophantine
+    /// consistency check is a pure function of `int_equalities` (it neither
+    /// reads nor depends on the live simplex assignment), but it performs an
+    /// O(rows·cols) fraction-free Gaussian elimination, so re-running it on
+    /// every theory check — which for an integer logic fires once per CDCL
+    /// propagation — dominates runtime on saturated LIA/DL inputs (e.g. the
+    /// mathsat `vhard` family, where it alone was ~80% of wall time).  The
+    /// equality set changes only when an equality is asserted (`intern`-time)
+    /// or retracted by `pop`, so the cache is invalidated at exactly those
+    /// points and recomputed lazily.  `None` ⇒ dirty.
+    int_eq_infeasible_cache: Option<bool>,
     /// Propagation-only single-variable constant bounds, maintained in
     /// parallel with the simplex.  The simplex encodes every constraint
     /// (`add_le`/`add_eq`) as a *slack row* with the bound on the slack, so its
@@ -187,6 +198,7 @@ impl ArithSolver {
             shared_equalities: Vec::new(),
             lia_model: FxHashMap::default(),
             int_equalities: Vec::new(),
+            int_eq_infeasible_cache: None,
             prop_lower: Vec::new(),
             prop_upper: Vec::new(),
             prop_undo: Vec::new(),
@@ -545,6 +557,9 @@ impl ArithSolver {
                     terms: eq_terms,
                     rhs: const_term,
                 });
+                // A new equality changes the Diophantine system → invalidate
+                // the cached feasibility verdict.
+                self.int_eq_infeasible_cache = None;
 
                 // Compute GCD of all coefficients
                 let g = coeffs.iter().fold(0i64, |acc, &c| gcd_i64(acc, c.abs()));
@@ -1132,7 +1147,18 @@ impl ArithSolver {
         // Cheap, sound integer-equality consistency check first — resolves
         // cross-constraint parity infeasibility that branch-and-bound over
         // unbounded variables would otherwise only be able to report as Unknown.
-        if self.int_equalities_infeasible() {
+        // The Diophantine check is a pure function of `int_equalities` and is
+        // O(rows·cols), so its result is memoised in `int_eq_infeasible_cache`
+        // (invalidated only when an equality is asserted or retracted by `pop`).
+        let infeasible = match self.int_eq_infeasible_cache {
+            Some(v) => v,
+            None => {
+                let v = self.int_equalities_infeasible();
+                self.int_eq_infeasible_cache = Some(v);
+                v
+            }
+        };
+        if infeasible {
             return Ok(TheoryResult::Unsat(self.full_unsat_core()));
         }
         let int_vars = self.interned_int_vars();
@@ -1377,6 +1403,13 @@ impl Theory for ArithSolver {
             self.reasons.truncate(state.num_reasons);
             self.reason_counter = state.num_reasons as u32;
             self.shared_equalities.truncate(state.num_shared_equalities);
+            // Only invalidate the Diophantine-feasibility cache if `pop` actually
+            // removed equalities asserted in this scope; a truncate that changes
+            // nothing leaves the live equality set identical, so any cached
+            // verdict over it is still valid.
+            if self.int_equalities.len() > state.num_int_equalities {
+                self.int_eq_infeasible_cache = None;
+            }
             self.int_equalities.truncate(state.num_int_equalities);
             // The LIA branch-and-bound model is a snapshot of the *last* check's
             // integral assignment, keyed by VarId. Because VarIds are recycled
@@ -1416,6 +1449,7 @@ impl Theory for ArithSolver {
         self.shared_equalities.clear();
         self.lia_model.clear();
         self.int_equalities.clear();
+        self.int_eq_infeasible_cache = None;
         self.prop_lower.clear();
         self.prop_upper.clear();
         self.prop_undo.clear();
