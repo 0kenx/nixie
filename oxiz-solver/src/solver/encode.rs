@@ -332,9 +332,15 @@ impl Solver {
         }
         /// Resume state for one `Mul` node.  A product is linear iff at most
         /// one factor is non-constant; each factor is evaluated into a fresh
-        /// [`Level`] and classified here when it completes.  The factor must
-        /// be linear-as-a-whole (exactly one variable term, no additive
-        /// constant) for the product to remain linear.
+        /// [`Level`] and classified here when it completes.  The single
+        /// non-constant factor may carry several variable terms AND an
+        /// additive constant (e.g. `a - 1`, `(+ x y 2)`): multiplying it by
+        /// the product of every *other* (constant) factor keeps the result
+        /// linear (`2·(a − 1) = 2a − 2`).  The previous code rejected such a
+        /// factor outright, which silently dropped the atom's theory meaning
+        /// and reported `sat`/`unknown` for goals that were in fact linear —
+        /// a false `sat` on the `20170829-Rodin` family
+        /// (`not (< (+ (* 2 (- a 1)) b 1) (+ (* 2 a) b)))`.
         struct MulFrame {
             args: SmallVec<[TermId; 4]>,
             /// Index of the next factor to evaluate; factors `..next-1` have
@@ -342,9 +348,10 @@ impl Solver {
             /// one whose result is sitting in the current level.
             next: usize,
             const_product: Rational64,
-            /// The single non-constant factor seen so far, e.g. `x`, `(- x)`,
-            /// `(* 2 x)`.  A second one makes the product nonlinear.
-            var_factor: Option<(TermId, Rational64)>,
+            /// The single non-constant factor seen so far, in full linear
+            /// form (variable terms + additive constant).  A second
+            /// non-constant factor makes the product nonlinear.
+            non_const_factor: Option<Level>,
             /// The scale the whole product contributes at.
             scale: Rational64,
             /// The suspended accumulation context of the `Mul`'s parent,
@@ -482,7 +489,7 @@ impl Solver {
                                 args: args.iter().copied().collect(),
                                 next: 0,
                                 const_product: Rational64::one(),
-                                var_factor: None,
+                                non_const_factor: None,
                                 scale: sc,
                                 parent: core::mem::replace(&mut cur, Level::new()),
                             }));
@@ -525,22 +532,19 @@ impl Solver {
                         // Classify the factor whose evaluation just completed
                         // into the current (per-factor) level.
                         if cur.terms.is_empty() {
-                            // Pure constant factor — absorb into product.
+                            // Pure constant factor — absorb into the running
+                            // product of constant factors.
                             frame.const_product *= cur.constant;
-                        } else if cur.terms.len() == 1 && cur.constant.is_zero() {
-                            // Exactly one scaled variable with no additive constant,
-                            // e.g. `x`, `(- x)`, `(* 2 x)`.  Record as the variable
-                            // factor; if we already have one, the product is nonlinear.
-                            if frame.var_factor.is_some() {
+                        } else {
+                            // Non-constant factor (one or more variable terms,
+                            // possibly with an additive constant).  A product
+                            // is linear iff at most one factor is non-constant,
+                            // so a second such factor makes it nonlinear.
+                            if frame.non_const_factor.is_some() {
                                 return None;
                             }
-                            frame.var_factor = Some(cur.terms[0]);
-                        } else {
-                            // Either multi-variable (e.g. `(+ x y)`), or a linear
-                            // expression with a constant offset (e.g. `(+ 1 x)`).
-                            // Multiplying such a factor by another variable yields a
-                            // nonlinear product.
-                            return None;
+                            frame.non_const_factor =
+                                Some(core::mem::replace(&mut cur, Level::new()));
                         }
                     }
                     if frame.next < frame.args.len() {
@@ -551,12 +555,22 @@ impl Solver {
                         work.push(Work::Visit(arg, Rational64::one()));
                     } else {
                         // All factors classified: restore the parent context
-                        // and contribute the product to it.
-                        let new_scale = frame.scale * frame.const_product;
+                        // and contribute the product to it.  `c` is the product
+                        // of the scale and every constant factor, so the single
+                        // non-constant factor's variable terms and its additive
+                        // constant are both scaled by `c`.
+                        let c = frame.scale * frame.const_product;
                         cur = frame.parent;
-                        match frame.var_factor {
-                            Some((v, coef)) => cur.terms.push((v, new_scale * coef)),
-                            None => cur.constant += new_scale,
+                        match frame.non_const_factor {
+                            None => {
+                                cur.constant += c;
+                            }
+                            Some(level) => {
+                                for (v, coef) in level.terms {
+                                    cur.terms.push((v, c * coef));
+                                }
+                                cur.constant += c * level.constant;
+                            }
                         }
                     }
                 }
@@ -2153,6 +2167,26 @@ impl Solver {
                     // Track theory variables for model extraction
                     self.track_theory_vars(*lhs, manager);
                     self.track_theory_vars(*rhs, manager);
+
+                    // Soundness: an equality between array-sorted terms (e.g.
+                    // `(= (store ...) (store ...))` or `(= (store ...) b)`) is
+                    // *not* a free Boolean — it can only be satisfied/discharged
+                    // by the array decision procedure (read-over-write +
+                    // extensionality).  The operands are array terms, so flag
+                    // `has_array_ops` so `check_core`'s lazy array-axiom
+                    // refinement loop actually runs; otherwise the atom is left
+                    // as an unconstrained Boolean and a spurious `sat` is
+                    // reported for an UNSAT goal (observed on the `storecomm`
+                    // family: a disequality of two provably-equal store chains).
+                    let lhs_is_array = lhs_term.is_some_and(|t| {
+                        manager
+                            .sorts
+                            .get(t.sort)
+                            .is_some_and(|s| matches!(s.kind, SortKind::Array { .. }))
+                    });
+                    if lhs_is_array {
+                        self.has_array_ops = true;
+                    }
 
                     // Pre-parse arithmetic equality for ArithSolver
                     // Only for Int/Real sorts, not BitVec

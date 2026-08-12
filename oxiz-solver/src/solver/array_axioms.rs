@@ -148,8 +148,14 @@ struct ArrayStructure {
     selects: Vec<(TermId, TermId, TermId)>,
     /// Unordered array-sorted equality atoms `(a, b)` (`a != b` syntactically).
     eq_pairs: Vec<(TermId, TermId)>,
-    /// `array_variable -> store_term` for every asserted `var = store(...)`.
-    aliases: FxHashMap<TermId, TermId>,
+    /// `array_variable -> store_term`s for every asserted `var = store(...)`.
+    /// A variable may appear in several such assertions, so this is a list per
+    /// variable — see [`record_alias`] for why dropping the second alias is
+    /// unsound.
+    aliases: FxHashMap<TermId, Vec<TermId>>,
+    /// `(base, store_result)` for every `store` term, used to seed
+    /// base↔store extensionality (see [`collect_array_structure`]).
+    store_base_pairs: Vec<(TermId, TermId)>,
     /// Distinct indices read on each array operand (for select congruence).
     read_indices: FxHashMap<TermId, Vec<TermId>>,
 }
@@ -188,6 +194,19 @@ fn collect_array_structure(
                 stack.push(*array);
             }
             TermKind::Store(base, index, value) => {
+                // Record the (base, store_result) pair for every store so
+                // extensionality can be generated between an array and its
+                // write when the write is *named by a variable* (see the
+                // aliased-result gate in `build_extensionality_and_congruence`,
+                // which is what keeps deep non-aliased chains like `storecomm`
+                // from exploding).  Without base-extensionality a
+                // contradiction that lives in whether `b = store(a, …)` forces
+                // `a = b` (Stump-Barrett-Dill-Levitt `array_incompleteness1`,
+                // or the deep-aliased writes in `cvc/read8`) is never explored,
+                // because `(a, b)` is not an *asserted* equality atom.
+                if *base != term {
+                    out.store_base_pairs.push((*base, term));
+                }
                 stack.push(*value);
                 stack.push(*index);
                 stack.push(*base);
@@ -214,18 +233,29 @@ fn collect_array_structure(
 
 /// If `var_term` is a plain variable and `store_term` is a `store` expression,
 /// record `var_term -> store_term`.
+///
+/// A variable may be equated to SEVERAL stores in one formula (e.g.
+/// `(= b (store a x v))` and `(= b (store a y w))`), and the array decision
+/// procedure must honour ALL of them: dropping the second alias silently
+/// loses the read-over-write lemma through it, and the two stores then never
+/// get reconciled — a spurious `sat` for an UNSAT goal (Stump-Barrett-Dill-
+/// Levitt `array_incompleteness1` shape).  De-duplicate by `store_term` so a
+/// repeated identical assertion does not double-instantiate.
 fn record_alias(
     var_term: TermId,
     store_term: TermId,
     manager: &TermManager,
-    aliases: &mut FxHashMap<TermId, TermId>,
+    aliases: &mut FxHashMap<TermId, Vec<TermId>>,
 ) {
     let (Some(var_data), Some(store_data)) = (manager.get(var_term), manager.get(store_term))
     else {
         return;
     };
     if matches!(var_data.kind, TermKind::Var(_)) && matches!(store_data.kind, TermKind::Store(..)) {
-        aliases.entry(var_term).or_insert(store_term);
+        let entry = aliases.entry(var_term).or_default();
+        if !entry.contains(&store_term) {
+            entry.push(store_term);
+        }
     }
 }
 
@@ -250,19 +280,25 @@ fn build_read_over_write(
                 row_implications(manager, select_term, store_idx, stored_val, base, index);
             candidates.push(row1);
             candidates.push(row2);
-        } else if let Some(&store_term) = collected.aliases.get(&array) {
-            if let Some((base, store_idx, stored_val)) = as_store(store_term, manager) {
-                // Aliased read: an asserted `array = store(...)` makes the same
-                // axiom apply, but we guard each implication with that alias
-                // equality so the lemma stays a universally-valid theorem
-                // (`array = store(...) ∧ cond ⇒ ...`).
-                let alias_eq = manager.mk_eq(array, store_term);
-                let (row1, row2) =
-                    row_implications(manager, select_term, store_idx, stored_val, base, index);
-                let g1 = manager.mk_implies(alias_eq, row1);
-                let g2 = manager.mk_implies(alias_eq, row2);
-                candidates.push(g1);
-                candidates.push(g2);
+        } else if let Some(store_terms) = collected.aliases.get(&array) {
+            // Aliased read: an asserted `array = store(...)` makes the same
+            // axiom apply, but we guard each implication with that alias
+            // equality so the lemma stays a universally-valid theorem
+            // (`array = store(...) ∧ cond ⇒ ...`).
+            //
+            // A variable may alias SEVERAL stores; every alias must contribute
+            // its read-over-write lemma or two stores equated through the same
+            // variable are never reconciled (see [`record_alias`]).
+            for &store_term in store_terms {
+                if let Some((base, store_idx, stored_val)) = as_store(store_term, manager) {
+                    let alias_eq = manager.mk_eq(array, store_term);
+                    let (row1, row2) =
+                        row_implications(manager, select_term, store_idx, stored_val, base, index);
+                    let g1 = manager.mk_implies(alias_eq, row1);
+                    let g2 = manager.mk_implies(alias_eq, row2);
+                    candidates.push(g1);
+                    candidates.push(g2);
+                }
             }
         }
     }
@@ -297,7 +333,38 @@ fn build_extensionality_and_congruence(
     collected: &ArrayStructure,
     candidates: &mut Vec<TermId>,
 ) {
-    for &(a, b) in &collected.eq_pairs {
+    // Extensionality candidate pairs: the asserted array equalities, PLUS
+    // every (base, store_result) pair for a store that is *named by a
+    // variable* (asserted `var = store(...)`), so an array and its write are
+    // compared even when their (in)equality is only implied.
+    //
+    // Gated to aliased stores: base-extensionality is the ingredient that
+    // decides the Stump-Barrett-Dill-Levitt `array_incompleteness1` /
+    // `storeinv` shape (a variable equated to a write over a base array, where
+    // the contradiction is whether the write forces `base = var`).  Applying
+    // it to EVERY store — including the innermost write of a deep `storecomm`
+    // chain — spawns extensionality pairs whose witness reads unfold the whole
+    // chain, turning a sub-millisecond SAT into a multi-second solve or a
+    // timeout.  Deep chains never need it: their (in)equality is already an
+    // asserted atom whose own extensionality lemma decides them.
+    // Set of store terms that some array variable is asserted equal to
+    // (`var = store(...)`).  A store in this set is "named" by a variable, so
+    // reconciling it against its own base array may be required to decide the
+    // goal; a store that is NOT named (e.g. an internal link of a deep
+    // `storecomm` chain) is already decided by the extensionality lemma on its
+    // asserted (dis)equality atom and needs no base-extensionality.
+    let aliased_stores: FxHashSet<TermId> =
+        collected.aliases.values().flatten().copied().collect();
+    let mut pairs: Vec<(TermId, TermId)> = collected.eq_pairs.clone();
+    for &(base, result) in &collected.store_base_pairs {
+        if aliased_stores.contains(&result)
+            && !pairs.contains(&(base, result))
+            && !pairs.contains(&(result, base))
+        {
+            pairs.push((base, result));
+        }
+    }
+    for &(a, b) in &pairs {
         // Extensionality: a = b ∨ select(a,k) != select(b,k), with a fresh but
         // deterministic witness index per unordered pair.
         if let Some(domain) = array_domain(a, manager) {
