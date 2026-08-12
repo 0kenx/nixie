@@ -163,6 +163,17 @@ fn is_plain_numeric_term(td: &oxiz_core::ast::Term) -> bool {
     )
 }
 
+/// Numeric value of a bare constant term (`IntConst`/`RealConst`), else `None`.
+/// Used by the DL-primary path to fold constants out of an atom's linear form.
+fn direct_const_value(manager: &oxiz_core::ast::TermManager, t: TermId) -> Option<Rational64> {
+    let td = manager.get(t)?;
+    match &td.kind {
+        TermKind::IntConst(n) => n.to_i64().map(Rational64::from_integer),
+        TermKind::RealConst(r) => Some(Rational64::new(*r.numer(), *r.denom())),
+        _ => None,
+    }
+}
+
 /// If `(= lhs rhs)` is a GENUINE `term = constant` equality — `rhs` a numeric
 /// constant and `lhs` a non-constant Int/Real-sorted term (a plain variable,
 /// an uninterpreted-function application like `(Succ 0)`, an array select, an
@@ -260,6 +271,25 @@ pub(crate) struct TheoryManager<'a> {
     term_to_var: &'a FxHashMap<TermId, Var>,
     /// Reverse mapping from SAT variables to terms (for EUF merge reasons)
     var_to_term: &'a Vec<TermId>,
+    /// `const TermId -> proxy TermId` map from `purify_numeric_uf_args`.  Because
+    /// that pass uses a *global* substitute, a constant abstracted out of one
+    /// UF application is replaced *everywhere* — including in arithmetic like
+    /// `(+ x 1)` -> `(+ x __oxiz_numarg)`, which destroys difference-logic
+    /// shape.  Inverting this map lets the DL-primary path fold those proxies
+    /// back into the atom's constant, restoring DL shape.
+    numarg_proxies: &'a FxHashMap<TermId, TermId>,
+    /// Canonical `IntConst(0)` term — the DL solver's zero reference for
+    /// absolute single-variable bounds (`x ≤ k` is fed as the edge
+    /// `zero → x` of weight `k`).  Registered as an ordinary DL variable; a
+    /// free zero gives correct feasibility (bounds `x ≤ k`, `x ≥ k'` form a
+    /// `zero→x→zero` cycle of weight `k − k'`, infeasible iff `k < k'`) and
+    /// never introduces spurious infeasibility.  Currently unused: feeding
+    /// bounds through the zero node was net-negative (the zero hub inflated
+    /// seeded-SPFA and derailed dense inputs), so bounds are deferred to the
+    /// simplex and only 2-var differences take the DL path.  Retained for a
+    /// future bound-aware DL propagation pass.
+    #[allow(dead_code)]
+    zero_term: TermId,
     /// Fresh `ite`-result constants (`__oxiz_ite_*`) axiomatized against
     /// constants (z3-style triangle).  Used by `final_check` to theory-propagate
     /// the `le`/`ge` atoms deterministically when arithmetic fixes such a term
@@ -452,6 +482,8 @@ impl<'a> TheoryManager<'a> {
         var_to_parsed_arith: &'a FxHashMap<Var, ParsedArithConstraint>,
         term_to_var: &'a FxHashMap<TermId, Var>,
         var_to_term: &'a Vec<TermId>,
+        numarg_proxies: &'a FxHashMap<TermId, TermId>,
+        zero_term: TermId,
         ite_result_terms: &'a FxHashSet<TermId>,
         derived_reasons: &'a mut DerivedReasons,
         theory_mode: TheoryMode,
@@ -481,6 +513,8 @@ impl<'a> TheoryManager<'a> {
             var_to_parsed_arith,
             term_to_var,
             var_to_term,
+            numarg_proxies,
+            zero_term,
             ite_result_terms,
             derived_reasons,
             level_stack: vec![0],
@@ -1430,11 +1464,26 @@ impl<'a> TheoryManager<'a> {
         }
     }
 
+    /// If `t` is a `__oxiz_numarg` proxy (a fresh variable that
+    /// `purify_numeric_uf_args` substituted for a numeric constant), return the
+    /// constant's value.  Linear scan of `numarg_proxies` (the map is small —
+    /// one entry per distinct numeric UF-arg constant, e.g. ~28 on vhard7).
+    fn proxy_const_value(&self, t: TermId) -> Option<Rational64> {
+        for (const_t, proxy_t) in self.numarg_proxies.iter() {
+            if *proxy_t == t {
+                return direct_const_value(self.manager, *const_t);
+            }
+        }
+        None
+    }
+
     /// Feed one asserted atom to the incremental DL solver and return a
     /// conflict if it creates a negative cycle.  Uses the seeded-SPFA
-    /// `add_*_check` (O(affected) per edge), the cheap DL-primary path.  Only
-    /// handles 2-var unit Int/Real differences with plain operands; no-op
-    /// otherwise.  SOUND: a DL negative cycle is a valid refutation.
+    /// `add_*_check` (O(affected) per edge), the cheap DL-primary path.
+    /// Folds `__oxiz_numarg` proxies and bare constants into the atom's RHS so
+    /// single-variable bounds and 2-variable differences both feed (bounds via
+    /// the canonical zero term).  SOUND: a DL negative cycle is a valid
+    /// refutation.
     fn diff_primary_conflict(
         &mut self,
         var: Var,
@@ -1445,26 +1494,57 @@ impl<'a> TheoryManager<'a> {
         is_positive: bool,
     ) -> Option<TheoryCheckResult> {
         use oxiz_theories::DiffLogicResult;
-        if terms.len() != 2 {
-            return None;
-        }
-        let mut x = None;
-        let mut y = None;
-        let mut ok = true;
+        // Fold every constant sub-term — whether a `purify_numeric_uf_args`
+        // proxy (`__oxiz_numarg`, recoverable via `numarg_proxies`) or a bare
+        // `IntConst`/`RealConst` — into the atom's RHS constant, leaving only
+        // the real variable terms.  This restores the difference-logic shape
+        // that the global purification substitute destroyed (it turned
+        // `(+ x 1)` into `(+ x __oxiz_numarg)`), so the DL solver can feed atoms
+        // it previously rejected as non-DL.
+        let mut adj_constant = constant;
+        let mut real_terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
         for &(t, c) in terms {
-            if c == Rational64::from_integer(1) {
-                x = Some(t);
-            } else if c == Rational64::from_integer(-1) {
-                y = Some(t);
+            let folded = self
+                .proxy_const_value(t)
+                .or_else(|| direct_const_value(self.manager, t));
+            if let Some(v) = folded {
+                adj_constant = adj_constant - c * v;
             } else {
-                ok = false;
+                real_terms.push((t, c));
             }
         }
-        if !ok {
-            return None;
-        }
-        let (Some(xt), Some(yt)) = (x, y) else {
-            return None;
+        // Normalise the resolved atom to a 2-variable DL edge `(x, y, c)` with
+        // `ctype`/`is_eq`, where a single-variable bound uses the canonical
+        // zero term as `y` (`x ≤ k` ≡ edge `zero → x`, weight `k`).
+        let (xt, yt, c, ctype) = match real_terms.as_slice() {
+            // Pure constant atom (e.g. `0 ≤ k`): defer to the simplex path.
+            [] => return None,
+            [(v, coef)] => {
+                // Single-variable bounds (`x ≤ k`) are deferred to the simplex.
+                // Feeding them through a DL zero-node is net-negative: the zero
+                // vertex becomes a high-degree hub that inflates the seeded-SPFA
+                // per-edge check and derails the search on dense inputs
+                // (vhard16 went 0.35s -> 50s with bounds fed; vhard7 was slower
+                // too).  The 2-variable differences below are the win.
+                let _ = (v, coef);
+                return None;
+            }
+            [(a, ca), (b, cb)] => {
+                // Difference `x − y`: one +1 coefficient, one −1.
+                let (x, y) = if *ca == Rational64::from_integer(1)
+                    && *cb == Rational64::from_integer(-1)
+                {
+                    (*a, *b)
+                } else if *cb == Rational64::from_integer(1)
+                    && *ca == Rational64::from_integer(-1)
+                {
+                    (*b, *a)
+                } else {
+                    return None; // not a unit difference
+                };
+                (x, y, adj_constant, ctype)
+            }
+            _ => return None, // 3+ real variables: genuinely non-difference
         };
         for t in [xt, yt] {
             let Some(td) = self.manager.get(t) else {
@@ -1480,7 +1560,7 @@ impl<'a> TheoryManager<'a> {
                 return None;
             }
         }
-        let dla = DlAtom { var, x: xt, y: yt, c: constant, is_eq, ctype };
+        let dla = DlAtom { var, x: xt, y: yt, c, is_eq, ctype };
         let origin = self.term_for_var(var);
         if let DiffLogicResult::Conflict(cycle_terms) =
             feed_dl_atom_inc(&mut *self.diff, &dla, is_positive, origin)

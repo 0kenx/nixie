@@ -1180,6 +1180,7 @@ impl Solver {
         self.dump_var_legend_if_tracing(manager);
 
         // Run SAT solver with theory integration
+        let zero_term = manager.mk_int(0);
         let mut theory_manager = TheoryManager::new(
             manager,
             &mut self.euf,
@@ -1191,6 +1192,8 @@ impl Solver {
             &self.var_to_parsed_arith,
             &self.term_to_var,
             &self.var_to_term,
+            &self.numarg_proxies,
+            zero_term,
             &self.ite_result_terms,
             &mut self.derived_reasons,
             self.config.theory_mode,
@@ -1290,6 +1293,7 @@ impl Solver {
                                 self.arith.reset();
                                 self.bv.reset();
                                 self.diff.reset();
+        let zero_term = manager.mk_int(0);
                                 theory_manager = TheoryManager::new(
                                     manager,
                                     &mut self.euf,
@@ -1301,6 +1305,8 @@ impl Solver {
                                     &self.var_to_parsed_arith,
                                     &self.term_to_var,
                                     &self.var_to_term,
+            &self.numarg_proxies,
+            zero_term,
                                     &self.ite_result_terms,
                                     &mut self.derived_reasons,
                                     self.config.theory_mode,
@@ -1348,6 +1354,7 @@ impl Solver {
                             self.arith.reset();
                             self.bv.reset();
                             self.diff.reset();
+        let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
                                 manager,
                                 &mut self.euf,
@@ -1359,6 +1366,8 @@ impl Solver {
                                 &self.var_to_parsed_arith,
                                 &self.term_to_var,
                                 &self.var_to_term,
+            &self.numarg_proxies,
+            zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
@@ -1409,6 +1418,7 @@ impl Solver {
                             // replayed search will re-derive.
                             self.debug_check_invariants("check_core: after array-lemma backtrack");
                             // Re-solve with the freshly asserted array lemmas.
+        let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
                                 manager,
                                 &mut self.euf,
@@ -1420,6 +1430,8 @@ impl Solver {
                                 &self.var_to_parsed_arith,
                                 &self.term_to_var,
                                 &self.var_to_term,
+            &self.numarg_proxies,
+            zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
@@ -1743,6 +1755,7 @@ impl Solver {
                     // re-derives the theory state from exactly those.  Nothing is
                     // re-encoded, so no clause is duplicated.
                     self.rebase_theory_state();
+        let zero_term = manager.mk_int(0);
                     theory_manager = TheoryManager::new(
                         manager,
                         &mut self.euf,
@@ -1754,6 +1767,8 @@ impl Solver {
                         &self.var_to_parsed_arith,
                         &self.term_to_var,
                         &self.var_to_term,
+            &self.numarg_proxies,
+            zero_term,
                         &self.ite_result_terms,
                         &mut self.derived_reasons,
                         self.config.theory_mode,
