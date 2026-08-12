@@ -1272,15 +1272,12 @@ impl<'a> TheoryManager<'a> {
         tighten: bool,
     ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         use oxiz_theories::arithmetic::DeltaRational;
-        // Collect candidate atoms up-front (clone out of the shared maps) so the
-        // immutable borrows end before the `&mut self.arith` derivation call.
-        let candidates: Vec<(
-            Var,
-            Vec<(TermId, Rational64)>,
-            Rational64,
-            bool, /* less */
-            bool, /* strict */
-        )> = self
+        // Collect candidate atoms as a flat `(var, constant, less, strict)` list —
+        // all `Copy`, so no per-candidate allocation.  The atom's term vector is
+        // fetched lazily into a single reused buffer below, which removes the
+        // `Vec<(Var, Vec<terms>, …)>` allocation that dominated this
+        // propagator (it inlined into the SAT loop as `extend`/`spec_extend`).
+        let candidates: Vec<(Var, Rational64, bool, bool)> = self
             .var_to_constraint
             .iter()
             .filter_map(|(&var, constraint)| {
@@ -1301,13 +1298,7 @@ impl<'a> TheoryManager<'a> {
                     ArithConstraintType::Gt => (false, true),
                     ArithConstraintType::Ge => (false, false),
                 };
-                Some((
-                    var,
-                    parsed.terms.iter().copied().collect(),
-                    parsed.constant,
-                    less,
-                    strict,
-                ))
+                Some((var, parsed.constant, less, strict))
             })
             .collect();
         if candidates.is_empty() {
@@ -1322,7 +1313,19 @@ impl<'a> TheoryManager<'a> {
             self.arith.tighten_tableau_bounds();
         }
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
-        for (var, terms, constant, less, strict) in candidates {
+        // One reused term buffer for every candidate (DL atoms have ≤2 terms,
+        // so capacity stabilises immediately): the immutable borrow of
+        // `var_to_parsed_arith` is scoped to the refill and ends before the
+        // `&mut self.arith` derivation call.
+        let mut terms_buf: Vec<(TermId, Rational64)> = Vec::new();
+        for (var, constant, less, strict) in candidates {
+            {
+                let Some(parsed) = self.var_to_parsed_arith.get(&var) else {
+                    continue;
+                };
+                terms_buf.clear();
+                terms_buf.extend(parsed.terms.iter().copied());
+            }
             let c_dr = DeltaRational::from_rational(constant);
             // Derive the bound on `e := Σ coefᵢ·termᵢ` (the atom's LHS) by
             // passing constant = 0; `constant` is the atom's RHS THRESHOLD,
@@ -1330,7 +1333,7 @@ impl<'a> TheoryManager<'a> {
             // here would fold the threshold into the expression and make the
             // check read `e + c ◦ c` ≡ `e ◦ 0` — a soundness bug for any atom
             // with a non-zero threshold.)
-            let (lo, hi) = self.arith.derive_expr_bound_reasons(&terms, Rational64::from_integer(0), tighten);
+            let (lo, hi) = self.arith.derive_expr_bound_reasons(&terms_buf, Rational64::from_integer(0), tighten);
             // Determine whether the atom `e ◦ c` is forced TRUE or FALSE.
             //
             //   less (e ≤ c / e < c): TRUE ⇔ upper(e) ≤/< c ;  FALSE ⇔ lower(e) >/≥ c
