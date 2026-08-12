@@ -572,6 +572,12 @@ enum InputFormat {
     Tptp,
 }
 
+/// Global allocator: mimalloc outperforms the system allocator on oxiz's
+/// allocation-heavy CDCL(T) loop (per-check vectors, conflict cores, clause
+/// learning, hashmap rehash).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() {
     match maybe_handle_dashboard_render_command() {

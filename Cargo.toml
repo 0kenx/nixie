@@ -70,6 +70,10 @@ type_complexity = "allow"
 collapsible_if = "allow"
 
 [workspace.dependencies]
+# Drop-in global allocator — oxiz's CDCL(T) loop is allocation-heavy
+# (per-check Vec/SmallVec, conflict cores, clause learning, hashmap rehash);
+# mimalloc cuts a large fraction of that overhead vs the system allocator.
+mimalloc = { version = "0.1", default-features = false }
 # Meta crate
 oxiz = { version = "0.3.2", path = "oxiz" }
 
