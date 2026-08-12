@@ -40,6 +40,18 @@ impl Solver {
         // This allows select(B, i) to be resolved via the read-over-write axiom.
         let array_var_aliases = self.collect_array_var_aliases(manager);
 
+        // Concrete store-chain decision procedure: a disequality
+        // `(not (= X Y))` whose operands are store chains that normalise to the
+        // SAME base and the SAME last-write-wins `{index -> value}` map is
+        // provably unsatisfiable (the arrays are identical), so it is an
+        // instant `unsat` — no CDCL(T) iteration.  This is what decides the
+        // `storecomm` family (two permutations of the same writes) in O(chain)
+        // instead of the O(rounds × re-solve) lazy-refinement loop, which on
+        // deep chains times out and turns a soundness fix into a sea of TOs.
+        if self.store_chain_disequality_conflict(&array_var_aliases, manager) {
+            return true;
+        }
+
         self.collect_array_constraints(
             manager,
             &mut select_values,
@@ -1526,6 +1538,167 @@ impl Solver {
                 if self.are_different_values(vx, vy, manager) {
                     return true;
                 }
+            }
+        }
+        false
+    }
+
+    /// Reconstruct the full store chain rooted at `start`, following
+    /// `var = store(...)` aliases through named intermediates (the `pp_sf`
+    /// `a_N = store(a_{N-1}, …)` shape) as well as direct nested chains.
+    /// Returns `(base, entries)` with `entries` the outermost-write-wins
+    /// `{idx -> val}` map.  A plain array term with no store definition
+    /// normalises to itself with an empty map.  Bounded by a size guard so a
+    /// cyclic alias graph cannot loop forever.
+    fn reconstruct_store_chain(
+        start: TermId,
+        aliases: &FxHashMap<TermId, TermId>,
+        manager: &TermManager,
+    ) -> (TermId, Vec<(TermId, TermId)>) {
+        let mut entries: Vec<(TermId, TermId)> = Vec::new();
+        let mut current = start;
+        for _ in 0..10_000 {
+            // Resolve a named intermediate var to its store definition.
+            if let Some(&store_term) = aliases.get(&current) {
+                current = store_term;
+            }
+            match manager.get(current).map(|d| &d.kind) {
+                Some(TermKind::Store(base, idx, val)) => {
+                    if !entries.iter().any(|(i, _)| *i == *idx) {
+                        entries.push((*idx, *val));
+                    }
+                    current = *base;
+                }
+                _ => return (current, entries),
+            }
+        }
+        (current, entries)
+    }
+
+    /// Concretely prove two store chains EQUAL by reconstruction: `Some(true)`
+    /// iff both chains share the same base term AND write the same value term
+    /// to the same index term at every written index (following named
+    /// intermediates).  The resulting arrays are then identical regardless of
+    /// how the (free) index/value variables are interpreted, so a disequality
+    /// that depends on them being different is unsatisfiable.  Returns `None`
+    /// when equality is not concretely decidable (different bases, differing
+    /// index sets, or differing value terms that might yet coincide) — those
+    /// defer to the lazy refinement loop.
+    fn store_chains_concretely_equal(
+        x: TermId,
+        y: TermId,
+        aliases: &FxHashMap<TermId, TermId>,
+        manager: &TermManager,
+    ) -> Option<bool> {
+        let (bx, ex) = Self::reconstruct_store_chain(x, aliases, manager);
+        let (by, ey) = Self::reconstruct_store_chain(y, aliases, manager);
+        if bx != by {
+            // Different base terms: equality depends on the base arrays, which
+            // this syntactic check cannot decide.
+            return None;
+        }
+        if ex.is_empty() && ey.is_empty() {
+            // Neither side is a store chain (e.g. two plain variables): no
+            // concrete equality to prove here.
+            return None;
+        }
+        if ex.len() != ey.len() {
+            // Different index sets: the arrays could still coincide with the
+            // base at the missing indices, which is not provable here.
+            return None;
+        }
+        for (idx, vx) in &ex {
+            match ey.iter().find(|(i, _)| i == idx) {
+                Some((_, vy)) if vy == vx => {}
+                _ => return None,
+            }
+        }
+        Some(true)
+    }
+
+    /// Scan the assertions for an asserted-true disequality `(not (= X Y))`
+    /// that a concrete store-chain equality proof refutes, and report it as a
+    /// conflict.  This is the fast path that decides `storecomm`-style goals
+    /// as `unsat` without entering the CDCL(T) array-axiom refinement loop.
+    /// Three shapes are recognised:
+    ///   (1) `not(= A B)` with A,B concretely-equal store chains;
+    ///   (2) `not(= (select A k) (select B k))` with A,B concretely equal and
+    ///       the same index `k` (congruence forces the reads equal) — the
+    ///       Skolemised-extensionality shape (`k = sk(A, B)`);
+    ///   (3) `not(= u v)` where `u`,`v` are int variables each defined by
+    ///       `u = (select A k)`, `v = (select B k)` with A,B concretely equal
+    ///       and the same `k` — the named-chain `pp_sf` shape.
+    ///
+    /// Polarity-aware (only `not(= …)` actually asserted) and iterative, like
+    /// [`Solver::scan_positive_array_eq`].
+    fn store_chain_disequality_conflict(
+        &self,
+        aliases: &FxHashMap<TermId, TermId>,
+        manager: &TermManager,
+    ) -> bool {
+        // Map an int variable to its `(array, index)` select definition, for
+        // shape (3): scan positive `(= var (select arr idx))`.
+        let mut int_select_def: FxHashMap<TermId, (TermId, TermId)> = FxHashMap::default();
+        for &assertion in &self.assertions {
+            let Some(d) = manager.get(assertion) else { continue };
+            if let TermKind::Eq(lhs, rhs) = &d.kind {
+                for (var, sel) in [(*lhs, *rhs), (*rhs, *lhs)] {
+                    if matches!(manager.get(var).map(|t| &t.kind), Some(TermKind::Var(_)))
+                        && let Some((arr, idx)) = self.extract_select(sel, manager)
+                    {
+                        int_select_def.insert(var, (arr, idx));
+                    }
+                }
+            }
+        }
+        // Resolve an operand of a disequality to a `(array, index)` read, via
+        // either a direct `select` or an int variable's select definition.
+        let read_of = |t: TermId| -> Option<(TermId, TermId)> {
+            self.extract_select(t, manager).or_else(|| int_select_def.get(&t).copied())
+        };
+
+        let mut worklist: Vec<(TermId, bool)> =
+            self.assertions.iter().rev().map(|&a| (a, true)).collect();
+        let mut visited: FxHashSet<(TermId, bool)> = FxHashSet::default();
+        while let Some((term, positive)) = worklist.pop() {
+            if !visited.insert((term, positive)) {
+                continue;
+            }
+            let Some(data) = manager.get(term) else { continue };
+            match &data.kind {
+                TermKind::And(_) | TermKind::Or(_) | TermKind::Not(_) => {
+                    let children = super::term_walk::asserted_children(&data.kind, positive);
+                    worklist.extend(children.into_iter().rev());
+                }
+                // An asserted-true `Eq` at NEGATIVE polarity is a disequality.
+                TermKind::Eq(lhs, rhs) if !positive && *lhs != *rhs => {
+                    if let (Some((la, li)), Some((ra, ri))) =
+                        (read_of(*lhs), read_of(*rhs))
+                    {
+                        // Shapes (2) and (3): two reads at the same index of
+                        // concretely-equal arrays must be equal.
+                        if li == ri
+                            && matches!(
+                                Self::store_chains_concretely_equal(la, ra, aliases, manager),
+                                Some(true)
+                            )
+                        {
+                            return true;
+                        }
+                    } else if self.is_array_sorted(*lhs, manager)
+                        && self.is_array_sorted(*rhs, manager)
+                    {
+                        // Shape (1): a direct disequality of concretely-equal
+                        // array terms.
+                        if matches!(
+                            Self::store_chains_concretely_equal(*lhs, *rhs, aliases, manager),
+                            Some(true)
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         false
