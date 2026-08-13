@@ -2454,16 +2454,42 @@ impl Solver {
                         // both RoW cases without `mk_select` mid-search (it
                         // only holds `&TermManager`).
                         if let Some(ad) = manager.get(*array) {
-                            if let TermKind::Store(base, store_idx, store_val) = &ad.kind {
-                                let (base, store_idx, store_val) = (*base, *store_idx, *store_val);
-                                let base_read = manager.mk_select(base, *index);
-                                self.array_theory.add_row_target(
-                                    term,
-                                    store_idx,
-                                    *index,
-                                    store_val,
-                                    base_read,
-                                );
+                            if let TermKind::Store(..) = &ad.kind {
+                                // Walk the store chain and index every
+                                // read-over-write level, so a single
+                                // `final_check` pass cascades the RoW axiom
+                                // through `select(store(store(...),i,v), j)` to
+                                // the matching value (or `select(base, j)`),
+                                // not just the outermost link.  Each
+                                // intermediate `select(base_k, j)` is
+                                // pre-created here (the theory holds
+                                // `&TermManager`).
+                                let read_idx = *index;
+                                let mut cur_array = *array;
+                                let mut cur_select = term;
+                                loop {
+                                    let Some(ad) = manager.get(cur_array) else { break };
+                                    let TermKind::Store(base, store_idx, store_val) =
+                                        &ad.kind
+                                    else {
+                                        break;
+                                    };
+                                    let (base, store_idx, store_val) =
+                                        (*base, *store_idx, *store_val);
+                                    let base_read = manager.mk_select(base, read_idx);
+                                    self.array_theory.add_row_target(
+                                        cur_select,
+                                        store_idx,
+                                        read_idx,
+                                        store_val,
+                                        base_read,
+                                    );
+                                    // Index `base_read` so the propagation
+                                    // pass visits it and fires its own RoW too.
+                                    self.array_theory.add_select(base, base_read);
+                                    cur_array = base;
+                                    cur_select = base_read;
+                                }
                             }
                         }
                     }
