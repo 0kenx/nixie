@@ -205,6 +205,10 @@ impl super::Solver {
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
             has_array_ops: _, // SNAPSHOT
+            array_select_terms: _, // Stage-1 bookkeeping: accumulates across
+            // `assert`s; no consumer yet (Stages 2–5 of ARRAY_THEORY_PLAN),
+            // so a stale entry after `pop` is harmless; cleared by `reset`.
+            array_store_terms: _, // same as `array_select_terms`
             array_axiom_instances: _, // TRAIL: ArrayAxiomInstanceAdded
             arith_purify: _,  // rebuilt from assertions each check
             arith_defined_terms: _, // TRAIL: ArithDefinedTermAdded

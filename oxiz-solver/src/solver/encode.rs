@@ -2440,6 +2440,19 @@ impl Solver {
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => {
                 // Array operations - theory terms
                 self.has_array_ops = true;
+                // Stage 1 array-theory bookkeeping (docs/ARRAY_THEORY_PLAN.md):
+                // record the read/write structure so the incremental theory
+                // (stages 2–5) can react to it during search.  Pure
+                // bookkeeping; no behaviour change.
+                match &manager.get(term).map(|d| d.kind.clone()) {
+                    Some(TermKind::Select(array, index)) => {
+                        self.array_select_terms.push((term, *array, *index));
+                    }
+                    Some(TermKind::Store(base, index, value)) => {
+                        self.array_store_terms.push((term, *base, *index, *value));
+                    }
+                    _ => {}
+                }
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }

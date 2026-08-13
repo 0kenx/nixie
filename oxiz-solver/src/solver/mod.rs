@@ -270,6 +270,19 @@ pub struct Solver {
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
     pub(super) has_array_ops: bool,
+    /// Incremental array-theory bookkeeping (Stage 1 of
+    /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
+    /// internalised by the encoder, recorded as `(select_term, array, index)`.
+    /// Populated at encode time and retracted on `pop`/`reset` via the trail.
+    /// Pure bookkeeping for now — no propagation — so Stages 2–5 can react to
+    /// reads/writes during the CDCL search instead of collecting them afresh
+    /// each lazy-refinement round.
+    #[allow(dead_code)]
+    pub(super) array_select_terms: Vec<(TermId, TermId, TermId)>,
+    /// Same as [`array_select_terms`] for `store(base, index, value)` terms,
+    /// recorded as `(store_term, base, index, value)`.
+    #[allow(dead_code)]
+    pub(super) array_store_terms: Vec<(TermId, TermId, TermId, TermId)>,
     /// Ground array-axiom instances (read-over-write / extensionality /
     /// select-congruence) already added to the SAT core as lemmas, keyed by the
     /// interned lemma term id.  Guarantees each valid instance is asserted at
@@ -518,6 +531,8 @@ impl Solver {
             fp_constraint_cache: FxHashMap::default(),
             encode_depth_exceeded: false,
             has_array_ops: false,
+            array_select_terms: Vec::new(),
+            array_store_terms: Vec::new(),
             array_axiom_instances: FxHashSet::default(),
             arith_defined_terms: FxHashSet::default(),
             arith_const_axiom_pairs: FxHashSet::default(),
@@ -2485,6 +2500,8 @@ impl Solver {
         self.fp_constraint_cache.clear();
         self.encode_depth_exceeded = false;
         self.has_array_ops = false;
+        self.array_select_terms.clear();
+        self.array_store_terms.clear();
         self.array_axiom_instances.clear();
         self.arith_defined_terms.clear();
         self.arith_const_axiom_pairs.clear();
