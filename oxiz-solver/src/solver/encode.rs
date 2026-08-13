@@ -2448,6 +2448,24 @@ impl Solver {
                     Some(TermKind::Select(array, index)) => {
                         self.array_select_terms.push((term, *array, *index));
                         self.array_theory.add_select(*array, term);
+                        // Pre-create the read-over-write-DIFFERENT target
+                        // `select(base, index)` for a select that reads a store
+                        // directly, so the theory-side propagation can fire
+                        // both RoW cases without `mk_select` mid-search (it
+                        // only holds `&TermManager`).
+                        if let Some(ad) = manager.get(*array) {
+                            if let TermKind::Store(base, store_idx, store_val) = &ad.kind {
+                                let (base, store_idx, store_val) = (*base, *store_idx, *store_val);
+                                let base_read = manager.mk_select(base, *index);
+                                self.array_theory.add_row_target(
+                                    term,
+                                    store_idx,
+                                    *index,
+                                    store_val,
+                                    base_read,
+                                );
+                            }
+                        }
                     }
                     Some(TermKind::Store(base, index, value)) => {
                         self.array_store_terms.push((term, *base, *index, *value));

@@ -694,49 +694,48 @@ impl<'a> TheoryManager<'a> {
 
     /// Array read-over-write theory propagation (Stage 5 of
     /// `docs/ARRAY_THEORY_PLAN.md`): for every indexed
-    /// `select(store(b, i, v), j)` whose store index `i` is EUF-equal to the
-    /// read index `j` (read-over-write-SAME), the axiom forces `select = v`.
-    /// Merge the two EUF nodes; if that exposes a contradiction with an
-    /// asserted disequality, return the conflict.
-    ///
-    /// The DIFFERENT case (`i ≠ j ⇒ select = select(b, j)`) is *not* done here:
-    /// it needs to create the `select(b, j)` term, and `TheoryManager` only
-    /// holds `&TermManager` (immutable).  It is left to the lazy instantiator
-    /// (which has `&mut`) and will move into the theory once the incremental
-    /// lemma-addition stages (P2) give the theory `&mut` manager access.
-    /// SOUND: it only ever merges a term with the value the array axiom
-    /// *proves* it equals, so it can only strengthen, never fabricate.
-    /// Two-phase (collect with shared EUF reads, then merge) so the `&mut
-    /// check_conflicts` does not alias the index iteration.
+    /// `select(store(b, i, v), j)`:
+    ///   * read-over-write-SAME: if `i = j` in EUF, the axiom forces
+    ///     `select = v`;
+    ///   * read-over-write-DIFFERENT: if `i ≠ j` is a *proven* disequality, the
+    ///     axiom forces `select = select(b, j)` (the `select(b, j)` term is
+    ///     pre-created at encode time — see `ArrayTheory::add_row_target` —
+    ///     because this pass holds `&TermManager` and cannot `mk_select`).
+    /// Merge the consequence in EUF; if that exposes a contradiction with an
+    /// asserted disequality, return the conflict.  SOUND: it only ever merges
+    /// a term with the value the array axiom *proves* it equals, so it can
+    /// only strengthen, never fabricate.  Two-phase (collect with shared EUF
+    /// reads, then merge) so the `&mut check_conflicts` does not alias the
+    /// index iteration.
     fn propagate_array_read_over_write(&mut self) -> Option<TheoryCheckResult> {
-        use oxiz_core::ast::TermKind;
-        let manager = self.manager;
         let mut to_merge: Vec<(TermId, TermId)> = Vec::new();
-        for (array, select_term) in self.array_theory.select_entries() {
-            let Some(ad) = manager.get(array) else { continue };
-            let TermKind::Store(_base, store_idx, store_val) = &ad.kind else { continue };
-            let Some(sd) = manager.get(select_term) else { continue };
-            let TermKind::Select(_, sel_idx) = &sd.kind else { continue };
+        for (_array, select_term) in self.array_theory.select_entries() {
+            let Some((store_idx, read_idx, store_val, base_read)) =
+                self.array_theory.row_target(select_term)
+            else {
+                continue;
+            };
             let (Some(ni), Some(nj)) =
-                (self.euf.term_to_node(*store_idx), self.euf.term_to_node(*sel_idx))
+                (self.euf.term_to_node(store_idx), self.euf.term_to_node(read_idx))
             else {
                 continue;
             };
             if self.euf.are_equal_immutable(ni, nj) {
-                // RoW-SAME: select(store(b,i,v), i) = v.
-                to_merge.push((select_term, *store_val));
+                to_merge.push((select_term, store_val));
+            } else if self.euf.are_proven_disequal(ni, nj) {
+                to_merge.push((select_term, base_read));
             }
         }
-        for (select_term, value_term) in to_merge {
-            let (Some(ns), Some(nv)) =
-                (self.euf.term_to_node(select_term), self.euf.term_to_node(value_term))
+        for (lhs, rhs) in to_merge {
+            let (Some(nl), Some(nr)) =
+                (self.euf.term_to_node(lhs), self.euf.term_to_node(rhs))
             else {
                 continue;
             };
-            if self.euf.are_equal_immutable(ns, nv) {
+            if self.euf.are_equal_immutable(nl, nr) {
                 continue;
             }
-            let _ = self.euf.merge(ns, nv, select_term);
+            let _ = self.euf.merge(nl, nr, lhs);
             if let Some(conflict_terms) = self.euf.check_conflicts() {
                 return Some(self.conflict_from_terms(&conflict_terms));
             }

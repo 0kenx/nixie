@@ -29,10 +29,20 @@ pub(crate) struct ArrayTheory {
     maps: FxHashMap<TermId, Vec<TermId>>,
     /// `array -> select terms` reading it (`select(array, idx)`).
     parents: FxHashMap<TermId, Vec<TermId>>,
+    /// Read-over-write targets for selects that read a store directly:
+    /// `select_term -> (store_idx, read_idx, store_val, select(base,
+    /// read_idx))`, where the fourth element is **pre-created at encode time**
+    /// (the theory holds `&TermManager`, so it cannot `mk_select` mid-search).
+    /// Lets the RoW propagation fire both the SAME case (`i = j ⇒ select = v`)
+    /// and the DIFFERENT case (`i ≠ j ⇒ select = select(base, j)`) without
+    /// term creation during search.
+    row_targets: FxHashMap<TermId, (TermId, TermId, TermId, TermId)>,
     /// One `base` per `maps` insertion, in insertion order, for LIFO undo.
     maps_journal: Vec<TermId>,
     /// One `array` per `parents` insertion, in insertion order, for LIFO undo.
     parents_journal: Vec<TermId>,
+    /// One `select_term` per `row_targets` insertion, for LIFO undo.
+    row_targets_journal: Vec<TermId>,
 }
 
 impl ArrayTheory {
@@ -52,6 +62,33 @@ impl ArrayTheory {
     pub(crate) fn add_select(&mut self, array: TermId, select_term: TermId) {
         self.parents.entry(array).or_default().push(select_term);
         self.parents_journal.push(array);
+    }
+
+    /// Record a read-over-write target for `select_term = select(store(base,
+    /// i, v), j)`: the propagation can then fire SAME (`i = j ⇒ select = v`)
+    /// or DIFFERENT (`i ≠ j ⇒ select = select(base, j)`) using `base_read`
+    /// (= the pre-created `select(base, j)`), with no term creation during
+    /// search.
+    pub(crate) fn add_row_target(
+        &mut self,
+        select_term: TermId,
+        store_idx: TermId,
+        read_idx: TermId,
+        store_val: TermId,
+        base_read: TermId,
+    ) {
+        self.row_targets
+            .insert(select_term, (store_idx, read_idx, store_val, base_read));
+        self.row_targets_journal.push(select_term);
+    }
+
+    /// The read-over-write target for `select_term`, if it reads a store:
+    /// `(store_idx, read_idx, store_val, select(base, read_idx))`.
+    pub(crate) fn row_target(
+        &self,
+        select_term: TermId,
+    ) -> Option<(TermId, TermId, TermId, TermId)> {
+        self.row_targets.get(&select_term).copied()
     }
 
     /// The `store` terms writing `array` (`store(array, _, _)`).
@@ -81,6 +118,7 @@ impl ArrayTheory {
         ArrayTheoryScope {
             maps_journal_len: self.maps_journal.len(),
             parents_journal_len: self.parents_journal.len(),
+            row_targets_journal_len: self.row_targets_journal.len(),
         }
     }
 
@@ -94,6 +132,11 @@ impl ArrayTheory {
                 if v.is_empty() {
                     self.parents.remove(&array);
                 }
+            }
+        }
+        while self.row_targets_journal.len() > scope.row_targets_journal_len {
+            if let Some(sel) = self.row_targets_journal.pop() {
+                self.row_targets.remove(&sel);
             }
         }
         while self.maps_journal.len() > scope.maps_journal_len {
@@ -112,8 +155,10 @@ impl ArrayTheory {
     pub(crate) fn reset(&mut self) {
         self.maps.clear();
         self.parents.clear();
+        self.row_targets.clear();
         self.maps_journal.clear();
         self.parents_journal.clear();
+        self.row_targets_journal.clear();
     }
 
     /// Number of indexed `store` entries (debug / statistics).
@@ -134,6 +179,7 @@ impl ArrayTheory {
 pub(crate) struct ArrayTheoryScope {
     maps_journal_len: usize,
     parents_journal_len: usize,
+    row_targets_journal_len: usize,
 }
 
 #[cfg(test)]
