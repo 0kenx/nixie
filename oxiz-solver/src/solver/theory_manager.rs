@@ -695,10 +695,17 @@ impl<'a> TheoryManager<'a> {
     /// Array read-over-write theory propagation (Stage 5 of
     /// `docs/ARRAY_THEORY_PLAN.md`): for every indexed
     /// `select(store(b, i, v), j)` whose store index `i` is EUF-equal to the
-    /// read index `j`, the axiom forces `select = v`.  Merge the two EUF nodes;
-    /// if that exposes a contradiction with an asserted disequality, return the
-    /// conflict.  SOUND: it only ever merges a term with the value the array
-    /// axiom *proves* it equals, so it can only strengthen, never fabricate.
+    /// read index `j` (read-over-write-SAME), the axiom forces `select = v`.
+    /// Merge the two EUF nodes; if that exposes a contradiction with an
+    /// asserted disequality, return the conflict.
+    ///
+    /// The DIFFERENT case (`i ≠ j ⇒ select = select(b, j)`) is *not* done here:
+    /// it needs to create the `select(b, j)` term, and `TheoryManager` only
+    /// holds `&TermManager` (immutable).  It is left to the lazy instantiator
+    /// (which has `&mut`) and will move into the theory once the incremental
+    /// lemma-addition stages (P2) give the theory `&mut` manager access.
+    /// SOUND: it only ever merges a term with the value the array axiom
+    /// *proves* it equals, so it can only strengthen, never fabricate.
     /// Two-phase (collect with shared EUF reads, then merge) so the `&mut
     /// check_conflicts` does not alias the index iteration.
     fn propagate_array_read_over_write(&mut self) -> Option<TheoryCheckResult> {
@@ -716,6 +723,7 @@ impl<'a> TheoryManager<'a> {
                 continue;
             };
             if self.euf.are_equal_immutable(ni, nj) {
+                // RoW-SAME: select(store(b,i,v), i) = v.
                 to_merge.push((select_term, *store_val));
             }
         }

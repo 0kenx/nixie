@@ -577,6 +577,23 @@ impl EufSolver {
         self.uf.same_no_compress(a, b)
     }
 
+    /// Whether an *asserted* disequality has both endpoints in the equivalence
+    /// classes of `a` and `b` (i.e. `a` and `b` are PROVEN disequal, not merely
+    /// "not currently known equal").  For the array theory's
+    /// read-over-write-DIFFERENT propagation (deferred until that pass gains
+    /// `&mut` manager access — see `TheoryManager::propagate_array_read_over_write`).
+    /// O(#asserted-disequalities); a watch index can speed it up later.
+    #[allow(dead_code)]
+    pub fn are_proven_disequal(&self, a: u32, b: u32) -> bool {
+        let ra = self.uf.find_no_compress(a);
+        let rb = self.uf.find_no_compress(b);
+        self.diseqs.iter().any(|d| {
+            let dl = self.uf.find_no_compress(d.lhs);
+            let dr = self.uf.find_no_compress(d.rhs);
+            (dl == ra && dr == rb) || (dl == rb && dr == ra)
+        })
+    }
+
     /// Get the number of E-graph nodes
     pub fn node_count(&self) -> usize {
         self.nodes.len()
