@@ -300,6 +300,23 @@ fn build_read_over_write(
                     candidates.push(g2);
                 }
             }
+        } else if let Some((c, a, b)) = as_array_ite(array, manager) {
+            // select-over-ite:  select(ite(c, a, b), i) = ite(c, select(a, i),
+            // select(b, i)).  Without this, a read of an array-valued `ite`
+            // (ubiquitous in translated CVC processor-verification benchmarks,
+            // e.g. `(= (ite cond (store …) b) b)`) is an opaque leaf and the
+            // extensionality / read-over-write lemmas never reach the `store`.
+            // Emitted as two implications (an `ite`-valued equality is opaque
+            // to the arithmetic/EUF solvers — see the RoW note above); the new
+            // `select(a, i)` / `select(b, i)` terms seed further instantiation
+            // in the next refinement round.
+            let read_a = manager.mk_select(a, index);
+            let read_b = manager.mk_select(b, index);
+            let hit = manager.mk_eq(select_term, read_a);
+            let miss = manager.mk_eq(select_term, read_b);
+            let not_c = manager.mk_not(c);
+            candidates.push(manager.mk_implies(c, hit));
+            candidates.push(manager.mk_implies(not_c, miss));
         }
     }
 }
@@ -431,6 +448,14 @@ fn extensionality_witness(
 fn as_store(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, TermId)> {
     match manager.get(term)?.kind {
         TermKind::Store(base, index, value) => Some((base, index, value)),
+        _ => None,
+    }
+}
+
+/// If `term` is an array-sorted `ite`, return `(cond, then, else)`.
+fn as_array_ite(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, TermId)> {
+    match manager.get(term)?.kind {
+        TermKind::Ite(c, t, e) => Some((c, t, e)),
         _ => None,
     }
 }

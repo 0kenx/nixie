@@ -1927,7 +1927,7 @@ impl Solver {
             TermKind::False => {
                 let var = self.get_or_create_var(manager.mk_false());
                 self.sat.add_clause([Lit::neg(var)]);
-                Lit::neg(var)
+                Lit::pos(var)
             }
             TermKind::Var(_) => {
                 let var = self.get_or_create_var(term);
