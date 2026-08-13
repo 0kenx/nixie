@@ -467,6 +467,10 @@ pub(crate) struct TheoryManager<'a> {
     /// held the previous round's derived equalities.  See
     /// [`DerivedReasons`] for the scope-depth pruning rule.
     derived_reasons: &'a mut DerivedReasons,
+    /// Incremental array-theory index (Stage 5).  Solver-owned, so it persists
+    /// across the per-round `TheoryManager` rebuilds; the event-driven stages
+    /// query it to react to reads/writes during search.
+    array_theory: &'a mut super::array_theory::ArrayTheory,
 }
 
 impl<'a> TheoryManager<'a> {
@@ -477,6 +481,7 @@ impl<'a> TheoryManager<'a> {
         arith: &'a mut ArithSolver,
         bv: &'a mut BvSolver,
         diff: &'a mut oxiz_theories::DiffLogicSolver,
+        array_theory: &'a mut super::array_theory::ArrayTheory,
         bv_terms: &'a FxHashSet<TermId>,
         var_to_constraint: &'a FxHashMap<Var, Constraint>,
         var_to_parsed_arith: &'a FxHashMap<Var, ParsedArithConstraint>,
@@ -542,6 +547,7 @@ impl<'a> TheoryManager<'a> {
             bool_false_node: None,
             resource_exhausted: false,
             unjustified_conflict: false,
+            array_theory,
             #[cfg(feature = "std")]
             deadline,
             assigned_pol_gen: Vec::new(),
@@ -684,6 +690,50 @@ impl<'a> TheoryManager<'a> {
                 TheoryCheckResult::Sat
             }
         }
+    }
+
+    /// Array read-over-write theory propagation (Stage 5 of
+    /// `docs/ARRAY_THEORY_PLAN.md`): for every indexed
+    /// `select(store(b, i, v), j)` whose store index `i` is EUF-equal to the
+    /// read index `j`, the axiom forces `select = v`.  Merge the two EUF nodes;
+    /// if that exposes a contradiction with an asserted disequality, return the
+    /// conflict.  SOUND: it only ever merges a term with the value the array
+    /// axiom *proves* it equals, so it can only strengthen, never fabricate.
+    /// Two-phase (collect with shared EUF reads, then merge) so the `&mut
+    /// check_conflicts` does not alias the index iteration.
+    fn propagate_array_read_over_write(&mut self) -> Option<TheoryCheckResult> {
+        use oxiz_core::ast::TermKind;
+        let manager = self.manager;
+        let mut to_merge: Vec<(TermId, TermId)> = Vec::new();
+        for (array, select_term) in self.array_theory.select_entries() {
+            let Some(ad) = manager.get(array) else { continue };
+            let TermKind::Store(_base, store_idx, store_val) = &ad.kind else { continue };
+            let Some(sd) = manager.get(select_term) else { continue };
+            let TermKind::Select(_, sel_idx) = &sd.kind else { continue };
+            let (Some(ni), Some(nj)) =
+                (self.euf.term_to_node(*store_idx), self.euf.term_to_node(*sel_idx))
+            else {
+                continue;
+            };
+            if self.euf.are_equal_immutable(ni, nj) {
+                to_merge.push((select_term, *store_val));
+            }
+        }
+        for (select_term, value_term) in to_merge {
+            let (Some(ns), Some(nv)) =
+                (self.euf.term_to_node(select_term), self.euf.term_to_node(value_term))
+            else {
+                continue;
+            };
+            if self.euf.are_equal_immutable(ns, nv) {
+                continue;
+            }
+            let _ = self.euf.merge(ns, nv, select_term);
+            if let Some(conflict_terms) = self.euf.check_conflicts() {
+                return Some(self.conflict_from_terms(&conflict_terms));
+            }
+        }
+        None
     }
 
     /// Open one theory scope on the EUF, arithmetic and bit-vector solvers.
@@ -2803,6 +2853,25 @@ impl TheoryCallback for TheoryManager<'_> {
             }
 
             return conflict;
+        }
+
+        // Array-theory read-over-write propagation (Stage 5 of
+        // `docs/ARRAY_THEORY_PLAN.md`): for each `select(store(b,i,v), j)`
+        // whose `i = j` is already in EUF, the read-over-write axiom forces
+        // `select = v`; merge the two in EUF so congruence / `check_conflicts`
+        // and the arithmetic pass below observe the consequence.  Additive to
+        // the lazy lemma instantiator (kept as a fallback); single pass per
+        // final_check for now (a fixpoint loop arrives with the incremental
+        // stages).  SOUND: only ever merges a term with the value the array
+        // axiom *proves* it equals, so it can only strengthen, never fabricate.
+        if let Some(r) = self.propagate_array_read_over_write() {
+            self.statistics.theory_conflicts += 1;
+            self.statistics.conflicts += 1;
+            if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                self.resource_exhausted = true;
+                return TheoryCheckResult::Sat;
+            }
+            return r;
         }
 
         // Soundness backstop: the incremental EUF state, built up across CDCL

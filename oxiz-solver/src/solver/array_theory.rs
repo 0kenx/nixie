@@ -69,6 +69,13 @@ impl ArrayTheory {
             .unwrap_or(&[])
     }
 
+    /// Iterator over every `(array, select_term)` pair in the index.
+    pub(crate) fn select_entries(&self) -> impl Iterator<Item = (TermId, TermId)> + '_ {
+        self.parents
+            .iter()
+            .flat_map(|(&array, sels)| sels.iter().map(move |&s| (array, s)))
+    }
+
     /// Snapshot of the journal lengths, for [`Self::pop].
     pub(crate) fn snapshot(&self) -> ArrayTheoryScope {
         ArrayTheoryScope {
