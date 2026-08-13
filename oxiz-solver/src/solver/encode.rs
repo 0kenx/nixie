@@ -2119,6 +2119,35 @@ impl Solver {
             }
             TermKind::Eq(lhs, rhs) => {
                 // Check if this is a boolean equality or theory equality
+                // Extract the array domain sort (if any) in a SEPARATE borrow
+                // before `lhs_term`, and immediately pre-create the
+                // extensionality witness terms (mk_var/mk_select) while
+                // `manager` is free — `lhs_term` below will borrow it
+                // immutably for the rest of this arm.
+                let array_domain_sort = manager.get(*lhs).and_then(|t| {
+                    manager.sorts.get(t.sort).and_then(|s| {
+                        if let SortKind::Array { domain, .. } = s.kind {
+                            Some(domain)
+                        } else {
+                            None
+                        }
+                    })
+                });
+                let lhs_is_array = array_domain_sort.is_some();
+                if lhs_is_array {
+                    self.has_array_ops = true;
+                    if let Some(domain) = array_domain_sort {
+                        let (lo, hi) = if lhs.raw() <= rhs.raw() {
+                            (lhs.raw(), rhs.raw())
+                        } else {
+                            (rhs.raw(), lhs.raw())
+                        };
+                        let k = manager.mk_var(&format!("!oxiz!ext!{lo}!{hi}"), domain);
+                        let sa = manager.mk_select(*lhs, k);
+                        let sb = manager.mk_select(*rhs, k);
+                        self.array_theory.add_ext_witness(*lhs, *rhs, k, sa, sb);
+                    }
+                }
                 let lhs_term = manager.get(*lhs);
                 let is_bool_eq = lhs_term.is_some_and(|t| t.sort == manager.sorts.bool_sort);
 
@@ -2178,15 +2207,8 @@ impl Solver {
                     // as an unconstrained Boolean and a spurious `sat` is
                     // reported for an UNSAT goal (observed on the `storecomm`
                     // family: a disequality of two provably-equal store chains).
-                    let lhs_is_array = lhs_term.is_some_and(|t| {
-                        manager
-                            .sorts
-                            .get(t.sort)
-                            .is_some_and(|s| matches!(s.kind, SortKind::Array { .. }))
-                    });
-                    if lhs_is_array {
-                        self.has_array_ops = true;
-                    }
+                    // (Extensionality witness was pre-created above, before
+                    // `lhs_term` borrowed `manager` — no action needed here.)
 
                     // Pre-parse arithmetic equality for ArithSolver
                     // Only for Int/Real sorts, not BitVec

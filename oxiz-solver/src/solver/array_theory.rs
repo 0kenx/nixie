@@ -37,6 +37,14 @@ pub(crate) struct ArrayTheory {
     /// and the DIFFERENT case (`i ≠ j ⇒ select = select(base, j)`) without
     /// term creation during search.
     row_targets: FxHashMap<TermId, (TermId, TermId, TermId, TermId)>,
+    /// Extensionality witnesses pre-created at encode time, one per array
+    /// equality atom `(= a b)`: `(a, b, k, select(a, k), select(b, k))`.
+    /// `final_check` checks each for the extensionality conflict `a ≠ b`
+    /// (proven disequal) while `select(a, k) = select(b, k)` (proven equal via
+    /// read-over-write / congruence) — which forces `a = b`, a contradiction.
+    ext_witnesses: Vec<(TermId, TermId, TermId, TermId, TermId)>,
+    /// `ext_witnesses` length snapshot for LIFO undo on `pop`.
+    ext_witnesses_journal_len_snapshots: Vec<usize>,
     /// One `base` per `maps` insertion, in insertion order, for LIFO undo.
     maps_journal: Vec<TermId>,
     /// One `array` per `parents` insertion, in insertion order, for LIFO undo.
@@ -91,6 +99,26 @@ impl ArrayTheory {
         self.row_targets.get(&select_term).copied()
     }
 
+    /// Record an extensionality witness for the array equality atom `(= a b)`:
+    /// `k` is a fresh index variable; `sa = select(a, k)`, `sb = select(b, k)`.
+    /// Pre-created at encode time (the theory holds `&TermManager`).
+    pub(crate) fn add_ext_witness(
+        &mut self,
+        a: TermId,
+        b: TermId,
+        k: TermId,
+        sa: TermId,
+        sb: TermId,
+    ) {
+        self.ext_witnesses.push((a, b, k, sa, sb));
+    }
+
+    /// Iterate the extensionality witnesses `(a, b, k, select(a,k),
+    /// select(b,k))`.
+    pub(crate) fn ext_witnesses(&self) -> &[(TermId, TermId, TermId, TermId, TermId)] {
+        &self.ext_witnesses
+    }
+
     /// The `store` terms writing `array` (`store(array, _, _)`).
     #[allow(dead_code)] // consumed by Stage 5 steps 3–6 (merge_eh / relevant_eh)
     pub(crate) fn stores_of(&self, array: TermId) -> &[TermId] {
@@ -119,6 +147,7 @@ impl ArrayTheory {
             maps_journal_len: self.maps_journal.len(),
             parents_journal_len: self.parents_journal.len(),
             row_targets_journal_len: self.row_targets_journal.len(),
+            ext_witnesses_len: self.ext_witnesses.len(),
         }
     }
 
@@ -139,6 +168,7 @@ impl ArrayTheory {
                 self.row_targets.remove(&sel);
             }
         }
+        self.ext_witnesses.truncate(scope.ext_witnesses_len);
         while self.maps_journal.len() > scope.maps_journal_len {
             if let Some(base) = self.maps_journal.pop()
                 && let Some(v) = self.maps.get_mut(&base)
@@ -156,6 +186,7 @@ impl ArrayTheory {
         self.maps.clear();
         self.parents.clear();
         self.row_targets.clear();
+        self.ext_witnesses.clear();
         self.maps_journal.clear();
         self.parents_journal.clear();
         self.row_targets_journal.clear();
@@ -180,6 +211,7 @@ pub(crate) struct ArrayTheoryScope {
     maps_journal_len: usize,
     parents_journal_len: usize,
     row_targets_journal_len: usize,
+    ext_witnesses_len: usize,
 }
 
 #[cfg(test)]

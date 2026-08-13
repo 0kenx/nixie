@@ -743,6 +743,39 @@ impl<'a> TheoryManager<'a> {
         None
     }
 
+    /// Array extensionality theory propagation (Stage 5): for each array
+    /// equality atom `(= a b)` whose operands are PROVEN disequal (`a ≠ b`)
+    /// while the witness reads `select(a, k)` and `select(b, k)` are EUF-equal,
+    /// extensionality forces `a = b` — a contradiction.  Return the conflict.
+    /// SOUND: fires only on a real `a = b` derivation (reads equal at the
+    /// witness) contradicting an asserted `a ≠ b`.
+    fn check_array_extensionality(&mut self) -> Option<TheoryCheckResult> {
+        for &(a, b, _k, sa, sb) in self.array_theory.ext_witnesses() {
+            let (Some(na), Some(nb)) =
+                (self.euf.term_to_node(a), self.euf.term_to_node(b))
+            else {
+                continue;
+            };
+            if !self.euf.are_proven_disequal(na, nb) {
+                continue;
+            }
+            let (Some(nsa), Some(nsb)) =
+                (self.euf.term_to_node(sa), self.euf.term_to_node(sb))
+            else {
+                continue;
+            };
+            if !self.euf.are_equal_immutable(nsa, nsb) {
+                continue;
+            }
+            // `a ≠ b` (asserted) but `select(a, k) = select(b, k)` (EUF), so by
+            // extensionality `a = b`: contradiction.  The conflict clause is
+            // the explanation of `select(a, k) = select(b, k)`.
+            let terms = self.euf.explain_eq(nsa, nsb);
+            return Some(self.conflict_from_terms(&terms));
+        }
+        None
+    }
+
     /// Open one theory scope on the EUF, arithmetic and bit-vector solvers.
     ///
     /// Every push of the three solvers goes through here (and every pop through
@@ -2872,6 +2905,18 @@ impl TheoryCallback for TheoryManager<'_> {
         // stages).  SOUND: only ever merges a term with the value the array
         // axiom *proves* it equals, so it can only strengthen, never fabricate.
         if let Some(r) = self.propagate_array_read_over_write() {
+            self.statistics.theory_conflicts += 1;
+            self.statistics.conflicts += 1;
+            if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                self.resource_exhausted = true;
+                return TheoryCheckResult::Sat;
+            }
+            return r;
+        }
+        // Array extensionality (Stage 5): catch `a ≠ b` while the witness reads
+        // `select(a, k)` / `select(b, k)` are EUF-equal (extensionality then
+        // forces `a = b`).
+        if let Some(r) = self.check_array_extensionality() {
             self.statistics.theory_conflicts += 1;
             self.statistics.conflicts += 1;
             if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
