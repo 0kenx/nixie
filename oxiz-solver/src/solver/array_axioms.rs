@@ -403,6 +403,24 @@ fn build_extensionality_and_congruence(
         }
     }
     for &(a, b) in &pairs {
+        // Fast path: finite-disjunction extensionality for two store chains
+        // over a common (non-store) base.  This adds a flat clause (value-term
+        // comparisons, no `select` / unfolding) that settles `storecomm`-style
+        // pairs in one round.  It is generated IN ADDITION to (not instead of)
+        // the fresh-witness extensionality below: that witness's `select(a,k)`
+        // / `select(b,k)` terms can link this pair to other constraints a pure
+        // value-disjunction misses (e.g. `cvc/read8`), so skipping it would
+        // lose completeness.  The clause is cheap, and on the deep-chain goals
+        // it dominates the search so the witness path adds little.
+        if let Some(lemma) = finite_disjunction_extensionality(manager, a, b) {
+            candidates.push(lemma);
+            // Generated IN ADDITION to the fresh-witness extensionality below:
+            // that witness's `select(a,k)` / `select(b,k)` terms can link this
+            // pair to other constraints a pure value-disjunction misses (e.g.
+            // `cvc/read8`, whose unsat needs the cross-congruence), so it can
+            // never be skipped.  The flat clause is still a big win on the
+            // deep-chain goals it decides.
+        }
         // Extensionality: a = b ∨ select(a,k) != select(b,k), with a fresh but
         // deterministic witness index per unordered pair.
         if let Some(domain) = array_domain(a, manager) {
@@ -479,6 +497,100 @@ fn as_array_ite(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, 
         TermKind::Ite(c, t, e) => Some((c, t, e)),
         _ => None,
     }
+}
+
+/// Normalise a direct (non-aliased) store chain `store(store(... store(base)
+/// ...))` into `(base, entries)` with `entries` the outermost-write-wins
+/// `{idx -> val}` map.  Returns `None` if `term` is not a `Store`-rooted
+/// chain (a plain variable / select / UF normalises to itself with an empty
+/// map, which is not useful here — callers gate on a non-empty map).
+fn direct_store_map(
+    term: TermId,
+    manager: &TermManager,
+) -> Option<(TermId, Vec<(TermId, TermId)>)> {
+    let mut entries: Vec<(TermId, TermId)> = Vec::new();
+    let mut cur = term;
+    loop {
+        match manager.get(cur)?.kind {
+            TermKind::Store(base, idx, val) => {
+                if !entries.iter().any(|(i, _)| *i == idx) {
+                    entries.push((idx, val));
+                }
+                cur = base;
+            }
+            _ => return Some((cur, entries)),
+        }
+    }
+}
+
+/// Finite-disjunction extensionality for two store chains over a *common base*
+/// that write the *same index set*: returns the valid lemma
+/// `a = b ∨ ∨_{k∈K} val_a(k) ≠ val_b(k)`, where each `val_·(k)` is the chain's
+/// value TERM at `k`.  Because the operands share a base and an index set, the
+/// two arrays can differ only at `K`, so this single clause fully decides the
+/// pair — and it compares value terms directly (no `select`, no
+/// read-over-write unfolding), so a depth-60 `storecomm` chain becomes one flat
+/// clause instead of a 60-deep unfolding that costs seconds per refinement
+/// round.  Returns `None` when the precondition (common base + same index set +
+/// at least one store) does not hold, so the caller falls back to the
+/// fresh-witness extensionality.
+fn finite_disjunction_extensionality(
+    manager: &mut TermManager,
+    a: TermId,
+    b: TermId,
+) -> Option<TermId> {
+    let (ba, ma) = direct_store_map(a, manager)?;
+    let (bb, mb) = direct_store_map(b, manager)?;
+    if ma.is_empty() || ba != bb {
+        return None;
+    }
+    // The base must not itself be a `Store`: the one-sided disjuncts below read
+    // `select(base, idx)`, and if `base` were a store chain those reads would
+    // unfold (the very cost this lemma exists to avoid).  For the `storecomm`
+    // family the base is a free array variable, so the reads stay opaque.
+    if as_store(ba, manager).is_some() {
+        return None;
+    }
+    let base = ba;
+    // Over a common base the two arrays can differ only at K = idx_a ∪ idx_b.
+    // At a shared index they compare value-term to value-term; at a one-sided
+    // index the writer's value compares to `select(base, idx)` (the unwritten
+    // side).  All comparisons are on value terms / opaque base reads — no
+    // read-over-write unfolding — so this is a flat clause regardless of chain
+    // depth.
+    let mut disjuncts: Vec<TermId> = vec![manager.mk_eq(a, b)];
+    for (idx, va) in &ma {
+        match mb.iter().find(|(i, _)| *i == *idx) {
+            Some((_, vb)) if vb != va => {
+                let eq = manager.mk_eq(*va, *vb);
+                disjuncts.push(manager.mk_not(eq));
+            }
+            Some(_) => {} // shared index, equal value terms — cannot witness a diff
+            None => {
+                // a-only:  a writes va, b reads select(base, idx).
+                let br = manager.mk_select(base, *idx);
+                let eq = manager.mk_eq(*va, br);
+                disjuncts.push(manager.mk_not(eq));
+            }
+        }
+    }
+    for (idx, vb) in &mb {
+        if !ma.iter().any(|(i, _)| *i == *idx) {
+            // b-only:  b writes vb, a reads select(base, idx).
+            let br = manager.mk_select(base, *idx);
+            let eq = manager.mk_eq(br, *vb);
+            disjuncts.push(manager.mk_not(eq));
+        }
+    }
+    // A single-disjunct lemma is just `a = b`, which is valid precisely when
+    // the two chains write identical values to identical indices over an
+    // identical base — sound to assert, and it forces a conflict with any
+    // `not(= a b)`.
+    Some(if disjuncts.len() == 1 {
+        disjuncts[0]
+    } else {
+        manager.mk_or(disjuncts)
+    })
 }
 
 /// Whether `term` has an array sort.
