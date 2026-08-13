@@ -2,6 +2,7 @@
 
 pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
+pub(super) mod array_theory;
 pub(super) mod candidates;
 pub(super) mod check_array;
 pub(super) mod check_bv;
@@ -283,6 +284,13 @@ pub struct Solver {
     /// recorded as `(store_term, base, index, value)`.
     #[allow(dead_code)]
     pub(super) array_store_terms: Vec<(TermId, TermId, TermId, TermId)>,
+    /// Incremental array-theory index (Stage 5 of `ARRAY_THEORY_PLAN.md`):
+    /// `base -> store terms` and `array -> select terms`, scoped by the user
+    /// context.  Populated at encode time alongside the flat Stage-1 records
+    /// above; the event-driven stages (3–6) consume it for O(1) lookup of the
+    /// reads/writes on an array instead of rescanning the formula each
+    /// lazy-refinement round.
+    pub(super) array_theory: array_theory::ArrayTheory,
     /// Ground array-axiom instances (read-over-write / extensionality /
     /// select-congruence) already added to the SAT core as lemmas, keyed by the
     /// interned lemma term id.  Guarantees each valid instance is asserted at
@@ -533,6 +541,7 @@ impl Solver {
             has_array_ops: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
+            array_theory: array_theory::ArrayTheory::new(),
             array_axiom_instances: FxHashSet::default(),
             arith_defined_terms: FxHashSet::default(),
             arith_const_axiom_pairs: FxHashSet::default(),
@@ -2209,6 +2218,7 @@ impl Solver {
             has_array_ops: self.has_array_ops,
             encode_depth_exceeded: self.encode_depth_exceeded,
             dt_axioms_incomplete: self.dt_axioms_incomplete,
+            array_theory_scope: self.array_theory.snapshot(),
         });
         self.sat.push();
         // No EUF / arithmetic scope is opened here on purpose.
@@ -2366,6 +2376,10 @@ impl Solver {
             self.entailed_int_consts_upto = 0;
             self.var_to_term.truncate(state.num_vars);
             self.has_false_assertion = state.has_false_assertion;
+            // Undo the `select`/`store` index entries encoded in this scope
+            // (Stage 5 array theory).  Encode runs at `assert` time, so these
+            // are not individual `TrailOp`s; the scope snapshot retracts them.
+            self.array_theory.pop(state.array_theory_scope);
 
             // Quantifier reasoning state: MBQI and the e-matching engine turn a
             // registered quantifier into hard ground lemmas, so a quantifier
@@ -2502,6 +2516,7 @@ impl Solver {
         self.has_array_ops = false;
         self.array_select_terms.clear();
         self.array_store_terms.clear();
+        self.array_theory.reset();
         self.array_axiom_instances.clear();
         self.arith_defined_terms.clear();
         self.arith_const_axiom_pairs.clear();

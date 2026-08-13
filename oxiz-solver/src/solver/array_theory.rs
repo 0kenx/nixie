@@ -1,0 +1,177 @@
+//! Incremental array-theory state — Stage 5 of `docs/ARRAY_THEORY_PLAN.md`.
+//!
+//! Indexed bookkeeping for the CDCL(T) array theory, mirroring Z3's
+//! `theory_array_full::var_data_full`: for each array term it records the
+//! `store`s that write it and the `select`s that read it.  Populated as
+//! `select`/`store` terms are encoded and retracted on user `pop`, so the
+//! later event-driven stages (`merge_eh` congruence, `relevant_eh`
+//! read-over-write, incremental lemma addition) can react to reads/writes by
+//! O(1) lookup instead of rescanning the whole formula each lazy-refinement
+//! round.
+//!
+//! Scope handling.  Entries are added at encode (assert) time, i.e. at the
+//! user context level, so they are undone by a user `pop` through journals
+//! snapshot in `ContextState` (see `Solver::push` / `Solver::pop`).  A HashMap
+//! cannot be truncated, so every insertion is appended to a journal and `pop`
+//! replays the journal in reverse, popping the matching Vec tail and dropping
+//! the key when its Vec becomes empty.  `reset` clears everything.
+
+#![allow(missing_docs)]
+
+use crate::prelude::*;
+use oxiz_core::ast::TermId;
+
+/// Incremental array-theory index: `base array -> store terms` and
+/// `array -> select terms`.
+#[derive(Default, Debug)]
+pub(crate) struct ArrayTheory {
+    /// `base -> store terms` writing it (`store(base, idx, val)`).
+    maps: FxHashMap<TermId, Vec<TermId>>,
+    /// `array -> select terms` reading it (`select(array, idx)`).
+    parents: FxHashMap<TermId, Vec<TermId>>,
+    /// One `base` per `maps` insertion, in insertion order, for LIFO undo.
+    maps_journal: Vec<TermId>,
+    /// One `array` per `parents` insertion, in insertion order, for LIFO undo.
+    parents_journal: Vec<TermId>,
+}
+
+impl ArrayTheory {
+    /// Create an empty index.
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that `store_term = store(base, _, _)` writes `base`.
+    pub(crate) fn add_store(&mut self, base: TermId, store_term: TermId) {
+        self.maps.entry(base).or_default().push(store_term);
+        self.maps_journal.push(base);
+    }
+
+    /// Record that `select_term = select(array, _)` reads `array`.
+    pub(crate) fn add_select(&mut self, array: TermId, select_term: TermId) {
+        self.parents.entry(array).or_default().push(select_term);
+        self.parents_journal.push(array);
+    }
+
+    /// The `store` terms writing `array` (`store(array, _, _)`).
+    #[allow(dead_code)] // consumed by Stage 5 steps 3–6 (merge_eh / relevant_eh)
+    pub(crate) fn stores_of(&self, array: TermId) -> &[TermId] {
+        self.maps.get(&array).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// The `select` terms reading `array` (`select(array, _)`).
+    #[allow(dead_code)] // consumed by Stage 5 steps 3–6
+    pub(crate) fn selects_of(&self, array: TermId) -> &[TermId] {
+        self.parents
+            .get(&array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Snapshot of the journal lengths, for [`Self::pop].
+    pub(crate) fn snapshot(&self) -> ArrayTheoryScope {
+        ArrayTheoryScope {
+            maps_journal_len: self.maps_journal.len(),
+            parents_journal_len: self.parents_journal.len(),
+        }
+    }
+
+    /// Undo every insertion made since the matching [`Self::snapshot] / `push`.
+    pub(crate) fn pop(&mut self, scope: ArrayTheoryScope) {
+        while self.parents_journal.len() > scope.parents_journal_len {
+            if let Some(array) = self.parents_journal.pop()
+                && let Some(v) = self.parents.get_mut(&array)
+            {
+                v.pop();
+                if v.is_empty() {
+                    self.parents.remove(&array);
+                }
+            }
+        }
+        while self.maps_journal.len() > scope.maps_journal_len {
+            if let Some(base) = self.maps_journal.pop()
+                && let Some(v) = self.maps.get_mut(&base)
+            {
+                v.pop();
+                if v.is_empty() {
+                    self.maps.remove(&base);
+                }
+            }
+        }
+    }
+
+    /// Drop all bookkeeping (called by `Solver::reset`).
+    pub(crate) fn reset(&mut self) {
+        self.maps.clear();
+        self.parents.clear();
+        self.maps_journal.clear();
+        self.parents_journal.clear();
+    }
+
+    /// Number of indexed `store` entries (debug / statistics).
+    #[allow(dead_code)]
+    pub(crate) fn num_stores(&self) -> usize {
+        self.maps.values().map(Vec::len).sum()
+    }
+
+    /// Number of indexed `select` entries (debug / statistics).
+    #[allow(dead_code)]
+    pub(crate) fn num_selects(&self) -> usize {
+        self.parents.values().map(Vec::len).sum()
+    }
+}
+
+/// Journal-length snapshot used to undo a scope's insertions on `pop`.
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct ArrayTheoryScope {
+    maps_journal_len: usize,
+    parents_journal_len: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_lookup_and_pop() {
+        let mut t = ArrayTheory::new();
+        let (a, b) = (TermId::new(1), TermId::new(2));
+        let (s1, s2) = (TermId::new(10), TermId::new(11));
+        let (r1, r2) = (TermId::new(20), TermId::new(21));
+
+        let snap = t.snapshot();
+        t.add_store(a, s1);
+        t.add_store(a, s2);
+        t.add_store(b, s1);
+        t.add_select(a, r1);
+        assert_eq!(t.stores_of(a), &[s1, s2]);
+        assert_eq!(t.stores_of(b), &[s1]);
+        assert_eq!(t.selects_of(a), &[r1]);
+        assert!(t.selects_of(b).is_empty());
+
+        // Pop undoes everything back to the snapshot, including dropping keys
+        // whose Vec became empty.
+        t.pop(snap);
+        assert!(t.stores_of(a).is_empty());
+        assert!(t.stores_of(b).is_empty());
+        assert!(t.selects_of(a).is_empty());
+        assert_eq!(t.num_stores(), 0);
+        assert_eq!(t.num_selects(), 0);
+    }
+
+    #[test]
+    fn nested_scopes_pop_lifo() {
+        let mut t = ArrayTheory::new();
+        let a = TermId::new(1);
+        let outer = t.snapshot();
+        t.add_store(a, TermId::new(10));
+        let inner = t.snapshot();
+        t.add_store(a, TermId::new(11));
+        assert_eq!(t.num_stores(), 2);
+        t.pop(inner);
+        assert_eq!(t.stores_of(a), &[TermId::new(10)]);
+        t.pop(outer);
+        assert!(t.stores_of(a).is_empty());
+    }
+}

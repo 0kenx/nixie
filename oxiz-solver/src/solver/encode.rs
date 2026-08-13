@@ -2447,9 +2447,11 @@ impl Solver {
                 match &manager.get(term).map(|d| d.kind.clone()) {
                     Some(TermKind::Select(array, index)) => {
                         self.array_select_terms.push((term, *array, *index));
+                        self.array_theory.add_select(*array, term);
                     }
                     Some(TermKind::Store(base, index, value)) => {
                         self.array_store_terms.push((term, *base, *index, *value));
+                        self.array_theory.add_store(*base, term);
                     }
                     _ => {}
                 }

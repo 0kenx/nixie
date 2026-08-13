@@ -90,6 +90,10 @@ pub(crate) struct ContextState {
     pub(crate) encode_depth_exceeded: bool,
     /// `dt_axioms_incomplete` flag at the time of push
     pub(crate) dt_axioms_incomplete: bool,
+    /// Snapshot of the incremental array-theory index's journals at push, so
+    /// `pop` undoes the `select`/`store` entries encoded in this scope
+    /// (Stage 5, `docs/ARRAY_THEORY_PLAN.md`).
+    pub(crate) array_theory_scope: super::array_theory::ArrayTheoryScope,
 }
 
 #[cfg(debug_assertions)]
@@ -205,6 +209,9 @@ impl super::Solver {
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
             has_array_ops: _, // SNAPSHOT
+            array_theory: _, // SCOPED: snapshot/`pop` via `array_theory_scope`
+            // in `ContextState` (entries are encoded at `assert` time, not as
+            // individual `TrailOp`s).
             array_select_terms: _, // Stage-1 bookkeeping: accumulates across
             // `assert`s; no consumer yet (Stages 2–5 of ARRAY_THEORY_PLAN),
             // so a stale entry after `pop` is harmless; cleared by `reset`.
