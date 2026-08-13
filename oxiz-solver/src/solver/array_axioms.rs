@@ -275,11 +275,32 @@ fn build_read_over_write(
 ) {
     for &(select_term, array, index) in &collected.selects {
         if let Some((base, store_idx, stored_val)) = as_store(array, manager) {
-            // Direct read over a syntactic store.
-            let (row1, row2) =
-                row_implications(manager, select_term, store_idx, stored_val, base, index);
-            candidates.push(row1);
-            candidates.push(row2);
+            // Direct read over a syntactic store — but unfold the WHOLE chain
+            // eagerly, not just the outermost level.  Each refinement round
+            // re-solves the entire goal from scratch (~0.15–0.77 s/round), and
+            // one-level-per-round unfolding makes a depth-N chain take N
+            // rounds — the dominant cost on the `storecomm`/`swap` families
+            // (depth-40 `storecomm` was 68 rounds / 10 s).  Generating the RoW
+            // implications for every store link now lets the chain resolve in
+            // ~1 round.  The intermediate `select(base, index)` terms are
+            // hash-consed (idempotent `mk_select`), and lemma instances are
+            // de-duplicated by term id, so a shared sub-chain is not
+            // re-instantiated.
+            let mut sel = select_term;
+            let mut cur_base = base;
+            let mut cur_idx = store_idx;
+            let mut cur_val = stored_val;
+            loop {
+                let (row1, row2) =
+                    row_implications(manager, sel, cur_idx, cur_val, cur_base, index);
+                candidates.push(row1);
+                candidates.push(row2);
+                let Some((b2, si2, sv2)) = as_store(cur_base, manager) else { break };
+                sel = manager.mk_select(cur_base, index);
+                cur_base = b2;
+                cur_idx = si2;
+                cur_val = sv2;
+            }
         } else if let Some(store_terms) = collected.aliases.get(&array) {
             // Aliased read: an asserted `array = store(...)` makes the same
             // axiom apply, but we guard each implication with that alias
