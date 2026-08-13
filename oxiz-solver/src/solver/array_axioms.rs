@@ -86,9 +86,12 @@ impl Solver {
         }
 
         // ---- Phase 2: build candidate ground axiom instances ------------
+        // Build extensionality first so its *complete* finite-disjunction
+        // clauses can tell `build_read_over_write` which arrays need no eager
+        // chain unfolding (the lever for deep `storecomm` chains).
         let mut candidates: Vec<TermId> = Vec::new();
-        build_read_over_write(manager, &collected, &mut candidates);
-        build_extensionality_and_congruence(manager, &collected, &mut candidates);
+        let no_eager = build_extensionality_and_congruence(manager, &collected, &mut candidates);
+        build_read_over_write(manager, &collected, &no_eager, &mut candidates);
 
         // ---- Phase 3: filter (dedup + model) and assert -----------------
         // Only instances the candidate model does not already *definitely*
@@ -271,21 +274,20 @@ fn record_alias(
 fn build_read_over_write(
     manager: &mut TermManager,
     collected: &ArrayStructure,
+    no_eager: &FxHashSet<TermId>,
     candidates: &mut Vec<TermId>,
 ) {
     for &(select_term, array, index) in &collected.selects {
         if let Some((base, store_idx, stored_val)) = as_store(array, manager) {
-            // Direct read over a syntactic store — but unfold the WHOLE chain
-            // eagerly, not just the outermost level.  Each refinement round
-            // re-solves the entire goal from scratch (~0.15–0.77 s/round), and
-            // one-level-per-round unfolding makes a depth-N chain take N
-            // rounds — the dominant cost on the `storecomm`/`swap` families
-            // (depth-40 `storecomm` was 68 rounds / 10 s).  Generating the RoW
-            // implications for every store link now lets the chain resolve in
-            // ~1 round.  The intermediate `select(base, index)` terms are
-            // hash-consed (idempotent `mk_select`), and lemma instances are
-            // de-duplicated by term id, so a shared sub-chain is not
-            // re-instantiated.
+            // Direct read over a syntactic store.  Unless this array is already
+            // settled by a *complete* finite-disjunction clause (in `no_eager`),
+            // unfold the WHOLE chain now — each refinement round re-solves the
+            // goal from scratch, and one-level-per-round unfolding made a
+            // depth-N chain take N rounds (the original storecomm/swap cost).
+            // For a finite-disjunction-settled array the clause decides the
+            // pair without any unfolding, so a single (lazy) level is sound and
+            // avoids generating a depth-N unfolding that the search never needs.
+            let do_eager = !no_eager.contains(&array);
             let mut sel = select_term;
             let mut cur_base = base;
             let mut cur_idx = store_idx;
@@ -295,6 +297,9 @@ fn build_read_over_write(
                     row_implications(manager, sel, cur_idx, cur_val, cur_base, index);
                 candidates.push(row1);
                 candidates.push(row2);
+                if !do_eager {
+                    break;
+                }
                 let Some((b2, si2, sv2)) = as_store(cur_base, manager) else { break };
                 sel = manager.mk_select(cur_base, index);
                 cur_base = b2;
@@ -365,12 +370,17 @@ fn row_implications(
 }
 
 /// Build extensionality and select-congruence instances for every collected
-/// array-sorted equality atom.
+/// array-sorted equality atom.  Returns the candidate lemmas and the set of
+/// arrays that a *complete* finite-disjunction clause settles — reads on those
+/// arrays need not be eagerly unfolded (the clause decides them), which is the
+/// lever that makes a depth-60 `storecomm` chain one flat clause instead of a
+/// 60-deep unfolding.
 fn build_extensionality_and_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
     candidates: &mut Vec<TermId>,
-) {
+) -> FxHashSet<TermId> {
+    let mut finite_decided: FxHashSet<TermId> = FxHashSet::default();
     // Extensionality candidate pairs: the asserted array equalities, PLUS
     // every (base, store_result) pair for a store that is *named by a
     // variable* (asserted `var = store(...)`), so an array and its write are
@@ -412,8 +422,17 @@ fn build_extensionality_and_congruence(
         // value-disjunction misses (e.g. `cvc/read8`), so skipping it would
         // lose completeness.  The clause is cheap, and on the deep-chain goals
         // it dominates the search so the witness path adds little.
-        if let Some(lemma) = finite_disjunction_extensionality(manager, a, b) {
+        if let Some((lemma, is_complete)) = finite_disjunction_extensionality(manager, a, b) {
             candidates.push(lemma);
+            if is_complete {
+                // The clause decides `a = b` with no array-read unfolding.
+                // Record both operands so `build_read_over_write` can skip the
+                // eager full-chain unfold for reads on them (lazy one-level RoW
+                // is sound and, since the search finishes once the clause fires,
+                // never actually needs the deeper levels).
+                finite_decided.insert(a);
+                finite_decided.insert(b);
+            }
             // Generated IN ADDITION to the fresh-witness extensionality below:
             // that witness's `select(a,k)` / `select(b,k)` terms can link this
             // pair to other constraints a pure value-disjunction misses (e.g.
@@ -460,6 +479,7 @@ fn build_extensionality_and_congruence(
             candidates.push(cong);
         }
     }
+    finite_decided
 }
 
 /// Materialise (interning is idempotent) a deterministic extensionality witness
@@ -523,6 +543,17 @@ fn direct_store_map(
     }
 }
 
+/// Whether `term` is a value the SAT + arithmetic + EUF core can decide
+/// directly, without an array `select` unfolding — anything that is not a
+/// `Select`, array-sorted `Ite`, or `Store`.  Used to tell when a
+/// finite-disjunction clause is *complete* (decides the pair with no unfolding).
+fn is_scalar_value(term: TermId, manager: &TermManager) -> bool {
+    !matches!(
+        manager.get(term).map(|d| &d.kind),
+        Some(TermKind::Select(..) | TermKind::Ite(..) | TermKind::Store(..))
+    )
+}
+
 /// Finite-disjunction extensionality for two store chains over a *common base*
 /// that write the *same index set*: returns the valid lemma
 /// `a = b ∨ ∨_{k∈K} val_a(k) ≠ val_b(k)`, where each `val_·(k)` is the chain's
@@ -538,7 +569,13 @@ fn finite_disjunction_extensionality(
     manager: &mut TermManager,
     a: TermId,
     b: TermId,
-) -> Option<TermId> {
+) -> Option<(TermId, bool)> {
+    // Returns `(lemma, is_complete)`.  `is_complete` is true only when the
+    // clause decides `a = b` with no array-select unfolding — a common
+    // free-variable base whose every compared value is scalar (variable /
+    // constant / arithmetic / UF).  `storecomm` qualifies (base `a1`, values
+    // are free `e_i`); `swap`/`read8` do not (values are `select`s), so their
+    // reads must still be unfolded and the caller keeps the eager path.
     let (ba, ma) = direct_store_map(a, manager)?;
     let (bb, mb) = direct_store_map(b, manager)?;
     if ma.is_empty() || ba != bb {
@@ -552,6 +589,16 @@ fn finite_disjunction_extensionality(
         return None;
     }
     let base = ba;
+    // `is_complete`: the clause decides `a = b` with no array-read unfolding.
+    // Requires (1) a free-variable base, (2) every compared value scalar, and
+    // (3) the SAME index set on both sides — a differing index set forces a
+    // one-sided `select(base, idx)` disjunct whose opaque read the SAT core
+    // cannot settle instantly, so the eager chain unfold is still needed there.
+    let same_index_set = ma.len() == mb.len()
+        && ma.iter().all(|(i, _)| mb.iter().any(|(j, _)| i == j));
+    let is_complete = same_index_set
+        && matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
+        && ma.iter().chain(mb.iter()).all(|&(_, v)| is_scalar_value(v, manager));
     // Over a common base the two arrays can differ only at K = idx_a ∪ idx_b.
     // At a shared index they compare value-term to value-term; at a one-sided
     // index the writer's value compares to `select(base, idx)` (the unwritten
@@ -587,9 +634,9 @@ fn finite_disjunction_extensionality(
     // identical base — sound to assert, and it forces a conflict with any
     // `not(= a b)`.
     Some(if disjuncts.len() == 1 {
-        disjuncts[0]
+        (disjuncts[0], is_complete)
     } else {
-        manager.mk_or(disjuncts)
+        (manager.mk_or(disjuncts), is_complete)
     })
 }
 
