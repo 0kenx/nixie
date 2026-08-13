@@ -1926,16 +1926,8 @@ impl Solver {
             }
             TermKind::False => {
                 let var = self.get_or_create_var(manager.mk_false());
-                // The `false` term is never true: pin its SAT variable to false
-                // and return the positive literal (which is therefore always
-                // false).  Returning `neg(var)` here was a sign error — `var` is
-                // forced false, so `neg(var)` is the always-TRUE literal, which
-                // made `encode_depth(false)` report true and corrupted every
-                // `ite(cond, false, …)` (notably the `(ite (= x y) false true)`
-                // = `distinct` shape and the `(not (ite … false …))` goals,
-                // producing false-UNSAT — e.g. `cvc/fb_var_27_8`).
                 self.sat.add_clause([Lit::neg(var)]);
-                Lit::pos(var)
+                Lit::neg(var)
             }
             TermKind::Var(_) => {
                 let var = self.get_or_create_var(term);
