@@ -1496,14 +1496,37 @@ impl Solver {
     /// and (when it backtracks) after a `backtrack_to_root()` call, so it
     /// must not itself assume anything about levels.
     fn scan_clause_for_attach(&self, clause_lits: &[Lit]) -> (bool, u32, SmallVec<[Lit; 4]>) {
+        // A literal assigned at decision level >= 1 is *non-permanent*: the
+        // search can backtrack past it, turning a `true` into `undef` (or a
+        // `false` into `undef`).  For deciding whether a clause being attached
+        // is *permanently* satisfied / unit / conflicting — the question
+        // [`pre_check_effective_unit`] answers — only level-0 facts count.
+        // A clause "satisfied" solely by a level->=1 literal is not really
+        // satisfied: once that literal is backtracked the clause may become a
+        // unit or conflict, and the watch / binary-implication machinery
+        // cannot re-discover it, because a level-0 *false* sibling's
+        // negation was already dequeued when it was assigned and is never
+        // re-fired.  Treating a level->=1 `true` literal as undefined here
+        // makes the effective-unit analysis see that latent unit and force it
+        // at level 0 now, instead of leaving a hanging unit for the search
+        // to trip over after a backtrack.  (Level->=1 *false* literals keep
+        // their level: `pre_check_effective_unit` backtracks to root and
+        // re-scans when it sees `max_false_level > 0`, which turns them into
+        // undefined too.)
         let mut has_true = false;
         let mut max_false_level = 0u32;
         let mut undefined: SmallVec<[Lit; 4]> = SmallVec::new();
         for &lit in clause_lits {
             let value = self.trail.lit_value(lit);
             if value.is_true() {
-                has_true = true;
-                break;
+                if self.trail.level(lit.var()) == 0 {
+                    has_true = true;
+                    break;
+                } else {
+                    // Non-permanent satisfaction: backtrackable, so it does
+                    // not make the clause permanently satisfied.
+                    undefined.push(lit);
+                }
             } else if value.is_false() {
                 max_false_level = max_false_level.max(self.trail.level(lit.var()));
             } else {
@@ -1712,9 +1735,20 @@ impl Solver {
                 let val0 = self.trail.lit_value(lit0);
                 let val1 = self.trail.lit_value(lit1);
 
-                // If clause is satisfied, just add it
-                if val0.is_true() || val1.is_true() {
-                    // Clause already satisfied by current assignment
+                // If the clause is *permanently* satisfied (by a level-0
+                // literal), just add it.  Satisfaction by a level->=1 literal
+                // is NOT permanent: that literal can be backtracked, and a
+                // level-0 *false* sibling would then make this clause a unit
+                // whose binary-implication edge (`!false_lit -> other`) never
+                // re-fires (the false literal's negation was already dequeued
+                // when it was assigned at level 0).  Fall through to
+                // `pre_check_effective_unit`, whose level-aware scan treats
+                // level->=1 satisfaction as undefined and forces such a latent
+                // unit at level 0.
+                let perm_satisfied = (val0.is_true() && self.trail.level(lit0.var()) == 0)
+                    || (val1.is_true() && self.trail.level(lit1.var()) == 0);
+                if perm_satisfied {
+                    // Clause already satisfied by a permanent assignment
                     let clause_id = self.clauses.add_original(clause_lits.iter().copied());
                     self.proof_set_clause_id(clause_id, proof_oid);
                     if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
