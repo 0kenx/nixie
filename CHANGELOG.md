@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **QF_AUFLIA performance on store-chain goals** (`oxiz-solver/src/solver/array_axioms.rs`).  A class of `storecomm` / `swap` / `storeinv` goals that took 7–30 s (vs z3's 0.02–0.07 s, i.e. 100–400×) now solve in milliseconds to ~1.5 s, with the differential parity suite unchanged at **163/0/5** and the six formerly-unsound `cvc` cases still matching z3.  An external QF_AUFLIA run reported **0 unsound, +22 agree, −22 timeout**.  Four changes, all sound (every emitted clause is a theorem of the extensional array theory):
+  - **Flat read-over-write encoding** for both *direct* and *alias* store chains.  A chain `store(...store(base, k1, v1)..., kn, vn)` read at `index` is now axiomatised as `(index = ki) ⇒ select = vi` per store index plus one `select = select(base, index) ∨ ∨_i (index = ki)` "else" clause, replacing the O(depth) nested read-over-write-DIFFERENT chain whose O(depth) cascade of intermediate `select(base_level, index)` atoms dominated the SAT search.  The alias variant resolves the whole `var = store(var' = store(...))` chain in one refinement round (via the new `aliased_store_map`), guarded by the alias equalities, collapsing a ~10-round cascade (and a 30 s `swap` timeout → 0.01 s).
+  - **`finite_disjunction_extensionality` completeness** no longer requires the two chains to write the *same* index set: for a free-variable base a one-sided `select(base, idx)` disjunct is an opaque, settleable atom, so a depth-60 `storecomm` chain whose arms write different index sets still settles to one flat clause (e.g. `storecomm_invalid_*_np_nf_ni_*`, ~10 s → 0.01 s).
+  - **Skip the redundant fresh-witness extensionality** when the pair's `a = b` is already decided — either by a *complete* finite-disjunction clause, or because the pair is a *self-alias* (`(= var store...)`, a level-0 fact whose witness clause is a tautology).  This removes the witness reads whose read-over-write unfolding drove the multi-round cascade on `swap` / `storeinv` goals.
+  - **Alias-aware store-map resolution** (`aliased_store_map`) follows asserted `var = store(...)` chains so array variables equated to store chains are compared/decoded as those chains.
+
+  Residual: the `storecomm_invalid_*_pp_nf_ai_*` shape (a Skolem-witness SAT goal with inline store chains and no array-equality atom) still takes ~6 s — its cost is the first, array-free CDCL search (≈58k decisions), which can only be guided by array lemmas present *before* that search; the Z3-style fix is on-demand array-lemma instantiation during the search, left for future work.
+
 ### Fixed
 
 ## [0.3.1] - 2026-07-31

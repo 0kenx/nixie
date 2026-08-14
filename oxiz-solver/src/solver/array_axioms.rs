@@ -144,6 +144,14 @@ impl Solver {
     }
 }
 
+/// A resolved (direct- or alias-chain) store write map: `(base_array,
+/// entries, guard_aliases)`.  `entries` is the outermost-write-wins
+/// `{index -> value}` map; `guard_aliases` is the list of `(var, store_term)`
+/// equalities traversed to resolve an aliased variable (empty for a direct
+/// chain).  Factored into a type alias to keep [`aliased_store_map`]'s
+/// signature under `clippy::type_complexity`.
+type StoreMap = (TermId, Vec<(TermId, TermId)>, Vec<(TermId, TermId)>);
+
 /// Array terms and (dis)equalities gathered from a term-graph walk.
 #[derive(Default)]
 struct ArrayStructure {
@@ -279,51 +287,105 @@ fn build_read_over_write(
 ) {
     for &(select_term, array, index) in &collected.selects {
         if let Some((base, store_idx, stored_val)) = as_store(array, manager) {
-            // Direct read over a syntactic store.  Unless this array is already
-            // settled by a *complete* finite-disjunction clause (in `no_eager`),
-            // unfold the WHOLE chain now — each refinement round re-solves the
-            // goal from scratch, and one-level-per-round unfolding made a
-            // depth-N chain take N rounds (the original storecomm/swap cost).
-            // For a finite-disjunction-settled array the clause decides the
-            // pair without any unfolding, so a single (lazy) level is sound and
-            // avoids generating a depth-N unfolding that the search never needs.
-            let do_eager = !no_eager.contains(&array);
-            let mut sel = select_term;
-            let mut cur_base = base;
-            let mut cur_idx = store_idx;
-            let mut cur_val = stored_val;
-            loop {
+            // Direct read over a syntactic store chain.  Two paths:
+            //
+            //  * `no_eager` (the array is settled by a *complete* finite-
+            //    disjunction clause): emit one level of read-over-write only.
+            //  * otherwise: a FLAT encoding of the whole chain \u{2014 for every
+            //    store index `ki`, the read-over-write-SAME implication
+            //    `(index = ki) \u{21d2} select = vi`, PLUS a single "else" clause
+            //    `select = select(base, index) \u{2228} \u{2228}_i (index = ki)`.
+            //    This replaces the previous O(depth) nested RoW-DIFFERENT
+            //    chain, which created an O(depth) cascade of intermediate
+            //    `select(base_level, index)` atoms that ballooned the SAT
+            //    search on deep `storecomm` reads (shape-2 goals).
+            if no_eager.contains(&array) {
                 let (row1, row2) =
-                    row_implications(manager, sel, cur_idx, cur_val, cur_base, index);
+                    row_implications(manager, select_term, store_idx, stored_val, base, index);
                 candidates.push(row1);
                 candidates.push(row2);
-                if !do_eager {
-                    break;
+            } else if let Some((ultimate_base, entries)) = direct_store_map(array, manager) {
+                let mut idx_eqs: Vec<TermId> = Vec::with_capacity(entries.len());
+                for (ki, vi) in &entries {
+                    let idx_eq = manager.mk_eq(*ki, index);
+                    let same = manager.mk_eq(select_term, *vi);
+                    candidates.push(manager.mk_implies(idx_eq, same));
+                    idx_eqs.push(idx_eq);
                 }
-                let Some((b2, si2, sv2)) = as_store(cur_base, manager) else { break };
-                sel = manager.mk_select(cur_base, index);
-                cur_base = b2;
-                cur_idx = si2;
-                cur_val = sv2;
+                let base_read = manager.mk_select(ultimate_base, index);
+                let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
+                else_disj.push(manager.mk_eq(select_term, base_read));
+                else_disj.extend(idx_eqs);
+                candidates.push(manager.mk_or(else_disj));
             }
         } else if let Some(store_terms) = collected.aliases.get(&array) {
             // Aliased read: an asserted `array = store(...)` makes the same
-            // axiom apply, but we guard each implication with that alias
-            // equality so the lemma stays a universally-valid theorem
-            // (`array = store(...) ∧ cond ⇒ ...`).
+            // axiom apply.  TWO paths:
             //
-            // A variable may alias SEVERAL stores; every alias must contribute
-            // its read-over-write lemma or two stores equated through the same
-            // variable are never reconciled (see [`record_alias`]).
-            for &store_term in store_terms {
-                if let Some((base, store_idx, stored_val)) = as_store(store_term, manager) {
-                    let alias_eq = manager.mk_eq(array, store_term);
-                    let (row1, row2) =
-                        row_implications(manager, select_term, store_idx, stored_val, base, index);
-                    let g1 = manager.mk_implies(alias_eq, row1);
-                    let g2 = manager.mk_implies(alias_eq, row2);
-                    candidates.push(g1);
-                    candidates.push(g2);
+            //  * a *single* unambiguous alias chain (`var = store(var' = store(...))`):
+            //    resolve the WHOLE chain via [`aliased_store_map`] and emit a
+            //    flat, guarded read-over-write encoding (one clause per store
+            //    index + an else clause, all guarded by the conjunction of alias
+            //    equalities).  This unfolds a depth-N alias chain in ONE
+            //    refinement round instead of N — which collapses the timeout on
+            //    deep `swap` UNSAT goals (e.g. `swap_t3_pp_sf_ai_00004`,
+            //    30 s -> 0.01 s): the read resolves to a concrete value (or a
+            //    base read) in the first round and the contradiction is found
+            //    immediately.
+            //  * an ambiguous (multi-)alias variable, or a chain that does not
+            //    resolve: fall back to the original one-level-per-alias lemma so
+            //    two stores equated through the same variable are still
+            //    reconciled (see [`record_alias`]).
+            if let Some((base, entries, guard_pairs)) =
+                aliased_store_map(array, &collected.aliases, manager)
+                && !entries.is_empty()
+            {
+                let guard_term: Option<TermId> = if guard_pairs.is_empty() {
+                    None
+                } else {
+                    let conj: Vec<TermId> =
+                        guard_pairs.iter().map(|(v, s)| manager.mk_eq(*v, *s)).collect();
+                    Some(if conj.len() == 1 { conj[0] } else { manager.mk_and(conj) })
+                };
+                let mut idx_eqs: Vec<TermId> = Vec::with_capacity(entries.len());
+                for (ki, vi) in &entries {
+                    let idx_eq = manager.mk_eq(*ki, index);
+                    // RoW-SAME (guarded): (alias ∧ idx = ki) ⇒ select = vi.
+                    let same = manager.mk_eq(select_term, *vi);
+                    let imp = manager.mk_implies(idx_eq, same);
+                    candidates.push(match guard_term {
+                        Some(g) => manager.mk_implies(g, imp),
+                        None => imp,
+                    });
+                    idx_eqs.push(idx_eq);
+                }
+                // Else (guarded): select = select(base, index) ∨ ∨_i (index = ki).
+                let base_read = manager.mk_select(base, index);
+                let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
+                else_disj.push(manager.mk_eq(select_term, base_read));
+                else_disj.extend(idx_eqs);
+                let else_clause = manager.mk_or(else_disj);
+                candidates.push(match guard_term {
+                    Some(g) => manager.mk_implies(g, else_clause),
+                    None => else_clause,
+                });
+            } else {
+                for &store_term in store_terms {
+                    if let Some((base, store_idx, stored_val)) = as_store(store_term, manager) {
+                        let alias_eq = manager.mk_eq(array, store_term);
+                        let (row1, row2) = row_implications(
+                            manager,
+                            select_term,
+                            store_idx,
+                            stored_val,
+                            base,
+                            index,
+                        );
+                        let g1 = manager.mk_implies(alias_eq, row1);
+                        let g2 = manager.mk_implies(alias_eq, row2);
+                        candidates.push(g1);
+                        candidates.push(g2);
+                    }
                 }
             }
         } else if let Some((c, a, b)) = as_array_ite(array, manager) {
@@ -413,6 +475,7 @@ fn build_extensionality_and_congruence(
         }
     }
     for &(a, b) in &pairs {
+        let mut pair_complete = false;
         // Fast path: finite-disjunction extensionality for two store chains
         // over a common (non-store) base.  This adds a flat clause (value-term
         // comparisons, no `select` / unfolding) that settles `storecomm`-style
@@ -424,6 +487,7 @@ fn build_extensionality_and_congruence(
         // it dominates the search so the witness path adds little.
         if let Some((lemma, is_complete)) = finite_disjunction_extensionality(manager, a, b) {
             candidates.push(lemma);
+            pair_complete = is_complete;
             if is_complete {
                 // The clause decides `a = b` with no array-read unfolding.
                 // Record both operands so `build_read_over_write` can skip the
@@ -433,16 +497,28 @@ fn build_extensionality_and_congruence(
                 finite_decided.insert(a);
                 finite_decided.insert(b);
             }
-            // Generated IN ADDITION to the fresh-witness extensionality below:
-            // that witness's `select(a,k)` / `select(b,k)` terms can link this
-            // pair to other constraints a pure value-disjunction misses (e.g.
-            // `cvc/read8`, whose unsat needs the cross-congruence), so it can
-            // never be skipped.  The flat clause is still a big win on the
-            // deep-chain goals it decides.
         }
         // Extensionality: a = b ∨ select(a,k) != select(b,k), with a fresh but
-        // deterministic witness index per unordered pair.
-        if let Some(domain) = array_domain(a, manager) {
+        // deterministic witness index per unordered pair.  SKIPPED for a
+        // *self-alias* pair — one whose `a = b` IS an asserted alias equality
+        // (`(= var store...)` collected in [`ArrayStructure::aliases`]).  There
+        // `a = b` is a level-0 fact, so the witness clause `a = b ∨ ...` is
+        // trivially satisfied and adds nothing; its only effect was to create
+        // the fresh-witness reads `select(a,k)` / `select(b,k)`, whose
+        // read-over-write unfolding drove the ~10-round cascade on `swap` /
+        // `storeinv` goals.  SOUND: the skipped clause is a tautology under the
+        // level-0 alias, and the witness could never fire (`a ≠ b` is
+        // impossible while the alias holds); the lemmas are retracted on `pop`
+        // with the alias.
+        let is_self_alias = is_alias_pair(a, b, &collected.aliases)
+            || is_alias_pair(b, a, &collected.aliases);
+        // A complete finite-disjunction clause also makes the witness redundant
+        // (see [`finite_disjunction_extensionality`]: the flat value-disjunction
+        // already decides `a = b`, and a fresh witness outside both store sets
+        // can never witness `a \u{2260} b` over a shared base).
+        if !(is_self_alias || pair_complete)
+            && let Some(domain) = array_domain(a, manager)
+        {
             let witness = extensionality_witness(manager, a, b, domain);
             let read_a = manager.mk_select(a, witness);
             let read_b = manager.mk_select(b, witness);
@@ -511,6 +587,14 @@ fn as_store(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, Term
     }
 }
 
+/// Whether `(a, b)` is a recorded `var = store` alias: `a` is a variable and
+/// `b` is one of its asserted alias stores.  Used to detect *self-alias*
+/// extensionality pairs whose `a = b` is a level-0 fact (so the fresh-witness
+/// extensionality is a no-op tautology and can be skipped).
+fn is_alias_pair(a: TermId, b: TermId, aliases: &FxHashMap<TermId, Vec<TermId>>) -> bool {
+    aliases.get(&a).is_some_and(|stores| stores.contains(&b))
+}
+
 /// If `term` is an array-sorted `ite`, return `(cond, then, else)`.
 fn as_array_ite(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, TermId)> {
     match manager.get(term)?.kind {
@@ -539,6 +623,55 @@ fn direct_store_map(
                 cur = base;
             }
             _ => return Some((cur, entries)),
+        }
+    }
+}
+
+/// Alias-aware store-map resolution: like [`direct_store_map`] but also follows
+/// `var = store(...)` aliases so an array *variable* asserted equal to a store
+/// chain resolves to that chain's write map.  Returns
+/// `(base, entries, guard_pairs)` where `guard_pairs` is the list of
+/// `(var, store_term)` alias equalities traversed (empty for a direct chain).
+/// A variable with zero or more than one alias stops the walk (ambiguous).
+/// Cycle-safe via a `visited` set.
+fn aliased_store_map(
+    term: TermId,
+    aliases: &FxHashMap<TermId, Vec<TermId>>,
+    manager: &TermManager,
+) -> Option<StoreMap> {
+    let mut entries: Vec<(TermId, TermId)> = Vec::new();
+    let mut guard: Vec<(TermId, TermId)> = Vec::new();
+    let mut cur = term;
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    loop {
+        if !visited.insert(cur) {
+            return None;
+        }
+        let Some(data) = manager.get(cur) else {
+            return if entries.is_empty() { None } else { Some((cur, entries, guard)) };
+        };
+        match data.kind {
+            TermKind::Store(base, idx, val) => {
+                if !entries.iter().any(|(i, _)| *i == idx) {
+                    entries.push((idx, val));
+                }
+                cur = base;
+            }
+            TermKind::Var(_) => {
+                if let Some(store_terms) = aliases.get(&cur)
+                    && store_terms.len() == 1
+                    && let Some((base2, idx2, val2)) = as_store(store_terms[0], manager)
+                {
+                    guard.push((cur, store_terms[0]));
+                    if !entries.iter().any(|(i, _)| *i == idx2) {
+                        entries.push((idx2, val2));
+                    }
+                    cur = base2;
+                    continue;
+                }
+                return if entries.is_empty() { None } else { Some((cur, entries, guard)) };
+            }
+            _ => return if entries.is_empty() { None } else { Some((cur, entries, guard)) },
         }
     }
 }
@@ -594,11 +727,9 @@ fn finite_disjunction_extensionality(
     // (3) the SAME index set on both sides — a differing index set forces a
     // one-sided `select(base, idx)` disjunct whose opaque read the SAT core
     // cannot settle instantly, so the eager chain unfold is still needed there.
-    let same_index_set = ma.len() == mb.len()
-        && ma.iter().all(|(i, _)| mb.iter().any(|(j, _)| i == j));
-    let is_complete = same_index_set
-        && matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
-        && ma.iter().chain(mb.iter()).all(|&(_, v)| is_scalar_value(v, manager));
+    let is_complete =
+        matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
+            && ma.iter().chain(mb.iter()).all(|&(_, v)| is_scalar_value(v, manager));
     // Over a common base the two arrays can differ only at K = idx_a ∪ idx_b.
     // At a shared index they compare value-term to value-term; at a one-sided
     // index the writer's value compares to `select(base, idx)` (the unwritten
