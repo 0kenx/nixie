@@ -293,6 +293,67 @@ mod tests_2 {
     }
 
     #[test]
+    fn lazy_scope_snapshot_restores_variables_added_on_both_sides_of_check() {
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        simplex.set_lower(x, Rational64::zero(), 0);
+        let base_len = simplex.assignment.len();
+        let base_rows = simplex.tableau.len();
+
+        simplex.push();
+        assert!(matches!(simplex.saved_tableaux.last(), Some(None)));
+        assert!(matches!(simplex.cached_assignments.last(), Some(None)));
+
+        // Rows and variables created before the first scoped check are present
+        // in the lazy basis snapshot, then removed by their structural undo
+        // records when this level is popped.
+        let y = simplex.new_var();
+        let mut first = LinExpr::new();
+        first.add_term(x, Rational64::one());
+        first.add_term(y, Rational64::one());
+        first.add_constant(Rational64::from_integer(-4));
+        simplex.add_eq(first, 1);
+        assert!(simplex.check().is_ok());
+        assert!(matches!(simplex.saved_tableaux.last(), Some(Some(_))));
+        assert!(matches!(simplex.cached_assignments.last(), Some(Some(_))));
+
+        // This variable did not exist when the snapshot was taken.  Pop must
+        // retain a temporary non-basic slot for it until NewVar/NewSlack undo
+        // records have restored all parallel vectors.
+        let z = simplex.new_var();
+        let mut second = LinExpr::new();
+        second.add_term(y, Rational64::one());
+        second.add_term(z, Rational64::one());
+        second.add_constant(Rational64::from_integer(-6));
+        simplex.add_eq(second, 2);
+        assert!(simplex.check().is_ok());
+
+        simplex.pop();
+        assert_eq!(simplex.assignment.len(), base_len);
+        assert_eq!(simplex.tableau.len(), base_rows);
+        assert_eq!(simplex.num_original_vars(), 1);
+        assert!(simplex.check().is_ok());
+    }
+
+    #[test]
+    fn pop_without_simplex_run_keeps_parent_assignment_without_snapshot() {
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        simplex.set_lower(x, Rational64::from_integer(3), 0);
+        assert!(simplex.check().is_ok());
+        let parent_value = simplex.delta_value(x);
+
+        simplex.push();
+        simplex.set_upper(x, Rational64::from_integer(9), 1);
+        assert!(matches!(simplex.saved_tableaux.last(), Some(None)));
+        simplex.pop();
+
+        assert_eq!(simplex.delta_value(x), parent_value);
+        assert!(simplex.get_upper(x).is_none());
+        assert!(simplex.check().is_ok());
+    }
+
+    #[test]
     fn test_dual_simplex_basic() {
         // Test dual simplex - it works best when we have a basis already
         // For a simple feasibility test, dual_simplex should find violations

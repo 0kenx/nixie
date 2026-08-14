@@ -427,11 +427,12 @@ pub struct Simplex {
     trail_limits: Vec<usize>,
     /// Cached assignments for warm-starting (basis caching)
     /// Saves assignment state at each decision level for faster incremental solving
-    cached_assignments: Vec<Vec<DeltaRational>>,
-    /// Saved tableau snapshots for correct restoration on pop.
-    /// Pivoting during check() modifies the tableau rows in-place; without saving
-    /// the full tableau at push time, pop() cannot restore the correct basis.
-    saved_tableaux: Vec<(FxHashMap<VarId, LinExpr>, Vec<bool>)>,
+    cached_assignments: Vec<Option<Vec<DeltaRational>>>,
+    /// Lazily saved tableau snapshots for correct restoration on pop.
+    /// Pivoting during `check()` modifies rows in-place, so the first operation
+    /// that can mutate a scoped basis snapshots it.  A decision level that only
+    /// accumulates trailed bounds/rows needs no full-tableau clone.
+    saved_tableaux: Vec<Option<(FxHashMap<VarId, LinExpr>, Vec<bool>)>>,
     /// Pivoting rule to use
     pivoting_rule: PivotingRule,
     /// Maximum number of pivot operations before giving up
@@ -884,6 +885,22 @@ impl Simplex {
         expr.negate();
         self.add_strict_lt(expr, reason);
     }
+    /// Snapshot the entry assignment and basis for the current decision level
+    /// immediately before an operation that may mutate them.  Bounds, fresh
+    /// variables and fresh slack rows have explicit undo records, so `push()`
+    /// itself remains O(1); only a level that actually runs simplex pays for a
+    /// full snapshot, at most once.
+    fn ensure_scope_snapshot(&mut self) {
+        let Some(index) = self.saved_tableaux.len().checked_sub(1) else {
+            return; // assertion/base level is never popped
+        };
+        if self.saved_tableaux[index].is_none() {
+            self.saved_tableaux[index] = Some((self.tableau.clone(), self.basic.clone()));
+        }
+        if self.cached_assignments[index].is_none() {
+            self.cached_assignments[index] = Some(self.assignment.clone());
+        }
+    }
     /// Check if bounds are consistent
     pub fn check(&mut self) -> Result<(), Vec<u32>> {
         #[cfg(feature = "std")]
@@ -906,6 +923,7 @@ impl Simplex {
                 return Err(conflict);
             }
         }
+        self.ensure_scope_snapshot();
         // Skip the O(tableau) `crash_basis` re-derivation when the assignment
         // is already current (maintained incrementally by `add_le` on basic
         // slacks and left untouched by basic-bound changes).  Non-basic bound
@@ -999,6 +1017,7 @@ impl Simplex {
     /// - Bixby, "Implementing the Simplex Method" (2002)
     /// - Modern MIP solvers (CPLEX, Gurobi) use dual simplex as the primary LP solver
     pub fn dual_simplex(&mut self) -> Result<(), Vec<u32>> {
+        self.ensure_scope_snapshot();
         self.resource_limit = false;
         self.update_assignment();
         for _ in 0..self.max_pivots {
@@ -1276,6 +1295,7 @@ impl Simplex {
     pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) -> bool {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SimplexPivot);
+        self.ensure_scope_snapshot();
         let Some(expr) = self.tableau.get(&basic_var) else {
             self.resource_limit = true;
             return false;
@@ -1734,13 +1754,27 @@ impl Simplex {
     /// Push a new decision level
     pub fn push(&mut self) {
         self.trail_limits.push(self.trail.len());
-        self.cached_assignments.push(self.assignment.clone());
-        self.saved_tableaux
-            .push((self.tableau.clone(), self.basic.clone()));
+        self.cached_assignments.push(None);
+        self.saved_tableaux.push(None);
     }
     /// Pop to previous decision level
     pub fn pop(&mut self) {
         self.assignment_current = false;
+        let saved_tableau = self.saved_tableaux.pop().flatten();
+        let cached_assignment = self.cached_assignments.pop().flatten();
+        // A lazy snapshot includes rows introduced at the current level because
+        // it is taken immediately before the first check/pivot.  Restore that
+        // pre-pivot basis first; the structural undo records below then remove
+        // those scoped rows and variables.
+        if let Some((saved_tableau, mut saved_basic)) = saved_tableau {
+            self.tableau = saved_tableau;
+            // More scoped variables/slacks may have been allocated after the
+            // first check took this snapshot.  They are all removed by the undo
+            // loop, but `basic` must retain one placeholder slot per pending
+            // structural undo until then so the parallel arrays stay aligned.
+            saved_basic.resize(self.basic.len(), false);
+            self.basic = saved_basic;
+        }
         if let Some(limit) = self.trail_limits.pop() {
             while self.trail.len() > limit {
                 if let Some(undo) = self.trail.pop() {
@@ -1766,51 +1800,41 @@ impl Simplex {
                         }
                         BoundUndo::NewSlack(id) => {
                             self.num_slack -= 1;
+                            self.tableau.remove(&id);
                             self.assignment.pop();
                             self.lower.pop();
                             self.upper.pop();
                             self.basic.pop();
-                            let _ = id;
                         }
                     }
                 }
             }
-            if let Some((saved_tableau, saved_basic)) = self.saved_tableaux.pop() {
-                self.tableau = saved_tableau;
-                let cur_len = self.basic.len();
-                let restore_len = saved_basic.len().min(cur_len);
-                self.basic[..restore_len].copy_from_slice(&saved_basic[..restore_len]);
-                for item in self.basic.iter_mut().skip(restore_len) {
-                    *item = false;
+            // Defensive sanitation for legacy/partially-built rows.  Every
+            // ordinary scoped slack is removed by `NewSlack` above; retaining
+            // this validation keeps malformed stale references from surviving
+            // a pop if a future constraint constructor exits early.
+            let num_vars = self.assignment.len();
+            self.tableau.retain(|&var, expr| {
+                if (var as usize) >= num_vars {
+                    return false;
                 }
-            } else {
-                let num_vars = self.assignment.len();
-                self.tableau.retain(|&var, expr| {
-                    if (var as usize) >= num_vars {
+                for (v, _) in &expr.terms {
+                    if (*v as usize) >= num_vars {
                         return false;
                     }
-                    for (v, _) in &expr.terms {
-                        if (*v as usize) >= num_vars {
-                            return false;
-                        }
-                    }
-                    true
-                });
-                for i in 0..num_vars {
-                    let var_id = i as VarId;
-                    if self.basic[i] && !self.tableau.contains_key(&var_id) {
-                        self.basic[i] = false;
-                    }
+                }
+                true
+            });
+            for i in 0..num_vars {
+                let var_id = i as VarId;
+                if self.basic[i] && !self.tableau.contains_key(&var_id) {
+                    self.basic[i] = false;
                 }
             }
-            if let Some(cached) = self.cached_assignments.pop() {
+            if let Some(cached) = cached_assignment {
                 let restore_len = cached.len().min(self.assignment.len());
                 self.assignment[..restore_len].copy_from_slice(&cached[..restore_len]);
                 for item in self.assignment.iter_mut().skip(restore_len) {
-                    *item = DeltaRational::zero();
-                }
-            } else {
-                for item in self.assignment.iter_mut() {
                     *item = DeltaRational::zero();
                 }
             }

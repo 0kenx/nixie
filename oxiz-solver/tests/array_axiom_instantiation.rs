@@ -190,6 +190,30 @@ fn aliased_store_read_over_write_is_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
+/// Unconditional aliases do not need synthetic select-congruence reads, but
+/// alias-aware RoW must still follow the whole chain for an actually observed
+/// read.  At `k`, both writes miss, so `select(a2,k)` is `select(a0,k)`.
+#[test]
+fn multi_alias_chain_observed_read_still_reaches_base() {
+    let script = r#"
+(set-logic QF_ALIA)
+(declare-const a0 (Array Int Int))
+(declare-const a1 (Array Int Int))
+(declare-const a2 (Array Int Int))
+(declare-const i Int)
+(declare-const j Int)
+(declare-const k Int)
+(assert (= a1 (store a0 i 1)))
+(assert (= a2 (store a1 j 2)))
+(assert (not (= i k)))
+(assert (not (= j k)))
+(assert (= (select a2 k) 5))
+(assert (= (select a0 k) 7))
+(check-sat)
+"#;
+    assert_eq!(run_script(script), SolverResult::Unsat);
+}
+
 /// Issue #22 (reduced): an equality between two *independent* read-over-write
 /// reads whose indices are arithmetic compounds.
 ///

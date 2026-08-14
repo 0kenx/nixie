@@ -459,12 +459,18 @@ fn build_read_over_write(
 ///
 /// Free-variable / non-store equalities contribute no write index, so they are
 /// left to the witness extensionality (`build_extensionality_and_congruence`).
+/// Unconditional `var = store(...)` aliases are also skipped: alias-aware RoW
+/// already unfolds every observed read through the entire asserted chain, so
+/// manufacturing reads at otherwise-unobserved write indices is redundant.
 fn build_equality_read_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
     candidates: &mut Vec<TermId>,
 ) {
     for &(a, b) in &collected.eq_pairs {
+        if is_alias_pair(a, b, &collected.aliases) || is_alias_pair(b, a, &collected.aliases) {
+            continue;
+        }
         // Gather the write indices exposed by either side's store chain.
         let mut idx_terms: Vec<TermId> = Vec::new();
         if let Some((_, entries)) = direct_store_map(a, manager) {
@@ -613,6 +619,25 @@ fn build_extensionality_and_congruence(
             let eq_ab = manager.mk_eq(a, b);
             let ext = manager.mk_or([eq_ab, reads_diff]);
             candidates.push(ext);
+        }
+
+        // Both cases above already provide a complete path for every relevant
+        // read without materialising the same read across this pair:
+        //
+        // * a level-0 alias is handled directly by alias-aware RoW, guarded by
+        //   that asserted equality;
+        // * a complete finite store-map clause characterises `a = b` at every
+        //   index where the arrays can differ, while ordinary RoW handles any
+        //   observed read on either operand.
+        //
+        // Generating select congruence here recursively copies every observed
+        // index across an alias chain.  Those copied selects then seed more
+        // RoW and congruence instances, creating the full array×index closure
+        // even though none of the extra reads occurs in the input.  Conditional
+        // inline equalities still take the congruence path below (and the
+        // write-index path in `build_equality_read_congruence`).
+        if is_self_alias || pair_complete {
+            continue;
         }
 
         // Select congruence: a = b ⇒ select(a,j) = select(b,j) for every index

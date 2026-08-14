@@ -23,7 +23,7 @@ const DL_PROP_PERIOD: u64 = 8;
 
 /// Whether theory-conflict tracing is enabled (`OXIZ_TRACE_DECISIONS`, shared
 /// with the SAT-side decision/conflict tracer). Read once and cached. Used by
-/// `diff_primary_conflict` to tag each DL (difference-logic) conflict so the
+/// `diff_primary_check` to tag each DL (difference-logic) conflict so the
 /// SAT-side `oxiz-conflict` lines (which report the detection *point* but not
 /// the theory) can be attributed to a theory.
 #[cfg(feature = "std")]
@@ -116,6 +116,18 @@ struct DlAtom {
     ctype: ArithConstraintType,
 }
 
+/// Outcome of feeding one arithmetic atom to the incremental difference-logic
+/// checker.  `Consistent` means the atom was exactly representable as DL and
+/// the updated graph has no negative cycle; it is therefore safe to defer the
+/// more expensive simplex feasibility pass until a non-DL atom or final check.
+enum DlPrimaryResult {
+    /// The atom is outside the exact difference-logic fragment.
+    NotApplicable,
+    /// The atom was added and the complete incremental DL check accepted it.
+    Consistent,
+    /// Adding the atom produced a justified negative-cycle conflict.
+    Conflict(TheoryCheckResult),
+}
 
 /// Feed a DL atom using the INCREMENTAL add+check API (`add_*_check`, seeded
 /// SPFA — O(affected) per edge), returning a conflict if the edge creates a
@@ -307,6 +319,11 @@ pub(crate) struct TheoryManager<'a> {
     processed_count: usize,
     /// Throttle counter for difference-logic theory propagation.
     dl_prop_counter: u64,
+    /// Cached result of the whole-vocabulary DL-fragment test.  The arithmetic
+    /// vocabulary is immutable for one `TheoryManager`; rescanning thousands
+    /// of atoms every propagation period merely to rediscover one non-DL atom
+    /// is quadratic overhead on dense AUFLIA inputs.
+    dl_prop_fragment: Option<bool>,
     /// Theory checking mode
     theory_mode: TheoryMode,
     /// Pending assignments for lazy theory checking
@@ -525,6 +542,7 @@ impl<'a> TheoryManager<'a> {
             level_stack: vec![0],
             processed_count: 0,
             dl_prop_counter: 0,
+            dl_prop_fragment: None,
             theory_mode,
             pending_assignments: Vec::new(),
             pending_equalities: Vec::new(),
@@ -1567,14 +1585,15 @@ impl<'a> TheoryManager<'a> {
         None
     }
 
-    /// Feed one asserted atom to the incremental DL solver and return a
-    /// conflict if it creates a negative cycle.  Uses the seeded-SPFA
+    /// Feed one asserted atom to the incremental DL solver and report whether
+    /// it was exactly handled, was outside the fragment, or created a negative
+    /// cycle.  Uses the seeded-SPFA
     /// `add_*_check` (O(affected) per edge), the cheap DL-primary path.
     /// Folds `__oxiz_numarg` proxies and bare constants into the atom's RHS so
-    /// single-variable bounds and 2-variable differences both feed (bounds via
-    /// the canonical zero term).  SOUND: a DL negative cycle is a valid
-    /// refutation.
-    fn diff_primary_conflict(
+    /// exact two-variable differences feed the graph; single-variable bounds
+    /// deliberately remain on the simplex path.  SOUND: a DL negative cycle
+    /// is a valid refutation.
+    fn diff_primary_check(
         &mut self,
         var: Var,
         terms: &[(TermId, Rational64)],
@@ -1582,7 +1601,7 @@ impl<'a> TheoryManager<'a> {
         ctype: ArithConstraintType,
         is_eq: bool,
         is_positive: bool,
-    ) -> Option<TheoryCheckResult> {
+    ) -> DlPrimaryResult {
         use oxiz_theories::DiffLogicResult;
         // Fold every constant sub-term — whether a `purify_numeric_uf_args`
         // proxy (`__oxiz_numarg`, recoverable via `numarg_proxies`) or a bare
@@ -1608,7 +1627,7 @@ impl<'a> TheoryManager<'a> {
         // zero term as `y` (`x ≤ k` ≡ edge `zero → x`, weight `k`).
         let (xt, yt, c, ctype) = match real_terms.as_slice() {
             // Pure constant atom (e.g. `0 ≤ k`): defer to the simplex path.
-            [] => return None,
+            [] => return DlPrimaryResult::NotApplicable,
             [(v, coef)] => {
                 // Single-variable bounds (`x ≤ k`) are deferred to the simplex.
                 // Feeding them through a DL zero-node is net-negative: the zero
@@ -1617,7 +1636,7 @@ impl<'a> TheoryManager<'a> {
                 // (vhard16 went 0.35s -> 50s with bounds fed; vhard7 was slower
                 // too).  The 2-variable differences below are the win.
                 let _ = (v, coef);
-                return None;
+                return DlPrimaryResult::NotApplicable;
             }
             [(a, ca), (b, cb)] => {
                 // Difference `x − y`: one +1 coefficient, one −1.
@@ -1630,24 +1649,24 @@ impl<'a> TheoryManager<'a> {
                 {
                     (*b, *a)
                 } else {
-                    return None; // not a unit difference
+                    return DlPrimaryResult::NotApplicable; // not a unit difference
                 };
                 (x, y, adj_constant, ctype)
             }
-            _ => return None, // 3+ real variables: genuinely non-difference
+            _ => return DlPrimaryResult::NotApplicable, // 3+ real variables: genuinely non-difference
         };
         for t in [xt, yt] {
             let Some(td) = self.manager.get(t) else {
-                return None;
+                return DlPrimaryResult::NotApplicable;
             };
             if !is_plain_numeric_term(td) {
-                return None;
+                return DlPrimaryResult::NotApplicable;
             }
             let Some(sort) = self.manager.sorts.get(td.sort) else {
-                return None;
+                return DlPrimaryResult::NotApplicable;
             };
             if !sort.is_int() && !sort.is_real() {
-                return None;
+                return DlPrimaryResult::NotApplicable;
             }
         }
         let dla = DlAtom { var, x: xt, y: yt, c, is_eq, ctype };
@@ -1659,9 +1678,9 @@ impl<'a> TheoryManager<'a> {
             if theory_trace_enabled() {
                 eprintln!("oxiz-tconf\tdiff");
             }
-            return Some(self.conflict_from_terms(&cycle_terms));
+            return DlPrimaryResult::Conflict(self.conflict_from_terms(&cycle_terms));
         }
-        None
+        DlPrimaryResult::Consistent
     }
 
     /// Difference-logic theory propagation using the incrementally-maintained
@@ -1672,6 +1691,9 @@ impl<'a> TheoryManager<'a> {
     /// for pure-DL formulas (defect 3); the caller gates on that.
     fn derive_diff_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         use oxiz_theories::DiffVar;
+        if self.dl_prop_fragment == Some(false) {
+            return None;
+        }
         // Collect DL atoms + the pure-DL flag (clone out of shared maps).
         let mut dl_atoms: Vec<DlAtom> = Vec::new();
         for (&var, parsed) in self.var_to_parsed_arith.iter() {
@@ -1714,8 +1736,10 @@ impl<'a> TheoryManager<'a> {
             dl_atoms.push(DlAtom { var, x: xt, y: yt, c: parsed.constant, is_eq, ctype });
         }
         if dl_atoms.is_empty() || dl_atoms.len() != self.var_to_parsed_arith.len() {
+            self.dl_prop_fragment = Some(false);
             return None; // no DL atoms, or not pure-DL (defect 3)
         }
+        self.dl_prop_fragment = Some(true);
         let mut sssp_cache:
             FxHashMap<DiffVar, Option<(HashMap<DiffVar, Rational64>, HashMap<DiffVar, usize>)>> =
             FxHashMap::default();
@@ -2267,7 +2291,7 @@ impl<'a> TheoryManager<'a> {
                             self.arith.note_fixed_var(lhs, fv, parsed.reason_term);
                         }
                         // Incremental DL conflict check for equalities.
-                        if let Some(dl_conflict) = self.diff_primary_conflict(
+                        if let DlPrimaryResult::Conflict(dl_conflict) = self.diff_primary_check(
                             var,
                             &parsed.terms,
                             parsed.constant,
@@ -2594,7 +2618,7 @@ impl<'a> TheoryManager<'a> {
                     // Incremental DL conflict check (seeded SPFA, O(affected)).
                     // For pure-DL this short-circuits the (slower) simplex below
                     // with a cheaper Bellman-Ford; SOUND (neg cycle = refutation).
-                    if let Some(dl_conflict) = self.diff_primary_conflict(
+                    let dl_exact = match self.diff_primary_check(
                         var,
                         &parsed.terms,
                         parsed.constant,
@@ -2602,20 +2626,30 @@ impl<'a> TheoryManager<'a> {
                         false,
                         is_positive,
                     ) {
-                        return dl_conflict;
-                    }
+                        DlPrimaryResult::Conflict(dl_conflict) => return dl_conflict,
+                        DlPrimaryResult::Consistent => true,
+                        DlPrimaryResult::NotApplicable => false,
+                    };
 
-                    // Check ArithSolver for conflicts
-                    use oxiz_theories::Theory;
-                    use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
-                    let arith_result = self.arith.check();
-                    match arith_result {
-                        Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) => {
-                            return self.conflict_from_terms(&conflict_terms);
-                        }
-                        Ok(TheoryCheckResultEnum::Sat) => {}
-                        other => {
-                            let _ = other;
+                    // DL-representable comparisons were already checked by the
+                    // exact incremental graph above.  Keep their constraints in
+                    // the simplex tableau for mixed-fragment interaction and
+                    // model construction, but defer its global feasibility pass
+                    // until a non-DL atom or `final_check`.  Running the full
+                    // tableau after every edge makes dense all-different cliques
+                    // quadratic checks over a quadratically growing tableau.
+                    if !dl_exact {
+                        use oxiz_theories::Theory;
+                        use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
+                        let arith_result = self.arith.check();
+                        match arith_result {
+                            Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) => {
+                                return self.conflict_from_terms(&conflict_terms);
+                            }
+                            Ok(TheoryCheckResultEnum::Sat) => {}
+                            other => {
+                                let _ = other;
+                            }
                         }
                     }
                 }
