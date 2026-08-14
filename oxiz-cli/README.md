@@ -67,9 +67,29 @@ OPTIONS:
     -i, --interactive    Run in interactive mode
     -v, --verbose        Enable verbose output
     -t, --timeout <MS>   Set timeout in milliseconds
+        --certified-mode Require an independently checked result certificate
     -h, --help           Print help information
     -V, --version        Print version information
 ```
+
+### Certified mode
+
+`oxiz --certified-mode input.smt2` applies a fail-closed exit gate. A `sat`
+candidate is returned only after the original assertion DAG evaluates to true
+under the concrete model, using cached exact integer, rational, and bit-vector
+operations. An `unsat` candidate is currently returned only when the
+propositional skeleton is contradictory without theory semantics: OxiZ
+independently builds a complete Tseitin encoding, generates an LRAT refutation,
+and checks that refutation in process. A result whose certificate cannot be
+constructed or completely checked is reported as `unknown`.
+
+The checker design and current trusted boundary are documented in
+[`docs/CERTIFIED_MODE.md`](../docs/CERTIFIED_MODE.md).
+
+The command-line policy cannot be disabled by commands in the input script.
+Library users can select the same reversible SMT option with
+`(set-option :certified-mode true)`, or call `Context::require_certified_mode()`
+for the non-downgradable embedding policy.
 
 ## Examples
 

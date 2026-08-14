@@ -109,7 +109,9 @@ pub use nelson_oppen::{NelsonOppenCombiner, NelsonOppenStats, TermTheory, Theory
 pub use optimization::{Objective, ObjectiveKind, OptimizationResult, Optimizer, ParetoPoint};
 #[cfg(feature = "std")]
 pub use oxiz_proof::replay::VerificationResult;
-pub use solver::{Model, Proof, ProofStep, Solver, SolverConfig, SolverResult, TheoryMode};
+pub use solver::{
+    CertificationMode, Model, Proof, ProofStep, Solver, SolverConfig, SolverResult, TheoryMode,
+};
 
 // Re-export types from oxiz-sat
 pub use oxiz_sat::{RestartStrategy, SolverStats};

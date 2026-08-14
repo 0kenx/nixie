@@ -981,6 +981,24 @@ impl Solver {
         self.connect_lrat(path, false)
     }
 
+    /// Enable an in-memory text LRAT transcript and return its read handle.
+    ///
+    /// This is intended for an in-process certification gate.  It must be
+    /// enabled before adding clauses so that the transcript contains the exact
+    /// original clause prefix against which LRAT hints are numbered.
+    #[must_use]
+    pub fn enable_lrat_transcript(&mut self) -> crate::proof::LratTranscriptHandle {
+        let (tracer, handle) = crate::proof::MemoryLratTracer::new();
+        self.lrat = true;
+        self.unit_clauses_idx.resize(2 * self.num_vars, 0);
+        self.lrat_flags.resize(2 * self.num_vars, 0);
+        let clause_id = self.clause_id;
+        let proof = self.proof_ensure();
+        proof.begin_proof(clause_id);
+        proof.connect(Box::new(tracer));
+        handle
+    }
+
     /// Disable LRAT proof logging, dropping the proof tracer.
     pub fn disable_lrat_proof(&mut self) {
         self.proof = None;
@@ -1971,7 +1989,7 @@ impl Solver {
         self.fatal_error.as_ref()
     }
 
-    /// Solve the SAT problem.
+    /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
         // A prior `add_clause` reintroduced a BVE-eliminated variable with no
         // sound way to honor it: refuse rather than risk a wrong verdict.
@@ -1985,8 +2003,12 @@ impl Solver {
         }
 
         // Initial propagation
-        if self.propagate().is_some() {
-            self.drat_emit_empty(None);
+        if let Some(conflict) = self.propagate() {
+            // The conflict clause is required to seed the LRAT hint chain for
+            // the final empty clause. Dropping it emitted `0 0` after initial
+            // propagation, which is not a proof even though the verdict is
+            // genuinely UNSAT.
+            self.drat_emit_empty(Some(conflict));
             return SolverResult::Unsat;
         }
 

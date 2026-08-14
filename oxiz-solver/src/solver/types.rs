@@ -225,6 +225,17 @@ pub enum TheoryMode {
     Lazy,
 }
 
+/// Whether public solver verdicts must pass an independent certificate gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CertificationMode {
+    /// Use the ordinary solver result and its internal honesty gates.
+    #[default]
+    Uncertified,
+    /// Return `Sat` or `Unsat` only after an independent checker accepts a
+    /// concrete model or an LRAT-backed refutation respectively.
+    Certified,
+}
+
 /// Solver configuration
 ///
 /// Every field is a scalar or a field-less enum, so this is cheap to clone and
@@ -244,6 +255,8 @@ pub struct SolverConfig {
     pub proof: bool,
     /// Enable model generation
     pub model: bool,
+    /// Require independently checked results at the public exit gate.
+    pub certification_mode: CertificationMode,
     /// Theory checking mode
     pub theory_mode: TheoryMode,
     /// Enable preprocessing/simplification
@@ -313,6 +326,7 @@ impl SolverConfig {
             num_threads: 4,
             proof: false,
             model: true,
+            certification_mode: CertificationMode::Uncertified,
             theory_mode: TheoryMode::Eager,
             simplify: true, // Keep basic simplification
             max_conflicts: 0,
@@ -343,6 +357,7 @@ impl SolverConfig {
             num_threads: 4,
             proof: false,
             model: true,
+            certification_mode: CertificationMode::Uncertified,
             theory_mode: TheoryMode::Eager,
             simplify: true,
             max_conflicts: 0,
@@ -373,6 +388,7 @@ impl SolverConfig {
             num_threads: 4,
             proof: false,
             model: true,
+            certification_mode: CertificationMode::Uncertified,
             theory_mode: TheoryMode::Eager,
             simplify: true,
             max_conflicts: 0,
@@ -403,6 +419,7 @@ impl SolverConfig {
             num_threads: 1,
             proof: false,
             model: true,
+            certification_mode: CertificationMode::Uncertified,
             theory_mode: TheoryMode::Lazy, // Lazy for minimal overhead
             simplify: false,
             max_conflicts: 0,
@@ -471,6 +488,13 @@ impl SolverConfig {
     #[must_use]
     pub fn with_theory_mode(mut self, mode: TheoryMode) -> Self {
         self.theory_mode = mode;
+        self
+    }
+
+    /// Require independently certified `Sat` and `Unsat` verdicts.
+    #[must_use]
+    pub fn certified(mut self) -> Self {
+        self.certification_mode = CertificationMode::Certified;
         self
     }
 }

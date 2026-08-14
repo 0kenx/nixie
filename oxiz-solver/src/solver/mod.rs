@@ -4,6 +4,7 @@ pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
 pub(super) mod array_theory;
 pub(super) mod candidates;
+pub(super) mod certification;
 pub(super) mod check_array;
 pub(super) mod check_bv;
 pub(super) mod check_dt;
@@ -32,8 +33,8 @@ pub(super) mod types;
 pub(super) mod verdict_cache;
 
 pub use types::{
-    FpConstraintData, Model, NamedAssertion, Proof, ProofStep, SolverConfig, SolverResult,
-    Statistics, TheoryMode, UnsatCore,
+    CertificationMode, FpConstraintData, Model, NamedAssertion, Proof, ProofStep, SolverConfig,
+    SolverResult, Statistics, TheoryMode, UnsatCore,
 };
 
 use crate::mbqi::{MBQIIntegration, MBQIResult};
@@ -118,6 +119,8 @@ pub struct Solver {
     pub(super) logic: Option<String>,
     /// Assertions
     pub(super) assertions: Vec<TermId>,
+    /// Untouched caller assertions used only by the independent certificate gate.
+    pub(super) certificate_assertions: Vec<TermId>,
     /// Named assertions for unsat core tracking
     pub(super) named_assertions: Vec<NamedAssertion>,
     /// Assumption literals for unsat core tracking (maps assertion index to assumption var)
@@ -128,6 +131,8 @@ pub struct Solver {
     pub(super) model: Option<Model>,
     /// Unsat core (if unsat)
     pub(super) unsat_core: Option<UnsatCore>,
+    /// Why certified mode declined the most recent candidate verdict.
+    pub(super) certification_failure: Option<String>,
     /// Context stack for push/pop
     pub(super) context_stack: Vec<ContextState>,
     /// Trail of operations for efficient undo
@@ -496,10 +501,12 @@ impl Solver {
             var_to_parsed_arith: FxHashMap::default(),
             logic: None,
             assertions: Vec::new(),
+            certificate_assertions: Vec::new(),
             named_assertions: Vec::new(),
             assumption_vars: FxHashMap::default(),
             model: None,
             unsat_core: None,
+            certification_failure: None,
             context_stack: Vec::new(),
             trail: Vec::new(),
             theory_processed_up_to: 0,
@@ -633,8 +640,9 @@ impl Solver {
         }
 
         let mbqi_checkpoint = self.mbqi.search_checkpoint();
-        let result = self.check_with_arith_refinement(manager);
+        let raw_result = self.check_with_arith_refinement(manager);
         self.mbqi.restore_search_state(&mbqi_checkpoint);
+        let result = self.certify_result(raw_result, manager);
         self.remember_verdict(result);
         result
     }
@@ -936,6 +944,7 @@ impl Solver {
         }
 
         if self.assertions.is_empty() {
+            self.model = Some(Model::new());
             return SolverResult::Sat;
         }
 
@@ -1863,11 +1872,13 @@ impl Solver {
         // the doc comment for why each half is or is not allowed to survive).
         let model = self.model.take();
         let unsat_core = self.unsat_core.take();
+        let certification_failure = self.certification_failure.take();
 
         // Restore state
         self.pop();
 
         self.model = model;
+        self.certification_failure = certification_failure;
         let num_assertions = self.assertions.len() as u32;
         self.unsat_core =
             unsat_core.filter(|core| core.indices.iter().all(|&i| i < num_assertions));
@@ -2049,10 +2060,11 @@ impl Solver {
         // and returns), so solving the clause set alone would miss it and
         // report a wrong `Sat` for e.g. `{false}`.
         if self.has_false_assertion {
-            return SolverResult::Unsat;
+            return self.certify_result(SolverResult::Unsat, manager);
         }
         if self.assertions.is_empty() {
-            return SolverResult::Sat;
+            self.model = Some(Model::new());
+            return self.certify_result(SolverResult::Sat, manager);
         }
         // Honesty gate (soundness): an assertion the encoder refused because
         // it nests deeper than `ENCODE_DEPTH_LIMIT` contributed *no clauses at
@@ -2063,14 +2075,15 @@ impl Solver {
             return SolverResult::Unknown;
         }
 
-        match self.sat.solve() {
+        let raw_result = match self.sat.solve() {
             SatResult::Sat => {
                 self.build_model(manager);
                 SolverResult::Sat
             }
             SatResult::Unsat => SolverResult::Unsat,
             SatResult::Unknown => SolverResult::Unknown,
-        }
+        };
+        self.certify_result(raw_result, manager)
     }
 
     /// Build the model after SAT solving, which can be used to efficiently extract minimal unsat cores
@@ -2305,6 +2318,9 @@ impl Solver {
                             if self.assertions.len() > index {
                                 self.assertions.truncate(index);
                             }
+                            if self.certificate_assertions.len() > index {
+                                self.certificate_assertions.truncate(index);
+                            }
                         }
                         TrailOp::VarCreated { var: _, term } => {
                             // Remove the term-to-var mapping
@@ -2526,6 +2542,7 @@ impl Solver {
         self.var_to_constraint.clear();
         self.var_to_parsed_arith.clear();
         self.assertions.clear();
+        self.certificate_assertions.clear();
         self.named_assertions.clear();
         self.invalidate_results();
         self.context_stack.clear();

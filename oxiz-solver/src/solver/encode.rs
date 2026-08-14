@@ -595,6 +595,10 @@ impl Solver {
     /// `Solver::invalidate_results` (private) for the rule and for why the unsat
     /// core goes with it.
     pub fn assert(&mut self, term: TermId, manager: &mut TermManager) {
+        // Keep the caller's exact assertion outside the preprocessing path.
+        // Certified mode must not trust rewrites, purification, or auxiliary
+        // definitions when checking a candidate result.
+        let certificate_term = term;
         // Depth guard FIRST.  The recursive pre-processing passes below
         // (`fold_unit_eq_reps` / `flatten_eq_ite_tables` / `purify_arith` / …)
         // walk the assertion term and would overflow the native call stack on a
@@ -608,6 +612,7 @@ impl Solver {
             self.encode_depth_exceeded = true;
             let index = self.assertions.len();
             self.assertions.push(term);
+            self.certificate_assertions.push(certificate_term);
             self.trail.push(TrailOp::AssertionAdded { index });
             self.invalidate_fp_cache();
             self.invalidate_results();
@@ -690,6 +695,7 @@ impl Solver {
 
         let index = self.assertions.len();
         self.assertions.push(term);
+        self.certificate_assertions.push(certificate_term);
         self.trail.push(TrailOp::AssertionAdded { index });
         self.invalidate_fp_cache();
         self.invalidate_results();
@@ -1274,6 +1280,7 @@ impl Solver {
     pub fn assert_named(&mut self, term: TermId, name: &str, manager: &mut TermManager) {
         let index = self.assertions.len();
         self.assertions.push(term);
+        self.certificate_assertions.push(term);
         self.trail.push(TrailOp::AssertionAdded { index });
         self.invalidate_fp_cache();
         self.invalidate_results();

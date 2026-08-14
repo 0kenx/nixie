@@ -33,7 +33,7 @@ mod legacy;
 
 pub use drat::DratTracer;
 pub use legacy::{DratWriter, LratWriter, ProofTrimmer};
-pub use lrat::LratTracer;
+pub use lrat::{LratTracer, LratTranscript, LratTranscriptHandle, MemoryLratTracer};
 pub use tracer::{ConclusionType, Tracer};
 
 /// The proof manager (`class Proof`).

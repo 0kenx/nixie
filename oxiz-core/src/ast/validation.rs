@@ -9,7 +9,7 @@ use crate::error::{OxizError, Result};
 use crate::prelude::*;
 use num_bigint::{BigInt, BigUint};
 use num_rational::BigRational;
-use num_traits::{One, Zero};
+use num_traits::{CheckedEuclid, One, ToPrimitive, Zero};
 
 /// Work item of the iterative model evaluator.
 enum EvalFrame {
@@ -126,7 +126,10 @@ fn eval_cached(
                     }
 
                     // Strictly evaluated operators
-                    TermKind::Not(arg) | TermKind::Neg(arg) | TermKind::BvNot(arg) => {
+                    TermKind::Not(arg)
+                    | TermKind::Neg(arg)
+                    | TermKind::BvNot(arg)
+                    | TermKind::BvExtract { arg, .. } => {
                         stack.push(EvalFrame::Combine(id));
                         stack.push(EvalFrame::Enter(*arg));
                     }
@@ -140,7 +143,24 @@ fn eval_cached(
                     | TermKind::Sub(lhs, rhs)
                     | TermKind::Div(lhs, rhs)
                     | TermKind::Mod(lhs, rhs)
-                    | TermKind::BvAnd(lhs, rhs) => {
+                    | TermKind::BvConcat(lhs, rhs)
+                    | TermKind::BvAnd(lhs, rhs)
+                    | TermKind::BvOr(lhs, rhs)
+                    | TermKind::BvXor(lhs, rhs)
+                    | TermKind::BvAdd(lhs, rhs)
+                    | TermKind::BvSub(lhs, rhs)
+                    | TermKind::BvMul(lhs, rhs)
+                    | TermKind::BvUdiv(lhs, rhs)
+                    | TermKind::BvSdiv(lhs, rhs)
+                    | TermKind::BvUrem(lhs, rhs)
+                    | TermKind::BvSrem(lhs, rhs)
+                    | TermKind::BvShl(lhs, rhs)
+                    | TermKind::BvLshr(lhs, rhs)
+                    | TermKind::BvAshr(lhs, rhs)
+                    | TermKind::BvUlt(lhs, rhs)
+                    | TermKind::BvUle(lhs, rhs)
+                    | TermKind::BvSlt(lhs, rhs)
+                    | TermKind::BvSle(lhs, rhs) => {
                         stack.push(EvalFrame::Combine(id));
                         stack.push(EvalFrame::Enter(*lhs));
                         stack.push(EvalFrame::Enter(*rhs));
@@ -310,7 +330,7 @@ fn eval_cached(
                         // (not a legal bit-vector sort) is refused.
                         Some(ModelValue::BitVec { value, width }) => {
                             bitvec_width_mask(width).map(|mask| ModelValue::BitVec {
-                                value: value ^ mask,
+                                value: (value & &mask) ^ mask,
                                 width,
                             })
                         }
@@ -332,6 +352,60 @@ fn eval_cached(
                         }),
                         _ => None,
                     },
+                    TermKind::BvOr(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Or)
+                    }
+                    TermKind::BvXor(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Xor)
+                    }
+                    TermKind::BvAdd(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Add)
+                    }
+                    TermKind::BvSub(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Sub)
+                    }
+                    TermKind::BvMul(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Mul)
+                    }
+                    TermKind::BvUdiv(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Udiv)
+                    }
+                    TermKind::BvSdiv(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Sdiv)
+                    }
+                    TermKind::BvUrem(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Urem)
+                    }
+                    TermKind::BvSrem(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Srem)
+                    }
+                    TermKind::BvShl(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Shl)
+                    }
+                    TermKind::BvLshr(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Lshr)
+                    }
+                    TermKind::BvAshr(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Ashr)
+                    }
+                    TermKind::BvUlt(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Ult)
+                    }
+                    TermKind::BvUle(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Ule)
+                    }
+                    TermKind::BvSlt(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Slt)
+                    }
+                    TermKind::BvSle(lhs, rhs) => {
+                        bv_binary(operand(lhs, cache), operand(rhs, cache), ExactBvOp::Sle)
+                    }
+                    TermKind::BvConcat(lhs, rhs) => {
+                        bv_concat(operand(lhs, cache), operand(rhs, cache))
+                    }
+                    TermKind::BvExtract { high, low, arg } => {
+                        bv_extract(operand(arg, cache), *high, *low)
+                    }
                     // `Combine` is only ever scheduled for the kinds above.
                     _ => None,
                 };
@@ -368,6 +442,204 @@ fn bitvec_const_value(value: &BigInt, width: u32) -> Option<ModelValue> {
         return None;
     }
     Some(ModelValue::from_bitvec_int(value, width))
+}
+
+#[derive(Clone, Copy)]
+enum ExactBvOp {
+    Or,
+    Xor,
+    Add,
+    Sub,
+    Mul,
+    Udiv,
+    Sdiv,
+    Urem,
+    Srem,
+    Shl,
+    Lshr,
+    Ashr,
+    Ult,
+    Ule,
+    Slt,
+    Sle,
+}
+
+fn bv_binary(
+    lhs: Option<ModelValue>,
+    rhs: Option<ModelValue>,
+    op: ExactBvOp,
+) -> Option<ModelValue> {
+    let (
+        ModelValue::BitVec { value: lhs, width },
+        ModelValue::BitVec {
+            value: rhs,
+            width: rhs_width,
+        },
+    ) = (lhs?, rhs?)
+    else {
+        return None;
+    };
+    if width == 0 || width != rhs_width {
+        return None;
+    }
+
+    let mask = bitvec_width_mask(width)?;
+    let modulus = &mask + BigUint::one();
+    let lhs = lhs & &mask;
+    let rhs = rhs & &mask;
+    let lhs_negative = bv_is_negative(&lhs, width);
+    let rhs_negative = bv_is_negative(&rhs, width);
+    let bits = |value: BigUint| Some(ModelValue::from_bitvec_bits(value, width));
+    let signed_cmp = || match (lhs_negative, rhs_negative) {
+        (false, false) | (true, true) => lhs.cmp(&rhs),
+        (true, false) => core::cmp::Ordering::Less,
+        (false, true) => core::cmp::Ordering::Greater,
+    };
+
+    match op {
+        ExactBvOp::Or => bits(lhs | rhs),
+        ExactBvOp::Xor => bits(lhs ^ rhs),
+        ExactBvOp::Add => bits((lhs + rhs) % &modulus),
+        ExactBvOp::Sub => bits((&lhs + &modulus - rhs) % &modulus),
+        ExactBvOp::Mul => bits((lhs * rhs) % &modulus),
+        ExactBvOp::Udiv => {
+            if rhs.is_zero() {
+                bits(mask)
+            } else {
+                bits(lhs / rhs)
+            }
+        }
+        ExactBvOp::Urem => {
+            if rhs.is_zero() {
+                bits(lhs)
+            } else {
+                bits(lhs % rhs)
+            }
+        }
+        ExactBvOp::Sdiv => {
+            if rhs.is_zero() {
+                return if lhs_negative {
+                    bits(BigUint::one())
+                } else {
+                    bits(mask)
+                };
+            }
+            let abs_lhs = if lhs_negative {
+                bv_negate(&lhs, &modulus)
+            } else {
+                lhs
+            };
+            let abs_rhs = if rhs_negative {
+                bv_negate(&rhs, &modulus)
+            } else {
+                rhs
+            };
+            let quotient = abs_lhs / abs_rhs;
+            bits(if lhs_negative != rhs_negative {
+                bv_negate(&quotient, &modulus)
+            } else {
+                quotient
+            })
+        }
+        ExactBvOp::Srem => {
+            if rhs.is_zero() {
+                return bits(lhs);
+            }
+            let abs_lhs = if lhs_negative {
+                bv_negate(&lhs, &modulus)
+            } else {
+                lhs
+            };
+            let abs_rhs = if rhs_negative {
+                bv_negate(&rhs, &modulus)
+            } else {
+                rhs
+            };
+            let remainder = abs_lhs % abs_rhs;
+            bits(if lhs_negative {
+                bv_negate(&remainder, &modulus)
+            } else {
+                remainder
+            })
+        }
+        ExactBvOp::Shl | ExactBvOp::Lshr | ExactBvOp::Ashr => {
+            if rhs >= BigUint::from(width) {
+                return match op {
+                    ExactBvOp::Ashr if lhs_negative => bits(mask),
+                    _ => bits(BigUint::ZERO),
+                };
+            }
+            let shift = rhs.to_u32()?;
+            match op {
+                ExactBvOp::Shl => bits((lhs << shift) & mask),
+                ExactBvOp::Lshr => bits(lhs >> shift),
+                ExactBvOp::Ashr if lhs_negative => {
+                    let shifted = &lhs >> shift;
+                    let fill = &mask ^ (&mask >> shift);
+                    bits(shifted | fill)
+                }
+                ExactBvOp::Ashr => bits(lhs >> shift),
+                _ => None,
+            }
+        }
+        ExactBvOp::Ult => Some(ModelValue::Bool(lhs < rhs)),
+        ExactBvOp::Ule => Some(ModelValue::Bool(lhs <= rhs)),
+        ExactBvOp::Slt => Some(ModelValue::Bool(signed_cmp() == core::cmp::Ordering::Less)),
+        ExactBvOp::Sle => Some(ModelValue::Bool(
+            signed_cmp() != core::cmp::Ordering::Greater,
+        )),
+    }
+}
+
+fn bv_is_negative(value: &BigUint, width: u32) -> bool {
+    width != 0 && ((value >> (width - 1)) & BigUint::one()) == BigUint::one()
+}
+
+fn bv_negate(value: &BigUint, modulus: &BigUint) -> BigUint {
+    if value.is_zero() {
+        BigUint::ZERO
+    } else {
+        modulus - value
+    }
+}
+
+fn bv_concat(lhs: Option<ModelValue>, rhs: Option<ModelValue>) -> Option<ModelValue> {
+    let (
+        ModelValue::BitVec {
+            value: lhs,
+            width: lhs_width,
+        },
+        ModelValue::BitVec {
+            value: rhs,
+            width: rhs_width,
+        },
+    ) = (lhs?, rhs?)
+    else {
+        return None;
+    };
+    if lhs_width == 0 || rhs_width == 0 {
+        return None;
+    }
+    let width = lhs_width.checked_add(rhs_width)?;
+    Some(ModelValue::from_bitvec_bits(
+        (lhs << rhs_width) | rhs,
+        width,
+    ))
+}
+
+fn bv_extract(value: Option<ModelValue>, high: u32, low: u32) -> Option<ModelValue> {
+    let ModelValue::BitVec {
+        value,
+        width: source_width,
+    } = value?
+    else {
+        return None;
+    };
+    if high < low || high >= source_width {
+        return None;
+    }
+    let width = high.checked_sub(low)?.checked_add(1)?;
+    Some(ModelValue::from_bitvec_bits(value >> low, width))
 }
 
 /// Left-fold the already-evaluated operands of an n-ary arithmetic term.
@@ -554,7 +826,9 @@ fn neg_value(val: &ModelValue) -> Option<ModelValue> {
 
 fn div_values(lhs: &ModelValue, rhs: &ModelValue) -> Option<ModelValue> {
     match (lhs, rhs) {
-        (ModelValue::Int(a), ModelValue::Int(b)) if !b.is_zero() => Some(ModelValue::Int(a / b)),
+        (ModelValue::Int(a), ModelValue::Int(b)) if !b.is_zero() => {
+            a.checked_div_euclid(b).map(ModelValue::Int)
+        }
         (ModelValue::Real(a), ModelValue::Real(b)) if !b.is_zero() => Some(ModelValue::Real(a / b)),
         _ => None,
     }
@@ -562,7 +836,9 @@ fn div_values(lhs: &ModelValue, rhs: &ModelValue) -> Option<ModelValue> {
 
 fn mod_values(lhs: &ModelValue, rhs: &ModelValue) -> Option<ModelValue> {
     match (lhs, rhs) {
-        (ModelValue::Int(a), ModelValue::Int(b)) if !b.is_zero() => Some(ModelValue::Int(a % b)),
+        (ModelValue::Int(a), ModelValue::Int(b)) if !b.is_zero() => {
+            a.checked_rem_euclid(b).map(ModelValue::Int)
+        }
         _ => None,
     }
 }
@@ -1010,6 +1286,79 @@ mod bitvec_const_tests {
                 value: high + BigUint::one(),
                 width: 128
             })
+        );
+    }
+
+    #[test]
+    fn test_wide_bitvec_arithmetic_and_signed_operations_are_exact() {
+        let mut manager = TermManager::new();
+        let bv128 = manager.sorts.bitvec(128);
+        let x = manager.mk_var("x", bv128);
+        let one = manager.mk_bitvec(BigInt::one(), 128);
+        let zero = manager.mk_bitvec(BigInt::zero(), 128);
+        let max = manager.mk_bitvec(BigInt::from(-1), 128);
+        let min_bits = BigUint::one() << 127u32;
+
+        let mut model = Model::new();
+        model.assign_bitvec_big(x, min_bits.clone(), 128);
+
+        let wrap = manager.mk_bv_add(max, one);
+        assert_eq!(eval_term(wrap, &manager, &model), Some(bv(0, 128)));
+
+        let signed_lt = manager.mk_bv_slt(x, one);
+        assert_eq!(
+            eval_term(signed_lt, &manager, &model),
+            Some(ModelValue::Bool(true))
+        );
+
+        let shift = manager.mk_bitvec(BigInt::from(127), 128);
+        let ashr = manager.mk_bv_ashr(x, shift);
+        assert_eq!(
+            eval_term(ashr, &manager, &model),
+            Some(ModelValue::BitVec {
+                value: crate::ast::model::bitvec_mask(128),
+                width: 128,
+            })
+        );
+
+        // SMT-LIB's totalized signed division maps a negative dividend divided
+        // by zero to one (the negation of the unsigned all-ones quotient).
+        let sdiv_zero = manager.mk_bv_sdiv(x, zero);
+        assert_eq!(eval_term(sdiv_zero, &manager, &model), Some(bv(1, 128)));
+    }
+
+    #[test]
+    fn test_wide_bitvec_concat_and_extract_are_exact() {
+        let mut manager = TermManager::new();
+        let hi = manager.mk_bitvec(BigInt::from(0x12_3456_789au64), 40);
+        let lo = manager.mk_bitvec(BigInt::from(0xbc_def0_1234u64), 40);
+        let concat = manager.mk_bv_concat(hi, lo);
+        let extracted = manager.mk_bv_extract(75, 36, concat);
+        let expected = ((BigUint::from(0x12_3456_789au64) << 40u32)
+            | BigUint::from(0xbc_def0_1234u64))
+            >> 36u32;
+
+        assert_eq!(
+            eval_term(extracted, &manager, &Model::new()),
+            Some(ModelValue::from_bitvec_bits(expected, 40))
+        );
+    }
+
+    #[test]
+    fn test_ast_validator_uses_euclidean_integer_division() {
+        let mut manager = TermManager::new();
+        let minus_seven = manager.mk_int(-7);
+        let two = manager.mk_int(2);
+        let div = manager.mk_div(minus_seven, two);
+        let modulo = manager.mk_mod(minus_seven, two);
+
+        assert_eq!(
+            eval_term(div, &manager, &Model::new()),
+            Some(ModelValue::Int(BigInt::from(-4)))
+        );
+        assert_eq!(
+            eval_term(modulo, &manager, &Model::new()),
+            Some(ModelValue::Int(BigInt::one()))
         );
     }
 }

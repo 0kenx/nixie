@@ -144,6 +144,7 @@ impl super::Solver {
             var_to_parsed_arith: _, // TRAIL: ConstraintAdded
             logic: _,           // INVARIANT: set before any assertion
             assertions: _,      // SNAPSHOT: num_assertions
+            certificate_assertions: _, // SNAPSHOT: num_assertions
             named_assertions: _, // TRAIL: NamedAssertionAdded
             assumption_vars: _, // INVARIANT: never written
             model: _,           // RESULT: cleared by `invalidate_results`
@@ -235,7 +236,8 @@ impl super::Solver {
             last_check: _, // RESULT: cleared by `invalidate_results` (the
             // cached verdict belongs to the assertion stack it was computed on,
             // exactly as `model` does)
-            settings_epoch: _, // INVARIANT: monotone — it counts *settings*
+            certification_failure: _, // RESULT: cleared with the cached verdict
+            settings_epoch: _,        // INVARIANT: monotone — it counts *settings*
             // mutations, which are not scoped by push/pop; rolling it back would
             // let a cached verdict from before a `set-option` be matched again
             // after the pop.

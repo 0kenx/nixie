@@ -49,6 +49,7 @@ impl Solver {
     /// seed was supposed to perturb which model comes back.
     pub(super) fn settings_changed(&mut self) {
         self.settings_epoch = self.settings_epoch.wrapping_add(1);
+        self.certification_failure = None;
         self.last_check = None;
     }
 
@@ -62,6 +63,12 @@ impl Solver {
     pub fn set_config(&mut self, config: SolverConfig) {
         self.config = config;
         self.settings_changed();
+    }
+
+    /// Why certified mode declined the most recent candidate verdict.
+    #[must_use]
+    pub fn certification_failure(&self) -> Option<&str> {
+        self.certification_failure.as_deref()
     }
 
     /// Set a wall-clock timeout.
