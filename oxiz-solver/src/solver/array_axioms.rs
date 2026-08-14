@@ -92,6 +92,16 @@ impl Solver {
         let mut candidates: Vec<TermId> = Vec::new();
         let no_eager = build_extensionality_and_congruence(manager, &collected, &mut candidates);
         build_read_over_write(manager, &collected, &no_eager, &mut candidates);
+        // Array-congruence at store-chain write indices: for an inline array
+        // equality `(= A B)` whose store chain exposes write indices, assert
+        // the theorem `(= A B) ⇒ (= (select A i) (select B i))` per write index.
+        // This is entailed by the array theory (it can change no verdict), but
+        // it materialises `select(var, store_idx)` atoms the lazy
+        // read-over-write pass never creates when the variable is unread at the
+        // store index -- the ingredient a conditional `(= (store…) var)` inside
+        // an `ite` needs to propagate its read-over-write consequences (the
+        // `cvc/read8` shape).
+        build_equality_read_congruence(manager, &collected, &mut candidates);
 
         // ---- Phase 3: filter (dedup + model) and assert -----------------
         // Only instances the candidate model does not already *definitely*
@@ -428,6 +438,59 @@ fn build_read_over_write(
             let not_c = manager.mk_not(c);
             candidates.push(manager.mk_implies(c, hit));
             candidates.push(manager.mk_implies(not_c, miss));
+        }
+    }
+}
+
+/// Array-congruence at store-chain write indices for every collected
+/// array-sorted equality.
+///
+/// For an equality `(= A B)` where at least one side is a (nested) store chain,
+/// this asserts the array-congruence theorem `(= A B) ⇒ (= (select A i)
+/// (select B i))` at each write index `i` of either chain.  The clause is
+/// *entailed* by the theory of arrays, so adding it changes no verdict -- it
+/// can only help the search derive a contradiction.  Its value is that it
+/// materialises `select(var, store_idx)` atoms the lazy `build_read_over_write`
+/// pass never creates when an array variable is unread at a store-chain write
+/// index: that is exactly the ingredient a *conditional* inline equality
+/// `(= (store…) var)` (e.g. one sitting inside an `ite` condition, as in
+/// `cvc/read8`) needs to propagate its read-over-write consequences once the
+/// SAT core commits to the branch that makes the equality hold.
+///
+/// Free-variable / non-store equalities contribute no write index, so they are
+/// left to the witness extensionality (`build_extensionality_and_congruence`).
+fn build_equality_read_congruence(
+    manager: &mut TermManager,
+    collected: &ArrayStructure,
+    candidates: &mut Vec<TermId>,
+) {
+    for &(a, b) in &collected.eq_pairs {
+        // Gather the write indices exposed by either side's store chain.
+        let mut idx_terms: Vec<TermId> = Vec::new();
+        if let Some((_, entries)) = direct_store_map(a, manager) {
+            for (idx, _val) in &entries {
+                idx_terms.push(*idx);
+            }
+        }
+        if let Some((_, entries)) = direct_store_map(b, manager) {
+            for (idx, _val) in &entries {
+                idx_terms.push(*idx);
+            }
+        }
+        if idx_terms.is_empty() {
+            continue;
+        }
+        let eq_ab = manager.mk_eq(a, b);
+        for (pos, &idx) in idx_terms.iter().enumerate() {
+            // Dedup (small vec -> linear scan): a shared index on both sides
+            // needs only one congruence clause.
+            if idx_terms[..pos].iter().any(|prev| *prev == idx) {
+                continue;
+            }
+            let sa = manager.mk_select(a, idx);
+            let sb = manager.mk_select(b, idx);
+            let reads_eq = manager.mk_eq(sa, sb);
+            candidates.push(manager.mk_implies(eq_ab, reads_eq));
         }
     }
 }
