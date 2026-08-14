@@ -1,4 +1,4 @@
-//! Proof tracer abstraction — faithful port of `tracer.hpp`.
+//! Proof tracer abstraction – faithful port of `tracer.hpp`.
 //!
 //! [`Tracer`] is the abstract observer base class from upstream: every proof
 //! event the solver emits (clause added / deleted / finalized, assumptions,
@@ -11,8 +11,8 @@
 //! tracer only overrides the events it cares about. File tracers additionally
 //! override [`Tracer::flush`]/[`Tracer::close`]/[`Tracer::closed`].
 //!
-//! Internal literals in oxiz-sat are external (DIMACS) literals — there is no
-//! `External` variable-mapping layer — so clauses are passed through verbatim.
+//! Internal literals in oxiz-sat are external (DIMACS) literals – there is no
+//! `External` variable-mapping layer – so clauses are passed through verbatim.
 
 /// How an UNSAT conclusion was reached (matches `ConclusionType` in
 /// `tracer.hpp`).
@@ -37,19 +37,19 @@ pub const CONSTRAINT: ConclusionType = ConclusionType::Constraint;
 /// defaults to a no-op so a tracer overrides only the events it needs.
 #[allow(unused_variables)]
 pub trait Tracer {
-    // -- lifecycle -----------------------------------------------------
+    // ======== lifecycle ========
 
-    /// `closed` — whether a file tracer's backing file is closed (default
+    /// `closed` – whether a file tracer's backing file is closed (default
     /// `true` for in-memory tracers).
     fn closed(&self) -> bool {
         true
     }
-    /// `close` — close the backing file (file tracers).
+    /// `close` – close the backing file (file tracers).
     fn close(&mut self, print: bool) {}
-    /// `flush` — flush the backing file (file tracers).
+    /// `flush` – flush the backing file (file tracers).
     fn flush(&mut self, print: bool) {}
 
-    // -- basic events --------------------------------------------------
+    // ======== basic events ========
 
     /// An original clause was added (`id`, redundant, clause, restored).
     fn add_original_clause(&mut self, id: i64, redundant: bool, clause: &[i32], restored: bool) {}
@@ -87,7 +87,7 @@ pub trait Tracer {
     /// The proof begins; `id` is the first derived-clause id.
     fn begin_proof(&mut self, id: i64) {}
 
-    // -- incremental events --------------------------------------------
+    // ======== incremental events ========
 
     /// A `solve` query begins (assumptions/constraints follow).
     fn solve_query(&mut self) {}
@@ -104,7 +104,7 @@ pub trait Tracer {
     /// An assumption clause (the negation of a failing-assumption core).
     fn add_assumption_clause(&mut self, id: i64, clause: &[i32], chain: &[i64]) {}
 
-    // -- conclusions ---------------------------------------------------
+    // ======== conclusions ========
 
     /// UNSAT conclusion (`conclusion`, relevant clause ids).
     fn conclude_unsat(&mut self, conclusion: ConclusionType, ids: &[i64]) {}

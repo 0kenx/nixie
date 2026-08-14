@@ -532,12 +532,12 @@ mod tests {
         assert!(isolator.stats().sign_evaluations > 0);
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // `isolate_in_interval` bisection-depth regression tests (audit: no
     // bound at all on the bisection recursion; `oxiz-nlsat`'s sibling
     // implementation of the same algorithm already carries a 4096-level
     // safety net).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_isolate_roots_multiple_roots_via_bisection_behaviour_preserved() {

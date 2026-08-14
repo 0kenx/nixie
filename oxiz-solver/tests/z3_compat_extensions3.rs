@@ -10,7 +10,7 @@ fn make_ctx() -> Z3Context {
     Z3Context::new(&Z3Config::new())
 }
 
-// ─── Sort introspection ───────────────────────────────────────────────────────
+// ======== Sort introspection ========
 
 #[test]
 fn test_sort_kind_bool() {
@@ -75,7 +75,7 @@ fn test_array_domain_range() {
     assert!(ctx.sort_of_bool(&p).array_range().is_none());
 }
 
-// ─── Term substitution ────────────────────────────────────────────────────────
+// ======== Term substitution ========
 
 #[test]
 fn test_substitute_replaces_subterm() {
@@ -134,7 +134,7 @@ fn test_substitute_nested() {
 #[test]
 fn test_substitute_into_bitvector() {
     // Exercises the bit-vector recursion that the core `substitute` does NOT
-    // perform — confirms the dedicated rebuild descends through BV operators.
+    // perform – confirms the dedicated rebuild descends through BV operators.
     let ctx = make_ctx();
     let a = BV::new_const(&ctx, "a", 8);
     let b = BV::new_const(&ctx, "b", 8);
@@ -148,7 +148,7 @@ fn test_substitute_into_bitvector() {
 
 #[test]
 fn test_substitute_into_apply() {
-    // Exercises substitution into a function application's arguments — another
+    // Exercises substitution into a function application's arguments – another
     // case the core `substitute` leaves untouched.
     let ctx = make_ctx();
     let x = Int::new_const(&ctx, "x");
@@ -161,7 +161,7 @@ fn test_substitute_into_apply() {
     assert_eq!(got, expected);
 }
 
-// ─── Quantifier patterns / triggers ───────────────────────────────────────────
+// ======== Quantifier patterns / triggers ========
 
 #[test]
 fn test_mk_pattern_and_forall_with_patterns() {

@@ -12,7 +12,7 @@ fn run_last(script: &str) -> String {
     out.last().cloned().unwrap_or_default()
 }
 
-// ─────────────────────────── Array honesty gate ───────────────────────────
+// ======== Array honesty gate ========
 
 #[test]
 fn store_store_conflict_concrete_index_is_unsat() {
@@ -98,7 +98,7 @@ fn plain_select_sat_unaffected_by_gate() {
     assert_eq!(r, "sat");
 }
 
-// ─────────────────────────── set_option wiring ───────────────────────────
+// ======== set_option wiring ========
 
 #[test]
 fn set_option_timeout_reaches_config() {
@@ -145,7 +145,7 @@ fn unknown_option_is_recorded_but_harmless() {
     assert_eq!(ctx.get_option("random-seed"), Some("12345"));
 }
 
-// ──────────────────────── get-unsat-assumptions ────────────────────────
+// ======== get-unsat-assumptions ========
 
 #[test]
 fn get_unsat_assumptions_after_unsat() {
@@ -181,7 +181,7 @@ fn get_unsat_assumptions_errors_without_unsat() {
     );
 }
 
-// ───────────────────────────── get-assignment ─────────────────────────────
+// ======== get-assignment ========
 
 #[test]
 fn get_assignment_reports_bool_consts() {
@@ -200,7 +200,7 @@ fn get_assignment_reports_bool_consts() {
     assert!(a.contains("(q false)"), "got: {a}");
 }
 
-// ─────────────────────── declare-sort / define-fun ───────────────────────
+// ======== declare-sort / define-fun ========
 
 #[test]
 fn declare_sort_and_define_fun_are_honoured() {
@@ -223,9 +223,9 @@ fn declare_sort_and_define_fun_are_honoured() {
     assert!(ctx.get_fun_signature("two").is_none()); // 0-ary is a const, not a fun sig
 }
 
-// ──────────────────── Datatype polarity boundary ────────────────────
+// ======== Datatype polarity boundary ========
 
-/// A Bool-sorted `(= A B)` is a `TermKind::Eq` — this AST has no `Iff` — and it
+/// A Bool-sorted `(= A B)` is a `TermKind::Eq` – this AST has no `Iff` – and it
 /// is satisfied with *both* sides false, so neither operand is asserted.
 ///
 /// The datatype pre-check used to recurse into an equality's operands carrying
@@ -274,7 +274,7 @@ fn test_dt_demorgan_polarity_boundary() {
 }
 
 /// Control: the genuinely contradictory testers, asserted unconditionally, must
-/// still be refuted — the fixes above must not have disabled the checks.
+/// still be refuted – the fixes above must not have disabled the checks.
 #[test]
 fn test_dt_conflicting_testers_still_unsat() {
     let r = run_last(
@@ -288,14 +288,14 @@ fn test_dt_conflicting_testers_still_unsat() {
     assert_eq!(r, "unsat");
 }
 
-// ──────────────────── Datatype axiomatisation ────────────────────
+// ======== Datatype axiomatisation ========
 //
 // The CDCL(T) core has no dedicated datatype theory: `encode.rs` maps
 // constructors, selectors and testers to plain SAT variables.  Every structural
 // property below therefore has to come from the ground lemmas asserted by
 // `solver::dt_axioms`, and every one of them was a false `sat` before that pass
-// existed.  Each axiom is tested in *both* directions — an unsatisfiable
-// instance and a satisfiable control — because over-correcting a false `sat`
+// existed.  Each axiom is tested in *both* directions – an unsatisfiable
+// instance and a satisfiable control – because over-correcting a false `sat`
 // into a false `unsat` would be just as wrong.  Verdicts cross-checked with z3.
 
 /// The shared `List Int` declaration used by the datatype axiom tests.
@@ -582,7 +582,7 @@ fn test_dt_injectivity_stays_sat() {
 }
 
 /// Acyclicity: a datatype value is a finite tree, so `l = (cons 1 l)` has no
-/// model.  Congruence alone never sees this — it happily merges the two — which
+/// model.  Congruence alone never sees this – it happily merges the two – which
 /// is why the property is so often missing and yields a false `sat`.
 #[test]
 fn test_dt_acyclicity_unsat() {
@@ -607,7 +607,7 @@ fn test_dt_acyclicity_depth_two_unsat() {
     assert_eq!(r, "unsat");
 }
 
-/// A cycle routed through two variables rather than one nested term — the case
+/// A cycle routed through two variables rather than one nested term – the case
 /// a purely syntactic occurs-check misses.
 #[test]
 fn test_dt_acyclicity_through_two_variables_unsat() {
@@ -648,8 +648,8 @@ fn test_dt_acyclicity_stays_sat() {
     assert_eq!(r, "sat");
 }
 
-/// A selector applied to the *wrong* constructor is underspecified in SMT-LIB —
-/// `(head nil)` may be any `Int` — so constraining it must stay `sat`.  Getting
+/// A selector applied to the *wrong* constructor is underspecified in SMT-LIB –
+/// `(head nil)` may be any `Int` – so constraining it must stay `sat`.  Getting
 /// this backwards would trade the false `sat` for an equally bad false `unsat`.
 #[test]
 fn test_dt_selector_on_wrong_constructor_stays_sat() {
@@ -788,7 +788,7 @@ fn test_dt_axioms_retracted_on_pop() {
     );
 }
 
-// ──────────── Datatype differential test against a brute-force oracle ────────────
+// ======== Datatype differential test against a brute-force oracle ========
 //
 // The axiom battery above pins the individual rules; this pass checks the
 // *combination* of them over a whole formula space.  The universe is chosen so
@@ -799,7 +799,7 @@ fn test_dt_axioms_retracted_on_pop() {
 //
 // `Col` has exactly 3 values and `Box` exactly 4 (`empty`, `full c`), both
 // finite and non-recursive, so a two-variable problem has a finite model space
-// that can be enumerated in full — no depth bound, no approximation, and no
+// that can be enumerated in full – no depth bound, no approximation, and no
 // wall-clock or random-seed dependence.  The one subtlety is `(item empty)`,
 // which SMT-LIB leaves *underspecified*: the oracle models it as one extra free
 // choice of `Col`, so a formula that pins it stays satisfiable exactly as the
@@ -823,7 +823,7 @@ struct Interp {
 }
 
 impl Interp {
-    /// `(item b)` — the accessor is total, and on `empty` it takes whatever
+    /// `(item b)` – the accessor is total, and on `empty` it takes whatever
     /// value this interpretation picked for it.
     fn item(&self, b: BoxVal) -> usize {
         b.unwrap_or(self.item_at_empty)
@@ -896,8 +896,8 @@ fn oracle(selection: &[usize], lits: &[Literal]) -> &'static str {
 
 /// Deterministic differential sweep: every conjunction of up to three literals
 /// over the eight atoms above (696 formulas), each checked against the exact
-/// brute-force verdict.  Fully enumerative — no RNG, no seed, no timing
-/// dependence — so a mismatch is reproducible from the reported indices alone.
+/// brute-force verdict.  Fully enumerative – no RNG, no seed, no timing
+/// dependence – so a mismatch is reproducible from the reported indices alone.
 #[test]
 fn test_dt_differential_against_brute_force_oracle() {
     let lits = literals();

@@ -4,7 +4,7 @@
 //! every clause containing `¬v`, producing resolvents that no longer mention
 //! `v`. This is sound (resolution preserves satisfiability) and shrinks the
 //! formula whenever the resolvents are not more numerous than the original
-//! clauses — the "bounded" gate. The eliminated variable is reconstructed at
+//! clauses – the "bounded" gate. The eliminated variable is reconstructed at
 //! model-extension time from its recorded positive clauses (see
 //! [`Solver::save_model`]).
 //!
@@ -78,7 +78,7 @@ impl Solver {
             let neg = Lit::neg(v);
             let pos_ids: Vec<ClauseId> = occ.get(pos).to_vec();
             let neg_ids: Vec<ClauseId> = occ.get(neg).to_vec();
-            // A variable with only one polarity present is *pure* — eliminating
+            // A variable with only one polarity present is *pure* – eliminating
             // it would drop clauses with no resolvents; leave that to
             // pure-literal handling. BVE needs both polarities.
             if pos_ids.is_empty() || neg_ids.is_empty() {
@@ -202,7 +202,7 @@ impl Solver {
             // *immediately* via occurrence-based simplification (not deferred):
             // a derived unit is a constraint on its variable, and a later
             // variable's elimination must see it (else it eliminates the forced
-            // variable as if free and silently drops the constraint — flipping
+            // variable as if free and silently drops the constraint – flipping
             // UNSAT to SAT). Watches are stale mid-pass, so this is occurrence-
             // based, not watch-based.
             for r in resolvents {
@@ -379,7 +379,7 @@ fn resolve(pc: &[Lit], nc: &[Lit], pos: Lit, neg: Lit) -> Option<SmallVec<[Lit; 
 impl Solver {
     /// Forward subsumption: remove every clause that is subsumed by some other
     /// clause (C subsumes C' iff C ⊆ C'). This is what lets BVE / congruence
-    /// actually *shrink* the formula — resolvents and rewritten clauses
+    /// actually *shrink* the formula – resolvents and rewritten clauses
     /// frequently subsume older, weaker clauses, and dropping them keeps
     /// propagation cheap.
     ///
@@ -388,7 +388,7 @@ impl Solver {
     /// scan the occurrence list of C''s rarest literal (fewest candidates) and
     /// merge-check each. Cost-guarded so a single high-degree literal cannot
     /// dominate. Incomplete by construction (a subsumer missing the rarest
-    /// literal is not found) — fine, since subsumption is an optimization.
+    /// literal is not found) – fine, since subsumption is an optimization.
     /// Returns the number of clauses removed.
     pub(super) fn forward_subsumption(&mut self) -> usize {
         if self.trail.decision_level() != 0 {
@@ -443,7 +443,7 @@ impl Solver {
                 continue;
             }
             // A clause justifying a level-0 trail assignment (a propagation
-            // reason) must not be deleted — conflict analysis reads reason
+            // reason) must not be deleted – conflict analysis reads reason
             // clauses, and a deleted reason yields garbage (wrong UNSAT).
             let is_reason = self.clauses.get(cid).is_some_and(|c| {
                 c.lits.iter().any(|&lit| {

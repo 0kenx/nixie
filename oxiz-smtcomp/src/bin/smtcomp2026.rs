@@ -276,7 +276,7 @@ fn run_solver(input: &str, track: &SolverTrack, verbose: bool) -> i32 {
                 }
             }
         },
-        // Single / Incremental / mismatched result — nothing extra to emit.
+        // Single / Incremental / mismatched result – nothing extra to emit.
         _ => {}
     }
 

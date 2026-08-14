@@ -1,11 +1,11 @@
 //! Regression tests for the closing *restore* check of
-//! `(get-consequences ...)` — see [`super::consequences_restore_state`].
+//! `(get-consequences ...)` – see [`super::consequences_restore_state`].
 
 use super::{Context, SolverResult, consequences_restore_state};
 
-// ---------------------------------------------------------------
+// ========  ========
 // `(get-consequences ...)` closing-restore honesty
-// ---------------------------------------------------------------
+// ========  ========
 
 /// The restore check's verdict used to be discarded and `sat` cached
 /// unconditionally, so a restore that came back `unknown` (budget consumed

@@ -71,7 +71,7 @@ pub use ext2::{
 pub mod ext3;
 pub use ext3::*;
 
-// ─── Z3Config ────────────────────────────────────────────────────────────────
+// ======== Z3Config ========
 
 /// Analogue of `z3::Config`.
 ///
@@ -103,7 +103,7 @@ impl Z3Config {
     }
 }
 
-// ─── Z3Context ───────────────────────────────────────────────────────────────
+// ======== Z3Context ========
 
 /// Analogue of `z3::Context`.
 ///
@@ -154,7 +154,7 @@ impl Z3Context {
     }
 }
 
-// ─── SatResult ───────────────────────────────────────────────────────────────
+// ======== SatResult ========
 
 /// Result of a satisfiability check, mirroring `z3::SatResult`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +187,7 @@ impl std::fmt::Display for SatResult {
     }
 }
 
-// ─── Z3Model ─────────────────────────────────────────────────────────────────
+// ======== Z3Model ========
 
 /// Raw function-interpretation data extracted at model-build time.
 ///
@@ -260,7 +260,7 @@ impl std::fmt::Display for Z3Model {
     }
 }
 
-// ─── Z3Solver ────────────────────────────────────────────────────────────────
+// ======== Z3Solver ========
 
 /// Analogue of `z3::Solver`.
 ///
@@ -346,7 +346,7 @@ impl Z3Solver {
     }
 }
 
-// ─── Helper: term building in Z3Context ──────────────────────────────────────
+// ======== Helper: term building in Z3Context ========
 
 /// Build a term via the `Z3Context`'s term manager, then return a `TermId`.
 ///
@@ -357,7 +357,7 @@ macro_rules! build {
     };
 }
 
-// ─── Bool ────────────────────────────────────────────────────────────────────
+// ======== Bool ========
 
 /// A boolean-sorted term, analogous to `z3::Bool<'ctx>`.
 #[derive(Debug, Clone)]
@@ -442,7 +442,7 @@ impl From<Bool> for TermId {
     }
 }
 
-// ─── Int ─────────────────────────────────────────────────────────────────────
+// ======== Int ========
 
 /// An integer-sorted term, analogous to `z3::Int<'ctx>`.
 #[derive(Debug, Clone)]
@@ -559,7 +559,7 @@ impl From<Int> for TermId {
     }
 }
 
-// ─── Real ────────────────────────────────────────────────────────────────────
+// ======== Real ========
 
 /// A real-sorted term, analogous to `z3::Real<'ctx>`.
 #[derive(Debug, Clone)]
@@ -641,7 +641,7 @@ impl From<Real> for TermId {
     }
 }
 
-// ─── BV ──────────────────────────────────────────────────────────────────────
+// ======== BV ========
 
 /// A bitvector-sorted term, analogous to `z3::BV<'ctx>`.
 #[derive(Debug, Clone)]
@@ -851,7 +851,7 @@ impl From<BV> for TermId {
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tests {

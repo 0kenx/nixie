@@ -1,7 +1,7 @@
 //! The candidate interpretation the real certifier verifies.
 //!
 //! An uninterpreted function over the reals is interpreted as a finite table of
-//! pinned argument values extended by one *affine* default — `λy. a·y + b` —
+//! pinned argument values extended by one *affine* default – `λy. a·y + b` –
 //! rather than by a single constant.  That is the difference that makes an
 //! infinite real domain tractable: `∀x. f(x) = x` has no pins-plus-constant
 //! model at all, but `f := λy. y` satisfies it outright, and the same shape

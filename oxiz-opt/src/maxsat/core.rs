@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 /// `Weight::Int(1_000_000)` is correctly greater than `Weight::Rational(1/2)`.
 /// `Weight::Infinite` is greater than every finite value. This total order is
 /// relied on by stratification, core min-weight extraction, hardening
-/// thresholds, and Pareto dominance — a variant-order comparison would corrupt
+/// thresholds, and Pareto dominance – a variant-order comparison would corrupt
 /// all of those optimization decisions when integer and rational weights mix.
 #[derive(Debug, Clone)]
 pub enum Weight {
@@ -85,8 +85,8 @@ impl std::hash::Hash for Weight {
             _ => {
                 1u8.hash(state);
                 // Hash the canonical (reduced) rational form so that any two
-                // numerically-equal finite weights — e.g. `Int(5)` and
-                // `Rational(5/1)` — hash identically, keeping `Hash` consistent
+                // numerically-equal finite weights – e.g. `Int(5)` and
+                // `Rational(5/1)` – hash identically, keeping `Hash` consistent
                 // with the value-based `PartialEq`. `BigRational` is always
                 // stored in lowest terms with a positive denominator.
                 let r = self.as_rational_value();

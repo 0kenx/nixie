@@ -326,7 +326,7 @@ fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
                         out.push_str(&format!("Param({})", spur.into_inner()));
                     }
                     SortKind::Parametric { name, args } => {
-                        // "(" <name> (" " <arg>)* ")" — with a lone space for
+                        // "(" <name> (" " <arg>)* ")" – with a lone space for
                         // an empty argument list, exactly as the previous
                         // `args.join(" ")` formulation produced.
                         out.push_str(&format!("({}", name.into_inner()));

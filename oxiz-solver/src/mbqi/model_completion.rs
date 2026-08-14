@@ -971,7 +971,7 @@ impl MacroSolver {
     /// Explicit-stack walk with a visited set (existence check, so traversal
     /// order is irrelevant); no input depth can overflow the call stack. The
     /// edge set is every syntactic subterm position, via
-    /// [`Self::subterm_positions`] — an occurs-check that misses a position
+    /// [`Self::subterm_positions`] – an occurs-check that misses a position
     /// green-lights an ill-founded macro, so the enumeration must be total.
     fn contains_function(&self, term: TermId, func: Spur, manager: &TermManager) -> bool {
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -1003,7 +1003,7 @@ impl MacroSolver {
     /// node here.  This function used to carry its own 17-kind edge list with a
     /// `_ => vec![]` fallback, so every bit-vector, floating-point, string,
     /// array, `Distinct`, `Xor`, quantifier, `Let`, datatype and `Match` term
-    /// looked like a leaf — and [`Self::contains_function`], the occurs-check
+    /// looked like a leaf – and [`Self::contains_function`], the occurs-check
     /// that decides whether `forall x. f(x) = rhs` is a safe macro, could miss
     /// an `f` inside `rhs` and install an ill-founded recursive definition as a
     /// function interpretation.
@@ -1011,7 +1011,7 @@ impl MacroSolver {
     /// One position is added on top of the canonical enumeration: quantifier
     /// **patterns** (triggers).  The canonical walk deliberately skips them
     /// (they are instantiation metadata, not semantic children), but an
-    /// occurs-check wants *all* syntactic positions — a trigger mentioning `f`
+    /// occurs-check wants *all* syntactic positions – a trigger mentioning `f`
     /// still ties the candidate macro body back to `f`.
     fn subterm_positions(term: TermId, manager: &TermManager) -> SmallVec<[TermId; 4]> {
         let Some(t) = manager.get(term) else {
@@ -1833,7 +1833,7 @@ mod tests {
         assert!(format!("{}", err).contains("test"));
     }
 
-    // ---------------------------------------------------------------
+    // ========  ========
     // Macro occurs-check coverage
     //
     // `MacroSolver::get_children` used to enumerate 17 term kinds and fall
@@ -1843,7 +1843,7 @@ mod tests {
     // `Xor`, quantifier and `Let` node.  An `f` hiding under any of them was
     // invisible and the ill-founded recursive definition was installed as a
     // function interpretation.
-    // ---------------------------------------------------------------
+    // ========  ========
 
     /// Build `forall x:sort. f(x) = rhs(f(x))` and ask the macro solver.
     fn macro_from_body(m: &mut TermManager, var_sort: SortId, body: TermId) -> QuantifiedFormula {

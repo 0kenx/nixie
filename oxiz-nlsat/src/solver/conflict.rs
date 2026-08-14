@@ -23,7 +23,7 @@ enum EntryOutcome {
 }
 
 impl NlsatSolver {
-    // ========== Conflict Analysis ==========
+    // ======== Conflict Analysis ========
 
     /// Analyze a conflict and learn a clause.
     pub(super) fn analyze_conflict(&mut self, conflict_id: ClauseId) -> (Vec<Literal>, u32) {
@@ -333,7 +333,7 @@ impl NlsatSolver {
         }
     }
 
-    // ========== Backtracking ==========
+    // ======== Backtracking ========
 
     /// Backtrack to a given level.
     pub(super) fn backtrack(&mut self, level: u32) {
@@ -357,7 +357,7 @@ impl NlsatSolver {
         self.eval_cache.clear();
     }
 
-    // ========== Activity Management ==========
+    // ======== Activity Management ========
 
     /// Bump the activity of a variable.
     pub(super) fn bump_var_activity(&mut self, var: BoolVar) {
@@ -400,7 +400,7 @@ impl NlsatSolver {
         self.clauses.decay_activities();
     }
 
-    // ========== Restart and Reduction ==========
+    // ======== Restart and Reduction ========
 
     /// Compute the Literal Block Distance (LBD) of a clause.
     ///
@@ -480,7 +480,7 @@ impl NlsatSolver {
         self.stats.reorderings += 1;
     }
 
-    // ========== Helper Methods ==========
+    // ======== Helper Methods ========
 
     /// Check if the formula is completely assigned.
     pub(super) fn is_complete(&self) -> bool {
@@ -538,12 +538,12 @@ mod tests {
         solver.clauses.add(literals, 0, false)
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Behaviour-preservation: pin the exact redundancy verdict for concrete,
     // hand-verifiable reason-clause shapes (audit: item 4 asked specifically
     // that dedup/memoization must not change which literals are judged
     // redundant).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_is_redundant_literal_dependency_already_in_clause() {
@@ -672,12 +672,12 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Cycle-safety: a reason-clause cycle can never arise from a sound
     // trail (see the doc comment on `is_redundant_literal`), but the
     // function itself had no way to detect one; construct one directly
     // against the trail/clause database to prove termination.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_is_redundant_literal_cycle_terminates_conservatively_false() {

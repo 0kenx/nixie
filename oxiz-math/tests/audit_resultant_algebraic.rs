@@ -15,7 +15,7 @@ fn rat(n: i64) -> BigRational {
     BigRational::from_integer(BigInt::from(n))
 }
 
-// ─────────────────────────── multivariate resultant ────────────────────────
+// ======== multivariate resultant ========
 
 /// `Res_y(y - x, y - 2) = x - 2` (eliminating y). Hand-computed: the Sylvester
 /// matrix of `y - x` and `y - 2` w.r.t. y is `[[1, -x], [1, -2]]`, whose
@@ -90,7 +90,7 @@ fn resultant_univariate_still_exact() {
 }
 
 /// `Res(x^2 - 5, x^2 - 2) = 9`, matching the Sylvester determinant test in the
-/// `resultant` module — the extended-ops entry point must agree.
+/// `resultant` module – the extended-ops entry point must agree.
 #[test]
 fn resultant_univariate_quadratics_is_nine() {
     let p = Polynomial::univariate(0, &[rat(-5), rat(0), rat(1)]); // x^2 - 5
@@ -100,11 +100,11 @@ fn resultant_univariate_quadratics_is_nine() {
     assert_eq!(res.constant_term(), rat(9));
 }
 
-// ───────────────────── real algebraic-number arithmetic ────────────────────
+// ======== real algebraic-number arithmetic ========
 
 /// √2 + √2 = √8 = 2√2. The computed sum must be a genuine algebraic number
 /// whose defining polynomial has 2√2 as a root (verified via gcd with x²-8),
-/// and whose isolating interval brackets ≈ 2.828 — not a rational collapse.
+/// and whose isolating interval brackets ≈ 2.828 – not a rational collapse.
 #[test]
 fn add_algebraic_sqrt2_plus_sqrt2_is_sqrt8() {
     let mut a = AlgebraicNumber::sqrt(&rat(2)).expect("sqrt(2)");
@@ -124,7 +124,7 @@ fn add_algebraic_sqrt2_plus_sqrt2_is_sqrt8() {
         "√2+√2 should be ≈ 2.8284, got {approx}"
     );
 
-    // The defining polynomial must vanish at 2√2 — i.e. it shares the factor
+    // The defining polynomial must vanish at 2√2 – i.e. it shares the factor
     // x² - 8 (whose roots are ±2√2). gcd of the two must have positive degree.
     let x2_minus_8 = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-8, &[])]);
     let g = sum.polynomial().gcd_univariate(&x2_minus_8);
@@ -166,7 +166,7 @@ fn mul_algebraic_sqrt2_times_sqrt3_is_sqrt6() {
     );
 }
 
-/// (1 + √2) + (1 - √2) = 2 — the rational-degeneration case. Even though both
+/// (1 + √2) + (1 - √2) = 2 – the rational-degeneration case. Even though both
 /// operands are irrational, their sum is exactly the rational 2, and the
 /// implementation must recognise this and return a rational algebraic number.
 #[test]

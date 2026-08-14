@@ -245,7 +245,7 @@ fn collect_topological(
 /// Find all root-to-leaf paths in the proof.
 ///
 /// Only *simple* paths are enumerated: a node that already occurs on the current
-/// path is not descended into again. On an acyclic proof (the documented shape —
+/// path is not descended into again. On an acyclic proof (the documented shape –
 /// see [`crate::validation`]) this is exactly "every root-to-axiom path"; on a
 /// cyclic proof it terminates instead of looping forever.
 ///

@@ -195,7 +195,7 @@ impl FieldExtension {
     ///
     /// Iterative rather than recursive: the recursion was one level per
     /// Euclidean division step, i.e. O(degree) deep on an attacker-supplied
-    /// polynomial, carrying three `Vec<BigRational>`s per frame — and the
+    /// polynomial, carrying three `Vec<BigRational>`s per frame – and the
     /// `(Vec, Vec, Vec)` return type has no channel through which a depth
     /// cap could report giving up. This is the standard forward
     /// accumulation of the same recurrence (`s ← old_s − q·s`), so it

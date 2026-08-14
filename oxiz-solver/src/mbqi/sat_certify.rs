@@ -22,7 +22,7 @@
 //! satisfies the whole formula and `sat` is sound.
 //!
 //! Crucially, the `sat` conclusion rests on the ground solver's own SAT result
-//! over the real assertions — never on evaluating the body under the completed
+//! over the real assertions – never on evaluating the body under the completed
 //! model (which may be an incomplete or macro-completed approximation).  A
 //! universal instance is always a sound logical consequence, so adding the
 //! complete set can only make an unsatisfiable problem reveal its conflict; it
@@ -30,18 +30,18 @@
 //!
 //! # The complete instantiation set
 //!
-//! * **Bounded box** — body `guard ⇒ C` where `guard` pins every Int variable
+//! * **Bounded box** – body `guard ⇒ C` where `guard` pins every Int variable
 //!   to a concrete finite interval `[l, u]`.  The whole interval is enumerated:
 //!   outside it the guard is false (implication vacuously true), inside every
 //!   value is instantiated.  Exhaustive, hence trivially complete.
 //!
-//! * **Essentially uninterpreted** — every occurrence of every bound variable
+//! * **Essentially uninterpreted** – every occurrence of every bound variable
 //!   is a direct argument of an uninterpreted function or array `select`.  Each
 //!   variable is instantiated over the ground terms already appearing at that
 //!   argument position (harvested from the completed model's interpretation
 //!   graph).  This is exactly Ge & de Moura's relevant set.
 //!
-//! * **Almost uninterpreted (guarded)** — body `guard ⇒ C` where the consequent
+//! * **Almost uninterpreted (guarded)** – body `guard ⇒ C` where the consequent
 //!   `C` reads every bound variable *only* through uninterpreted functions /
 //!   array operations (strictly essentially uninterpreted), and `guard` is a
 //!   conjunction of:
@@ -103,7 +103,7 @@ pub(crate) fn collect_fragment_instances(
     // variable is not a legal instantiation value.  Such a term can leak into a
     // function's model interpretation as a *symbolic* application (e.g. `f(x)`
     // harvested from the un-instantiated body `f(x) ≥ 0`), and instantiating a
-    // variable with itself would leave a free variable in the lemma — which
+    // variable with itself would leave a free variable in the lemma – which
     // `substitute_tuple` rightly rejects, collapsing the whole certification to
     // `NotEligible`.  Excluding these terms up front keeps the relevant set
     // ground and lets the fragment saturate.
@@ -117,7 +117,7 @@ pub(crate) fn collect_fragment_instances(
     // compared against in a guard (`x ≤ c`, `i < n`, `i ≠ k`, ...).  This is the
     // second half of the almost-uninterpreted fragment's relevant set: without
     // the guard constants a region boundary can be missed, which would let a
-    // point the guard admits — but that is never instantiated — escape the check
+    // point the guard admits – but that is never instantiated – escape the check
     // and turn a genuine `unsat` into a spurious `sat`.  Adding instantiation
     // points is always sound (a universal instance is a consequence), so this
     // can only ever *strengthen* the ground problem.
@@ -300,7 +300,7 @@ fn augment_guard_grounds(
 ///
 /// Iterative with an explicit heap stack: the guard shape is
 /// caller-controlled input and the results flow through `out` with no error
-/// channel, so a depth cap could only have silently dropped guard bounds —
+/// channel, so a depth cap could only have silently dropped guard bounds –
 /// shrinking the relevant instantiation set, which is exactly the failure
 /// [`augment_guard_grounds`] exists to prevent.  Children are pushed in
 /// reverse so `out` keeps the recursive version's left-to-right emission
@@ -477,7 +477,7 @@ fn premise_safe(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager) -> 
 /// # Iterative machine
 ///
 /// This used to be a three-way native recursion (`eu_walk` ↔ `guard_cmp` ↔
-/// `arg_ok`) returning `bool` — a return type with no error channel, where a
+/// `arg_ok`) returning `bool` – a return type with no error channel, where a
 /// depth cap could only have fabricated a wrong fragment-classification
 /// verdict, and a wrong `true` here would let an incomplete instantiation
 /// set certify a spurious `sat`.  It now runs as a worklist of obligations
@@ -489,7 +489,7 @@ fn premise_safe(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager) -> 
 /// outcome: the walk answers `false` the moment any obligation fails, and
 /// `true` only once the worklist drains.  `seen` deduplicates structural
 /// obligations by `TermId` (`allow_guard` is fixed for a given walk), which
-/// preserves the verdict — a repeated subterm re-adds identical conjuncts —
+/// preserves the verdict – a repeated subterm re-adds identical conjuncts –
 /// while bounding re-expansion of shared subterms of the hash-consed DAG to
 /// linear.
 fn eu_walk(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager, allow_guard: bool) -> bool {
@@ -506,13 +506,13 @@ fn eu_walk(term: TermId, vars: &FxHashSet<Spur>, manager: &TermManager, allow_gu
         /// (`allow_guard`) two extra forms are admitted beyond a plain
         /// essentially-uninterpreted comparison:
         ///
-        /// * **bound-variable vs ground** — `x ⊕ t` (or `t ⊕ x`) where `t`
+        /// * **bound-variable vs ground** – `x ⊕ t` (or `t ⊕ x`) where `t`
         ///   mentions no bound variable.  This is the interval/point bound
         ///   of the almost-uninterpreted fragment; its ground constant `t`
         ///   is added to the relevant instantiation set (see
         ///   [`augment_guard_grounds`]) so the region boundary is always
         ///   covered.
-        /// * **bound-variable vs bound-variable** — `x ⊕ y`, but only for
+        /// * **bound-variable vs bound-variable** – `x ⊕ y`, but only for
         ///   the monotone-preserving non-strict relations (the `bool`
         ///   field, the old `allow_var_var`); strict `<` / `>` between two
         ///   variables is *not* preserved by the projection and is
@@ -903,7 +903,7 @@ mod tests {
         }
     }
 
-    // ===== eu_walk (iterative fragment classification) =====
+    // ======== eu_walk (iterative fragment classification) ========
     //
     // `eu_walk` / `guard_cmp` / `arg_ok` used to be a three-way native
     // recursion returning `bool`; it now runs as an obligation worklist on
@@ -1027,7 +1027,7 @@ mod tests {
         assert!(!strict_eu(t, &bound, &m));
     }
 
-    // ===== collect_guard_ground_terms (iterative guard scan) =====
+    // ======== collect_guard_ground_terms (iterative guard scan) ========
 
     #[test]
     fn guard_grounds_pin_content_and_emission_order() {

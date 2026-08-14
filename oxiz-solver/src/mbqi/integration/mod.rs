@@ -267,7 +267,7 @@ impl MBQIIntegration {
         // Fast path: if every instantiable quantifier has a body that
         // simplifies to `true` independently of its bound variables (e.g.
         // `forall x. f(x) = f(x)`), the whole quantified block is valid over
-        // its entire domain — infinite or not — so the model already satisfies
+        // its entire domain – infinite or not – so the model already satisfies
         // it.  Recognizing this up front (before any enumerative
         // instantiation) restores `Satisfied` (sat) in a single round for
         // simple UFLIA-style tautological quantifiers that the finite-domain
@@ -314,8 +314,8 @@ impl MBQIIntegration {
                     // Record against the (quantifier, binding) key *before* the
                     // tautology filter below.  Saturation is detected purely by
                     // this key (never by the result term), so recording every
-                    // relevant tuple — even those whose body collapses to `true`
-                    // — is what lets a later round observe "nothing fresh" and
+                    // relevant tuple – even those whose body collapses to `true`
+                    // – is what lets a later round observe "nothing fresh" and
                     // conclude `Satisfied` soundly.
                     self.record_instantiation(&inst);
 
@@ -348,7 +348,7 @@ impl MBQIIntegration {
                 let result = if fresh.is_empty() {
                     // Saturated: every relevant instance was either emitted in an
                     // earlier round or is a tautology, and the ground solver still
-                    // found a model — so by the completeness theorem for this
+                    // found a model – so by the completeness theorem for this
                     // fragment the whole quantified formula is `Sat`.
                     MBQIResult::Satisfied
                 } else {
@@ -599,7 +599,7 @@ impl MBQIIntegration {
     /// simplifies to the constant `true` regardless of its bound variables.
     ///
     /// Such a quantifier (`forall x. body` or `exists x. body` with `body ≡ ⊤`)
-    /// is valid over its whole domain — infinite or not — so reporting
+    /// is valid over its whole domain – infinite or not – so reporting
     /// `Satisfied` is sound without any finite-domain enumeration.  Returns
     /// `false` when there is no instantiable quantifier, or when any of them has
     /// a body that does not provably collapse to `true`; that keeps the check
@@ -1199,7 +1199,7 @@ impl MBQIIntegration {
                 // and boolean simplifications so the SAT solver sees clean lemmas.
                 let simplified = self.deep_simplify(ground_body, manager);
 
-                // Skip tautologies (body simplifies to True — no information)
+                // Skip tautologies (body simplifies to True – no information)
                 if manager
                     .get(simplified)
                     .is_some_and(|t| matches!(t.kind, TermKind::True))
@@ -1243,8 +1243,8 @@ impl MBQIIntegration {
     /// of native recursion.
     ///
     /// The previous implementation recursed once per nesting level, so a
-    /// deeply nested lemma — this runs on every instantiated quantifier
-    /// body, on the default `check_sat` path — could abort the process by
+    /// deeply nested lemma – this runs on every instantiated quantifier
+    /// body, on the default `check_sat` path – could abort the process by
     /// exhausting the native stack; the memo cache bounded re-visits of
     /// shared subterms but never depth.  The return type is a plain
     /// `TermId` with no error channel, so a depth cap could only have
@@ -1266,19 +1266,19 @@ impl MBQIIntegration {
         /// A binary operator: both operands are simplified (left, then
         /// right) before folding.
         enum BinKind {
-            /// `=>` — folds a constant premise or conclusion.
+            /// `=>` – folds a constant premise or conclusion.
             Implies,
-            /// `=` — folds via `simplify_eq`.
+            /// `=` – folds via `simplify_eq`.
             Eq,
-            /// `<=` — folds via `simplify_le`.
+            /// `<=` – folds via `simplify_le`.
             Le,
-            /// `<` — folds via `simplify_lt`.
+            /// `<` – folds via `simplify_lt`.
             Lt,
-            /// `>=` — folds via `simplify_le` with swapped operands.
+            /// `>=` – folds via `simplify_le` with swapped operands.
             Ge,
-            /// `>` — folds via `simplify_lt` with swapped operands.
+            /// `>` – folds via `simplify_lt` with swapped operands.
             Gt,
-            /// Array `select` — rebuilt from the simplified operands.
+            /// Array `select` – rebuilt from the simplified operands.
             Select,
         }
 
@@ -1294,7 +1294,7 @@ impl MBQIIntegration {
                 term: TermId,
             },
             /// `And(args)`: classify the conjunct just simplified, then
-            /// simplify `args[next..]` — unless a `False` ends it early.
+            /// simplify `args[next..]` – unless a `False` ends it early.
             AndArgs {
                 /// The `And` term (cache key).
                 term: TermId,

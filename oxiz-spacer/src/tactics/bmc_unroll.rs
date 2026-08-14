@@ -45,7 +45,7 @@ impl<'a> BmcEngine<'a> {
     /// substitution).  A previous hand-written per-kind walk had a `_ => term`
     /// fallthrough that left `Div`/`Mod`/`Neg`/`Distinct`/`Xor`/`Select`/`Store`
     /// (and their variable subterms) unrenamed, silently mixing time frames and
-    /// producing wrong SAT/UNSAT results — this delegation makes it impossible
+    /// producing wrong SAT/UNSAT results – this delegation makes it impossible
     /// for any variable to escape renaming.
     fn rename_term(&mut self, term: TermId, step: usize) -> TermId {
         // Pattern-aware: `TermManager::substitute` rewrites quantifier
@@ -160,7 +160,7 @@ mod tests {
 
     /// Verify that a doubly-next-state variable `x_next_next` is renamed correctly.
     /// `next_state_name` strips only the final `_next` suffix, so `x_next_next`
-    /// becomes `x_next@{step+1}` — the inner `_next` is treated as part of the base
+    /// becomes `x_next@{step+1}` – the inner `_next` is treated as part of the base
     /// name, not stripped again.
     #[test]
     fn test_bmc_unroll_handles_nested_next_state() {

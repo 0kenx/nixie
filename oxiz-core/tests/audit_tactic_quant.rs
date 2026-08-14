@@ -2,7 +2,7 @@
 //! (`oxiz-core/src/tactic/quantifier.rs`).
 //!
 //! Findings fixed:
-//!   1. DER's ∀ rule was inverted — it resolved a *positive* equality
+//!   1. DER's ∀ rule was inverted – it resolved a *positive* equality
 //!      (∀x.(x=t ∨ ψ) → ψ[t/x]) instead of a *disequality*
 //!      (∀x.(x≠t ∨ ψ) ≡ ψ[t/x]).  {∀x.(x=5 ∨ P(x)), ¬P(6)} is UNSAT but the old
 //!      rule produced {P(5), ¬P(6)} = SAT.
@@ -28,9 +28,9 @@ fn setup_manager() -> TermManager {
     TermManager::new()
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Skolemization
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_skolemization_tactic() {
@@ -114,7 +114,7 @@ fn test_skolem_negated_existential_not_skolemized() {
     match result {
         TacticResult::NotApplicable => {}
         TacticResult::SubGoals(goals) => {
-            // If (re)built, it must still contain the quantifier — never a bare
+            // If (re)built, it must still contain the quantifier – never a bare
             // ¬P(sk).
             assert!(
                 goal_has_quantifiers(&goals[0], &manager),
@@ -187,9 +187,9 @@ fn p_apply_arg(manager: &TermManager, term: oxiz_core::TermId) -> oxiz_core::Ter
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Quantifier instantiation
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Finding 3: a universal under a negation must NOT be instantiated as a fact.
 /// {¬(∀x.P(x)), ¬P(5)} is SAT; adding P(5) would make it UNSAT.
@@ -245,9 +245,9 @@ fn test_qi_positive_forall_instantiated() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // DER (Destructive Equality Resolution)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_contains_quantifier() {

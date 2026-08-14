@@ -322,7 +322,7 @@ impl MaxSmtSolver {
     /// Solve the MaxSMT problem.
     ///
     /// MaxSMT optimization cannot proceed without the [`TermManager`] that owns
-    /// the constraint terms — it is needed to build the selector-variable
+    /// the constraint terms – it is needed to build the selector-variable
     /// encoding and invoke the SMT solver. Historically this method was a stub
     /// that always returned `Unknown` regardless of the input, silently
     /// mis-reporting every instance as unsolved. It now fails honestly; use
@@ -349,7 +349,7 @@ impl MaxSmtSolver {
         let int_sort = terms.sorts.int_sort;
         let bool_sort = terms.sorts.bool_sort;
 
-        // Trivial case: no soft constraints — just check hard feasibility.
+        // Trivial case: no soft constraints – just check hard feasibility.
         if self.soft_constraints.is_empty() {
             let mut solver = Solver::new();
             for &h in &self.hard_constraints {

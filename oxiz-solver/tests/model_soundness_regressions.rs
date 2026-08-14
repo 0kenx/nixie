@@ -1,11 +1,11 @@
-//! Model-soundness regression guards — a `sat` must be backed by a model that
+//! Model-soundness regression guards – a `sat` must be backed by a model that
 //! satisfies the formula.
 //!
 //! Distinct from `known_unsound_regressions.rs` (verdict soundness: never
 //! `sat` on a z3-unsat instance). These pin **model soundness**: when the
 //! solver answers `sat`, the model it emits must actually satisfy the
 //! assertions. A model that contradicts the formula is a wrong answer dressed
-//! as a right one — invisible to verdict-only tests, found by the z3-validated
+//! as a right one – invisible to verdict-only tests, found by the z3-validated
 //! differential harness.
 //!
 //! Two independent defects were found this way (see
@@ -14,11 +14,11 @@
 //! * **Construction** (`Solver::build_model`): the emitted model violates the
 //!   formula on a *correct* `sat` verdict. z3 rejects `asserts ∧ model`.
 //!   **2 confirmed instances** (DLX1C0 QF_UFIDL; 1659 QF_NIA), pinned
-//!   `#[ignore]`d below. (An earlier run counted 4 — `21.lp`/`3.lp` were a
+//!   `#[ignore]`d below. (An earlier run counted 4 – `21.lp`/`3.lp` were a
 //!   validator quoting bug in the harness, since fixed; their models are valid.)
 //! * **Evaluator** (`Model::eval`, behind `Context::eval_in_model`): on a
 //!   *correct* model it false-alarms (reports an assertion unsatisfied that
-//!   z3 confirms is satisfied) — so `(get-value)`/`(get-model)` and the CLI's
+//!   z3 confirms is satisfied) – so `(get-value)`/`(get-model)` and the CLI's
 //!   `--validate-model` are unreliable. Pinned `#[ignore]`d below (iso_brn1083).
 //!
 //! The two were disambiguated with z3 as an independent oracle AND with
@@ -132,7 +132,7 @@ fn nullary_defines(model: &str) -> Vec<(String, String, String)> {
 
 /// Declared nullary symbols, keyed by the *unquoted* name -> the EXACT token
 /// the file uses (incl. SMT-LIB `|...|` quoting). A model pin must use the
-/// file's exact token or it references a disconnected fresh symbol — pinning
+/// file's exact token or it references a disconnected fresh symbol – pinning
 /// `hc(18,17)` bare while the file declares `|hc(18,17)|` makes z3 parse the
 /// pin as the application `hc (18 17)` and return a spurious verdict. This is
 /// the harness quoting bug that once false-flagged 21.lp/3.lp as bad models.
@@ -160,16 +160,16 @@ fn declared_nullary_tokens(orig: &str) -> std::collections::HashMap<String, Stri
 }
 
 /// Build `(asserts ∧ model-pins)` and ask z3. Returns:
-///   `Some(true)`  — model consistent with the assertions (good),
-///   `Some(false)` — model contradicts the assertions (BAD),
-///   `None`        — z3 unavailable.
+///   `Some(true)`  – model consistent with the assertions (good),
+///   `Some(false)` – model contradicts the assertions (BAD),
+///   `None`        – z3 unavailable.
 ///
 /// Each nullary define-fun is pinned to its value with the file's EXACT
 /// declared token (declaration-accurate quoting); model names not present as
 /// declared nullary symbols are skipped. Function models are skipped (only
 /// top-level constants are pinned): this can only make the check *lenient*,
 /// never a false `false`, because `(asserts ∧ pinned-constants)` unsat already
-/// implies no function extension rescues the formula — see
+/// implies no function extension rescues the formula – see
 /// `bench/differential/VALIDATED_RESCORE.md`.
 fn model_validates(orig: &str, model: &str) -> Option<bool> {
     if !z3_available() {
@@ -247,20 +247,20 @@ fn assert_model_valid(label: &str, rel: &str) {
     match model_validates(&orig, &model) {
         Some(true) => {}
         Some(false) => panic!(
-            "{label}: emitted model contradicts the assertions (z3: asserts∧model = unsat) — \
+            "{label}: emitted model contradicts the assertions (z3: asserts∧model = unsat) – \
              build_model produced an unsatisfying witness for a correct sat verdict"
         ),
         None => eprintln!("skipping {label}: z3 unavailable"),
     }
 }
 
-// ─── Defect B: build_model emits a model that violates the formula ────────
+// ======== Defect B: build_model emits a model that violates the formula ========
 // Both solve to a CORRECT `sat` (z3 agrees sat) but emit a model z3 rejects.
 // `#[ignore]`d until the construction defect is fixed; un-ignore is the
 // acceptance criterion.
 //
 // (An earlier version of this file also pinned 21.lp and 3.lp here. Those
-// were a HARNESS validator quoting bug — the models are valid; removed.)
+// were a HARNESS validator quoting bug – the models are valid; removed.)
 
 #[ignore = "build_model construction defect: DLX1C0 (QF_UFIDL) emits negative \
             Int values (impl.fdType=-4 …) where z3's model is non-negative; \
@@ -286,8 +286,8 @@ fn verymax_1659_model_satisfies_assertions() {
     );
 }
 
-// ─── Defect A: Model::eval false-alarms on a CORRECT model ────────────────
-// iso_brn1083 (QF_UF) solves to a CORRECT sat whose model z3 ACCEPTS — so this
+// ======== Defect A: Model::eval false-alarms on a CORRECT model ========
+// iso_brn1083 (QF_UF) solves to a CORRECT sat whose model z3 ACCEPTS – so this
 // non-ignored test asserts the model really is good. The `#[ignore]`d test
 // below it pins the separate evaluator defect: `Context::eval_in_model`
 // (Model::eval) reports 5 of 19 assertions as not-true under that correct

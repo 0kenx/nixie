@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired (candidate for a
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired (candidate for a
 // future flag). Interval bound propagation is a sound over-approximation ONLY as
 // an infeasibility detector: an empty interval is a genuine conflict, but it must
 // never be used to claim feasibility or fix a value, and its conflicts still need
@@ -411,9 +411,9 @@ impl Default for BoundPropagator {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Interval arithmetic helpers (module-private)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Add two intervals: [a, b] + [c, d] = [a+c, b+d].
 fn interval_add(lhs: &Interval, rhs: &Interval) -> Interval {
@@ -612,9 +612,9 @@ mod tests {
         assert_eq!(propagator.bounds.len(), 0);
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Tests for propagate_polynomial
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_propagate_polynomial_zero_poly_no_conflict() {

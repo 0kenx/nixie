@@ -43,7 +43,7 @@ done
 
 # Generate description and conf
 cat > "${OUT_DIR}/description.txt" <<EOF
-OxiZ ${VERSION} — Pure Rust SMT Solver
+OxiZ ${VERSION} – Pure Rust SMT Solver
 Next-generation SMT solving with 100% Z3 parity across 8 core logics.
 https://github.com/cool-japan/oxiz
 EOF

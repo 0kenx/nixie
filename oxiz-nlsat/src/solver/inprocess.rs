@@ -2,17 +2,17 @@
 //!
 //! This module wires four otherwise-standalone engines into the solve loop:
 //!
-//! * [`StructureAnalyzer`](crate::structure_analyzer::StructureAnalyzer) —
+//! * [`StructureAnalyzer`](crate::structure_analyzer::StructureAnalyzer) –
 //!   classifies the problem once (linear / univariate / dense / …) and seeds a
 //!   Brown-style arithmetic variable ordering. Ordering is a *heuristic* only,
 //!   so it can never change the satisfiability verdict.
-//! * [`SubsumptionChecker`](crate::subsumption::SubsumptionChecker) — a
+//! * [`SubsumptionChecker`](crate::subsumption::SubsumptionChecker) – a
 //!   one-shot pre-search pass that drops an original clause `D` whenever some
 //!   other clause `C ⊆ D` is present. A subsumed clause is logically redundant,
 //!   so the verdict is preserved.
-//! * [`Inprocessor`](crate::inprocessing::Inprocessor) — periodic subsumption
+//! * [`Inprocessor`](crate::inprocessing::Inprocessor) – periodic subsumption
 //!   and self-subsuming resolution over *learned* clauses at decision level 0.
-//! * [`Vivifier`](crate::vivification::Vivifier) — unit-propagation based
+//! * [`Vivifier`](crate::vivification::Vivifier) – unit-propagation based
 //!   strengthening of learned clauses at decision level 0, replacing each
 //!   learned clause with a provably-entailed subset of its literals.
 //!
@@ -210,7 +210,7 @@ impl NlsatSolver {
     ///
     /// For each candidate learned clause the clause is first removed from the
     /// database (so the probe cannot use the clause to prove its own
-    /// strengthening — that would be circular), then the negations of its
+    /// strengthening – that would be circular), then the negations of its
     /// literals are assumed one at a time with real boolean propagation. If the
     /// accumulated assumptions become inconsistent, the assumed prefix is a
     /// clause entailed by the *rest* of the formula that subsumes the original,
@@ -274,8 +274,8 @@ impl NlsatSolver {
     /// strengthened to the (strictly shorter) entailed `prefix`, else `None`.
     ///
     /// Soundness: the returned `prefix` is either (a) a set of literals whose
-    /// negations propagate to a conflict — hence entailed by the formula and a
-    /// superclause-subset of the original — or (b) the original with literals
+    /// negations propagate to a conflict – hence entailed by the formula and a
+    /// superclause-subset of the original – or (b) the original with literals
     /// dropped because they were forced false by the negations of the retained
     /// literals (so every model of the formula satisfying the original also
     /// satisfies `prefix`). Both cases preserve the model set.
@@ -324,7 +324,7 @@ impl NlsatSolver {
     /// Record the arithmetic variables participating in a certified theory
     /// conflict into the [`TheoryConflictTracker`](crate::theory_conflict::TheoryConflictTracker)
     /// and boost their decision activity, so recurrently-conflicting variables
-    /// are decided earlier. This only reorders heuristics — never the verdict.
+    /// are decided earlier. This only reorders heuristics – never the verdict.
     pub(super) fn record_theory_conflict_vars(&mut self, lemma: &[Literal]) {
         let mut vars: Vec<Var> = Vec::new();
         let mut polys: Vec<Polynomial> = Vec::new();
@@ -392,7 +392,7 @@ mod tests {
         BigRational::from_integer(BigInt::from(n))
     }
 
-    // ── eval_cache (theory evaluation memoization) ───────────────────────────
+    // ======== eval_cache (theory evaluation memoization) ========
 
     #[test]
     fn eval_cache_serves_repeated_atom_evaluations() {
@@ -445,7 +445,7 @@ mod tests {
         );
     }
 
-    // ── subsumption preprocessing ────────────────────────────────────────────
+    // ======== subsumption preprocessing ========
 
     #[test]
     fn preprocess_subsumes_original_clauses_and_stays_sat() {
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(solver.solve(), SolverResult::Unsat);
     }
 
-    // ── theory-conflict tracking ─────────────────────────────────────────────
+    // ======== theory-conflict tracking ========
 
     #[test]
     fn theory_conflict_tracker_records_certified_conflicts() {
@@ -508,7 +508,7 @@ mod tests {
         );
     }
 
-    // ── vivification ────────────────────────────────────────────────────────
+    // ======== vivification ========
 
     #[test]
     fn vivify_learned_removes_redundant_literal_and_stays_sound() {
@@ -566,7 +566,7 @@ mod tests {
     fn vivify_probe_derives_entailed_prefix_on_conflict() {
         // Originals: (¬x ∨ y) and (¬y): assuming x forces y then ¬y ⇒ conflict,
         // so probing the clause (x ∨ z ∨ w) strengthens it to the unit-level
-        // prefix (x) — but since we only keep binary+ results, the mechanism is
+        // prefix (x) – but since we only keep binary+ results, the mechanism is
         // exercised via a 3-literal clause whose first two probes conflict.
         let mut solver = NlsatSolver::new();
         let x = solver.new_bool_var();
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(solver.solve(), SolverResult::Sat);
     }
 
-    // ── inprocessing (learned-clause subsumption / strengthening) ────────────
+    // ======== inprocessing (learned-clause subsumption / strengthening) ========
 
     #[test]
     fn inprocessing_removes_subsumed_learned_clause() {

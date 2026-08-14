@@ -11,7 +11,7 @@ single most effective tuning lever available.
 
 1. [Setting the Right Logic](#setting-the-right-logic)
 2. [Logic Family → Solver Dispatch Table](#logic-family--solver-dispatch-table)
-3. [Incremental Solving (push/pop) — When to Use, Overhead](#incremental-solving-pushpop)
+3. [Incremental Solving (push/pop) – When to Use, Overhead](#incremental-solving-pushpop)
 4. [Timeout Configuration](#timeout-configuration)
 5. [MBQI Budget Hints for Quantified Formulas](#mbqi-budget-hints-for-quantified-formulas)
 6. [Portfolio Mode](#portfolio-mode)
@@ -122,7 +122,7 @@ s.assert_term(tm.mk_gt(x, tm.mk_int(90)), tm)
 r1 = s.check_sat(tm)     # Sat
 s.pop()
 
-# Query 2 — shared constraints still in place
+# Query 2 – shared constraints still in place
 s.push()
 s.assert_term(tm.mk_lt(x, tm.mk_int(5)), tm)
 r2 = s.check_sat(tm)     # Sat
@@ -184,7 +184,7 @@ s.set_option('timeout', '30000')   ; milliseconds as string
 ### How timeout interacts with the solver
 
 When a timeout fires, `check_sat()` returns `SolverResult.Unknown`. The solver
-state is preserved — you can still call `get_model()` (it will return an empty
+state is preserved – you can still call `get_model()` (it will return an empty
 dict) and continue with `push()`/`pop()`. Calling `check_sat()` again after a
 timeout will restart the search from scratch unless incremental state was
 preserved via `push()`.
@@ -249,7 +249,7 @@ When MBQI exceeds its budget and returns `unknown`, inspect whether:
 - The formula has quantifier alternation (∀∃) which makes it undecidable in
   general.
 - The witnesses being generated form an infinite chain (a sign of a
-  non-stratified formula — see the Quantifier Handling Guide).
+  non-stratified formula – see the Quantifier Handling Guide).
 - The problem can be reformulated in a quantifier-free fragment.
 
 ---
@@ -307,7 +307,7 @@ Key subcrates and what they cover:
 | `oxiz-nlsat` | Nonlinear arithmetic over reals/integers (cylindrical algebraic) |
 
 A higher SLoC count in a subcrate relative to Z3's equivalent module generally
-indicates deeper coverage — but review the benchmark parity results in
+indicates deeper coverage – but review the benchmark parity results in
 `bench/z3_parity/` for ground-truth functional equivalence data.
 
 ---
@@ -317,7 +317,7 @@ indicates deeper coverage — but review the benchmark parity results in
 The benchmark suite in `bench/z3_parity/benchmarks/` is organized by logic
 family. Each category tests specific solver paths:
 
-### `qf_lia/` — Linear Integer Arithmetic
+### `qf_lia/` – Linear Integer Arithmetic
 
 ```smt2
 ; Good: declare logic, use simple linear constraints
@@ -332,7 +332,7 @@ Tuning: Prefer `QF_LIA` over `QF_NIA` for linear problems. The LIA path uses
 the Omega test and cutting planes, which are complete for linear integer
 arithmetic without requiring NLSAT.
 
-### `qf_bv/` — Bitvectors
+### `qf_bv/` – Bitvectors
 
 ```smt2
 ; Good: declare width-matching operations
@@ -347,7 +347,7 @@ with width and can be superlinear for multiplication. For widths > 64, consider
 whether your problem can be modeled using `QF_LIA` with explicit modular
 arithmetic constraints.
 
-### `qf_lra/` — Linear Real Arithmetic
+### `qf_lra/` – Linear Real Arithmetic
 
 ```smt2
 ; Good: Simplex is very fast for sparse systems
@@ -363,7 +363,7 @@ Tuning: LRA via the Simplex method handles thousands of variables efficiently.
 Avoid unnecessary `distinct` constraints on reals; they expand to quadratic
 pairwise inequality sets.
 
-### `AUFLIA/` and `AUFLIRA/` — Quantified Array + Arithmetic
+### `AUFLIA/` and `AUFLIRA/` – Quantified Array + Arithmetic
 
 ```smt2
 ; Add patterns to guide E-matching when possible
@@ -381,7 +381,7 @@ Tuning: Always provide `:pattern` triggers for quantifiers over arrays. Without
 triggers, E-matching cannot fire and MBQI must enumerate model-based witnesses,
 which is expensive. See the Quantifier Handling Guide for details.
 
-### `qf_s/` — Strings
+### `qf_s/` – Strings
 
 String solving is handled by a regular-expression-based theory. Performance
 degrades with long string lengths and complex regex intersections. Prefer

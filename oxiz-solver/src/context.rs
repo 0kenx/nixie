@@ -333,7 +333,7 @@ impl Context {
         // Array soundness honesty gate: the syntactic array checks and the EUF
         // congruence core do not implement full array extensionality.  If a
         // positive equality between two store terms survived to a `Sat` verdict
-        // without being refuted as a conflict, the assignment is not certified —
+        // without being refuted as a conflict, the assignment is not certified –
         // the core may have merged the two store terms into one class without
         // enforcing element-wise agreement of their bases.  Answer `Unknown`
         // rather than a possibly-spurious `Sat` (never a silent wrong result).
@@ -416,7 +416,7 @@ impl Context {
                         counter += 1;
                     }
                     if counter == 0 {
-                        // Proof object present but empty — emit minimal witness.
+                        // Proof object present but empty – emit minimal witness.
                         logger.log_step(
                             ProofNodeId(0),
                             &ProofStep::Axiom {
@@ -462,7 +462,7 @@ impl Context {
     /// term structure, substituting variables with their model values, and
     /// returns the simplified/concrete `TermId`.
     ///
-    /// The returned `TermId` belongs to `self.terms` — the same `TermManager`
+    /// The returned `TermId` belongs to `self.terms` – the same `TermManager`
     /// owned by this `Context`.
     pub fn eval_in_model(&mut self, term: TermId) -> Option<TermId> {
         if self.last_result != Some(SolverResult::Sat) {
@@ -550,8 +550,8 @@ impl Context {
 
     /// Reset assertions (keep declarations and options)
     ///
-    /// SMT-LIB 2.6 §4.2.5: `reset-assertions` empties the assertion stack but —
-    /// unlike `reset` — keeps the current logic, all declarations/definitions
+    /// SMT-LIB 2.6 §4.2.5: `reset-assertions` empties the assertion stack but –
+    /// unlike `reset` – keeps the current logic, all declarations/definitions
     /// and every option.  [`crate::solver::Solver::reset`] is a *total* reset,
     /// so anything the context still owns has to be re-established on the fresh
     /// solver afterwards, otherwise the solver silently loses configuration the
@@ -620,19 +620,19 @@ impl Context {
     /// Wired keys (each consumed by the solve loop, so setting them actually
     /// changes behaviour):
     ///
-    /// - `produce-proofs` (`true`/`false`) — enable proof generation.
-    /// - `certified-mode` (`true`/`false`) — require an independently checked
+    /// - `produce-proofs` (`true`/`false`) – enable proof generation.
+    /// - `certified-mode` (`true`/`false`) – require an independently checked
     ///   model or LRAT-backed refutation before returning `sat`/`unsat`.
-    /// - `produce-unsat-cores` (`true`/`false`) — enable unsat-core tracking.
-    /// - `timeout` (milliseconds) — wall-clock budget for the search; `0`
+    /// - `produce-unsat-cores` (`true`/`false`) – enable unsat-core tracking.
+    /// - `timeout` (milliseconds) – wall-clock budget for the search; `0`
     ///   disables it.  Maps to [`crate::SolverConfig::timeout_ms`], enforced between
     ///   MBQI rounds and inside the theory callbacks.
-    /// - `max-conflicts` / `max-decisions` (non-negative integer) — resource
+    /// - `max-conflicts` / `max-decisions` (non-negative integer) – resource
     ///   limits; `0` means unlimited.
-    /// - `theory-mode` (`eager`/`lazy`) — theory propagation eagerness.
-    /// - `simplify` (`true`/`false`) — pre-solve simplification of asserted
+    /// - `theory-mode` (`eager`/`lazy`) – theory propagation eagerness.
+    /// - `simplify` (`true`/`false`) – pre-solve simplification of asserted
     ///   formulas.
-    /// - `random-seed` / `random_seed` (non-negative integer) — seed for the SAT
+    /// - `random-seed` / `random_seed` (non-negative integer) – seed for the SAT
     ///   engine's phase-randomization PRNG.  It is threaded straight into the SAT
     ///   solver via [`crate::solver::Solver::set_random_seed`], so it perturbs the
     ///   decision order (and hence which model a satisfiable problem yields)
@@ -766,8 +766,8 @@ impl Context {
                     "produce-assignments" => "false".to_string(),
                     // print-success is honored by `execute_script` (a `success`
                     // line is emitted after each silently-succeeding command
-                    // once enabled), but defaults to off — matching common
-                    // solver behavior — so that scripts that never opt in keep
+                    // once enabled), but defaults to off – matching common
+                    // solver behavior – so that scripts that never opt in keep
                     // their existing terse output.  Once `(set-option
                     // :print-success true)` is issued, the `Some(val)` branch
                     // above reports the real `true`.
@@ -829,8 +829,8 @@ impl Context {
     /// variables users query in practice.  It returns `()` when the last check
     /// did not produce a model (not `sat`, or no model available).
     ///
-    /// Boolean constants that never entered a constraint — and therefore carry no
-    /// forced value — are reported as `false`, matching the default-completion
+    /// Boolean constants that never entered a constraint – and therefore carry no
+    /// forced value – are reported as `false`, matching the default-completion
     /// convention used by [`Context::get_model`].
     pub fn get_assignment(&self) -> String {
         if self.last_result != Some(SolverResult::Sat) {
@@ -860,7 +860,7 @@ impl Context {
     ///
     /// After a `check-sat-assuming` that returned `unsat`, this returns a subset
     /// of the supplied assumptions whose conjunction with the current assertions
-    /// is unsatisfiable.  The reported set is the full assumption list — a valid,
+    /// is unsatisfiable.  The reported set is the full assumption list – a valid,
     /// though not necessarily minimal, unsatisfiable set (a superset of a minimal
     /// core is still unsatisfiable).  Returns an error S-expression when the last
     /// result was not `unsat`, and `()` when the last check used no assumptions.
@@ -920,7 +920,7 @@ impl Context {
     }
 
     /// Borrow the embedded solver so a crate-internal test can inspect state
-    /// that has no place in the public API — currently the SAT clause count,
+    /// that has no place in the public API – currently the SAT clause count,
     /// which `crate::solver::scope_rebase_tests` watches across MBQI rounds.
     ///
     /// Test-only on purpose: exposing the solver publicly would make every
@@ -962,8 +962,8 @@ impl Context {
 
     /// Replace the entire solver configuration.
     ///
-    /// Fields consumed during the solve loop — `timeout_ms`, `max_conflicts`,
-    /// `max_decisions`, `theory_mode`, and `simplify` — take effect on the next
+    /// Fields consumed during the solve loop – `timeout_ms`, `max_conflicts`,
+    /// `max_decisions`, `theory_mode`, and `simplify` – take effect on the next
     /// `check_sat`.  Fields that the embedded SAT solver only reads at
     /// construction time (notably `restart_strategy` and the inprocessing
     /// toggles) are stored but do not retroactively reconfigure an already-built
@@ -1031,7 +1031,7 @@ impl Context {
     /// Model-guided algorithm (mirrors Z3's `solver::get_consequences`):
     ///
     ///   1. Check satisfiability of the assertions under `assumptions`.  If it
-    ///      is `unsat`/`unknown`, report exactly that — there is no model to
+    ///      is `unsat`/`unknown`, report exactly that – there is no model to
     ///      seed candidate consequences from.
     ///   2. Otherwise read each queried variable's polarity from the model
     ///      (the candidate consequences).  Every polarity is extracted **up
@@ -1042,7 +1042,7 @@ impl Context {
     ///      consequence.
     ///
     /// Returns the output lines: a status (`sat`, or `unknown` when the
-    /// closing restore check could not reproduce the model — see
+    /// closing restore check could not reproduce the model – see
     /// [`consequences_restore_state`]) followed by the Z3-shaped
     /// `((=> (and A) lit) ...)` implication list, or a single
     /// `unsat`/`unknown`/error line.
@@ -1071,7 +1071,7 @@ impl Context {
         for &v in variables {
             // Re-fetch the model each iteration; the immutable borrow ends
             // within the statement so `self.terms` can be borrowed mutably by
-            // `eval` (disjoint fields — the same pattern as `eval_in_model`).
+            // `eval` (disjoint fields – the same pattern as `eval_in_model`).
             let value = match self.solver.model() {
                 Some(m) => m.eval(v, &mut self.terms),
                 None => continue,
@@ -1106,7 +1106,7 @@ impl Context {
         // wall-clock timeout or conflict budget consumed by the certification
         // checks above can leave it `unknown`.  Its verdict used to be
         // discarded (`let _ = ...`) and `last_result` forced to `Sat`, which
-        // put the context in `sat` mode with no model behind it — a following
+        // put the context in `sat` mode with no model behind it – a following
         // `(get-model)` then served a stale or absent interpretation while the
         // session claimed `sat`.  Report the restore verdict honestly instead.
         let restore = self.check_with_assumptions_raw(assumptions);
@@ -1120,7 +1120,7 @@ impl Context {
         }
 
         // Build the Z3-shaped implication list.  The antecedent is `(and A)`
-        // rendered directly — NOT via `mk_implies`, which simplifies away the
+        // rendered directly – NOT via `mk_implies`, which simplifies away the
         // antecedent for an empty/singleton assumption set.
         let ante = self.terms.mk_and(assumptions.iter().copied());
         let printer = oxiz_core::smtlib::Printer::new(&self.terms);
@@ -1297,7 +1297,7 @@ impl Context {
                     // SMT-LIB 2.6 §4.1.1: an unsat core exists only in `unsat`
                     // mode.  Without this gate a core computed before a `pop` /
                     // `assert` was reported against the *current* assertion
-                    // list, whose indices no longer match — `minimize_unsat_core`
+                    // list, whose indices no longer match – `minimize_unsat_core`
                     // indexes `Solver::assertions` by the stale core indices and
                     // panicked outright on a `(push)(assert)(check-sat)(pop)
                     // (get-unsat-core)` script.
@@ -1458,7 +1458,7 @@ impl Context {
             }
 
             // Emit the `:print-success` acknowledgement for a command that
-            // succeeded *silently* — no response of its own and no error it
+            // succeeded *silently* – no response of its own and no error it
             // pushed (a pushed error is left as the command's response).  `exit`
             // handles its own acknowledgement before breaking out of the loop.
             if self.print_success_enabled()
@@ -1494,9 +1494,9 @@ impl Context {
 /// the model queries answer "not available" instead of serving whatever the
 /// last certification check happened to leave behind).
 ///
-/// * `Sat` — the model is back; stay in `sat` mode and report `sat`.
-/// * `Unknown` — no certified model; report `unknown`, cache nothing.
-/// * `Unsat` — contradicts the opening `sat` of the same assumption set, so
+/// * `Sat` – the model is back; stay in `sat` mode and report `sat`.
+/// * `Unknown` – no certified model; report `unknown`, cache nothing.
+/// * `Unsat` – contradicts the opening `sat` of the same assumption set, so
 ///   the two checks disagree and neither may be published as a verdict.  That
 ///   is precisely `unknown`, and nothing is cached.
 #[cfg(feature = "std")]
@@ -1837,7 +1837,7 @@ mod tests {
         // PRNG via Solver::set_random_seed.  The observable contract here is
         // two-fold: (1) `(get-option :random-seed)` reflects exactly the value
         // the user set (recording preserved), and (2) setting a seed keeps the
-        // sat/unsat verdict sound — seeding must never change a decidable
+        // sat/unsat verdict sound – seeding must never change a decidable
         // answer.  A previous silent no-op would still pass (1); the point of
         // this test is that the plumbing is now wired without regressing (2).
         let mut ctx = Context::new();

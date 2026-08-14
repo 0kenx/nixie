@@ -375,7 +375,7 @@ impl fmt::Display for DivisionValidationResult {
         } else {
             write!(
                 f,
-                "{}: FAIL — {}",
+                "{}: FAIL – {}",
                 self.division,
                 self.failure_reason.as_deref().unwrap_or("unknown reason")
             )
@@ -446,7 +446,7 @@ pub fn validate_divisions(
             validation_results.push(DivisionValidationResult::failing(
                 division.clone(),
                 format!(
-                    "{} benchmarks run, {} correct, {} wrong, {} unknown — need at least 1 correct",
+                    "{} benchmarks run, {} correct, {} wrong, {} unknown – need at least 1 correct",
                     division_results.len(),
                     passing,
                     failing,
@@ -564,7 +564,7 @@ pub fn generate_submission_package(
     let bin_dir = output_dir.join("bin");
     fs::create_dir_all(&bin_dir)?;
 
-    // Generate the default StarExec run script (backward compatibility — no --track flag).
+    // Generate the default StarExec run script (backward compatibility – no --track flag).
     let run_script_path = bin_dir.join("starexec_run_default");
     write_run_script(config, &run_script_path)?;
 
@@ -622,7 +622,7 @@ fn write_track_run_script(
     writeln!(w, "#!/bin/bash")?;
     writeln!(
         w,
-        "# Auto-generated StarExec run script for {} — {} track",
+        "# Auto-generated StarExec run script for {} – {} track",
         config.solver_name,
         track.display_name()
     )?;
@@ -890,7 +890,7 @@ mod tests {
         );
     }
 
-    // --- Track infrastructure tests ---
+    // ======== Track infrastructure tests ========
 
     #[test]
     fn test_default_config_uses_smtcomp_binary() {

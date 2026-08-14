@@ -1,8 +1,8 @@
 """Tests for floating-point theory support in OxiZ Python bindings.
 
 Covers:
-- FPSort(eb, sb, tm)               — FP sort constructor
-- FPVal(tm, sign, exp, sig, sort)  — FP value constructor
+- FPSort(eb, sb, tm)               – FP sort constructor
+- FPVal(tm, sign, exp, sig, sort)  – FP value constructor
 - fp_add / fp_sub / fp_mul / fp_div module-level combinators
 - FPRoundingMode sentinel class
 - mk_fp_* methods on TermManager

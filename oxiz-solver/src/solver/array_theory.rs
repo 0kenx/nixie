@@ -1,4 +1,4 @@
-//! Incremental array-theory state — Stage 5 of `docs/ARRAY_THEORY_PLAN.md`.
+//! Incremental array-theory state – Stage 5 of `docs/ARRAY_THEORY_PLAN.md`.
 //!
 //! Indexed bookkeeping for the CDCL(T) array theory, mirroring Z3's
 //! `theory_array_full::var_data_full`: for each array term it records the
@@ -41,7 +41,7 @@ pub(crate) struct ArrayTheory {
     /// equality atom `(= a b)`: `(a, b, k, select(a, k), select(b, k))`.
     /// `final_check` checks each for the extensionality conflict `a ≠ b`
     /// (proven disequal) while `select(a, k) = select(b, k)` (proven equal via
-    /// read-over-write / congruence) — which forces `a = b`, a contradiction.
+    /// read-over-write / congruence) – which forces `a = b`, a contradiction.
     ext_witnesses: Vec<(TermId, TermId, TermId, TermId, TermId)>,
     /// One `base` per `maps` insertion, in insertion order, for LIFO undo.
     maps_journal: Vec<TermId>,

@@ -321,22 +321,22 @@ impl Solver {
     /// Only *unconditional* facts may be collected: every caller of
     /// [`Self::check_bv_constraints`] treats a hit as a definite top-level
     /// conflict and answers `unsat` outright.  Descending through `Or` or `Not`
-    /// would record a fact that only holds under some branch — e.g. the
-    /// `bvurem` result in `(or (= (bvurem a b) #x05) (= a #x01))` — and the
+    /// would record a fact that only holds under some branch – e.g. the
+    /// `bvurem` result in `(or (= (bvurem a b) #x05) (= a #x01))` – and the
     /// remainder-bound check would then refute a satisfiable formula.  An
     /// equality's operands are conditional for the same reason: `(= p q)` over
     /// two Bool-sorted terms is a `TermKind::Eq` (this AST has no `Iff`), so
     /// `(= (= r (bvor x y)) p)` leaves `r = (bvor x y)` free to be false.
     ///
     /// We therefore descend only through the conjuncts of an `And`, which are
-    /// all asserted — the same shape as
+    /// all asserted – the same shape as
     /// `check_string.rs::collect_string_constraints`.
     ///
     /// # Why not `term_walk::asserted_children`
     ///
     /// This descent is *narrower* than the general rule, and deliberately so.
     /// `asserted_children` also hands out a `Not`'s body and an `Or`'s
-    /// disjuncts at negative polarity — but the `Eq` arm below records its
+    /// disjuncts at negative polarity – but the `Eq` arm below records its
     /// facts as *positive* ones, with no polarity parameter to consult.  Fed
     /// the negatively-asserted equality inside `(not (or (= r (bvor x y)) p))`
     /// it would record `r = (bvor x y)` as if it held, when the assertion says
@@ -347,7 +347,7 @@ impl Solver {
     /// The walk is an explicit heap worklist, not recursion, because the
     /// nesting depth of an assertion is attacker-controlled and this runs on
     /// whatever stack `check_sat`'s caller has.  Conjuncts are pushed in
-    /// reverse so they pop left to right, preserving the recursive order —
+    /// reverse so they pop left to right, preserving the recursive order –
     /// which matters, because `bv_values` / `bv_widths` are `insert`ed into and
     /// the last write for a term wins.
     ///
@@ -447,7 +447,7 @@ impl Solver {
                     // No descent into `lhs` / `rhs`.  A bit-vector-sorted operand
                     // holds no formula for this collector to find, so every
                     // sub-term the recursion ever reached lay behind a *Boolean*
-                    // equality — this AST has no `Iff`, so `(= p q)` on two
+                    // equality – this AST has no `Iff`, so `(= p q)` on two
                     // Bool-sorted terms is a `TermKind::Eq` and hence a polarity
                     // boundary.  `(= (= r (bvor x y)) p)` is satisfied just as well
                     // with both sides false, so `r = (bvor x y)` is conditional and
@@ -567,7 +567,7 @@ mod tests {
         (urem_constraints, values)
     }
 
-    /// A two-conjunct `And` the builder cannot flatten into its parent — see
+    /// A two-conjunct `And` the builder cannot flatten into its parent – see
     /// `check_dt.rs`'s twin for why `mk_and` will not do.
     fn nested_and(manager: &mut TermManager, first: TermId, second: TermId) -> TermId {
         let bool_sort = manager.sorts.bool_sort;
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(collected, vec![(r, a, b)]);
     }
 
-    /// Conjuncts are visited left to right, which decides `bv_values` — a later
+    /// Conjuncts are visited left to right, which decides `bv_values` – a later
     /// literal for the same term overwrites an earlier one.
     #[test]
     fn later_conjuncts_win_the_value_map() {

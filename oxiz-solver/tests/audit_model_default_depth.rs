@@ -48,7 +48,7 @@ fn run_script(script: &'static str) -> Vec<String> {
     })
 }
 
-// ============ Finding 1: default_value / default_datatype_value budget =====
+// ======== Finding 1: default_value / default_datatype_value budget ========
 
 #[test]
 fn datatype_whose_field_is_an_array_of_itself_terminates_in_get_model() {
@@ -147,7 +147,7 @@ fn well_founded_datatype_and_array_defaults_are_unchanged() {
     );
 }
 
-// ============ Finding 2: encode_depth_exceeded consulted before the walks ==
+// ======== Finding 2: encode_depth_exceeded consulted before the walks ========
 
 #[test]
 fn a_term_deeper_than_the_encoder_allows_answers_unknown_instead_of_aborting() {

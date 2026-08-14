@@ -620,9 +620,7 @@ impl Default for SeqEvaluator {
     }
 }
 
-// ============================================================================
-// Sequence Constraint Generation
-// ============================================================================
+// ======== Sequence Constraint Generation ========
 
 /// Constraint generated from sequence operations
 #[derive(Debug, Clone)]
@@ -784,9 +782,7 @@ impl Default for SeqConstraintGen {
     }
 }
 
-// ============================================================================
-// String Builder for Model Generation
-// ============================================================================
+// ======== String Builder for Model Generation ========
 
 /// String builder for generating concrete values
 #[derive(Debug)]
@@ -911,9 +907,7 @@ impl Default for StringBuilder {
     }
 }
 
-// ============================================================================
-// Sequence Rewriter
-// ============================================================================
+// ======== Sequence Rewriter ========
 
 /// Rewriter for sequence expressions
 #[derive(Debug)]
@@ -969,7 +963,7 @@ impl SeqRewriter {
     /// Explicit post-order stack, not recursion: `SeqExpr` nests as deeply as
     /// the caller builds it, the recursive version consumed the expression by
     /// value (so every frame carried a whole subtree), and it returns a
-    /// `SeqExpr` — no channel through which a depth limit could be reported.
+    /// `SeqExpr` – no channel through which a depth limit could be reported.
     /// The rewrite rules and the order they are applied in are unchanged.
     pub fn simplify(&mut self, expr: SeqExpr) -> SeqExpr {
         let mut frames: Vec<SimplifyFrame> = match Self::open_simplify(expr) {
@@ -1061,7 +1055,7 @@ impl SeqRewriter {
                 } else {
                     SimplifyBuild::Replace
                 };
-                // Reversed so the pops yield `s`, `from`, `to` — the order the
+                // Reversed so the pops yield `s`, `from`, `to` – the order the
                 // recursive version simplified them in.
                 frame(build, vec![to, from, s])
             }

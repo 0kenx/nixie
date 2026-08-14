@@ -8,7 +8,7 @@
 //! That matters because a library cannot know how much stack its caller has.
 //! The recursive-descent version of this parser needed roughly 2.9 KiB of
 //! native stack per nesting level in the release profile, so the nesting limit
-//! below (1024) needed a 3 MiB stack to reach — more than the ~2 MiB a libtest
+//! below (1024) needed a 3 MiB stack to reach – more than the ~2 MiB a libtest
 //! thread gets, and far more than the ~1 MiB an embedder's worker thread may
 //! have. Past that point the process died of a stack overflow *before* the
 //! limit could report an error, which is exactly the failure mode the limit
@@ -37,7 +37,7 @@ use std::cell::Cell;
 /// This bounds the resulting AST, not the input's parenthesis nesting. The two
 /// are not the same: SMT-LIB's n-ary `=>`, `xor`, `-`, `div`, `/` and `str.++`
 /// have no n-ary term representation and are folded into binary chains, so a
-/// syntactically flat `(str.++ x1 … x100000)` — nesting depth 2 — used to build
+/// syntactically flat `(str.++ x1 … x100000)` – nesting depth 2 – used to build
 /// a 100 000-deep term and sail straight through this limit. Every downstream
 /// mitigation that assumes "the parser bounds term depth" was void as a result,
 /// from a single-line input file. [`Parser::charge_fold_depth`] now charges the
@@ -245,7 +245,7 @@ impl Parser<'_> {
         let mut frames: Vec<Frame> = Vec::new();
 
         loop {
-            // --- read one operand ------------------------------------------
+            // ======== read one operand ========
             let depth = outer.saturating_add(frame_depth(&frames)).saturating_add(1);
             if depth > MAX_PARSE_DEPTH {
                 return Err(OxizError::ParseError {
@@ -274,7 +274,7 @@ impl Parser<'_> {
                 _ => self.parse_leaf(token)?,
             };
 
-            // --- hand it to the innermost pending frame --------------------
+            // ======== hand it to the innermost pending frame ========
             loop {
                 PARSE_DEPTH.with(|d| d.set(outer.saturating_add(frame_depth(&frames))));
                 let Some(top) = frames.last_mut() else {
@@ -298,7 +298,7 @@ impl Parser<'_> {
     /// Called from [`Parser::build_variadic`](super::build) just before it
     /// folds an n-ary operator into a binary chain. At that point the driver
     /// has already set [`PARSE_DEPTH`] to the depth of the node being closed,
-    /// and `extra` is the depth of the chain that will hang below it — so the
+    /// and `extra` is the depth of the chain that will hang below it – so the
     /// sum is the depth of the term about to be built, which is exactly what
     /// [`MAX_PARSE_DEPTH`] promises to bound.
     pub(super) fn charge_fold_depth(&self, extra: u32) -> Result<()> {
@@ -318,7 +318,7 @@ impl Parser<'_> {
     ///
     /// A nullary `(define-fun a () Int <body>)` inlines `<body>` into
     /// `self.bindings`, and [`Parser::parse_symbol`] then hands that `TermId`
-    /// straight back wherever `a` occurs — it is a *substitution*, not a
+    /// straight back wherever `a` occurs – it is a *substitution*, not a
     /// variable reference. So a chain
     ///
     /// ```text
@@ -356,7 +356,7 @@ impl Parser<'_> {
     ///
     /// Iterative, and memoized on `TermId` so a shared subterm of the
     /// hash-consed DAG is measured once rather than re-expanded per
-    /// occurrence — without the memo, `(+ a a)` chains would take exponential
+    /// occurrence – without the memo, `(+ a a)` chains would take exponential
     /// time. Aborts as soon as any node's depth passes `budget`, so the cost
     /// of the check on an over-deep input is bounded by the budget rather
     /// than by the input.
@@ -528,8 +528,8 @@ impl Parser<'_> {
     /// term.
     ///
     /// Returns `true` when a term is needed next (the next element of an
-    /// s-expression attribute value) and `false` when the whole annotation —
-    /// including its closing `)` — has been consumed.
+    /// s-expression attribute value) and `false` when the whole annotation –
+    /// including its closing `)` – has been consumed.
     fn advance_annotation(&mut self, state: &mut AnnotFrame) -> Result<bool> {
         loop {
             if state.in_sexpr {
@@ -1210,7 +1210,7 @@ impl Parser<'_> {
                 // because `-` is a valid symbol char), but Z3 accepts them as
                 // negative numbers.  If the symbol matches the pattern of a
                 // negative numeral or decimal and has not been bound to
-                // anything else, interpret it as such — otherwise arithmetic
+                // anything else, interpret it as such – otherwise arithmetic
                 // constraints like `(* -3.0 x)` silently become nonsense
                 // boolean-sorted variables.
                 if let Some(rest) = s.strip_prefix('-')
@@ -1263,7 +1263,7 @@ impl Parser<'_> {
                 }
                 // Even in bare-term mode a reserved theory name (`str.foo`,
                 // `re.bar`, ...) is never a legitimate free variable, so it is
-                // rejected too — see `Parser::reject_unknown_symbol`.
+                // rejected too – see `Parser::reject_unknown_symbol`.
                 self.reject_unknown_symbol(s, s)?;
                 // Lenient fallback (bare-term mode): boolean variable.
                 let sort = self.manager.sorts.bool_sort;
@@ -1282,12 +1282,12 @@ impl Parser<'_> {
     ///
     /// 1. In **script mode** (`parse_script`, or an embedder that seeded a real
     ///    context) every symbol must be declared before use, exactly as in Z3.
-    ///    Any undeclared head symbol is an error — the same rule
+    ///    Any undeclared head symbol is an error – the same rule
     ///    [`Parser::parse_symbol`] already applies to undeclared *nullary*
     ///    symbols.
     /// 2. In **bare-term mode** (`parse_term`, which intentionally allows
     ///    free variables in an ad-hoc fragment) an undeclared symbol is still
-    ///    an error when it lives in a reserved SMT-LIB theory namespace — no
+    ///    an error when it lives in a reserved SMT-LIB theory namespace – no
     ///    such name can ever be a user-introduced function, so it is either a
     ///    typo or an operator OxiZ has not implemented.
     ///

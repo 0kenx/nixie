@@ -1,6 +1,6 @@
 # oxiz-sat TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 Reference: Z3's `sat/` directory
 
@@ -503,8 +503,8 @@ These advanced features could push beyond Z3 and modern SAT solvers:
 
 ## Changes in v0.2.3 (2026-06-09)
 
-- [x] `DratProof` renamed to `DratWriter<W>` — now generic over any `W: Write + Send`; `DratProof` name collided with `oxiz-proof::DratProof`
-- [x] `LratProof` renamed to `LratWriter<W>` — same generalization and rename rationale
+- [x] `DratProof` renamed to `DratWriter<W>` – now generic over any `W: Write + Send`; `DratProof` name collided with `oxiz-proof::DratProof`
+- [x] `LratProof` renamed to `LratWriter<W>` – same generalization and rename rationale
 - [x] `with_writer(w: W)` constructors and `enable_writer(&mut self, w: W)` methods added for in-memory proof capture
 - [x] `Default` impls remain specialized on `BufWriter<File>` for backward compatibility at call sites
 - [x] All proof-logger tests use `std::env::temp_dir()` instead of hardcoded `/tmp/` paths

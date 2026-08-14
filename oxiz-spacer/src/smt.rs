@@ -129,7 +129,7 @@ pub enum SmtError {
 pub struct SmtSolver<'a> {
     /// The underlying SAT/SMT solver (does NOT own a TermManager)
     solver: Solver,
-    /// Canonical term manager — the same arena used by the CHC system
+    /// Canonical term manager – the same arena used by the CHC system
     terms: &'a mut TermManager,
     /// CHC system
     system: &'a ChcSystem,
@@ -171,7 +171,7 @@ pub struct SmtStats {
 impl<'a> SmtSolver<'a> {
     /// Create a new SMT solver for Spacer.
     ///
-    /// `terms` is the **single canonical** arena — all `TermId`s produced by
+    /// `terms` is the **single canonical** arena – all `TermId`s produced by
     /// callers and by methods on this struct must belong to this arena.
     pub fn new(terms: &'a mut TermManager, system: &'a ChcSystem) -> Self {
         let mut solver = Solver::new();
@@ -790,7 +790,7 @@ mod tests {
         let result = solver.check_sat().expect("should be SAT");
         assert!(result, "x >= 5 and x <= 5 should be SAT");
 
-        // Evaluate x in the model — should yield 5
+        // Evaluate x in the model – should yield 5
         let val = solver.eval_in_model(x);
         assert!(val.is_some(), "eval_in_model should return Some for x");
     }

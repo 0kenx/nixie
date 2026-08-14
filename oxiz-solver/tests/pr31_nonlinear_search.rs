@@ -11,7 +11,7 @@
 //!
 //! Every satisfiable case therefore checks `get-value` as well as the verdict.
 //! A `sat` with no usable model would pass a verdict-only test while being
-//! useless — and, worse, a `sat` with a *wrong* model would too.
+//! useless – and, worse, a `sat` with a *wrong* model would too.
 
 use oxiz_core::ast::TermManager;
 use oxiz_solver::{Context, Solver, SolverConfig, SolverResult};
@@ -22,10 +22,10 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 1. Model-based repair search: satisfiable nonlinear integer problems that
 //    the cell-decomposition core alone leaves undecided.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// A product constrained to a composite value, with both factors bounded away
 /// from the trivial `1 x n` split. The repair search has to actually solve
@@ -57,7 +57,7 @@ fn test_pr31_nia_bounded_product_is_sat_with_model() {
 }
 
 /// A square pinned to a perfect square, with the sign fixed to the negative
-/// root — so a search that only ever tries non-negative values fails.
+/// root – so a search that only ever tries non-negative values fails.
 #[test]
 fn test_pr31_nia_negative_square_root_is_sat_with_model() {
     let output = run(r#"
@@ -106,12 +106,12 @@ fn test_pr31_nia_three_way_product_is_sat_with_model() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 2. Unsatisfiable controls: the search must never turn one of these `sat`.
-// ---------------------------------------------------------------------
+// ========  ========
 
-/// A square can never be negative. The repair search cannot prove this — that
-/// is the decomposition core's job — but it must not report `sat` either.
+/// A square can never be negative. The repair search cannot prove this – that
+/// is the decomposition core's job – but it must not report `sat` either.
 #[test]
 fn test_pr31_nia_negative_square_is_never_sat() {
     let output = run(r#"
@@ -167,10 +167,10 @@ fn test_pr31_nia_conflicting_squares_are_never_sat() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 3. Grammar reduction: arrays and uninterpreted functions in arithmetic
 //    positions (QF_ANIA).
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Two array reads multiplied together. Without the grammar reduction the
 /// product has no polynomial translation, so the atom is invisible to the
@@ -262,13 +262,13 @@ fn test_pr31_ania_same_cell_read_twice_is_never_sat() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 4. The searches are budget-gated, and the gate works.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `SolverConfig::nonlinear_model_search` turns the search-based procedures
 /// off. Because they can only ever produce `sat`, switching them off can only
-/// ever cost completeness — the same goal must degrade to `unknown`, never to
+/// ever cost completeness – the same goal must degrade to `unknown`, never to
 /// a different verdict. Pinning both halves here is what makes the flag a
 /// budget control rather than a soundness control.
 #[test]
@@ -309,18 +309,18 @@ fn test_pr31_model_search_flag_trades_sat_for_unknown() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 5. Depth guard: a pathologically deep assertion must be answered, not
 //    crash the process.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Builds a hundred-thousand-deep arithmetic term directly through the term
 /// API, bypassing the SMT-LIB reader (whose own nesting limit would reject the
 /// input long before the solver saw it) so the *solver's* guards are what is
 /// under test.
 ///
-/// Every pre-processing pass that walks an assertion — the grammar reduction
-/// and concrete evaluator added for this slice included — must either be
+/// Every pre-processing pass that walks an assertion – the grammar reduction
+/// and concrete evaluator added for this slice included – must either be
 /// iterative or sit behind `Solver::assert`'s depth probe. Otherwise this
 /// overflows the native stack instead of returning an answer, which is the
 /// one outcome an SMT solver may never have.
@@ -364,9 +364,9 @@ fn test_pr31_deep_arith_term_answers_instead_of_crashing() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // helpers
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Pull every integer literal out of a `get-value` response.
 fn parse_ints(response: &str) -> Vec<i64> {

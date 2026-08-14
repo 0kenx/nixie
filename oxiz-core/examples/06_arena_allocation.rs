@@ -30,7 +30,7 @@ use std::time::Instant;
 fn main() {
     println!("=== OxiZ Core: Arena Allocation ===\n");
 
-    // ===== Example 1: Basic Arena =====
+    // ======== Example 1: Basic Arena ========
     println!("--- Example 1: Basic Arena Allocation ---");
 
     let config = ArenaConfig {
@@ -67,7 +67,7 @@ fn main() {
     };
     println!("  Utilization: {:.1}%", utilization);
 
-    // ===== Example 2: Object Pool (Reusable Allocations) =====
+    // ======== Example 2: Object Pool (Reusable Allocations) ========
     println!("\n--- Example 2: Object Pool ---");
 
     #[derive(Debug, Clone, Default)]
@@ -111,7 +111,7 @@ fn main() {
     println!("  Returns: {}", stats.returns);
     println!("  Hit rate: {:.1}%", stats.hit_rate() * 100.0);
 
-    // ===== Example 3: Region Allocator (Scoped Lifetimes) =====
+    // ======== Example 3: Region Allocator (Scoped Lifetimes) ========
     println!("\n--- Example 3: Region Allocator (Scoped) ---");
 
     {
@@ -137,7 +137,7 @@ fn main() {
     }
     println!("Exited region scope - all allocations freed\n");
 
-    // ===== Example 4: Performance Comparison =====
+    // ======== Example 4: Performance Comparison ========
     println!("--- Example 4: Performance Comparison ---");
 
     const N: usize = 10000;
@@ -171,7 +171,7 @@ fn main() {
     };
     println!("Speedup: {:.2}x\n", speedup);
 
-    // ===== Example 5: Shared Object Pool (Thread-Safe) =====
+    // ======== Example 5: Shared Object Pool (Thread-Safe) ========
     println!("--- Example 5: Shared Object Pool (Thread-Safe) ---");
 
     let shared_pool = SharedObjectPool::new(
@@ -204,7 +204,7 @@ fn main() {
 
     println!("\nAll threads completed");
 
-    // ===== Example 6: Arena Growth =====
+    // ======== Example 6: Arena Growth ========
     println!("\n--- Example 6: Arena Growth ---");
 
     let mut growing_arena = Arena::with_config(ArenaConfig {
@@ -225,7 +225,7 @@ fn main() {
     println!("  Used: {} bytes", growing_arena.used());
     println!("  Chunks: {}", growing_arena.num_chunks());
 
-    // ===== Example 7: Arena Reset =====
+    // ======== Example 7: Arena Reset ========
     println!("\n--- Example 7: Arena Reset ---");
 
     let mut resettable_arena = Arena::new();
@@ -248,7 +248,7 @@ fn main() {
         resettable_arena.capacity()
     );
 
-    // ===== Example 8: Object Pool Hit/Miss =====
+    // ======== Example 8: Object Pool Hit/Miss ========
     println!("\n--- Example 8: Object Pool Hit/Miss Tracking ---");
 
     let small_pool = ObjectPool::new(
@@ -282,7 +282,7 @@ fn main() {
     println!("  Returns: {}", final_stats.returns);
     println!("  Discards: {}", final_stats.discards);
 
-    // ===== Example 9: Custom Arena Configuration =====
+    // ======== Example 9: Custom Arena Configuration ========
     println!("\n--- Example 9: Custom Arena Configuration ---");
 
     let _custom_arena = Arena::with_config(ArenaConfig {
@@ -300,7 +300,7 @@ fn main() {
     println!("  - Predictable memory usage");
     println!("  - Large AST construction");
 
-    // ===== Example 10: Region with Slice Allocation =====
+    // ======== Example 10: Region with Slice Allocation ========
     println!("\n--- Example 10: Region with Slice Allocation ---");
 
     let region = Region::new();

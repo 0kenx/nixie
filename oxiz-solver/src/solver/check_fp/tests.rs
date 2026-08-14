@@ -48,9 +48,9 @@ fn collect(
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Shallow behavior preservation: small formulas with a known-exact answer.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn is_zero_at_positive_polarity_is_collected() {
@@ -197,15 +197,15 @@ fn equality_with_fp_add_records_equality_and_operation_result() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Deep structure: built iteratively, exercised on a 128 KiB stack.
 //
 // Each `(STACK_SIZE, DEPTH)` pair below was scaled down from (1 MiB, 100 000)
 // by a factor of 8 on both sides.  What the tests pin is the ~10 bytes of
-// stack available per nesting level — no native frame fits in that, so a
-// recursive collector still dies — not the absolute depth, and the smaller
+// stack available per nesting level – no native frame fits in that, so a
+// recursive collector still dies – not the absolute depth, and the smaller
 // pair costs a 64th of the construction work.  Never raise one alone.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `fp.to_fp(fp.to_fp(...fp.to_fp(fp.real_to_fp(v))...))`, `depth` levels of
 /// `FpToFp` deep, built with a plain iterative loop -- never a recursive
@@ -273,10 +273,10 @@ fn fp_to_fp_conversion_chain_survives_a_small_stack() {
         .expect("the FP-conversion walk must return on a 128 KiB stack instead of overflowing it");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The narrow (polarity-free) collector: `collect_fp_constraints`.  Same
-// worklist conversion, same rationale — see its doc comment in `check_fp.rs`.
-// ---------------------------------------------------------------------------
+// worklist conversion, same rationale – see its doc comment in `check_fp.rs`.
+// ========  ========
 
 /// Calls the narrow collector with `data`'s matching accumulator fields.
 fn collect_narrow(
@@ -337,9 +337,9 @@ fn narrow_collector_records_conjunct_facts_and_ignores_disjuncts() {
     );
 }
 
-/// An `And` chain 12 500 levels deep — built through the raw interner, because
+/// An `And` chain 12 500 levels deep – built through the raw interner, because
 /// `mk_and` flattens nested conjunctions and cannot produce genuine nesting,
-/// while an API user calling `intern_term` directly can — must be walked on a
+/// while an API user calling `intern_term` directly can – must be walked on a
 /// 128 KiB stack.  One equality fact per level (plus the innermost leaf)
 /// proves the walk was complete, not silently truncated.
 #[test]

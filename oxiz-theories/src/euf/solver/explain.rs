@@ -6,15 +6,15 @@
 //!
 //! # The one invariant this module exists to protect
 //!
-//! An explanation is either **complete** — the conjunction of the returned
-//! reason terms really does entail `a = b` — or it is **absent**.  There is no
+//! An explanation is either **complete** – the conjunction of the returned
+//! reason terms really does entail `a = b` – or it is **absent**.  There is no
 //! third outcome.  A partial explanation is not a weaker conflict clause, it is
 //! an unsound one: the clause asserts that the literals it *does* name are by
 //! themselves contradictory, which is false whenever a justification was
 //! dropped.  Every path that could fail therefore returns `None` from
 //! [`EufSolver::try_explain_equality`], and [`EufSolver::check_conflicts`]
 //! answers a `None` with the conservative core over *all* currently asserted
-//! reasons — weaker, but valid.
+//! reasons – weaker, but valid.
 
 use super::{EufSolver, MergeReason, ordered_pair};
 #[allow(unused_imports)]
@@ -28,15 +28,15 @@ impl EufSolver {
     ///
     /// Returns the reason terms of a violated disequality together with a
     /// justification of the equality that violates it.  The justification is
-    /// always *complete*: when congruence closure cannot produce one — an
-    /// invariant violation, see `try_explain_equality` — the result falls back
+    /// always *complete*: when congruence closure cannot produce one – an
+    /// invariant violation, see `try_explain_equality` – the result falls back
     /// to `all_asserted_reasons`, the core over every literal EUF currently
     /// holds.  That core is valid by construction (the assertion set
     /// really is contradictory, or there would be no conflict) and is the only
     /// admissible substitute: any *smaller* set would claim a refutation that its
     /// members do not support.
     pub fn check_conflicts(&mut self) -> Option<Vec<TermId>> {
-        // Disequality violations are detected eagerly — at the merge (or the
+        // Disequality violations are detected eagerly – at the merge (or the
         // assert_diseq) that causes them, recorded in `pending_diseq_conflict`.
         // So this is O(1): surface the pending violation, or report none. The
         // old O(diseqs) full scan on every theory check was the dominant EUF cost.
@@ -63,7 +63,7 @@ impl EufSolver {
     ///
     /// This is the conservative conflict core.  It is sound whenever a conflict
     /// exists (the full assertion set is then contradictory by definition) and it
-    /// is deterministic — both sources are `Vec`s walked in index order, so the
+    /// is deterministic – both sources are `Vec`s walked in index order, so the
     /// clause, and hence the search, does not depend on hash iteration order.
     ///
     /// Reserved for the "explanation unavailable" path that
@@ -102,7 +102,7 @@ impl EufSolver {
     /// An empty result is meaningful only when `a == b` (the two term ids were
     /// hash-consed onto the same node, so the equality holds structurally and
     /// needs no justification).  When `a != b` an empty result means no complete
-    /// proof was found — the caller must treat the equality as *unjustifiable*
+    /// proof was found – the caller must treat the equality as *unjustifiable*
     /// and refrain from propagating it rather than propagate an unexplainable
     /// fact.  Callers that want to tell "no justification" from "justified by
     /// nothing" apart should use [`Self::try_explain_eq`].
@@ -142,7 +142,7 @@ impl EufSolver {
     /// 1. **The BFS finds no path** between two nodes the union-find says are
     ///    equal.  Every applied union appends exactly one edge pair, and `pop()`
     ///    rewinds edges and unions together, so the forest spans each class and
-    ///    this cannot happen — hence the `debug_assert!`.  It is kept as a live
+    ///    this cannot happen – hence the `debug_assert!`.  It is kept as a live
     ///    check because the alternative, `continue`, silently returned a partial
     ///    explanation.
     /// 2. **A congruence edge names a node that no longer exists**, or two
@@ -156,7 +156,7 @@ impl EufSolver {
     ///    exists; failing to find one means the edge was not a congruence.
     ///
     /// The scratch buffers are moved out of `self` via `mem::take` at entry and
-    /// restored at exit — on the failure path as well — so their heap capacity is
+    /// restored at exit – on the failure path as well – so their heap capacity is
     /// retained across calls.
     pub(super) fn try_explain_equality(&mut self, a: u32, b: u32) -> Option<Vec<TermId>> {
         if a == b {
@@ -210,7 +210,7 @@ impl EufSolver {
             // Bottleneck (minimax) search: among all paths from -> to, take one
             // whose *latest* edge is as early as possible (smallest max stamp).
             // Plain BFS minimises hop count instead, and a short path may route
-            // through merges made long after `from = to` was already derived —
+            // through merges made long after `from = to` was already derived –
             // exactly the circular route that used to produce truncated
             // explanations and spurious UNSAT. Minimising the maximum stamp
             // reconstructs the derivation-time path, so every congruence edge on
@@ -322,7 +322,7 @@ impl EufSolver {
                     }
                     MergeReason::Congruence { term1, term2 } => {
                         // The congruence holds because the arguments are pairwise
-                        // equal — schedule each argument pair for explanation.
+                        // equal – schedule each argument pair for explanation.
                         let (Some(node1), Some(node2)) = (
                             self.nodes.get(term1 as usize),
                             self.nodes.get(term2 as usize),
@@ -372,7 +372,7 @@ impl EufSolver {
             }
         }
 
-        // Restore buffers so the next call reuses their capacity — on the failure
+        // Restore buffers so the next call reuses their capacity – on the failure
         // path too, otherwise a single failure would strand them empty forever.
         self.explain_generation = generation;
         self.explain_visited = settled;
@@ -396,7 +396,7 @@ impl EufSolver {
     /// Positional matching is wrong for a commutative symbol: its canonical
     /// signature is *sorted*, so `f(a, b)` and `f(b, a)` match on signature while
     /// `args[0]` of one is equal to `args[1]` of the other.  Greedy matching by
-    /// class is exact here — equal canonical signatures mean the two argument
+    /// class is exact here – equal canonical signatures mean the two argument
     /// class-multisets are equal (later merges only coarsen them), so every
     /// argument does have an unused partner, and taking any one of them cannot
     /// strand a later argument.

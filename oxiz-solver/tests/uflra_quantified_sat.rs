@@ -160,7 +160,7 @@ fn pin_contradicting_its_quantifier_is_never_sat() {
 
 /// Strict guards must be honoured exactly.  `f` is fixed to `5` on the *open*
 /// interval `(0,1)` and pinned to `9` at the excluded endpoint `0`, which is
-/// consistent — the certifier has to distinguish the point cell `{0}` from the
+/// consistent – the certifier has to distinguish the point cell `{0}` from the
 /// interval next to it rather than lumping them together.
 #[test]
 fn open_interval_guard_excludes_its_endpoint() {

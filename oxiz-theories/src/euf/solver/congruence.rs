@@ -149,7 +149,7 @@ impl EufSolver {
 
     /// Publish `node` under the signature `(func, args)` with fingerprint `fp`.
     ///
-    /// The caller must have established that the key is **absent** — the undo
+    /// The caller must have established that the key is **absent** – the undo
     /// record for a signature insertion is a plain `remove`, so overwriting an
     /// existing entry would make `pop()` delete the older, still-valid mapping and
     /// silently lose every congruence that depended on it.  Both call sites check
@@ -194,7 +194,7 @@ impl EufSolver {
     /// every signature change in `propagate` left a dead entry keyed by obsolete
     /// representatives, and under specific push/pop orderings those dead entries
     /// resurrect into a spurious (or missed) congruence that `pop` partially
-    /// undoes — leaving the incremental closure in a state a from-scratch
+    /// undoes – leaving the incremental closure in a state a from-scratch
     /// rebuild never reaches (missed congruence / spurious sat).
     ///
     /// Callers only invoke this when `new_key` is known absent (fingerprint /
@@ -223,7 +223,7 @@ impl EufSolver {
 
     /// Look up `sig` in `sig_table`, returning the registered node only if its
     /// *current* canonical signature still equals `sig` (per `node_sig_key`).
-    /// A stale entry — left behind before `update_sig_entry` existed — is
+    /// A stale entry – left behind before `update_sig_entry` existed – is
     /// evicted so it can never dedup a freshly-interned term to a node it isn't
     /// actually congruent to.
     pub(super) fn lookup_valid_sig(&mut self, sig: &(u32, SmallVec<[u32; 4]>)) -> Option<u32> {
@@ -267,7 +267,7 @@ impl EufSolver {
     ///
     /// Signature updates are applied **as they are discovered**, not batched to
     /// the end of the use-list scan.  Batching made two applications that acquire
-    /// the *same* new signature within one merge event invisible to each other —
+    /// the *same* new signature within one merge event invisible to each other –
     /// neither found the other in `sig_table` (the inserts had not happened yet),
     /// so no congruence was enqueued and the two stayed in different classes.
     pub(super) fn propagate(&mut self) {
@@ -286,7 +286,7 @@ impl EufSolver {
             // Trailed so pop() removes these edges even when a and b pre-existed
             // the current scope.
             //
-            // Both assertion *and* congruence edges are appended here — i.e. only
+            // Both assertion *and* congruence edges are appended here – i.e. only
             // once the union below is actually going to happen. Adding an edge for
             // a merge that is subsequently skipped (because the two classes were
             // joined in the meantime by another propagation) would leave the proof
@@ -326,8 +326,8 @@ impl EufSolver {
             // class (`other_root`) has an endpoint whose class just merged into
             // `new_root`. Test each for violation (both endpoints now equal),
             // then copy it onto `new_root`'s watch list so future merges keep
-            // testing it. This replaces check_conflicts' O(diseqs) full scan —
-            // the dominant EUF cost — with O(watched-by-this-class) per merge.
+            // testing it. This replaces check_conflicts' O(diseqs) full scan –
+            // the dominant EUF cost – with O(watched-by-this-class) per merge.
             let dw_len = self
                 .diseq_watch
                 .get(other_root as usize)
@@ -343,7 +343,7 @@ impl EufSolver {
                 self.diseq_watch_push(new_root, didx);
             }
 
-            // --- Optimization 1: Index-based use-list iteration ---
+            // ======== Optimization 1: Index-based use-list iteration ========
             // Instead of cloning the entire use-list, iterate by index.
             // We snapshot the length so we only process existing entries.
             let use_len = self.use_list[other_root as usize].len();
@@ -351,7 +351,7 @@ impl EufSolver {
             // Collect congruence merges to enqueue
             propagation_buf.clear();
 
-            // --- Change A: Reusable canonicalization buffer ---
+            // ======== Change A: Reusable canonicalization buffer ========
             // Declared once outside the loop so the SmallVec's heap backing (if it
             // ever spills past the inline capacity of 4) is allocated at most once
             // per merge event rather than once per use-list entry.
@@ -360,7 +360,7 @@ impl EufSolver {
             for i in 0..use_len {
                 let user = self.use_list[other_root as usize][i];
                 if (user as usize) >= self.nodes.len() {
-                    continue; // stale use-list entry — node was not allocated
+                    continue; // stale use-list entry – node was not allocated
                 }
                 let node_func_val = self.nodes[user as usize].func;
                 if node_func_val == ENode::NO_FUNC {
@@ -382,7 +382,7 @@ impl EufSolver {
                 // Canonicalize arguments into the reusable buffer (avoids per-iteration alloc).
                 self.canonicalize_args_with_props_into(&props, &args_copy, &mut canon_buf);
 
-                // --- Optimization 2: Fingerprint pre-filter ---
+                // ======== Optimization 2: Fingerprint pre-filter ========
                 // Compute the new fingerprint for the updated canonical args and
                 // keep the node's cached copy in step with it.
                 let new_fp = ENodeFingerprint::compute(func, &canon_buf);
@@ -397,7 +397,7 @@ impl EufSolver {
                     if let Some(&existing) = self.sig_table.get(&sig) {
                         if existing != user && !self.uf.same(user, existing) {
                             // Congruence detected. The proof-forest edge is *not*
-                            // appended here — it is appended by the main loop when the
+                            // appended here – it is appended by the main loop when the
                             // merge is actually applied, so that a merge skipped as
                             // already-satisfied never leaves a redundant edge behind.
                             propagation_buf.push((
@@ -440,7 +440,7 @@ impl EufSolver {
 
             // Merge use lists: extend new_root's use-list with other_root's
             // entries. Each append is trailed (via use_list_push) so pop() undoes
-            // exactly these entries from new_root — a pre-existing node whose list
+            // exactly these entries from new_root – a pre-existing node whose list
             // would otherwise not be reclaimed by truncation.
             for i in 0..use_len {
                 let entry = self.use_list[other_root as usize][i];

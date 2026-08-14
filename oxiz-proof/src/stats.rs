@@ -172,7 +172,7 @@ pub struct TheoryProofStats {
 ///
 /// Iterative breadth-first search over the proof DAG, so the result is the
 /// *shortest* root-to-node distance and each node is expanded exactly once.
-/// Nodes that are unreachable from `root` are simply absent from the map — the
+/// Nodes that are unreachable from `root` are simply absent from the map – the
 /// caller decides what to do with them, rather than a sentinel `0` standing in
 /// for both "is the root" and "not found".
 fn depths_from_root(

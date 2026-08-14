@@ -249,11 +249,11 @@ impl GF2Matrix {
     /// `value` on the live SAT trail; when the solver later backtracks past
     /// this assignment, [`Self::undo_propagate`] must be called (once, in
     /// exact LIFO order relative to other `propagate` calls) to restore the
-    /// affected rows — otherwise the matrix silently keeps reasoning as if
+    /// affected rows – otherwise the matrix silently keeps reasoning as if
     /// a retracted (or now differently-valued) assignment still held,
     /// producing wrong unit/conflict results for the rest of the search.
-    /// Every call — even one for an unregistered variable that touches no
-    /// rows — pushes an undo-trail entry, so `undo_propagate` calls stay in
+    /// Every call – even one for an unregistered variable that touches no
+    /// rows – pushes an undo-trail entry, so `undo_propagate` calls stay in
     /// 1:1 lockstep with `propagate` calls regardless of how many rows (if
     /// any) were actually touched.
     pub fn propagate(&mut self, var: Var, value: bool) -> Vec<XorAddResult> {
@@ -313,7 +313,7 @@ impl GF2Matrix {
     ///
     /// Must be called in the same LIFO order the SAT solver backtracks its
     /// trail (undo the most recently propagated assignment first, mirroring
-    /// `Solver`'s own phase-saving backtrack) — `propagate` destructively
+    /// `Solver`'s own phase-saving backtrack) – `propagate` destructively
     /// folds each assignment's effect into the matrix rows, so calling this
     /// out of order (or skipping an entry) would leave rows reflecting a
     /// mix of assignments that never coexisted on the trail.
@@ -1209,7 +1209,7 @@ pub struct XorSubsumption {
     /// lookup: two constraints with different signatures can never be a
     /// subset/superset match (the signature is a linear function of the
     /// variable set), but two constraints with the *same* signature are not
-    /// guaranteed to be related — a 64-bit XOR fingerprint collides
+    /// guaranteed to be related – a 64-bit XOR fingerprint collides
     /// whenever the same bit position is touched an even number of times
     /// (e.g. `Var(0)` and `Var(64)` both map to bit 0), so an unrelated
     /// variable set can share a signature by chance. Every candidate pulled
@@ -1253,14 +1253,14 @@ impl XorSubsumption {
     /// Mirrors CNF clause subsumption: an existing constraint at index
     /// `idx` is subsumed by (i.e. rendered redundant by) `vars` when
     /// `vars`'s variable set is a subset of `idx`'s registered variable set
-    /// — `vars` is at least as general, so `idx` need not be kept
+    /// – `vars` is at least as general, so `idx` need not be kept
     /// separately. Every signature-bucket candidate is checked against its
     /// *real* stored variable set (see the `signatures` field doc) before
     /// being reported, so this never returns an unverified hash collision
     /// as if it were a genuine subsumption.
     ///
     /// Note this can only find matches whose variable sets share the same
-    /// 64-bit signature — in practice this reliably covers exact-duplicate
+    /// 64-bit signature – in practice this reliably covers exact-duplicate
     /// variable sets (always same signature) plus the rare deliberate
     /// signature collision, but is not a full O(n) subset scan against
     /// every registered constraint.
@@ -1417,7 +1417,7 @@ mod tests {
         let detector = XorDetector::new(2, 4);
 
         // Create clauses for x0 ⊕ x1 = 1
-        // (x0 ∨ x1) ∧ (¬x0 ∨ ¬x1) — each clause has an even number of negatives,
+        // (x0 ∨ x1) ∧ (¬x0 ∨ ¬x1) – each clause has an even number of negatives,
         // so the encoded RHS is 1 (the two variables must differ).
         let clauses = vec![
             (vec![Lit::pos(Var(0)), Lit::pos(Var(1))], ClauseId(0)),

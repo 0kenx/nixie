@@ -170,8 +170,8 @@ impl BddManager {
     /// rather than the tree recursion this replaces. Two defects are fixed:
     ///
     /// * The recursion had no computed table, so every shared node was
-    ///   re-expanded. `not` on a 40-variable parity BDD — O(n) nodes, 2ⁿ
-    ///   tree unfoldings — never returned.
+    ///   re-expanded. `not` on a 40-variable parity BDD – O(n) nodes, 2ⁿ
+    ///   tree unfoldings – never returned.
     /// * Recursion depth was the BDD height, i.e. the variable count, with
     ///   no guard. The return type is `NodeId`, so a depth cap could only
     ///   have produced a silently wrong diagram.
@@ -217,7 +217,7 @@ impl BddManager {
     /// Negation of an already-resolved node: the two constants plus a
     /// computed-table hit. Panics (loudly, via the map index) rather than
     /// returning a wrong diagram if called on a node the walk has not yet
-    /// resolved — the driver above always schedules cofactors first.
+    /// resolved – the driver above always schedules cofactors first.
     fn negated(&self, node: NodeId) -> NodeId {
         if node == BDD_FALSE {
             return BDD_TRUE;
@@ -260,7 +260,7 @@ impl BddManager {
     /// Like [`Self::not`] and [`Self::ite`], this runs on an explicit
     /// work-stack. The computed table (`op_cache`) already kept the *work*
     /// linear in diagram size, but the recursion depth was still the BDD
-    /// height — the variable count — with no guard and a `NodeId` return
+    /// height – the variable count – with no guard and a `NodeId` return
     /// that leaves nowhere to report a cap.
     fn apply(&mut self, op: BddOp, left: NodeId, right: NodeId) -> NodeId {
         let root = (op, left, right);

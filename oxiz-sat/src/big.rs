@@ -335,7 +335,7 @@ impl BinaryImplicationGraph {
                 sccs.push(scc);
             }
 
-            // Propagate this node's lowlink into its (suspended) parent —
+            // Propagate this node's lowlink into its (suspended) parent –
             // the `lowlink[parent] = min(lowlink[parent], lowlink[child])`
             // step that followed the recursive call.
             if let Some(parent) = frames.last() {
@@ -440,7 +440,7 @@ mod tests {
     }
 
     /// A long implication *cycle* must still be reported as a single SCC
-    /// after the iterative rewrite — the component-popping half of the
+    /// after the iterative rewrite – the component-popping half of the
     /// algorithm is the part most easily broken by the conversion.
     #[test]
     fn test_find_sccs_long_cycle_is_one_component() {

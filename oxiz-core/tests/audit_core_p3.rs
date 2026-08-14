@@ -35,7 +35,7 @@ use oxiz_core::ast::{Model, ModelValue, SubstitutionBuilder, TermManager, eval_t
 use oxiz_core::smtlib::{Command, parse_script};
 use oxiz_core::tactic::mbp::{MbpEngine, Model as MbpModel};
 
-// ===================== Finding 1: mk_bv_extract underflow ==================
+// ======== Finding 1: mk_bv_extract underflow ========
 
 #[test]
 fn mk_bv_extract_with_low_greater_than_high_does_not_panic_or_explode_width() {
@@ -76,7 +76,7 @@ fn mk_bv_extract_with_valid_indices_still_computes_correct_width() {
     assert_eq!(width, 4, "valid extract indices must be unaffected");
 }
 
-// ===================== Finding 2: BvNot mask for width >= 64 ===============
+// ======== Finding 2: BvNot mask for width >= 64 ========
 
 #[test]
 fn eval_term_bv_not_width_64_does_not_panic_and_is_correct() {
@@ -141,7 +141,7 @@ fn cached_evaluator_bv_not_width_64_does_not_panic() {
     );
 }
 
-// ===================== Finding 3: set-info accepts any value ===============
+// ======== Finding 3: set-info accepts any value ========
 
 #[test]
 fn set_info_smt_lib_version_header_does_not_abort_script() {
@@ -185,7 +185,7 @@ fn set_info_accepts_numeral_and_sexpr_values() {
     }
 }
 
-// ===================== Finding 4: define-sort =====================
+// ======== Finding 4: define-sort ========
 
 #[test]
 fn define_sort_compound_body_parses_and_resolves_to_the_real_sort() {
@@ -239,7 +239,7 @@ fn define_sort_parametric_is_rejected_honestly_not_silently_corrupted() {
     );
 }
 
-// ===================== Finding 5: MBP nonlinear soundness ==================
+// ======== Finding 5: MBP nonlinear soundness ========
 
 #[test]
 fn mbp_does_not_silently_eliminate_variable_through_nonlinear_literal() {
@@ -306,7 +306,7 @@ fn mbp_still_eliminates_genuinely_linear_variable() {
     assert!(!result.remaining.contains(&x_name));
 }
 
-// ===================== Deferral (a): query.rs recursion cap =================
+// ======== Deferral (a): query.rs recursion cap ========
 
 #[test]
 fn simplify_and_substitute_do_not_overflow_stack_on_deep_terms() {
@@ -333,7 +333,7 @@ fn simplify_and_substitute_do_not_overflow_stack_on_deep_terms() {
     assert!(m.get(substituted).is_some());
 }
 
-// ===================== Deferral (b): ManagedTactic re-export ================
+// ======== Deferral (b): ManagedTactic re-export ========
 
 #[test]
 fn managed_tactic_is_reexported_from_tactic_root() {

@@ -363,7 +363,7 @@ impl InterpolationContext {
 /// Children-before-parents listing of the sub-terms the projection rewrites.
 ///
 /// Only the boolean skeleton is rewritten, so only those operands are
-/// traversed — exactly the sub-terms the recursive projection descended into.
+/// traversed – exactly the sub-terms the recursive projection descended into.
 fn projection_postorder(root: TermId, manager: &TermManager) -> Vec<TermId> {
     fn rewritten_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         match kind {
@@ -406,7 +406,7 @@ fn projection_postorder(root: TermId, manager: &TermManager) -> Vec<TermId> {
 /// in a silent catch-all, so the symbols inside a function application,
 /// datatype, string or floating-point term were never seen: a clause such as
 /// `f(a)` then looked symbol-free, `only_has_b_symbols` vacuously returned
-/// `true`, and the interpolant for it collapsed to `true` — a wrong
+/// `true`, and the interpolant for it collapsed to `true` – a wrong
 /// interpolant, not merely a weak one.
 fn collect_symbols(term: TermId, symbols: &mut FxHashSet<TermId>, manager: &TermManager) {
     let mut stack = vec![term];

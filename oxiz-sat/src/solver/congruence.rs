@@ -13,7 +13,7 @@
 //! We detect gates from the clause patterns, run a union-find congruence
 //! closure to a fixpoint (re-canonicalizing each gate's inputs through the
 //! union-find after every merge, so equivalences propagate through nested
-//! gates — the step a one-shot pairwise scan misses), and add binary
+//! gates – the step a one-shot pairwise scan misses), and add binary
 //! implication edges between equivalent outputs. The existing SCC pass then
 //! folds them into the substitution.
 

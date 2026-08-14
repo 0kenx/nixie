@@ -615,7 +615,7 @@ impl DatatypeSolver {
 
     /// Collect the reasons of every asserted equality constraint (deduplicated).
     ///
-    /// Used as a conservative — but always sound — conflict explanation for the
+    /// Used as a conservative – but always sound – conflict explanation for the
     /// class-based and acyclicity checks: the detected inconsistency depends on
     /// the merges induced by these equalities, and a superset of a genuine
     /// conflict core is still a valid conflict clause.

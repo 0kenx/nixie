@@ -17,7 +17,7 @@ fn make_solver(ctx: &Z3Context) -> Z3Solver {
     Z3Solver::new(ctx)
 }
 
-// ─── Z3Statistics ─────────────────────────────────────────────────────────────
+// ======== Z3Statistics ========
 
 #[test]
 fn test_statistics_has_keys() {
@@ -79,7 +79,7 @@ fn test_statistics_display() {
     assert!(!s.is_empty(), "display output must not be empty");
 }
 
-// ─── Z3Params ─────────────────────────────────────────────────────────────────
+// ======== Z3Params ========
 
 #[test]
 fn test_params_set_bool_timeout_then_check() {
@@ -131,7 +131,7 @@ fn test_params_set_str() {
     );
 }
 
-// ─── Z3Probe ──────────────────────────────────────────────────────────────────
+// ======== Z3Probe ========
 
 #[test]
 fn test_probe_size_empty_goal() {
@@ -198,7 +198,7 @@ fn test_probe_depth_empty() {
     assert_eq!(probe.apply(&ctx, &goal), 0.0);
 }
 
-// ─── Z3Goal ───────────────────────────────────────────────────────────────────
+// ======== Z3Goal ========
 
 #[test]
 fn test_goal_add_assert_size() {
@@ -230,7 +230,7 @@ fn test_goal_is_decided_sat_on_empty() {
     assert!(goal.is_decided_sat(), "empty goal is trivially SAT");
 }
 
-// ─── Z3Tactic ─────────────────────────────────────────────────────────────────
+// ======== Z3Tactic ========
 
 #[test]
 fn test_tactic_simplify_apply() {
@@ -305,7 +305,7 @@ fn test_apply_result_subgoals() {
     }
 }
 
-// ─── Z3Tactic — registry-backed dispatch ──────────────────────────────────────
+// ======== Z3Tactic – registry-backed dispatch ========
 
 #[test]
 fn test_z3_tactic_registry_simplify_works() {
@@ -385,7 +385,7 @@ fn test_z3_tactic_smt_backend_name_passes_through() {
     assert_eq!(result.get_subgoal(0).get_formula(0).id, p.id);
 }
 
-// ─── Z3DatatypeSort ───────────────────────────────────────────────────────────
+// ======== Z3DatatypeSort ========
 
 #[test]
 fn test_datatype_list_cons_nil() {
@@ -435,13 +435,13 @@ fn test_datatype_sort_id_is_valid() {
     let ctx = make_ctx();
     let unit = mk_constructor("Unit", &[]);
     let dt = Z3DatatypeSort::new(&ctx, "UnitType", &[unit]);
-    // sort_id() must not equal Bool/Int/Real — it's a fresh datatype sort.
+    // sort_id() must not equal Bool/Int/Real – it's a fresh datatype sort.
     let sid = dt.sort_id();
     assert_ne!(sid, ctx.bool_sort());
     assert_ne!(sid, ctx.int_sort());
 }
 
-// ─── check_assumptions / unsat_core ──────────────────────────────────────────
+// ======== check_assumptions / unsat_core ========
 
 #[test]
 fn test_check_assumptions_sat_trivial() {
@@ -485,7 +485,7 @@ fn test_check_assumptions_does_not_pollute_stack() {
     // First check_assumptions: contradictory
     let r1 = solver.check_assumptions(&[p, not_p]);
     assert_eq!(r1, SatResult::Unsat);
-    // Now check without assumptions — should be SAT (no permanent assertions added)
+    // Now check without assumptions – should be SAT (no permanent assertions added)
     assert_eq!(solver.check(), SatResult::Sat);
 }
 
@@ -509,7 +509,7 @@ fn test_unsat_core_returns_vec() {
     let _ = core.len();
 }
 
-// ─── Z3AstVector ──────────────────────────────────────────────────────────────
+// ======== Z3AstVector ========
 
 #[test]
 fn test_ast_vector_push_len() {
@@ -560,7 +560,7 @@ fn test_ast_vector_any_true() {
     assert!(v.any_true());
 }
 
-// ─── End-to-end integration tests ─────────────────────────────────────────────
+// ======== End-to-end integration tests ========
 
 #[test]
 fn test_goal_tactic_pipeline_end_to_end() {
@@ -622,7 +622,7 @@ fn test_params_pipeline() {
     assert_eq!(solver.check(), SatResult::Sat);
 }
 
-// ─── Z3FuncInterp / Z3FuncEntry / Z3Value ────────────────────────────────────
+// ======== Z3FuncInterp / Z3FuncEntry / Z3Value ========
 
 #[test]
 fn test_z3_value_display() {
@@ -675,7 +675,7 @@ fn test_z3_func_interp_declared_function_num_entries_ge_zero() {
         .context_mut()
         .declare_fun("fi_test_f", vec![int_sort], int_sort);
 
-    // Build: f(0) — the apply term.
+    // Build: f(0) – the apply term.
     let zero_id = solver.context_mut().terms.mk_int(0i64);
     let f_app = solver
         .context_mut()
@@ -763,7 +763,7 @@ fn test_z3_func_interp_else_value_non_empty() {
             "else_value must be a non-empty string"
         );
     }
-    // If None it means the function wasn't found — that's also valid for an
+    // If None it means the function wasn't found – that's also valid for an
     // unconstrained function in this simplified model extraction.
 }
 

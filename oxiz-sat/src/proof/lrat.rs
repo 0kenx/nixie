@@ -1,4 +1,4 @@
-//! LRAT proof tracer — faithful port of `lrattracer.hpp` / `lrattracer.cpp` /
+//! LRAT proof tracer – faithful port of `lrattracer.hpp` / `lrattracer.cpp` /
 //! `lrat.rs`.
 //!
 //! Streams an LRAT (Linear RAT) proof to a file in either **text** or
@@ -253,7 +253,7 @@ impl LratTracer {
         self.binary
     }
 
-    // -- binary primitives (faithful `put_binary_*`) ------------------
+    // ======== binary primitives (faithful `put_binary_*`) ========
 
     #[inline]
     fn put_binary_zero(&mut self) {
@@ -336,7 +336,7 @@ impl LratTracer {
         }
     }
 
-    // -- core emission (`lrat_add_clause` / `lrat_delete_clause`) -----
+    // ======== core emission (`lrat_add_clause` / `lrat_delete_clause`) ========
 
     /// Flush any pending deletions, then write an added clause with its RUP
     /// hint chain. Faithful port of `LratTracer::lrat_add_clause`.
@@ -390,7 +390,7 @@ impl LratTracer {
         self.delete_ids.push(id);
     }
 
-    // -- backward-compatible convenience wrappers ----------------------
+    // ======== backward-compatible convenience wrappers ========
 
     /// Text-style convenience wrapper: `add_derived_clause(id, false, 0, lits, hints)`.
     pub fn add_clause(&mut self, id: i64, lits: &[i32], hints: &[i64]) {

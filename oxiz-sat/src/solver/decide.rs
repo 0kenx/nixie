@@ -83,7 +83,7 @@ impl Solver {
             };
             if use_vmtf_now {
                 // Borrow only `trail`, `equiv_substitution`, and `bve_def`
-                // (disjoint from the `&mut self.vmtf` the call below needs) —
+                // (disjoint from the `&mut self.vmtf` the call below needs) –
                 // a full `&self` method like `var_eliminated` would conflict.
                 let trail = &self.trail;
                 let subst = &self.equiv_substitution;
@@ -146,7 +146,7 @@ impl Solver {
     /// solver emits (see `oxiz-solver`) to classify each decision's atom.
     ///
     /// When the env var is unset this is a single cached-`bool` check and an
-    /// early return — safe to call on every decision in a release build.
+    /// early return – safe to call on every decision in a release build.
     #[cfg(feature = "std")]
     pub(super) fn trace_decision(&self, var: Var, level: u32, polarity: bool) {
         if !trace_decisions_enabled() {
@@ -168,17 +168,17 @@ impl Solver {
     /// Emit one conflict-trace line when `OXIZ_TRACE_DECISIONS` is set.
     ///
     /// `path` identifies which of the CDCL(T) loop's conflict branches fired,
-    /// i.e. *where* the conflict was detected — the key diagnostic for the
+    /// i.e. *where* the conflict was detected – the key diagnostic for the
     /// qlock bound-propagation question:
     ///
     /// * `bool`          - pure boolean BCP conflict.
     /// * `theory-assign` - theory conflict from `on_assignment` (incremental /
     ///   "propagated"; surfaces at the level where the triggering literal was
-    ///   assigned — shallow when the theory propagates eagerly).
+    ///   assigned – shallow when the theory propagates eagerly).
     /// * `theory-prop`   - boolean conflict caused by a theory-derived
     ///   propagation (also shallow).
     /// * `final-check`   - theory conflict from `final_check` (the theory only
-    ///   noticed the inconsistency once the full assignment was reached — deep).
+    ///   noticed the inconsistency once the full assignment was reached – deep).
     ///
     /// Tab-separated: `oxiz-conflict <path> <level> <learnt_len> <props>` where
     /// `level` is the decision level at the moment of conflict (before
@@ -257,7 +257,7 @@ impl Solver {
     /// unassigned without being re-inserted is lost to the search for good.
     /// `solve_with_assumptions` ends every probe on this path, so each probe used
     /// to drain the heaps a little further; once they ran dry the next probe had
-    /// nothing left to branch on and reported `Sat` over a partial assignment —
+    /// nothing left to branch on and reported `Sat` over a partial assignment –
     /// a model with `Undef` entries that falsified clauses the search had never
     /// even looked at. The vivification and distillation probes in
     /// `learn.rs` unwind through here too, with the same consequence.
@@ -320,7 +320,7 @@ impl Solver {
     /// the root on every restart, backtrack only as far as the highest level
     /// whose decision variable would be re-decided anyway (activity >= the
     /// next variable to decide). This preserves the optimal decision prefix so
-    /// the restart does not throw away and re-derive the whole trail — the main
+    /// the restart does not throw away and re-derive the whole trail – the main
     /// reason frequent restarts were counterproductive here.
     pub(super) fn reuse_trail(&self) -> u32 {
         // Only meaningful under VSIDS scoring (the default); under CHB/LRB the
@@ -413,7 +413,7 @@ impl Solver {
         // it is the longest reached so far. The trail holds the just-explored
         // partial assignment; remembering its polarities lets a later rephase
         // refocus the search near the best-known region (cadical's "best"
-        // phase array — the one genuinely missing SAT-side phase signal).
+        // phase array – the one genuinely missing SAT-side phase signal).
         let trail_size = self.trail.size();
         if trail_size > self.best_trail_size {
             self.best_trail_size = trail_size;

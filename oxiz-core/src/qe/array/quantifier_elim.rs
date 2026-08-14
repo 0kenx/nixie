@@ -16,7 +16,7 @@
 //! that legitimately never fires).
 //!
 //! The functioning, `TermManager`-backed array quantifier eliminator lives
-//! in `oxiz_theories::array::quantifier_elim::ArrayQuantifierEliminator` —
+//! in `oxiz_theories::array::quantifier_elim::ArrayQuantifierEliminator` –
 //! prefer that implementation for real elimination work. This module is
 //! kept only as a design scratchpad and should not be relied upon for
 //! sound results.
@@ -300,7 +300,7 @@ impl ArrayQuantifierEliminator {
         _value: TermId,
     ) -> Result<TermId, String> {
         Err(format!(
-            "array QE: cannot instantiate quantified variable '{var}' — this module has no \
+            "array QE: cannot instantiate quantified variable '{var}' – this module has no \
              TermManager to perform substitution; use \
              oxiz_theories::array::ArrayQuantifierEliminator instead"
         ))
@@ -319,7 +319,7 @@ impl ArrayQuantifierEliminator {
         _concrete_indices: &FxHashSet<TermId>,
     ) -> Result<TermId, String> {
         Err(format!(
-            "array QE: cannot build the fresh-value case for '{var}' — this module has no \
+            "array QE: cannot build the fresh-value case for '{var}' – this module has no \
              TermManager to construct disequality constraints; use \
              oxiz_theories::array::ArrayQuantifierEliminator instead"
         ))
@@ -349,7 +349,7 @@ impl ArrayQuantifierEliminator {
         self.stats.skolemizations += quantified_vars.len() as u64;
 
         Err(format!(
-            "array QE: cannot substitute Skolem constants into the formula for {} variable(s) — \
+            "array QE: cannot substitute Skolem constants into the formula for {} variable(s) – \
              this module has no TermManager to perform substitution; use \
              oxiz_theories::array::ArrayQuantifierEliminator instead",
             quantified_vars.len()
@@ -365,7 +365,7 @@ impl ArrayQuantifierEliminator {
     /// collisions with real term ids.
     fn mk_skolem_constant(&self, var: &str) -> Result<TermId, String> {
         Err(format!(
-            "array QE: cannot create a Skolem constant for '{var}' — this module has no \
+            "array QE: cannot create a Skolem constant for '{var}' – this module has no \
              TermManager to mint a fresh term"
         ))
     }
@@ -375,7 +375,7 @@ impl ArrayQuantifierEliminator {
     /// # Honesty note
     /// For more than one term this requires building a real `Or` term. The
     /// previous placeholder silently returned only `terms[0]`, discarding
-    /// every other disjunct — an unsound simplification. We now report
+    /// every other disjunct – an unsound simplification. We now report
     /// failure instead.
     fn mk_or(&self, terms: &[TermId]) -> Result<TermId, String> {
         if terms.is_empty() {
@@ -387,7 +387,7 @@ impl ArrayQuantifierEliminator {
         }
 
         Err(format!(
-            "array QE: cannot build a disjunction of {} case-split terms — this module has no \
+            "array QE: cannot build a disjunction of {} case-split terms – this module has no \
              TermManager to construct an Or term",
             terms.len()
         ))
@@ -426,7 +426,7 @@ impl ArrayQuantifierEliminator {
     /// structure, this cannot be done soundly, so it now fails explicitly.
     fn collect_relevant_indices(&self, _lhs: TermId, _rhs: TermId) -> Result<Vec<TermId>, String> {
         Err(
-            "array QE: cannot analyze array term structure to collect relevant indices — this \
+            "array QE: cannot analyze array term structure to collect relevant indices – this \
              module has no TermManager"
                 .to_string(),
         )
@@ -434,12 +434,12 @@ impl ArrayQuantifierEliminator {
 
     /// Create select term.
     fn mk_select(&self, _array: TermId, _index: TermId) -> Result<TermId, String> {
-        Err("array QE: cannot build a select term — this module has no TermManager".to_string())
+        Err("array QE: cannot build a select term – this module has no TermManager".to_string())
     }
 
     /// Create equality term.
     fn mk_eq(&self, _lhs: TermId, _rhs: TermId) -> Result<TermId, String> {
-        Err("array QE: cannot build an equality term — this module has no TermManager".to_string())
+        Err("array QE: cannot build an equality term – this module has no TermManager".to_string())
     }
 
     /// Create conjunction of terms.
@@ -451,14 +451,14 @@ impl ArrayQuantifierEliminator {
     /// `0` would collide with `mk_select`/`mk_eq`'s (also fabricated)
     /// output and be indistinguishable from a real term id, so we report
     /// failure instead. The `len() > 1` case previously silently dropped
-    /// every conjunct but the first — an unsound simplification.
+    /// every conjunct but the first – an unsound simplification.
     fn mk_and(&self, terms: &[TermId]) -> Result<TermId, String> {
         if terms.len() == 1 {
             return Ok(terms[0]);
         }
 
         Err(format!(
-            "array QE: cannot build a conjunction of {} term(s) — this module has no \
+            "array QE: cannot build a conjunction of {} term(s) – this module has no \
              TermManager to construct a True/And term",
             terms.len()
         ))

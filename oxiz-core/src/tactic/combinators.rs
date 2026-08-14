@@ -29,8 +29,8 @@ thread_local! {
 /// elapsed.
 ///
 /// Long-running or looping tactics should poll this periodically (e.g.
-/// once per iteration of a fixpoint loop) and bail out promptly —
-/// returning `Ok(TacticResult::Failed(..))` — when it becomes `true`, so
+/// once per iteration of a fixpoint loop) and bail out promptly –
+/// returning `Ok(TacticResult::Failed(..))` – when it becomes `true`, so
 /// that `TimeoutTactic` can reclaim the worker thread within its grace
 /// period instead of leaving it to run to completion in the background.
 /// Tactics that never poll this still terminate correctly (the wrapping
@@ -83,14 +83,14 @@ impl Tactic for ThenTactic {
             for g in &current_goals {
                 match tactic.apply(g)? {
                     // One conjunct being unsatisfiable makes the whole
-                    // conjunctive goal set unsatisfiable — sound to
+                    // conjunctive goal set unsatisfiable – sound to
                     // short-circuit.
                     TacticResult::Solved(SolveResult::Unsat) => {
                         return Ok(TacticResult::Solved(SolveResult::Unsat));
                     }
                     // Sat/Unknown for *this one* subgoal says nothing about
                     // any *other* still-pending subgoal from an earlier
-                    // split — it must not be returned as the verdict for
+                    // split – it must not be returned as the verdict for
                     // the whole goal set. Simply drop this now-discharged
                     // subgoal and keep processing the rest.
                     TacticResult::Solved(SolveResult::Sat | SolveResult::Unknown) => {}
@@ -424,7 +424,7 @@ impl Tactic for TimeoutTactic {
                 // joined directly; past the grace period it is handed to
                 // a dedicated reaper thread that blocks until the worker
                 // eventually finishes and joins it then. Either way the
-                // worker thread is always reclaimed — for tactics that
+                // worker thread is always reclaimed – for tactics that
                 // never call `cancellation_requested()`, just not
                 // promptly.
                 cancel.store(true, Ordering::Relaxed);
@@ -585,7 +585,7 @@ mod tests {
     }
 
     // Regression tests for: "TimeoutTactic leaks its worker thread on
-    // timeout" — the worker must be reclaimed (cooperatively, promptly, or
+    // timeout" – the worker must be reclaimed (cooperatively, promptly, or
     // eventually via the background reaper), never dropped-and-forgotten.
 
     #[test]

@@ -16,9 +16,9 @@ use oxiz_core::tactic::{
     TacticResult,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // P4-1103: Ackermannization + quantifier-bound arguments
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn ackermann_ground_applications_are_transformed() {
@@ -103,9 +103,9 @@ fn ackermann_excludes_symbol_with_mixed_ground_and_quantified_occurrence() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // P4-1104: Fourier-Motzkin over integer variables
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Build the two-inequality encoding of `2x = c`: `2x <= c AND 2x >= c`.
 fn two_x_equals(manager: &mut TermManager, x: oxiz_core::ast::TermId, c: i64) -> Goal {
@@ -172,9 +172,9 @@ fn fm_integer_unit_coefficient_bounds_still_eliminated() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // P4-1109: model converters
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn solve_eqs_converter_reconstructs_constant_eliminated_var() {

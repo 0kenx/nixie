@@ -138,9 +138,9 @@ fn test_audit_collect_ground_terms_seeds_candidates() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Audit regression tests (solver-mbqi)
-// ---------------------------------------------------------------------
+// ========  ========
 
 use num_bigint::BigInt;
 
@@ -566,7 +566,7 @@ fn test_grounding_guard_inspects_trigger_patterns() {
     );
 }
 
-// ===== deep_simplify iterative-machine regression tests =====
+// ======== deep_simplify iterative-machine regression tests ========
 //
 // `deep_simplify_cached` used to recurse natively once per nesting level;
 // it now runs as an explicit-stack frame machine. These tests pin exact
@@ -607,7 +607,7 @@ fn deep_simplify_semantic_pins() {
     let eq_fold = m.mk_eq(ge_53, tt);
     assert_eq!(integration.deep_simplify(eq_fold, &mut m), tt);
 
-    // Ge/Gt normalize to Le/Lt with swapped operands — pigeonhole.rs
+    // Ge/Gt normalize to Le/Lt with swapped operands – pigeonhole.rs
     // pattern-matches on exactly this shape.
     let ge_ab = m.mk_ge(a, b);
     let le_ba = m.mk_le(b, a);

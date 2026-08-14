@@ -5,7 +5,7 @@
 //! a resumable record after a completed solve, and replaying one on resume.
 //!
 //! This is a *completed-problem* checkpoint, not a pause/resume of an
-//! in-progress CDCL search — `oxiz-solver` exposes no hook to snapshot
+//! in-progress CDCL search – `oxiz-solver` exposes no hook to snapshot
 //! mid-`check-sat` state, so the learned clauses / assignments are honestly
 //! left empty (see [`crate::checkpoint::solver_state_from_counts`]). What it
 //! genuinely provides is a durable record of a problem and its result that a
@@ -20,7 +20,7 @@ use crate::{Args, Verbosity};
 
 /// Resolve the checkpoint directory: explicit `--checkpoint-dir`, else the
 /// platform config dir under `oxiz/checkpoints`. Never hardcodes an absolute
-/// path — the default is derived from the OS config dir.
+/// path – the default is derived from the OS config dir.
 pub fn checkpoint_dir(args: &Args) -> Option<PathBuf> {
     if let Some(ref dir) = args.checkpoint_dir {
         return Some(dir.clone());
@@ -52,7 +52,7 @@ pub fn try_resume(script: &str, args: &Args) -> Option<Vec<String>> {
 /// Persist a completed-solve checkpoint (problem + config + real post-solve
 /// counters + full output) so a later `--resume` can replay it.
 ///
-/// Best-effort — a write failure warns but never aborts the solve.
+/// Best-effort – a write failure warns but never aborts the solve.
 pub fn write(script: &str, args: &Args, ctx: &Context, output: &[String]) {
     let Some(dir) = checkpoint_dir(args) else {
         return;

@@ -983,7 +983,7 @@ impl AdvancedBitBlaster {
     ///
     /// Explicit stack, not recursion: the AIG's depth is input-controlled. The
     /// memo (`node_to_var`) is still written *before* the operands are
-    /// visited, so variable numbering — and therefore the emitted CNF — is
+    /// visited, so variable numbering – and therefore the emitted CNF – is
     /// byte-for-byte what the recursive version produced.
     fn encode_pg_positive(&mut self, node: NodeId, sat: &mut SatSolver) -> Result<Var> {
         // `true` marks a node whose operands have already been queued.

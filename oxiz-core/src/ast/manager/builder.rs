@@ -1,4 +1,4 @@
-//! Term builder methods for TermManager — all mk_* constructors
+//! Term builder methods for TermManager – all mk_* constructors
 
 use super::super::term::{RoundingMode, TermId, TermKind};
 #[allow(unused_imports)]
@@ -467,27 +467,27 @@ impl TermManager {
         )
     }
 
-    /// `str.replace_re` — replace the leftmost shortest match of a regular
+    /// `str.replace_re` – replace the leftmost shortest match of a regular
     /// language.
     ///
     /// The regex operand carries the reserved `RegLan` sort (see
     /// [`Self::reglan_sort`]); the theory compiles it with its Brzozowski
     /// derivative engine, so no folding happens here (`oxiz-core` deliberately
-    /// hosts no regex matcher — `str.in_re` is left symbolic for the same
+    /// hosts no regex matcher – `str.in_re` is left symbolic for the same
     /// reason).
     pub fn mk_str_replace_re(&mut self, s: TermId, re: TermId, replacement: TermId) -> TermId {
         let string_sort = self.sorts.string_sort();
         self.intern(TermKind::StrReplaceRe(s, re, replacement), string_sort)
     }
 
-    /// `str.replace_re_all` — replace every shortest non-empty match of a
+    /// `str.replace_re_all` – replace every shortest non-empty match of a
     /// regular language, scanning left to right.
     pub fn mk_str_replace_re_all(&mut self, s: TermId, re: TermId, replacement: TermId) -> TermId {
         let string_sort = self.sorts.string_sort();
         self.intern(TermKind::StrReplaceReAll(s, re, replacement), string_sort)
     }
 
-    /// `str.<` — strict lexicographic order over code points.
+    /// `str.<` – strict lexicographic order over code points.
     ///
     /// Folded on constant operands, and simplified on the three shapes whose
     /// truth is fixed by the order's structure alone. Reference: Z3's
@@ -518,7 +518,7 @@ impl TermManager {
         self.intern(TermKind::StrLt(lhs, rhs), bool_sort)
     }
 
-    /// `str.<=` — the reflexive closure of [`Self::mk_str_lt`].
+    /// `str.<=` – the reflexive closure of [`Self::mk_str_lt`].
     pub fn mk_str_le(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if lhs == rhs {
             return self.mk_true();
@@ -542,7 +542,7 @@ impl TermManager {
         self.intern(TermKind::StrLe(lhs, rhs), bool_sort)
     }
 
-    /// `str.to_code` — the code point of a singleton string, `-1` otherwise.
+    /// `str.to_code` – the code point of a singleton string, `-1` otherwise.
     pub fn mk_str_to_code(&mut self, s: TermId) -> TermId {
         if let Some(value) = self.string_lit_of(s) {
             return self.mk_int(str_fold::str_to_code(&value));
@@ -551,7 +551,7 @@ impl TermManager {
         self.intern(TermKind::StrToCode(s), int_sort)
     }
 
-    /// `str.from_code` — the singleton string for a code point in the
+    /// `str.from_code` – the singleton string for a code point in the
     /// theory's alphabet, `""` outside it.
     ///
     /// A surrogate code point is deliberately left unfolded; see
@@ -603,7 +603,7 @@ impl TermManager {
         self.intern(TermKind::StrInRe(s, re), bool_sort)
     }
 
-    // ==================== Regular-expression (RegLan) terms ====================
+    // ======== Regular-expression (RegLan) terms ========
     //
     // The SMT-LIB Strings theory `RegLan` sort has no dedicated `SortKind`
     // variant (that enum is matched exhaustively across sibling crates, so it
@@ -632,81 +632,81 @@ impl TermManager {
         self.mk_apply(name, args, sort)
     }
 
-    /// `re.none` — the empty regular language.
+    /// `re.none` – the empty regular language.
     pub fn mk_re_none(&mut self) -> TermId {
         self.mk_regex_op("re.none", core::iter::empty())
     }
 
-    /// `re.all` — the language of all strings.
+    /// `re.all` – the language of all strings.
     pub fn mk_re_all(&mut self) -> TermId {
         self.mk_regex_op("re.all", core::iter::empty())
     }
 
-    /// `re.allchar` — the language of all single-character strings.
+    /// `re.allchar` – the language of all single-character strings.
     pub fn mk_re_all_char(&mut self) -> TermId {
         self.mk_regex_op("re.allchar", core::iter::empty())
     }
 
-    /// `str.to_re` — singleton language containing exactly one string.
+    /// `str.to_re` – singleton language containing exactly one string.
     pub fn mk_str_to_re(&mut self, s: TermId) -> TermId {
         self.mk_regex_op("str.to_re", [s])
     }
 
-    /// `re.++` — regular-language concatenation.
+    /// `re.++` – regular-language concatenation.
     pub fn mk_re_concat(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
         self.mk_regex_op("re.++", args)
     }
 
-    /// `re.union` — regular-language union.
+    /// `re.union` – regular-language union.
     pub fn mk_re_union(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
         self.mk_regex_op("re.union", args)
     }
 
-    /// `re.inter` — regular-language intersection.
+    /// `re.inter` – regular-language intersection.
     pub fn mk_re_inter(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
         self.mk_regex_op("re.inter", args)
     }
 
-    /// `re.*` — Kleene star.
+    /// `re.*` – Kleene star.
     pub fn mk_re_star(&mut self, re: TermId) -> TermId {
         self.mk_regex_op("re.*", [re])
     }
 
-    /// `re.+` — Kleene plus (one or more).
+    /// `re.+` – Kleene plus (one or more).
     pub fn mk_re_plus(&mut self, re: TermId) -> TermId {
         self.mk_regex_op("re.+", [re])
     }
 
-    /// `re.opt` — optional (zero or one).
+    /// `re.opt` – optional (zero or one).
     pub fn mk_re_opt(&mut self, re: TermId) -> TermId {
         self.mk_regex_op("re.opt", [re])
     }
 
-    /// `re.comp` — complement.
+    /// `re.comp` – complement.
     pub fn mk_re_comp(&mut self, re: TermId) -> TermId {
         self.mk_regex_op("re.comp", [re])
     }
 
-    /// `re.diff` — difference of two regular languages.
+    /// `re.diff` – difference of two regular languages.
     pub fn mk_re_diff(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         self.mk_regex_op("re.diff", [lhs, rhs])
     }
 
-    /// `re.range` — the language of single-character strings between two
+    /// `re.range` – the language of single-character strings between two
     /// one-character string literals (`lo` and `hi`, passed through as the
     /// operator's operands).
     pub fn mk_re_range(&mut self, lo: TermId, hi: TermId) -> TermId {
         self.mk_regex_op("re.range", [lo, hi])
     }
 
-    /// `(_ re.^ n) re` — the regex repeated exactly `n` times. The repetition
+    /// `(_ re.^ n) re` – the regex repeated exactly `n` times. The repetition
     /// count is encoded as a leading `Int` operand.
     pub fn mk_re_power(&mut self, n: u32, re: TermId) -> TermId {
         let count = self.mk_int(n);
         self.mk_regex_op("re.^", [count, re])
     }
 
-    /// `(_ re.loop lo hi) re` — the regex repeated between `lo` and `hi` times.
+    /// `(_ re.loop lo hi) re` – the regex repeated between `lo` and `hi` times.
     /// The bounds are encoded as two leading `Int` operands.
     pub fn mk_re_loop(&mut self, lo: u32, hi: u32, re: TermId) -> TermId {
         let lo_t = self.mk_int(lo);
@@ -1170,7 +1170,7 @@ impl TermManager {
 
     /// Create a bit vector concatenation.
     ///
-    /// Both operands must have a bit-vector sort — the result width is
+    /// Both operands must have a bit-vector sort – the result width is
     /// exactly their sum, per SMT-LIB `FixedSizeBitVectors` semantics.
     /// Callers (in particular the SMT-LIB parser, which only ever applies
     /// `concat` to already sort-checked bit-vector terms) must guarantee
@@ -1239,7 +1239,7 @@ impl TermManager {
     }
 
     /// Create a signed bit-vector modulo (`bvsmod`), whose result sign
-    /// follows the *divisor* `rhs` — distinct from `bvsrem`, whose result
+    /// follows the *divisor* `rhs` – distinct from `bvsrem`, whose result
     /// sign follows the dividend. Implements the standard SMT-LIB
     /// `FixedSizeBitVectors` definition by reducing to the unsigned
     /// remainder over the operands' absolute values and then reintroducing
@@ -1257,8 +1257,8 @@ impl TermManager {
     /// Two literal operands are folded directly instead of being expanded
     /// into that `ite` chain.  The chain would collapse to the same constant
     /// on its own (every condition becomes literal), but evaluating it here
-    /// keeps the definition of the total zero-divisor case — `bvsmod s 0` is
-    /// `s` — in one auditable place alongside the rest of the division
+    /// keeps the definition of the total zero-divisor case – `bvsmod s 0` is
+    /// `s` – in one auditable place alongside the rest of the division
     /// family.
     pub fn mk_bv_smod(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let width = self
@@ -1315,7 +1315,7 @@ impl TermManager {
     /// must ensure `low <= high` and `high < width(arg)` *before* calling this
     /// so the resulting term is semantically meaningful. As defense in depth
     /// against malformed indices reaching this far (which would otherwise
-    /// underflow `high - low + 1` — a panic in debug builds and a ~4-billion
+    /// underflow `high - low + 1` – a panic in debug builds and a ~4-billion
     /// bit sort in release builds), the width computation uses checked
     /// arithmetic and falls back to a minimal 1-bit result instead of
     /// panicking or wrapping.
@@ -1326,7 +1326,7 @@ impl TermManager {
             .unwrap_or(1);
 
         // A literal operand yields a literal slice, provided the indices are
-        // in range — malformed indices are left for the parser's sort check
+        // in range – malformed indices are left for the parser's sort check
         // rather than silently folded to a fabricated value.
         if low <= high
             && let Some(arg_width) = self.bv_width_of(arg)
@@ -1572,8 +1572,8 @@ impl TermManager {
     /// assignment, returning the constant truth value it folds to.
     ///
     /// Reference: Z3's `bv_rewriter.cpp`, which folds exactly these atoms.
-    /// Without them, an assertion like `(bvult x #b00000000)` — false for every
-    /// `x`, since nothing is unsigned-less-than zero — survives as an
+    /// Without them, an assertion like `(bvult x #b00000000)` – false for every
+    /// `x`, since nothing is unsigned-less-than zero – survives as an
     /// unconstrained boolean atom and the solver answers a spurious `sat`.
     ///
     /// The rules, for width `w` with `MAX_U = 2^w - 1`, `MIN_S = -2^(w-1)` and
@@ -1599,7 +1599,7 @@ impl TermManager {
         }
 
         // Both orders are total and reflexive, so `t < t` is false and
-        // `t <= t` is true for any term — hash-consing makes the syntactic
+        // `t <= t` is true for any term – hash-consing makes the syntactic
         // identity check exact.
         if lhs == rhs {
             return Some(!strict);
@@ -1852,7 +1852,7 @@ impl TermManager {
     /// shifting by at least the width yields `0` regardless of the value.
     ///
     /// `fold_const` is the matching evaluator from
-    /// [`super::bv_fold`] — an ordinary Rust function pointer chosen at the
+    /// [`super::bv_fold`] – an ordinary Rust function pointer chosen at the
     /// call site, not any form of dynamic evaluation.
     fn fold_bv_shift(
         &self,

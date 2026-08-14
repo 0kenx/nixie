@@ -3,8 +3,8 @@
 //!
 //! Quantifiers are decided by enumerating one representative per *region* of
 //! the critical set (see [`super::harvest::region_stable`] for why that is
-//! exhaustive, not a sample).  Everything runs on explicit heap stacks — a
-//! term worklist, a value stack, an environment stack and a domain stack — so
+//! exhaustive, not a sample).  Everything runs on explicit heap stacks – a
+//! term worklist, a value stack, an environment stack and a domain stack – so
 //! neither formula depth nor quantifier nesting touches the native call stack.
 
 use core::cmp::Ordering;
@@ -77,7 +77,7 @@ struct Machine {
     domains: Vec<Vec<CertValue>>,
 }
 
-/// Decide `term` — which must be closed — under `interp`.
+/// Decide `term` – which must be closed – under `interp`.
 ///
 /// `critical` is the sorted, deduplicated set of integers that atoms can
 /// distinguish (literals, pinned arguments and results, constant values,
@@ -428,7 +428,7 @@ fn quant_iter(
 /// Build the exhaustive enumeration domain for a bound variable of `sort`.
 ///
 /// `Bool` enumerates its whole domain.  `Int` enumerates every critical value
-/// plus one representative of every non-empty gap between (and beyond) them —
+/// plus one representative of every non-empty gap between (and beyond) them –
 /// the critical set being `critical` extended with the integer values of the
 /// enclosing bound variables, which is what makes an inner variable able to
 /// land below, on, and above an outer one.

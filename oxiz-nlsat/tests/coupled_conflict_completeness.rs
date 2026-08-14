@@ -111,7 +111,7 @@ fn coupled_product_conflict_negative_positive_is_unsat() {
 }
 
 /// Soundness guard: `x > 0 ∧ y > 0 ∧ x·y > 1` is SAT (e.g. x = y = 2). The sign
-/// abstraction must NOT fabricate a conflict here — a satisfiable coupled system
+/// abstraction must NOT fabricate a conflict here – a satisfiable coupled system
 /// must stay `Sat`.
 #[test]
 fn satisfiable_coupled_product_stays_sat() {

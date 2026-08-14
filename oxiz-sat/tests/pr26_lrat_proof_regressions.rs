@@ -1,7 +1,7 @@
 //! End-to-end regression tests for the PR #26 online LRAT proof-tracing
 //! port: solve a set of UNSAT instances with LRAT tracing enabled, emit the
 //! proof, and check it with `oxiz_proof::lrat_check`'s pure-Rust LRAT
-//! checker (no external tool, no C dependency — that checker replaces
+//! checker (no external tool, no C dependency – that checker replaces
 //! `tools/lrat-check.c` from the upstream PR).
 //!
 //! Coverage:
@@ -13,7 +13,7 @@
 //! - Every inprocessing mechanism this port gates off rather than covers
 //!   with hint chains (probing, hyper-binary resolution, BVE, ELS,
 //!   subsumption/vivification) still yields *some* verifiable proof when
-//!   enabled alongside LRAT tracing — the solver falls back to the plain
+//!   enabled alongside LRAT tracing – the solver falls back to the plain
 //!   CDCL path instead of emitting a proof gap.
 //! - `check_hyper_binary_resolution`'s proof-tracing gate (a real,
 //!   pre-existing bug this port fixes: that pass previously ran from the
@@ -125,9 +125,9 @@ fn drop_final_line(lrat_text: &str) -> String {
     s
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Positive: representative UNSAT instances, each independently re-verified.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lrat_pigeonhole_proof_verifies() {
@@ -168,7 +168,7 @@ fn test_pr26_lrat_small_hand_built_unsat_proof_verifies() {
 #[test]
 fn test_pr26_lrat_dimacs_fixture_proof_verifies_via_files() {
     // The same tiny UNSAT instance as above, but round-tripped through real
-    // CNF and LRAT *files* via `oxiz_proof::lrat_check::check_lrat_files` —
+    // CNF and LRAT *files* via `oxiz_proof::lrat_check::check_lrat_files` –
     // exercising the "usable as a library function" file-based entry point.
     let cnf_path = unique_lrat_path("dimacs_fixture").with_extension("cnf");
     let lrat_path = unique_lrat_path("dimacs_fixture").with_extension("lrat");
@@ -200,10 +200,10 @@ fn test_pr26_lrat_dimacs_fixture_proof_verifies_via_files() {
     let _ = std::fs::remove_file(&lrat_path);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Positive: `add_clause`-level UNSAT paths that finalize the proof without
 // ever entering `solve()`'s main search loop.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lrat_direct_empty_original_clause_needs_no_derivation() {
@@ -217,7 +217,7 @@ fn test_pr26_lrat_direct_empty_original_clause_needs_no_derivation() {
     let lrat_text = std::fs::read_to_string(&path).expect("read lrat");
     let _ = std::fs::remove_file(&path);
 
-    // A literal length-0 original clause is, on its own, a complete proof —
+    // A literal length-0 original clause is, on its own, a complete proof –
     // the checker must accept it even with an otherwise-empty LRAT stream.
     let report = check_lrat_proof(&[vec![]], &lrat_text);
     assert!(report.verified, "failure: {:?}", report.failure);
@@ -252,11 +252,11 @@ fn test_pr26_lrat_unit_clause_contradicting_existing_fact_proof_verifies() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Positive: every gated-off inprocessing mechanism still yields a
 // verifiable proof (falls back to the plain CDCL path) rather than a proof
 // gap when combined with LRAT tracing.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lrat_probing_and_hyper_binary_gate_still_yields_verifiable_proof() {
@@ -300,14 +300,14 @@ fn test_pr26_lrat_equiv_substitution_gate_still_yields_verifiable_proof() {
 // elimination, on-the-fly strengthening) in ways the tracer cannot back
 // with sound LRAT addition/deletion lines, so `Solver::inprocess` steps
 // aside entirely while an LRAT tracer is attached (faithful port of
-// v0.3.2's `|| self.lrat.is_some()` early-return gate — main had dropped
+// v0.3.2's `|| self.lrat.is_some()` early-return gate – main had dropped
 // it). This test pins that gate: with inprocessing *requested* and LRAT
 // tracing *on*, the solve must fall back to the plain CDCL path and still
 // emit a verifiable proof. If the gate regresses, inprocess runs under
 // LRAT, the proof stream and the search diverge, and this fails.
 //
 // NOTE (not under test here): inprocessing with LRAT *off* is a separate,
-// pre-existing upstream (v0.3.2) unsoundness — see
+// pre-existing upstream (v0.3.2) unsoundness – see
 // `INTEGRATION_NOTES.md` §1. Verified by transplant: v0.3.2 fails the
 // identical pigeonhole(6,5) inprocessing-on/no-LRAT case with the same
 // propagation-fixpoint invariant ("hanging unit"). This test does not
@@ -324,16 +324,16 @@ fn test_pr26_lrat_inprocessing_gate_still_yields_verifiable_proof() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Regression: `check_hyper_binary_resolution`'s proof-tracing gate. This
 // pass runs from the *main* propagation path, gated only by
-// `enable_lazy_hyper_binary` (on by `SolverConfig::default()`) — before
+// `enable_lazy_hyper_binary` (on by `SolverConfig::default()`) – before
 // this port it had no DRAT/LRAT awareness at all, so a default-configured
 // solve that reached decision level >= 2 could add a clause to the live
 // database with no corresponding proof line. If that gate ever regresses,
 // `lrat_hint_chain`'s trail replay silently drops the hint for that
 // clause's reason, and this proof fails to verify.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lrat_default_config_hyper_binary_gate_produces_verifiable_proof() {
@@ -347,9 +347,9 @@ fn test_pr26_lrat_default_config_hyper_binary_gate_produces_verifiable_proof() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Positive: DRAT and LRAT tracing enabled together.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lrat_and_drat_both_enabled_lrat_still_verifies() {
@@ -371,9 +371,9 @@ fn test_pr26_lrat_and_drat_both_enabled_lrat_still_verifies() {
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Negative: corrupted proofs must be rejected.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lrat_corrupted_hint_reference_is_rejected() {
@@ -429,9 +429,9 @@ fn test_pr26_lrat_valid_proof_is_not_accidentally_rejected_by_corruption_helpers
     assert!(report.verified, "failure: {:?}", report.failure);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Gatekeeper SK-5: the writer must go inert once the proof is finalized.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 // Gatekeeper SK-5: the proof writer must go inert once finalized. Two

@@ -287,7 +287,7 @@ impl CodeTreeBuilder {
     /// through the (mutually recursive) operator compilers, so a
     /// pathologically deep pattern would otherwise exhaust the native
     /// stack. Because this function has a real error channel, the bound is
-    /// reported as an honest error — the pattern is *not* silently compiled
+    /// reported as an honest error – the pattern is *not* silently compiled
     /// into an instruction stream that matches something else.
     fn compile_term(
         &mut self,
@@ -604,7 +604,7 @@ impl CodeTreeBuilder {
     /// Merge sequential instructions.
     ///
     /// Finds consecutive Compare instructions that check the same discriminant
-    /// and removes the duplicate — the first check already establishes the kind.
+    /// and removes the duplicate – the first check already establishes the kind.
     fn merge_sequences(&self, tree: &mut CodeTree) {
         if tree.instructions.len() < 2 {
             return;
@@ -747,7 +747,7 @@ impl CodeTree {
     /// (bindings + term stack), and the first alternative continues with the
     /// current state. A failing branch pops the most recent trail entry and
     /// resumes it, which explores the alternatives in exactly the order the
-    /// previous recursive implementation did — but with the backtrack stack
+    /// previous recursive implementation did – but with the backtrack stack
     /// on the heap, so a pattern with many choice points cannot exhaust the
     /// native stack (each recursive frame cloned two `Vec`s).
     fn run(
@@ -1081,7 +1081,7 @@ mod tests {
         assert_eq!(bind.next, Some(1));
     }
 
-    // ── TODO-939: Choice backtracking regression tests ────────────────────
+    // ======== TODO-939: Choice backtracking regression tests ========
     //
     // Before the fix, `execute_from` inspected only the *single* instruction
     // at a Choice's first branch and returned `Ok(None)` for anything other

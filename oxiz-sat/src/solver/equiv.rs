@@ -46,7 +46,7 @@ impl Solver {
         let num_lits = num_vars * 2;
 
         // Refresh the binary implication graph from current (incl. learned)
-        // binary clauses so the SCC sees equivalences exposed during search —
+        // binary clauses so the SCC sees equivalences exposed during search –
         // essential for inprocessing re-runs. (On the first, pre-search call
         // the graph is already current; this is a cheap no-op there.)
         self.refresh_binary_graph();
@@ -63,7 +63,7 @@ impl Solver {
         // and the rep maps to itself, so one lookup resolves any chain.
         let mut sub: Vec<Lit> = (0..num_lits as u32).map(Lit::from_code).collect();
 
-        // ---- Iterative Tarjan over the binary implication graph. ----
+        // ======== Iterative Tarjan over the binary implication graph. ========
         // Nodes are literal codes; successors of `lit` are the literals it
         // directly implies (binary_graph edges). Recursion would overflow on
         // deep implication chains (thousands deep on multiplier circuits).
@@ -122,7 +122,7 @@ impl Solver {
                         }
                         // Actually remove the popped members: without this the
                         // `stack` Vec kept already-assigned nodes, and a later
-                        // SCC's `stack[scc_start..]` slice re-included them —
+                        // SCC's `stack[scc_start..]` slice re-included them –
                         // fabricating equivalences (and spurious pos(v)≡neg(v)
                         // contradictions) that proved satisfiable formulas UNSAT.
                         let scc_members = stack.split_off(scc_start);
@@ -155,7 +155,7 @@ impl Solver {
             return SubstOutcome::Ok;
         }
 
-        // ---- Rewrite every live clause through the map. ----
+        // ======== Rewrite every live clause through the map. ========
         let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
         let mut new_units: SmallVec<[Lit; 64]> = SmallVec::new();
         let mut eliminated = 0usize;
@@ -185,7 +185,7 @@ impl Solver {
             }
             match lits.len() {
                 0 => {
-                    // Every literal collapsed to one value and was a duplicate —
+                    // Every literal collapsed to one value and was a duplicate –
                     // impossible after dedup unless the original was empty.
                     self.trivially_unsat = true;
                     return SubstOutcome::Unsat;
@@ -204,10 +204,10 @@ impl Solver {
             }
         }
 
-        // ---- Record model-reconstruction map + branching-skip flag. ----
+        // ======== Record model-reconstruction map + branching-skip flag. ========
         // `equiv_substitution[v]` is the CUMULATIVE representative literal for
         // `v` across all substitution rounds (identity `pos(v)` if never
-        // eliminated). Each round COMPOSES this round's `sub` onto it — so an
+        // eliminated). Each round COMPOSES this round's `sub` onto it – so an
         // inprocessing re-run that further folds a previous representative is
         // recorded correctly, instead of overwriting (and losing) the earlier
         // elimination. (Overwriting was the inprocessing soundness bug: a var
@@ -231,10 +231,10 @@ impl Solver {
             }
         }
 
-        // ---- Rebuild watch lists + binary implication graph. ----
+        // ======== Rebuild watch lists + binary implication graph. ========
         self.rebuild_watches_and_binary_graph();
 
-        // ---- Assign the newly exposed level-0 units and re-propagate. ----
+        // ======== Assign the newly exposed level-0 units and re-propagate. ========
         for lit in new_units {
             match self.trail.lit_value(lit) {
                 LBool::True => {}

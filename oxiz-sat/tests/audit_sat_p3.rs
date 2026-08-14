@@ -18,10 +18,10 @@ fn neg(i: u32) -> Lit {
     Lit::neg(Var::new(i))
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 1: Cube-and-Conquer must actually solve, and an empty cube list must
 // not fabricate UNSAT.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn cube_solver_solves_sat_and_unsat_cubes() {
@@ -72,10 +72,10 @@ fn cube_solver_empty_cube_list_is_unknown_not_unsat() {
     assert!(results.is_empty());
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 2: an adversarial DIMACS header variable count must be rejected
 // rather than triggering an unbounded allocation.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn dimacs_rejects_absurd_variable_count() {
@@ -113,10 +113,10 @@ fn dimacs_max_vars_is_configurable() {
     assert!(matches!(res, Err(DimacsError::InvalidProblem)));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 5: the CDCL loop must honor a resource budget / interrupt and return
 // Unknown instead of running forever.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn solve_returns_unknown_when_interrupted() {
@@ -134,7 +134,7 @@ fn solve_returns_unknown_when_interrupted() {
 
 #[test]
 fn solve_returns_unknown_when_conflict_budget_exhausted() {
-    // PHP(4,3): 4 pigeons, 3 holes — UNSAT and requires several conflicts.
+    // PHP(4,3): 4 pigeons, 3 holes – UNSAT and requires several conflicts.
     let mut solver = Solver::new();
     for _ in 0..12 {
         solver.new_var();
@@ -184,10 +184,10 @@ fn unlimited_budget_still_solves() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 7: inprocessing / vivification strengthening must keep results
 // correct (rebuilding watches after removing a watched literal).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn php_config_with_inprocessing() -> SolverConfig {
     SolverConfig {

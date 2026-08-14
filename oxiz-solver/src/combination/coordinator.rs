@@ -566,7 +566,7 @@ impl TheoryCoordinator {
     ///
     /// When no registered theory can witness inconsistency (e.g. no theories, or
     /// a conflict none of them re-derives), every removal leaves the subset
-    /// satisfiable, so the deduplicated conflict is returned unchanged — a sound,
+    /// satisfiable, so the deduplicated conflict is returned unchanged – a sound,
     /// conservative fallback.  The coordinator's full assertion set is restored
     /// before returning so later queries are unaffected.
     fn minimize_conflict(&mut self, conflict: Vec<TermId>) -> Vec<TermId> {

@@ -8,9 +8,9 @@
 
 use oxiz_solver::{Context, SolverResult};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// QF_NIA tests — nonlinear integer arithmetic
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// QF_NIA tests – nonlinear integer arithmetic
+// ========  ========
 
 #[test]
 fn test_nia_x_squared_eq_4_sat() {
@@ -314,9 +314,9 @@ fn test_nia_factored_product_xp1_ym2_sat() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// QF_NRA tests — nonlinear real arithmetic
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// QF_NRA tests – nonlinear real arithmetic
+// ========  ========
 
 #[test]
 fn test_nra_x_squared_lt_0_unsat() {
@@ -420,9 +420,9 @@ fn test_nra_polynomial_x2_minus_2x_plus_1_sat() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Push / pop tests
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn test_nia_push_pop_backtrack() {
@@ -451,7 +451,7 @@ fn test_nia_push_pop_backtrack() {
 
     ctx.push();
 
-    // Level 2: add x > 0 — conflicts with x < 0
+    // Level 2: add x > 0 – conflicts with x < 0
     let x_gt = ctx.terms.mk_gt(x, zero);
     ctx.assert(x_gt);
     // x<0 AND x>0 → UNSAT. This is a direct propositional contradiction on
@@ -478,9 +478,9 @@ fn test_nia_push_pop_backtrack() {
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Fixture-based tests: bench/extended_theories/QF_NIA_ext/
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Run a single SMT2 fixture and return the solver result string.
 fn run_smt2_fixture(path: &std::path::Path) -> SolverResult {
@@ -529,7 +529,7 @@ fn test_qf_nia_ext_fixtures() {
         .join("../bench/extended_theories/QF_NIA_ext");
 
     if !fixture_dir.exists() {
-        // Fixture directory doesn't exist — skip silently.
+        // Fixture directory doesn't exist – skip silently.
         return;
     }
 

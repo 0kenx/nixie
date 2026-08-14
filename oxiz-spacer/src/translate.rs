@@ -6,7 +6,7 @@
 //! worker thread to own a *private* term arena. A [`ChcSystem`] is not `Clone`
 //! (it holds atomic id counters) and its rule terms live in one specific
 //! arena, so to hand a worker an independent copy we must rebuild every rule
-//! term in a brand-new arena — which is exactly what this module does.
+//! term in a brand-new arena – which is exactly what this module does.
 //!
 //! The translation is **fail-closed**: it only handles the linear
 //! arithmetic / boolean fragment that the Spacer engine solves soundly
@@ -18,7 +18,7 @@
 //!
 //! Predicates and rules are rebuilt in their original insertion order, so the
 //! translated [`ChcSystem`] reproduces the exact same [`crate::chc::PredId`]/
-//! [`crate::chc::RuleId`] numbering — the copy is structurally identical to
+//! [`crate::chc::RuleId`] numbering – the copy is structurally identical to
 //! the original and yields the same verdict.
 //!
 //! Reference: Z3's `ast_translation` (`src/ast/ast_translation.cpp`).
@@ -127,7 +127,7 @@ impl Translator<'_> {
     /// per nesting level (mutually with `terms`); the memo made it linear in
     /// DAG size but did nothing about depth, and the return type is
     /// `Option<TermId>` whose `None` already means "outside the supported
-    /// fragment" — so a depth cap could not be distinguished from that and
+    /// fragment" – so a depth cap could not be distinguished from that and
     /// would silently drop a translatable rule instead of translating it.
     fn term(&mut self, dest: &mut TermManager, root: TermId) -> Option<TermId> {
         let mut stack: Vec<(TermId, bool)> = vec![(root, false)];

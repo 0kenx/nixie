@@ -41,7 +41,7 @@ enum EvalFrame {
 ///
 /// This is the single implementation behind both [`eval_term`] and
 /// [`CachedEvaluator`]. It replaces two structurally identical recursive
-/// evaluators that had no depth bound at all — and the public `eval_term`
+/// evaluators that had no depth bound at all – and the public `eval_term`
 /// had no cache either, so it re-evaluated shared sub-terms once per path,
 /// which is exponential on a hash-consed DAG.
 ///
@@ -88,8 +88,8 @@ fn eval_cached(
                     TermKind::BitVecConst { value, width } => {
                         // `ModelValue::BitVec` carries a `BigUint`, so every
                         // width is representable exactly. An earlier form took
-                        // `value.iter_u64_digits().next()` — the *low 64 bits*
-                        // — regardless of the declared width, so a 128-bit
+                        // `value.iter_u64_digits().next()` – the *low 64 bits*
+                        // – regardless of the declared width, so a 128-bit
                         // constant silently became a different value of the
                         // same declared width, and `validate_assertion` could
                         // certify a model that does not satisfy the assertion.
@@ -1258,7 +1258,7 @@ mod bitvec_const_tests {
 
         let mut model = Model::new();
         model.assign_bitvec(x, 0, 128);
-        // `!0` at 128 bits is 128 one-bits — the full width, not the low 64.
+        // `!0` at 128 bits is 128 one-bits – the full width, not the low 64.
         assert_eq!(
             eval_term(not_x, &manager, &model),
             Some(ModelValue::BitVec {

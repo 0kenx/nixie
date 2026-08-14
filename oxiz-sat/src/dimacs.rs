@@ -147,7 +147,7 @@ impl DimacsParser {
                     .map_err(|_| DimacsError::Parse(format!("Invalid literal: {token}")))?;
 
                 if lit_val == 0 {
-                    // End of clause. Always hand the clause to the solver —
+                    // End of clause. Always hand the clause to the solver –
                     // including the *empty* clause. An empty clause (a lone `0`,
                     // as in `p cnf 0 1` / `0`) is the unsatisfiable unit and must
                     // be recorded: `Solver::add_clause` marks the solver
@@ -462,7 +462,7 @@ mod tests {
     // trailing empty clause).
     #[test]
     fn test_parse_empty_clause_in_middle_is_unsat() {
-        // (x1) ∧ (empty) — satisfiable by x1=true except for the empty clause.
+        // (x1) ∧ (empty) – satisfiable by x1=true except for the empty clause.
         let cnf = "p cnf 1 2\n1 0\n0\n";
         let mut parser = DimacsParser::new();
         let mut solver = Solver::new();

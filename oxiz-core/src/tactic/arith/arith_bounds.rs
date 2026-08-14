@@ -37,7 +37,7 @@ use core::fmt;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 
-/// Variable identifier — the underlying variable term's raw [`TermId`]
+/// Variable identifier – the underlying variable term's raw [`TermId`]
 /// value, used directly as a stable per-goal key.
 pub type VarId = usize;
 
@@ -175,7 +175,7 @@ impl ArithBoundsTactic {
         self.stats = ArithBoundsStats::default();
     }
 
-    // -- real extraction/analysis (requires `&TermManager`) -----------------
+    // ======== real extraction/analysis (requires `&TermManager`) ========
 
     /// Extract a variable id for `term_id` if it denotes a bare variable.
     fn as_var(term_id: TermId, manager: &TermManager) -> Option<VarId> {
@@ -359,9 +359,9 @@ impl ArithBoundsTactic {
     /// assertions.
     ///
     /// This is a real, term-aware analysis; it requires `&TermManager`
-    /// access that the registry-dispatched [`Tactic::apply`] — whose
+    /// access that the registry-dispatched [`Tactic::apply`] – whose
     /// signature is `fn apply(&self, goal: &Goal) -> Result<TacticResult>`,
-    /// with no manager parameter — structurally cannot provide. That is why
+    /// with no manager parameter – structurally cannot provide. That is why
     /// `Tactic::apply` on this type honestly reports
     /// [`TacticResult::NotApplicable`] instead of guessing; callers with
     /// `TermManager` access should call `analyze` directly.
@@ -391,14 +391,14 @@ impl ArithBoundsTactic {
 
         // Greedily drop redundant assertions. An assertion is dropped only
         // when it is provably implied by the bounds derived from the
-        // *surviving* assertions — i.e. every other assertion not already
+        // *surviving* assertions – i.e. every other assertion not already
         // dropped (the kept-so-far set together with the not-yet-processed
         // remainder). Excluding already-dropped assertions is what makes the
         // transformation sound: it prevents two syntactically-distinct but
         // logically-equivalent constraints (e.g. `x >= 5` and `5 <= x`, or two
         // copies of `x >= 5`) from mutually justifying each other's removal.
         // Were both dropped, the goal would lose the bound entirely and admit
-        // models the original forbids — a model-widening under `Precise`.
+        // models the original forbids – a model-widening under `Precise`.
         //
         // Soundness: let `K` be the final surviving set. Processing the dropped
         // assertions in reverse order, each was implied by a set contained in
@@ -652,7 +652,7 @@ mod tests {
         // Regression: two syntactically-identical bounds `x >= 5, x >= 5`
         // must NOT both be dropped. Dropping both would yield an empty goal
         // that still carries `Precision::Precise` and admits `x = 0`, which
-        // the original forbids — a model-widening (unsound) transformation.
+        // the original forbids – a model-widening (unsound) transformation.
         let mut manager = TermManager::default();
         let int_sort = manager.sorts.int_sort;
         let x = manager.mk_var("x", int_sort);
@@ -667,7 +667,7 @@ mod tests {
             .expect("test operation should succeed");
 
         match result {
-            // Either untouched, or exactly one copy dropped — but never both.
+            // Either untouched, or exactly one copy dropped – but never both.
             TacticResult::NotApplicable => {}
             TacticResult::SubGoals(goals) => {
                 assert_eq!(goals.len(), 1);

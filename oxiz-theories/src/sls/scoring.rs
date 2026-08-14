@@ -4,9 +4,7 @@
 use super::types::{ClauseId, Lit, Var};
 use std::collections::HashSet;
 
-// ============================================================================
-// Clause Weighting Schemes
-// ============================================================================
+// ======== Clause Weighting Schemes ========
 
 /// Clause weighting scheme
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -113,9 +111,7 @@ impl ClauseWeightManager {
     }
 }
 
-// ============================================================================
-// Variable Selection Heuristics
-// ============================================================================
+// ======== Variable Selection Heuristics ========
 
 /// Variable selection heuristic
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -201,9 +197,7 @@ impl Default for VarActivity {
     }
 }
 
-// ============================================================================
-// CCAnr (Conflict-driven Clause Learning with Novelty and Restart)
-// ============================================================================
+// ======== CCAnr (Conflict-driven Clause Learning with Novelty and Restart) ========
 
 /// CCAnr configuration
 #[derive(Debug, Clone)]
@@ -326,9 +320,7 @@ impl CcanrEnhancer {
     }
 }
 
-// ============================================================================
-// DDFW (Divide and Distribute Fixed Weights)
-// ============================================================================
+// ======== DDFW (Divide and Distribute Fixed Weights) ========
 
 /// DDFW configuration
 #[derive(Debug, Clone)]
@@ -440,9 +432,7 @@ impl DdfwManager {
     }
 }
 
-// ============================================================================
-// Clause Importance Tracking
-// ============================================================================
+// ======== Clause Importance Tracking ========
 
 /// Tracks importance of clauses based on conflict frequency
 #[derive(Debug)]

@@ -42,9 +42,9 @@ fn eval_bool(manager: &TermManager, term: TermId, assignment: &HashMap<TermId, b
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 1 -- And absorption must keep all other conjuncts.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn and_absorption_keeps_other_conjuncts() {
@@ -81,9 +81,9 @@ fn and_absorption_keeps_other_conjuncts() {
     assert!(eval_bool(&manager, result, &assignment));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 2 -- Or absorption must keep all other disjuncts.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn or_absorption_keeps_other_disjuncts() {
@@ -120,9 +120,9 @@ fn or_absorption_keeps_other_disjuncts() {
     assert!(!eval_bool(&manager, result, &assignment));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 3 -- factoring Or-of-Ands must keep untouched disjuncts.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn factor_or_of_ands_keeps_other_disjuncts() {
@@ -168,9 +168,9 @@ fn factor_or_of_ands_keeps_other_disjuncts() {
     assert!(eval_bool(&manager, result, &assignment));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Property test: brute-force truth-table equivalence over small random formulas.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A tiny deterministic xorshift-style PRNG so the property test has no new
 /// dependency and is fully reproducible.

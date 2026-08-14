@@ -334,14 +334,14 @@ impl Preprocessor {
     ///
     /// A soft clause that happens to have a single literal is *not* a fact:
     /// it need not hold in the optimal solution (e.g. soft `(x)` weight 1
-    /// competing against soft `(¬x)` weight 5 — the optimum violates the
+    /// competing against soft `(¬x)` weight 5 – the optimum violates the
     /// weight-1 clause, it does not force `x`). Treating such soft units as
     /// facts and using them to delete or truncate other soft clauses
     /// silently discards weight and corrupts the optimum.
     ///
-    /// Only clauses that are unconditionally true — the HARD unit clauses
+    /// Only clauses that are unconditionally true – the HARD unit clauses
     /// already produced earlier in this preprocessing pass (e.g. by
-    /// [`Self::harden_high_weight`]) — may be used as propagation facts:
+    /// [`Self::harden_high_weight`]) – may be used as propagation facts:
     /// - A soft clause containing a hard-true literal is always satisfied
     ///   regardless of the solution, so it can be dropped outright (it
     ///   never contributes to the cost).
@@ -1142,7 +1142,7 @@ mod tests {
         let result = prep.bounded_variable_elimination(soft.clone());
 
         assert_eq!(prep.stats().variables_eliminated, 0);
-        // The clauses must survive unchanged (in some order) — no resolvent
+        // The clauses must survive unchanged (in some order) – no resolvent
         // was substituted in their place.
         assert_eq!(result.len(), soft.len());
         for clause in &soft {

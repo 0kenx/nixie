@@ -1,6 +1,6 @@
 //! Indexed-identifier term construction for the SMT-LIB2 parser.
 //!
-//! SMT-LIB indexed identifiers — `(_ f i ...)` — are theory constructs, never
+//! SMT-LIB indexed identifiers – `(_ f i ...)` – are theory constructs, never
 //! user declarations. This module builds the ones whose lowering is purely
 //! syntactic (the bit-vector extend/rotate/repeat family, `divisible`, the
 //! regular-expression repetition operators) and the floating-point conversions
@@ -64,7 +64,7 @@ impl Parser<'_> {
         };
 
         match name {
-            // `((_ extract i j) x)` — the standard SMT-LIB spelling, where the
+            // `((_ extract i j) x)` – the standard SMT-LIB spelling, where the
             // indexed identifier is its own S-expression.  Without this arm it
             // fell through to the `Bool`-sorted uninterpreted-application
             // fallback below, so `(= ((_ extract 3 0) #xab) #xc)` answered
@@ -280,9 +280,9 @@ impl Parser<'_> {
     ///
     /// These all take a rounding-mode *symbol* (`RNE`/`RNA`/`RTP`/`RTN`/`RTZ`)
     /// as their first argument. A bare rounding-mode symbol is not itself a
-    /// term — it is not a declared constant, so the strict unknown-symbol check
+    /// term – it is not a declared constant, so the strict unknown-symbol check
     /// in [`Parser::parse_symbol`] would reject it if it were parsed as an
-    /// operand — so it is consumed here, while the head is being read, with
+    /// operand – so it is consumed here, while the head is being read, with
     /// [`Parser::parse_rounding_mode`].
     ///
     /// Returns `Ok(Some(rm))` when `name` is one of these operators and the

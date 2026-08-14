@@ -13,7 +13,7 @@
 //! only propagate *entailed* equalities.  `t = 0` is **not** entailed while
 //! `t = 1` is still possible, so the disjunction `t ∈ {0,1}` is never resolved
 //! and the CDCL core has no Boolean atom to branch on `t`'s value.  The
-//! result is a spurious `sat` on an `unsat` instance — a classic false-SAT of
+//! result is a spurious `sat` on an `unsat` instance – a classic false-SAT of
 //! non-convex theory combination.
 //!
 //! ## The fix
@@ -24,7 +24,7 @@
 //! atoms, then assert an explicit disjunction `(or (= t lo) … (= t hi))` as a
 //! lemma and re-solve.  Each disjunct is a fresh equality atom shared by both
 //! theories, so once CDCL picks a value the EUF congruence `f(t) = f(k)`
-//! fires and the arithmetic solver detects the conflict — exactly reproducing
+//! fires and the arithmetic solver detects the conflict – exactly reproducing
 //! what a hand-written `(assert (or (= d 0) (= d 1)))` achieves.
 //!
 //! This closes the gap for both simple UF arguments (`f(d)`) and compound ones
@@ -40,7 +40,7 @@
 //! lies in `[lo, hi]`), so adding it can never change satisfiability.  Bounds
 //! come only from **direct single-variable** arithmetic atoms
 //! (`(>= d 0)`, `(< d 5)`, `(= d 3)`) that are unit-propagated to true at
-//! decision level 0 — i.e. they are theorems of the formula and hold in every
+//! decision level 0 – i.e. they are theorems of the formula and hold in every
 //! model.  A model-consistency guard backstops any derivation bug.
 //!
 //! Multi-variable equalities are deliberately *not* used to transfer bounds
@@ -96,7 +96,7 @@ const PER_ROUND_CAP: usize = 32;
 /// within this many milliseconds.  The refinement re-solves the whole problem
 /// from scratch, so on a hard instance (slow first solve) it would roughly
 /// double the runtime; skipping it there preserves the original fast answer.
-/// Easy instances — where the technique actually closes a non-convex gap —
+/// Easy instances – where the technique actually closes a non-convex gap –
 /// solve in well under this budget.
 pub(super) const CASE_SPLIT_REFINE_BUDGET_MS: u64 = 5000;
 
@@ -124,7 +124,7 @@ impl Solver {
     ///
     /// Returns `true` iff at least one new case-split lemma was asserted, in
     /// which case the caller resets the theory state and re-solves.  Returns
-    /// `false` when there is nothing more to split — the candidate `sat` then
+    /// `false` when there is nothing more to split – the candidate `sat` then
     /// stands.
     pub(super) fn refine_int_case_split(&mut self, manager: &mut TermManager) -> bool {
         // Not gated on `self.arith.is_integer()`: the Solver always constructs
@@ -152,7 +152,7 @@ impl Solver {
             .collect();
         let mut bounds = self.compute_int_bounds();
         // LP-optimization fallback for UF-arguments whose finite range comes
-        // from a bounded *difference* of free variables — invisible to both the
+        // from a bounded *difference* of free variables – invisible to both the
         // per-variable interval fixpoint above and to simplex bound propagation
         // (e.g. `D = fmt1 - fmt0 - 2 ∈ {0..4}`).  Minimize then maximize each
         // such term over the simplex feasible region (`ArithSolver::lp_int_bounds`,
@@ -194,7 +194,7 @@ impl Solver {
             }
             if let Some(val) = model_vals.get(t).and_then(|v| *v) {
                 if val < lo || val > hi {
-                    // Derived range excludes the model the theory just built —
+                    // Derived range excludes the model the theory just built –
                     // our bounds are wrong for this term; do not prune.
                     continue;
                 }
@@ -231,7 +231,7 @@ impl Solver {
     /// The assertions are scanned *after* preprocessing (purification +
     /// compound-argument abstraction), so a compound UF argument like
     /// `f(fmt1 + 1)` is already represented by its fresh abstraction proxy,
-    /// which is exactly the plain variable EUF/Arith share — the right thing
+    /// which is exactly the plain variable EUF/Arith share – the right thing
     /// to split.
     fn collect_int_uf_args(&self, manager: &TermManager) -> Vec<TermId> {
         let int_sort = manager.sorts.int_sort;
@@ -267,7 +267,7 @@ impl Solver {
     ///
     /// Only single-variable atoms (`(>= d 0)`, `(< d 5)`, `(= d 3)`) are used:
     /// they are theorems of the formula (level 0), so any bound derived from
-    /// them holds in all models.  Multi-variable equalities are excluded — see
+    /// them holds in all models.  Multi-variable equalities are excluded – see
     /// the module-level soundness note.
     fn compute_int_bounds(&self) -> FxHashMap<TermId, (Option<i64>, Option<i64>)> {
         let mut facts: Vec<Fact> = Vec::new();
@@ -327,7 +327,7 @@ impl Solver {
     }
 
     /// `true` iff the SAT atom `var` is forced to its positive polarity at
-    /// decision level 0 — i.e. it is unit-propagated from the formula alone and
+    /// decision level 0 – i.e. it is unit-propagated from the formula alone and
     /// therefore holds in every model.  This is the soundness criterion for
     /// using the atom's constraint in bound derivation.
     fn atom_is_level0_true(&self, var: oxiz_sat::Var) -> bool {

@@ -84,12 +84,12 @@ fn pigeonhole_script(holes: usize) -> String {
     s
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --conflict-limit / --decision-limit (main.rs apply_solver_options):
 // used to be written under keys `Context::set_option` never recognises
 // ("conflict-limit"/"decision-limit" instead of "max-conflicts"/
 // "max-decisions"), so they were always silently ignored.
-// ---------------------------------------------------------------------
+// ========  ========
 
 // NOTE: `--conflict-limit`/`--decision-limit` are now recorded under the
 // keys `Context::set_option` actually recognises (`max-conflicts`/
@@ -202,11 +202,11 @@ fn memory_limit_is_honestly_reported_as_unenforced_not_silently_accepted() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --strategy: "portfolio" now really dispatches to the parallel-portfolio
 // solver; unrecognised values (e.g. "dpll") are reported honestly instead
 // of being silently accepted and ignored.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn strategy_portfolio_dispatches_the_real_portfolio_solver() {
@@ -261,11 +261,11 @@ fn strategy_unrecognised_value_warns_instead_of_silently_no_oping() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --unsat-core: core *production* is now actually enabled before
 // `check-sat` runs, so `(get-unsat-core)` returns a real core instead of
 // always erroring.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn unsat_core_produces_a_real_core_not_an_error() {
@@ -297,10 +297,10 @@ fn unsat_core_produces_a_real_core_not_an_error() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --validate-model: now actually evaluates every assertion under the
 // reported model instead of just printing the model unchecked.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn validate_model_reports_genuine_validation_result() {
@@ -323,11 +323,11 @@ fn validate_model_reports_genuine_validation_result() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --minimize-core / --incremental / --checkpoint / --resume / --threads:
 // previously accepted-but-unimplemented flags now drive real, observable
 // behavior (each has its own regression below).
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `--minimize-core` runs a real deletion-based minimal-unsat-core search and
 /// reports a strictly smaller core than the full assertion set.
@@ -359,7 +359,7 @@ fn minimize_core_reports_a_minimal_core() {
 }
 
 /// `--incremental` carries a single persistent context across multiple input
-/// files, so a declaration in the first file is still in scope in the second —
+/// files, so a declaration in the first file is still in scope in the second –
 /// something the default (fresh-context-per-file) batch path deliberately does
 /// not do.
 #[test]
@@ -486,7 +486,7 @@ fn checkpoint_and_resume_round_trip() {
 }
 
 /// `--ml-tactic-selection` extracts features, recommends a tactic, and still
-/// solves correctly — surfacing the recommendation as a comment.
+/// solves correctly – surfacing the recommendation as a comment.
 #[test]
 fn ml_tactic_selection_recommends_and_solves() {
     let script = write_temp_smt2(
@@ -514,11 +514,11 @@ fn ml_tactic_selection_recommends_and_solves() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --enhanced-errors: now wires oxiz-core's existing (previously unused by
 // the CLI) `OxizError::enhance` for a real hint/suggestion instead of doing
 // nothing.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn enhanced_errors_adds_a_real_hint() {
@@ -555,12 +555,12 @@ fn enhanced_errors_adds_a_real_hint() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // processor.rs: `--stats` used to always report 0 decisions/propagations/
 // conflicts/restarts for file-based runs, because each file solved on its
 // own freshly constructed `Context` while the outer (never-solved-against)
 // `Context` was what `--stats` actually read from.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn stats_reports_real_nonzero_counters_for_file_runs() {
@@ -590,11 +590,11 @@ fn stats_reports_real_nonzero_counters_for_file_runs() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // format.rs output_results: `-o` with multiple input files used to
 // truncate-and-overwrite the output file once per result, so only the last
 // file's result ever survived on disk.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn output_flag_keeps_every_result_across_multiple_files() {
@@ -642,11 +642,11 @@ fn output_flag_keeps_every_result_across_multiple_files() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Exit code: solver/parse errors used to always exit 0 unless
 // --cicd-strict was explicitly passed, so shell scripts / CI steps
 // checking `$?` could never detect a failed solve.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn parse_error_exits_nonzero_without_any_cicd_flag() {
@@ -691,7 +691,7 @@ fn sat_result_still_exits_zero() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // --timeout (main.rs `supervise_timeout`): a wall-clock `--timeout` must
 // actually bound the normal solving path and report "unknown" rather than
 // hang forever or fabricate an answer. Enforcement is delegated to a thin
@@ -699,7 +699,7 @@ fn sat_result_still_exits_zero() {
 // can be starved for far longer than the deadline by the abandoned,
 // CPU-bound solver under load; these tests lock in that the deadline is
 // honored promptly and honestly.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Spawn `oxiz` with `args`, polling until it exits or `hard_kill_after`
 /// elapses (a safety net so a regression in `--timeout` cannot hang the whole

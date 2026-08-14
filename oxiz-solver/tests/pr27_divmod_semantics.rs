@@ -9,12 +9,12 @@
 //! Every script below declares `(set-logic QF_LIA)` explicitly. This is not
 //! decorative: `arith_axioms::instantiate_arith_axioms` only asserts the
 //! Euclidean defining axioms in *integer mode*
-//! (`self.arith.is_integer()`) — real mode leaves `div`/`mod` deliberately
+//! (`self.arith.is_integer()`) – real mode leaves `div`/`mod` deliberately
 //! undefined, per that module's own doc comment, because "the quotient
 //! being an integer" is what the axioms rest on. Integer mode is decided
 //! from the declared logic, not merely from every operand happening to be
 //! `Int`-sorted, so a script that never calls `set-logic` at all answers
-//! `unknown` for a `div`/`mod` query regardless of declared sorts — a
+//! `unknown` for a `div`/`mod` query regardless of declared sorts – a
 //! pre-existing, logic-string-driven gate this file does not change or
 //! attempt to relax, and works around the documented way (declaring the
 //! logic, exactly as a conformant SMT-LIB2 script must).
@@ -22,7 +22,7 @@
 //! ## The convention being pinned
 //!
 //! For a nonzero divisor `n`, `(div m n)` and `(mod m n)` are the unique
-//! `q`, `r` satisfying `m = n·q + r` with `0 ≤ r < |n|` — the remainder is
+//! `q`, `r` satisfying `m = n·q + r` with `0 ≤ r < |n|` – the remainder is
 //! never negative, regardless of either operand's sign. Hand-computed
 //! expectations used below:
 //!

@@ -568,7 +568,7 @@ fn rebuild(
             unreachable!("leaves are resolved directly in `expand`, never scheduled as a Combine")
         }
 
-        // ===== Boolean connectives =====
+        // ======== Boolean connectives ========
         TermKind::Not(a) => {
             let a = sub(a);
             manager.mk_not(a)
@@ -598,7 +598,7 @@ fn rebuild(
             manager.mk_ite(c, t, e)
         }
 
-        // ===== Equality / distinct =====
+        // ======== Equality / distinct ========
         TermKind::Eq(a, b) => {
             let a = sub(a);
             let b = sub(b);
@@ -609,7 +609,7 @@ fn rebuild(
             manager.mk_distinct(new)
         }
 
-        // ===== Arithmetic =====
+        // ======== Arithmetic ========
         TermKind::Neg(a) => {
             let a = sub(a);
             manager.mk_neg(a)
@@ -658,7 +658,7 @@ fn rebuild(
             manager.mk_ge(a, b)
         }
 
-        // ===== Arrays =====
+        // ======== Arrays ========
         TermKind::Select(arr, idx) => {
             let arr = sub(arr);
             let idx = sub(idx);
@@ -671,7 +671,7 @@ fn rebuild(
             manager.mk_store(arr, idx, val)
         }
 
-        // ===== Bit vectors =====
+        // ======== Bit vectors ========
         TermKind::BvConcat(a, b) => {
             let a = sub(a);
             let b = sub(b);
@@ -771,7 +771,7 @@ fn rebuild(
             manager.mk_bv_sle(a, b)
         }
 
-        // ===== Strings =====
+        // ======== Strings ========
         TermKind::StrConcat(a, b) => {
             let a = sub(a);
             let b = sub(b);
@@ -869,7 +869,7 @@ fn rebuild(
             manager.mk_str_from_code(a)
         }
 
-        // ===== Floating point =====
+        // ======== Floating point ========
         TermKind::FpAbs(a) => {
             let a = sub(a);
             manager.mk_fp_abs(a)
@@ -1009,13 +1009,13 @@ fn rebuild(
             manager.mk_ubv_to_fp(rm, arg, eb, sb)
         }
 
-        // ===== Uninterpreted function application =====
+        // ======== Uninterpreted function application ========
         TermKind::Apply { func, args } => {
             let args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(a)).collect();
             manager.intern(TermKind::Apply { func, args }, sort)
         }
 
-        // ===== Algebraic datatypes =====
+        // ======== Algebraic datatypes ========
         TermKind::DtConstructor { constructor, args } => {
             let args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(a)).collect();
             manager.intern(TermKind::DtConstructor { constructor, args }, sort)

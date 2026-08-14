@@ -38,7 +38,7 @@ use smallvec::SmallVec;
 /// a silent catch-all, so array, string, bit-vector, floating-point,
 /// datatype, `ite`, `not` and `implies` sub-terms were invisible: a bound
 /// variable occurring only under one of them was reported as absent, and the
-/// enclosing term was dropped as "ground" — losing the trigger entirely.
+/// enclosing term was dropped as "ground" – losing the trigger entirely.
 fn trigger_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
     match kind {
         TermKind::Forall { .. }
@@ -275,7 +275,7 @@ impl TriggerGenerator {
     /// Pre-order walk with an explicit stack and a visited set (children are
     /// pushed in reverse so they are processed left-to-right, preserving the
     /// candidate order of the recursive form). Terms below a nested binder
-    /// are not descended into — see [`trigger_children`].
+    /// are not descended into – see [`trigger_children`].
     fn collect_candidates_recursive(
         &self,
         term: TermId,
@@ -304,8 +304,8 @@ impl TriggerGenerator {
             // other kind is merely traversed through.
             //
             // A trigger is matched against the e-graph, so its head symbol
-            // decides how many terms it can fire on.  An interpreted head —
-            // `=`, `<`, `<=`, `>`, `>=`, and arithmetic generally — is shared
+            // decides how many terms it can fire on.  An interpreted head –
+            // `=`, `<`, `<=`, `>`, `>=`, and arithmetic generally – is shared
             // by every atom of the whole problem, so a pattern like the guard
             // `x <= y` of `∀x y. x ≤ y ⇒ f(x) ≤ f(y)` matches *every*
             // inequality in the e-graph, including the ones its own instances
@@ -320,7 +320,7 @@ impl TriggerGenerator {
             // This restriction used to be masked rather than enforced: the
             // walk that reaches candidates bailed out at `Implies` and
             // `Select` (see `contains_bound_var_quick`), so a comparison under
-            // a `⇒` guard — the usual place one appears — was never reached.
+            // a `⇒` guard – the usual place one appears – was never reached.
             // Now that the walk is exhaustive, the rule has to be stated.
             let proposable = matches!(&t.kind, TermKind::Apply { .. } | TermKind::Select(_, _));
             if proposable && self.is_good_candidate(current, var_names, manager)? {
@@ -365,7 +365,7 @@ impl TriggerGenerator {
 
             // Predicates satisfy the *shape* requirements of a pattern, but an
             // interpreted head makes them match every atom in the e-graph.
-            // `collect_candidates_recursive` therefore never offers one — see
+            // `collect_candidates_recursive` therefore never offers one – see
             // the head restriction there for why.
             TermKind::Eq(_, _)
             | TermKind::Lt(_, _)
@@ -393,7 +393,7 @@ impl TriggerGenerator {
     /// Iterative with a visited set. This predicate is evaluated at *every*
     /// node of [`Self::collect_candidates_recursive`], so on a hash-consed
     /// DAG the old unmemoized recursion re-expanded shared sub-terms as a
-    /// tree — a body built as `x1 = f(x0, x0); x2 = f(x1, x1); …` turned
+    /// tree – a body built as `x1 = f(x0, x0); x2 = f(x1, x1); …` turned
     /// trigger generation into an exponential hang at assert time. It also
     /// recursed once per level of nesting with no bound.
     fn contains_bound_var_quick(
@@ -995,7 +995,7 @@ mod deep_walk_tests {
     /// the only admissible candidates are `f(x)` and `f(y)`: the guard `x ≤ y`
     /// and the consequent `f(x) ≤ f(y)` are headed by `≤`, an interpreted
     /// relation shared by every arithmetic atom in the problem, so using either
-    /// as a trigger makes the axiom fire on every inequality in the e-graph —
+    /// as a trigger makes the axiom fire on every inequality in the e-graph –
     /// including the ones its own instances add.  That matching loop turned the
     /// UFLIA / UFLRA / AUFLIA `sat`-certification benchmarks from a
     /// millisecond `sat` into an unbounded instantiation run.

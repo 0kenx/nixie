@@ -23,7 +23,7 @@ fn is_unsat(r: &TheoryCheckResult) -> bool {
     matches!(r, TheoryCheckResult::Unsat(_))
 }
 
-// ===== Barrel-shifter over-shift =====
+// ======== Barrel-shifter over-shift ========
 
 /// `bvshl 0xFF #x10` on width 8: shift amount 16 (bit 4 set) is >= width, so
 /// the result must be 0, not the identity `0xFF` the buggy encoder produced.
@@ -124,7 +124,7 @@ fn shl_in_range_still_correct() {
     assert!(is_sat(&solver.check().expect("check")));
 }
 
-// ===== Division/remainder no-wrap =====
+// ======== Division/remainder no-wrap ========
 
 /// The headline finding: width 4, `bvudiv #b0001 #b0011` (1 / 3) has quotient 0.
 /// The spurious quotient 5 (which only satisfied the equation via the wrap

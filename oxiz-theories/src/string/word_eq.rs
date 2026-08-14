@@ -685,9 +685,7 @@ enum NielsenResult {
     Continue(Vec<WordEquation>),
 }
 
-// ============================================================================
-// Length Abstraction
-// ============================================================================
+// ======== Length Abstraction ========
 
 /// Length abstraction for word equations
 #[derive(Debug)]

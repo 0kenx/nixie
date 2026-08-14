@@ -18,7 +18,7 @@ pub use printer::Printer;
 // term printers instead of keeping its own copy of the escape rules.
 //
 // `pub` (not `pub(crate)`): reused outside `oxiz-core` too, by any site in
-// the workspace that emits SMT-LIB-shaped text containing a string value —
+// the workspace that emits SMT-LIB-shaped text containing a string value –
 // e.g. `(error "...")` responses in `oxiz-solver`/`oxiz-cli` and proof
 // metadata in `oxiz-core::smtlib::printer::proof`, so a `"` or control
 // character in user-supplied text cannot break the surrounding syntax.

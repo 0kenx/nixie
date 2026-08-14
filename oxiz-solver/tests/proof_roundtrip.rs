@@ -64,7 +64,7 @@ fn test_unsat_proof_roundtrip() {
     let mut ctx = Context::new();
     ctx.set_proof_log_path(Some(log_path.clone()));
 
-    // Assert both true and false — immediately UNSAT.
+    // Assert both true and false – immediately UNSAT.
     let t = ctx.terms.mk_true();
     let f = ctx.terms.mk_false();
     ctx.assert(t);

@@ -549,7 +549,7 @@ impl super::Polynomial {
 
     /// Evaluate the polynomial completely (all variables assigned).
     ///
-    /// (Numeric substitution of `assignment` into the polynomial's terms —
+    /// (Numeric substitution of `assignment` into the polynomial's terms –
     /// no code/expression execution of any kind is involved.)
     ///
     /// # Panics
@@ -604,7 +604,7 @@ impl super::Polynomial {
     ///
     /// # Panics
     ///
-    /// Panics if the polynomial is genuinely multivariate in `var` — i.e. it
+    /// Panics if the polynomial is genuinely multivariate in `var` – i.e. it
     /// still contains a variable other than `var` after substituting `value`
     /// for `var`, so it cannot be reduced to a scalar. Callers that cannot
     /// guarantee univariate-in-`var` input (e.g. because it comes from
@@ -1272,8 +1272,8 @@ impl super::Polynomial {
         // `count_roots_in_interval` counts roots in the *open* interval
         // (a, b) (standard Sturm's theorem convention). The search below
         // seeds (0, bound) for positive roots and (-bound, 0) for negative
-        // roots, so a root at exactly x=0 — the shared boundary of both
-        // ranges — falls outside both open intervals and would otherwise be
+        // roots, so a root at exactly x=0 – the shared boundary of both
+        // ranges – falls outside both open intervals and would otherwise be
         // silently dropped. Check for it explicitly up front, the same way
         // an exact root found at a bisection midpoint is recorded below.
         if p.eval_at(var, &BigRational::zero())
@@ -1427,7 +1427,7 @@ impl super::Polynomial {
         Some(x)
     }
 
-    // ── Dense i64 coefficient fast paths (SIMD-accelerated) ─────────────────
+    // ======== Dense i64 coefficient fast paths (SIMD-accelerated) ========
 
     /// Extract the dense integer coefficient vector for a univariate polynomial.
     ///
@@ -1440,8 +1440,8 @@ impl super::Polynomial {
         }
         // Require the polynomial to be univariate *in `var`* specifically:
         // at most one variable overall (`is_univariate()`), and that
-        // variable — if any (a nonzero constant has none, `max_var() ==
-        // NULL_VAR`) — must be `var` itself. The previous `&&` accepted any
+        // variable – if any (a nonzero constant has none, `max_var() ==
+        // NULL_VAR`) – must be `var` itself. The previous `&&` accepted any
         // multivariate polynomial whose *highest-indexed* variable happened
         // to equal `var`, silently dropping every other variable's
         // contribution when the coefficients below are extracted purely by
@@ -1542,7 +1542,7 @@ impl super::Polynomial {
     }
 }
 
-// ── Multivariate resultant via Sylvester matrix + Berkowitz determinant ─────
+// ======== Multivariate resultant via Sylvester matrix + Berkowitz determinant ========
 
 /// Exact resultant `Res_var(p, q)` for polynomials whose coefficients with
 /// respect to `var` may themselves be polynomials in other variables.

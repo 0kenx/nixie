@@ -629,7 +629,7 @@ mod tests {
         assert!(sv.compatible_with(&s1)); // variable matches anything
     }
 
-    // ===== Regression pins for the explicit-machine rewrite =====
+    // ======== Regression pins for the explicit-machine rewrite ========
 
     /// A pattern and a candidate far deeper than any native stack could
     /// carry: the retired lockstep recursion spent one frame per level and

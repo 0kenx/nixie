@@ -49,7 +49,7 @@ pub enum ClauseTier {
 #[derive(Debug, Clone)]
 #[repr(align(64))]
 pub struct Clause {
-    /// The literals in this clause — SmallVec placed FIRST for optimal struct
+    /// The literals in this clause – SmallVec placed FIRST for optimal struct
     /// layout: 7 inline lits (28B) + len/cap (16B) = 44B, leaving 20B for
     /// metadata in the same 64-byte cache line. Eliminates heap spills for
     /// 5-7 literal clauses (the previous four-element inline capacity spilled
@@ -160,7 +160,7 @@ impl Clause {
     /// learning time rather than waiting for `record_usage` to promote them.
     /// Without this, a freshly-learned glue-2 clause lands in `Local` and is
     /// eligible for the aggressive 75%-per-cycle Local sweep before it ever gets
-    /// reused — which is catastrophic on multiplier circuits (e.g. `longmult`),
+    /// reused – which is catastrophic on multiplier circuits (e.g. `longmult`),
     /// where the short glue-1/glue-2 clauses *are* the propagating cascade that
     /// collapses the formula. Promotion is one-way upward (never demotes a
     /// clause that `record_usage`/`promote_to_core` already lifted higher).
@@ -438,7 +438,7 @@ impl ClauseDatabase {
     /// those not-yet-cleaned stale watchers would suddenly reference a live but
     /// unrelated clause. Propagation does not re-validate that the watched literal
     /// belongs to the clause, so it could force a bogus unit propagation (or corrupt
-    /// the real watchers' positions via its in-place swaps) — an unsound result that
+    /// the real watchers' positions via its in-place swaps) – an unsound result that
     /// can flip SAT instances to UNSAT.
     ///
     /// Until a full watch-list garbage-collection pass exists (which would rewrite
@@ -451,7 +451,7 @@ impl ClauseDatabase {
         // Update statistics
         self.update_stats_add(&clause);
 
-        // Always allocate a new slot (see soundness note above — no free_list reuse).
+        // Always allocate a new slot (see soundness note above – no free_list reuse).
         let id = ClauseId::new(self.clauses.len() as u32);
         if clause.learned {
             self.num_learned += 1;
@@ -575,7 +575,7 @@ impl ClauseDatabase {
     /// Used as a rare overflow guard for the MiniSat-style growing-increment
     /// decay (see `Solver::decay_clause_activity`): the bump increment grows
     /// geometrically, so once it approaches the f64 range limit we shrink every
-    /// activity — and the increment — by a constant factor. This is O(n) but
+    /// activity – and the increment – by a constant factor. This is O(n) but
     /// fires roughly every ~230k conflicts (for the default 0.999 clause decay)
     /// instead of every conflict, replacing a per-conflict O(n) pass with an
     /// amortized O(1) one. Relative ordering (all that `reduce_clause_database`

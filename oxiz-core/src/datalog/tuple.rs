@@ -186,8 +186,8 @@ impl Ord for Value {
     /// over tuples inherits that: a sort or a `BTreeMap`/binary-search index
     /// treats two distinct values of different types as the same key, so a
     /// lookup silently returns the wrong tuple (or misses one that is
-    /// present), and `Tuple::cmp` — which stops at the first non-`Equal`
-    /// column — could not distinguish tuples that differ only by a column's
+    /// present), and `Tuple::cmp` – which stops at the first non-`Equal`
+    /// column – could not distinguish tuples that differ only by a column's
     /// *type*.
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
@@ -515,7 +515,7 @@ mod tests {
 
     /// `Ord` used to end in `_ => Ordering::Equal`, so two values of
     /// *different* variants compared `Equal` while `PartialEq` said they were
-    /// unequal — a broken total order. Every ordered structure built over
+    /// unequal – a broken total order. Every ordered structure built over
     /// tuples (sorts, binary-search probes, `BTreeMap` indexes) silently
     /// treated such values as the same key.
     #[test]

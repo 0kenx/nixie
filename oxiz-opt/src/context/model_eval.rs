@@ -33,21 +33,21 @@ enum EvalTask {
 /// The model maps *leaf* terms (variables / atoms the solver assigned) to
 /// concrete [`ModelValue`]s. A soft constraint term, however, may be an
 /// arbitrary boolean expression such as `(not p)`, `(and p q)`, or an
-/// arithmetic atom like `(<= x 3)` — none of which appear directly as a
+/// arithmetic atom like `(<= x 3)` – none of which appear directly as a
 /// model key, so the term structure has to be walked, looking leaves up in
 /// the model.
 ///
 /// That walk used to be a pair of mutually recursive functions. Both defects
 /// that entails are fixed here:
 ///
-/// * **Stack depth** — soft-constraint terms come straight from user
+/// * **Stack depth** – soft-constraint terms come straight from user
 ///   `.smt2` input, so nesting depth is attacker-controlled and the native
 ///   stack could be blown. The walk now runs on an explicit heap stack.
 ///   A depth cap was not an option: both entry points return `Option`,
 ///   where `None` already means "undeterminable", so a cap would be
 ///   indistinguishable from a genuine unknown and would silently inflate
 ///   the reported cost.
-/// * **Shared sub-terms** — the term DAG is hash-consed, so the recursive
+/// * **Shared sub-terms** – the term DAG is hash-consed, so the recursive
 ///   form re-expanded every shared node, taking exponential time on a DAG
 ///   with only linearly many nodes. Both interpretations are memoized on
 ///   `TermId`, making the walk linear in DAG size. Memoization is sound
@@ -57,7 +57,7 @@ enum EvalTask {
 ///
 /// Operands are expanded eagerly rather than short-circuited (the recursive
 /// form stopped early on, say, a `false` conjunct). That is observationally
-/// equivalent — evaluation has no side effects — and the memo keeps the
+/// equivalent – evaluation has no side effects – and the memo keeps the
 /// extra work bounded by DAG size.
 struct ModelEvaluation<'a> {
     model: &'a FxHashMap<TermId, ModelValue>,

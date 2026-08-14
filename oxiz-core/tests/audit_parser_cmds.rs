@@ -26,9 +26,9 @@
 use oxiz_core::ast::TermManager;
 use oxiz_core::smtlib::{Command, parse_script};
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding: define-fun-rec / define-funs-rec silently skipped
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn define_fun_rec_is_rejected_not_silently_skipped() {
@@ -97,9 +97,9 @@ fn genuinely_unknown_command_is_still_leniently_skipped() {
     assert_eq!(commands.len(), 2);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding: set-option silently drops numeral/string values
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn set_option_preserves_numeral_value() {
@@ -160,9 +160,9 @@ fn set_option_missing_value_is_an_error() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding: declare-datatypes only parses the first constructor group
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn declare_datatypes_multi_datatype_parses_all_groups() {
@@ -245,9 +245,9 @@ fn declare_datatype_selector_with_parametric_sort_parses() {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding: declare-sort silently skipped
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn declare_sort_is_implemented_not_silently_skipped() {

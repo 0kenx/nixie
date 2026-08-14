@@ -44,7 +44,7 @@
 //!
 //! * **Reducing operands.** `bv_fold` takes values already in `[0, 2^width)` as
 //!   a precondition, and `TermManager::mk_bitvec` does not enforce it, so every
-//!   leaf goes through [`bv_fold::bv_wrap_unsigned`] on the way in — the same
+//!   leaf goes through [`bv_fold::bv_wrap_unsigned`] on the way in – the same
 //!   normalisation the term builder's `bv_const_unsigned`, the SMT-LIB printer
 //!   and the model builder apply.  A negative literal therefore means the same
 //!   thing here as everywhere else.
@@ -58,7 +58,7 @@
 //!
 //! This file used to carry its own copy of the folding rules, and that copy had
 //! diverged three times: a shift distance read out of its low 64-bit limb (so
-//! `bvshl x (_ bv2^64 65)` folded to `x` instead of zero — a manufacturable
+//! `bvshl x (_ bv2^64 65)` folded to `x` instead of zero – a manufacturable
 //! spurious `unsat`), a negative distance shifted by its magnitude, and no arm
 //! at all for five of the operators `bv_fold` folds.
 //!
@@ -68,7 +68,7 @@
 //! assertions, so their nesting depth is input-controlled, and this runs on
 //! whatever stack `check_sat`'s caller has.  A stack overflow aborts the process
 //! instead of returning an answer, and there is no error channel to report "too
-//! deep" through — the only two answers are a value and "not evaluable", and
+//! deep" through – the only two answers are a value and "not evaluable", and
 //! reporting "not evaluable" for a term that does have a value is exactly the
 //! false `Sat` described above.  So the depth is removed rather than capped.
 //!
@@ -77,7 +77,7 @@
 //! [`ENCODE_DEPTH_LIMIT`](crate::solver::ENCODE_DEPTH_LIMIT) before `check`
 //! reaches the array checks at all, but that bound was never a stack bound:
 //! with `opt-level = 0` the recursive version's native frame measured about
-//! 6.5 KiB, so a 1 MiB worker overflowed at roughly 160 levels — far below
+//! 6.5 KiB, so a 1 MiB worker overflowed at roughly 160 levels – far below
 //! the gate's historical value of 2000.  A depth-200 bit-vector term in a
 //! select-value equality aborted the process with the gate reporting nothing
 //! wrong.
@@ -113,7 +113,7 @@ mod tests;
 /// A folded bit-vector value: the number, and the width it was folded at.
 ///
 /// The width travels with the value because it is not always the operand's
-/// declared sort — a variable takes both from the equality that bound it, and
+/// declared sort – a variable takes both from the equality that bound it, and
 /// `concat` and `extract` produce a width neither operand has.
 type BvValue = (BigInt, u32);
 
@@ -243,7 +243,7 @@ enum Frame {
     },
     /// `and` / `or`, part way through its operands.
     Connective {
-        /// `true` for `and` — the value that lets the scan continue, and the
+        /// `true` for `and` – the value that lets the scan continue, and the
         /// value of the connective over no operands.
         all: bool,
         /// The whole operand list; `operands[next..]` is what remains.
@@ -467,9 +467,9 @@ fn open(
 /// Read a term that must produce a bit-vector value.
 ///
 /// Every `TermKind` variant of bit-vector sort has an arm, plus `ite`.  The
-/// catch-all is reached by kinds that are not bit-vector-sorted — the four
+/// catch-all is reached by kinds that are not bit-vector-sorted – the four
 /// bit-vector comparisons are Boolean, `select` is an array read with no model
-/// here, `Apply` is an uninterpreted function — and it is a catch-all rather
+/// here, `Apply` is an uninterpreted function – and it is a catch-all rather
 /// than an exhaustive listing because `TermKind` has well over a hundred
 /// variants.  Reaching it costs a possible refutation; see the module docs for
 /// why that is a real cost.
@@ -537,7 +537,7 @@ fn open_bits(term: TermId, kind: &TermKind, var_equalities: &Bindings) -> Option
 ///
 /// A Boolean *variable* is deliberately absent: nothing here binds one, so it
 /// could only be guessed.  Equality between two Boolean operands is also absent
-/// — the [`Compare::Eq`] arm opens both sides in [`Position::Bits`], so a
+/// – the [`Compare::Eq`] arm opens both sides in [`Position::Bits`], so a
 /// Boolean operand simply does not fold, which is the conservative answer.
 fn open_truth(kind: &TermKind) -> Option<Opened> {
     let compare = |cmp: Compare, left: TermId, right: TermId| {

@@ -4,7 +4,7 @@
 //! nonlinear monomial is a fresh variable, driven by a CDCL core: the Boolean
 //! structure of the formula is encoded as clauses over arithmetic-comparison
 //! *atoms*, the Simplex theory checks consistency of the atoms currently
-//! asserted true, and conflicts — Boolean or theory — are explained as
+//! asserted true, and conflicts – Boolean or theory – are explained as
 //! literals, subjected to 1-UIP analysis, and *learned* as new clauses that
 //! prune the rest of the search (`theory_arith_nl.h::process_non_linear`,
 //! `branch_nl_int_var`, the standard CDCL loop).
@@ -14,7 +14,7 @@
 //!   * Top-level assertions are Tseitin-encoded into CNF over arithmetic atoms.
 //!     Monomials become fresh Simplex variables (the *relaxation*).
 //!   * A CDCL loop searches: Boolean unit propagation, then a lazy theory check
-//!     — impose the true atoms in the Simplex and test feasibility. An
+//!     – impose the true atoms in the Simplex and test feasibility. An
 //!     infeasible theory state yields a conflict clause (the asserted atoms
 //!     responsible); a feasible-but-non-integer state yields an integer
 //!     *branching lemma* (`v ≤ k ∨ v ≥ k+1`, decided true first), z3's
@@ -75,7 +75,7 @@ pub fn cdcl_nia_search(
     }
     // A genuine `false` assertion makes the formula unsat regardless of other
     // (even un-encodable) assertions. Otherwise, if anything bailed, we cannot
-    // soundly encode the formula — concede and fall through.
+    // soundly encode the formula – concede and fall through.
     if genuine_false {
         return Some(NlDispatchResult::Unsat);
     }
@@ -103,9 +103,9 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Atoms & Tseitin CNF encoder
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct AtomKey {
@@ -147,7 +147,7 @@ enum Encoded {
     Lit(i32), // signed SAT literal; var = |lit| (1-based)
     /// The sub-term uses structure the encoder cannot polynomialise (e.g.
     /// `distinct`, `ite`, quantifiers). Propagated up so the caller concedes
-    /// `None` (falls through) rather than guessing — never `Unsat`.
+    /// `None` (falls through) rather than guessing – never `Unsat`.
     Bail,
 }
 
@@ -382,9 +382,9 @@ fn negate_enc(e: Encoded) -> Encoded {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // CDCL(T) solver with a Simplex theory
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 const ORIG_REASON: u32 = 0;
 const DECISION_REASON_BASE: u32 = 1_000_000_000;
@@ -408,7 +408,7 @@ struct CdclSolver<'a> {
     trail: Vec<i32>,
     trail_lim: Vec<usize>,
     clauses: Vec<Vec<i32>>,
-    /// Number of original (formula + gate) clauses — clauses at and above
+    /// Number of original (formula + gate) clauses – clauses at and above
     /// this index are learnt. A level-0 conflict on an original clause is a
     /// genuine unsat; on a learnt clause it means the learner produced an
     /// unsound clause, so we discard the learnts and restart instead of
@@ -458,7 +458,7 @@ impl<'a> CdclSolver<'a> {
         Some(s)
     }
 
-    // ── polynomial translation into the Simplex (monomials → fresh vars) ──
+    // ======== polynomial translation into the Simplex (monomials → fresh vars) ========
 
     /// Register `term` as a Simplex variable (idempotent), keeping the reverse
     /// `var_term` map in sync for product distribution.
@@ -607,7 +607,7 @@ impl<'a> CdclSolver<'a> {
 
     /// Impose atom `atom_var`'s Simplex constraint according to its assigned
     /// `value` (+1 true / −1 false). Comparison atoms impose only when true
-    /// (their falsity is handled by the clause layer — the relaxation omits
+    /// (their falsity is handled by the clause layer – the relaxation omits
     /// them); split atoms impose on *both* polarities (the two sides of the
     /// branching lemma). Returns `None` if the constraint cannot be expressed.
     fn impose(&mut self, atom_var: i32, value: i8) -> Option<()> {
@@ -652,7 +652,7 @@ impl<'a> CdclSolver<'a> {
         Some(())
     }
 
-    // ── CDCL core ──
+    // ======== CDCL core ========
 
     fn lit_value(&self, lit: i32) -> i8 {
         let v = lit.unsigned_abs() as usize;
@@ -733,7 +733,7 @@ impl<'a> CdclSolver<'a> {
     /// encoder defects produced unsound learnt clauses → wrong `Unsat`). The
     /// `num_original` guard and the tested analyzer are staged for when the
     /// encoder is verified.
-    /// Conflict analysis — SOUND CONCEDE-STUB. Clause learning is disabled:
+    /// Conflict analysis – SOUND CONCEDE-STUB. Clause learning is disabled:
     /// re-enabling the verified-correct [`analyze_1uip`] needs the Tseitin
     /// encoder fully audited (an `and_gate` bug and reflexive-atom emission
     /// were fixed, but further latent encoder defects still produce unsound
@@ -764,7 +764,7 @@ impl<'a> CdclSolver<'a> {
         self.simplex.push();
     }
 
-    // ── Theory check (lazy): impose true atoms, test feasibility ──
+    // ======== Theory check (lazy): impose true atoms, test feasibility ========
 
     /// Impose every atom currently assigned true into the Simplex (which is at
     /// the current push level), then check feasibility. On conflict, return the
@@ -826,7 +826,7 @@ impl<'a> CdclSolver<'a> {
     /// polynomials), as a positive literal to decide. Skips degenerate `Tru`
     /// atoms (aux gates / free Booleans, which carry no constraint) and split
     /// atoms (integer branches). Returns `None` when every comparison atom is
-    /// assigned — the precondition for integer branching / model verification.
+    /// assigned – the precondition for integer branching / model verification.
     fn unassigned_comparison_atom(&self) -> Option<i32> {
         for v in 1..self.atoms.len() {
             if self.value[v] == 0
@@ -873,15 +873,15 @@ impl<'a> CdclSolver<'a> {
     /// `m = x·y` has a constant value (the product of its factors). If any
     /// monomial variable's Simplex value differs from that product, return a
     /// factor to branch on (z3's `find_nl_var_for_branching`). `None` if every
-    /// monomial is consistent. (This is model-based consistency checking —
-    /// strategy 3 of `process_non_linear` — not the blocked interval
+    /// monomial is consistent. (This is model-based consistency checking –
+    /// strategy 3 of `process_non_linear` – not the blocked interval
     /// propagation of strategy 0.)
     fn monomial_inconsistent_factor(&self) -> Option<TermId> {
         for (factors, mv) in &self.mono {
             if self.simplex.value(*mv) == self.mono_product(factors) {
                 continue;
             }
-            // Prefer a bounded factor (smallest range), else any — z3's
+            // Prefer a bounded factor (smallest range), else any – z3's
             // bounded preference keeps the branching tractable.
             let mut best: Option<(TermId, Rational64)> = None;
             let mut any: Option<TermId> = None;
@@ -908,7 +908,7 @@ impl<'a> CdclSolver<'a> {
         None
     }
 
-    // ── Main loop ──
+    // ======== Main loop ========
 
     fn solve(
         &mut self,
@@ -944,7 +944,7 @@ impl<'a> CdclSolver<'a> {
                 if self.decision_level() == 0 {
                     // A level-0 conflict on an original (formula) clause is a
                     // genuine unsat. On a *learnt* clause it means the learner
-                    // produced an unsound clause — discard all learnts and
+                    // produced an unsound clause – discard all learnts and
                     // restart rather than claim `Unsat` (soundness backstop).
                     if cid < self.num_original {
                         if std::env::var("OXIZ_NIA_DEBUG").is_ok() {
@@ -1044,7 +1044,7 @@ impl<'a> CdclSolver<'a> {
                 ));
             }
             // The relaxation is integer-consistent but the full formula (with
-            // the parts the relaxation abstracts — actual products) rejects it.
+            // the parts the relaxation abstracts – actual products) rejects it.
             // Without in-tableau monomial enforcement this branch concedes
             // (sound; an honest `Unknown` via the caller).
             return None;
@@ -1066,7 +1066,7 @@ impl<'a> CdclSolver<'a> {
     }
 }
 
-// ── Helpers ──
+// ======== Helpers ========
 
 enum TheoryResult {
     Feasible,
@@ -1120,15 +1120,15 @@ fn concrete_sat(
     true
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 1-UIP conflict analysis (pure, unit-tested)
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// First-UIP conflict analysis. Given a conflict clause (all literals false
 /// under the trail), derive the learnt clause (asserting literal at index 0)
 /// and the backtrack level, by resolving the conflict clause against the
 /// reasons of the most recent current-level literals until exactly one
-/// current-level literal remains — the unique implication point.
+/// current-level literal remains – the unique implication point.
 ///
 /// Inputs follow the standard CDCL conventions:
 /// * `value[v]`: `+1` true, `-1` false, `0` unassigned.
@@ -1139,7 +1139,7 @@ fn concrete_sat(
 /// * `current_level`: the current decision level.
 ///
 /// Returns `(learnt, backtrack_level)`; an empty `learnt` signals a level-0
-/// conflict (the conflict clause has no level>0 literal to resolve — the caller
+/// conflict (the conflict clause has no level>0 literal to resolve – the caller
 /// must treat that as a genuine unsat only if it is an original clause).
 #[allow(dead_code)]
 fn analyze_1uip(

@@ -888,7 +888,7 @@ fn test_context_level() {
     assert_eq!(solver.context_level(), 0);
 }
 
-// ===== Quantifier Tests =====
+// ======== Quantifier Tests ========
 
 #[test]
 fn test_quantifier_basic_forall() {
@@ -1222,10 +1222,10 @@ fn test_fp_constraint_data_not_empty() {
     assert!(!data.is_empty());
 }
 
-// ============================================================================
+// ========  ========
 
 // Task 2: Model Cache Tests
-// ============================================================================
+// ========  ========
 
 #[test]
 fn test_model_cache_basic() {
@@ -1318,11 +1318,11 @@ fn test_model_cache_batch_eval() {
     assert_eq!(results[1], f);
 }
 
-// ============================================================================
+// ========  ========
 
 // Task 3: Parallel Theory Checking Tests
 // (feature-gated - these test the data structures that support parallel checking)
-// ============================================================================
+// ========  ========
 
 // Task 5: Lazy Evaluation Tests
 
@@ -1515,8 +1515,8 @@ fn test_lazy_eval_eq_reflexive() {
     assert_eq!(solver.check(&mut manager), SolverResult::Sat);
 }
 
-// ---------------------------------------------------------------------------
-// Regression: GitHub issue #12 — `distinct` / `not (= t 0)` over Int/Real must
+// ========  ========
+// Regression: GitHub issue #12 – `distinct` / `not (= t 0)` over Int/Real must
 // reach the arithmetic theory, and the reported model must actually satisfy it.
 //
 // Two independent defects produced the wrong `Sat` with `x = 0`:
@@ -1524,7 +1524,7 @@ fn test_lazy_eval_eq_reflexive() {
 //      disequality was invisible to `ArithSolver`; and
 //   2. the LRA model read back only the real part of the delta-rational
 //      assignment, reporting a variable pinned at a strict bound *on* the bound.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Read the Int value a model assigns to `term`, failing the test if the model
 /// has no concrete integer for it.

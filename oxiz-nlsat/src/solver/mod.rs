@@ -121,7 +121,7 @@ pub struct SolverStats {
 /// NLSAT assigns arithmetic variables to rational sample points. When a later
 /// variable's cell is empty (or only algebraic) under that choice, the search
 /// must undo the earlier sample and try another point from the same feasible
-/// region — treating level-0 cell failure as global `Unsat` is unsound
+/// region – treating level-0 cell failure as global `Unsat` is unsound
 /// (e.g. bare `x*y = 12` with the default sample `x = 0`).
 #[derive(Debug, Clone)]
 pub(super) struct ArithTrailFrame {
@@ -131,7 +131,7 @@ pub(super) struct ArithTrailFrame {
     pub(super) region: crate::interval_set::IntervalSet,
     /// Sample points already tried for this variable at this stack depth.
     pub(super) tried: Vec<BigRational>,
-    /// True when `region` was a singleton — the value was forced by the
+    /// True when `region` was a singleton – the value was forced by the
     /// boolean atom assignment, not a free greedy choice. Needed so a later
     /// empty cell can be promoted to a valid boolean theory lemma.
     pub(super) forced: bool,
@@ -327,7 +327,7 @@ impl NlsatSolver {
         &self.clauses
     }
 
-    // ========== Variable and Atom Management ==========
+    // ======== Variable and Atom Management ========
 
     /// Create a new boolean variable.
     pub fn new_bool_var(&mut self) -> BoolVar {
@@ -465,7 +465,7 @@ impl NlsatSolver {
         }
     }
 
-    // ========== Clause Management ==========
+    // ======== Clause Management ========
 
     /// Add a clause to the solver.
     /// Returns the clause ID, or None if the clause is trivially satisfied.
@@ -606,7 +606,7 @@ impl NlsatSolver {
         max_var
     }
 
-    // ========== Main Solve Loop ==========
+    // ======== Main Solve Loop ========
 
     /// Reset all search state to a clean level-0 configuration and rebuild the
     /// unit assignments implied by the clause database.
@@ -823,8 +823,8 @@ impl NlsatSolver {
                     // satisfiable instances whose model sits behind a different
                     // arithmetic sample), fall back to chronological arithmetic
                     // backtracking: undo the latest arithmetic sample and try
-                    // another point. This is sound — it learns no lemma and only
-                    // re-explores arithmetic space — and bounded by the resample
+                    // another point. This is sound – it learns no lemma and only
+                    // re-explores arithmetic space – and bounded by the resample
                     // budget; if every sample is exhausted we still report
                     // `Unknown` exactly as before.
                     if self.resample_previous_arith() {
@@ -874,7 +874,7 @@ impl NlsatSolver {
                     ArithDecision::IrrationalOnly | ArithDecision::GreedyEmpty => {
                         // Cell failure under the current greedy samples: undo
                         // the latest arithmetic choice and try another point.
-                        // Never promote this to global Unsat — emptiness is
+                        // Never promote this to global Unsat – emptiness is
                         // conditional on earlier free samples (bare `x*y=12`
                         // with `x=0` is the canonical false-Unsat).
                         if self.resample_previous_arith() {
@@ -890,7 +890,7 @@ impl NlsatSolver {
         }
     }
 
-    // ========== Model Extraction ==========
+    // ======== Model Extraction ========
 
     /// Get the model (assignment of variables) if satisfiable.
     pub fn get_model(&self) -> Option<Model> {

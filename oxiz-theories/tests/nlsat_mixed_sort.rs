@@ -1,12 +1,12 @@
 //! Regression tests for two nonlinear-arithmetic dispatch soundness bugs in
 //! `oxiz_theories::nlsat`:
 //!
-//! 1. **PARITY-QF_NIRA-01** — mixed Int/Real nonlinear problems used to force
+//! 1. **PARITY-QF_NIRA-01** – mixed Int/Real nonlinear problems used to force
 //!    *every* variable to Integer (the global `integer_mode` flag), so a
 //!    genuinely-Real variable that had to take a non-integral value produced a
 //!    spurious UNSAT. The fix assigns integrality per variable *sort*.
 //!
-//! 2. **nia-nra-dispatch-drops-atoms-trusts-sat** — the dispatch used to drop
+//! 2. **nia-nra-dispatch-drops-atoms-trusts-sat** – the dispatch used to drop
 //!    any top-level term that is not a pure conjunction of translatable
 //!    polynomial atoms (e.g. a disjunction) and still trust a `Sat` verdict on
 //!    the resulting relaxed subproblem. The fix flags the extraction as
@@ -19,7 +19,7 @@ use num_rational::Rational64;
 use oxiz_core::ast::TermManager;
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints, dispatch_nra_constraints};
 
-// ── PARITY-QF_NIRA-01: mixed Int/Real must not force Real vars to Integer ────
+// ======== PARITY-QF_NIRA-01: mixed Int/Real must not force Real vars to Integer ========
 
 /// `(* x x) = 4 ∧ y = 1.5` with `x : Int`, `y : Real`.
 ///
@@ -49,7 +49,7 @@ fn test_qf_nira_int_square_with_real_half_is_sat() {
     assert_ne!(
         result,
         Some(NlDispatchResult::Unsat),
-        "mixed Int/Real (x*x=4 ∧ y=1.5) must not be reported UNSAT — Real y must stay real"
+        "mixed Int/Real (x*x=4 ∧ y=1.5) must not be reported UNSAT – Real y must stay real"
     );
     assert!(
         matches!(result, Some(NlDispatchResult::Sat(_))),
@@ -96,7 +96,7 @@ fn test_qf_nira_sat_requires_non_integral_real() {
     );
 }
 
-/// Control: a *pure* QF_NIA square (all Int) must still be reported SAT — the
+/// Control: a *pure* QF_NIA square (all Int) must still be reported SAT – the
 /// per-sort change must not regress the genuinely-integer path.
 #[test]
 fn test_qf_nia_pure_integer_square_still_sat() {
@@ -114,7 +114,7 @@ fn test_qf_nia_pure_integer_square_still_sat() {
     );
 }
 
-// ── nia-nra-dispatch-drops-atoms-trusts-sat: no silent drop → no false Sat ───
+// ======== nia-nra-dispatch-drops-atoms-trusts-sat: no silent drop → no false Sat ========
 
 /// NIA: `(* x y) = 12 ∧ (x = 100 ∨ y = 100)` with `x, y : Int`.
 ///
@@ -178,7 +178,7 @@ fn test_nra_dropped_disjunction_does_not_fabricate_sat() {
 /// NIA: an assertion containing an untranslatable operand (integer `div`) must
 /// likewise not be silently dropped into a false SAT.
 ///
-/// `(* x x) = 4 ∧ (div x y) = 3` — the `div` atom does not translate to a
+/// `(* x x) = 4 ∧ (div x y) = 3` – the `div` atom does not translate to a
 /// polynomial, so the extractor must flag the problem incomplete and refuse to
 /// certify SAT on the relaxed `x*x = 4`.
 #[test]

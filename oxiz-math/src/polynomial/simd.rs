@@ -12,9 +12,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 
-// ====================================================================
-// Core SIMD-friendly chunk operations
-// ====================================================================
+// ======== Core SIMD-friendly chunk operations ========
 
 /// Width of the chunk processed per loop iteration.
 ///

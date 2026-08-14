@@ -11,10 +11,10 @@
 //!
 //! 1. The bit-blaster pinned a `BitVecConst` from `iter_u64_digits().next()`,
 //!    so a 128-bit constant became its low limb: `2^64` was asserted as `0`,
-//!    which really is `<u 1` — a false `sat` in release builds, and a shift
+//!    which really is `<u 1` – a false `sat` in release builds, and a shift
 //!    overflow abort in debug ones.
 //! 2. The EUF canonicalisation of BV constants keyed on `(low_64_bits, width)`,
-//!    so `0` and `2^64` shared a key at width 128 and were *merged* — with the
+//!    so `0` and `2^64` shared a key at width 128 and were *merged* – with the
 //!    merge recorded as tautological.  Congruence then made `(g a)` and `(g b)`
 //!    the same node and the disequality became a conflict: a false `unsat`.
 //! 3. The model builder read `BvSolver::get_value`, which is `None` above 64
@@ -49,9 +49,9 @@ fn run_script_output(script: &str) -> Vec<String> {
     ctx.execute_script(script).unwrap_or_default()
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 1. Wide constants must be pinned at their full width
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `x = 2^64 ∧ x <u 1` at width 128.  Truncating the constant to its low limb
 /// pinned `x = 0`, which satisfies `x <u 1`: a false `sat`.
@@ -94,9 +94,9 @@ fn wide_consts_differing_above_bit_64_are_unequal() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 2. EUF canonicalisation of wide BV constants
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Distinct wide constants sharing their low 64 bits must stay in distinct EUF
 /// classes, so `(distinct (g a) (g b))` is satisfiable.
@@ -150,9 +150,9 @@ fn wide_const_congruence_conflict_above_bit_64() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 3. Wide model values
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// A 96-bit variable pinned to all-ones must be *reported* as all-ones; the
 /// model used to read `0` because `get_value` gives up above 64 bits.
@@ -192,11 +192,11 @@ fn wide_bv_model_value_high_limb_only_128bit() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // 4. Wide BV structure must not abort or answer falsely
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
-/// `2^64 + 2^64 = 2^65` at width 128 — a carry that crosses the limb boundary.
+/// `2^64 + 2^64 = 2^65` at width 128 – a carry that crosses the limb boundary.
 #[test]
 fn wide_bv_add_crosses_limb_boundary_128bit() {
     let script = "\

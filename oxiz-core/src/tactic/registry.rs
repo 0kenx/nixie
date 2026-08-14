@@ -7,7 +7,7 @@
 //!
 //! # Design
 //!
-//! - [`TacticRegistry`] is a plain `HashMap`-backed struct — no
+//! - [`TacticRegistry`] is a plain `HashMap`-backed struct – no
 //!   `lazy_static`/`once_cell` global state.  Each call to
 //!   [`default_registry`] produces an independent instance, which is cheap
 //!   because the factories are function pointers wrapped in `Box<dyn Fn>`.
@@ -22,7 +22,7 @@
 //!   `BitBlaster::blast_goal`) are additionally exposed through a second,
 //!   parallel by-name dispatch path: [`ManagedTactic`] /
 //!   [`TacticRegistry::create_managed`]. This is the *real, working*
-//!   implementation — callers that hold a `&mut TermManager` (e.g. a
+//!   implementation – callers that hold a `&mut TermManager` (e.g. a
 //!   tactic-pipeline driver that owns the goal's term manager) should
 //!   prefer `create_managed` over `create` for these names to get an actual
 //!   transformation instead of a honest no-op/`NotApplicable`.
@@ -54,7 +54,7 @@ use crate::ast::TermManager;
 use crate::error::Result;
 use crate::tactic::core::{Goal, Tactic, TacticResult};
 
-// ─── Type aliases ────────────────────────────────────────────────────────────
+// ======== Type aliases ========
 
 /// Type alias for a boxed tactic factory closure.
 type TacticFactory = Box<dyn Fn() -> Box<dyn Tactic> + Send + Sync>;
@@ -62,7 +62,7 @@ type TacticFactory = Box<dyn Fn() -> Box<dyn Tactic> + Send + Sync>;
 /// Type alias for a boxed [`ManagedTactic`] factory closure.
 type ManagedTacticFactory = Box<dyn Fn() -> Box<dyn ManagedTactic> + Send + Sync>;
 
-// ─── Concrete tactic imports ─────────────────────────────────────────────────
+// ======== Concrete tactic imports ========
 
 // Top-level stateless tactics
 use super::ackermann::StatelessAckermannizeTactic;
@@ -89,7 +89,7 @@ use super::bv::bvarray2uf::{BvArray2UfConfig, BvArray2UfTactic};
 use super::lia2card::StatelessLia2CardTactic;
 use super::nla2bv::StatelessNla2BvTactic;
 
-// ─── ManagedTactic ───────────────────────────────────────────────────────────
+// ======== ManagedTactic ========
 
 /// A tactic whose real transformation requires mutable access to the
 /// [`TermManager`] that owns the goal's terms (to allocate fresh Boolean
@@ -98,8 +98,8 @@ use super::nla2bv::StatelessNla2BvTactic;
 /// This exists alongside [`Tactic`] rather than replacing it because
 /// [`Tactic::apply`] intentionally has no `TermManager` parameter (many
 /// tactics are genuinely stateless and manager-free). Implementors that
-/// *also* implement [`Tactic`] must keep that impl honest — e.g. by
-/// returning [`TacticResult::NotApplicable`] or the goal unchanged — since
+/// *also* implement [`Tactic`] must keep that impl honest – e.g. by
+/// returning [`TacticResult::NotApplicable`] or the goal unchanged – since
 /// [`Tactic::apply`] structurally cannot perform the real transformation.
 pub trait ManagedTactic: Send + Sync {
     /// The canonical registry name of this tactic.
@@ -162,7 +162,7 @@ impl ManagedTactic for BitBlaster {
     }
 }
 
-// ─── TacticRegistry ──────────────────────────────────────────────────────────
+// ======== TacticRegistry ========
 
 /// A registry mapping string names to zero-argument tactic constructor closures.
 ///
@@ -214,7 +214,7 @@ impl TacticRegistry {
 
     /// Create a fresh [`ManagedTactic`] instance by name.
     ///
-    /// Returns `None` if `name` has no manager-aware registration — either
+    /// Returns `None` if `name` has no manager-aware registration – either
     /// because the tactic doesn't need `TermManager` access at all (use
     /// [`create`](Self::create) instead), or because it isn't registered.
     #[must_use]
@@ -257,7 +257,7 @@ impl Default for TacticRegistry {
     }
 }
 
-// ─── SkipTactic ──────────────────────────────────────────────────────────────
+// ======== SkipTactic ========
 
 /// A no-op tactic that always returns `SubGoals` with the goal unchanged.
 ///
@@ -279,7 +279,7 @@ impl Tactic for SkipTactic {
     }
 }
 
-// ─── Manager-backed wrappers for the stateful tactics ────────────────────────
+// ======== Manager-backed wrappers for the stateful tactics ========
 //
 // Each stateful tactic (`SimplifyTactic`, `SolveEqsTactic`, …) borrows a
 // `&mut TermManager` at construction and performs its real transformation in
@@ -379,19 +379,19 @@ managed_stateful_wrapper!(
     "Performs case splitting on boolean subterms"
 );
 
-// ─── default_registry ────────────────────────────────────────────────────────
+// ======== default_registry ========
 
 /// Build and return the default registry with all known zero-argument tactics
 /// registered under their canonical names.
 ///
 /// This is a free function (not a global singleton) so that callers always
-/// get an independent, freshly constructed registry — useful for testing and
+/// get an independent, freshly constructed registry – useful for testing and
 /// for avoiding `Send`/`Sync` complexity of globals.
 #[must_use]
 pub fn default_registry() -> TacticRegistry {
     let mut reg = TacticRegistry::new();
 
-    // ── Core simplification tactics ──────────────────────────────────────────
+    // ======== Core simplification tactics ========
     reg.register("simplify", || Box::new(StatelessSimplifyTactic));
     reg.register("propagate-values", || {
         Box::new(StatelessPropagateValuesTactic)
@@ -403,26 +403,26 @@ pub fn default_registry() -> TacticRegistry {
         Box::new(StatelessAggressiveSimplifyTactic)
     });
 
-    // ── Bit-blasting and bitvector tactics ───────────────────────────────────
+    // ======== Bit-blasting and bitvector tactics ========
     reg.register("bit-blast", || Box::new(StatelessBitBlastTactic));
     reg.register("bvarray2uf", || {
         Box::new(BvArray2UfTactic::new(BvArray2UfConfig::default()))
     });
 
-    // ── UF (uninterpreted functions) ─────────────────────────────────────────
+    // ======== UF (uninterpreted functions) ========
     reg.register("ackermannize", || Box::new(StatelessAckermannizeTactic));
 
-    // ── Variable elimination and equation solving ─────────────────────────────
+    // ======== Variable elimination and equation solving ========
     reg.register("elim-uncnstr", || {
         Box::new(StatelessEliminateUnconstrainedTactic)
     });
     reg.register("solve-eqs", || Box::new(StatelessSolveEqsTactic));
 
-    // ── Normal forms and CNF ─────────────────────────────────────────────────
+    // ======== Normal forms and CNF ========
     reg.register("nnf", || Box::new(StatelessNnfTactic));
     reg.register("tseitin-cnf", || Box::new(StatelessCnfTactic));
 
-    // ── Arithmetic tactics ───────────────────────────────────────────────────
+    // ======== Arithmetic tactics ========
     reg.register("fm", || Box::new(StatelessFourierMotzkinTactic));
     reg.register("arith-bounds", || {
         Box::new(ArithBoundsTactic::new(ArithBoundsConfig::default()))
@@ -431,20 +431,20 @@ pub fn default_registry() -> TacticRegistry {
         Box::new(FactorTactic::new(FactorTacticConfig::default()))
     });
 
-    // ── Pseudo-boolean and cardinality ───────────────────────────────────────
+    // ======== Pseudo-boolean and cardinality ========
     reg.register("pb2bv", || Box::new(StatelessPb2BvTactic));
     reg.register("lia2card", || Box::new(StatelessLia2CardTactic::new()));
 
-    // ── Non-linear arithmetic ────────────────────────────────────────────────
+    // ======== Non-linear arithmetic ========
     reg.register("nla2bv", || Box::new(StatelessNla2BvTactic::new()));
 
-    // ── Goal splitting ───────────────────────────────────────────────────────
+    // ======== Goal splitting ========
     reg.register("split", || Box::new(StatelessSplitTactic));
 
-    // ── Utility ──────────────────────────────────────────────────────────────
+    // ======== Utility ========
     reg.register("skip", || Box::new(SkipTactic));
 
-    // ── Manager-aware tactics (real, TermManager-backed implementations) ─────
+    // ======== Manager-aware tactics (real, TermManager-backed implementations) ========
     //
     // These duplicate the "arith-bounds" / "bit-blast" names on the
     // `create_managed` path with the *working* implementation: unlike their
@@ -478,7 +478,7 @@ pub fn default_registry() -> TacticRegistry {
     reg
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tests {
@@ -519,7 +519,7 @@ mod tests {
         let reg = default_registry();
         let _t1 = reg.create("simplify").unwrap();
         let _t2 = reg.create("simplify").unwrap();
-        // Two independent instances — just verifying both are Some
+        // Two independent instances – just verifying both are Some
     }
 
     #[test]
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(tactic.name(), "skip");
     }
 
-    // ── ManagedTactic wiring regression tests ─────────────────────────────
+    // ======== ManagedTactic wiring regression tests ========
     //
     // Wave-1 left `ArithBoundsTactic::apply` and the `Tactic` impls around
     // bit-blasting honestly `NotApplicable`/detection-only, because
@@ -764,7 +764,7 @@ mod tests {
     fn test_registry_plain_transforming_tactics_are_not_applicable() {
         // Every manager-requiring stateless tactic's plain path must be an
         // honest NotApplicable rather than a silent goal-unchanged success
-        // (P4-1107). `skip` is intentionally excluded — its name honestly
+        // (P4-1107). `skip` is intentionally excluded – its name honestly
         // advertises a no-op.
         let reg = default_registry();
         let goal = Goal::empty();

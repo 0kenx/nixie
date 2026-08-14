@@ -30,7 +30,7 @@ fn main() {
 
     let mut tm = TermManager::new();
 
-    // ===== Example 1: Simple UNSAT Core =====
+    // ======== Example 1: Simple UNSAT Core ========
     println!("--- Example 1: Simple UNSAT Core ---");
 
     // Create contradictory assertions
@@ -64,7 +64,7 @@ fn main() {
     println!("  Term IDs: {:?}", core.term_ids());
     println!("\nExplanation: x > 10 and x < 0 are contradictory");
 
-    // ===== Example 2: Larger UNSAT Core =====
+    // ======== Example 2: Larger UNSAT Core ========
     println!("\n--- Example 2: Larger UNSAT Core ---");
 
     let y = tm.mk_var("y", tm.sorts.int_sort);
@@ -103,7 +103,7 @@ fn main() {
     println!("\nUNSAT Core: {:?}", large_core.names());
     println!("Explanation: If z > 10, then y = z + 5 > 15, contradicting y < 10");
 
-    // ===== Example 3: Core Extraction Strategies =====
+    // ======== Example 3: Core Extraction Strategies ========
     println!("\n--- Example 3: Core Extraction Strategies ---");
 
     println!("UnsatCoreStrategy::All");
@@ -125,7 +125,7 @@ fn main() {
     println!("  {:?}", UnsatCoreStrategy::Deletion);
     println!("  {:?}", UnsatCoreStrategy::QuickXplain);
 
-    // ===== Example 4: UnsatCore Operations =====
+    // ======== Example 4: UnsatCore Operations ========
     println!("\n--- Example 4: UnsatCore Operations ---");
 
     let mut core = UnsatCore::empty();
@@ -144,7 +144,7 @@ fn main() {
     println!("  Contains name 'A1'? {}", core.contains_name("A1"));
     println!("  Contains name 'A5'? {}", core.contains_name("A5"));
 
-    // ===== Example 5: Core Minimization =====
+    // ======== Example 5: Core Minimization ========
     println!("\n--- Example 5: Core Minimization ---");
 
     // Create a core with duplicates
@@ -159,7 +159,7 @@ fn main() {
     println!("After minimization: {} assertions", dup_core.len());
     println!("(Duplicates removed)");
 
-    // ===== Example 6: Application - Debugging =====
+    // ======== Example 6: Application - Debugging ========
     println!("\n--- Example 6: Application - Debugging Specifications ---");
 
     println!("Specification with 20 assertions is UNSAT");
@@ -168,7 +168,7 @@ fn main() {
     println!("  Core: 3 assertions");
     println!("\nBenefit: Focus debugging on 3 assertions instead of 20");
 
-    // ===== Example 7: Application - Abstraction Refinement =====
+    // ======== Example 7: Application - Abstraction Refinement ========
     println!("\n--- Example 7: Application - Abstraction Refinement (CEGAR) ---");
 
     println!("Counter-Example Guided Abstraction Refinement:");
@@ -178,7 +178,7 @@ fn main() {
     println!("  4. Refinement based on core");
     println!("\nUNSAT core guides refinement, avoiding over-refinement");
 
-    // ===== Example 8: Core Display =====
+    // ======== Example 8: Core Display ========
     println!("\n--- Example 8: Core Display Format ---");
 
     let mut display_core = UnsatCore::empty();
@@ -188,7 +188,7 @@ fn main() {
 
     println!("{}", display_core);
 
-    // ===== Example 9: Multiple Cores =====
+    // ======== Example 9: Multiple Cores ========
     println!("--- Example 9: Multiple UNSAT Cores ---");
 
     println!("For formula F = C1 AND C2 AND C3 AND C4 AND C5:");
@@ -198,7 +198,7 @@ fn main() {
     println!("\nDifferent cores highlight different reasons for UNSAT");
     println!("Intersection of all cores reveals essential constraints");
 
-    // ===== Example 10: Proof-Based Core Extraction =====
+    // ======== Example 10: Proof-Based Core Extraction ========
     println!("\n--- Example 10: Proof-Based Core Extraction ---");
 
     println!("Resolution proof:");
@@ -207,7 +207,7 @@ fn main() {
     println!("  3. Core = assertions used in proof");
     println!("\nAdvantage: Core computed during proof construction (no extra SAT calls)");
 
-    // ===== Example 11: Core Visualization =====
+    // ======== Example 11: Core Visualization ========
     println!("\n--- Example 11: Core Visualization ---");
 
     println!("Assertions and their participation in core:\n");

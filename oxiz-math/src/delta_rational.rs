@@ -136,7 +136,7 @@ impl DeltaRational {
     /// by the `i64` `delta_coeff` field. Previously this silently rounded
     /// it to `0`, which erases a strict-inequality encoding entirely (e.g.
     /// `x < 5` represented as `5 - δ` would become plain `5`, i.e. `x <=
-    /// 5`) — unsound for callers relying on the strict/non-strict
+    /// 5`) – unsound for callers relying on the strict/non-strict
     /// distinction. Instead, the *sign* of the infinitesimal offset is
     /// preserved: its exact symbolic magnitude is meaningless on its own
     /// (δ is an arbitrarily small placeholder), but its sign is exactly

@@ -3,8 +3,8 @@
 //! The shared `TermKind::Div` / `TermKind::Mod` nodes must follow SMT-LIB
 //! semantics dispatched by operand sort:
 //!
-//! * Int operands: `(div a b)` is Euclidean integer division — the unique `q`
-//!   with `a = b*q + r` and `0 <= r < |b|` — and `(mod a b)` is the matching
+//! * Int operands: `(div a b)` is Euclidean integer division – the unique `q`
+//!   with `a = b*q + r` and `0 <= r < |b|` – and `(mod a b)` is the matching
 //!   non-negative remainder. In particular `(div 7 2) = 3`, `(div -7 2) = -4`,
 //!   `(mod -7 2) = 1`. Previously constant folding used Rust truncated `/`/`%`,
 //!   which gave wrong results for negative operands, and integer division of
@@ -20,9 +20,9 @@ use oxiz_core::model::{EvalResult, Model, ModelEvaluator, Value};
 use oxiz_core::rewrite::arith::ArithRewriter;
 use oxiz_core::rewrite::{RewriteContext, Rewriter};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Rewriter: Euclidean integer div/mod constant folding.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn fold_div(a: i64, b: i64) -> (TermManager, oxiz_core::ast::TermId) {
     let mut m = TermManager::new();
@@ -159,7 +159,7 @@ fn rewrite_real_division_stays_exact() {
 /// QF_AUFLIA read-over-write reproducer, over every operand-sign combination.
 ///
 /// SMT-LIB Ints fixes `m = n * (div m n) + (mod m n)` with `0 <= (mod m n) <
-/// |n|`, so the remainder is *never* negative — unlike Rust's truncating `%`,
+/// |n|`, so the remainder is *never* negative – unlike Rust's truncating `%`,
 /// where `-3 % -5 == -3` and `-3 % 5 == -3`.  Folding `div`/`mod` with `/`/`%`
 /// instead of `div_euclid`/`rem_euclid` would be a soundness bug across every
 /// Int logic, so pin the Euclidean answers directly.
@@ -190,9 +190,9 @@ fn test_issue_22_euclidean_div_mod_folding() {
     expect_int(&m, t, 3);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Model evaluator: Euclidean div/mod and exact real division.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn eval(term: oxiz_core::ast::TermId, m: &TermManager) -> EvalResult {
     let model = Model::new();
@@ -280,9 +280,9 @@ fn eval_mod_by_zero_is_error_not_fabricated() {
     assert!(matches!(eval(md, &m), EvalResult::Error(_)));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Parser: to_int / is_int constant folding, and honest error on symbolic.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 use oxiz_core::smtlib::{Command, parse_script};
 
@@ -379,14 +379,14 @@ fn is_int_of_symbolic_is_honest_error() {
     assert!(parse_script(script, &mut m).is_err());
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Parser: script-mode strictness no longer depends on a non-empty decl table.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn undeclared_symbol_rejected_even_with_no_declarations() {
     // A script that declares nothing but references an undeclared symbol must
-    // still be rejected — the old "any declaration table non-empty" heuristic
+    // still be rejected – the old "any declaration table non-empty" heuristic
     // wrongly stayed lenient here.
     let mut m = TermManager::new();
     let script = "(assert (< undeclared_a undeclared_b))";

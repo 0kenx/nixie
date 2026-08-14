@@ -53,7 +53,7 @@ fn parse_on_small_stack(script: String) -> Result<(), String> {
     })
 }
 
-// ============ Finding 1: self- and mutually-referential sort aliases ========
+// ======== Finding 1: self- and mutually-referential sort aliases ========
 
 #[test]
 fn self_referential_define_sort_is_rejected_at_the_definition() {
@@ -136,7 +136,7 @@ fn legitimate_sort_abbreviations_still_resolve() {
     }
 }
 
-// ================= Finding 2: folded n-ary chains vs MAX_PARSE_DEPTH =======
+// ======== Finding 2: folded n-ary chains vs MAX_PARSE_DEPTH ========
 
 /// `(op x0 x1 ... x{n-1})` over constants of `sort`, optionally wrapped so the
 /// assertion is Bool-sorted.

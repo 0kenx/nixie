@@ -28,7 +28,7 @@ fn main() {
 
     let mut tm = TermManager::new();
 
-    // ===== Example 1: Boolean Model =====
+    // ======== Example 1: Boolean Model ========
     println!("--- Example 1: Boolean Model Evaluation ---");
     let p = tm.mk_var("p", tm.sorts.bool_sort);
     let q = tm.mk_var("q", tm.sorts.bool_sort);
@@ -56,7 +56,7 @@ fn main() {
     print_eval("p OR r", &evaluator.eval(formula2, &tm));
     print_eval("q => r", &evaluator.eval(formula3, &tm));
 
-    // ===== Example 2: Integer Model =====
+    // ======== Example 2: Integer Model ========
     println!("\n--- Example 2: Integer Model Evaluation ---");
     let x = tm.mk_var("x", tm.sorts.int_sort);
     let y = tm.mk_var("y", tm.sorts.int_sort);
@@ -97,7 +97,7 @@ fn main() {
     print_eval("y > x ?", &int_evaluator.eval(y_gt_x, &tm));
     print_eval("z < 0 ?", &int_evaluator.eval(z_lt_0, &tm));
 
-    // ===== Example 3: Value Types =====
+    // ======== Example 3: Value Types ========
     println!("\n--- Example 3: Value Types ---");
 
     println!("Boolean value:");
@@ -134,7 +134,7 @@ fn main() {
     println!("  Value::Undefined: {}", v_undef);
     println!("  is_undefined(): {}", v_undef.is_undefined());
 
-    // ===== Example 4: Bitvector Evaluation =====
+    // ======== Example 4: Bitvector Evaluation ========
     println!("\n--- Example 4: Bitvector Evaluation ---");
 
     let bv8_sort = tm.sorts.bitvec(8);
@@ -161,7 +161,7 @@ fn main() {
     let a_xor_b = tm.mk_bv_xor(a, b);
     print_eval("a XOR b (BV)", &bv_eval.eval(a_xor_b, &tm));
 
-    // ===== Example 5: ITE Evaluation =====
+    // ======== Example 5: ITE Evaluation ========
     println!("\n--- Example 5: ITE Evaluation ---");
 
     // ite(p, x, y) with p=true, x=5, y=10 => 5
@@ -178,14 +178,14 @@ fn main() {
     print_eval("ite(p, x, y) with p=true", &ite_eval.eval(ite_expr, &tm));
     print_eval("ite(q, x, y) with q=false", &ite_eval.eval(ite_expr2, &tm));
 
-    // ===== Example 6: Undefined Variables =====
+    // ======== Example 6: Undefined Variables ========
     println!("\n--- Example 6: Undefined Variables ---");
 
     let undefined_var = tm.mk_var("undefined_z", tm.sorts.int_sort);
     let undef_result = ite_eval.eval(undefined_var, &tm);
     print_eval("undefined_z", &undef_result);
 
-    // ===== Example 7: Model Operations =====
+    // ======== Example 7: Model Operations ========
     println!("\n--- Example 7: Model Operations ---");
 
     println!("Model has {} assignments", model.len());
@@ -205,7 +205,7 @@ fn main() {
     println!("\nRemoved p: {:?}", removed);
     println!("Model size after removal: {}", model_copy.len());
 
-    // ===== Example 8: Model Merge =====
+    // ======== Example 8: Model Merge ========
     println!("\n--- Example 8: Model Merge ---");
 
     let mut model_a = Model::new();
@@ -229,7 +229,7 @@ fn main() {
     );
     println!("  z = {:?}", model_a.get(z).map(|v| v.to_string()));
 
-    // ===== Example 9: Evaluator Caching =====
+    // ======== Example 9: Evaluator Caching ========
     println!("\n--- Example 9: Evaluator Caching ---");
 
     let mut cached_eval = ModelEvaluator::new(&int_model);
@@ -250,7 +250,7 @@ fn main() {
         nocache_eval.cache_size()
     );
 
-    // ===== Example 10: EvalResult API =====
+    // ======== Example 10: EvalResult API ========
     println!("\n--- Example 10: EvalResult API ---");
 
     let ok_result = EvalResult::Ok(Value::Int(42));

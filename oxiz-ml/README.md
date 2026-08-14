@@ -1,4 +1,4 @@
-# oxiz-ml — Machine Learning-Guided Heuristics for OxiZ
+# oxiz-ml – Machine Learning-Guided Heuristics for OxiZ
 
 Machine learning-guided heuristics for the OxiZ SMT solver, providing adaptive branching, clause deletion, restart policies, and tactic selection driven by learned models trained on solving experience.
 
@@ -14,13 +14,13 @@ Machine learning-guided heuristics for the OxiZ SMT solver, providing adaptive b
 
 ## Features
 
-- **ML-Enhanced VSIDS Branching** — learned variable selection augments classical VSIDS scores with feature-based predictions
-- **Adaptive Clause Deletion** — usefulness predictor scores learned clauses; poor clauses are pruned earlier to reduce memory pressure
-- **Adaptive Restart Policies** — online-learned policy selects among restart schedules based on solver state signals
-- **Formula Classification and Tactic Selection** — extracts formula features to pick the best solving strategy from a portfolio before search begins
-- **Online Learning** — solver decisions and outcomes update models incrementally during a run
-- **Offline Training** — batch trainer consumes collected solve traces to pre-train models for persistent deployment
-- **Pure Rust** — no C/C++, no FFI; all model types (linear, decision tree, neural network) are implemented natively
+- **ML-Enhanced VSIDS Branching** – learned variable selection augments classical VSIDS scores with feature-based predictions
+- **Adaptive Clause Deletion** – usefulness predictor scores learned clauses; poor clauses are pruned earlier to reduce memory pressure
+- **Adaptive Restart Policies** – online-learned policy selects among restart schedules based on solver state signals
+- **Formula Classification and Tactic Selection** – extracts formula features to pick the best solving strategy from a portfolio before search begins
+- **Online Learning** – solver decisions and outcomes update models incrementally during a run
+- **Offline Training** – batch trainer consumes collected solve traces to pre-train models for persistent deployment
+- **Pure Rust** – no C/C++, no FFI; all model types (linear, decision tree, neural network) are implemented natively
 
 ## Architecture
 
@@ -102,4 +102,4 @@ cargo bench -p oxiz-ml
 
 ## License
 
-Apache-2.0 — Copyright COOLJAPAN OU (Team Kitasan)
+Apache-2.0 – Copyright COOLJAPAN OU (Team Kitasan)

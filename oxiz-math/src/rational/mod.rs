@@ -849,7 +849,7 @@ pub fn legendre_symbol(a: &BigInt, p: &BigInt) -> i8 {
     jacobi_symbol(a, p)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Verified complete factorization
 //
 // `trial_division` only ever removes factors up to a fixed limit and then
@@ -870,7 +870,7 @@ pub fn legendre_symbol(a: &BigInt, p: &BigInt) -> i8 {
 // rather than by `n`'s magnitude, so factorization always terminates
 // promptly -- including for large primes, which is exactly the case that
 // used to hang.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Small deterministic PRNG (SplitMix64) used only to vary the starting
 /// parameters of successive Pollard's rho attempts. Not cryptographically

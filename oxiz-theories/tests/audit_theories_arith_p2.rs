@@ -43,7 +43,7 @@ fn lia_check_enforces_integrality_parity() {
 }
 
 /// Finding 1 (model quality): when LIA is SAT, `value()` must return integral
-/// assignments for Int terms — never the fractional LP optimum.
+/// assignments for Int terms – never the fractional LP optimum.
 #[test]
 fn lia_check_sat_returns_integral_model() {
     let mut solver = ArithSolver::lia();
@@ -75,7 +75,7 @@ fn lia_check_sat_simple_feasible() {
     let y = TermId::new(2);
     let reason = TermId::new(100);
 
-    // x + y = 3, x >= 0, y >= 0  — clearly SAT over integers.
+    // x + y = 3, x >= 0, y >= 0  – clearly SAT over integers.
     solver.assert_eq(&[(x, r(1)), (y, r(1))], r(3), reason);
     solver.assert_ge(&[(x, r(1))], r(0), reason);
     solver.assert_ge(&[(y, r(1))], r(0), reason);
@@ -143,7 +143,7 @@ fn simplex_pivot_limit_flags_resource_limit_not_sat() {
         simplex.resource_limit_reached(),
         "one-pivot budget on a multi-row LP must hit the resource limit"
     );
-    // A resource-limited run returns Ok (no conflict proven) — but that Ok is a
+    // A resource-limited run returns Ok (no conflict proven) – but that Ok is a
     // resource limit, NOT a feasibility proof; the flag is how callers tell the
     // difference and report Unknown instead of Sat.
     assert!(res.is_ok(), "resource-limited run returns Ok, not Err");

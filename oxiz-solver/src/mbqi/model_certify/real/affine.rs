@@ -4,8 +4,8 @@
 //! Every value the real engine produces is *piecewise affine*: the real line is
 //! cut at finitely many rationals, and on each resulting cell (a cut point, or
 //! an open interval between two neighbouring cuts) the value is either a single
-//! affine form `a·x + b` or a single boolean.  That representation is exact —
-//! no sampling is involved — which is what lets a `∀` over an *infinite* domain
+//! affine form `a·x + b` or a single boolean.  That representation is exact –
+//! no sampling is involved – which is what lets a `∀` over an *infinite* domain
 //! be decided by inspecting finitely many cells.
 
 use num_rational::BigRational;
@@ -117,7 +117,7 @@ impl Affine {
     /// `self ∘ inner`, i.e. `x ↦ self(inner(x))`.
     ///
     /// This is how an uninterpreted function's affine default is applied to an
-    /// argument that is itself affine in `x` — the composition that decides
+    /// argument that is itself affine in `x` – the composition that decides
     /// nested applications such as `f(g(x))`.
     pub(crate) fn compose(&self, inner: &Self) -> Self {
         Self {
@@ -145,7 +145,7 @@ impl Affine {
 /// (-∞, c₀)  {c₀}  (c₀, c₁)  {c₁}  …  {c_{n-1}}  (c_{n-1}, +∞)
 /// ```
 ///
-/// — `2n + 1` of them, every one non-empty.  Non-emptiness is the whole point:
+/// – `2n + 1` of them, every one non-empty.  Non-emptiness is the whole point:
 /// "the body holds on every cell" is then *equivalent* to "the body holds for
 /// every real", not merely implied by it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -199,7 +199,7 @@ impl Partition {
     /// point.
     ///
     /// For an open cell the point returned lies *strictly* inside it and is
-    /// never a cut of this partition — which is what lets [`Piecewise::refine`]
+    /// never a cut of this partition – which is what lets [`Piecewise::refine`]
     /// locate a refined cell inside its coarser ancestor by value alone.
     pub(crate) fn probe(&self, index: usize) -> Option<(Rat, bool)> {
         if index >= self.len() {

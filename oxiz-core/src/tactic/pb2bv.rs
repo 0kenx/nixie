@@ -107,7 +107,7 @@ impl<'a> Pb2BvTactic<'a> {
         match &t.kind {
             // NOTE: `extract_linear_bool_comb` returns `(terms, const)` for
             // `lhs = Σ(coeff*var) + const`. Every branch below used to bind
-            // that constant as `_lhs_const` and drop it — silently turning
+            // that constant as `_lhs_const` and drop it – silently turning
             // e.g. `2x + 3y + 5 <= 10` into `2x + 3y <= 10` instead of the
             // correct `2x + 3y <= 5`. It must be folded into `bound`.
             TermKind::Le(lhs, rhs) => {

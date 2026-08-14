@@ -2,7 +2,7 @@
 //! propagation left un-run.
 //!
 //! The CDCL(T) loop handles a theory conflict by backtracking, learning the
-//! analysed clause and putting its asserting literal on the trail — for a unit
+//! analysed clause and putting its asserting literal on the trail – for a unit
 //! lemma, a brand-new **level-0 fact**. That literal is appended *unpropagated*.
 //! The theory-conflict branches used to rejoin the inner theory loop, which does
 //! not run BCP; only the outer search loop does. As long as some variable was
@@ -12,7 +12,7 @@
 //! assigned" and the loop went straight to `final_check`. The theory saw a
 //! consistent set of atoms and said `Sat`, and `solve_with_theory` returned that
 //! `Sat` over a trail on which an **original** clause was already falsified by
-//! level-0 facts alone — a total model that does not satisfy the input formula,
+//! level-0 facts alone – a total model that does not satisfy the input formula,
 //! on an instance that is in fact `Unsat`.
 //!
 //! Reference: Z3's `smt_context.cpp`, whose `final_check` is likewise only
@@ -41,7 +41,7 @@ fn deterministic_solver() -> Solver {
 /// itself is false, so `Conflict([lit.negate()])` is a well-formed, fully
 /// falsified conflict clause. Every such lemma is globally valid, which makes
 /// CDCL(T) over `cnf` with this theory exactly SAT of `cnf` conjoined with the
-/// forced unit literals — an exactly brute-forceable oracle.
+/// forced unit literals – an exactly brute-forceable oracle.
 struct ForcedPolarityTheory {
     /// `forced[i] == Some(p)` pins variable `i` to polarity `p`.
     forced: Vec<Option<bool>>,
@@ -97,7 +97,7 @@ fn model_satisfies(solver: &Solver, clauses: &[Vec<Lit>]) -> bool {
 ///
 /// The default decision polarity is negative, so the search decides `¬a`, the
 /// theory reports the unit lemma `a`, and the loop backtracks to level 0 and
-/// pins `a` there — repeating for `b` and then `c`. That third lemma assigns the
+/// pins `a` there – repeating for `b` and then `c`. That third lemma assigns the
 /// last open variable, so pre-fix the very next step was `final_check`, which
 /// answered `Sat`, and the model `a = b = c = true` falsified the clause.
 #[test]
@@ -161,7 +161,7 @@ fn theory_unit_lemma_sat_model_satisfies_every_original_clause() {
     }
 }
 
-/// Deterministic SplitMix64 — no external `rand` dependency, no wall-clock input.
+/// Deterministic SplitMix64 – no external `rand` dependency, no wall-clock input.
 struct Rng(u64);
 impl Rng {
     fn next_u64(&mut self) -> u64 {
@@ -181,12 +181,12 @@ impl Rng {
 ///
 /// Because every lemma the stub theory reports is a globally valid unit clause,
 /// `cnf` solved under it is satisfiable exactly when some total assignment
-/// satisfies `cnf` and agrees with all forced polarities — enumerable in `2^n`.
+/// satisfies `cnf` and agrees with all forced polarities – enumerable in `2^n`.
 /// Both verdicts are therefore assertable, and every `Sat` additionally has its
 /// model checked against the clauses. Zero mismatches is the contract.
 ///
-/// The family is deliberately theory-dominated — few, wide clauses and most
-/// variables pinned — so the search is driven by unit lemmas rather than by BCP,
+/// The family is deliberately theory-dominated – few, wide clauses and most
+/// variables pinned – so the search is driven by unit lemmas rather than by BCP,
 /// which is what puts pressure on the propagation-fixpoint invariant. Against
 /// the pre-fix loop this seed found 24 unsound verdicts in 20 000 instances; it
 /// runs in well under a second.

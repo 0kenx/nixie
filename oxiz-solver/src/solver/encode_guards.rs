@@ -3,11 +3,11 @@
 //! Two families of checks split out of `encode.rs` to keep every file under the
 //! 2000-line limit:
 //!
-//!   * the **arithmetic honesty gate** — detect comparison/equality atoms the
+//!   * the **arithmetic honesty gate** – detect comparison/equality atoms the
 //!     linear solver cannot represent (integer `div`/`mod`, nonlinear products,
 //!     out-of-range constants), so `check` can answer `Unknown` rather than
 //!     trust a free-Boolean encoding; and
-//!   * the **depth guard** — a non-recursive scan that reports when a formula
+//!   * the **depth guard** – a non-recursive scan that reports when a formula
 //!     nests deeper than [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT), used
 //!     to bail out before a recursive pass overflows the native stack.
 
@@ -22,7 +22,7 @@ use super::types::Constraint;
 impl Solver {
     /// Honesty gate (soundness): returns `true` when some *active* arithmetic
     /// comparison / equality atom could not be turned into a linear constraint
-    /// and therefore carries no theory semantics — `encode` left it as a free
+    /// and therefore carries no theory semantics – `encode` left it as a free
     /// Boolean.  Trusting the SAT layer to pick a truth value for such an atom
     /// produces a spurious `Sat`/`Unsat`, so `check` answers `Unknown` instead.
     ///
@@ -219,7 +219,7 @@ impl Solver {
                         stack.push(a);
                     }
                 }
-                // `let` is transparent — walk into it so a nonlinear product
+                // `let` is transparent – walk into it so a nonlinear product
                 // bound by a let is seen (otherwise CDCL returned spurious sat
                 // on let/ite-heavy industrial QF_NIA).
                 TermKind::Let { bindings, body } => {
@@ -235,7 +235,7 @@ impl Solver {
     }
 
     /// Returns `true` if the arithmetic subtree rooted at `term` is not a pure
-    /// constant — i.e. it reaches a variable, an uninterpreted application, an
+    /// constant – i.e. it reaches a variable, an uninterpreted application, an
     /// array select, a div/mod node, or a conditional value.  Used to count the
     /// non-constant factors of a product when deciding whether it is nonlinear.
     fn arith_subterm_has_variable(term: TermId, manager: &TermManager) -> bool {
@@ -302,9 +302,9 @@ impl Solver {
     /// Push every direct sub-term of `term` onto `stack` paired with
     /// `child_depth`.
     ///
-    /// The match is exhaustive over every `TermKind` variant — child-carrying
+    /// The match is exhaustive over every `TermKind` variant – child-carrying
     /// kinds push their children, genuine leaves are listed in a final no-op
-    /// arm — so a future variant is a compile error here rather than a
+    /// arm – so a future variant is a compile error here rather than a
     /// silently unmeasured family.  This scan is what makes
     /// [`Solver::term_exceeds_encode_depth`]'s answer trustworthy: a kind it
     /// skips is a kind through which an over-deep term can pass the guard and
@@ -436,8 +436,8 @@ impl Solver {
                 push(*body);
             }
             TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => push(*body),
-            // Datatype values nest through constructor arguments — a
-            // `succ(succ(...))` chain is one level per constructor — and
+            // Datatype values nest through constructor arguments – a
+            // `succ(succ(...))` chain is one level per constructor – and
             // testers/selectors through their single operand.  These kinds
             // (with `Match`, `FpFma` and the FP conversions below) once fell
             // into a `_ => {}` catch-all presumed to hold only leaves, which

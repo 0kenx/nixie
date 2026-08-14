@@ -12,11 +12,11 @@
 //!
 //! * the asserting literal must be assigned at its **true** implication level
 //!   (the maximum level over the learned clause's remaining literals), not at
-//!   the level the search happens to sit at after the rollback — see
+//!   the level the search happens to sit at after the rollback – see
 //!   [`crate::trail::Trail::assign_propagation_at`]; and
 //! * the trail is consequently no longer sorted by decision level, so rollback
-//!   filters by level instead of truncating — see
-//!   [`crate::trail::Trail::backtrack_to_with_callback`] — and the solver's
+//!   filters by level instead of truncating – see
+//!   [`crate::trail::Trail::backtrack_to_with_callback`] – and the solver's
 //!   1-UIP conflict analysis skips trail literals that are not at the conflict
 //!   level.
 //!
@@ -51,7 +51,7 @@ impl ChronoBacktrack {
     ///
     /// Returns a level in `[assertion_level, conflict_level - 1]`: the assertion
     /// level for an ordinary backjump, or `conflict_level - 1` for a
-    /// chronological backtrack.  The upper bound is not negotiable — the
+    /// chronological backtrack.  The upper bound is not negotiable – the
     /// asserting literal sits at `conflict_level`, so the rollback must go at
     /// least one level below it or the literal would still be assigned when the
     /// learned clause tries to imply it, duplicating it on the trail.
@@ -78,7 +78,7 @@ impl ChronoBacktrack {
         // A unit (or empty) learned clause is implied by the formula alone, so
         // it must be installed at the root level where nothing can retract it.
         // Backtracking chronologically here would pin a global fact inside some
-        // decision level, losing it on the next rollback — and, because the
+        // decision level, losing it on the next rollback – and, because the
         // asserting literal of a unit clause has no reason clause to resolve
         // against, planting a second reason-less literal in the middle of a
         // level, which breaks 1-UIP termination and yields over-strong (unsound)
@@ -118,11 +118,11 @@ impl ChronoBacktrack {
     /// be counted, and must NOT be confused with each other:
     /// - The variable is genuinely unassigned in the (current, full) trail.
     /// - The variable *is* assigned, but only at some level strictly above
-    ///   `level` — i.e. it hadn't been decided yet by the time the search
+    ///   `level` – i.e. it hadn't been decided yet by the time the search
     ///   was at level L.
     ///
     /// Crucially, level 0 is a real decision level (unit facts derived by
-    /// root-level propagation), not a sentinel for "unassigned" — treating
+    /// root-level propagation), not a sentinel for "unassigned" – treating
     /// `trail.level(var) == 0` as "unassigned" would misclassify every
     /// level-0 literal in the clause, and variables actually assigned above
     /// `level` must still be tallied as unassigned rather than silently
@@ -224,7 +224,7 @@ mod tests {
     // the way Z3's `use_backjumping` does: short hops are backjumped, long ones
     // are backtracked chronologically.  A previous revision had this inverted
     // (chronological only for *short* hops), which made chronological
-    // backtracking fire on essentially every conflict — the opposite of the
+    // backtracking fire on essentially every conflict – the opposite of the
     // heuristic's intent, and the amplifier that turned the level bugs it was
     // paired with into false `unsat` answers.
     #[test]
@@ -267,7 +267,7 @@ mod tests {
     }
 
     // The asserting literal lives at `conflict_level`, so the rollback must go
-    // strictly below it — otherwise the literal is still assigned when the
+    // strictly below it – otherwise the literal is still assigned when the
     // learned clause implies it and it ends up duplicated on the trail.
     #[test]
     fn test_chrono_level_stays_below_the_asserting_literal() {
@@ -302,7 +302,7 @@ mod tests {
     // level and the conflict level instead of throwing them away: with x9 a
     // level-0 fact, x1..x4 decided at levels 1..4 and x5 (the UIP) at level 5,
     // the clause `¬x5 ∨ ¬x9 ∨ ¬x1` is asserting from level 1 upwards, and a
-    // chronological rollback stops at level 4 — retaining the levels 2..4 that a
+    // chronological rollback stops at level 4 – retaining the levels 2..4 that a
     // plain backjump to the assertion level 1 would have discarded.
     #[test]
     fn test_chrono_backtrack_keeps_intervening_decisions() {

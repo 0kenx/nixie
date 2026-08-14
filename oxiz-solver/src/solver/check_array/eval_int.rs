@@ -7,7 +7,7 @@
 //! not unsoundness, because an Int-sorted `select` is a first-class arithmetic
 //! variable rather than an opaque leaf: `encode` registers it in `arith_terms`
 //! and parses `(< (select a i) 5)` as a linear atom, so when this check declines
-//! an assertion two backstops still reach a sound verdict — the alias-aware
+//! an assertion two backstops still reach a sound verdict – the alias-aware
 //! read-over-write lemmas in `array_axioms.rs`, whose Int-sorted equalities do
 //! enter the tableau, and `propagate_euf_equalities_to_arith`, which carries
 //! congruence-derived equalities between arith-registered terms across with an
@@ -21,12 +21,12 @@
 //!
 //! * `div` and `mod` are **Euclidean** on integers: the unique `q` with
 //!   `a = b*q + r` and `0 <= r < |b|`, so `(div -7 2) = -4` and `(mod -7 2) = 1`
-//!   — not Rust's `/` and `%`, which truncate towards zero.  They go through
+//!   – not Rust's `/` and `%`, which truncate towards zero.  They go through
 //!   [`CheckedEuclid`], matching `oxiz_core`'s `rewrite::arith` and its model
 //!   evaluator, which both use `checked_div_euclid`.
 //! * Division and modulo **by zero are uninterpreted**, not total.  SMT-LIB
 //!   leaves `(div a 0)` a fixed but unspecified value, so folding it to anything
-//!   at all would claim a fact the theory does not state — and this evaluator's
+//!   at all would claim a fact the theory does not state – and this evaluator's
 //!   answer feeds a check that reports `Unsat`, so a fabricated value could
 //!   refute a satisfiable formula.  [`CheckedEuclid`] returns `None` at a zero
 //!   divisor, which is exactly the required answer.  (This is the opposite of the
@@ -52,15 +52,15 @@
 //! * The chain length is bounded by the number of alias *assertions*, not by any
 //!   term's depth, so
 //!   [`Solver::term_exceeds_encode_depth`](super::Solver::term_exceeds_encode_depth)
-//!   — which bounds structural depth at
+//!   – which bounds structural depth at
 //!   [`ENCODE_DEPTH_LIMIT`](crate::solver::ENCODE_DEPTH_LIMIT) before `check`
-//!   reaches the array checks — does not bound it at all.  Each link
+//!   reaches the array checks – does not bound it at all.  Each link
 //!   `(= b_k (store a 0 (select b_(k-1) 0)))` nests only four deep.  Two thousand
 //!   such assertions aborted the process with the depth gate reporting nothing
 //!   wrong.
 //! * The chain can **cycle**.  `(= b (store a 0 (select b 0)))` rewrites
 //!   `(select b 0)` to itself, and the recursive version followed that rewrite
-//!   forever — as an infinite loop wherever the tail call was optimised into one,
+//!   forever – as an infinite loop wherever the tail call was optimised into one,
 //!   and as a stack overflow where it was not.  Either way `check` never
 //!   returned, on two well-sorted assertions.  [`Solver::open_number`] carries
 //!   the set of reads it has already rewritten along the current chain and
@@ -115,7 +115,7 @@ impl Value {
     /// ever produces a value of the position it was given.  It is written as an
     /// `Option` rather than an assertion because "not evaluable" is the honest
     /// answer for a shape this evaluator cannot make sense of, and it is the
-    /// conservative one — it can only cost a refutation, where a fabricated value
+    /// conservative one – it can only cost a refutation, where a fabricated value
     /// could invent one.
     fn number(self) -> Option<BigInt> {
         match self {
@@ -231,7 +231,7 @@ enum Frame {
     },
     /// `and` / `or`, part way through its operands.
     Connective {
-        /// `true` for `and` — the value that lets the scan continue, and the
+        /// `true` for `and` – the value that lets the scan continue, and the
         /// value of the connective over no operands.
         all: bool,
         /// The whole operand list; `operands[next..]` is what remains.
@@ -297,7 +297,7 @@ impl Solver {
     /// Evaluate an integer expression after reducing array selects through the
     /// read-over-write axiom.
     ///
-    /// `None` means the expression does not fold — an unbound variable, an
+    /// `None` means the expression does not fold – an unbound variable, an
     /// operator with no arm here, a read the axiom does not decide, a rewrite
     /// chain that cycles, a `div`/`mod` by zero (which SMT-LIB leaves
     /// uninterpreted), or an `ite` whose condition does not fold.  Every one of
@@ -375,7 +375,7 @@ impl Solver {
     /// dispatch on whatever the rewriting lands on.
     ///
     /// `rewritten` is what makes that loop terminate.  It holds the reads already
-    /// rewritten **on this chain** — a chain is one root-to-leaf path, so a
+    /// rewritten **on this chain** – a chain is one root-to-leaf path, so a
     /// per-call set is exactly the right scope: the same read reached again from a
     /// different operand position gets a fresh set and still folds.  A repeat
     /// within one chain can only mean the alias map sends the rewriting round in a
@@ -600,7 +600,7 @@ fn open_truth(kind: &TermKind) -> Option<Opened> {
 
 /// Open an n-ary `+` or `*`.
 ///
-/// An empty operand list folds to the identity outright — the value the recursive
+/// An empty operand list folds to the identity outright – the value the recursive
 /// accumulator started from and never added to.
 fn open_nary(fold: Fold, args: &Operands) -> Opened {
     match args.first().copied() {

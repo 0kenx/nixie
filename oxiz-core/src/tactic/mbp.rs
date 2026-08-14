@@ -196,7 +196,7 @@ impl<'a> MbpEngine<'a> {
         // Defense in depth: even when a caller bypasses `detect_projector` by
         // explicitly requesting a linear projector (`config.projector` =
         // Lra/Lia), never run the linear projector's completeness assumptions
-        // over nonlinear input — route it to the honest partial handler
+        // over nonlinear input – route it to the honest partial handler
         // instead (TODO-940: "never silently linear-project nonlinear terms").
         let projector = if matches!(detected, ProjectorKind::Lra | ProjectorKind::Lia)
             && self.contains_nonlinear_arith(formula)
@@ -705,10 +705,10 @@ impl<'a> MbpEngine<'a> {
     /// (so [`MbpResult::is_complete`] honestly reports `false`).
     ///
     /// The bound-classification / `unprojectable` logic in [`Self::project_lra`]
-    /// already implements exactly this per-variable discipline — a literal
+    /// already implements exactly this per-variable discipline – a literal
     /// that does not decompose into a recognized linear bound on the variable
     /// (which includes every nonlinear literal) is preserved verbatim and the
-    /// variable is not reported as eliminated — so this method delegates to it.
+    /// variable is not reported as eliminated – so this method delegates to it.
     /// The distinct routing exists so nonlinear input is never *labelled* as a
     /// complete LRA/LIA elimination.
     fn project_nonlinear(
@@ -932,7 +932,7 @@ mod tests {
         assert_eq!(result, x);
     }
 
-    // ── TODO-940: nonlinear input must not be linear-projected ────────────
+    // ======== TODO-940: nonlinear input must not be linear-projected ========
 
     /// Regression: `mentions_var` used to end in `_ => false`, so it never
     /// looked inside `Store`/`Select` (or any other unlisted kind) and

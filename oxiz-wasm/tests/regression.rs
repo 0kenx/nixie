@@ -10,9 +10,7 @@ use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
-// ====================================================================
-// REGRESSION: Empty input validation
-// ====================================================================
+// ======== REGRESSION: Empty input validation ========
 
 /// Regression test: Ensure empty script is properly rejected
 /// Previously, empty scripts might cause unexpected behavior
@@ -61,9 +59,7 @@ fn test_empty_sort_name_rejected() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: Invalid sort handling
-// ====================================================================
+// ======== REGRESSION: Invalid sort handling ========
 
 /// Regression test: Ensure invalid sort names produce proper errors
 #[wasm_bindgen_test]
@@ -120,9 +116,7 @@ fn test_bitvec_invalid_width() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: Model availability checks
-// ====================================================================
+// ======== REGRESSION: Model availability checks ========
 
 /// Regression test: Getting model before check-sat should fail
 #[wasm_bindgen_test]
@@ -175,9 +169,7 @@ fn test_get_value_empty_terms() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: Unsat core availability
-// ====================================================================
+// ======== REGRESSION: Unsat core availability ========
 
 /// Regression test: Getting unsat core before check-sat should fail
 #[wasm_bindgen_test]
@@ -202,9 +194,7 @@ fn test_get_unsat_core_after_sat() {
     assert!(core_result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: State management
-// ====================================================================
+// ======== REGRESSION: State management ========
 
 /// Regression test: Reset should clear last_result
 #[wasm_bindgen_test]
@@ -265,9 +255,7 @@ fn test_push_pop_preserves_result() {
     assert!(model.is_ok());
 }
 
-// ====================================================================
-// REGRESSION: check-sat-assuming
-// ====================================================================
+// ======== REGRESSION: check-sat-assuming ========
 
 /// Regression test: check-sat-assuming should not modify assertion stack
 #[wasm_bindgen_test]
@@ -311,9 +299,7 @@ fn test_check_sat_assuming_empty_assumption() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: define-sort
-// ====================================================================
+// ======== REGRESSION: define-sort ========
 
 /// Regression test: define-sort with empty name should fail
 #[wasm_bindgen_test]
@@ -334,9 +320,7 @@ fn test_define_sort_invalid_base() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: define-fun
-// ====================================================================
+// ======== REGRESSION: define-fun ========
 
 /// Regression test: define-fun with empty name should fail
 #[wasm_bindgen_test]
@@ -383,9 +367,7 @@ fn test_define_fun_invalid_return_sort() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: validate-formula
-// ====================================================================
+// ======== REGRESSION: validate-formula ========
 
 /// Regression test: validate-formula should not modify assertion stack
 #[wasm_bindgen_test]
@@ -412,9 +394,7 @@ fn test_validate_formula_empty() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: simplify
-// ====================================================================
+// ======== REGRESSION: simplify ========
 
 /// Regression test: simplify with empty expression should fail
 #[wasm_bindgen_test]
@@ -427,9 +407,7 @@ fn test_simplify_empty() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: Presets
-// ====================================================================
+// ======== REGRESSION: Presets ========
 
 /// Regression test: apply-preset with invalid preset should fail
 #[wasm_bindgen_test]
@@ -461,9 +439,7 @@ fn test_apply_preset_all_valid() {
     }
 }
 
-// ====================================================================
-// REGRESSION: get-info
-// ====================================================================
+// ======== REGRESSION: get-info ========
 
 /// Regression test: get-info with invalid key should fail
 #[wasm_bindgen_test]
@@ -490,9 +466,7 @@ fn test_get_info_colon_variants() {
     assert_eq!(result1.unwrap(), result2.unwrap());
 }
 
-// ====================================================================
-// REGRESSION: declare-fun
-// ====================================================================
+// ======== REGRESSION: declare-fun ========
 
 /// Regression test: declare-fun with empty name should fail
 #[wasm_bindgen_test]
@@ -526,9 +500,7 @@ fn test_declare_fun_invalid_arg_sorts() {
     assert!(result.is_err());
 }
 
-// ====================================================================
-// REGRESSION: Cancellation
-// ====================================================================
+// ======== REGRESSION: Cancellation ========
 
 /// Regression test: Cancel flag should persist across operations
 #[wasm_bindgen_test]
@@ -554,9 +526,7 @@ fn test_reset_clears_cancel_flag() {
     assert!(!solver.is_cancelled());
 }
 
-// ====================================================================
-// REGRESSION: Complex scenarios
-// ====================================================================
+// ======== REGRESSION: Complex scenarios ========
 
 /// Regression test: Multiple push/pop cycles should work correctly
 #[wasm_bindgen_test]
@@ -666,9 +636,7 @@ fn test_pattern_checking() {
     assert!(rec.contains("Unknown pattern"));
 }
 
-// ====================================================================
-// REGRESSION: Edge cases for options
-// ====================================================================
+// ======== REGRESSION: Edge cases for options ========
 
 /// Regression test: Getting unset option should return None
 #[wasm_bindgen_test]
@@ -688,9 +656,7 @@ fn test_set_get_option() {
     assert_eq!(value, Some("true".to_string()));
 }
 
-// ====================================================================
-// REGRESSION: Statistics
-// ====================================================================
+// ======== REGRESSION: Statistics ========
 
 /// Regression test: Statistics should be available even without check-sat
 #[wasm_bindgen_test]

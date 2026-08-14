@@ -247,7 +247,7 @@ impl TermManager {
                 };
 
                 match kind {
-                    // ===== Leaves: nothing to substitute into =====
+                    // ======== Leaves: nothing to substitute into ========
                     TermKind::True
                     | TermKind::False
                     | TermKind::IntConst(_)
@@ -264,7 +264,7 @@ impl TermManager {
                         contexts[ctx].cache.insert(id, id);
                     }
 
-                    // ===== Binders: capture-avoiding, handled specially =====
+                    // ======== Binders: capture-avoiding, handled specially ========
                     TermKind::Forall {
                         vars,
                         body,
@@ -290,7 +290,7 @@ impl TermManager {
                         self.expand_match(id, ctx, sort, scrutinee, cases, contexts, work);
                     }
 
-                    // ===== Everything else: generic children via get_children =====
+                    // ======== Everything else: generic children via get_children ========
                     other => {
                         let children = get_children(&other);
                         work.push(SubstStep::Combine {
@@ -685,7 +685,7 @@ impl TermManager {
                 unreachable!("leaves are resolved directly in Expand, never scheduled as Combine")
             }
 
-            // ===== Boolean connectives =====
+            // ======== Boolean connectives ========
             TermKind::Not(a) => {
                 let a = sub(a);
                 self.mk_not(a)
@@ -715,7 +715,7 @@ impl TermManager {
                 self.mk_ite(c, t, e)
             }
 
-            // ===== Equality / distinct =====
+            // ======== Equality / distinct ========
             TermKind::Eq(a, b) => {
                 let a = sub(a);
                 let b = sub(b);
@@ -726,7 +726,7 @@ impl TermManager {
                 self.mk_distinct(new)
             }
 
-            // ===== Arithmetic =====
+            // ======== Arithmetic ========
             TermKind::Neg(a) => {
                 let a = sub(a);
                 self.mk_neg(a)
@@ -775,7 +775,7 @@ impl TermManager {
                 self.mk_ge(a, b)
             }
 
-            // ===== Arrays =====
+            // ======== Arrays ========
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);
@@ -788,7 +788,7 @@ impl TermManager {
                 self.mk_store(arr, idx, val)
             }
 
-            // ===== Bit vectors =====
+            // ======== Bit vectors ========
             TermKind::BvConcat(a, b) => {
                 let a = sub(a);
                 let b = sub(b);
@@ -888,7 +888,7 @@ impl TermManager {
                 self.mk_bv_sle(a, b)
             }
 
-            // ===== Strings =====
+            // ======== Strings ========
             TermKind::StrConcat(a, b) => {
                 let a = sub(a);
                 let b = sub(b);
@@ -986,7 +986,7 @@ impl TermManager {
                 self.mk_str_from_code(a)
             }
 
-            // ===== Floating point =====
+            // ======== Floating point ========
             TermKind::FpAbs(a) => {
                 let a = sub(a);
                 self.mk_fp_abs(a)
@@ -1126,13 +1126,13 @@ impl TermManager {
                 self.mk_ubv_to_fp(rm, arg, eb, sb)
             }
 
-            // ===== Uninterpreted function application =====
+            // ======== Uninterpreted function application ========
             TermKind::Apply { func, args } => {
                 let args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(a)).collect();
                 self.intern(TermKind::Apply { func, args }, sort)
             }
 
-            // ===== Algebraic datatypes =====
+            // ======== Algebraic datatypes ========
             TermKind::DtConstructor { constructor, args } => {
                 let args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(a)).collect();
                 self.intern(TermKind::DtConstructor { constructor, args }, sort)

@@ -935,9 +935,9 @@ mod tests {
         assert!(result.is_valid());
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Real per-rule verification (equality congruence-closure rules).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_symmetry_valid_and_rejects_bogus_conclusion() {
@@ -1205,11 +1205,11 @@ mod tests {
         assert!(sk.validate_step(0, &mut m).is_invalid());
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // `validate_step` cycle-safety regression tests (audit: `validated.insert`
     // runs only after antecedents are validated, with no in-progress marker,
     // so a cyclic antecedent edge recursed forever).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_validate_step_self_loop_reports_cyclic_invalid_not_a_hang() {

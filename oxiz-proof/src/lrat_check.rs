@@ -1,8 +1,8 @@
 //! Pure-Rust LRAT (Linear RAT) proof checker.
 //!
 //! An LRAT proof augments a plain DRAT proof with, for every added clause, an
-//! explicit **hint chain**: the ids of clauses that — when unit-propagated in
-//! the given order after the new clause's literals are assumed false — reach
+//! explicit **hint chain**: the ids of clauses that – when unit-propagated in
+//! the given order after the new clause's literals are assumed false – reach
 //! a conflict. Because the hints are given rather than searched for, checking
 //! an LRAT proof only ever needs *forward* unit propagation guided by the
 //! hint list, never the backward RAT search a plain DRAT checker performs.
@@ -12,18 +12,18 @@
 //! # Format
 //!
 //! Text LRAT, one record per line (matches what `oxiz-sat`'s `LratWriter`
-//! emits — not linked here, as this crate does not unconditionally depend on
-//! `oxiz-sat` — and what the reference `lrat-check` tool reads):
+//! emits – not linked here, as this crate does not unconditionally depend on
+//! `oxiz-sat` – and what the reference `lrat-check` tool reads):
 //!
-//! - Addition: `<id> <lit>… 0 <hint>… 0` — `id` is the clause's own id,
+//! - Addition: `<id> <lit>… 0 <hint>… 0` – `id` is the clause's own id,
 //!   `<lit>…` its literals (DIMACS convention, terminated by a literal `0`),
 //!   `<hint>…` the RUP chain (clause ids, also terminated by `0`; may be
 //!   empty, in which case only the mandatory terminating `0` appears).
-//! - Deletion: `<id> d <clause-id>… 0` — the leading `id` is cosmetic (the id
+//! - Deletion: `<id> d <clause-id>… 0` – the leading `id` is cosmetic (the id
 //!   of the most-recently-added clause, per the LRAT convention); what
 //!   matters is the `d` marker and the list of now-inactive clause ids.
 //!
-//! Original (input-formula) clauses are not part of the LRAT stream itself —
+//! Original (input-formula) clauses are not part of the LRAT stream itself –
 //! they are supplied separately, numbered `1..=N` in the order given, exactly
 //! as a checker reading an accompanying DIMACS CNF file would number the
 //! lines of that file.
@@ -35,11 +35,11 @@
 //! 1. Assume every literal of the new clause is **false** (the negation of
 //!    the clause being added).
 //! 2. Replay the hint chain: each hint's clause must, under the assumption
-//!    built so far, be either already satisfied (a literal already true —
+//!    built so far, be either already satisfied (a literal already true –
 //!    skipped as a harmless no-op) or have at most one literal not yet
 //!    assigned. An unassigned literal is a propagation: it is assigned true
 //!    and the walk continues. A hint clause with every literal false is the
-//!    conflict the chain was building toward — checking that addition line
+//!    conflict the chain was building toward – checking that addition line
 //!    succeeds immediately (any hints left unprocessed after that point are
 //!    simply unused, which is allowed).
 //! 3. If the hint chain runs out without ever reaching a fully-false clause,
@@ -56,7 +56,7 @@
 //! (`lrat-check` rejects the same).
 //!
 //! The proof as a whole verifies UNSAT once *any* clause with zero literals
-//! is active — either an original clause supplied directly as `[]`, or one
+//! is active – either an original clause supplied directly as `[]`, or one
 //! derived by a verified addition line.
 
 use std::collections::HashMap;
@@ -113,7 +113,7 @@ pub enum LratCheckIoError {
     Io(io::Error),
     /// The CNF text was not well-formed DIMACS: a clause token was neither a
     /// literal nor the `0` terminator. Surfaced as an error rather than
-    /// silently dropped — see `parse_dimacs_clauses` (a private function, not
+    /// silently dropped – see `parse_dimacs_clauses` (a private function, not
     /// part of this crate's public API) for why silently skipping a bad
     /// token is unsafe for a checker (it would under-count the clause's
     /// literals, potentially turning a real original clause into one the
@@ -192,7 +192,7 @@ fn rup_check(active: &HashMap<i64, Vec<i32>>, clause: &[i32], hints: &[i64]) -> 
 
     // Assume the new clause's negation: every one of its own literals is
     // false. A clause that contains both `x` and `-x` makes this assumption
-    // self-contradictory immediately — trivially RUP, no hints needed.
+    // self-contradictory immediately – trivially RUP, no hints needed.
     for &lit in clause {
         if !assigned.assign_true(-lit) {
             return Ok(());
@@ -367,7 +367,7 @@ pub fn check_lrat_proof(original_clauses: &[Vec<i32>], lrat_text: &str) -> LratC
         let id = (i + 1) as i64;
         if clause.is_empty() {
             // An empty clause given directly in the input formula is, on its
-            // own, a complete proof of UNSAT — no LRAT lines need to run.
+            // own, a complete proof of UNSAT – no LRAT lines need to run.
             return LratCheckReport::accept(0, 0);
         }
         active.insert(id, clause.clone());
@@ -434,7 +434,7 @@ pub fn check_lrat_proof(original_clauses: &[Vec<i32>], lrat_text: &str) -> LratC
 ///
 /// - Some SATLIB-era generators end the clause section with a bare `%` line
 ///   before trailing junk (a repeated literal count, a filename, …). Reading
-///   past it — as `oxiz-sat`'s own `dimacs.rs` reader does not — would parse
+///   past it – as `oxiz-sat`'s own `dimacs.rs` reader does not – would parse
 ///   that junk as more clause tokens; a lone digit trailer like `0\n` reads
 ///   as a spurious **empty** original clause, and an empty original clause
 ///   makes *any* LRAT stream vacuously verify (the empty clause is already
@@ -443,7 +443,7 @@ pub fn check_lrat_proof(original_clauses: &[Vec<i32>], lrat_text: &str) -> LratC
 ///   hole.
 /// - A token that is neither a valid `i32` literal nor absent used to be
 ///   silently skipped. Dropping a stray token out of a clause *shortens*
-///   that clause, which only ever makes it easier to satisfy — silently
+///   that clause, which only ever makes it easier to satisfy – silently
 ///   strengthening the formula the checker verifies against relative to what
 ///   the input file actually says. Every token must parse; one that does not
 ///   is now a hard error.
@@ -480,7 +480,7 @@ fn parse_dimacs_clauses(text: &str) -> Result<Vec<Vec<i32>>, String> {
 }
 
 /// [`check_lrat_proof`], reading the original formula and the LRAT proof
-/// from files (a minimal DIMACS CNF reader and a plain LRAT text reader —
+/// from files (a minimal DIMACS CNF reader and a plain LRAT text reader –
 /// this crate never shells out to an external tool).
 pub fn check_lrat_files(
     cnf_path: impl AsRef<Path>,
@@ -534,7 +534,7 @@ mod tests {
     fn test_pr26_proof_lrat_check_rejects_hint_that_is_not_unit() {
         let (clauses, _) = tiny_unsat_instance();
         // Clause 1 is (a ∨ b): neither literal is discharged by assuming
-        // nothing, so it is not unit — this hint chain cannot derive `b`.
+        // nothing, so it is not unit – this hint chain cannot derive `b`.
         let lrat = "5 2 0 1 0\n";
         let report = check_lrat_proof(&clauses, lrat);
         assert!(!report.verified);
@@ -654,7 +654,7 @@ mod tests {
     /// filename) must not be read as more clause content. Before the fix,
     /// the trailing `0` line parsed as an empty *original* clause, and
     /// `check_lrat_proof` treats any empty original clause as a complete
-    /// proof on its own — so a genuinely non-trivial formula with this
+    /// proof on its own – so a genuinely non-trivial formula with this
     /// trailer would verify against literally any LRAT text, including an
     /// empty one that derives nothing. The real formula here is UNSAT but
     /// requires a real derivation; an empty proof must be rejected.

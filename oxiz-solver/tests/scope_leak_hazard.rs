@@ -1,4 +1,4 @@
-//! Reproductions for task **#26** — theory-solver scope leakage across
+//! Reproductions for task **#26** – theory-solver scope leakage across
 //! `TheoryManager` lifetimes produces a **false `unsat`**.
 //!
 //! # The leak
@@ -17,8 +17,8 @@
 //!
 //! A search that ends `Sat` **never backtracks**, so it leaves the theory
 //! solvers several scopes deep, holding every assertion the winning branch made.
-//! A new `TheoryManager` is then built — for the next MBQI round, or for the
-//! next `check-sat` — and it starts with `level_stack == vec![0]`.  From that
+//! A new `TheoryManager` is then built – for the next MBQI round, or for the
+//! next `check-sat` – and it starts with `level_stack == vec![0]`.  From that
 //! moment the leaked scopes are *unreachable*: `level_stack.len()` is already 1,
 //! so no `on_backtrack(0)` can ever pop them, and the assertions inside them are
 //! committed for the lifetime of the `Solver`.  Meanwhile the new manager
@@ -46,7 +46,7 @@
 //! ```
 //!
 //! The MBQI lemma `f(1) = 100 ⇒ x ≠ 1` is added with `Solver::add_clause`, which
-//! calls `backtrack_to_root()` **without notifying the theory manager** — hence
+//! calls `backtrack_to_root()` **without notifying the theory manager** – hence
 //! `sat decision level = 0` against `abs theory depth = 3`.  Round 2 asserts
 //! `x ≠ 1` into a tableau that still contains `x = 1` from the branch the lemma
 //! just retracted, the arithmetic solver refutes it at SAT decision level 0, and
@@ -61,23 +61,23 @@
 //! SAT variable, so it took case 1 and was emitted unchecked; and when the
 //! conflict lands at decision level 0, `solve_with_theory` returns `Unsat`
 //! before conflict analysis examines the clause at all.  Nothing was loud; the
-//! answer was simply wrong.  Case 1 now applies the same liveness test — see
+//! answer was simply wrong.  Case 1 now applies the same liveness test – see
 //! *Status* below.
 //!
-//! # Status — fixed
+//! # Status – fixed
 //!
 //! Every test below asserts the **correct** answer, and every one of them failed
 //! before the task-#26 fix.  They are now the regression pins for it.
 //!
 //! The remedy is `Solver::rebase_theory_state` (`solver/mod.rs`), called at the
-//! two seams this file exercises — `check_core` entry and the MBQI round
+//! two seams this file exercises – `check_core` entry and the MBQI round
 //! boundary.  It drops the SAT trail to the root and re-derives the EUF /
 //! arithmetic / bit-vector state from it, so the next round starts from exactly
 //! the facts it is entitled to: the ground assertions plus every kept
 //! instantiation lemma, all of which live in the SAT clause database with their
 //! unit consequences committed at the root, and none of the branch decisions.
 //!
-//! Popping the leaked scopes instead was tried and diverges — see the doc
+//! Popping the leaked scopes instead was tried and diverges – see the doc
 //! comment on `rebase_theory_state` for why the SAT trail and the theory scope
 //! stack have to be re-aligned together.
 //!
@@ -86,7 +86,7 @@
 //! atom the SAT core no longer has assigned trips a `debug_assert!` and falls
 //! back to the conservative lemma instead of being emitted silently.  With the
 //! fix reverted, [`leaked_order_bounds_cause_a_false_unsat`] trips exactly that
-//! assertion — the net is live, not quiet by exemption.
+//! assertion – the net is live, not quiet by exemption.
 
 use oxiz_solver::Context;
 
@@ -113,9 +113,9 @@ const TWO_BRANCH_CORE: &str = r#"
     (assert (or (= y 2) (= y 7)))
 "#;
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Control: green today and after the fix.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The differential control arm: the very assertion set that the reproductions
 /// end up with, checked **once**, is satisfiable and answered `sat`.
@@ -133,9 +133,9 @@ fn control_same_assertions_checked_once_are_sat() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// (a) End-to-end false `unsat` — the MBQI-round leak inside a single check.
-// ---------------------------------------------------------------------------
+// ========  ========
+// (a) End-to-end false `unsat` – the MBQI-round leak inside a single check.
+// ========  ========
 
 /// **Task #26, the flagged hazard itself.** A single `check-sat` on a
 /// satisfiable UFLIA goal answers `unsat`, because an MBQI lemma retracts the
@@ -170,9 +170,9 @@ fn mbqi_round_scope_leak_causes_false_unsat() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// (a) End-to-end false `unsat` — the same leak across `check-sat` calls.
-// ---------------------------------------------------------------------------
+// ========  ========
+// (a) End-to-end false `unsat` – the same leak across `check-sat` calls.
+// ========  ========
 
 /// The purest statement of the bug: **interposing a `(check-sat)` changes the
 /// answer**.
@@ -180,7 +180,7 @@ fn mbqi_round_scope_leak_causes_false_unsat() {
 /// Both halves finish with the identical assertion set, and
 /// [`control_same_assertions_checked_once_are_sat`] shows that set is `sat`.
 /// Adding a `(check-sat)` before the last two assertions can only *observe*, it
-/// cannot constrain — yet it turns the verdict into `unsat`, because the first
+/// cannot constrain – yet it turns the verdict into `unsat`, because the first
 /// check left `x = 1` and `y = 7` committed in scopes the second check's
 /// manager can never pop.  (`Solver::check_core` resets only the bit-vector
 /// solver between checks; EUF and arithmetic carry over by design.)
@@ -224,7 +224,7 @@ fn leaked_order_bounds_cause_a_false_unsat() {
     assert_eq!(verdicts(script), vec!["sat", "sat"]);
 }
 
-/// Reals leak identically — the branch state lives in the shared simplex
+/// Reals leak identically – the branch state lives in the shared simplex
 /// tableau, not in anything integer-specific.
 #[test]
 fn leaked_real_bounds_cause_a_false_unsat() {
@@ -259,9 +259,9 @@ fn leaked_uf_branch_equalities_cause_a_false_unsat() {
     assert_eq!(verdicts(script), vec!["sat", "sat"]);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // (a) The quantified fragments the MBQI parity suites cover.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// UFLIA: the same leak with a bounded-box universal in play, i.e. inside the
 /// fragment `tests/mbqi_sat_certification.rs` certifies.
@@ -321,17 +321,17 @@ fn quantified_uflra_multicheck_false_unsat() {
     assert_eq!(verdicts(script), vec!["sat", "sat"]);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // (a) The self-contradictory sequence: unsat, then sat, from a *weaker* state.
-// ---------------------------------------------------------------------------
+// ========  ========
 
-/// The leak survives `push`, and `pop` cures it — which is visible from the
+/// The leak survives `push`, and `pop` cures it – which is visible from the
 /// outside as an impossible answer sequence.
 ///
 /// `Solver::pop` resets EUF and arithmetic wholesale (see the comment on
 /// `Solver::pop`), so it happens to sweep the leak away.  The middle check
 /// therefore answers `unsat` for an assertion set that is *strictly stronger*
-/// than the one the final check answers `sat` for — the final check's set is a
+/// than the one the final check answers `sat` for – the final check's set is a
 /// subset of the middle one.  A monotone solver cannot do that; only leaked
 /// state can.
 #[test]

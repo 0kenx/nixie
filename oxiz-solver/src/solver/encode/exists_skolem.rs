@@ -5,7 +5,7 @@
 //! `(assert (exists ((y Int)) φ(y)))` says "some `y` satisfies `φ`".  Left as a
 //! quantifier it reaches MBQI, which can only *guess* a witness: it instantiates
 //! `y` with candidate ground terms and adds `φ(c)` to the SAT core as a hard
-//! unit clause.  Every such guess is a strengthening — sound for `sat` (a model
+//! unit clause.  Every such guess is a strengthening – sound for `sat` (a model
 //! of `φ(c)` is a model of `∃y. φ(y)`) but hopeless for completeness, because a
 //! witness outside the candidate pool is never tried, and outright dangerous
 //! when several guesses for the *same* existential are asserted together (their
@@ -13,9 +13,9 @@
 //!
 //! Skolemization replaces the guess with a *symbol*: `∃y. φ(y)` becomes
 //! `φ(sk)` for a fresh constant `sk`.  This is the textbook equisatisfiability
-//! rewrite — any model of `φ(sk)` yields a model of `∃y. φ(y)` by forgetting
+//! rewrite – any model of `φ(sk)` yields a model of `∃y. φ(y)` by forgetting
 //! `sk`, and any model of `∃y. φ(y)` extends to one of `φ(sk)` by interpreting
-//! `sk` as the witness — so the ordinary ground solver now *searches* for the
+//! `sk` as the witness – so the ordinary ground solver now *searches* for the
 //! witness instead of guessing it, and the assertion carries no quantifier at
 //! all when `φ` is quantifier-free.
 //!
@@ -57,7 +57,7 @@ const MAX_SPINE_CONJUNCTS: usize = 4096;
 /// advanced past every symbol minted here.  Threading it is mandatory: Skolem
 /// symbols are named positionally and interned, so two rewrites that both
 /// started from zero would make two unrelated existentials share one witness
-/// symbol — a strengthening that can turn `sat` into `unsat`.
+/// symbol – a strengthening that can turn `sat` into `unsat`.
 pub(crate) fn skolemize_asserted_existentials(
     term: TermId,
     manager: &mut TermManager,
@@ -105,7 +105,7 @@ pub(crate) fn skolemize_asserted_existentials(
 ///
 /// Iterative with an explicit heap stack: the spine shape is caller-controlled
 /// input, and a depth cap on a native recursion could only have silently
-/// dropped conjuncts — which would drop assertions from the encoded problem.
+/// dropped conjuncts – which would drop assertions from the encoded problem.
 /// Children are pushed in reverse so the conjunct order is preserved, and the
 /// rebuilt conjunction is structurally the same formula.
 fn flatten_asserted_conjuncts(term: TermId, manager: &TermManager) -> Option<Vec<TermId>> {

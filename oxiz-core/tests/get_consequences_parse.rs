@@ -75,7 +75,7 @@ fn plain_assertion_stays_unnamed() {
 #[test]
 fn named_annotation_on_subterm_does_not_name_the_assertion() {
     // The `:named` sits on a *sub*-expression, not the asserted formula, so the
-    // command must stay a plain `Assert` — the annotation key is the inner term
+    // command must stay a plain `Assert` – the annotation key is the inner term
     // `a`, never the returned top-level `(=> a b)` term.
     let mut manager = TermManager::new();
     let script = "(declare-const a Bool)(declare-const b Bool)(assert (=> (! a :named x) b))";

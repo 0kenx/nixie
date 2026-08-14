@@ -3,9 +3,9 @@
 //! The Ferrante–Rackoff and Loos–Weispfenning virtual-substitution eliminators
 //! both operate on the same underlying object: a quantifier-free boolean
 //! combination of linear comparison atoms over the reals. This module factors
-//! out the machinery they share — linear-form parsing with exact rational
+//! out the machinery they share – linear-form parsing with exact rational
 //! arithmetic, boundary/test-point construction, the `x → ±∞` limit rewrite,
-//! and the infinitesimal `x → t + ε` virtual substitution — so each eliminator
+//! and the infinitesimal `x → t + ε` virtual substitution – so each eliminator
 //! only has to express its own test set.
 //!
 //! All internal arithmetic is carried out in exact [`BigRational`]; conversion
@@ -174,7 +174,7 @@ fn rational64_to_big(r: Rational64) -> BigRational {
 ///
 /// Iterative, with a visited set. The result type `bool` has no error
 /// channel, so a depth cap could only ever answer "does not mention `x`" for
-/// a term it never finished inspecting — and this predicate gates the whole
+/// a term it never finished inspecting – and this predicate gates the whole
 /// eliminator, so a wrong `false` silently drops a constraint. The visited
 /// set also stops a shared-subterm DAG from being re-walked as a tree; this
 /// predicate is called at the top of three separate recursions, which made
@@ -267,7 +267,7 @@ fn mentions_map(root: TermId, x: Spur, tm: &TermManager) -> FxHashMap<TermId, bo
 ///
 /// A missing entry cannot happen for a node reached from the map's root, but
 /// if it ever did, answering `true` keeps the walker on the path that either
-/// rewrites the atom properly or reports an honest `Err` — answering `false`
+/// rewrites the atom properly or reports an honest `Err` – answering `false`
 /// would silently return an `x`-containing term as if it were `x`-free.
 fn mentions_lookup(map: &FxHashMap<TermId, bool>, id: TermId) -> bool {
     map.get(&id).copied().unwrap_or(true)
@@ -318,7 +318,7 @@ pub(crate) fn to_linear(id: TermId, x: Spur, tm: &TermManager) -> Option<LinForm
     // Explicit stack plus a memo: the recursive form had one frame per level
     // of arithmetic nesting (each holding a `LinForm` with an `FxHashMap` of
     // `BigRational`s) and re-parsed shared sub-terms once per occurrence.
-    // The memo is keyed on `TermId` alone, which is exact here — the linear
+    // The memo is keyed on `TermId` alone, which is exact here – the linear
     // form of a term depends only on the term and on `x`.
     let mut memo: FxHashMap<TermId, LinForm> = FxHashMap::default();
     let mut stack = vec![Step::Enter(id)];
@@ -588,7 +588,7 @@ fn push_cmp_atom(
     let fb = to_linear(b, x, tm).ok_or("lra: non-linear comparison operand")?;
     let form = fa.sub(fb);
     if form.x_coeff.is_zero() {
-        // `x` cancels out — the atom is effectively `x`-free.
+        // `x` cancels out – the atom is effectively `x`-free.
         return Ok(());
     }
     out.push(XAtom {
@@ -648,8 +648,8 @@ fn atom_rewrite(
 ///
 /// Explicit work stack (two phases: schedule operands, then rebuild the node
 /// from the already-rewritten operands) plus a memo. Both rewrites are a
-/// function of the sub-term alone once `x` and `mode` are fixed — neither
-/// carries polarity or any other context down the walk — so memoising on
+/// function of the sub-term alone once `x` and `mode` are fixed – neither
+/// carries polarity or any other context down the walk – so memoising on
 /// `TermId` is exact, and it keeps a sub-formula shared by several parents
 /// (an `Xor`/`Ite` chain re-expands one operand under two parents per level)
 /// from being rewritten once per path.

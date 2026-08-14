@@ -136,7 +136,7 @@ impl RootIsolator {
         // Count sign variations at endpoints. Normalize a reversed/degenerate
         // interval (`left > right`) up front rather than let a Sturm
         // sign-variation count for the (higher-x) `left` come out smaller
-        // than for `right` — sign variations are non-increasing as x
+        // than for `right` – sign variations are non-increasing as x
         // increases, so a reversed pair would otherwise underflow the
         // `usize` subtraction below.
         let (left, right) = interval;
@@ -469,12 +469,12 @@ mod tests {
         BigRational::from_integer(BigInt::from(n))
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // `bisect_and_isolate` bisection-depth regression tests (audit: no
     // bound at all on the bisection recursion; `oxiz-nlsat`'s sibling
     // implementation of the same algorithm already carries a 4096-level
     // safety net).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_isolate_roots_multiple_roots_via_bisection_behaviour_preserved() {

@@ -10,9 +10,7 @@
 use super::*;
 use crate::ast::normal_forms::{extract_cnf_clauses, to_cnf};
 
-// ===========================================================================
-// Helpers
-// ===========================================================================
+// ======== Helpers ========
 
 /// Render a literal as `name` / `!name` for readable clause assertions.
 fn literal_name(manager: &TermManager, id: TermId) -> String {
@@ -180,9 +178,7 @@ fn bool_var_row(manager: &mut TermManager, count: usize) -> Vec<TermId> {
         .collect()
 }
 
-// ===========================================================================
-// Clause-shape pins, one per connective
-// ===========================================================================
+// ======== Clause-shape pins, one per connective ========
 
 #[test]
 fn and_definition_clause_shape() {
@@ -365,9 +361,7 @@ fn non_connective_boolean_terms_stay_atoms() {
     assert!(clauses.iter().flatten().any(|&lit| lit == int_eq));
 }
 
-// ===========================================================================
-// Size: linear where `to_cnf` is exponential
-// ===========================================================================
+// ======== Size: linear where `to_cnf` is exponential ========
 
 /// Thirty nested `Iff`s: four clauses and one variable per level, and it has
 /// to be instant.
@@ -462,9 +456,7 @@ fn shared_subformulas_are_named_once() {
     assert_eq!(clauses.len(), 14);
 }
 
-// ===========================================================================
-// Contract: equisatisfiability
-// ===========================================================================
+// ======== Contract: equisatisfiability ========
 
 #[test]
 fn equisatisfiable_on_nested_iff() {
@@ -507,9 +499,7 @@ fn equisatisfiable_on_a_contradiction() {
     assert_equisatisfiable(&mut manager, formula);
 }
 
-// ===========================================================================
-// Fresh variables and traversal
-// ===========================================================================
+// ======== Fresh variables and traversal ========
 
 /// A user variable already named `tseitin!0` must not be captured: minting
 /// checks the manager rather than assuming the prefix is unused.

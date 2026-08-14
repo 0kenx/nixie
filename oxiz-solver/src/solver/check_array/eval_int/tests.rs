@@ -72,7 +72,7 @@ impl Env {
         self.node(TermKind::Sub(lhs, rhs))
     }
 
-    /// A raw `select` node — `mk_select` would apply read-over-write itself.
+    /// A raw `select` node – `mk_select` would apply read-over-write itself.
     fn select(&mut self, array: TermId, index: TermId) -> TermId {
         self.node(TermKind::Select(array, index))
     }
@@ -102,9 +102,9 @@ fn val(value: i64) -> Option<BigInt> {
     Some(BigInt::from(value))
 }
 
-// ── Leaves and the unhandled kinds ────────────────────────────────────────
+// ======== Leaves and the unhandled kinds ========
 
-/// An integer literal evaluates to itself, at arbitrary magnitude — the
+/// An integer literal evaluates to itself, at arbitrary magnitude – the
 /// evaluator is exact `BigInt` arithmetic, not `i64`.
 #[test]
 fn literals_evaluate_exactly() {
@@ -163,7 +163,7 @@ fn every_supported_integer_kind_folds() {
     }
 }
 
-// ── Arithmetic ────────────────────────────────────────────────────────────
+// ======== Arithmetic ========
 
 /// `+` sums every operand.  A dropped operand is the failure mode this pins.
 #[test]
@@ -196,7 +196,7 @@ fn single_operand_folds() {
     assert_eq!(env.eval(product), val(7));
 }
 
-/// `*` multiplies every operand, exactly — no `i64` wrap-around.
+/// `*` multiplies every operand, exactly – no `i64` wrap-around.
 #[test]
 fn mul_is_exact() {
     let mut env = Env::new();
@@ -232,7 +232,7 @@ fn nested_arithmetic_folds_bottom_up() {
     assert_eq!(env.eval(product), val(18));
 }
 
-/// One unevaluable operand anywhere makes the whole term unevaluable — the sum
+/// One unevaluable operand anywhere makes the whole term unevaluable – the sum
 /// does not quietly proceed with the operands it did manage to fold.
 #[test]
 fn one_unevaluable_operand_defeats_the_whole_term() {
@@ -267,7 +267,7 @@ fn shared_subterms_fold_identically() {
     assert_eq!(env.eval(squared), val(49));
 }
 
-// ── The read-over-write arm ───────────────────────────────────────────────
+// ======== The read-over-write arm ========
 
 /// `select(store(a, i, v), i)` folds to `v`.
 #[test]
@@ -282,7 +282,7 @@ fn read_over_write_at_the_same_index() {
 }
 
 /// A read at a *different* index is not decided by the axiom, so the term does
-/// not fold — the evaluator must not fall through to the stored value.
+/// not fold – the evaluator must not fall through to the stored value.
 #[test]
 fn read_at_a_different_index_does_not_fold() {
     let mut env = Env::new();
@@ -412,7 +412,7 @@ fn an_alias_chain_folds_to_the_bottom() {
     assert_eq!(env.eval(top), val(11));
 }
 
-// ── Negation, Euclidean division and `ite` ────────────────────────────────
+// ======== Negation, Euclidean division and `ite` ========
 
 /// Arithmetic negation.
 #[test]
@@ -658,7 +658,7 @@ fn new_kinds_compose() {
     assert_eq!(env.eval(remainder), val(0));
 }
 
-// ── Corpus equivalence ────────────────────────────────────────────────────
+// ======== Corpus equivalence ========
 
 /// A deterministic 64-bit xorshift, so the corpus below is reproducible
 /// without a random-number dependency.
@@ -783,8 +783,8 @@ const EXTENDED_CORPUS_OPS: usize = 7;
 /// Build a corpus of integer terms in two layers, the same way the bit-vector
 /// corpus does.
 ///
-/// The first layer draws only from leaves that fold — literals of both signs,
-/// a read-over-write, and a read resolved through the alias map — so the sums,
+/// The first layer draws only from leaves that fold – literals of both signs,
+/// a read-over-write, and a read resolved through the alias map – so the sums,
 /// products and differences are exercised on terms that actually produce a
 /// value.  The second layer adds an unbound variable, a non-folding read and
 /// two kinds with no arm, so the "not evaluable" propagation is exercised from
@@ -898,16 +898,16 @@ const LEGACY_PINNED_DIGEST: u64 = 8_667_480_659_813_980_293;
 ///
 /// This corpus draws only from the three kinds the pre-extension evaluator
 /// supported, and is generated draw for draw identically to the one the
-/// **recursive** implementation was measured against — whose digest was
+/// **recursive** implementation was measured against – whose digest was
 /// `7013243568558455799` over 3003 evaluable terms.  Every one of its 3013
 /// answers was then compared term by term against a faithful restatement of the
 /// pre-extension semantics:
 ///
-/// * **3009 identical** — same value, or `None` in both.
+/// * **3009 identical** – same value, or `None` in both.
 /// * **4 answered where it did not**, all reached through the two poison leaves
 ///   the corpus plants: `(div 1 1) = 1` and `(- 1) = -1`, plus
 ///   `(- (- 1) 2) = -3` and `(+ x (div 1 1)) = -6`.
-/// * **0 regressions** — no term it could answer is answered differently now.
+/// * **0 regressions** – no term it could answer is answered differently now.
 #[test]
 fn legacy_corpus_matches_the_pinned_digest() {
     let (env, terms) = build_corpus(2500, 500, LEGACY_CORPUS_OPS);
@@ -926,7 +926,7 @@ const EXTENDED_PINNED_DIGEST: u64 = 16_094_252_581_770_523_361;
 ///
 /// Same generator, drawing from `div`, `mod`, `neg` and `ite` over each of the
 /// five integer relations as well.  Nothing pins these answers to a previous
-/// implementation — there was none — so the value tests above are what establish
+/// implementation – there was none – so the value tests above are what establish
 /// them and this digest is what keeps them from drifting.  Fewer terms fold than
 /// in the legacy corpus (966 of 3013) precisely because `0` is one of the corpus
 /// literals and `div`/`mod` by zero must *not* fold, so the refusal path is
@@ -944,7 +944,7 @@ fn extended_corpus_matches_the_pinned_digest() {
     assert_eq!(digest, EXTENDED_PINNED_DIGEST, "corpus digest");
 }
 
-// ── Native stack usage ────────────────────────────────────────────────────
+// ======== Native stack usage ========
 
 /// A left-nested `-` chain of `depth` levels, and its expected value.
 fn sub_chain(env: &mut Env, depth: usize) -> (TermId, BigInt) {
@@ -958,13 +958,13 @@ fn sub_chain(env: &mut Env, depth: usize) -> (TermId, BigInt) {
 
 /// The evaluator's native stack usage is constant in the term's depth.
 ///
-/// The chain is evaluated on a **128 KiB** thread — one eighth of the 1 MiB
+/// The chain is evaluated on a **128 KiB** thread – one eighth of the 1 MiB
 /// this test used to pin, paired with one eighth of the historical 200 000
 /// levels so the ~5 bytes of stack per level it actually pins is unchanged at
 /// a 64th of the construction cost.  The recursive implementation this
 /// replaced aborted the *process* at roughly 540 levels on a stack this size
 /// (4 300 on 1 MiB).  The assertion that matters is that the thread returned
-/// at all — a stack overflow is not a catchable failure.
+/// at all – a stack overflow is not a catchable failure.
 #[test]
 fn deep_arithmetic_evaluates_on_a_small_stack() {
     // Stack and depth scale together (1 MiB/200k -> 128 KiB/25k): the
@@ -1040,14 +1040,14 @@ fn a_deep_alias_chain_folds_on_a_small_stack() {
     assert_eq!(observed, val(11));
 }
 
-// ── The alias rewrite cycle ───────────────────────────────────────────────
+// ======== The alias rewrite cycle ========
 
 /// An alias whose stored value is the very read being resolved makes the
 /// read-over-write rewrite cycle: `B = store(A, i, select(B, i))` rewrites
 /// `select(B, i)` to itself.
 ///
 /// The recursive implementation followed that rewrite as a tail call and so
-/// **aborted the process** with a stack overflow — on well-sorted SMT-LIB input
+/// **aborted the process** with a stack overflow – on well-sorted SMT-LIB input
 /// (`collect_array_var_aliases` records the alias for any `(= B (store …))`
 /// with `B` a variable, and applies no acyclicity test).  The iterative
 /// implementation detects the repeat and answers "not evaluable", which is the

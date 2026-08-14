@@ -262,7 +262,7 @@ impl<'a> Nla2BvTactic<'a> {
     /// `TermKind::Or` as well, treating each disjunct's comparison as a fact:
     /// given `(or (<= x 3) (>= y 100))` it recorded `x <= 3`, then encoded
     /// `x` in two bits, discarding every model in which the *second* disjunct
-    /// is the one that holds — turning a SAT goal UNSAT. `Or` is now skipped
+    /// is the one that holds – turning a SAT goal UNSAT. `Or` is now skipped
     /// entirely (its sub-bounds are simply not learned, which only costs the
     /// `check_all_bounded` gate an opportunity to succeed).
     ///
@@ -515,18 +515,18 @@ impl<'a> Nla2BvTactic<'a> {
     /// tactic's licence to replace unbounded integers by fixed-width
     /// bitvectors. A variable this walk fails to report is a variable whose
     /// bounds are never checked, so the encoding silently wraps it modulo
-    /// 2^w — the formula's meaning changes. Two ways that used to happen:
+    /// 2^w – the formula's meaning changes. Two ways that used to happen:
     ///
     /// * The hand-written match ended in `_ => {}`, so nothing below a
     ///   `Store`/`Select`/`Apply`/`Distinct`/`Implies`/`Xor`/quantifier/`Let`
     ///   node was ever looked at. `(and (>= x 0) (<= x 7) (p (* x y)))`
-    ///   reported only `x`, and `y` — genuinely unbounded — sailed through
+    ///   reported only `x`, and `y` – genuinely unbounded – sailed through
     ///   the bounded check. Descending is now delegated to
     ///   [`crate::ast::traversal::get_children`], which is exhaustive over
     ///   `TermKind`, so a new variant is a compile error there instead of a
     ///   silent omission here.
     /// * The walk recursed natively with no guard, on a `()` return type
-    ///   where a depth cap could only *drop* variables — the same silent
+    ///   where a depth cap could only *drop* variables – the same silent
     ///   unsoundness. It now uses an explicit heap stack.
     ///
     /// Quantifier bodies are descended into as well, so a bound variable is
@@ -580,7 +580,7 @@ impl<'a> Nla2BvTactic<'a> {
 
     /// Convert an integer term to bitvector.
     ///
-    /// Entry point for [`Self::convert_term_at`] — see that function for the
+    /// Entry point for [`Self::convert_term_at`] – see that function for the
     /// depth contract.
     fn convert_term(&mut self, term: TermId) -> Option<TermId> {
         self.convert_term_at(term, 0)
@@ -594,13 +594,13 @@ impl<'a> Nla2BvTactic<'a> {
     /// This and [`Self::convert_arith_to_bv_at`] are mutually recursive over
     /// the input term's nesting, and each level keeps a whole
     /// `TermConvData`/`ArithConvData` (which own `Vec<TermId>`,
-    /// `Vec<(Spur, SortId)>` and `Vec<Vec<TermId>>`) alive across the call —
+    /// `Vec<(Spur, SortId)>` and `Vec<Vec<TermId>>`) alive across the call –
     /// among the largest frames in the tactic module. Beyond
     /// [`MAX_CONVERSION_DEPTH`] they stop and return `None`.
     ///
     /// `None` is not a silent default here: it is this converter's existing,
     /// documented "I cannot encode this term" channel, and `apply_mut` turns
-    /// it into [`TacticResult::NotApplicable`] — the goal is handed on
+    /// it into [`TacticResult::NotApplicable`] – the goal is handed on
     /// untouched, exactly as when a variable turns out to be unbounded. No
     /// partially-converted or wrapped-around formula can escape, so the
     /// limit costs completeness only.
@@ -941,7 +941,7 @@ impl<'a> Nla2BvTactic<'a> {
     ///
     /// Iterative (explicit post-order heap stack) with a local `TermId ->
     /// width` memo. The recursive version had neither: the return type is
-    /// `u32`, so a depth cap could only have produced a *wrong* width — and a
+    /// `u32`, so a depth cap could only have produced a *wrong* width – and a
     /// width that is too small is exactly the silent-wraparound bug this
     /// tactic must not introduce. The memo also collapses what was a
     /// quadratic-at-best walk (this function is called once per node from

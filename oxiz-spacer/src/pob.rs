@@ -724,9 +724,9 @@ mod tests {
         assert_eq!(popped, Some(id1));
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Regression tests for the `sweep-backend-misc` triage sweep.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// `is_subsumed` used to ignore its `post` parameter entirely and
     /// report *any* closed POB at a high-enough level as a subsumer. This

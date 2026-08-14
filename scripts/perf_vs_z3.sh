@@ -34,7 +34,7 @@ fi
     if $HAS_Z3; then
         echo "Z3: $Z3_VERSION"
     else
-        echo "Z3: not installed — OxiZ-only timings"
+        echo "Z3: not installed – OxiZ-only timings"
     fi
     echo "Timeout: ${TIMEOUT_SEC}s per benchmark"
     echo "Benchmark dir: $BENCH_DIR"

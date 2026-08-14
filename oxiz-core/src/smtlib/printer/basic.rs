@@ -66,7 +66,7 @@ pub struct Printer<'a> {
     pub(super) manager: &'a TermManager,
     /// Current `write_term` recursion depth on this printer. `Cell`
     /// because `write_term` takes `&self` (it is called recursively and
-    /// re-entrantly from many call sites, all of which stay unchanged —
+    /// re-entrantly from many call sites, all of which stay unchanged –
     /// see `write_term`'s depth-guard wrapper below).
     depth: Cell<u32>,
 }
@@ -106,7 +106,7 @@ impl<'a> Printer<'a> {
     /// degrades gracefully to a truncation marker (`...`) instead of
     /// recursing further and risking a native stack overflow. See
     /// `write_term_at_depth` for the actual
-    /// per-`TermKind` printing logic — every recursive call within it
+    /// per-`TermKind` printing logic – every recursive call within it
     /// still goes back through this wrapper, so the depth check applies
     /// at every level without needing to touch each call site.
     pub fn write_term(&self, w: &mut impl Write, term_id: TermId) {
@@ -1058,7 +1058,7 @@ mod tests {
     use super::*;
 
     // Regression tests for: "Recursive term printers lack an explicit
-    // depth cap" — `write_term` must degrade gracefully (truncate) past
+    // depth cap" – `write_term` must degrade gracefully (truncate) past
     // `MAX_PRINT_DEPTH` instead of recursing without bound. Superseded the
     // original (default-thread-only) version of this test with one that
     // additionally constrains the stack, per this session's general
@@ -1129,7 +1129,7 @@ mod tests {
     #[test]
     fn write_term_depth_counter_resets_between_independent_calls() {
         // The depth counter must not leak across independent top-level
-        // `write_term` calls on the same `Printer` — verified by printing
+        // `write_term` calls on the same `Printer` – verified by printing
         // a normal term successfully more than once in a row.
         let mut manager = TermManager::new();
         let x = manager.mk_var("x", manager.sorts.bool_sort);
@@ -1177,7 +1177,7 @@ mod tests {
     /// `Spur` minted by one is meaningless to the other: resolving a datatype
     /// or parametric sort name (both interned by `SortManager`) through the
     /// term manager's interner yields whatever unrelated string happens to sit
-    /// at that index — or panics with an out-of-range index when the term
+    /// at that index – or panics with an out-of-range index when the term
     /// interner is shorter. This pins the sort names to the sort manager's
     /// interner, with the two interners deliberately driven out of sync first
     /// so a crossed resolution cannot accidentally agree.

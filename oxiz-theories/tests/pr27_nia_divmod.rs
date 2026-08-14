@@ -7,13 +7,13 @@
 //! This file exercises the *nonlinear* dispatch path specifically: every
 //! case here needs genuine nonlinearity (a product of two non-constant
 //! factors) alongside a `div`/`mod` term, because `dispatch_nia_constraints`
-//! only engages when `term_is_nonlinear` sees one — a purely linear
+//! only engages when `term_is_nonlinear` sees one – a purely linear
 //! `div`/`mod` problem is deliberately left to `oxiz-solver`'s
 //! `arith_axioms` ground-lemma encoder (the simplex/CDCL(T) path), which
 //! already handles it and is not touched here. The Euclidean convention
 //! itself (which value `div`/`mod` actually produce, including `get-value`)
 //! is pinned end-to-end on that LIA path instead, in
-//! `oxiz-solver/tests/pr27_divmod_semantics.rs` — this file only checks that
+//! `oxiz-solver/tests/pr27_divmod_semantics.rs` – this file only checks that
 //! the *nonlinear* dispatcher reaches the correct sat/unsat verdict.
 //!
 //! Each case here was hand-verified against the pre-fix tree: before the
@@ -23,7 +23,7 @@
 //! or fell through to `None` (`extract_poly_atoms` marked the atom
 //! `incomplete` when `translate` returned `None` for the `div`/`mod`
 //! sub-term) and the caller fell back to CDCL(T), which cannot handle the
-//! nonlinear part either — so these formulas answered `unknown` end to end.
+//! nonlinear part either – so these formulas answered `unknown` end to end.
 
 use oxiz_core::ast::TermManager;
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints};
@@ -58,7 +58,7 @@ fn test_pr27_nia_divmod_positive_divisor_is_sat() {
 /// 25); `x mod 3 = 1` is added to exercise the Euclidean witness atoms
 /// coexisting with (not being the cause of) the conflict. Every *problem*
 /// atom here is univariate in `x`, so the trustworthy-`Unsat` gate is not
-/// blocked by the pre-existing "no multivariate problem atom" restriction —
+/// blocked by the pre-existing "no multivariate problem atom" restriction –
 /// only the synthetic witness identity is multivariate, and that is exactly
 /// what `PolyAtom::synthetic` exists to permit.
 #[test]

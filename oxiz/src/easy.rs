@@ -670,7 +670,7 @@ mod tests {
     // a caller of this ergonomic API could not read a string result back at
     // all. It now returns the raw string content, matching every sibling
     // arm (`True`/`False`/`IntConst`/`RealConst`/`BitVecConst`), none of
-    // which render an SMT-LIB literal either — they render the plain value.
+    // which render an SMT-LIB literal either – they render the plain value.
 
     /// Control: plain ASCII passes through unchanged, with no quoting.
     #[test]

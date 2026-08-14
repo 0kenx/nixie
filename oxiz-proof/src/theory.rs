@@ -50,7 +50,7 @@ impl<S: Into<String>> From<S> for ProofTerm {
 /// Theory-specific proof rules
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TheoryRule {
-    // === EUF Rules ===
+    // ======== EUF Rules ========
     /// Reflexivity: ⊢ t = t
     Refl,
     /// Symmetry: t1 = t2 ⊢ t2 = t1
@@ -64,7 +64,7 @@ pub enum TheoryRule {
     /// Distinctness axiom: distinct(t1,...,tn) ⊢ ti ≠ tj for i ≠ j
     Distinct,
 
-    // === Linear Arithmetic Rules ===
+    // ======== Linear Arithmetic Rules ========
     /// Linear combination of inequalities (Farkas lemma)
     LaGeneric,
     /// Multiplication of inequality by positive constant
@@ -80,7 +80,7 @@ pub enum TheoryRule {
     /// Disequality split: x ≠ c ⊢ x < c ∨ x > c
     LaDiseq,
 
-    // === BitVector Rules ===
+    // ======== BitVector Rules ========
     /// Bit-blasting equality
     BvBlastEq,
     /// Bit extraction
@@ -100,7 +100,7 @@ pub enum TheoryRule {
     /// Overflow detection
     BvOverflow,
 
-    // === Array Rules ===
+    // ======== Array Rules ========
     /// Read-over-write (same index): (select (store a i v) i) = v
     ArrReadWrite1,
     /// Read-over-write (different index): i ≠ j → (select (store a i v) j) = (select a j)
@@ -110,7 +110,7 @@ pub enum TheoryRule {
     /// Const array: (select (const v) i) = v
     ArrConst,
 
-    // === Quantifier Rules ===
+    // ======== Quantifier Rules ========
     /// Forall elimination: ∀x. φ(x) ⊢ φ(t) for any term t
     ForallElim,
     /// Exists introduction: φ(t) ⊢ ∃x. φ(x) for any term t
@@ -122,7 +122,7 @@ pub enum TheoryRule {
     /// α-equivalence (renaming bound variables)
     AlphaEquiv,
 
-    // === General SMT Rules ===
+    // ======== General SMT Rules ========
     /// Theory conflict (unsat core from theory)
     TheoryConflict,
     /// Theory propagation
@@ -293,7 +293,7 @@ impl TheoryProof {
         id
     }
 
-    // === EUF Proof Helpers ===
+    // ======== EUF Proof Helpers ========
 
     /// Add reflexivity step: ⊢ t = t
     pub fn refl(&mut self, term: impl Into<ProofTerm>) -> TheoryStepId {
@@ -364,7 +364,7 @@ impl TheoryProof {
         self.add_step(TheoryRule::Cong, premises, conclusion)
     }
 
-    // === Arithmetic Proof Helpers ===
+    // ======== Arithmetic Proof Helpers ========
 
     /// Add a Farkas lemma step (linear combination proving unsatisfiability)
     pub fn farkas(
@@ -406,7 +406,7 @@ impl TheoryProof {
         )
     }
 
-    // === Array Proof Helpers ===
+    // ======== Array Proof Helpers ========
 
     /// Add read-over-write-same step
     pub fn read_write_same(
@@ -445,7 +445,7 @@ impl TheoryProof {
         self.add_step(TheoryRule::ArrReadWrite2, vec![premise], conclusion)
     }
 
-    // === BitVector Proof Helpers ===
+    // ======== BitVector Proof Helpers ========
 
     /// Add bit-blasting equality step
     pub fn bv_blast_eq(
@@ -456,7 +456,7 @@ impl TheoryProof {
         self.add_step(TheoryRule::BvBlastEq, premises, conclusion)
     }
 
-    // === Quantifier Proof Helpers ===
+    // ======== Quantifier Proof Helpers ========
 
     /// Add forall elimination step: ∀x. φ(x) ⊢ φ(t)
     pub fn forall_elim(
@@ -522,7 +522,7 @@ impl TheoryProof {
         )
     }
 
-    // === General Methods ===
+    // ======== General Methods ========
 
     /// Get the number of steps
     #[must_use]

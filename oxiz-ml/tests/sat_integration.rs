@@ -114,9 +114,9 @@ fn test_solver_falls_back_when_adapter_returns_none() {
     assert!(*call_count.lock().unwrap_or_else(|e| e.into_inner()) > 0);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Test: on_conflict_var is forwarded from MLBranchingHeuristic to MLEnhancedVSIDS
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_adapter_forwards_conflict_var() {

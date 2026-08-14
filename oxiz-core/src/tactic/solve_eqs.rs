@@ -304,9 +304,7 @@ impl Tactic for StatelessSolveEqsTactic {
     }
 }
 
-// ============================================================================
-// Fourier-Motzkin Elimination Tactic
-// ============================================================================
+// ======== Fourier-Motzkin Elimination Tactic ========
 
 /// Coefficient in a linear constraint
 ///
@@ -373,7 +371,7 @@ impl Coefficient {
     /// Used by the integer-soundness guard in [`FourierMotzkinTactic`]: an
     /// integer variable is exactly eliminable (real shadow == integer
     /// projection) only when, for every lower/upper pair, its coefficient is a
-    /// unit on at least one side — the Omega-test exact-shadow condition.
+    /// unit on at least one side – the Omega-test exact-shadow condition.
     fn is_unit_magnitude(&self) -> bool {
         self.denominator == num_bigint::BigInt::from(1)
             && Signed::abs(&self.numerator) == num_bigint::BigInt::from(1)
@@ -684,7 +682,7 @@ impl<'a> FourierMotzkinTactic<'a> {
             //
             // A variable that is unbounded below (only upper bounds) or above
             // (only lower bounds) can always be given a value satisfying its
-            // constraints — over the reals *and* over the integers — so
+            // constraints – over the reals *and* over the integers – so
             // dropping those constraints is a sound projection for both. No
             // integer-exactness guard is needed here.
             if lower_indices.is_empty() || upper_indices.is_empty() {
@@ -703,7 +701,7 @@ impl<'a> FourierMotzkinTactic<'a> {
             // coefficient on at least one side (the Omega-test exact-shadow
             // condition). If some pair has |coeff| > 1 on both sides, the real
             // shadow is a strict over-approximation of the integer projection,
-            // so eliminating the variable would be unsound — e.g. the system
+            // so eliminating the variable would be unsound – e.g. the system
             // 1 <= 2x <= 1 is real-feasible (x = 1/2) but integer-infeasible,
             // and eliminating x used to collapse it to `true` and report Sat.
             // In that case we skip this variable, leaving its constraints
@@ -1223,9 +1221,7 @@ impl Tactic for StatelessFourierMotzkinTactic {
     }
 }
 
-// ============================================================================
-// Scriptable Tactic (Rhai-based)
-// ============================================================================
+// ======== Scriptable Tactic (Rhai-based) ========
 
 /// A tactic that executes user-defined Rhai scripts
 ///

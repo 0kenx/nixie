@@ -36,9 +36,9 @@ fn model_satisfies(solver: &Solver, clauses: &[Vec<i32>]) -> bool {
     true
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 3: solve() then solve_with_assumptions() must not return false UNSAT
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn assumptions_after_solve_do_not_report_false_unsat() {
@@ -58,7 +58,7 @@ fn assumptions_after_solve_do_not_report_false_unsat() {
     assert_eq!(
         res_a,
         SolverResult::Sat,
-        "a ∧ (a ∨ b) is SAT — must not be reported UNSAT after a prior solve()"
+        "a ∧ (a ∨ b) is SAT – must not be reported UNSAT after a prior solve()"
     );
 
     // And the opposite assumption is likewise SAT (¬a forces b).
@@ -111,14 +111,14 @@ fn assumptions_genuine_unsat_still_detected() {
     assert_eq!(
         res,
         SolverResult::Unsat,
-        "¬a contradicts the unit clause (a) — genuinely UNSAT"
+        "¬a contradicts the unit clause (a) – genuinely UNSAT"
     );
     assert!(core.is_some(), "UNSAT under assumptions must return a core");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 1: binary-graph reason clauses must not drop antecedents in analyze()
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn binary_reason_conflict_keeps_instance_sat() {
@@ -208,9 +208,9 @@ fn binary_chain_forced_false_is_sat_with_valid_model() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 2: clause slot reuse must not corrupt propagation under heavy deletion
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn heavy_learning_and_deletion_stays_sound() {

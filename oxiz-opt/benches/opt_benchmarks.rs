@@ -15,9 +15,7 @@ use oxiz_opt::{
 use oxiz_sat::{Lit, Var};
 use std::hint::black_box;
 
-// ============================================================================
-// Weight Operations Benchmarks
-// ============================================================================
+// ======== Weight Operations Benchmarks ========
 
 fn bench_weight_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("weight_operations");
@@ -78,9 +76,7 @@ fn bench_weight_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// MaxSAT Algorithm Benchmarks
-// ============================================================================
+// ======== MaxSAT Algorithm Benchmarks ========
 
 fn bench_maxsat_algorithms(c: &mut Criterion) {
     let mut group = c.benchmark_group("maxsat_algorithms");
@@ -114,9 +110,7 @@ fn bench_maxsat_algorithms(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Preprocessing Benchmarks
-// ============================================================================
+// ======== Preprocessing Benchmarks ========
 
 fn bench_preprocessing(c: &mut Criterion) {
     let mut group = c.benchmark_group("preprocessing");
@@ -160,9 +154,7 @@ fn bench_preprocessing(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Soft Clause Operations
-// ============================================================================
+// ======== Soft Clause Operations ========
 
 fn bench_soft_clause_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("soft_clause");
@@ -190,9 +182,7 @@ fn bench_soft_clause_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Large Instance Benchmarks
-// ============================================================================
+// ======== Large Instance Benchmarks ========
 
 fn bench_large_maxsat_instances(c: &mut Criterion) {
     let mut group = c.benchmark_group("large_maxsat");
@@ -289,9 +279,7 @@ fn bench_large_maxsat_instances(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// Cardinality Constraint Benchmarks
-// ============================================================================
+// ======== Cardinality Constraint Benchmarks ========
 
 fn bench_cardinality_constraints(c: &mut Criterion) {
     let mut group = c.benchmark_group("cardinality_constraints");
@@ -326,9 +314,7 @@ fn bench_cardinality_constraints(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// WCNF Format Benchmarks
-// ============================================================================
+// ======== WCNF Format Benchmarks ========
 
 fn bench_wcnf_format(c: &mut Criterion) {
     use oxiz_opt::WcnfInstance;

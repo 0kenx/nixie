@@ -40,14 +40,14 @@ fn collect(manager: &TermManager, assertions: Vec<TermId>) -> ArrayFacts {
     )
 }
 
-/// A two-conjunct `And` the builder cannot flatten into its parent — see
+/// A two-conjunct `And` the builder cannot flatten into its parent – see
 /// `check_dt.rs`'s twin for why `mk_and` will not do.
 fn nested_and(manager: &mut TermManager, first: TermId, second: TermId) -> TermId {
     let bool_sort = manager.sorts.bool_sort;
     manager.intern_term(TermKind::And(smallvec![first, second]), bool_sort)
 }
 
-/// An `And` whose two conjuncts are the *same* term — one level of the
+/// An `And` whose two conjuncts are the *same* term – one level of the
 /// doubling DAG.  Interned directly so no builder can deduplicate it away.
 fn doubling_and(manager: &mut TermManager, child: TermId) -> TermId {
     let bool_sort = manager.sorts.bool_sort;
@@ -104,7 +104,7 @@ fn unconditional_read_over_write_is_collected() {
 /// The two de Morgan holes this release closed, restated as tests.
 ///
 /// `(not (and (= (select (store a 3 5) 3) 5) p))` is `(or (not ..) (not p))`
-/// — satisfiable with `p = false` — so neither conjunct is entailed, and
+/// – satisfiable with `p = false` – so neither conjunct is entailed, and
 /// `(or (= ..) p)` is satisfiable with `p` alone.  Harvesting the equality
 /// from either shape refuted a satisfiable formula.
 #[test]
@@ -124,7 +124,7 @@ fn de_morgan_boundaries_yield_nothing() {
     assert!(negated.is_empty());
 }
 
-/// A `Not` over the equality alone *is* asserted — negatively — so it feeds
+/// A `Not` over the equality alone *is* asserted – negatively – so it feeds
 /// the negated-select list rather than the positive one.
 #[test]
 fn negation_routes_the_fact_to_the_negative_list() {
@@ -186,7 +186,7 @@ fn deeply_nested_conjunction_walks_on_a_worker_stack() {
 /// A shared sub-DAG is walked once per `(term, polarity)`, not once per path.
 ///
 /// Sixty doubling levels are 2⁶⁰ paths to the equality at the bottom, so
-/// finishing at all is the proof that re-visits are pruned — and the fact is
+/// finishing at all is the proof that re-visits are pruned – and the fact is
 /// collected exactly once, not once per path.
 #[test]
 fn a_doubling_dag_is_walked_in_linear_time() {
@@ -246,18 +246,18 @@ fn store_equality_scan_survives_a_doubling_dag() {
         vec![(store_a, store_b)]
     );
     // Extensionality forces select(store_a, 0) = select(store_b, 0), i.e.
-    // 1 = 2 — the whole check refutes it, through every walker at once.
+    // 1 = 2 – the whole check refutes it, through every walker at once.
     assert!(solver.check_array_constraints(&manager));
 }
 
-// ── Cross-theory soundness regressions ────────────────────────────────────
+// ======== Cross-theory soundness regressions ========
 //
 // `check_cross_theory_conflict` is the only component in the solver that closes
 // the EUF↔bit-vector gap for two array reads at congruent indices: congruence
 // merges `select(a, x)` with `select(a, #x05)` once `x = #x05`, but the
 // bit-vector solver receives the two reads as independent fresh variables and no
 // Nelson–Oppen bridge carries the equality across.  Nor does any honesty gate
-// cover the shape — `array_atoms_need_theory` needs a positive `store = store`
+// cover the shape – `array_atoms_need_theory` needs a positive `store = store`
 // equality, `arith_atoms_need_theory` skips non-Int atoms, and the
 // model-verification gate's `EvalVal` has no bit-vector variant.
 //
@@ -285,7 +285,7 @@ fn script_result(script: &str) -> crate::SolverResult {
 /// expression that folds to anything other than `#x10` is a contradiction.
 ///
 /// Each operator below sits in the value position.  With `bvadd` this was always
-/// refuted; with the other four it was reported `sat` — verified by disabling
+/// refuted; with the other four it was reported `sat` – verified by disabling
 /// just those arms and re-running, which turns every row after the first back
 /// into `Sat`.
 #[test]
@@ -338,12 +338,12 @@ fn a_consistent_cross_theory_read_stays_satisfiable() {
 ///
 /// `(= b (store a 0 (select b 0)))` makes the alias map rewrite
 /// `(select b 0)` to itself; the recursive evaluator followed that rewrite
-/// without end, so `(check-sat)` never returned — on two well-sorted
+/// without end, so `(check-sat)` never returned – on two well-sorted
 /// assertions.  The iterative evaluator carries the set of reads already
 /// rewritten along the chain and declines the repeat.
 ///
 /// The worker is joined through a channel with a deadline because the failure
-/// mode under guard is precisely "never returns" — a plain `join` would hang
+/// mode under guard is precisely "never returns" – a plain `join` would hang
 /// the whole suite with it.  The formula is satisfiable (`b = a` is a model),
 /// so a sound answer is `sat` or `unknown`; `unsat` would be a soundness
 /// regression, and a timeout is the original bug back again.

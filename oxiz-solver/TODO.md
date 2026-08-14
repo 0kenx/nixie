@@ -1,6 +1,6 @@
 # oxiz-solver TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness sweep and hardening pass
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness sweep and hardening pass
 
 Reference: Z3's `smt/` directory
 
@@ -305,7 +305,7 @@ The actual implementation leverages:
 
 ## Stub completions (2026-06-08)
 
-- [x] `Context::eval_in_model` — new public method; evaluates a TermId against the current model (clones Model, calls eval over ctx.terms). Added for oxiz-spacer BMC counterexample extraction.
+- [x] `Context::eval_in_model` – new public method; evaluates a TermId against the current model (clones Model, calls eval over ctx.terms). Added for oxiz-spacer BMC counterexample extraction.
 
 ## MBQI completeness, honesty and resource behavior (2026-07-31, v0.3.1)
 
@@ -320,7 +320,7 @@ The actual implementation leverages:
 
 ### Honesty and state hygiene
 
-- [x] Model, unsat core and proof invalidated on `push` / `pop` / `assert` — no stale answers survive a mutation
+- [x] Model, unsat core and proof invalidated on `push` / `pop` / `assert` – no stale answers survive a mutation
 - [x] An unjustified conflict clause now yields `Unknown` instead of a fabricated `Unsat`
 - [x] Solver-owned `DerivedReasons` carrying absolute scope-depth stamps
 - [x] `(get-unsat-core)` works when `:produce-unsat-cores` is enabled mid-session (assertion names recorded unconditionally)

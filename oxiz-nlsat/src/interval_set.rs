@@ -287,7 +287,7 @@ impl IntervalSet {
 
         let is_fresh = |v: &BigRational| !tried.iter().any(|t| t == v);
 
-        // 1. Integers inside finite (bounded) components — complete for NIA boxes.
+        // 1. Integers inside finite (bounded) components – complete for NIA boxes.
         const MAX_INT_ENUM: i64 = 512;
         for interval in &self.intervals {
             if let (Bound::Finite(lo), Bound::Finite(hi)) = (&interval.lo, &interval.hi) {

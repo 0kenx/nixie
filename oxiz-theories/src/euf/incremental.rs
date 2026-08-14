@@ -592,7 +592,7 @@ impl EGraph {
     /// being expanded again. This matters because merging `x` and `f(x)`
     /// (asserting `x = f(x)`) puts `f(x)` in `x`'s own class, so naive
     /// recursion through "the first node of `x`'s class" can revisit the
-    /// very node it started from and never terminate — the acyclicity
+    /// very node it started from and never terminate – the acyclicity
     /// assumption that a plain recursive size computation relies on does not
     /// hold for E-graphs in general. Sizes are memoized per E-class so
     /// shared structure is evaluated once rather than exponentially, and a
@@ -957,11 +957,11 @@ mod tests {
         assert_eq!(class.map(|c| c.nodes[0].children.len()), Some(3));
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // `node_size` cycle-safety regression tests (audit: merging `x = f(x)`
     // puts `f(x)` in `x`'s own class, so naive recursion over "the first node
     // of a class" can revisit its own starting point forever).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_node_size_cycle_terminates_with_unbounded_sentinel() {

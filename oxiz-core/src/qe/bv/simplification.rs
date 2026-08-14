@@ -27,7 +27,7 @@ pub type VarId = usize;
 ///
 /// There is deliberately no bound on how deep a `BvTerm` may be: the variants
 /// are public and take `Box<Self>` children, so callers build values of any
-/// depth directly. Every walk over this type is therefore iterative —
+/// depth directly. Every walk over this type is therefore iterative –
 /// [`Clone`], [`Drop`], [`PartialEq`], [`std::hash::Hash`] and
 /// [`BvSimplifier::simplify`]. Do **not** replace any of them with a
 /// `derive`: a derived `Clone`/`PartialEq`/`Hash` (and the compiler-generated
@@ -280,7 +280,7 @@ impl Drop for BvTerm {
     ///
     /// With every other walk over this type made iterative, the
     /// compiler-generated recursive `drop_in_place` would be the one remaining
-    /// way for a deep term to abort the process — at scope exit, with no
+    /// way for a deep term to abort the process – at scope exit, with no
     /// diagnostic. Each node is dismantled into a shallow shell before being
     /// released.
     fn drop(&mut self) {
@@ -349,9 +349,9 @@ pub struct BvSimplificationStats {
 /// Compute the all-ones mask for a bitvector of the given width.
 ///
 /// `1u64 << width` is undefined-ish for `width >= 64` (panics on the
-/// shift-overflow debug check; wraps to a shift-by-`width % 64` — silently
+/// shift-overflow debug check; wraps to a shift-by-`width % 64` – silently
 /// producing the *wrong* mask, e.g. `0` instead of `u64::MAX` for
-/// `width == 64` — in release). 64-bit bitvectors are a common width, so
+/// `width == 64` – in release). 64-bit bitvectors are a common width, so
 /// this guard is not just a defensive edge case.
 #[inline]
 fn width_mask(width: u32) -> u64 {
@@ -396,8 +396,8 @@ impl BvSimplifier {
     /// Simplify a BV term.
     ///
     /// Iterative (explicit heap stack) bottom-up rewriting: results are
-    /// identical to the recursive formulation — each node is still rewritten
-    /// only after both of its operands have been — but the walk no longer
+    /// identical to the recursive formulation – each node is still rewritten
+    /// only after both of its operands have been – but the walk no longer
     /// consumes one native frame per nesting level, which a `BvTerm` of
     /// caller-controlled depth could exhaust.
     pub fn simplify(&mut self, term: &BvTerm) -> BvTerm {

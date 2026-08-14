@@ -198,7 +198,7 @@ impl ImplicantExtractor {
     /// twenty of the ~110 variants, so the relevant-term walk stopped dead at
     /// the first `Select`/`Store`/`Apply`/string/FP/quantifier/datatype node
     /// and reported an implicant that silently omitted every literal
-    /// underneath it — a *wrong* (non-implying) implicant, not merely an
+    /// underneath it – a *wrong* (non-implying) implicant, not merely an
     /// unminimized one.
     fn add_children_to_worklist(&self, kind: &TermKind, worklist: &mut Vec<TermId>) {
         worklist.extend(get_children(kind));

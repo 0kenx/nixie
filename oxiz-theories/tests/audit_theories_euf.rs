@@ -12,7 +12,7 @@ use oxiz_core::ast::TermId;
 use oxiz_theories::Theory;
 use oxiz_theories::euf::EufSolver;
 
-/// Finding 1 — direct reproduction at the solver level.
+/// Finding 1 – direct reproduction at the solver level.
 ///
 /// Base: b = a (so root(b) walks through a). Push. In the scope, merge a = c and
 /// force a `find(b)` (via `are_equal`) that would path-compress b straight to the
@@ -55,7 +55,7 @@ fn find_path_compression_is_undone_on_pop() {
     );
 }
 
-/// Finding 1 — deeper stress: multiple compressions across nested scopes must all
+/// Finding 1 – deeper stress: multiple compressions across nested scopes must all
 /// unwind exactly, leaving only the base-level equalities.
 #[test]
 fn nested_scope_compression_unwinds_exactly() {
@@ -87,7 +87,7 @@ fn nested_scope_compression_unwinds_exactly() {
     assert!(!solver.are_equal(a, d));
 }
 
-/// Finding 2 — proof-forest edges on pre-existing nodes must not leak past a pop
+/// Finding 2 – proof-forest edges on pre-existing nodes must not leak past a pop
 /// and let a later conflict be "explained" by a retracted assertion.
 ///
 /// a, b pre-exist the scope. Inside the scope we assert a = b (reason 21). We pop.
@@ -134,7 +134,7 @@ fn popped_proof_edges_do_not_pollute_explanations() {
     );
 }
 
-/// Finding 2 — congruence edges appended to pre-existing nodes during a scope must
+/// Finding 2 – congruence edges appended to pre-existing nodes during a scope must
 /// also be removed on pop.
 #[test]
 fn popped_congruence_edges_do_not_pollute_explanations() {
@@ -177,7 +177,7 @@ fn popped_congruence_edges_do_not_pollute_explanations() {
     );
 }
 
-/// GitHub issue #18 — explaining a congruence must not recurse over its argument
+/// GitHub issue #18 – explaining a congruence must not recurse over its argument
 /// sub-goals.
 ///
 /// `f^k(a)` and `f^k(b)` are merged by a cascade of `k` congruence steps once
@@ -186,8 +186,8 @@ fn popped_congruence_edges_do_not_pollute_explanations() {
 /// with a self-call per level, so a chain this deep exhausted the stack; the
 /// worklist form runs in constant stack space.
 ///
-/// The body runs on a thread with an explicit 8 MiB stack — the usual main-thread
-/// size — so the test measures a normal stack budget rather than whatever the test
+/// The body runs on a thread with an explicit 8 MiB stack – the usual main-thread
+/// size – so the test measures a normal stack budget rather than whatever the test
 /// harness happens to hand out. `DEPTH` is chosen so the old recursion (~3 KiB per
 /// frame) would overrun that budget, while the iterative version finishes in well
 /// under a second.
@@ -275,7 +275,7 @@ fn repeated_push_pop_cycles_are_stable() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Congruence discovered at intern time must not outlive its justification
 //
 // `intern_app` used to hand a new term the node of an already-interned
@@ -283,10 +283,10 @@ fn repeated_push_pop_cycles_are_stable() {
 // equality that made them congruent lives on the trail and is retracted by
 // `pop`; the `term_to_node` entry does not, because `pop` drops entries by node
 // index and the borrowed index belongs to an older, still-live node.  After the
-// backtrack the term therefore denoted a different application for good — and,
+// backtrack the term therefore denoted a different application for good – and,
 // worse, had no node, no use-list entry and no signature of its own, so every
 // congruence that would have gone *through* it was silently unreachable.
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 const F_SYM: u32 = 7;
 
@@ -334,7 +334,7 @@ fn intern_time_congruence_is_a_retractable_merge_not_an_alias() {
 
 /// The consequence the direct reproduction is about: with `f(0)` pinned to
 /// `f(a)`'s node it had no signature of its own, so the *second* congruence step
-/// — `f(f(a)) = f(0)` once `f(a) = 0` — could never be discovered.  That is the
+/// – `f(f(a)) = f(0)` once `f(a) = 0` – could never be discovered.  That is the
 /// EUF half of the false `sat` on
 /// `a ∈ {0,1} ∧ f(0), f(1) ∈ {0,1} ∧ f(f(a)) > 1`.
 #[test]
@@ -355,7 +355,7 @@ fn nested_congruence_is_discovered_after_the_alias_scope_is_popped() {
     let f0 = solver.intern_app(TermId::new(11), F_SYM, [zero]);
 
     // f(a) = 0 must make f(f(a)) congruent to f(0).  This needs f(0) to own a
-    // live signature entry keyed on 0's class — exactly what the alias destroyed.
+    // live signature entry keyed on 0's class – exactly what the alias destroyed.
     solver
         .merge(fa, zero, TermId::new(31))
         .expect("merge f(a)=0");
@@ -380,7 +380,7 @@ fn nested_congruence_is_discovered_after_the_alias_scope_is_popped() {
 /// `f(b)` is interned while `b` is a non-root member of `{a, b}`.  A later merge
 /// that makes the *other* side the surviving root scans the absorbed root's
 /// use-list; if `f(b)` was filed under `b` it is not there, is never
-/// re-canonicalized, and the congruence with `f(d)` is lost — a missed
+/// re-canonicalized, and the congruence with `f(d)` is lost – a missed
 /// congruence, i.e. a false `sat`.
 ///
 /// The two rank-1 trees below are built deliberately: union-by-rank only lets
@@ -419,17 +419,17 @@ fn use_list_registers_applications_on_the_argument_representative() {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // The explanation engine never answers with a partial justification
 //
 // `explain_equality` used to `continue` past a failed path search and return
 // whatever reasons it had already collected.  A conflict core built from such an
 // answer is not a weaker clause but an unsound one: it asserts that the literals
 // it *does* name are by themselves contradictory.  The two tests below pin the
-// invariant from both ends — every equality the union-find reports is
+// invariant from both ends – every equality the union-find reports is
 // explainable in full, and the core a conflict comes with really does entail the
 // conflict.
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// A deterministic xorshift64* so the operation sequence is byte-for-byte
 /// reproducible across runs and machines.  No wall-clock, no thread scheduling.
@@ -467,7 +467,7 @@ fn build_shape(solver: &mut EufSolver) -> Vec<u32> {
 }
 
 /// Invariant: for every pair the union-find reports equal, the explanation
-/// engine must produce a *complete* justification — never `None`, never a
+/// engine must produce a *complete* justification – never `None`, never a
 /// silently truncated list.
 ///
 /// The proof forest gains exactly one edge pair per applied union and `pop`
@@ -624,7 +624,7 @@ fn conflict_core_entails_the_conflict() {
         assert!(
             replay.check_conflicts().is_some(),
             "trial {trial}: the conflict core {core:?} does not entail a \
-             conflict on its own — a clause built from it would claim that its \
+             conflict on its own – a clause built from it would claim that its \
              literals alone are contradictory"
         );
     }

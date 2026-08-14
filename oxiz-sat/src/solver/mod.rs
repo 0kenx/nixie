@@ -186,7 +186,7 @@ pub struct SolverConfig {
     /// folds equivalent variables out of the search, which is incompatible with
     /// incremental/AllSAT clients that reference original variables between
     /// solve() calls, and on the one structured benchmark with many
-    /// equivalences (`longmult15`, 29% of vars in SCCs) it does not help —
+    /// equivalences (`longmult15`, 29% of vars in SCCs) it does not help –
     /// CaDiCaL's edge there is pure search quality, not structural collapse.
     /// Enable for one-shot solving of binary-heavy formulas where collapsing
     /// equivalences is expected to pay off.
@@ -226,15 +226,15 @@ pub struct SolverConfig {
     /// mode restarts uncapped (rare). 0 = uncapped.
     pub focused_luby_cap: u64,
     /// Use VMTF (variable move-to-front) as the decision heuristic instead
-    /// of VSIDS — cadical's default focused-mode branching.
+    /// of VSIDS – cadical's default focused-mode branching.
     pub use_vmtf: bool,
     /// Use VMTF (variable move-to-front) as the decision heuristic instead of
-    /// VSIDS — cadical's default focused-mode branching. Conflict-involved
+    /// VSIDS – cadical's default focused-mode branching. Conflict-involved
     /// variables are moved to the tail of a list; the next decision is the
     /// most-recently-bumped unassigned variable.
     /// Restarts between phase inversions (rephasing). 0 disables rephase.
     /// Periodically flipping the saved polarity lets a restart explore the
-    /// complementary phase region instead of re-deriving the previous trail —
+    /// complementary phase region instead of re-deriving the previous trail –
     /// essential for frequent (LBD) restarts to be productive rather than
     /// counterproductive.
     pub rephase_interval: u32,
@@ -251,7 +251,7 @@ pub struct SolverConfig {
     /// Try CaDiCaL-style "lucky" pre-solving phase guesses before search
     /// (uniform all-false / all-true, ordered-with-flip, positive/negative
     /// Horn). Default **true**, matching CaDiCaL's `opts.lucky = 1`: the
-    /// strategies are soundness-preserving — a doomed guess performs at most a
+    /// strategies are soundness-preserving – a doomed guess performs at most a
     /// pure `O(|literals|)` scan or a single-literal-at-a-time probe that
     /// backtracks to the root on failure, so it never perturbs the search
     /// state. Set `false` to disable (e.g. to isolate search-only behaviour).
@@ -505,7 +505,7 @@ pub enum SolverError {
 /// Which branching strategy supplied the variable returned by the most
 /// recent [`Solver::pick_branch_var`]. Recorded so a decision tracer (see
 /// `Solver::trace_decision`, gated on `OXIZ_TRACE_DECISIONS`) can report the
-/// source alongside each decision — the key diagnostic for whether any
+/// source alongside each decision – the key diagnostic for whether any
 /// theory-aware path is actually steering the search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BranchSource {
@@ -602,12 +602,12 @@ pub struct Solver {
     pub(super) deterministic_phase: Vec<Option<bool>>,
     /// Global polarity flip applied on top of saved phases (rephasing). Toggled
     /// periodically on restart so a restart explores the complementary phase
-    /// region instead of re-deriving the same trail — without it, frequent
+    /// region instead of re-deriving the same trail – without it, frequent
     /// (Glucose) restarts just redo work and inflate the conflict count.
     pub(super) phase_inverted: bool,
     /// Best partial assignment found so far (the phase of the longest trail
     /// reached without conflict). Restored on some rephase rounds to refocus
-    /// the search near the best-known region — the one genuinely missing
+    /// the search near the best-known region – the one genuinely missing
     /// SAT-side phase signal (cadical's "best" phase array).
     pub(super) best_phase: Vec<bool>,
     /// Length of the trail that produced `best_phase` (0 until a trail is
@@ -659,7 +659,7 @@ pub struct Solver {
     /// Number of conflicts contributing to recent_lbd_sum
     pub(super) recent_lbd_count: u64,
     /// Fast EMA of learned-clause LBD (short window) for Glucose restarts.
-    /// Restart when this exceeds the slow EMA — clause quality is degrading.
+    /// Restart when this exceeds the slow EMA – clause quality is degrading.
     pub(super) lbd_ema_fast: f64,
     /// Slow EMA of learned-clause LBD (long window) for Glucose restarts.
     pub(super) lbd_ema_slow: f64,
@@ -706,11 +706,11 @@ pub struct Solver {
     /// variable; `bve_def[v]` holds the non-`v` literals of every clause that
     /// contained `v` *positively* at elimination time. At model-extension time
     /// `v` is set true iff all of those clauses are falsified by the current
-    /// model (else false) — see [`Solver::save_model`].
+    /// model (else false) – see [`Solver::save_model`].
     pub(super) bve_def: Vec<Vec<SmallVec<[Lit; 4]>>>,
     /// Elimination order of BVE-eliminated variables (reconstruction runs in
-    /// reverse, so a variable eliminated later — which may appear in an earlier
-    /// variable's recorded clauses — is assigned first).
+    /// reverse, so a variable eliminated later – which may appear in an earlier
+    /// variable's recorded clauses – is assigned first).
     pub(super) bve_order: Vec<Var>,
     pub(super) interrupt: Option<Arc<AtomicBool>>,
     /// Optional conflict budget. When `Some(n)`, the search loop returns
@@ -729,7 +729,7 @@ pub struct Solver {
     /// `true` once an LRAT tracer (or any antecedent-requiring tracer) is
     /// connected. Drives clause-id bookkeeping (`clause_lrat_id`,
     /// `unit_clauses_idx`) and RUP-chain assembly in conflict analysis. DRAT-only
-    /// proofs leave this `false` — DRAT needs neither ids nor chains.
+    /// proofs leave this `false` – DRAT needs neither ids nor chains.
     pub(super) lrat: bool,
     /// True once drat_emit_empty has concluded the proof with the empty
     /// clause. Guards against double finalization (a second UNSAT solve
@@ -883,7 +883,7 @@ impl Solver {
     /// reduction / subsumption / vivification / incremental forgetting, and the
     /// empty clause when unconditional UNSAT is derived. The resulting file can
     /// be checked by any DRAT proof checker. Enabling it does not change the
-    /// search itself — only whether the trace is recorded.
+    /// search itself – only whether the trace is recorded.
     pub fn enable_drat_proof(&mut self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         self.connect_drat(path, false)
     }
@@ -922,7 +922,7 @@ impl Solver {
         self.lrat
     }
 
-    // -- proof connection helpers -------------------------------------
+    // ======== proof connection helpers ========
 
     fn proof_ensure(&mut self) -> &mut crate::proof::Proof {
         self.proof.get_or_insert_with(crate::proof::Proof::new)
@@ -1019,7 +1019,7 @@ impl Solver {
         }
     }
 
-    // -- clause-id bookkeeping ---------------------------------------
+    // ======== clause-id bookkeeping ========
 
     /// Allocate the next monotonic clause id (`++clause_id`). Returns 0 when no
     /// proof is active (ids are meaningless without a tracer).
@@ -1093,7 +1093,7 @@ impl Solver {
     /// fix that makes every level-0 literal a unit with an LRAT id, matching
     /// cadical's invariant). Called right after a literal is propagated at
     /// decision level 0: emits a derived unit `[lit]` whose RUP chain is the
-    /// antecedent unit ids (already flushed — propagation is in trail order)
+    /// antecedent unit ids (already flushed – propagation is in trail order)
     /// followed by the propagating clause's id, and records the new unit id.
     ///
     /// This lets conflict analysis, the empty-clause walk, and minimization
@@ -1136,7 +1136,7 @@ impl Solver {
         }
     }
 
-    // -- higher-level proof events used by learn.rs / inprocessing ----
+    // ======== higher-level proof events used by learn.rs / inprocessing ========
 
     /// Emit a derived clause for a *theory* lemma / explanation clause
     /// (`add_derived_clause` with an empty RUP chain). Pure-SAT runs never hit
@@ -1178,7 +1178,7 @@ impl Solver {
         let id = self.proof_next_id();
         let chain = if self.lrat {
             let c = std::mem::take(&mut self.lrat_chain);
-            // A 0 hint id means a clause/unit id was never bound — the proof
+            // A 0 hint id means a clause/unit id was never bound – the proof
             // would be un-checkable. Catch it early in debug builds.
             debug_assert!(
                 !c.contains(&0),
@@ -1209,7 +1209,7 @@ impl Solver {
     /// fresh derived clause with the kept literals, then delete the old clause,
     /// finally rebind the stored clause's LRAT id to the new one
     /// (`c->id = new_id` in upstream's `strengthen_clause`). The RUP chain is
-    /// empty — used by vivification, which proves the shorter clause is
+    /// empty – used by vivification, which proves the shorter clause is
     /// RUP-derivable but does not currently expose its antecedents.
     fn proof_strengthen_clause(&mut self, cid: ClauseId, kept: &[Lit]) {
         if self.proof.is_none() {
@@ -1288,8 +1288,8 @@ impl Solver {
     /// the contradiction is detected *before* the offending clause is attached
     /// to the clause database (so no `ClauseId` exists yet for
     /// [`Self::build_chain_for_empty`] to read), but the clause is fully
-    /// falsified at decision level 0 — every literal's negation is a level-0
-    /// unit with a known LRAT id — so the RUP chain is simply
+    /// falsified at decision level 0 – every literal's negation is a level-0
+    /// unit with a known LRAT id – so the RUP chain is simply
     /// `[unit id of each literal's negation] ++ [final_id]`, which is exactly
     /// what `build_chain_for_empty(Some(cid))` computes for a stored clause.
     /// Faithful port of v0.3.2's `lrat_emit_empty_from(seed_lits, final_id)`;
@@ -1336,7 +1336,7 @@ impl Solver {
         // and a caller reusing the solver must not keep appending to a
         // concluded proof. Mirrors v0.3.2's finalization. Flush immediately
         // so a caller that reads the proof file before dropping the solver
-        // (and so before BufWriter's drop-flush) sees the concluded proof —
+        // (and so before BufWriter's drop-flush) sees the concluded proof –
         // matches v0.3.2's `writer.flush()` in `lrat_emit_empty_from`.
         self.flush_proof();
         self.lrat = false;
@@ -1386,8 +1386,8 @@ impl Solver {
     /// Used by theory-combination axiomatization (the z3-style "triangle"
     /// axioms `(t1=t2) ⟺ (t1≤t2 ∧ t1≥t2)`): biasing the equality atom toward
     /// `true` (`try_true_first`) makes CDCL prefer merging shared terms, so the
-    /// arithmetic solver's consistency check (`check`) — not fragile reason
-    /// extraction — drives theory combination.
+    /// arithmetic solver's consistency check (`check`) – not fragile reason
+    /// extraction – drives theory combination.
     pub fn set_preferred_phase(&mut self, var: Var, phase: bool) {
         let idx = var.index();
         if idx < self.phase.len() {
@@ -1556,8 +1556,8 @@ impl Solver {
         // A literal assigned at decision level >= 1 is *non-permanent*: the
         // search can backtrack past it, turning a `true` into `undef` (or a
         // `false` into `undef`).  For deciding whether a clause being attached
-        // is *permanently* satisfied / unit / conflicting — the question
-        // [`pre_check_effective_unit`] answers — only level-0 facts count.
+        // is *permanently* satisfied / unit / conflicting – the question
+        // [`pre_check_effective_unit`] answers – only level-0 facts count.
         // A clause "satisfied" solely by a level->=1 literal is not really
         // satisfied: once that literal is backtracked the clause may become a
         // unit or conflict, and the watch / binary-implication machinery
@@ -1693,7 +1693,7 @@ impl Solver {
 
         // Assign this original clause a monotonic LRAT id *before* any
         // early-return (tautology / unit / empty), so every input clause draws
-        // exactly one id in file order — matching `lrat-check`'s CNF numbering
+        // exactly one id in file order – matching `lrat-check`'s CNF numbering
         // (`1..K`). `0` when no proof is active. The id is bound to a stored
         // clause / unit entry below; tautologies consume it but bind nothing.
         let proof_oid = if self.proof.is_some() {
@@ -1833,7 +1833,7 @@ impl Solver {
                 let outcome = self.pre_check_effective_unit(&clause_lits);
                 if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
                     // This just-registered binary clause is itself fully
-                    // falsified at level 0 — seed the empty-clause derivation
+                    // falsified at level 0 – seed the empty-clause derivation
                     // from its own literals + id (faithful port of v0.3.2's
                     // binary branch).
                     self.trivially_unsat = true;
@@ -1870,7 +1870,7 @@ impl Solver {
         let outcome = self.pre_check_effective_unit(&clause_lits);
         if matches!(outcome, PreAttachOutcome::UnconditionalConflict) {
             // This just-registered 3+-literal clause is itself fully
-            // falsified at level 0 — seed the empty-clause derivation from
+            // falsified at level 0 – seed the empty-clause derivation from
             // its own literals + id (faithful port of v0.3.2's 3+ branch).
             self.trivially_unsat = true;
             self.drat_emit_empty_from_seed(&clause_lits, proof_oid);
@@ -1943,7 +1943,7 @@ impl Solver {
 
     /// Rank a literal for two-watched-literal selection; a higher rank is a
     /// better watch. A true literal is best (the clause is satisfied through it),
-    /// then an unassigned literal, and finally a false literal — and among false
+    /// then an unassigned literal, and finally a false literal – and among false
     /// literals the one assigned at the highest decision level (falsified latest)
     /// is preferred. Watching the two highest-ranked literals mirrors MiniSat's
     /// attachClause invariant so a watch always fires when a watched literal is
@@ -1967,7 +1967,7 @@ impl Solver {
     /// Decay clause activity the MiniSat way: grow the per-conflict bump
     /// increment (so recently-useful clauses dominate) instead of multiplying
     /// every clause's activity on every conflict. Rescale only when the
-    /// increment approaches the f64 range limit — a rare O(n) pass that
+    /// increment approaches the f64 range limit – a rare O(n) pass that
     /// replaces what was an O(n) pass *every* conflict (a top flamegraph
     /// hotspot). The only active consumer of clause activity is
     /// `reduce_clause_database`, which ranks clauses relatively, so the
@@ -2062,7 +2062,7 @@ impl Solver {
         // Lucky pre-solving (CaDiCaL `lucky_phases`): try to satisfy the
         // formula without search via a small set of structured phase guesses
         // (uniform / Horn / ordered-with-flip). On by default, matching
-        // CaDiCaL — each strategy is soundness-preserving (a pure scan or a
+        // CaDiCaL – each strategy is soundness-preserving (a pure scan or a
         // single-literal-at-a-time probe that bails to the root on failure, so
         // a doomed guess never perturbs the watched-literal state).
         if self.config.enable_lucky {
@@ -2081,7 +2081,7 @@ impl Solver {
         // structured instances (e.g. `longmult`) probing deduces forced units
         // up front. Probing runs once here (not on every periodic inprocess
         // call) because brute-force per-variable probing is too expensive to
-        // repeat — cadical schedules it on binary-implication roots, which is a
+        // repeat – cadical schedules it on binary-implication roots, which is a
         // larger follow-up.
         if self.config.enable_inprocessing {
             if self.config.enable_failed_literal_probing {
@@ -2254,7 +2254,7 @@ impl Solver {
                 }
 
                 // Stable/focused mode switch (cadical-style adaptive restart
-                // schedule) — checked each conflict, before the restart decision
+                // schedule) – checked each conflict, before the restart decision
                 // so the mode affects this restart's interval.
                 self.check_stabilize();
 
@@ -2537,7 +2537,7 @@ impl Solver {
     /// Get number of clauses
     /// Soundness gate: does the current trail falsify a live clause?
     ///
-    /// With a correct BCP this is never true — a clause whose every literal is
+    /// With a correct BCP this is never true – a clause whose every literal is
     /// false is a conflict, and `propagate` must have reported it before the
     /// search could run out of variables to assign.  It is checked anyway at the
     /// one place a wrong answer would escape (the `Sat` exit of the CDCL(T)
@@ -2684,7 +2684,7 @@ impl Solver {
             // level-0 *consequences* of the retained prefix, and this pop has
             // just removed clauses the prefix was propagated against. The
             // surviving literals are therefore assigned but no longer followed by
-            // their implications, and nothing would ever recompute them —
+            // their implications, and nothing would ever recompute them –
             // `backtrack_with_phase_saving(0)` above only clamps the head when it
             // actually rolls a level back, and after `backtrack_to_size` the
             // solver already sits at level 0.
@@ -2741,7 +2741,7 @@ impl Solver {
         // `pick_branch_var` return a variable index that no longer exists
         // (`num_vars` was reset to 0 and only the new problem's vars were
         // re-created via `new_var`), which `assign_decision` happily pushes onto
-        // the trail — and the next `propagate` indexes the still-small
+        // the trail – and the next `propagate` indexes the still-small
         // `binary_graph` (and other var-indexed arrays) out of bounds.
         // Rebuild them empty so `new_var` repopulates from scratch.
         self.vmtf = VMTF::new(0);

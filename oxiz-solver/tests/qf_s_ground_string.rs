@@ -9,7 +9,7 @@
 //!
 //! Every satisfiable answer here is backed by a concrete model that the ground
 //! solver verified against all assertions before answering `sat`, so these are
-//! sound certificates — not free-Boolean guesses.
+//! sound certificates – not free-Boolean guesses.
 
 use oxiz_solver::Context;
 
@@ -29,7 +29,7 @@ fn script_output(script: &str) -> Vec<String> {
     ctx.execute_script(script).expect("script executes")
 }
 
-// ── Satisfiable: basic concatenation with pinned operands ──────────────
+// ======== Satisfiable: basic concatenation with pinned operands ========
 #[test]
 fn string_01_basic_concat_pinned() {
     let verdict = check_sat_verdict(
@@ -45,7 +45,7 @@ fn string_01_basic_concat_pinned() {
     assert_eq!(verdict, "sat");
 }
 
-// ── Unsatisfiable: chain concatenation length conflict ─────────────────
+// ======== Unsatisfiable: chain concatenation length conflict ========
 #[test]
 fn string_02_chain_concat_length_conflict() {
     let verdict = check_sat_verdict(
@@ -62,7 +62,7 @@ fn string_02_chain_concat_length_conflict() {
     assert_eq!(verdict, "unsat");
 }
 
-// ── Satisfiable: split a constant by known operand lengths ─────────────
+// ======== Satisfiable: split a constant by known operand lengths ========
 #[test]
 fn string_03_length_split() {
     let verdict = check_sat_verdict(
@@ -77,7 +77,7 @@ fn string_03_length_split() {
     assert_eq!(verdict, "sat");
 }
 
-// ── Unsatisfiable: contradictory length vs. concrete value ─────────────
+// ======== Unsatisfiable: contradictory length vs. concrete value ========
 #[test]
 fn string_04_length_value_conflict() {
     let verdict = check_sat_verdict(
@@ -90,7 +90,7 @@ fn string_04_length_value_conflict() {
     assert_eq!(verdict, "unsat");
 }
 
-// ── Satisfiable: contains + prefix + length lower bound ────────────────
+// ======== Satisfiable: contains + prefix + length lower bound ========
 #[test]
 fn string_05_contains_prefix_length() {
     let verdict = check_sat_verdict(
@@ -104,7 +104,7 @@ fn string_05_contains_prefix_length() {
     assert_eq!(verdict, "sat");
 }
 
-// ── Satisfiable: suffix + contains + length upper bound ────────────────
+// ======== Satisfiable: suffix + contains + length upper bound ========
 #[test]
 fn string_06_suffix_contains_length() {
     let verdict = check_sat_verdict(
@@ -118,7 +118,7 @@ fn string_06_suffix_contains_length() {
     assert_eq!(verdict, "sat");
 }
 
-// ── Satisfiable: replace on a pinned constant string ───────────────────
+// ======== Satisfiable: replace on a pinned constant string ========
 #[test]
 fn string_07_replace_pinned() {
     let verdict = check_sat_verdict(
@@ -133,7 +133,7 @@ fn string_07_replace_pinned() {
     assert_eq!(verdict, "sat");
 }
 
-// ── Unsatisfiable: replace_all changes the string ──────────────────────
+// ======== Unsatisfiable: replace_all changes the string ========
 #[test]
 fn string_08_replace_all_conflict() {
     let verdict = check_sat_verdict(
@@ -148,7 +148,7 @@ fn string_08_replace_all_conflict() {
     assert_eq!(verdict, "unsat");
 }
 
-// ── Satisfiable: regex ".*digit-digit-digit" + prefix + exact length ───
+// ======== Satisfiable: regex ".*digit-digit-digit" + prefix + exact length ========
 #[test]
 fn string_09_regex_digits_prefix_length() {
     let verdict = check_sat_verdict(
@@ -167,7 +167,7 @@ fn string_09_regex_digits_prefix_length() {
     assert_eq!(verdict, "sat");
 }
 
-// ── Satisfiable: lowercase regex + length range + contains ─────────────
+// ======== Satisfiable: lowercase regex + length range + contains ========
 #[test]
 fn string_10_regex_lowercase_range_contains() {
     let verdict = check_sat_verdict(
@@ -219,14 +219,14 @@ fn empty_regex_intersection_is_not_sat() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Issue #14 — trivially unsatisfiable string equalities reported `sat`,
+// Issue #14 – trivially unsatisfiable string equalities reported `sat`,
 // and string values missing from `(get-value ...)` / `(get-model)`.
 // Every case goes through `Context::execute_script`, the entry point the
 // reporter used.
 // ══════════════════════════════════════════════════════════════════════
 
 /// A term forced to two different string constants is refuted by constant
-/// propagation alone — directly (`s = "x" ∧ s = "y"`), through an equality
+/// propagation alone – directly (`s = "x" ∧ s = "y"`), through an equality
 /// chain, or between two bare literals.
 #[test]
 fn test_issue_14_string_eq_conflict_unsat() {
@@ -309,7 +309,7 @@ fn test_issue_14_concat_prefix_conflict_unsat() {
 /// of echoing the constant back unevaluated.
 #[test]
 fn test_issue_14_get_value_string() {
-    // Plain equality (decided by the CDCL(T) path — no string-theory atom).
+    // Plain equality (decided by the CDCL(T) path – no string-theory atom).
     let output = script_output(
         r#"(set-logic QF_S)
            (declare-const s String)
@@ -416,7 +416,7 @@ fn test_issue_14_conditional_string_facts_not_unsat() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Issue #23 — an implication with a provably false premise, and the two
+// Issue #23 – an implication with a provably false premise, and the two
 // layers it is built from.  The premise `(= (str.++ (str.substr "aba" 3 1)
 // "bb") "")` is false because the out-of-range substring is `""`, so the
 // implication is vacuously true for every `s0`.
@@ -425,7 +425,7 @@ fn test_issue_14_conditional_string_facts_not_unsat() {
 /// The verbatim reproducer: `sat`, matching Z3.
 ///
 /// Nothing may harvest the antecedent's concat equation as an unconditional
-/// fact — doing so refutes `(= (str.++ … "bb") "")`, which is indeed false, and
+/// fact – doing so refutes `(= (str.++ … "bb") "")`, which is indeed false, and
 /// turns the vacuously true implication into a spurious `unsat`.
 #[test]
 fn test_issue_23_false_premise_implication() {
@@ -479,7 +479,7 @@ fn test_issue_23_substr_out_of_range() {
 /// `""` makes `(str.++ s0 "b")` differ from `"b"`.
 ///
 /// The model builder pins a variable only from an equality, a length bound or a
-/// regular constraint; `s0` has none of those, so it defaults to `""` — the one
+/// regular constraint; `s0` has none of those, so it defaults to `""` – the one
 /// value the disequality forbids.  The verdict must still be `sat`, with a
 /// witness that really satisfies the disequality.
 #[test]
@@ -522,13 +522,13 @@ fn test_issue_23_distinct_concat_sat() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Ground refutation — the other half of the ground string procedure.
+// Ground refutation – the other half of the ground string procedure.
 //
 // A fully ground string formula has no variables, so it is decidable: it
 // is either `sat` or `unsat`, never `unknown`.  oxiz could already
 // *evaluate* every operator (that is how the `sat` direction is
 // certified) but had no path from "this assertion evaluates to false" to
-// `unsat`, so every ground refutation degraded to `unknown` — the gap
+// `unsat`, so every ground refutation degraded to `unknown` – the gap
 // left open when issue #23 was fixed.
 //
 // Each operator below is tested in **both polarities**: the true ground
@@ -554,7 +554,7 @@ fn assert_ground_fact(formula: &str) {
 }
 
 /// `str.substr s m n`: `min(n, |s| - m)` characters from `m` when
-/// `0 <= m < |s|` and `n > 0`; the **empty string** in every other case —
+/// `0 <= m < |s|` and `n > 0`; the **empty string** in every other case –
 /// `m < 0`, `m >= |s|` (issue #23's shape) and `n <= 0` alike.
 #[test]
 fn test_ground_substr_out_of_range_negation_unsat() {
@@ -609,7 +609,7 @@ fn test_ground_at_out_of_range() {
 
 /// `str.indexof s t m`: the smallest `n >= m` with `t` occurring at `n`,
 /// provided `0 <= m <= |s|`; `-1` otherwise.  The empty needle occurs at
-/// every position, so the answer is `m` itself — including `m = |s|` —
+/// every position, so the answer is `m` itself – including `m = |s|` –
 /// while `m = |s| + 1` is out of range and gives `-1`.
 #[test]
 fn test_ground_indexof_not_found() {
@@ -657,7 +657,7 @@ fn test_ground_replace_and_replace_all() {
 }
 
 /// `str.to_int` is `-1` for anything that is not a non-empty word of
-/// digits — `""`, `"12a"` and even `"-7"` (the sign is not a digit) — while
+/// digits – `""`, `"12a"` and even `"-7"` (the sign is not a digit) – while
 /// leading zeros are allowed.  `str.from_int` is `""` for negatives, has no
 /// leading zeros, and maps `0` to `"0"`.
 #[test]
@@ -746,7 +746,7 @@ fn test_symbolic_lexicographic_identities() {
 }
 
 /// `str.to_code` is the code point of a **singleton** string and `-1` for
-/// everything else — `""` and any two-character string alike.  `str.from_code`
+/// everything else – `""` and any two-character string alike.  `str.from_code`
 /// is the singleton string for a code point in `[0, 0x2FFFF]` and `""` outside
 /// that range.
 #[test]
@@ -769,7 +769,7 @@ fn test_ground_char_code_conversions() {
 /// A UTF-16 surrogate is inside the theory's alphabet but is not a Unicode
 /// scalar value, so OxiZ's `char`-backed strings cannot hold it.  Folding it
 /// to `""` would be a *wrong* answer (the theory says the result has length
-/// 1), so the term stays unevaluated and the verdict degrades to `unknown` —
+/// 1), so the term stays unevaluated and the verdict degrades to `unknown` –
 /// never to `sat` or `unsat`.
 #[test]
 fn test_from_code_surrogate_is_unknown_not_wrong() {
@@ -787,7 +787,7 @@ fn test_from_code_surrogate_is_unknown_not_wrong() {
     }
 }
 
-/// `str.replace_re` replaces the **shortest leftmost** match — which is the
+/// `str.replace_re` replaces the **shortest leftmost** match – which is the
 /// *empty* match at position 0 whenever the language contains `""`, so the
 /// replacement is prepended.  `str.replace_re_all` replaces every shortest
 /// **non-empty** match left to right, so an empty-matching regex leaves the
@@ -834,7 +834,7 @@ fn test_ground_replace_re() {
 }
 
 /// A ground conflict is still found when it is one conjunct of a larger
-/// assertion, at any depth of the `And` / `Or` / `Not` spine — and a
+/// assertion, at any depth of the `And` / `Or` / `Not` spine – and a
 /// `distinct` is refuted as soon as two of its operands are known equal,
 /// even with a free variable among the rest.
 #[test]
@@ -882,8 +882,8 @@ fn test_ground_conflict_inside_boolean_structure() {
 // satisfiable, so `unsat` is a soundness bug.
 // ══════════════════════════════════════════════════════════════════════
 
-/// A ground-false fact behind a polarity boundary — `Or`, `Implies`, `Ite`,
-/// `Xor`, a Bool-sorted `Eq`, or de Morgan's `(not (and …))` — is
+/// A ground-false fact behind a polarity boundary – `Or`, `Implies`, `Ite`,
+/// `Xor`, a Bool-sorted `Eq`, or de Morgan's `(not (and …))` – is
 /// *conditional* and must never drive a refutation.
 #[test]
 fn test_control_conditional_ground_facts_not_unsat() {
@@ -925,7 +925,7 @@ fn test_control_conditional_ground_facts_not_unsat() {
 
 /// Formulas that mention a string *variable* have no closed sub-term to
 /// fold, so their verdicts are exactly what they were before the ground
-/// refutation existed — `sat` or `unknown`, never `unsat`.
+/// refutation existed – `sat` or `unknown`, never `unsat`.
 #[test]
 fn test_control_variable_formulas_unaffected() {
     for body in [

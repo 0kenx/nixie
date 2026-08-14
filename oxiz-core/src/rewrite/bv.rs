@@ -220,7 +220,7 @@ impl BvRewriter {
 
         // None of the simplification rules above applied: rebuild the
         // original XOR term (`TermManager::mk_bv_xor` exists and must be
-        // used here — building an OR term instead, as this previously did,
+        // used here – building an OR term instead, as this previously did,
         // silently changed `x ^ y` into `x | y`).
         RewriteResult::Unchanged(manager.mk_bv_xor(lhs, rhs))
     }

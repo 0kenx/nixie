@@ -9,10 +9,10 @@ use tempfile::TempDir;
 
 /// Create a temporary directory containing a synthetic SV-COMP benchmark layout:
 ///
-/// - `task_smt2.yml` — valid task pointing at a `.smt2` file (should be accepted)
-/// - `task_smt2.smt2` — the SMT-LIB file referenced by `task_smt2.yml`
-/// - `task_c.yml` — valid task pointing at a `.c` file (should be skipped: NotSmtLib)
-/// - `malformed.yml` — YAML with unbalanced structure that fails parsing (should be skipped: YamlParseError)
+/// - `task_smt2.yml` – valid task pointing at a `.smt2` file (should be accepted)
+/// - `task_smt2.smt2` – the SMT-LIB file referenced by `task_smt2.yml`
+/// - `task_c.yml` – valid task pointing at a `.c` file (should be skipped: NotSmtLib)
+/// - `malformed.yml` – YAML with unbalanced structure that fails parsing (should be skipped: YamlParseError)
 fn setup_synthetic_svcomp() -> TempDir {
     let dir = tempfile::TempDir::new().expect("temp dir should be created");
     let root = dir.path();

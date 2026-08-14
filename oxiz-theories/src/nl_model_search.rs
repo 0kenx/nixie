@@ -1,4 +1,4 @@
-//! Model-based nonlinear integer search — the portable essence of z3's
+//! Model-based nonlinear integer search – the portable essence of z3's
 //! `theory_arith` nonlinear plugin (`src/smt/theory_arith_nl.h`,
 //! `process_non_linear`).
 //!
@@ -13,7 +13,7 @@
 //!   * Linearise the top-level comparison conjuncts (monomials → fresh Simplex
 //!     variables) and solve the relaxation. The linearisation is a *relaxation*
 //!     (monomial variables are unconstrained), so **linear-relaxation-infeasible
-//!     ⇒ the original is UNSAT** — a sound `Unsat`.
+//!     ⇒ the original is UNSAT** – a sound `Unsat`.
 //!   * Otherwise branch-and-bound toward an integer model, applying local
 //!     monomial repair, and **concretely verify** the full original formula
 //!     before reporting `Sat` (so a spurious relaxed model can never yield a
@@ -22,7 +22,7 @@
 //! Two extensions over the bare relaxation close the gap that defeated it on
 //! the VeryMax family (industrial termination VCs):
 //!   * **In-tableau monomial repair** (`repair_monomials_via_simplex`): pin each
-//!     inconsistent monomial `m` to `∏ value(factors)` and re-run Simplex —
+//!     inconsistent monomial `m` to `∏ value(factors)` and re-run Simplex –
 //!     turning `m ≠ x·y` into an explainable infeasibility (a real conflict)
 //!     instead of a silent concrete-fail.
 //!   * **Disjunctive case-split** (`bool_split`): the relaxation only sees
@@ -30,7 +30,7 @@
 //!     structural `or`/Boolean conjunct the tableau never encoded. When the
 //!     integer/monomial search dead-ends, we case-split a falsified `or`
 //!     conjunct, asserting each disjunct (linearised, or split as a two-way
-//!     integer disequality) into the relaxation in turn — DPLL-style Boolean
+//!     integer disequality) into the relaxation in turn – DPLL-style Boolean
 //!     search inlined into the model-based search. This is what solves
 //!     `896.smt2` (z3-sat) and the rest of the VeryMax SAT cluster.
 //!
@@ -55,11 +55,11 @@ use std::collections::HashMap;
 
 /// Bound on branch-and-bound nodes (each node re-runs Simplex).
 const MAX_BB_NODES: usize = 4_000;
-/// Bound on branch-and-bound *recursion depth* — kept equal to the node
+/// Bound on branch-and-bound *recursion depth* – kept equal to the node
 /// bound so the real limit is total work, not stack depth. The search runs on
 /// a dedicated large-stack worker thread (see `nia_search_core`), so deep
 /// recursion is safe; this only guards against pathological unbounded chains
-/// (sound to bail — returns `None` → unknown, never a wrong answer).
+/// (sound to bail – returns `None` → unknown, never a wrong answer).
 const MAX_BB_DEPTH: usize = MAX_BB_NODES;
 /// Bound on monomial-repair fixpoint iterations per node.
 const MAX_REPAIR_ITERS: usize = 32;
@@ -80,7 +80,7 @@ const REASON: u32 = 0;
 const MAX_FREE_BOOL_CASESPLIT: usize = 8;
 
 /// Whether any `div`/`mod` subterm across `assertions` has a symbolic
-/// (non-constant) divisor — the case [`try_model_based_nia_search`] must
+/// (non-constant) divisor – the case [`try_model_based_nia_search`] must
 /// defer to CDCL(T) rather than guess on.
 pub(crate) fn assertions_have_symbolic_divmod(
     assertions: &[TermId],
@@ -119,8 +119,8 @@ pub(crate) fn assertions_have_symbolic_divmod(
 
 /// Fold resolvable `select`-over-store-tower reads (at a ground integer
 /// index) into their integer values throughout `assertions`, returning the
-/// rewritten assertions. Unresolvable reads — an unwritten index of an
-/// unknown base (a declared array var) — are left in place; `fully_evaluable`
+/// rewritten assertions. Unresolvable reads – an unwritten index of an
+/// unknown base (a declared array var) – are left in place; `fully_evaluable`
 /// then rejects the goal and the search defers, so no `Sat` is fabricated on
 /// an unread index (Sat-only; cf. 34e854fc). Ports v0.3.2's `nl_eval`
 /// select handling into the model-based search.
@@ -233,7 +233,7 @@ pub fn try_model_based_nia_search(
 /// Core model-based search on a single, already Boolean-grounded (and
 /// case-split) assertion set. Linearise the comparison conjuncts, solve the
 /// relaxation (infeasible ⇒ sound `Unsat`), then bounded concrete enumeration
-/// and integer branch-and-bound with monomial repair — each returning `Sat`
+/// and integer branch-and-bound with monomial repair – each returning `Sat`
 /// only on a concretely verified witness.
 fn nia_search_core(
     assertions: &[TermId],
@@ -289,7 +289,7 @@ fn nia_search_core_on_worker(
     // standard for nonlinear integer arithmetic requires a definite `Unsat`
     // to come from the certified CAD/B&B core (`dispatch_nia_constraints`'s
     // `NiaSolver` arm under `unsat_is_trustworthy`), not from this relaxation
-    // — which has been the source of false-`Unsat` regressions (see
+    // – which has been the source of false-`Unsat` regressions (see
     // `audit_solver_p3c::nonlinear_atom_is_not_spuriously_decided`).  Returning
     // `None` routes the goal to that certified core, which either proves
     // `Unsat` or honestly answers `Unknown`.
@@ -391,7 +391,7 @@ fn ground_bool_interface_eqs(assertions: &[TermId], manager: &mut TermManager) -
     }
 
     // Resolve chains: substitute the map into each definition until it is
-    // stable (bounded — `substitute` does not recurse into replacements, so a
+    // stable (bounded – `substitute` does not recurse into replacements, so a
     // single pass resolves one level of nesting). Any pathological cycle just
     // stops after the cap, leaving a free variable that `fully_evaluable`
     // catches downstream (no correctness impact).
@@ -571,7 +571,7 @@ type MonoKey = Vec<(TermId, u32)>;
 /// current integer value `k` cannot be part of a monomial-consistent model, so
 /// the split `v ≤ k−1` / `v ≥ k+1` removes it from both children. Without
 /// `Exclude` the search dead-ends whenever every variable is integral yet some
-/// product is wrong — exactly the VeryMax shape that defeated the relaxation.
+/// product is wrong – exactly the VeryMax shape that defeated the relaxation.
 enum Branch {
     /// `var` is non-integral at `val`; split `var ≤ floor` | `var ≥ ceil`.
     FloorCeil {
@@ -592,7 +592,7 @@ enum AssertPlan {
     /// The term was fully asserted as linear constraint(s) under the current
     /// push scope; proceed to re-check + recurse.
     Done,
-    /// The term is trivially false under this polarity — this disjunct cannot
+    /// The term is trivially false under this polarity – this disjunct cannot
     /// contribute; skip it.
     Infeasible,
     /// The term forces a disequality `expr ≠ 0` (e.g. `(not (= v 0))`);
@@ -601,7 +601,7 @@ enum AssertPlan {
     SplitExpr(LinExpr),
     /// The term is not a linearizable Boolean shape we handle (nested `or` in
     /// a conjunction, Boolean disequalities, `ite`, …); skip it. Skipping only
-    /// loses completeness — never soundness — because every reported `Sat` is
+    /// loses completeness – never soundness – because every reported `Sat` is
     /// still concretely verified.
     Skip,
 }
@@ -708,7 +708,7 @@ impl<'a> Relaxation<'a> {
                 TermKind::Var(_) => *powers.entry(id).or_insert(0) += 1,
                 // Compound factor (e.g. `(- 0 1)` = -1): translate it and fold
                 // if it is a pure constant; a variable-bearing compound factor
-                // (e.g. `(x+1)*y`) is not a single monomial — bail honestly.
+                // (e.g. `(x+1)*y`) is not a single monomial – bail honestly.
                 _ => {
                     let e = self.translate(id)?;
                     if e.terms.is_empty() {
@@ -776,7 +776,7 @@ impl<'a> Relaxation<'a> {
         // integer factors and re-run Simplex. If the system stays feasible,
         // the monomials become honest and we re-round + concretely verify. If
         // it goes infeasible, the current integer factor assignment is
-        // incompatible with `m = x·y` — a real conflict the relaxation alone
+        // incompatible with `m = x·y` – a real conflict the relaxation alone
         // could never surface. Either outcome only prunes or verifies; never
         // produces a wrong answer.
         if let Some(witness) = self.repair_monomials_via_simplex(assertions, manager) {
@@ -787,7 +787,7 @@ impl<'a> Relaxation<'a> {
             None => {
                 // No integer/monomial branch exists, yet the concrete check
                 // fails: the culprit must be the Boolean *structure* (a
-                // disjunction the relaxation cannot see — the dominant VeryMax
+                // disjunction the relaxation cannot see – the dominant VeryMax
                 // shape, e.g. `(or (not (= inv 0)) …)` forcing a nonzero
                 // invariant). Case-split a falsified disjunctive conjunct,
                 // asserting each disjunct into the relaxation in turn. This is
@@ -1043,7 +1043,7 @@ impl<'a> Relaxation<'a> {
     }
 
     /// Whether a term is Boolean-sorted (so its equality is a Boolean, not
-    /// arithmetic, equality — handled by substitution, not the relaxation).
+    /// arithmetic, equality – handled by substitution, not the relaxation).
     fn term_is_bool(manager: &TermManager, t: TermId) -> bool {
         manager
             .get(t)
@@ -1160,7 +1160,7 @@ impl<'a> Relaxation<'a> {
     /// re-run Simplex. If every monomial becomes self-consistent, concretely
     /// verify and return a witness. If re-Simplex is infeasible, the current
     /// integer factor assignment is incompatible with `m = x·y` under the
-    /// asserted atoms — return `None` so the caller branches away from it.
+    /// asserted atoms – return `None` so the caller branches away from it.
     /// Sound: a witness is returned only after [`Self::concrete_sat`]; `None`
     /// only declines to decide, so the worst a bug can do is miss a model.
     fn repair_monomials_via_simplex(
@@ -1208,7 +1208,7 @@ impl<'a> Relaxation<'a> {
                 // Every monomial is consistent with the integer factors, yet the
                 // concrete check failed (a strict inequality or a linear
                 // constraint the rounding broke). No further tableau repair can
-                // help — hand back to branching.
+                // help – hand back to branching.
                 return None;
             }
             for (mvar, prod) in &pins {
@@ -1217,7 +1217,7 @@ impl<'a> Relaxation<'a> {
             }
             if self.simplex.check().is_err() {
                 // Infeasible: the integer factor assignment is incompatible
-                // with `m = x·y` under the linear constraints — a real
+                // with `m = x·y` under the linear constraints – a real
                 // conflict the relaxation alone could never surface.
                 return None;
             }
@@ -1281,7 +1281,7 @@ impl<'a> Relaxation<'a> {
         // All integer variables are integral, yet the concrete check fails and
         // (typically) some monomial is inconsistent (`m ≠ ∏ factors`). Branch
         // on a factor of an inconsistent monomial by excluding its current
-        // value (`v ≤ k−1` | `v ≥ k+1`) — z3's `branch_nl_int_var` shape.
+        // value (`v ≤ k−1` | `v ≥ k+1`) – z3's `branch_nl_int_var` shape.
         // Prefer the bounded factor with the smallest range (shallowest tree),
         // but fall back to an unbounded factor: many VeryMax models are only
         // reachable by excluding a variable that is unbounded in the relaxation.

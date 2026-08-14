@@ -25,7 +25,7 @@ use oxiz_spacer::chc::{ChcSystem, PredicateApp};
 fn test_bmc_unroll_feeds_bmc_engine() {
     let mut terms = TermManager::new();
 
-    // --- Build the flat Goal for BmcUnrollTactic ---
+    // ======== Build the flat Goal for BmcUnrollTactic ========
     let int_sort = terms.sorts.int_sort;
     let x = terms.mk_var("x", int_sort);
     let x_next = terms.mk_var("x_next", int_sort);
@@ -63,7 +63,7 @@ fn test_bmc_unroll_feeds_bmc_engine() {
         other => panic!("unexpected TacticResult variant: {other:?}"),
     }
 
-    // --- Build the ChcSystem for the production Bmc solver ---
+    // ======== Build the ChcSystem for the production Bmc solver ========
     // The Bmc solver requires a ChcSystem with at least one init rule and one query.
     let mut system = ChcSystem::new();
 
@@ -103,7 +103,7 @@ fn test_bmc_unroll_feeds_bmc_engine() {
         neg_constraint,
     );
 
-    // Run the production BMC solver — just assert no error (Ok(_)).
+    // Run the production BMC solver – just assert no error (Ok(_)).
     let config = BmcConfig {
         max_depth: 3,
         use_kinduction: false,

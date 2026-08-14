@@ -181,8 +181,8 @@ impl AsymmetricBranching {
     ///
     /// For clause `C = l_0 ∨ l_1 ∨ ... ∨ l_{n-1}`, literal `l_k` is redundant
     /// (droppable) if the rest of the database already entails `C \ {l_k}`.
-    /// To certify that, we assume `¬(C \ {l_k})` — i.e. the negation of every
-    /// *other* literal — and run unit propagation over `clauses`. A conflict
+    /// To certify that, we assume `¬(C \ {l_k})` – i.e. the negation of every
+    /// *other* literal – and run unit propagation over `clauses`. A conflict
     /// means `clauses ∧ ¬(C \ {l_k}) ⊨ ⊥`, i.e. `clauses ⊨ (C \ {l_k})`, so
     /// `l_k` can be dropped while the clause stays entailed (self-subsuming
     /// resolution / asymmetric literal elimination). This mirrors the
@@ -234,7 +234,7 @@ impl AsymmetricBranching {
                 if self.is_false(neg) {
                     // Assuming ~other directly contradicts a value already
                     // forced by propagation from an earlier assumption in
-                    // this pass — an immediate conflict.
+                    // this pass – an immediate conflict.
                     conflict = true;
                     break;
                 }
@@ -286,7 +286,7 @@ impl AsymmetricBranching {
                     // an off-line pass with no trail access (see the module
                     // doc), so `compute_lbd` is unavailable; carry the
                     // predecessor's LBD instead. Strengthening only removes
-                    // literals, so the distinct-level count cannot grow — the
+                    // literals, so the distinct-level count cannot grow – the
                     // old LBD is a sound upper bound, clamped to the new
                     // length (LBD <= len) and to >= 1 (the invariant every
                     // other `add_learned` site satisfies).

@@ -1,4 +1,4 @@
-//! DRAT (Delete, Resolution Asymmetric Tautology) proof tracer — faithful
+//! DRAT (Delete, Resolution Asymmetric Tautology) proof tracer – faithful
 //! port of `drattracer.hpp` / `drattracer.cpp` / `drat.rs`.
 //!
 //! Streams a DRAT proof to a file in either **text** or **binary** format.
@@ -61,7 +61,7 @@ impl DratTracer {
         self.binary
     }
 
-    // -- binary primitives (faithful `put_binary_*`) ------------------
+    // ======== binary primitives (faithful `put_binary_*`) ========
 
     #[inline]
     fn put_binary_zero(&mut self) {
@@ -93,9 +93,9 @@ impl DratTracer {
             .write_all(&[x as u8]);
     }
 
-    // -- core emission (`drat_add_clause` / `drat_delete_clause`) -----
+    // ======== core emission (`drat_add_clause` / `drat_delete_clause`) ========
 
-    /// `drat_add_clause` — emit an added (derived) clause.
+    /// `drat_add_clause` – emit an added (derived) clause.
     pub fn drat_add_clause(&mut self, clause: &[i32]) {
         if self.binary {
             let _ = self.writer.get_mut().expect("proof writer").write_all(b"a");
@@ -118,7 +118,7 @@ impl DratTracer {
         }
     }
 
-    /// `drat_delete_clause` — emit a clause deletion.
+    /// `drat_delete_clause` – emit a clause deletion.
     pub fn drat_delete_clause(&mut self, clause: &[i32]) {
         if self.binary {
             let _ = self.writer.get_mut().expect("proof writer").write_all(b"d");
@@ -147,7 +147,7 @@ impl DratTracer {
         }
     }
 
-    // -- backward-compatible convenience wrappers ----------------------
+    // ======== backward-compatible convenience wrappers ========
 
     /// Text-style convenience wrapper: `add_derived_clause(0, false, 0, lits, &[])`.
     pub fn add_clause(&mut self, lits: &[i32]) {
@@ -177,7 +177,7 @@ impl DratTracer {
 }
 
 impl Tracer for DratTracer {
-    /// `add_original_clause` — no-op for DRAT (originals come from the DIMACS
+    /// `add_original_clause` – no-op for DRAT (originals come from the DIMACS
     /// file; the `redundant` flag, `witness` and `chain` are unused).
     fn add_original_clause(
         &mut self,

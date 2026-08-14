@@ -1,7 +1,7 @@
 //! ML-based difficulty prediction for SMT benchmarks.
 //!
-//! This module provides three regression models — [`LinearRegressor`],
-//! [`KnnRegressor`], and [`RegressionTree`] — all sharing the [`DifficultyModel`]
+//! This module provides three regression models – [`LinearRegressor`],
+//! [`KnnRegressor`], and [`RegressionTree`] – all sharing the [`DifficultyModel`]
 //! trait.  Models predict expected solver runtime (seconds) and difficulty
 //! class from a [`Features`] vector derived from a benchmark's metadata.
 //!
@@ -14,7 +14,7 @@
 //! let features = Features::default();
 //! let runtime = model.predict_runtime(&features);
 //! let class   = model.predict_class(&features);
-//! println!("Predicted {runtime:.2}s — class: {class}");
+//! println!("Predicted {runtime:.2}s – class: {class}");
 //! ```
 
 pub mod class;
@@ -70,7 +70,7 @@ pub fn train_model(dataset: &Dataset) -> LinearRegressor {
 /// Build a small synthetic [`Dataset`] that seeds the cold-start predictor.
 ///
 /// Covers a range of logics, structural profiles, and runtimes spanning all
-/// five difficulty classes.  No file I/O is performed — all `BenchmarkMeta`
+/// five difficulty classes.  No file I/O is performed – all `BenchmarkMeta`
 /// objects are constructed in memory.
 fn synthetic_seed_dataset() -> Dataset {
     use crate::benchmark::BenchmarkStatus;
@@ -92,7 +92,7 @@ fn synthetic_seed_dataset() -> Dataset {
     }
 
     let entries = [
-        // QF_LIA — trivial
+        // QF_LIA – trivial
         SyntheticEntry {
             logic: "QF_LIA",
             file_size: 200,
@@ -117,7 +117,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 0.05,
         },
-        // QF_LIA — easy
+        // QF_LIA – easy
         SyntheticEntry {
             logic: "QF_LIA",
             file_size: 2000,
@@ -142,7 +142,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 0.7,
         },
-        // QF_LIA — medium
+        // QF_LIA – medium
         SyntheticEntry {
             logic: "QF_LIA",
             file_size: 20000,
@@ -167,7 +167,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 8.0,
         },
-        // QF_BV — trivial/easy
+        // QF_BV – trivial/easy
         SyntheticEntry {
             logic: "QF_BV",
             file_size: 300,
@@ -192,7 +192,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 64,
             runtime_seconds: 0.5,
         },
-        // QF_BV — hard
+        // QF_BV – hard
         SyntheticEntry {
             logic: "QF_BV",
             file_size: 100000,
@@ -217,7 +217,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 512,
             runtime_seconds: 50.0,
         },
-        // QF_FP — medium/hard
+        // QF_FP – medium/hard
         SyntheticEntry {
             logic: "QF_FP",
             file_size: 10000,
@@ -242,7 +242,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 64,
             runtime_seconds: 40.0,
         },
-        // QF_S (strings) — easy/medium
+        // QF_S (strings) – easy/medium
         SyntheticEntry {
             logic: "QF_S",
             file_size: 1500,
@@ -267,7 +267,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 6.0,
         },
-        // QF_DT (datatypes) — medium/hard
+        // QF_DT (datatypes) – medium/hard
         SyntheticEntry {
             logic: "QF_DT",
             file_size: 8000,
@@ -292,7 +292,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 35.0,
         },
-        // QF_AUFBV — hard/very hard
+        // QF_AUFBV – hard/very hard
         SyntheticEntry {
             logic: "QF_AUFBV",
             file_size: 150000,
@@ -317,7 +317,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 256,
             runtime_seconds: 120.0,
         },
-        // LIA (with quantifiers) — medium/very hard
+        // LIA (with quantifiers) – medium/very hard
         SyntheticEntry {
             logic: "LIA",
             file_size: 12000,
@@ -342,7 +342,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 180.0,
         },
-        // UFLIA — very hard
+        // UFLIA – very hard
         SyntheticEntry {
             logic: "UFLIA",
             file_size: 300000,
@@ -355,7 +355,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 90.0,
         },
-        // NIA — very hard
+        // NIA – very hard
         SyntheticEntry {
             logic: "NIA",
             file_size: 200000,
@@ -368,7 +368,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 150.0,
         },
-        // QF_NIA — hard
+        // QF_NIA – hard
         SyntheticEntry {
             logic: "QF_NIA",
             file_size: 80000,
@@ -381,7 +381,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 55.0,
         },
-        // QF_LRA — medium
+        // QF_LRA – medium
         SyntheticEntry {
             logic: "QF_LRA",
             file_size: 25000,
@@ -394,7 +394,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 4.5,
         },
-        // QF_UF — easy
+        // QF_UF – easy
         SyntheticEntry {
             logic: "QF_UF",
             file_size: 4000,
@@ -407,7 +407,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 0.4,
         },
-        // QF_ABV — medium/hard
+        // QF_ABV – medium/hard
         SyntheticEntry {
             logic: "QF_ABV",
             file_size: 35000,
@@ -432,7 +432,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 128,
             runtime_seconds: 42.0,
         },
-        // QF_ALIA — hard
+        // QF_ALIA – hard
         SyntheticEntry {
             logic: "QF_ALIA",
             file_size: 90000,
@@ -445,7 +445,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 0,
             runtime_seconds: 30.0,
         },
-        // BV — very hard
+        // BV – very hard
         SyntheticEntry {
             logic: "BV",
             file_size: 400000,
@@ -458,7 +458,7 @@ fn synthetic_seed_dataset() -> Dataset {
             bv_width: 64,
             runtime_seconds: 200.0,
         },
-        // QF_LIA — very hard (large)
+        // QF_LIA – very hard (large)
         SyntheticEntry {
             logic: "QF_LIA",
             file_size: 400000,

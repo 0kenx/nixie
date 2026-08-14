@@ -275,14 +275,14 @@ fn linear_system_sat(arms: &[(&Polynomial, Relation)]) -> SatResult {
 mod tests {
     use super::*;
 
-    // -----------------------------------------------------------------
+    // ========  ========
     // Whitebox regression test for the Fourier-Motzkin resolvent used by
     // the linear inequality decision procedure (`decide_linear_arms` /
     // `linear_system_sat`). Public-API-level coverage of `check_sat` with
     // linear inequalities lives in
     // `oxiz-math/tests/audit_qe_math_follow.rs` (it needs no access to
     // these private internals).
-    // -----------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_fm_eliminate_var_combines_strict_and_non_strict_correctly() {

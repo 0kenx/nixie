@@ -11,7 +11,7 @@
 //!   recursive clause minimization with RUP-chain extension). Enable with
 //!   [`Solver::enable_drat_proof`] / [`Solver::enable_lrat_proof`] (text or
 //!   binary) *before* adding clauses; `solve()` then streams a checkable proof
-//!   — derived clauses with RUP hint chains assembled during 1-UIP conflict
+//!   – derived clauses with RUP hint chains assembled during 1-UIP conflict
 //!   analysis (and extended per minimized literal), id-based deletions, and the
 //!   empty clause on UNSAT. Level-0 propagations are flushed to explicit
 //!   derived units so the chain invariant holds. The LRAT proof is verified by
@@ -78,7 +78,7 @@ extern crate alloc;
 
 mod prelude;
 
-// === Always-available modules (no_std compatible) ===
+// ======== Always-available modules (no_std compatible) ========
 mod activity;
 mod agility;
 mod allsat;
@@ -112,7 +112,7 @@ mod hyper_binary;
 // Debug-net checkers: every production caller sits behind
 // `#[cfg(debug_assertions)]` (see `Solver::debug_check_invariants`), so a
 // release *lib* build has no callers and the module would be pure dead code
-// there. Test builds keep it in both profiles — the invariant tests and the
+// there. Test builds keep it in both profiles – the invariant tests and the
 // solver tests call the checkers directly.
 #[cfg(any(debug_assertions, test))]
 mod invariants;
@@ -151,7 +151,7 @@ mod vsids;
 mod watched;
 mod xor;
 
-// === std-only modules ===
+// ======== std-only modules ========
 #[cfg(feature = "std")]
 mod benchmark;
 #[cfg(feature = "std")]
@@ -171,7 +171,7 @@ mod proof;
 #[cfg(feature = "std")]
 mod stats_dashboard;
 
-// === Always-available exports ===
+// ======== Always-available exports ========
 pub use activity::{ActivityStats, ClauseActivityManager, VariableActivityManager};
 pub use agility::{AgilityStats, AgilityTracker};
 pub use allsat::{AllSatEnumerator, EnumerationConfig, EnumerationResult, EnumerationStats, Model};
@@ -255,7 +255,7 @@ pub use xor::{
     XorDetector, XorManager, XorPropagator, XorPropagatorStats, XorStrengthening, XorSubsumption,
 };
 
-// === std-only exports ===
+// ======== std-only exports ========
 #[cfg(feature = "std")]
 pub use benchmark::{BenchmarkHarness, BenchmarkResult};
 #[cfg(feature = "std")]

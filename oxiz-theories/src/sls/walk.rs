@@ -3,9 +3,7 @@
 
 use super::types::{Lit, Var};
 
-// ============================================================================
-// Focused Random Walk
-// ============================================================================
+// ======== Focused Random Walk ========
 
 /// Focused random walk parameters
 #[derive(Debug, Clone)]
@@ -77,9 +75,7 @@ impl FocusedWalk {
     }
 }
 
-// ============================================================================
-// Novelty and rNovelty Heuristics
-// ============================================================================
+// ======== Novelty and rNovelty Heuristics ========
 
 /// Novelty parameter for variable selection
 #[derive(Debug, Clone)]
@@ -215,9 +211,7 @@ impl NoveltySelector {
     }
 }
 
-// ============================================================================
-// Sparrow Algorithm
-// ============================================================================
+// ======== Sparrow Algorithm ========
 
 /// Sparrow algorithm configuration
 #[derive(Debug, Clone)]
@@ -351,9 +345,7 @@ impl SparrowSelector {
     }
 }
 
-// ============================================================================
-// Break-Make Score (BMS) Selector
-// ============================================================================
+// ======== Break-Make Score (BMS) Selector ========
 
 /// BMS (Break-Make Score) variable selection
 #[derive(Debug, Clone)]

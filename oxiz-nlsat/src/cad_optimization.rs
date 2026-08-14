@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. These partial-CAD
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. These partial-CAD
 // / conflict-driven-projection / Hong-projection optimizations need a persistent
 // projection+lifting engine in the search path, which does not exist yet
 // (solver::decide rebuilds regions per variable via Sturm on each call). Sequence

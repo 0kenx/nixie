@@ -1,13 +1,13 @@
 //! The line between a *search* and the *goal* it searches, for
 //! [`MBQIIntegration`].
 //!
-//! One `Solver::check` is one MBQI search.  Everything that search derives —
+//! One `Solver::check` is one MBQI search.  Everything that search derives –
 //! the ground terms it harvested from its own instantiations, the dedup filter
 //! that stops a round re-deriving an earlier round's work, the one-shot
-//! blind-instantiation guard, the round counter and its budget — belongs to
+//! blind-instantiation guard, the round counter and its budget – belongs to
 //! *that* search and must not be visible to the next one.  Everything the
-//! caller put there — the registered quantifiers, the candidates from
-//! `declare-const`, the configured limits, the cumulative statistics — belongs
+//! caller put there – the registered quantifiers, the candidates from
+//! `declare-const`, the configured limits, the cumulative statistics – belongs
 //! to the goal and must survive.
 //!
 //! Getting that line wrong is task #28's third mechanism, and it goes wrong in
@@ -73,21 +73,21 @@ impl MBQIIntegration {
     ///
     /// # Which fields are which
     ///
-    /// Goal state — untouched here: `quantifiers` (registered by `assert`, and
+    /// Goal state – untouched here: `quantifiers` (registered by `assert`, and
     /// retracted by `Solver::pop` through [`Self::truncate_quantifiers`]), the
     /// candidates registered outside a search (recorded in `checkpoint`), the
     /// configured limits, and `stats` (cumulative by contract).
     ///
-    /// Search state — restored here:
+    /// Search state – restored here:
     ///
-    /// * `extra_candidates` beyond `checkpoint` — ground sub-terms harvested
+    /// * `extra_candidates` beyond `checkpoint` – ground sub-terms harvested
     ///   from *this* search's own instantiation results so that a later round
     ///   of the same search can use them.
-    /// * `generated_instantiations` — the dedup filter that stops a round from
+    /// * `generated_instantiations` – the dedup filter that stops a round from
     ///   re-deriving what an earlier round of the same search already derived.
-    /// * `blind_attempted` — the one-shot guard for the blind-instantiation
+    /// * `blind_attempted` – the one-shot guard for the blind-instantiation
     ///   fallback, which is meant to fire at most once *per search*.
-    /// * `current_round` / `budget` / `conflict_scores` — the round counter that
+    /// * `current_round` / `budget` / `conflict_scores` – the round counter that
     ///   `max_rounds` bounds, and the per-round budget it carves up.  [`Self::run`]
     ///   documents these as accumulating "for a single `solve()` invocation".
     /// * the instantiation engine's and lazy instantiator's caches.
@@ -98,7 +98,7 @@ impl MBQIIntegration {
     /// something different from the first one, in both directions.  Too much,
     /// at first: the dedup filter still holds the previous search's
     /// instantiations, so the next search skips them and reaches deeper,
-    /// genuinely new terms — new SAT variables and new clauses appearing
+    /// genuinely new terms – new SAT variables and new clauses appearing
     /// several `check-sat` calls into an unchanged session, which is the
     /// unexplained late-onset growth of task #28.  Then too little: once the
     /// accumulated `current_round` reaches `max_rounds`, every later search

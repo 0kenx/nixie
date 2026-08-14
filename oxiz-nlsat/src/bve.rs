@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired because it is
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired because it is
 // unsound for this solver: eliminating a boolean variable that backs a theory
 // atom destroys the atom<->literal correspondence every theory_propagate /
 // evaluate_atom step relies on. In QF_NRA/NIA essentially every boolean

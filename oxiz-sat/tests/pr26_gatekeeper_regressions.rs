@@ -4,7 +4,7 @@
 //! could be *reintroduced* by a later `add_clause`/assumption with no guard.
 //! `pick_branch_var` skips eliminated variables, so nothing assigns them
 //! during search, and model reconstruction overwrote whatever the new clause
-//! demanded — yielding a false `Sat`.
+//! demanded – yielding a false `Sat`.
 //!
 //! Equivalent-literal substitution (ELS) has a sound rewrite (fold the
 //! reintroduced literal through the substitution map), so a reintroduced ELS
@@ -29,7 +29,7 @@ fn els_enabled_solver() -> Solver {
 /// Wire up `a ≡ b` (via `(¬a∨b)∧(¬b∨a)`) and run the first `solve()`, which
 /// (with ELS enabled) folds one variable into the other. Returns the two
 /// variables; the caller does not need to know which one ended up as the
-/// canonical representative — the fix is symmetric in that choice.
+/// canonical representative – the fix is symmetric in that choice.
 fn solve_and_fold_equivalence(solver: &mut Solver) -> (Lit, Lit) {
     let a = solver.new_var();
     let b = solver.new_var();
@@ -52,7 +52,7 @@ fn test_pr26_gatekeeper_sk1_els_add_clause_reintroduction_is_rewritten_soundly()
     // in every model, so ¬a implies ¬b, contradicting the unit clause b. The
     // second `add_clause` may catch this immediately (its own trivially_unsat
     // fast path, once b is rewritten to a's already-fixed representative) or
-    // defer to `solve()` — either is correct; what must never happen is a
+    // defer to `solve()` – either is correct; what must never happen is a
     // later `solve()` reporting `Sat`.
     assert!(solver.add_clause([a.negate()]));
     let _ = solver.add_clause([b]);

@@ -10,9 +10,7 @@ use crate::prelude::*;
 use crate::sort::SortId;
 use smallvec::SmallVec;
 
-// ===========================================================================
-// Boolean simplification
-// ===========================================================================
+// ======== Boolean simplification ========
 
 /// Simplify a boolean formula by eliminating redundant terms.
 ///
@@ -103,9 +101,7 @@ fn combine_simplify_boolean(
     }
 }
 
-// ===========================================================================
-// NNF
-// ===========================================================================
+// ======== NNF ========
 
 /// Convert a boolean formula to Negation Normal Form (NNF)
 ///

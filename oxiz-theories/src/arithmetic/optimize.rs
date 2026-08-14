@@ -404,7 +404,7 @@ mod tests {
         assert!(matches!(result, OptResult::Infeasible));
     }
 
-    // ---- Optimization correctness tests ----
+    // ======== Optimization correctness tests ========
 
     /// Maximize 3x + 4y subject to: x + y <= 8, x >= 0, y >= 0.
     /// Optimal: y = 8, x = 0 → value = 32.
@@ -512,7 +512,7 @@ mod tests {
         let mut model = OptModel::new();
         let x = model.new_var();
 
-        // x >= 10 AND x <= 5 — contradictory
+        // x >= 10 AND x <= 5 – contradictory
         model.set_bounds(
             x,
             Some(Rational64::from_integer(10)),

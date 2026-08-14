@@ -875,7 +875,7 @@ mod tests {
         assert_eq!(prop.stats.equalities_propagated, 0);
     }
 
-    // ===== Congruence regression tests =====
+    // ======== Congruence regression tests ========
     //
     // These drive `are_congruent` directly. That is deliberate: nothing in the
     // workspace ever inserts into `CongruenceData::use_list` (only

@@ -22,16 +22,16 @@ Changes in 0.3.1:
   `ast::model::bitvec_mask`, and
   `Model::assign_bitvec_big` (the `u64` `Model::assign_bitvec` is kept for
   narrow widths).
-- Every remaining unguarded recursive term walk — parser, printer, model
+- Every remaining unguarded recursive term walk – parser, printer, model
   evaluator, substitution, and the `Drop`/`Clone`/`PartialEq` impls on the deep
-  public enums — now runs on an explicit heap stack, so deeply nested input can
+  public enums – now runs on an explicit heap stack, so deeply nested input can
   no longer overflow the stack.
 - The SMT-LIB2 parser is fully iterative and rejects unhandled or malformed
   input with an error instead of silently dropping or defaulting it; mixed-width
   bit-vector binary operands are now rejected at parse time, as Z3 does.
 - E-matching trigger inference is restricted to uninterpreted heads (matching
   Z3's `pattern_inference`), which removes a matching loop.
-- New `ast::normal_forms::to_cnf_tseitin` — equisatisfiable linear-size CNF via
+- New `ast::normal_forms::to_cnf_tseitin` – equisatisfiable linear-size CNF via
   Tseitin encoding; `TseitinCnfTactic` is rewired to it.
 
 ## Overview

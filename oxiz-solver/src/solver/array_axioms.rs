@@ -1,7 +1,7 @@
 //! Lazy array-theory axiom instantiation for the CDCL(T) loop.
 //!
 //! The syntactic pre-checks in [`super::check_array`] recognise a fixed set of
-//! definite array conflicts, but they cannot decide the general case — e.g. a
+//! definite array conflicts, but they cannot decide the general case – e.g. a
 //! read-over-write at a *provably different* index (`i != j` forcing
 //! `select(store(a,i,v),j) = select(a,j)`), or extensionality on a disequality
 //! between two array variables.  Left to the raw SAT core those atoms are free
@@ -14,19 +14,19 @@
 //! not already satisfy, asserts the corresponding ground lemma and asks the
 //! core to re-solve.  The three axiom families are:
 //!
-//!   * **Read-over-write** — for every `select(store(b,i,v), j)` (directly or
+//!   * **Read-over-write** – for every `select(store(b,i,v), j)` (directly or
 //!     through an asserted `B = store(b,i,v)` alias):
 //!     `select(store(b,i,v),j) = ite(i = j, v, select(b,j))`.
-//!   * **Extensionality** — for every array-sorted equality atom `a = b`, a
+//!   * **Extensionality** – for every array-sorted equality atom `a = b`, a
 //!     witness index `k` (fresh but *deterministic* per unordered pair) with
 //!     `a = b  ∨  select(a,k) != select(b,k)`.  When `a != b` is asserted this
 //!     forces a concrete differing index.
-//!   * **Select congruence** — for every array-sorted equality atom `a = b`
+//!   * **Select congruence** – for every array-sorted equality atom `a = b`
 //!     and every index `j` read on either side:
 //!     `a = b  ⇒  select(a,j) = select(b,j)`.
 //!
 //! Every asserted instance is a theorem of the (extensional) array theory, so
-//! adding it never changes satisfiability — it only removes models that violate
+//! adding it never changes satisfiability – it only removes models that violate
 //! array semantics.  Instances are deduplicated by their interned lemma term
 //! id, and the reachable instance set is finite (bounded by the store-subterm ×
 //! index-set product plus one witness per array pair), so the refinement loop
@@ -55,7 +55,7 @@ const MAX_ARRAY_AXIOM_INSTANCES: usize = 20_000;
 impl Solver {
     /// One round of lazy array-axiom instantiation against the current candidate
     /// model.  Returns `true` when at least one new ground array lemma was
-    /// asserted to the SAT core — in which case the caller must re-solve — and
+    /// asserted to the SAT core – in which case the caller must re-solve – and
     /// `false` when the candidate model already satisfies every applicable
     /// axiom instance (so the reported `Sat` is trustworthy for the array
     /// atoms).
@@ -64,7 +64,7 @@ impl Solver {
             return false;
         }
 
-        // ---- Phase 1: collect array structure ---------------------------
+        // ======== Phase 1: collect array structure ========
         // Walk both the user assertions and every axiom instance asserted so
         // far, so selects introduced by earlier read-over-write / extensionality
         // lemmas seed further instantiation (saturation).
@@ -85,7 +85,7 @@ impl Solver {
             return false;
         }
 
-        // ---- Phase 2: build candidate ground axiom instances ------------
+        // ======== Phase 2: build candidate ground axiom instances ========
         // Build extensionality first so its *complete* finite-disjunction
         // clauses can tell `build_read_over_write` which arrays need no eager
         // chain unfolding (the lever for deep `storecomm` chains).
@@ -103,11 +103,11 @@ impl Solver {
         // `cvc/read8` shape).
         build_equality_read_congruence(manager, &collected, &mut candidates);
 
-        // ---- Phase 3: filter (dedup + model) and assert -----------------
+        // ======== Phase 3: filter (dedup + model) and assert ========
         // Only instances the candidate model does not already *definitely*
         // satisfy are added.  A `None` evaluation (opaque/undetermined) is
         // treated as unsatisfied so completeness never depends on the model
-        // being able to evaluate a select — worst case this degenerates to
+        // being able to evaluate a select – worst case this degenerates to
         // eager instantiation, which is still sound and complete.
         let mut to_add: Vec<TermId> = Vec::new();
         {
@@ -171,7 +171,7 @@ struct ArrayStructure {
     eq_pairs: Vec<(TermId, TermId)>,
     /// `array_variable -> store_term`s for every asserted `var = store(...)`.
     /// A variable may appear in several such assertions, so this is a list per
-    /// variable — see [`record_alias`] for why dropping the second alias is
+    /// variable – see [`record_alias`] for why dropping the second alias is
     /// unsound.
     aliases: FxHashMap<TermId, Vec<TermId>>,
     /// `(base, store_result)` for every `store` term, used to seed
@@ -185,7 +185,7 @@ struct ArrayStructure {
 /// shared sub-terms of the interned DAG.
 ///
 /// Iterative (explicit work stack), so nesting depth is bounded by memory
-/// rather than by the native call stack — this walk has no error channel, so a
+/// rather than by the native call stack – this walk has no error channel, so a
 /// depth cap could only silently drop array structure and with it the
 /// read-over-write / extensionality lemmas that make the answer sound.
 /// Children are pushed in reverse, which reproduces the recursive pre-order
@@ -203,7 +203,7 @@ fn collect_array_structure(
     // disequality's inner equality would (a) make `is_self_alias` skip the
     // fresh-witness extensionality that a disequality *needs*, and (b) feed
     // alias-aware read-over-write a `var = store` premise that is actually
-    // false — both producing a spurious `sat` on an UNSAT goal (e.g.
+    // false – both producing a spurious `sat` on an UNSAT goal (e.g.
     // `store_noop_disequality_is_unsat`: `select(a,i) = v` with
     // `a != store(a,i,v)` is UNSAT, but a phantom `a = store(a,i,v)` alias
     // suppresses the witness and the contradiction is never derived).
@@ -256,7 +256,7 @@ fn collect_array_structure(
                     out.eq_pairs.push((*lhs, *rhs));
                 }
                 // Record a `var = store(...)` alias for alias-aware
-                // read-over-write — POSITIVE equalities only.  A disequality
+                // read-over-write – POSITIVE equalities only.  A disequality
                 // `(not (= var store))` is not an alias; its inner `Eq` reaches
                 // here at `positive == false`.
                 if positive {
@@ -282,7 +282,7 @@ fn collect_array_structure(
 /// `(= b (store a x v))` and `(= b (store a y w))`), and the array decision
 /// procedure must honour ALL of them: dropping the second alias silently
 /// loses the read-over-write lemma through it, and the two stores then never
-/// get reconciled — a spurious `sat` for an UNSAT goal (Stump-Barrett-Dill-
+/// get reconciled – a spurious `sat` for an UNSAT goal (Stump-Barrett-Dill-
 /// Levitt `array_incompleteness1` shape).  De-duplicate by `store_term` so a
 /// repeated identical assertion does not double-instantiate.
 fn record_alias(
@@ -360,7 +360,7 @@ fn build_read_over_write(
             //    flat, guarded read-over-write encoding (one clause per store
             //    index + an else clause, all guarded by the conjunction of alias
             //    equalities).  This unfolds a depth-N alias chain in ONE
-            //    refinement round instead of N — which collapses the timeout on
+            //    refinement round instead of N – which collapses the timeout on
             //    deep `swap` UNSAT goals (e.g. `swap_t3_pp_sf_ai_00004`,
             //    30 s -> 0.01 s): the read resolves to a concrete value (or a
             //    base read) in the first round and the contradiction is found
@@ -434,7 +434,7 @@ fn build_read_over_write(
             // e.g. `(= (ite cond (store …) b) b)`) is an opaque leaf and the
             // extensionality / read-over-write lemmas never reach the `store`.
             // Emitted as two implications (an `ite`-valued equality is opaque
-            // to the arithmetic/EUF solvers — see the RoW note above); the new
+            // to the arithmetic/EUF solvers – see the RoW note above); the new
             // `select(a, i)` / `select(b, i)` terms seed further instantiation
             // in the next refinement round.
             let read_a = manager.mk_select(a, index);
@@ -537,7 +537,7 @@ fn row_implications(
 
 /// Build extensionality and select-congruence instances for every collected
 /// array-sorted equality atom.  Returns the candidate lemmas and the set of
-/// arrays that a *complete* finite-disjunction clause settles — reads on those
+/// arrays that a *complete* finite-disjunction clause settles – reads on those
 /// arrays need not be eagerly unfolded (the clause decides them), which is the
 /// lever that makes a depth-60 `storecomm` chain one flat clause instead of a
 /// 60-deep unfolding.
@@ -556,8 +556,8 @@ fn build_extensionality_and_congruence(
     // decides the Stump-Barrett-Dill-Levitt `array_incompleteness1` /
     // `storeinv` shape (a variable equated to a write over a base array, where
     // the contradiction is whether the write forces `base = var`).  Applying
-    // it to EVERY store — including the innermost write of a deep `storecomm`
-    // chain — spawns extensionality pairs whose witness reads unfold the whole
+    // it to EVERY store – including the innermost write of a deep `storecomm`
+    // chain – spawns extensionality pairs whose witness reads unfold the whole
     // chain, turning a sub-millisecond SAT into a multi-second solve or a
     // timeout.  Deep chains never need it: their (in)equality is already an
     // asserted atom whose own extensionality lemma decides them.
@@ -603,7 +603,7 @@ fn build_extensionality_and_congruence(
         }
         // Extensionality: a = b ∨ select(a,k) != select(b,k), with a fresh but
         // deterministic witness index per unordered pair.  SKIPPED for a
-        // *self-alias* pair — one whose `a = b` IS an asserted alias equality
+        // *self-alias* pair – one whose `a = b` IS an asserted alias equality
         // (`(= var store...)` collected in [`ArrayStructure::aliases`]).  There
         // `a = b` is a level-0 fact, so the witness clause `a = b ∨ ...` is
         // trivially satisfied and adds nothing; its only effect was to create
@@ -744,7 +744,7 @@ fn as_array_ite(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, 
 /// ...))` into `(base, entries)` with `entries` the outermost-write-wins
 /// `{idx -> val}` map.  Returns `None` if `term` is not a `Store`-rooted
 /// chain (a plain variable / select / UF normalises to itself with an empty
-/// map, which is not useful here — callers gate on a non-empty map).
+/// map, which is not useful here – callers gate on a non-empty map).
 fn direct_store_map(
     term: TermId,
     manager: &TermManager,
@@ -828,7 +828,7 @@ fn aliased_store_map(
 }
 
 /// Whether `term` is a value the SAT + arithmetic + EUF core can decide
-/// directly, without an array `select` unfolding — anything that is not a
+/// directly, without an array `select` unfolding – anything that is not a
 /// `Select`, array-sorted `Ite`, or `Store`.  Used to tell when a
 /// finite-disjunction clause is *complete* (decides the pair with no unfolding).
 fn is_scalar_value(term: TermId, manager: &TermManager) -> bool {
@@ -843,7 +843,7 @@ fn is_scalar_value(term: TermId, manager: &TermManager) -> bool {
 /// `a = b ∨ ∨_{k∈K} val_a(k) ≠ val_b(k)`, where each `val_·(k)` is the chain's
 /// value TERM at `k`.  Because the operands share a base and an index set, the
 /// two arrays can differ only at `K`, so this single clause fully decides the
-/// pair — and it compares value terms directly (no `select`, no
+/// pair – and it compares value terms directly (no `select`, no
 /// read-over-write unfolding), so a depth-60 `storecomm` chain becomes one flat
 /// clause instead of a 60-deep unfolding that costs seconds per refinement
 /// round.  Returns `None` when the precondition (common base + same index set +
@@ -855,7 +855,7 @@ fn finite_disjunction_extensionality(
     b: TermId,
 ) -> Option<(TermId, bool)> {
     // Returns `(lemma, is_complete)`.  `is_complete` is true only when the
-    // clause decides `a = b` with no array-select unfolding — a common
+    // clause decides `a = b` with no array-select unfolding – a common
     // free-variable base whose every compared value is scalar (variable /
     // constant / arithmetic / UF).  `storecomm` qualifies (base `a1`, values
     // are free `e_i`); `swap`/`read8` do not (values are `select`s), so their
@@ -875,7 +875,7 @@ fn finite_disjunction_extensionality(
     let base = ba;
     // `is_complete`: the clause decides `a = b` with no array-read unfolding.
     // Requires (1) a free-variable base, (2) every compared value scalar, and
-    // (3) the SAME index set on both sides — a differing index set forces a
+    // (3) the SAME index set on both sides – a differing index set forces a
     // one-sided `select(base, idx)` disjunct whose opaque read the SAT core
     // cannot settle instantly, so the eager chain unfold is still needed there.
     let is_complete = matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
@@ -886,8 +886,8 @@ fn finite_disjunction_extensionality(
     // Over a common base the two arrays can differ only at K = idx_a ∪ idx_b.
     // At a shared index they compare value-term to value-term; at a one-sided
     // index the writer's value compares to `select(base, idx)` (the unwritten
-    // side).  All comparisons are on value terms / opaque base reads — no
-    // read-over-write unfolding — so this is a flat clause regardless of chain
+    // side).  All comparisons are on value terms / opaque base reads – no
+    // read-over-write unfolding – so this is a flat clause regardless of chain
     // depth.
     let mut disjuncts: Vec<TermId> = vec![manager.mk_eq(a, b)];
     for (idx, va) in &ma {
@@ -896,7 +896,7 @@ fn finite_disjunction_extensionality(
                 let eq = manager.mk_eq(*va, *vb);
                 disjuncts.push(manager.mk_not(eq));
             }
-            Some(_) => {} // shared index, equal value terms — cannot witness a diff
+            Some(_) => {} // shared index, equal value terms – cannot witness a diff
             None => {
                 // a-only:  a writes va, b reads select(base, idx).
                 let br = manager.mk_select(base, *idx);
@@ -915,7 +915,7 @@ fn finite_disjunction_extensionality(
     }
     // A single-disjunct lemma is just `a = b`, which is valid precisely when
     // the two chains write identical values to identical indices over an
-    // identical base — sound to assert, and it forces a conflict with any
+    // identical base – sound to assert, and it forces a conflict with any
     // `not(= a b)`.
     Some(if disjuncts.len() == 1 {
         (disjuncts[0], is_complete)
@@ -951,7 +951,7 @@ mod s8_iterative_tests {
     ///
     /// This depth and [`SMALL_STACK`] were scaled down together by a factor
     /// of 8 (from 60 000 on 1 MiB).  What the test pins is the ~17 bytes of
-    /// stack available per level — far under any native frame — not the
+    /// stack available per level – far under any native frame – not the
     /// absolute depth, and the smaller pair costs a fraction of the memory
     /// the interner has to keep live.  Never raise one without the other.
     const DEEP: usize = 7_500;

@@ -63,8 +63,8 @@ impl ArithChecker {
     ///
     /// This checker operates on abstract literal identities only (it has no
     /// access to the term manager), so it can soundly certify the two
-    /// theory-independent cases — an empty clause is *not* a valid conflict,
-    /// and a propositional tautology *is* — but a genuine linear-arithmetic
+    /// theory-independent cases – an empty clause is *not* a valid conflict,
+    /// and a propositional tautology *is* – but a genuine linear-arithmetic
     /// infeasibility (e.g. `x+y>=5 ∧ x+y<=4`) requires Simplex/Fourier–Motzkin
     /// over the actual atoms and is reported as `Unknown` rather than being
     /// rubber-stamped as `Valid`.

@@ -93,7 +93,7 @@ impl<'a> BitBlastTactic<'a> {
     /// depth follows the input formula, and a `-> bool` walk has no error
     /// channel with which to report a depth cut-off, so recursing here could
     /// only fail by overflowing the native stack. The `visited` set also stops
-    /// a shared sub-DAG from being re-expanded once per incoming edge — the
+    /// a shared sub-DAG from being re-expanded once per incoming edge – the
     /// original recursion re-walked it every time, which is exponential on the
     /// classic `let`-free doubling DAG.
     ///
@@ -321,14 +321,14 @@ impl Tactic for StatelessBitBlastTactic {
     }
 
     fn description(&self) -> &str {
-        "Detects BitVector operations (does not itself transform them; requires a TermManager — \
+        "Detects BitVector operations (does not itself transform them; requires a TermManager – \
          see BitBlaster / create_managed for the real encoder; the manager-free path is NotApplicable)"
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Real bit-blasting engine
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A bit-vector represented as a vector of Boolean-sorted [`TermId`]s,
 /// least-significant bit first (index `i` has weight `2^i`).
@@ -434,7 +434,7 @@ impl BitBlaster {
         }]))
     }
 
-    // -- dispatch -----------------------------------------------------------
+    // ======== dispatch ========
 
     fn bv_width(manager: &TermManager, sort: SortId) -> Option<u32> {
         manager.sorts.get(sort)?.bitvec_width()
@@ -742,7 +742,7 @@ impl BitBlaster {
         Some(manager.mk_and(diffs))
     }
 
-    // -- leaves ---------------------------------------------------------------
+    // ======== leaves ========
 
     fn fresh_bits(&mut self, term_id: TermId, width: u32, manager: &mut TermManager) -> BitVec {
         let bool_sort = manager.sorts.bool_sort;
@@ -768,7 +768,7 @@ impl BitBlaster {
         bits
     }
 
-    // -- bitwise ----------------------------------------------------------------
+    // ======== bitwise ========
 
     fn bitwise_not(&mut self, a: &BitVec, manager: &mut TermManager) -> BitVec {
         a.iter().map(|&x| manager.mk_not(x)).collect()
@@ -807,7 +807,7 @@ impl BitBlaster {
         manager.mk_and(xnors)
     }
 
-    // -- arithmetic circuits ------------------------------------------------
+    // ======== arithmetic circuits ========
 
     /// Ripple-carry adder (result truncated to the input width, matching
     /// BitVector wraparound-on-overflow semantics).
@@ -880,7 +880,7 @@ impl BitBlaster {
     }
 
     /// Unsigned restoring division: returns `(quotient, remainder)` for
-    /// `a / b`, undefined (but well-formed) when `b == 0` — callers must
+    /// `a / b`, undefined (but well-formed) when `b == 0` – callers must
     /// apply the SMT-LIB division-by-zero convention themselves.
     fn div_rem_unsigned(
         &mut self,
@@ -1008,7 +1008,7 @@ impl BitBlaster {
             .collect()
     }
 
-    // -- shifts -------------------------------------------------------------
+    // ======== shifts ========
 
     fn log2_ceil(width: usize) -> u32 {
         if width <= 1 {
@@ -1110,7 +1110,7 @@ impl BitBlaster {
             .collect()
     }
 
-    // -- comparators ----------------------------------------------------------
+    // ======== comparators ========
 
     /// Unsigned `a < b`, folded MSB-to-LSB.
     ///

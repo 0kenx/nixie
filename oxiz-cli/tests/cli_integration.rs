@@ -411,7 +411,7 @@ fn test_issue_5_sequential_isolation() {
     );
     assert_eq!(
         lines[1], "sat",
-        "Second file (LIA) should be sat, got '{}' — state leak from first file suspected\nstdout={}\nstderr={}",
+        "Second file (LIA) should be sat, got '{}' – state leak from first file suspected\nstdout={}\nstderr={}",
         lines[1], stdout, stderr
     );
 }
@@ -474,14 +474,14 @@ fn test_issue_5_memory_reports_process_rss_not_system_total() {
 
     if let Some(mb) = reported_mb {
         // Must be > 0: the process allocates at least some memory
-        assert!(mb > 0, "Reported memory is 0 — RSS collection failed");
+        assert!(mb > 0, "Reported memory is 0 – RSS collection failed");
 
         // Must be well below total system RAM: a tiny problem can't consume all RAM
         let total_system_mb = System::new_all().total_memory() / 1_048_576;
         assert!(
             mb < total_system_mb,
             "Reported memory ({} MB) equals or exceeds total system RAM ({} MB) \
-             — this indicates system-wide RAM is being reported instead of process RSS",
+             – this indicates system-wide RAM is being reported instead of process RSS",
             mb,
             total_system_mb
         );
@@ -518,9 +518,9 @@ fn test_output_file() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Peak-memory fix tests (Track B, Pass 4)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `--memory` must report a non-zero peak.
 #[test]
@@ -800,7 +800,7 @@ fn test_exit_code_unsat() {
 }
 
 /// A malformed SMT-LIB2 file (missing closing parens) should produce an error
-/// — either a non-zero exit code or an "(error ...)" token in stdout.
+/// – either a non-zero exit code or an "(error ...)" token in stdout.
 #[test]
 fn test_exit_code_parse_error() {
     // Deliberately broken: every s-expression is left unclosed
@@ -863,7 +863,7 @@ fn test_exit_code_nonexistent_file() {
 ///
 /// The EUF congruence-closure explanation walk recursed once per congruence
 /// argument sub-goal, and a redundant proof-forest edge let that walk justify a
-/// congruence through the very edge it was explaining — an endless cycle.
+/// congruence through the very edge it was explaining – an endless cycle.
 ///
 /// Running the real binary as a subprocess is deliberate: it exercises the solver
 /// on a genuine 8 MiB main-thread stack and lets the assertion distinguish a clean

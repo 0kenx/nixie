@@ -4,7 +4,7 @@
 //!
 //! [`certify`] answers `true` only after it has built a concrete, *total*
 //! interpretation of every symbol a real goal mentions and checked that every
-//! assertion — ground and quantified alike — is true under it.  That is a model
+//! assertion – ground and quantified alike – is true under it.  That is a model
 //! in the ordinary semantic sense, so `sat` follows without appealing to the
 //! ground solver's verdict or to "no counterexample was found".  `false` says
 //! nothing and leaves the caller's `unknown` in place.
@@ -32,7 +32,7 @@
 //!   `f(t) = default ∘ t`, again affine).  Nested applications compose, which
 //!   is what decides `f(g(x)) = g(f(x))`;
 //! * a comparison of two affine forms changes truth only where their difference
-//!   crosses zero — one point — so cutting there leaves each cell with a single
+//!   crosses zero – one point – so cutting there leaves each cell with a single
 //!   constant verdict.
 //!
 //! Each of those steps adds finitely many cuts, so the body ends up as a
@@ -46,7 +46,7 @@
 //! Pins come from the goal's own literal equations and from the ground model;
 //! defaults are searched over a small ordered set (a macro definition the goal
 //! states, the affine through two pins, the identity, the pinned values, zero,
-//! the goal's literals) — see [`synth`].  Nothing in that search is trusted:
+//! the goal's literals) – see [`synth`].  Nothing in that search is trusted:
 //! every combination is verified in full before `true` is returned.
 //!
 //! Reference: Ge & de Moura, "Complete instantiation for quantified formulas in
@@ -77,7 +77,7 @@ const MAX_COMBINATIONS: usize = 512;
 /// Try to certify a real goal satisfiable by constructing and verifying a total
 /// interpretation.
 ///
-/// Declines immediately — before any search — on a goal outside the real
+/// Declines immediately – before any search – on a goal outside the real
 /// fragment, so the integer certifier and this one never share a goal and each
 /// verdict rests on the completeness argument written for its own domain.
 pub(crate) fn certify(

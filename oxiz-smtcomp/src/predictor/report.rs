@@ -130,7 +130,7 @@ impl PredictorStats {
         }
     }
 
-    /// Alias for `class_accuracy` — fraction of correctly classified samples.
+    /// Alias for `class_accuracy` – fraction of correctly classified samples.
     #[must_use]
     pub fn solve_rate(&self) -> f64 {
         self.class_accuracy

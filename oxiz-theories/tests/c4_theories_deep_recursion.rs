@@ -3,13 +3,13 @@
 //!
 //! Every walk exercised here returns a value with **no error channel**
 //! (`bool`, `usize`, `TermId`, `Ordering`, `Arc<Regex>`, `()`, or drop glue),
-//! so it could never have been given an honest depth limit — the only correct
+//! so it could never have been given an honest depth limit – the only correct
 //! fix is an explicit heap stack. The assertion in each test is simply that
 //! the call *returns*: a native-stack overflow aborts the whole process, so
 //! reaching the assertion at all is the proof.
 //!
-//! Each body runs on a deliberately small worker stack — a scaled-down model of
-//! what an embedder's thread typically gets — so a regression fails here long
+//! Each body runs on a deliberately small worker stack – a scaled-down model of
+//! what an embedder's thread typically gets – so a regression fails here long
 //! before it would on the main thread. What the stack size and the nesting
 //! depths pin *together* is a bytes-per-frame threshold, never either number on
 //! its own; see [`WORKER_STACK`].
@@ -26,7 +26,7 @@ use oxiz_theories::string::{Regex, RegexOp};
 /// A worker stack small enough that any surviving recursion overflows it.
 ///
 /// This constant and every nesting depth below are scaled **together**, and
-/// only their ratio — about 21 bytes of stack per nesting level — decides what
+/// only their ratio – about 21 bytes of stack per nesting level – decides what
 /// these tests detect. A recursive walk needs tens of bytes per frame at the
 /// very least, so it still overflows; an iterative one uses O(1) native stack,
 /// so it still returns. Halving the stack without halving the depths would
@@ -47,9 +47,9 @@ fn on_worker_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static)
         .expect("worker thread must return, not abort")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// string::regex — derivative, comparator, Eq/Hash, Drop
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// string::regex – derivative, comparator, Eq/Hash, Drop
+// ========  ========
 
 /// A regex nested `levels` deep. `re.loop` is the one operator whose smart
 /// constructor never flattens or collapses, so it builds genuine depth.
@@ -136,9 +136,9 @@ fn shared_regex_dag_hashing_is_not_exponential() {
     assert!(ok);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// nlsat — term_is_nonlinear, TermPolyTranslator::translate
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// nlsat – term_is_nonlinear, TermPolyTranslator::translate
+// ========  ========
 
 /// A `((x + 1) + 1) + 1 …` chain nested `levels` deep.
 fn deep_arith_chain(manager: &mut TermManager, levels: usize) -> TermId {
@@ -178,9 +178,9 @@ fn deep_arith_term_translation_returns() {
     assert!(translated, "a deep `+` chain is a polynomial");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// combination — union-find `find` in extract_assignments
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// combination – union-find `find` in extract_assignments
+// ========  ========
 
 #[test]
 fn long_union_find_chain_returns() {
@@ -206,9 +206,9 @@ fn long_union_find_chain_returns() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// set — SetSort::nesting_depth, SetExpr::get_vars / extract_var / Drop
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// set – SetSort::nesting_depth, SetExpr::get_vars / extract_var / Drop
+// ========  ========
 
 #[test]
 fn deep_set_sort_nesting_depth_returns() {
@@ -262,9 +262,9 @@ fn deep_set_expr_constraint_extraction_returns() {
     assert!(ok);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// euf — ProofStep terms/size/reasons/Display/Drop, Trigger/EMatcher patterns
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// euf – ProofStep terms/size/reasons/Display/Drop, Trigger/EMatcher patterns
+// ========  ========
 
 /// A left-leaning `Trans` chain `levels` deep, wrapped in `Symm` at every
 /// other level so the endpoint walk has to flip direction repeatedly.
@@ -359,9 +359,9 @@ fn deep_ematch_pattern_matching_returns() {
     assert!(matched > 0, "the deep pattern must match the deep term");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// string::sequence — SeqRewriter::simplify and Drop
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// string::sequence – SeqRewriter::simplify and Drop
+// ========  ========
 
 #[test]
 fn deep_sequence_simplify_and_drop_return() {

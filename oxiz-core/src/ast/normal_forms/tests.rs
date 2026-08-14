@@ -72,10 +72,10 @@ fn deep_forall_chain(manager: &mut TermManager, leaf: TermId, depth: usize) -> T
     term
 }
 
-// ===========================================================================
+// ========  ========
 // Shallow behaviour-preservation tests: pin the exact output of each public
 // entry point on a small, hand-computable formula.
-// ===========================================================================
+// ========  ========
 
 mod shallow_pinned_outputs {
     use super::*;
@@ -346,11 +346,11 @@ mod shallow_pinned_outputs {
     }
 }
 
-// ===========================================================================
+// ========  ========
 // Deep-structure regression tests: built iteratively, run on a 1 MiB stack.
 // The call returning at all is part of the assertion; the result must also
 // be exactly correct, not merely "didn't crash".
-// ===========================================================================
+// ========  ========
 
 mod deep_structures_on_tiny_stack {
     use super::*;

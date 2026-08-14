@@ -118,7 +118,7 @@ pub enum ParametricSimplexResult {
 pub struct ParametricSimplexSolver {
     /// Configuration.
     config: ParametricSimplexConfig,
-    /// Base simplex solver — now wired to SimplexSolver.
+    /// Base simplex solver – now wired to SimplexSolver.
     simplex: SimplexSolver,
     /// Parametric coefficients (d_j for objective, e_i for RHS).
     parametric_coeffs: FxHashMap<usize, BigRational>,

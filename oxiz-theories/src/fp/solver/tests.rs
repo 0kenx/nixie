@@ -630,13 +630,13 @@ mod tests_2 {
         }
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Honesty (theories-fp): the FP<->int/real conversion methods do not
     // yet bit-blast their semantics. They must NOT let `check()` report a
     // bogus `Sat` on a model that ignores the conversion -- an unsupported
     // conversion assertion forces `Unknown`. `Unsat` (sound regardless of
     // the free conversion bits) is still reported.
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn audit_unsupported_conversion_reports_unknown_not_sat() {

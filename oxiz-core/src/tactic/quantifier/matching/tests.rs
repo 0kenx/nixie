@@ -40,9 +40,7 @@ fn resolved(manager: &TermManager, subst: &FxHashMap<Spur, TermId>) -> Vec<(Stri
     out
 }
 
-// ===========================================================================
-// Eq orientations
-// ===========================================================================
+// ======== Eq orientations ========
 
 /// `Eq(x, k)` matches `Eq(k, m)` only in the swapped orientation, and the
 /// `x := k` binding made while the first orientation failed must not survive
@@ -203,9 +201,7 @@ fn nested_eq_does_not_blow_up_exponentially() {
     );
 }
 
-// ===========================================================================
-// Non-matches still fail (and fail fast)
-// ===========================================================================
+// ======== Non-matches still fail (and fail fast) ========
 
 #[test]
 fn arity_and_head_mismatches_reject() {
@@ -242,9 +238,7 @@ fn arity_and_head_mismatches_reject() {
     );
 }
 
-// ===========================================================================
-// Deep regression: no native stack involved
-// ===========================================================================
+// ======== Deep regression: no native stack involved ========
 
 /// A 50 000-level pattern and ground term matched on a 1 MiB stack.
 ///

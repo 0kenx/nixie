@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired (candidate for a
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired (candidate for a
 // future feature flag). Groebner-basis simplification is sound only on the
 // equational (p=0) subset of atoms; applying it to inequalities is unsound, and
 // it spawns background threads that outlive their timeout. Needs equational
@@ -39,7 +39,7 @@ const MAX_OUTSTANDING_GROBNER_THREADS: usize = 4;
 
 /// Number of Gröbner-basis worker threads currently running in the
 /// background (including ones whose timeout already fired on the caller's
-/// side — they keep running regardless, see
+/// side – they keep running regardless, see
 /// [`GroebnerPreprocessor::compute_grobner_with_timeout`]).
 static OUTSTANDING_GROBNER_THREADS: AtomicUsize = AtomicUsize::new(0);
 
@@ -262,17 +262,17 @@ impl GroebnerPreprocessor {
     /// happens but do not eliminate it (Buchberger's algorithm can still be
     /// doubly-exponential on small-looking inputs, which is precisely why a
     /// timeout is needed at all). Left unmitigated, a caller that hits this
-    /// timeout repeatedly — e.g. a portfolio search retrying preprocessing
-    /// across many hard subproblems — would accumulate an unbounded number
+    /// timeout repeatedly – e.g. a portfolio search retrying preprocessing
+    /// across many hard subproblems – would accumulate an unbounded number
     /// of these permanently-running threads: an unbounded resource leak.
     ///
     /// [`OUTSTANDING_GROBNER_THREADS`] turns that into a *bounded* leak:
     /// once [`MAX_OUTSTANDING_GROBNER_THREADS`] computations are already in
     /// flight process-wide, further calls honestly report "skip" (`None`,
     /// exactly like a timeout) instead of spawning yet another
-    /// unreclaimable thread. This does not implement true cancellation —
+    /// unreclaimable thread. This does not implement true cancellation –
     /// that would require a cooperative check inside `grobner_basis` itself
-    /// (in `oxiz-math`, outside this crate) — but it does cap the worst-case
+    /// (in `oxiz-math`, outside this crate) – but it does cap the worst-case
     /// damage at a small, fixed number of background threads rather than
     /// letting it grow without limit.
     fn compute_grobner_with_timeout(&self, polys: &[Polynomial]) -> Option<Vec<Polynomial>> {
@@ -297,7 +297,7 @@ impl GroebnerPreprocessor {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let gb = grobner_basis(&polys_clone);
-            // Ignore send error — receiver may have already timed out.
+            // Ignore send error – receiver may have already timed out.
             let _ = tx.send(gb);
             // Release our slot regardless of whether anyone was still
             // listening, so the cap reflects threads still actually running
@@ -307,7 +307,7 @@ impl GroebnerPreprocessor {
 
         let gb = match rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(_) => return None, // Timeout — skip preprocessing (thread keeps running).
+            Err(_) => return None, // Timeout – skip preprocessing (thread keeps running).
         };
 
         // Check if result is too large
@@ -648,7 +648,7 @@ mod tests {
         let p1 = poly_from_coeffs(0, &[1, 1]);
         // `time_us` is recorded at microsecond granularity via per-call
         // `as_micros()` truncation, so a single trivial preprocess can measure
-        // 0 µs on a fast machine — a positive lower bound is not
+        // 0 µs on a fast machine – a positive lower bound is not
         // deterministically assertable for sub-µs work.  Instead we check the
         // *consistency* invariant: the internally recorded time must be a
         // non-negative value bounded above by the real wall-clock window of

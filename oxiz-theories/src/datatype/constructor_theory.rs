@@ -229,8 +229,8 @@ impl ConstructorTheory {
     /// Get constructor arguments from a term.
     ///
     /// A constructor application is represented either as a native
-    /// [`TermKind::DtConstructor`] or — for terms built before datatype
-    /// support existed — as an uninterpreted [`TermKind::Apply`]; both carry
+    /// [`TermKind::DtConstructor`] or – for terms built before datatype
+    /// support existed – as an uninterpreted [`TermKind::Apply`]; both carry
     /// their arguments directly.  A nullary constructor interned as a bare
     /// symbol ([`TermKind::Var`]) genuinely has no arguments.  Every other
     /// kind is *not* a constructor application, and answering `vec![]` for it

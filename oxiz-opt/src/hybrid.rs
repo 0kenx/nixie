@@ -80,7 +80,7 @@ pub struct HybridStats {
 
 /// Hybrid MaxSAT solver
 pub struct HybridSolver {
-    /// Hard clauses (must be satisfied — partial MaxSAT support)
+    /// Hard clauses (must be satisfied – partial MaxSAT support)
     hard_clauses: Vec<SmallVec<[Lit; 4]>>,
     /// Soft clauses
     soft_clauses: Vec<SoftClause>,

@@ -139,7 +139,7 @@ impl WasmSolver {
     ///
     /// For multiple objectives, they are optimized lexicographically in the order
     /// they were added (first objective has highest priority). Objectives are
-    /// wired to the real `oxiz_solver::Optimizer` — they are never silently
+    /// wired to the real `oxiz_solver::Optimizer` – they are never silently
     /// dropped.
     ///
     /// # Parameters
@@ -672,7 +672,7 @@ impl WasmSolver {
         }
 
         // Get proof from the last check-sat. This only confirms that a proof
-        // was actually produced (not merely that the option was set) — the
+        // was actually produced (not merely that the option was set) – the
         // structured proof itself is not exposed by `Context`, see the
         // `# Errors` section above.
         let proof_str = self.ctx.get_proof();
@@ -828,7 +828,7 @@ impl WasmSolver {
     }
 }
 
-// Private helper methods (no wasm_bindgen — not exported to JS) supporting
+// Private helper methods (no wasm_bindgen – not exported to JS) supporting
 // `minimize`/`maximize`/`assertSoft`/`optimize` above, plus the declared-
 // symbol side-table other `js_api` modules (e.g. `declarations::declare_const`,
 // `assertions::assert_formula`) feed into and read from. See the

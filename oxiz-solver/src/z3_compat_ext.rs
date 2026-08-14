@@ -3,9 +3,9 @@
 //! This module contains the additional Z3 API surfaces that complement the
 //! core types in [`crate::z3_compat`]:
 //!
-//! - [`Array`]       — array terms (select/store theory)
-//! - [`FuncDecl`]    — uninterpreted function declarations and application
-//! - [`Z3Optimize`]  — optimization wrapper (minimize/maximize)
+//! - [`Array`]       – array terms (select/store theory)
+//! - [`FuncDecl`]    – uninterpreted function declarations and application
+//! - [`Z3Optimize`]  – optimization wrapper (minimize/maximize)
 //! - Free functions: `ite_bool`, `ite_int`, `ite_real`, `ite_bv`
 //! - Free functions: `distinct_int`, `distinct_real`, `distinct_bv`
 //! - Free functions: `forall_bool`, `exists_bool`
@@ -18,7 +18,7 @@ use oxiz_core::sort::SortId;
 use crate::optimization::{OptimizationResult, Optimizer};
 use crate::z3_compat::{BV, Bool, Int, Real, SatResult, Z3Context};
 
-// ─── Helper macro (mirrors the one in z3_compat) ─────────────────────────────
+// ======== Helper macro (mirrors the one in z3_compat) ========
 
 macro_rules! build {
     ($ctx:expr, $method:ident $(, $arg:expr)* ) => {
@@ -26,7 +26,7 @@ macro_rules! build {
     };
 }
 
-// ─── Real symmetry additions ─────────────────────────────────────────────────
+// ======== Real symmetry additions ========
 
 impl Real {
     /// Strict greater-than comparison: `lhs > rhs`.
@@ -65,7 +65,7 @@ impl Real {
     }
 }
 
-// ─── ITE (if-then-else) free functions ───────────────────────────────────────
+// ======== ITE (if-then-else) free functions ========
 
 /// Boolean if-then-else: `ite(cond, then_branch, else_branch) : Bool`.
 ///
@@ -100,7 +100,7 @@ pub fn ite_bv(ctx: &Z3Context, cond: &Bool, then_branch: &BV, else_branch: &BV) 
     BV { id, width }
 }
 
-// ─── Distinct free functions ──────────────────────────────────────────────────
+// ======== Distinct free functions ========
 
 /// Assert that all given integer terms are pairwise distinct.
 #[must_use]
@@ -126,7 +126,7 @@ pub fn distinct_bv(ctx: &Z3Context, args: &[BV]) -> Bool {
     Bool { id }
 }
 
-// ─── Array ────────────────────────────────────────────────────────────────────
+// ======== Array ========
 
 /// An array-sorted term, analogous to `z3::Array<'ctx, D, R>`.
 ///
@@ -198,7 +198,7 @@ impl From<Array> for TermId {
     }
 }
 
-// ─── FuncDecl ────────────────────────────────────────────────────────────────
+// ======== FuncDecl ========
 
 /// An uninterpreted function declaration, analogous to `z3::FuncDecl<'ctx>`.
 ///
@@ -253,7 +253,7 @@ impl FuncDecl {
     }
 }
 
-// ─── Quantifiers ─────────────────────────────────────────────────────────────
+// ======== Quantifiers ========
 
 /// Universal quantifier over a boolean body.
 ///
@@ -287,7 +287,7 @@ pub fn exists_bool<'a>(
     Bool { id }
 }
 
-// ─── Z3Optimize ──────────────────────────────────────────────────────────────
+// ======== Z3Optimize ========
 
 /// Analogue of `z3::Optimize`.
 ///
@@ -447,7 +447,7 @@ impl Z3Optimize {
     }
 }
 
-// ─── Z3Context sort helpers ───────────────────────────────────────────────────
+// ======== Z3Context sort helpers ========
 
 impl Z3Context {
     /// Return an array sort with the given domain and range sorts.
@@ -465,10 +465,10 @@ impl Z3Context {
     }
 }
 
-// ─── Additional Int helpers (ensure from_i64 parity) ─────────────────────────
-// (Int::from_i64 already exists in z3_compat.rs — no re-definition needed)
+// ======== Additional Int helpers (ensure from_i64 parity) ========
+// (Int::from_i64 already exists in z3_compat.rs – no re-definition needed)
 
-// ─── Additional Real helpers with mk_int coercion ────────────────────────────
+// ======== Additional Real helpers with mk_int coercion ========
 
 /// Convenience: build a `Real` literal from a numerator and denominator in the
 /// solver's term manager.
@@ -481,14 +481,14 @@ pub fn real_numeral(ctx: &Z3Context, num: i64, den: i64) -> Real {
 
 /// Convenience: build an `Int` literal inside `ctx`.
 ///
-/// Equivalent to `Int::from_i64` — provided as a free function for ergonomics
+/// Equivalent to `Int::from_i64` – provided as a free function for ergonomics
 /// when building mixed expressions.
 #[must_use]
 pub fn int_numeral(ctx: &Z3Context, value: i64) -> Int {
     Int::from_i64(ctx, value)
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tests {
@@ -500,7 +500,7 @@ mod tests {
         Z3Context::new(&Z3Config::new())
     }
 
-    // ── Real symmetry ─────────────────────────────────────────────────────────
+    // ======== Real symmetry ========
 
     #[test]
     fn test_real_gt_smoke() {
@@ -539,7 +539,7 @@ mod tests {
         let _r = Real::from_i64(&ctx, 42);
     }
 
-    // ── ITE ───────────────────────────────────────────────────────────────────
+    // ======== ITE ========
 
     #[test]
     fn test_ite_bool_smoke() {
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(ite.width, 32);
     }
 
-    // ── Distinct ──────────────────────────────────────────────────────────────
+    // ======== Distinct ========
 
     #[test]
     fn test_distinct_int_smoke() {
@@ -605,7 +605,7 @@ mod tests {
         let _d = distinct_bv(&ctx, &[a, b]);
     }
 
-    // ── Array ─────────────────────────────────────────────────────────────────
+    // ======== Array ========
 
     #[test]
     fn test_array_new_const_smoke() {
@@ -645,7 +645,7 @@ mod tests {
         let _sort = ctx.array_sort(dom, rng);
     }
 
-    // ── FuncDecl ──────────────────────────────────────────────────────────────
+    // ======== FuncDecl ========
 
     #[test]
     fn test_func_decl_apply_smoke() {
@@ -667,7 +667,7 @@ mod tests {
         let _r = g.apply(&ctx, &[x.id, y.id]);
     }
 
-    // ── Quantifiers ───────────────────────────────────────────────────────────
+    // ======== Quantifiers ========
 
     #[test]
     fn test_forall_bool_smoke() {
@@ -693,7 +693,7 @@ mod tests {
         let _q = exists_bool(&ctx, [("x", int_sort)], &body);
     }
 
-    // ── Z3Optimize ────────────────────────────────────────────────────────────
+    // ======== Z3Optimize ========
 
     #[test]
     fn test_optimize_sat_no_objectives() {

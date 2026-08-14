@@ -1,4 +1,4 @@
-//! Context class — ergonomic high-level API mirroring z3-python's Context.
+//! Context class – ergonomic high-level API mirroring z3-python's Context.
 //!
 //! A `Context` bundles a `TermManager` and provides typed named-constant
 //! factories that return `Term` objects with a back-reference to the owning

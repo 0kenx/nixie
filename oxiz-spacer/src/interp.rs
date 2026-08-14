@@ -153,7 +153,7 @@ impl Interpolator {
     /// This restricts to the sound *shared-literal fragment*: the candidate is
     /// the sub-conjunction of `A`'s literals whose variables are all shared with
     /// `B`. That construction makes (1) and (3) hold by construction, but *not*
-    /// (2) — a projection can share symbols yet fail to contradict `B`. So we
+    /// (2) – a projection can share symbols yet fail to contradict `B`. So we
     /// **verify** property (2) (and defensively re-verify (1)) with the solver
     /// before returning, and **fail closed** to an honest
     /// [`InterpolationError`] otherwise. We never return an unvalidated

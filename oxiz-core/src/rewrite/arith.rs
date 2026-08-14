@@ -498,7 +498,7 @@ impl ArithRewriter {
         // x mod 1 → 0 and x mod -1 → 0.
         //
         // The Euclidean remainder satisfies `0 <= (mod x n) < abs(n)`, so a
-        // divisor of magnitude 1 leaves no room for anything but 0 — the sign of
+        // divisor of magnitude 1 leaves no room for anything but 0 – the sign of
         // the divisor is irrelevant, unlike for `div`.
         if self.is_one(rhs, manager) || self.is_neg_one(rhs, manager) {
             ctx.stats_mut().record_rule("arith_mod_one");

@@ -64,19 +64,19 @@ impl ValueFactory {
     ///
     /// Dispatches on `sort`'s actual [`SortKind`] (looked up in `sorts`),
     /// never on the raw [`SortId`] integer. `SortManager` only guarantees
-    /// fixed ids for `Bool` (0), `Int` (1) and `Real` (2) — every other sort,
+    /// fixed ids for `Bool` (0), `Int` (1) and `Real` (2) – every other sort,
     /// including `String` and the reserved `RegLan` sort, is interned lazily
     /// in whatever order the input happens to request it, so a caller that
     /// matched on `sort.0 == 3` / `sort.0 == 4` was really matching "whatever
     /// sort got interned 4th / 5th", which can be a `BitVec` or `Array` sort
     /// just as easily as `String`. That handed a term a value of the *wrong
     /// sort* (e.g. `Value::String("")` for a `BitVec`-sorted term) rather
-    /// than erroring — silently wrong, not absent.
+    /// than erroring – silently wrong, not absent.
     ///
     /// Returns `None` (rather than a guessed value) for a sort this factory
     /// cannot soundly default: an unresolved sort parameter, a datatype sort
     /// (picking a base-case constructor and synthesizing its arguments is
-    /// out of scope here — see [`crate::model::Value::Datatype`]'s doc), or
+    /// out of scope here – see [`crate::model::Value::Datatype`]'s doc), or
     /// a `SortId` not present in `sorts` at all.
     ///
     /// The array case is unrolled with a loop rather than recursion. `None`
@@ -89,7 +89,7 @@ impl ValueFactory {
     pub fn default_value(&mut self, sort: SortId, sorts: &SortManager) -> Option<Value> {
         // Descend the chain of array *range* sorts, then wrap the innermost
         // default back up once per level. A custom default is consulted at
-        // every level, exactly as the recursive version did — it short-circuits
+        // every level, exactly as the recursive version did – it short-circuits
         // the descent wherever it is registered.
         let mut array_levels = 0usize;
         let mut current = sort;
@@ -134,7 +134,7 @@ impl ValueFactory {
                 // per-`SortId` element is as sound a default as `Value` can give
                 // without a concrete representation for either. This also covers
                 // the reserved `RegLan` sort (modelled as `Uninterpreted("RegLan")`
-                // — see `TermManager::mk_regex_op`), which gets the same
+                // – see `TermManager::mk_regex_op`), which gets the same
                 // treatment as any other uninterpreted sort rather than a
                 // hardcoded id check.
                 SortKind::Uninterpreted(_) | SortKind::Parametric { .. } => {
@@ -143,7 +143,7 @@ impl ValueFactory {
                 // A raw sort parameter (e.g. free `T` in a `define-sort` body
                 // before instantiation) does not denote a concrete type, and a
                 // datatype sort needs a base-case constructor plus synthesized
-                // selector arguments to default soundly — neither is something
+                // selector arguments to default soundly – neither is something
                 // this factory can fabricate without risking a wrong-looking
                 // value, so both are honestly "cannot default" rather than a
                 // guess.
@@ -239,8 +239,8 @@ mod tests {
     use crate::ast::TermManager;
 
     /// `default_value` unrolls nested array sorts with a loop. It returns
-    /// `Option`, whose `None` means "cannot default this sort" — not an error
-    /// channel a depth cap could report through — so recursing here could only
+    /// `Option`, whose `None` means "cannot default this sort" – not an error
+    /// channel a depth cap could report through – so recursing here could only
     /// abort the process, and `SortManager::array` is `pub` and interns in
     /// constant stack, so nothing bounds the depth an embedder can build.
     ///
@@ -430,7 +430,7 @@ mod tests {
     /// Regression test for: `ValueFactory::default_value` used to dispatch on
     /// the raw `SortId` integer with hardcoded `3 == String`, `4 == RegLan`,
     /// but `SortManager` only guarantees fixed ids for `Bool`/`Int`/`Real`
-    /// (0/1/2) — every other sort is interned in whatever order the caller
+    /// (0/1/2) – every other sort is interned in whatever order the caller
     /// asks for it. This reproduces the report precisely: a `BitVec` sort
     /// lands on raw id 3 and an `Array` sort on raw id 4, exactly the ids the
     /// old code hardcoded to `String` and `Undefined` (RegLan).

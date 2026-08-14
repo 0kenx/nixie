@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 fn main() {
     println!("=== OxiZ Core: Resource Limits ===\n");
 
-    // ===== Example 1: Basic Time Limit =====
+    // ======== Example 1: Basic Time Limit ========
     println!("--- Example 1: Time Limits (Timeouts) ---");
 
     let limits = ResourceLimits {
@@ -67,7 +67,7 @@ fn main() {
         }
     }
 
-    // ===== Example 2: Decision Limits =====
+    // ======== Example 2: Decision Limits ========
     println!("\n--- Example 2: Decision Limits ---");
 
     let limits = ResourceLimits {
@@ -97,7 +97,7 @@ fn main() {
         }
     }
 
-    // ===== Example 3: Conflict Limits =====
+    // ======== Example 3: Conflict Limits ========
     println!("\n--- Example 3: Conflict Limits ---");
 
     let limits = ResourceLimits {
@@ -127,7 +127,7 @@ fn main() {
         }
     }
 
-    // ===== Example 4: Memory Limits =====
+    // ======== Example 4: Memory Limits ========
     println!("\n--- Example 4: Memory Limits ---");
 
     let limits = ResourceLimits {
@@ -158,7 +158,7 @@ fn main() {
         }
     }
 
-    // ===== Example 5: Combined Limits =====
+    // ======== Example 5: Combined Limits ========
     println!("\n--- Example 5: Combined Limits ---");
 
     let limits = ResourceLimits {
@@ -203,7 +203,7 @@ fn main() {
         }
     }
 
-    // ===== Example 6: Resource Limits from Config =====
+    // ======== Example 6: Resource Limits from Config ========
     println!("\n--- Example 6: ResourceLimits Structure ---");
 
     let config_limits = ResourceLimits {
@@ -239,7 +239,7 @@ fn main() {
             .map_or("unlimited".to_string(), |m| format!("{} bytes", m))
     );
 
-    // ===== Example 7: Resource Reset =====
+    // ======== Example 7: Resource Reset ========
     println!("\n--- Example 7: Resource Reset ---");
 
     let limits = ResourceLimits {
@@ -260,7 +260,7 @@ fn main() {
     resources.reset();
     println!("After reset, elapsed: {:?}", resources.elapsed());
 
-    // ===== Example 8: Remaining Budget =====
+    // ======== Example 8: Remaining Budget ========
     println!("\n--- Example 8: Remaining Budget Tracking ---");
 
     let limits = ResourceLimits {
@@ -301,7 +301,7 @@ fn main() {
             .map_or("unlimited".to_string(), |c| c.to_string())
     );
 
-    // ===== Example 9: Incremental Solving with Limits =====
+    // ======== Example 9: Incremental Solving with Limits ========
     println!("\n--- Example 9: Incremental Solving with Limits ---");
 
     println!("Simulating incremental solving with 100ms per query:");
@@ -335,7 +335,7 @@ fn main() {
         }
     }
 
-    // ===== Example 10: Limit Status Types =====
+    // ======== Example 10: Limit Status Types ========
     println!("\n--- Example 10: LimitStatus Variants ---");
 
     println!("LimitStatus variants:");
@@ -354,7 +354,7 @@ fn main() {
         LimitStatus::MemoryExceeded
     );
 
-    // ===== Example 11: Statistics Tracking =====
+    // ======== Example 11: Statistics Tracking ========
     println!("\n--- Example 11: Statistics Tracking ---");
 
     let mut stats = Statistics::new();

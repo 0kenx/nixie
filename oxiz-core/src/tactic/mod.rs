@@ -907,7 +907,7 @@ mod tests {
         assert!(!tactic.description().is_empty());
     }
 
-    // ==================== Solve-Eqs Tactic Tests ====================
+    // ======== Solve-Eqs Tactic Tests ========
 
     #[test]
     fn test_solve_eqs_simple() {
@@ -1207,9 +1207,7 @@ mod tests {
         assert!(matches!(result, TacticResult::NotApplicable));
     }
 
-    // ========================================================================
-    // ScriptableTactic tests
-    // ========================================================================
+    // ======== ScriptableTactic tests ========
 
     #[test]
     fn test_scriptable_tactic_basic() {
@@ -1427,9 +1425,7 @@ mod tests {
         assert!(matches!(result, TacticResult::NotApplicable));
     }
 
-    // ========================================================================
-    // Fourier-Motzkin Tactic Tests
-    // ========================================================================
+    // ======== Fourier-Motzkin Tactic Tests ========
 
     #[test]
     fn test_fm_not_applicable_non_linear() {

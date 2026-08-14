@@ -6,7 +6,7 @@
 use num_bigint::BigInt;
 use oxiz_opt::{ModelValue, OptConfig, OptContext, OptResult, Weight};
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ======== helpers ========
 
 /// Extract `Some(BigInt)` from an `OptContext` model for a variable term.
 fn model_int(ctx: &OptContext, term: oxiz_core::ast::TermId) -> Option<BigInt> {
@@ -16,7 +16,7 @@ fn model_int(ctx: &OptContext, term: oxiz_core::ast::TermId) -> Option<BigInt> {
     }
 }
 
-// ── check_sat ────────────────────────────────────────────────────────────────
+// ======== check_sat ========
 
 #[test]
 fn check_sat_empty_is_sat() {
@@ -54,7 +54,7 @@ fn check_sat_unsat_constraint() {
     assert_eq!(result, OptResult::Unsatisfiable);
 }
 
-// ── MaxSMT ───────────────────────────────────────────────────────────────────
+// ======== MaxSMT ========
 
 /// Two soft constraints that are **both satisfiable** with unit weights.
 /// The solver should find a model satisfying both (cost = 0).
@@ -62,7 +62,7 @@ fn check_sat_unsat_constraint() {
 fn maxsmt_both_soft_satisfiable() {
     let mut ctx = OptContext::new();
 
-    // Create two fresh boolean variables — build all terms before adding.
+    // Create two fresh boolean variables – build all terms before adding.
     let p = ctx.terms.mk_var("p", ctx.terms.sorts.bool_sort);
     let q = ctx.terms.mk_var("q", ctx.terms.sorts.bool_sort);
 
@@ -93,10 +93,10 @@ fn maxsmt_conflicting_soft_max_weight_wins() {
     // Hard: p must be true.
     ctx.add_hard(p_true);
 
-    // Soft: ¬p (weight 1) — forces p = false, conflicts with hard
+    // Soft: ¬p (weight 1) – forces p = false, conflicts with hard
     ctx.add_soft_weighted(not_p, Weight::from(1));
 
-    // Soft: q (weight 5) — no conflict
+    // Soft: q (weight 5) – no conflict
     ctx.add_soft_weighted(q, Weight::from(5));
 
     let result = ctx.optimize().expect("optimize should not error");
@@ -107,7 +107,7 @@ fn maxsmt_conflicting_soft_max_weight_wins() {
     );
 }
 
-/// Hard constraint makes the problem UNSAT — no model should be found.
+/// Hard constraint makes the problem UNSAT – no model should be found.
 #[test]
 fn maxsmt_unsat_hard_constraints() {
     let mut ctx = OptContext::new();
@@ -130,7 +130,7 @@ fn maxsmt_unsat_hard_constraints() {
     assert_eq!(result, OptResult::Unsatisfiable);
 }
 
-// ── Single-objective OMT ─────────────────────────────────────────────────────
+// ======== Single-objective OMT ========
 
 /// minimize x  subject to  x >= 3  →  optimal x = 3
 #[test]
@@ -273,11 +273,11 @@ fn omt_minimize_real_objective_lower_bound() {
     }
 }
 
-// ── timeout_ms honoring ─────────────────────────────────────────────────────
+// ======== timeout_ms honoring ========
 //
 // `OptConfig::timeout_ms` used to be threaded into `new_solver()` (bounding
 // each *individual* SMT call) but was never consulted by the multi-call
-// search loops in `optimize_single_objective` / `optimize_pareto` — those
+// search loops in `optimize_single_objective` / `optimize_pareto` – those
 // delegated wholesale to `oxiz_solver::Optimizer`, which has no timeout hook
 // at all. A slow instance could therefore run for however long the
 // (unbounded) internal binary search / Pareto enumeration took, regardless of
@@ -403,7 +403,7 @@ fn pareto_tiny_timeout_bounds_runtime_and_stays_honest() {
     );
 }
 
-// ── Pareto optimization ───────────────────────────────────────────────────────
+// ======== Pareto optimization ========
 
 /// Two objectives, two variables, bounded box.
 /// The Pareto front should be non-empty (at least one point found).
@@ -478,7 +478,7 @@ fn pareto_unsat_no_crash() {
     );
 }
 
-// ── Opt result variants ───────────────────────────────────────────────────────
+// ======== Opt result variants ========
 
 #[test]
 fn opt_result_unbounded_display() {
@@ -494,7 +494,7 @@ fn opt_result_all_variants_display() {
     assert_eq!(OptResult::Unbounded.to_string(), "unbounded");
 }
 
-// ── TermManager exposed on OptContext ────────────────────────────────────────
+// ======== TermManager exposed on OptContext ========
 
 #[test]
 fn opt_context_terms_accessible() {
@@ -509,7 +509,7 @@ fn opt_context_terms_accessible() {
     assert_eq!(result, OptResult::Satisfiable);
 }
 
-// ── Check stats are updated ───────────────────────────────────────────────────
+// ======== Check stats are updated ========
 
 #[test]
 fn stats_solver_calls_incremented() {

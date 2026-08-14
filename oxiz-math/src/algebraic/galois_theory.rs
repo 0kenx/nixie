@@ -393,7 +393,7 @@ impl Discriminant {
     /// Compute the determinant of a square matrix by Gaussian elimination
     /// with partial (first-nonzero) pivoting.
     ///
-    /// `None` means the input is not square — a shape check, never a
+    /// `None` means the input is not square – a shape check, never a
     /// give-up: the elimination is exact over `BigRational`, so the result
     /// is always the true determinant.
     ///
@@ -402,7 +402,7 @@ impl Discriminant {
     /// minor at every one of its n levels. The callers here are Sylvester
     /// resultant matrices whose dimension is twice the polynomial degree,
     /// so a degree-10 input meant n = 20 and 20! ≈ 2.4·10¹⁸ cofactor terms
-    /// — a permanent hang on ordinary input. Elimination is O(n³) and
+    /// – a permanent hang on ordinary input. Elimination is O(n³) and
     /// iterative, so neither the time nor the stack is a concern.
     fn determinant(matrix: &[Vec<BigRational>]) -> Option<BigRational> {
         let n = matrix.len();
@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(Discriminant::determinant(&ragged), None);
     }
 
-    /// A 20x20 matrix — the size a degree-10 Sylvester resultant produces.
+    /// A 20x20 matrix – the size a degree-10 Sylvester resultant produces.
     /// Laplace expansion would need 20! ≈ 2.4·10¹⁸ cofactor terms and never
     /// return; elimination finishes instantly. The value is pinned via a
     /// triangular matrix whose determinant is the product of its diagonal.

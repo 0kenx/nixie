@@ -169,7 +169,7 @@ pub fn reduce(f: &Polynomial, g_set: &[Polynomial]) -> Polynomial {
     // If the iteration cap was hit with `p` still non-zero, we have not
     // finished reducing. The invariant `f ≡ p + r (mod ideal)` still holds, so
     // fold the unreduced tail back into the result rather than silently
-    // dropping it — dropping `p` would return a polynomial that is NOT
+    // dropping it – dropping `p` would return a polynomial that is NOT
     // equivalent to `f` modulo the ideal, corrupting every downstream caller
     // (S-polynomial reduction, membership/implication tests, NRA sat checks).
     if !p.is_zero() {
@@ -1817,7 +1817,7 @@ mod tests {
         assert_eq!(solver.check_sat(), SatResult::Unknown);
     }
 
-    // -----------------------------------------------------------------
+    // ========  ========
     // Regression tests: complex-vs-real Nullstellensatz soundness gap.
     //
     // The Gröbner basis "no nonzero constant" test only certifies
@@ -1828,7 +1828,7 @@ mod tests {
     // inequality's Fourier-Motzkin decision suggests), while still
     // reporting `Sat` when the basis is linear-only (no complex/real gap
     // for degree-1 generators).
-    // -----------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn nra_solver_nonlinear_equality_downgrades_fm_sat_to_unknown() {

@@ -39,9 +39,7 @@ fn get_int_value(tm: &TermManager, id: TermId) -> Option<BigInt> {
 }
 
 proptest! {
-    // =====================================
-    // Term Construction Properties
-    // =====================================
+    // ======== Term Construction Properties ========
 
     /// Test that creating the same integer constant twice yields the same TermId
     #[test]
@@ -215,9 +213,7 @@ proptest! {
         }
     }
 
-    // =====================================
-    // Substitution Properties
-    // =====================================
+    // ======== Substitution Properties ========
 
     /// Test that substituting a variable with itself yields the original term
     #[test]
@@ -311,9 +307,7 @@ proptest! {
         }
     }
 
-    // =====================================
-    // Comparison Properties
-    // =====================================
+    // ======== Comparison Properties ========
 
     /// Test that x = x is always true for constants
     #[test]
@@ -382,9 +376,7 @@ proptest! {
         }
     }
 
-    // =====================================
-    // Traversal Properties
-    // =====================================
+    // ======== Traversal Properties ========
 
     /// Test that traversing a term and collecting all subterms includes the term itself
     #[test]
@@ -449,9 +441,7 @@ proptest! {
         }
     }
 
-    // =====================================
-    // Simplification Properties
-    // =====================================
+    // ======== Simplification Properties ========
 
     /// Test that simplification is idempotent
     #[test]

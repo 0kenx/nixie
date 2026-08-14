@@ -97,8 +97,8 @@ fn bv_width(mgr: &TermManager, tid: TermId) -> Option<u32> {
 
 /// Whether every operand in `operands` is bit-vector sorted at exactly `width`.
 ///
-/// The term builder does not currently reject `(bvadd x8 y16)` — it interns the
-/// application at the *left* operand's sort — so a mixed-width application can
+/// The term builder does not currently reject `(bvadd x8 y16)` – it interns the
+/// application at the *left* operand's sort – so a mixed-width application can
 /// reach the bit-blaster.  There is no circuit for it: wiring the bits that
 /// happen to line up would encode a different operation than the term denotes,
 /// and the widths must therefore be checked here, before a single gate is
@@ -238,9 +238,9 @@ pub(super) fn encode_bv_term_recursive(
                         stack.push((*else_t, false));
                     }
                 }
-                // Leaves: Var, BitVecConst — no children to push
+                // Leaves: Var, BitVecConst – no children to push
                 TermKind::Var(_) | TermKind::BitVecConst { .. } => {}
-                // Unknown term kind — cannot encode, abort
+                // Unknown term kind – cannot encode, abort
                 _ => return false,
             }
         } else {
@@ -250,7 +250,7 @@ pub(super) fn encode_bv_term_recursive(
             // are `width` bits wide and then propagates the encoder's own
             // verdict: a `false` from the BV solver means no circuit was built,
             // and continuing would leave `tid` as free bits that satisfy
-            // anything — a false `sat`.  Reporting the term as unencodable is
+            // anything – a false `sat`.  Reporting the term as unencodable is
             // the honest alternative.
             match &term.kind {
                 TermKind::BvAdd(a, b) => {
@@ -375,7 +375,7 @@ pub(super) fn encode_bv_term_recursive(
                     }
                     bv.new_bv(*a, aw);
                     bv.new_bv(*b, bw);
-                    // BvConcat(high, low) — `a` is the high (most-significant) part.
+                    // BvConcat(high, low) – `a` is the high (most-significant) part.
                     if !bv.concat(tid, *a, *b) {
                         return false;
                     }
@@ -454,7 +454,7 @@ pub(super) fn encode_bv_term_recursive(
                     //
                     // The *whole* value is pinned.  Keeping only its low 64 bits
                     // (`iter_u64_digits().next()`) pinned the wrong constant for
-                    // every wider bit-vector — `x = 2^64` at width 128 became
+                    // every wider bit-vector – `x = 2^64` at width 128 became
                     // `x = 0`, which made `x <u 1` satisfiable and answered
                     // `sat` to an unsatisfiable query.
                     let Some(magnitude) = value.to_biguint() else {
@@ -513,7 +513,7 @@ fn bv_magnitude(value: u64, width: u32) -> u64 {
 }
 
 /// Reference (non-circuit) semantics of a binary BV operation, mirroring the
-/// totalised SMT-LIB `FixedSizeBitVectors` definitions — including the
+/// totalised SMT-LIB `FixedSizeBitVectors` definitions – including the
 /// divide-by-zero conventions, which are where the bit-blasted circuits are
 /// most likely to drift from the constant folder.
 #[cfg(debug_assertions)]
@@ -710,7 +710,7 @@ pub(super) fn debug_verify_bv_circuits(bv: &BvSolver, root: TermId, mgr: &TermMa
                 "bit-blasted BV circuit disagrees with the reference semantics \
                  of {:?} at width {w}: the model says {actual:#x} but the \
                  operation evaluates to {expected:#x} on its operands' model \
-                 values — the circuit admits assignments the operation forbids, \
+                 values – the circuit admits assignments the operation forbids, \
                  which surfaces as a false `sat`",
                 term.kind
             );

@@ -1,10 +1,10 @@
 //! End-to-end equivalence tests for the quantifier-elimination front-ends
 //! that were hardened in this wave:
 //!
-//! * `qe::MbiSolver` — propositional Craig interpolation (validated).
-//! * `qe::cad::CadSolver` — real term→polynomial extraction.
-//! * `qe::datatype::DatatypeQePlugin` — constructor case-split QE.
-//! * `qe::bv::BvQePlugin` — sound bit-vector QE (unused var / definitional /
+//! * `qe::MbiSolver` – propositional Craig interpolation (validated).
+//! * `qe::cad::CadSolver` – real term→polynomial extraction.
+//! * `qe::datatype::DatatypeQePlugin` – constructor case-split QE.
+//! * `qe::bv::BvQePlugin` – sound bit-vector QE (unused var / definitional /
 //!   small-width brute force).
 //!
 //! Each "eliminated" result is checked for equivalence against the original
@@ -18,9 +18,9 @@ use oxiz_core::qe::cad::{CadError, CadSolver};
 use oxiz_core::qe::datatype::{Constructor, Datatype, DatatypeQePlugin};
 use oxiz_core::{TermId, TermKind, TermManager};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // MBI: validated propositional interpolation.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn eval_bool(term: TermId, assign: &[(TermId, bool)], tm: &TermManager) -> Option<bool> {
     match &tm.get(term)?.kind {
@@ -93,9 +93,9 @@ fn mbi_no_interpolant_when_satisfiable() {
     assert!(solver.interpolate(x, y, &mut tm).is_none());
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // CAD: real polynomial extraction.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn cad_extracts_faithful_polynomial() {
@@ -144,9 +144,9 @@ fn cad_rejects_non_polynomial() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Datatype: constructor case-split QE.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn ctor_name(term: TermId, tm: &TermManager) -> Option<String> {
     match &tm.get(term)?.kind {
@@ -288,9 +288,9 @@ fn datatype_recursive_depth_budget_residual() {
     assert!(!tm.free_vars(result).contains(&x));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // BV: sound bit-vector QE.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn bv_eval(formula: TermId, assign: &[(TermId, u32, u64)], tm: &TermManager) -> Option<bool> {
     let mut model = Model::new();
@@ -306,7 +306,7 @@ fn bv_eval(formula: TermId, assign: &[(TermId, u32, u64)], tm: &TermManager) -> 
 
 #[test]
 fn bv_brute_force_equivalence() {
-    // ∃ x:bv3. (x + a = 5) — solvable for every a (x = 5 - a), so ≡ true.
+    // ∃ x:bv3. (x + a = 5) – solvable for every a (x = 5 - a), so ≡ true.
     let mut tm = TermManager::new();
     let bv3 = tm.sorts.bitvec(3);
     let x = tm.mk_var("x", bv3);

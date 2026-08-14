@@ -171,7 +171,7 @@ impl MonotonicityAnalyzer {
                 } else if value_at_zero.is_negative() {
                     return Some(false);
                 }
-                // value_at_zero == 0 but no roots found — treat as unknown
+                // value_at_zero == 0 but no roots found – treat as unknown
                 return None;
             }
             return None;

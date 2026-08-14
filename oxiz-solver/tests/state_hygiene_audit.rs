@@ -256,13 +256,13 @@ fn model_values_survive_the_rebase() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Result lifetime: a verdict belongs to the assertion stack it was computed on
-// ---------------------------------------------------------------------------
+// ========  ========
 //
 // `Solver::pop` used to leave `model` / `unsat_core` in place.  The core's
 // `indices` name positions in `Solver::assertions`, which the pop truncates, so
-// the survivor did not merely describe a superseded stack — it *dangled*, and
+// the survivor did not merely describe a superseded stack – it *dangled*, and
 // `minimize_unsat_core` indexed the truncated vector with it.  These pins are at
 // the `Solver` API level on purpose: `Context` gates every query on its own
 // `last_result`, so a solver-level leak is invisible from a script and only an

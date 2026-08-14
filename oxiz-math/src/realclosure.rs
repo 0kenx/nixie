@@ -433,7 +433,7 @@ impl AlgebraicNumber {
     /// `αᵢ + βⱼ` over all roots `αᵢ` of `p` and `βⱼ` of `q`. We compute `R`
     /// exactly via [`Polynomial::resultant`] (a genuine bivariate resultant),
     /// make it square-free, then isolate the single root that matches the sum
-    /// of the operand intervals — refining both operand brackets as needed to
+    /// of the operand intervals – refining both operand brackets as needed to
     /// disambiguate. If that root is rational (a *degeneration* such as
     /// `(1+√2) + (1−√2) = 2`) the result collapses to an exact rational.
     ///
@@ -442,7 +442,7 @@ impl AlgebraicNumber {
     /// finite rational approximation of an irrational value.
     ///
     /// Reference: "Algorithms in Real Algebraic Geometry" (Basu, Pollack,
-    /// Roy) — resultant of `p(y)` and `q(z − y)` for the sum of algebraic
+    /// Roy) – resultant of `p(y)` and `q(z − y)` for the sum of algebraic
     /// numbers.
     pub fn add_algebraic(&mut self, other: &mut AlgebraicNumber) -> AlgebraicNumber {
         // If either operand is rational, the exact `*_rational` shift applies.
@@ -480,7 +480,7 @@ impl AlgebraicNumber {
     /// collapses to an exact rational.
     ///
     /// Reference: "Algorithms in Real Algebraic Geometry" (Basu, Pollack,
-    /// Roy) — resultant of `p(y)` and `yᵐ q(z/y)` for the product of algebraic
+    /// Roy) – resultant of `p(y)` and `yᵐ q(z/y)` for the product of algebraic
     /// numbers.
     pub fn mul_algebraic(&mut self, other: &mut AlgebraicNumber) -> AlgebraicNumber {
         if self.is_rational() {
@@ -509,7 +509,7 @@ impl AlgebraicNumber {
     }
 }
 
-/// Result variable (`z`) for resultant-based algebraic arithmetic — matches the
+/// Result variable (`z`) for resultant-based algebraic arithmetic – matches the
 /// `var = 0` convention used by [`AlgebraicNumber::from_rational`] and
 /// [`AlgebraicNumber::sqrt`].
 const Z_VAR: Var = 0;
@@ -524,7 +524,7 @@ const Y_VAR: Var = 1;
 /// combination `[lo, hi]` of the operand brackets (because the operands are
 /// irrational here, so each strictly brackets its value). We refine both
 /// operand brackets until `[lo, hi]` is a genuine isolating interval for
-/// `r_poly` — exactly one root inside, and neither endpoint itself a root — and
+/// `r_poly` – exactly one root inside, and neither endpoint itself a root – and
 /// then build the algebraic number directly from that bracket. This deliberately
 /// avoids `isolate_roots`' independently-computed brackets, whose endpoints can
 /// coincide with a *different* root of `r_poly` (e.g. the root `0` of `z³ − 8z`
@@ -532,7 +532,7 @@ const Y_VAR: Var = 1;
 ///
 /// Convergence: once `[lo, hi]` is narrower than the distance from the true
 /// root to the nearest other root of `r_poly`, the count is 1 and the endpoints
-/// (within that distance of the true root) cannot equal another root — so the
+/// (within that distance of the true root) cannot equal another root – so the
 /// loop terminates in a small number of steps.
 fn combine_via_resultant(
     a: &mut AlgebraicNumber,
@@ -625,7 +625,7 @@ fn product_bounds(
 ///
 /// The divisor enumeration is bounded: when the (integer-cleared) leading and
 /// constant coefficients are large or zero, detection is skipped and `None` is
-/// returned — the caller then keeps the exact algebraic-number representation,
+/// returned – the caller then keeps the exact algebraic-number representation,
 /// which is still correct, just not simplified to a rational literal.
 fn rational_root_in(
     poly: &Polynomial,
@@ -654,7 +654,7 @@ fn rational_root_in(
 
     // A zero constant term means `0` is a root; only report it when it lies
     // strictly inside the bracket. (Nonzero rational roots of `poly / z` are
-    // not enumerated in this degenerate case — the exact algebraic form is
+    // not enumerated in this degenerate case – the exact algebraic form is
     // kept instead.)
     if a0.is_zero() {
         let zero = BigRational::zero();

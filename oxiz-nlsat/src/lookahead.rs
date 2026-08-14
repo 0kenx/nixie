@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Lookahead is
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. Lookahead is
 // costly and rarely pays off in CDCL(T)/NLSAT, and its standalone propagation
 // model diverges from the solver's real watched-literal BCP (it cannot see
 // theory propagation). VSIDS + phase saving, already present, is the standard

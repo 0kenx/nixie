@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Overlaps the
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. Overlaps the
 // dedicated oxiz-proof crate and would emit proofs for reasoning paths that are
 // not yet certified. Integrate certified UNSAT with oxiz-proof rather than
 // maintaining a parallel in-crate proof subsystem.

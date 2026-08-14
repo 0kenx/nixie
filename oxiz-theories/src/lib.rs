@@ -63,7 +63,7 @@ extern crate alloc;
 
 mod prelude;
 
-// === Always-available modules (no_std compatible) ===
+// ======== Always-available modules (no_std compatible) ========
 pub mod arithmetic;
 pub mod array;
 pub mod array_eager_expand;
@@ -96,7 +96,7 @@ pub mod utvpi;
 pub mod watched;
 pub mod wmaxsat;
 
-// === std-only modules ===
+// ======== std-only modules ========
 #[cfg(feature = "std")]
 pub mod ania_ground;
 #[cfg(feature = "std")]
@@ -107,7 +107,7 @@ pub mod nlsat;
 #[cfg(feature = "std")]
 pub mod sls;
 
-// === Always-available exports ===
+// ======== Always-available exports ========
 pub use combination::{Purifier, SharedVar, TheoryCombiner};
 pub use config::{
     BranchingHeuristic, BvConfig, CombinationConfig, CombinationMode, LiaConfig, PivotingRule,
@@ -200,7 +200,7 @@ pub use set::{
     SubsetConstraint, SubsetDomain, SubsetGraph, SubsetPropagator, SubsetResult, SubsetStats,
 };
 
-// === std-only exports ===
+// ======== std-only exports ========
 
 // Theory checking exports
 #[cfg(feature = "std")]

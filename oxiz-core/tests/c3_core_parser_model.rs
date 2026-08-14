@@ -31,9 +31,9 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// parser/sorts.rs — self-referential `define-sort`
-// ---------------------------------------------------------------------------
+// ========  ========
+// parser/sorts.rs – self-referential `define-sort`
+// ========  ========
 
 /// `(define-sort A () A)` installs `A -> A` in the alias table. Resolving a
 /// reference to `A` that goes through `parse_sort` (rather than the
@@ -87,9 +87,9 @@ fn well_formed_sort_alias_chain_still_resolves() {
     assert_eq!(commands.len(), 4);
 }
 
-// ---------------------------------------------------------------------------
-// parser/commands.rs — unknown-command skipping
-// ---------------------------------------------------------------------------
+// ========  ========
+// parser/commands.rs – unknown-command skipping
+// ========  ========
 
 /// Skipping an unrecognized command is a documented feature. It used to be
 /// implemented as a tail call into `parse_command`, so a script of N unknown
@@ -110,9 +110,9 @@ fn a_hundred_thousand_unknown_commands_do_not_overflow() {
     assert_eq!(count.ok(), Some(1));
 }
 
-// ---------------------------------------------------------------------------
-// parser/commands.rs + terms.rs — nullary define-fun inlining accumulates depth
-// ---------------------------------------------------------------------------
+// ========  ========
+// parser/commands.rs + terms.rs – nullary define-fun inlining accumulates depth
+// ========  ========
 
 /// Build `(define-fun a0 () Int 0)` followed by `n` doubling definitions.
 fn nullary_define_fun_chain(n: u32) -> String {
@@ -138,7 +138,7 @@ fn short_nullary_define_fun_chain_still_parses() {
 }
 
 /// Each command in the chain is two parens deep, so the per-parse nesting
-/// counter never sees the accumulation — but the *term* grows one level per
+/// counter never sees the accumulation – but the *term* grows one level per
 /// command. Past the budget the parser must say so honestly instead of
 /// handing a 100 000-deep term to whatever consumes it next.
 #[test]
@@ -159,13 +159,13 @@ fn long_nullary_define_fun_chain_is_an_honest_parse_error() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// printer/basic.rs — write_sort
-// ---------------------------------------------------------------------------
+// ========  ========
+// printer/basic.rs – write_sort
+// ========  ========
 
 /// `SortManager::array` is public and interns in constant stack, so an
 /// embedder can build a sort far deeper than any SMT-LIB text could express.
-/// Printing it used to recurse once per level with no guard at all —
+/// Printing it used to recurse once per level with no guard at all –
 /// `write_sort` never touched the printer's depth counter.
 #[test]
 fn printing_a_deeply_nested_array_sort_does_not_overflow() {

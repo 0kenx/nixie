@@ -195,12 +195,12 @@ fn test_conjunction_chain() {
     );
 }
 
-// ----------------------------------------------------------------------------
+// ========  ========
 // Regression tests for the O(n^2) -> O(n) rewrite of `model_based_combination`
 // (theory_manager.rs).  These exercise the EUF <-> arithmetic interface: EUF
 // congruence closure equates two arithmetic-valued terms and the arithmetic
 // solver must agree on / disagree with their values.
-// ----------------------------------------------------------------------------
+// ========  ========
 
 // a = b forces f(a) = f(b) by congruence; the arithmetic bounds on f(a) and
 // f(b) are then jointly contradictory ( >=5 and <=3 for the same value ).
@@ -265,21 +265,21 @@ fn test_euf_arith_interface_sat() {
     );
 }
 
-// ----------------------------------------------------------------------------
+// ========  ========
 // Randomized cross-check: small disjunctive LIA formulas vs. brute force.
 //
 // Each formula is a chain `x0 = c0`, then for every i `(x_i = x_{i-1} + p_i) ∨
 // (x_i = x_{i-1} + q_i)`, plus a handful of filter constraints (`= c`, `<= c`,
 // `>= c`) on individual variables.  Because every variable's value is fully
 // determined by `x0` and the sequence of arm choices, the entire model space is
-// exactly the `2^(k-1)` arm combinations — so brute-force enumeration of those
+// exactly the `2^(k-1)` arm combinations – so brute-force enumeration of those
 // combinations is an EXACT decision procedure (no finite-domain truncation), and
 // we can assert the solver's Sat/Unsat verdict matches it on every instance.
 // This is precisely the disjunction/backtrack ↔ LIA interaction that produced
 // the wrong-UNSAT soundness bug.
-// ----------------------------------------------------------------------------
+// ========  ========
 
-/// Minimal deterministic PRNG (SplitMix64) — no external `rand` dependency.
+/// Minimal deterministic PRNG (SplitMix64) – no external `rand` dependency.
 struct Rng(u64);
 impl Rng {
     fn next_u64(&mut self) -> u64 {
@@ -320,7 +320,7 @@ impl Instance {
         let arms: Vec<(i64, i64)> = (1..k)
             .map(|_| (rng.in_range(-2, 2), rng.in_range(-2, 2)))
             .collect();
-        // Endpoint constraint on the last variable — the exact shape of the
+        // Endpoint constraint on the last variable – the exact shape of the
         // original soundness bug (…∧ x_{k-1} = target). Half the time we drop
         // it (a trivially-satisfiable chain); otherwise pin the endpoint with
         // an equality, upper bound, or lower bound, chosen at random so every
@@ -440,8 +440,8 @@ fn test_random_disjunctive_lia_vs_brute_force() {
                     wrong += 1;
                 }
             }
-            // `Unknown` is honest — the model-verification gate refusing to trust
-            // a model the SAT core built over an inconsistent trail — but on this
+            // `Unknown` is honest – the model-verification gate refusing to trust
+            // a model the SAT core built over an inconsistent trail – but on this
             // fragment it must never be needed.  Every instance here is decidable
             // by construction, so a single `Unknown` means the CDCL(T) loop again
             // produced a model that `model_refutes_assertions` had to reject.
@@ -466,7 +466,7 @@ fn test_random_disjunctive_lia_vs_brute_force() {
     );
 }
 
-// ----------------------------------------------------------------------------
+// ========  ========
 // Regression: the CDCL(T) propagation-fixpoint bug, reduced.
 //
 // This is the smallest instance of the generated family above that made
@@ -479,7 +479,7 @@ fn test_random_disjunctive_lia_vs_brute_force() {
 //
 // x1 ∈ {-2,-1} and x2 ∈ {x1-1, x1}, so x2 ≤ -1 and `x2 = 0` is unreachable: the
 // only sound verdict is UNSAT.
-// ----------------------------------------------------------------------------
+// ========  ========
 #[test]
 fn test_cdclt_propagation_fixpoint_regression_unsat() {
     let mut ctx = Context::new();
@@ -517,7 +517,7 @@ fn test_cdclt_propagation_fixpoint_regression_unsat() {
 
 // Companion of the above: the satisfiable endpoint on the same chain must be
 // decided `Sat`, and the model must genuinely satisfy every assertion.  This is
-// the model-validity half of the contract — a `Sat` from the CDCL(T) path is
+// the model-validity half of the contract – a `Sat` from the CDCL(T) path is
 // worthless if the assignment behind it does not satisfy the input.
 #[test]
 fn test_cdclt_propagation_fixpoint_regression_sat_model_is_valid() {

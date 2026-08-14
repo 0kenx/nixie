@@ -13,14 +13,14 @@ fn make_ctx() -> Z3Context {
     Z3Context::new(&Z3Config::new())
 }
 
-// ─── Real symmetry ────────────────────────────────────────────────────────────
+// ======== Real symmetry ========
 
 #[test]
 fn test_real_gt() {
     let ctx = make_ctx();
     let a = Real::from_i64(&ctx, 3);
     let b = Real::from_i64(&ctx, 1);
-    // Build the term — just verify no panic
+    // Build the term – just verify no panic
     let _gt = Real::gt(&ctx, &a, &b);
 }
 
@@ -62,11 +62,11 @@ fn test_real_from_i64() {
     );
 }
 
-// ─── ITE ─────────────────────────────────────────────────────────────────────
+// ======== ITE ========
 
 #[test]
 fn test_ite_bool_sat() {
-    // ite(c, true, false) — the TermManager simplifies this to `c`; no panic.
+    // ite(c, true, false) – the TermManager simplifies this to `c`; no panic.
     let ctx = make_ctx();
     let c = Bool::new_const(&ctx, "c");
     let t_val = Bool::from_bool(&ctx, true);
@@ -108,7 +108,7 @@ fn test_ite_bv() {
     assert_eq!(ite.width, 8);
 }
 
-// ─── Distinct ─────────────────────────────────────────────────────────────────
+// ======== Distinct ========
 
 #[test]
 fn test_distinct_int_sat() {
@@ -134,7 +134,7 @@ fn test_distinct_int_sat() {
 fn test_distinct_int_same_literal() {
     // distinct(1, 1): distinct on two identical literal TermIds.
     // mk_distinct with equal ids either yields false immediately or
-    // interns a well-formed term — either way must not panic.
+    // interns a well-formed term – either way must not panic.
     let ctx = make_ctx();
     let one_a = Int::from_i64(&ctx, 1);
     let one_b = Int::from_i64(&ctx, 1);
@@ -164,7 +164,7 @@ fn test_distinct_bv() {
     let _d = distinct_bv(&ctx, &[a, b]);
 }
 
-// ─── Array ────────────────────────────────────────────────────────────────────
+// ======== Array ========
 
 #[test]
 fn test_array_select_store() {
@@ -183,7 +183,7 @@ fn test_array_select_store() {
 
 #[test]
 fn test_array_select_different_index() {
-    // store at index 0, select at index 1 — two distinct terms expected
+    // store at index 0, select at index 1 – two distinct terms expected
     let ctx = make_ctx();
     let dom = ctx.int_sort();
     let rng = ctx.int_sort();
@@ -211,7 +211,7 @@ fn test_array_eq() {
     assert!(eq.id.0 < u32::MAX);
 }
 
-// ─── FuncDecl ─────────────────────────────────────────────────────────────────
+// ======== FuncDecl ========
 
 #[test]
 fn test_func_decl_apply() {
@@ -237,11 +237,11 @@ fn test_func_decl_two_args() {
     assert!(gxy.0 < u32::MAX);
 }
 
-// ─── Quantifiers ──────────────────────────────────────────────────────────────
+// ======== Quantifiers ========
 
 #[test]
 fn test_quantifier_forall_construction() {
-    // forall x:Int. x >= 0  — verify term construction without panic
+    // forall x:Int. x >= 0  – verify term construction without panic
     // We build the body via the Z3-compat Int API so everything stays in the
     // same context TermManager.
     let ctx = make_ctx();
@@ -268,7 +268,7 @@ fn test_quantifier_exists_construction() {
     assert_ne!(q.id, body.id);
 }
 
-// ─── Z3Optimize ───────────────────────────────────────────────────────────────
+// ======== Z3Optimize ========
 
 #[test]
 fn test_optimize_minimize_term_constructed() {

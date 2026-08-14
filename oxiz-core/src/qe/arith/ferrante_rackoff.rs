@@ -16,9 +16,9 @@
 //! pairs with `a < b` give an interior point of the interval between two
 //! consecutive boundaries. All arithmetic is exact rational arithmetic.
 //!
-//! Formulae outside the supported linear-real fragment — a non-linear
+//! Formulae outside the supported linear-real fragment – a non-linear
 //! occurrence of `x`, `x` under an uninterpreted symbol, or an integer-sorted
-//! `x` (for which the dense-order midpoint construction is unsound) — are
+//! `x` (for which the dense-order midpoint construction is unsound) – are
 //! reported as an explicit `Err` rather than silently returning an unchanged or
 //! wrong result.
 //!
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn integer_sort_is_rejected() {
-        // ∃x:Int. x < 5 — Ferrante–Rackoff is a real method; reject honestly.
+        // ∃x:Int. x < 5 – Ferrante–Rackoff is a real method; reject honestly.
         let mut tm = TermManager::new();
         let int_sort = tm.sorts.int_sort;
         let x = tm.mk_var("x", int_sort);
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn nonlinear_is_rejected() {
-        // ∃x. x*x = y — outside the linear fragment → honest Err.
+        // ∃x. x*x = y – outside the linear fragment → honest Err.
         let mut tm = TermManager::new();
         let x = real_var(&mut tm, "x");
         let y = real_var(&mut tm, "y");

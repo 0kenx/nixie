@@ -185,7 +185,7 @@ impl NlsatSolver {
                 self.assignment.set_arith(var, next);
                 return true;
             }
-            // This cell is exhausted — pop and try the parent sample.
+            // This cell is exhausted – pop and try the parent sample.
             self.arith_trail.pop();
         }
         false
@@ -1275,7 +1275,7 @@ impl NlsatSolver {
         // Divisors of the constant term and of the leading coefficient. If
         // either set could not be enumerated within the trial-division
         // budget, return only the roots established by deflation rather
-        // than testing an incomplete candidate set — this list is already
+        // than testing an incomplete candidate set – this list is already
         // "the rational roots we could establish" (a degree>=3 polynomial's
         // irrational roots are never in it either).
         let (Some(divisors_a0), Some(divisors_an)) =
@@ -1484,7 +1484,7 @@ fn rational_sign(value: &BigRational) -> i8 {
     }
 }
 
-// ─── Sign-abstraction lattice for coupled-conflict certification ─────────────
+// ======== Sign-abstraction lattice for coupled-conflict certification ========
 //
 // A sign-set is a subset of {negative, zero, positive} encoded as a bitmask.
 // This backs `NlsatSolver::certify_sign_conflict`; every operation is a sound
@@ -1636,7 +1636,7 @@ fn sign_satisfies(kind: AtomKind, is_true: bool, sign: i8) -> bool {
     if is_true { holds } else { !holds }
 }
 
-// ─── Helpers for rational root theorem ──────────────────────────────────────
+// ======== Helpers for rational root theorem ========
 
 /// Euclidean GCD for non-negative BigInts.
 fn gcd_bigint(mut a: num_bigint::BigInt, mut b: num_bigint::BigInt) -> num_bigint::BigInt {
@@ -1663,7 +1663,7 @@ fn lcm_bigint(a: &num_bigint::BigInt, b: &num_bigint::BigInt) -> num_bigint::Big
 ///
 /// `n` is a polynomial coefficient straight from `.smt2` input, so its
 /// magnitude is attacker-chosen and `sqrt(n)` bignum modulos is unbounded
-/// work — a 40-digit prime coefficient would hang the solver forever. This
+/// work – a 40-digit prime coefficient would hang the solver forever. This
 /// budget enumerates every `n` below 10¹⁰ exactly and reports failure
 /// instead of hanging above that.
 const TRIAL_DIVISION_BUDGET: u64 = 100_000;

@@ -235,7 +235,7 @@ impl NonLinearAnalyzer {
     /// gives depth `n`), and `compute_sccs` runs unconditionally from
     /// `NonLinearAnalyzer::analyze`. The procedure returns `()`, so there is
     /// no channel through which a depth limit could report having stopped
-    /// early — it would just emit wrong SCCs. It therefore keeps its DFS
+    /// early – it would just emit wrong SCCs. It therefore keeps its DFS
     /// state in an explicit heap stack of frames.
     ///
     /// Every `expect` of the old version is gone as well: each frame owns
@@ -701,7 +701,7 @@ mod tests {
     }
 
     /// A three-node cycle is one SCC, and the two nodes hanging off it are
-    /// their own — a semantic pin on the iterative Tarjan.
+    /// their own – a semantic pin on the iterative Tarjan.
     #[test]
     fn compute_sccs_groups_a_cycle() {
         let mut analyzer = NonLinearAnalyzer::new();

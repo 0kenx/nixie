@@ -5,9 +5,7 @@
 use super::types::{Lit, Var};
 use std::collections::{HashMap, HashSet};
 
-// ============================================================================
-// Phase Saving and Polarity Heuristics
-// ============================================================================
+// ======== Phase Saving and Polarity Heuristics ========
 
 /// Phase saving mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,9 +85,7 @@ impl PhaseSaver {
     }
 }
 
-// ============================================================================
-// Backbone Detection
-// ============================================================================
+// ======== Backbone Detection ========
 
 /// Backbone analysis (variables that have the same value in all solutions)
 #[derive(Debug)]
@@ -180,9 +176,7 @@ impl BackboneDetector {
     }
 }
 
-// ============================================================================
-// Diversification Methods
-// ============================================================================
+// ======== Diversification Methods ========
 
 /// Diversification strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -272,9 +266,7 @@ impl DiversificationManager {
     }
 }
 
-// ============================================================================
-// Clause Subsumption and Simplification
-// ============================================================================
+// ======== Clause Subsumption and Simplification ========
 
 /// Clause simplifier for SLS
 #[derive(Debug)]
@@ -398,9 +390,7 @@ impl Default for ClauseSimplifier {
     }
 }
 
-// ============================================================================
-// Solution Verification
-// ============================================================================
+// ======== Solution Verification ========
 
 /// Solution verifier for SLS
 #[derive(Debug)]
@@ -488,9 +478,7 @@ pub struct VerificationResult {
     pub unsatisfied_indices: Vec<usize>,
 }
 
-// ============================================================================
-// Learning from Solutions
-// ============================================================================
+// ======== Learning from Solutions ========
 
 /// Learns variable polarities from found solutions
 #[derive(Debug)]

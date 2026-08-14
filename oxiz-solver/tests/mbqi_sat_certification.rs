@@ -5,7 +5,7 @@
 //! plus its wiring in `mbqi/integration.rs`: for a satisfiable quantified goal
 //! whose universal quantifiers fall in the complete-instantiation fragment, the
 //! solver must saturate the relevant/bounded instantiation set and answer `sat`
-//! rather than `unknown`.  The `*_unsat` tests are the soundness half — the same
+//! rather than `unknown`.  The `*_unsat` tests are the soundness half – the same
 //! machinery must never turn a genuinely unsatisfiable quantified goal into a
 //! spurious `sat` (a universal instance is only ever a sound consequence).
 //!
@@ -26,9 +26,9 @@ fn check(script: &str) -> String {
         .unwrap_or_else(|| "<no check-sat output>".to_string())
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // SAT certification: satisfiable quantified goals must return `sat`.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Bounded-box fragment: an injectivity axiom over a finite integer window,
 /// consistent with the ground function values.  This is the regression guard
@@ -216,9 +216,9 @@ fn auflia_update_disequality_guard_sat() {
     assert_eq!(r, "sat", "array-update axiom should certify sat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Soundness: unsatisfiable quantified goals must never be certified `sat`.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A point the guard admits (`x = 7`) that is *not* a function-argument term,
 /// whose consequent forces `f(7)` to be simultaneously `>= 5` and `<= 2`.  This
@@ -341,16 +341,16 @@ fn uflia_forall_ground_conflict_unsat() {
     assert_eq!(r, "unsat", "forall/ground conflict must be unsat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Polarity boundary: only *asserted* quantifiers may be instantiated.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A universal that sits behind a polarity boundary is not a fact, so MBQI must
 /// not instantiate it.
 ///
 /// Registration used to happen inside the Tseitin encoder, which visits every
-/// sub-term at every polarity, so `(not (forall ((x Int)) (P x)))` — really
-/// `∃x. ¬P(x)` — was handed to MBQI as a universal. Instantiating it at `x = 5`
+/// sub-term at every polarity, so `(not (forall ((x Int)) (P x)))` – really
+/// `∃x. ¬P(x)` – was handed to MBQI as a universal. Instantiating it at `x = 5`
 /// contradicted the asserted `(not (P 5))` and produced a false `unsat` on a
 /// formula `z3` answers `sat` for. The same held for a universal inside a
 /// disjunct, an implication consequent or an `ite` branch.
@@ -387,9 +387,9 @@ fn test_mbqi_quantifier_polarity_boundary() {
     }
 }
 
-/// Control: the same universal asserted *unconditionally* — directly, as an
+/// Control: the same universal asserted *unconditionally* – directly, as an
 /// `And` conjunct, and through a double negation that lands back at positive
-/// polarity — must still be instantiated and refute `(not (P 5))`.
+/// polarity – must still be instantiated and refute `(not (P 5))`.
 #[test]
 fn test_mbqi_asserted_quantifier_still_instantiated() {
     let cases = [

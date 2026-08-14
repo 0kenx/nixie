@@ -154,7 +154,7 @@ impl StringRewriter {
             let length = ln as usize;
             // Bound against the codepoint count, matching the codepoint
             // (not byte) semantics that `.chars().skip()/.take()` below
-            // already use — `s.len()` is a byte count and would let a
+            // already use – `s.len()` is a byte count and would let a
             // codepoint-out-of-range `start_idx` through for any
             // multi-byte-character string.
             let char_count = s.chars().count();

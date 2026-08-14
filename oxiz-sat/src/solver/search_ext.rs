@@ -25,12 +25,12 @@ impl Solver {
     /// the *whole* clause database.
     ///
     /// Handling a conflict inside the theory loop and rejoining that inner loop
-    /// instead — which is what the theory-conflict branches used to do — skips
+    /// instead – which is what the theory-conflict branches used to do – skips
     /// BCP: the learned clause's asserting literal (for a unit lemma, a fresh
     /// level-0 fact) is appended to the trail but never propagated. If the theory
     /// conflict happens to resolve the *last* unassigned variable, `pick_branch_var`
     /// then reports "all assigned", `final_check` sees a theory-consistent atom
-    /// assignment and answers `Sat` — over a trail on which an **original** clause
+    /// assignment and answers `Sat` – over a trail on which an **original** clause
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
@@ -80,8 +80,8 @@ impl Solver {
                 // Clamp the theory cursor to the rollback boundary, not to the
                 // trail length: chronological backtracking re-appends the
                 // literals that survive the rollback above that boundary, and
-                // the theory — which was just told to unwind to
-                // `backtrack_level` — has to see them again.
+                // the theory – which was just told to unwind to
+                // `backtrack_level` – has to see them again.
                 self.backtrack_with_phase_saving(backtrack_level);
                 let boundary = self.trail.assignments().len();
                 theory_processed = theory_processed.min(boundary);
@@ -99,12 +99,12 @@ impl Solver {
                 let mut theory_propagations = Vec::new();
 
                 // Process only NEW (unprocessed) trail assignments.  Iterate the
-                // trail slice in place — the previous code cloned the *entire*
+                // trail slice in place – the previous code cloned the *entire*
                 // trail (`to_vec()`) on every iteration of this loop, which is
                 // O(trail) allocation + copy per theory-check and dominated QF_UF
                 // runtime (trails reach thousands of literals).  The trail is not
-                // mutated inside this loop — only after, when propagations /
-                // conflicts are applied — so holding an immutable borrow across
+                // mutated inside this loop – only after, when propagations /
+                // conflicts are applied – so holding an immutable borrow across
                 // the `on_assignment` calls (which take `&mut theory`, a separate
                 // parameter, not `&mut self`) is sound.
                 let new_len = {
@@ -176,7 +176,7 @@ impl Solver {
                 // conflict analysis (it resolves to nothing, so the propagated
                 // literal becomes a spurious UIP and the learned clause can
                 // negate a genuinely-forced atom → false UNSAT). Such facts
-                // must be installed at level 0 — handled first, which discards
+                // must be installed at level 0 – handled first, which discards
                 // the reasoned propagations in a mixed batch (they were derived
                 // from the now-backtracked trail and will be re-derived).
                 let has_units = theory_propagations.iter().any(|(_, r)| r.is_empty());
@@ -251,7 +251,7 @@ impl Solver {
             // fixpoint before a decision is taken and, critically, before
             // `final_check` is allowed to answer `Sat` over this trail. Every path
             // that assigns without propagating rejoins `'search` above, so this
-            // guard is the belt to that braces — one comparison, and it makes the
+            // guard is the belt to that braces – one comparison, and it makes the
             // invariant hold no matter how the branches above are later edited.
             if self.trail.has_pending_propagation() {
                 continue 'search;
@@ -355,7 +355,7 @@ impl Solver {
     /// the theory so its trail view stays in sync.
     ///
     /// An empty reason means the propagated literal is a consequence of nothing
-    /// on the trail — a theory tautology. It must live at level 0: a unit
+    /// on the trail – a theory tautology. It must live at level 0: a unit
     /// clause cannot be two-watched, and using one as the reason of a mid-level
     /// propagation breaks 1-UIP conflict analysis. Each fact is stored as a
     /// Core-tier unit clause ([`Solver::force_theory_unit`]) and forced as a
@@ -400,7 +400,7 @@ impl Solver {
     /// view of the trail in sync.
     ///
     /// A restart backtracks the trail (to level 0 for the global strategies, or a
-    /// local level for `LocalLbd`) purely inside the Boolean core — `restart()`
+    /// local level for `LocalLbd`) purely inside the Boolean core – `restart()`
     /// only holds `&mut self` and cannot reach the theory. Without notifying the
     /// theory, its per-atom polarity bookkeeping keeps the assignments the restart
     /// just discarded and, on the next check, reports a "conflict" whose clause
@@ -425,7 +425,7 @@ impl Solver {
             // The restart backtracked inside `handle_clause_deletion_and_restart`,
             // so the rollback boundary is not returned here. The propagation head
             // is rewound to that boundary by every rollback, so it is a safe (never
-            // too large) stand-in — important under chronological backtracking,
+            // too large) stand-in – important under chronological backtracking,
             // where literals surviving the rollback are re-appended above the
             // boundary and must be re-sent to the theory.
             *theory_processed = (*theory_processed).min(self.trail.propagation_head());

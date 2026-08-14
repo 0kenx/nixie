@@ -5,9 +5,7 @@ use super::types::{Lit, SlsAlgorithm, SlsConfig, SlsResult, SlsSolver, SlsStats,
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-// ============================================================================
-// Weighted MAX-SAT SLS
-// ============================================================================
+// ======== Weighted MAX-SAT SLS ========
 
 /// Configuration for weighted MAX-SAT SLS
 #[derive(Debug, Clone)]
@@ -144,9 +142,7 @@ impl WeightedSlsSolver {
     }
 }
 
-// ============================================================================
-// Hybrid SLS-CDCL Interface
-// ============================================================================
+// ======== Hybrid SLS-CDCL Interface ========
 
 /// Interface for hybrid SLS-CDCL solving
 #[derive(Debug)]
@@ -231,9 +227,7 @@ impl Default for HybridSlsInterface {
     }
 }
 
-// ============================================================================
-// YalSAT-style Solver
-// ============================================================================
+// ======== YalSAT-style Solver ========
 
 /// YalSAT configuration (Yet Another Local Search SAT)
 #[derive(Debug, Clone)]
@@ -346,9 +340,7 @@ impl YalsatSolver {
     }
 }
 
-// ============================================================================
-// Portfolio SLS (Multiple Algorithms)
-// ============================================================================
+// ======== Portfolio SLS (Multiple Algorithms) ========
 
 /// Portfolio SLS configuration
 #[derive(Debug, Clone)]

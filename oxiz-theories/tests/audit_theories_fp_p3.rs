@@ -13,9 +13,9 @@
 use oxiz_theories::fp::ieee754_full::{FpClass, Ieee754Engine, UnpackedFloat};
 use oxiz_theories::fp::{FpFormat, FpRoundingMode, FpValue};
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 1: RNE must round exact ties to even, not always up.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Directly pins `pack()`'s rounding decision on a hand-constructed exact
 /// tie (guard = 1, round = 0, sticky = 0): the pre-round LSB decides the
@@ -113,9 +113,9 @@ fn add_round_nearest_ties_to_even_end_to_end() {
     assert_eq!(sum_odd.exponent, bias as u64);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 2: subnormal unpack must not double the value.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The smallest positive subnormal f32 (0x0000_0001, value 2^-149) must
 /// unpack, round-trip, and arithmetic-combine as its true value, not double
@@ -265,9 +265,9 @@ fn subnormal_unpack_f64_min_and_max_subnormal_round_trip() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 3: sqrt() must not halve odd-exponent inputs.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// sqrt(2.0) must be ~1.4142135..., not 1.0 (which is what the dead
 /// doubling / unconditional `exp -= 1` bug produced: sqrt(1.0) = 1.0).

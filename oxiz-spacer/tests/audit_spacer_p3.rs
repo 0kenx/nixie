@@ -89,7 +89,7 @@ fn bmc_unroll_renames_div_mod_subterms() {
 }
 
 /// `extract_witnesses` must bind each existential variable to the model value
-/// of the term that carries *its* name — not an arbitrary hash-ordered entry.
+/// of the term that carries *its* name – not an arbitrary hash-ordered entry.
 #[test]
 fn witness_extraction_matches_variable_names() {
     let mut manager = TermManager::new();

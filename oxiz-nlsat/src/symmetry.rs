@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired (unsound unless
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired (unsound unless
 // detection is exact). A false-positive symmetry emits a lex-ordering clause that
 // removes real solutions, turning SAT into wrong UNSAT; the automorphism detection
 // is the load-bearing correctness component and must be proven exact (and guarded

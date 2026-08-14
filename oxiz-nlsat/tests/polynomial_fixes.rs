@@ -32,7 +32,7 @@ fn poly_from_coeffs(var: u32, coeffs: &[i64]) -> Polynomial {
     p
 }
 
-// ─── Resultant Tests ─────────────────────────────────────────────────────────
+// ======== Resultant Tests ========
 
 /// res(x²-1, x-1, x) should be 0 because x=1 is a common root.
 #[test]
@@ -83,7 +83,7 @@ fn test_resultant_identical_polys() {
     );
 }
 
-// ─── Higher-Degree Root Tests ─────────────────────────────────────────────────
+// ======== Higher-Degree Root Tests ========
 
 /// Degree-3 polynomial (x-1)(x-2)(x-3) = x³-6x²+11x-6 has three rational roots.
 #[test]
@@ -169,7 +169,7 @@ fn test_solver_cubic_sat() {
     assert_eq!(check, rat(0), "Model value {x_val} does not satisfy x³-x=0");
 }
 
-// ─── Monotonicity / Derivative Sign Tests ────────────────────────────────────
+// ======== Monotonicity / Derivative Sign Tests ========
 
 /// For x³ + x (derivative 3x² + 1 > 0 always), is_increasing should hold.
 #[test]

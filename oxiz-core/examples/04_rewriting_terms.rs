@@ -33,7 +33,7 @@ fn main() {
     let mut tm = TermManager::new();
     let mut ctx = RewriteContext::new();
 
-    // ===== Example 1: Boolean Rewriting =====
+    // ======== Example 1: Boolean Rewriting ========
     println!("--- Example 1: Boolean Constant Folding ---");
     let p = tm.mk_var("p", tm.sorts.bool_sort);
     let true_term = tm.mk_true();
@@ -57,7 +57,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten2.was_rewritten());
     println!("Expected: p\n");
 
-    // ===== Example 2: Double Negation =====
+    // ======== Example 2: Double Negation ========
     println!("--- Example 2: Double Negation Elimination ---");
     let q = tm.mk_var("q", tm.sorts.bool_sort);
     let not_q = tm.mk_not(q);
@@ -69,7 +69,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten3.was_rewritten());
     println!("Expected: q\n");
 
-    // ===== Example 3: De Morgan's Laws =====
+    // ======== Example 3: De Morgan's Laws ========
     println!("--- Example 3: De Morgan's Laws ---");
     let r = tm.mk_var("r", tm.sorts.bool_sort);
     let s = tm.mk_var("s", tm.sorts.bool_sort);
@@ -84,7 +84,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten4.was_rewritten());
     println!("Expected: (NOT r) OR (NOT s)\n");
 
-    // ===== Example 4: Arithmetic Simplification =====
+    // ======== Example 4: Arithmetic Simplification ========
     println!("--- Example 4: Arithmetic Constant Folding ---");
     let x = tm.mk_var("x", tm.sorts.int_sort);
     let zero = tm.mk_int(0);
@@ -116,7 +116,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten7.was_rewritten());
     println!("Expected: 0\n");
 
-    // ===== Example 5: Polynomial Normalization =====
+    // ======== Example 5: Polynomial Normalization ========
     println!("--- Example 5: Polynomial Normalization ---");
     let y = tm.mk_var("y", tm.sorts.int_sort);
 
@@ -130,7 +130,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten8.was_rewritten());
     println!("Expected: 2*x + y (normalized form)\n");
 
-    // ===== Example 6: Constant Evaluation =====
+    // ======== Example 6: Constant Evaluation ========
     println!("--- Example 6: Constant Evaluation ---");
     let five = tm.mk_int(5);
     let ten = tm.mk_int(10);
@@ -146,7 +146,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten9.was_rewritten());
     println!("Expected: 45\n");
 
-    // ===== Example 7: Bitvector Rewriting =====
+    // ======== Example 7: Bitvector Rewriting ========
     println!("--- Example 7: Bitvector Simplification ---");
     let bv8_sort = tm.sorts.bitvec(8);
     let a = tm.mk_var("a", bv8_sort);
@@ -171,7 +171,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten11.was_rewritten());
     println!("Expected: 0xFF\n");
 
-    // ===== Example 8: Composite Rewriter =====
+    // ======== Example 8: Composite Rewriter ========
     println!("--- Example 8: Composite Rewriting (Bool + Arith) ---");
     let z = tm.mk_var("z", tm.sorts.int_sort);
 
@@ -194,7 +194,7 @@ fn main() {
     println!("Was rewritten: {}", rewritten12.was_rewritten());
     println!("Expected: z > 0\n");
 
-    // ===== Example 9: Fixpoint Iteration =====
+    // ======== Example 9: Fixpoint Iteration ========
     println!("--- Example 9: Fixpoint Rewriting ---");
     let w = tm.mk_var("w", tm.sorts.int_sort);
 
@@ -213,7 +213,7 @@ fn main() {
     println!("Iterations: {}", fresh_ctx.stats().iterations);
     println!("Expected: w (after iterations)\n");
 
-    // ===== Example 10: Rewrite Statistics =====
+    // ======== Example 10: Rewrite Statistics ========
     println!("--- Example 10: Rewrite Statistics ---");
     println!("Rewrite statistics from context:");
     println!("  Terms visited: {}", ctx.stats().terms_visited);
@@ -225,7 +225,7 @@ fn main() {
         ctx.stats().cache_hit_rate() * 100.0
     );
 
-    // ===== Example 11: Rewrite Configuration =====
+    // ======== Example 11: Rewrite Configuration ========
     println!("\n--- Example 11: Rewrite Configuration ---");
     let config = RewriteConfig {
         max_iterations: 100,
@@ -249,7 +249,7 @@ fn main() {
     let _configured_ctx = RewriteContext::with_config(config);
     println!("\nContext created with custom config");
 
-    // ===== Example 12: RewriteResult API =====
+    // ======== Example 12: RewriteResult API ========
     println!("\n--- Example 12: RewriteResult API ---");
     let term_a = tm.mk_var("a", tm.sorts.int_sort);
     let term_b = tm.mk_var("b", tm.sorts.int_sort);

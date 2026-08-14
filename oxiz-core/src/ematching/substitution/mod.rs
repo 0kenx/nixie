@@ -534,7 +534,7 @@ mod tests {
         assert!((hit_rate - 2.0 / 3.0).abs() < 0.01);
     }
 
-    // ===== Regression pins for the iterative rewrite =====
+    // ======== Regression pins for the iterative rewrite ========
 
     /// A term far deeper than any native stack could carry: the retired
     /// recursion spent one frame per level and aborted the process here.

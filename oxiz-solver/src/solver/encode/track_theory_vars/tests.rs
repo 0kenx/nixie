@@ -10,9 +10,9 @@
 //! journalled, or *in what order* fails here.
 use super::*;
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Corpus construction
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Deterministic 64-bit xorshift, written inline so the corpus needs no
 /// dependency and reproduces bit-for-bit on every platform.
@@ -55,7 +55,7 @@ struct Corpus {
 /// commutative-operand canonicalization cannot pre-compute or reorder anything:
 /// the generated shapes are exactly the shapes the walk sees.  Because operands
 /// are drawn from the pool of already-built terms, the result is a genuine DAG
-/// — many subterms are reachable by two or more paths, which is what exercises
+/// – many subterms are reachable by two or more paths, which is what exercises
 /// the `tracked_compound_terms` memo.
 ///
 /// Coverage is deliberate: Int/Real/Bool/BitVector/Array/String sorts, both
@@ -329,16 +329,16 @@ fn build_corpus(manager: &mut TermManager, rounds: usize) -> Corpus {
     c
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Observable-effect capture
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Canonical rendering of every observable effect the walk can have: the three
-/// term sets (sorted — `TermId`s are deterministic), the two sticky flags, the
+/// term sets (sorted – `TermId`s are deterministic), the two sticky flags, the
 /// trail **in order**, and a witness for each theory solver's own interning.
 ///
 /// Takes `&mut Solver` because the intern-order witness has to call
-/// [`oxiz_theories::arithmetic::ArithSolver::intern`] — the only available read
+/// [`oxiz_theories::arithmetic::ArithSolver::intern`] – the only available read
 /// of that map.  `intern` is idempotent for an already-interned term and hands
 /// out `VarId`s sequentially otherwise, so probing the whole corpus in a fixed
 /// order yields a sequence that is identical across two runs exactly when the
@@ -385,13 +385,13 @@ fn fnv1a(s: &str) -> u64 {
     h
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Pinned characterisation
-// ---------------------------------------------------------------------
+// ========  ========
 
-/// Replay the whole corpus in order on one solver — the way a real assertion
+/// Replay the whole corpus in order on one solver – the way a real assertion
 /// sequence hits the walk, with shared sub-DAGs and the memo interacting across
-/// terms — and pin every observable effect.
+/// terms – and pin every observable effect.
 ///
 /// The digest is over the full canonical rendering (sets, flags, the ordered
 /// trail, and the per-term intern/BV witnesses), so it also pins the *order* of
@@ -430,8 +430,8 @@ fn corpus_effects_match_the_recursive_implementation() {
 
 /// Same corpus, but each term walked on its own fresh solver, and the
 /// per-solver digests combined.  This pins the effect of each term *in
-/// isolation* — the memo cannot mask a lost child here, because nothing was
-/// claimed before the term was walked — so it catches a regression that the
+/// isolation* – the memo cannot mask a lost child here, because nothing was
+/// claimed before the term was walked – so it catches a regression that the
 /// accumulated run above could hide.
 #[test]
 fn per_term_effects_match_the_recursive_implementation() {
@@ -452,9 +452,9 @@ fn per_term_effects_match_the_recursive_implementation() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Hand-checkable behaviour, in case the digests above ever need re-pinning
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The three registration kinds and the memo, on a formula small enough to
 /// verify by eye: `(bvudiv v (bvadd v w))` compared against `(f i)` and
@@ -573,12 +573,12 @@ fn children_are_visited_left_to_right() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Native-stack bound
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `bvnot(bvnot(...bvnot(x)...))`, `depth` levels over an 8-bit variable, built
-/// with a plain loop — a recursive builder would overflow before the walk under
+/// with a plain loop – a recursive builder would overflow before the walk under
 /// test even ran.
 ///
 /// `intern_term` is used directly rather than `mk_bv_not` so that no folding
@@ -599,8 +599,8 @@ fn build_bvnot_chain(manager: &mut TermManager, depth: usize) -> TermId {
 /// a process abort.  The pinned stack here is an eighth of that, paired with an
 /// eighth of the depth, which pins the same bytes-per-frame ratio.
 ///
-/// A Rust stack overflow is not a panic — it is a fatal runtime abort that
-/// `catch_unwind` cannot intercept — so **the fact that this test returns at all
+/// A Rust stack overflow is not a panic – it is a fatal runtime abort that
+/// `catch_unwind` cannot intercept – so **the fact that this test returns at all
 /// is itself the assertion**.  The recursive predecessor died at ~1556 levels on
 /// 1 MiB at `opt-level = 0` and ~4370 at `opt-level = 1`; on the 128 KiB stack
 /// used here that scales to ~195 and ~546 levels, and 25_000 is two orders of

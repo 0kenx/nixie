@@ -16,7 +16,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::One;
 
-// ─── Public types required by the parent module ──────────────────────────────
+// ======== Public types required by the parent module ========
 
 /// Classifies the direction of a single bound constraint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,7 +70,7 @@ pub struct NormalizeBoundsStats {
     pub derived_inequalities: usize,
 }
 
-// ─── Internal helper ─────────────────────────────────────────────────────────
+// ======== Internal helper ========
 
 /// Internal per-variable bound record.
 #[derive(Debug, Clone)]
@@ -79,7 +79,7 @@ struct BoundInfo {
     upper: Option<BoundValue>,
 }
 
-// ─── Tactic ──────────────────────────────────────────────────────────────────
+// ======== Tactic ========
 
 /// Bounds normalization tactic for linear arithmetic.
 pub struct NormalizeBoundsTactic {
@@ -152,7 +152,7 @@ impl NormalizeBoundsTactic {
         &self.stats
     }
 
-    // ── Bound extraction ──────────────────────────────────────────────────────
+    // ======== Bound extraction ========
 
     fn extract_bounds(&mut self, formula: TermId, tm: &TermManager) -> Result<(), String> {
         let mut stack = vec![formula];
@@ -214,7 +214,7 @@ impl NormalizeBoundsTactic {
         Ok(())
     }
 
-    // ── Bound maintenance ─────────────────────────────────────────────────────
+    // ======== Bound maintenance ========
 
     fn update_lower_bound(&mut self, var: String, new_b: BoundValue) {
         let entry = self.bounds.entry(var).or_insert(BoundInfo {
@@ -260,7 +260,7 @@ impl NormalizeBoundsTactic {
         }
     }
 
-    // ── Conflict detection ────────────────────────────────────────────────────
+    // ======== Conflict detection ========
 
     /// Return the name of the first conflicted variable, if any.
     fn check_conflicts(&self) -> Option<&str> {
@@ -278,7 +278,7 @@ impl NormalizeBoundsTactic {
         None
     }
 
-    // ── Inequality emission ───────────────────────────────────────────────────
+    // ======== Inequality emission ========
 
     fn generate_normalized_inequalities(
         &self,
@@ -342,7 +342,7 @@ impl NormalizeBoundsTactic {
         Ok(derived)
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ======== Helpers ========
 
     fn get_var_name(&self, tid: TermId, tm: &TermManager) -> Option<String> {
         let term = tm.get(tid)?;
@@ -371,7 +371,7 @@ impl Default for NormalizeBoundsTactic {
     }
 }
 
-// ─── Free helper ─────────────────────────────────────────────────────────────
+// ======== Free helper ========
 
 /// Emit a `TermId` for a rational constant.
 ///
@@ -389,7 +389,7 @@ fn rational_to_term(r: &BigRational, tm: &mut TermManager) -> Result<TermId, Str
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tests {

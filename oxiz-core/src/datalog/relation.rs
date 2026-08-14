@@ -697,7 +697,7 @@ mod tests {
     }
 
     // Regression tests for: "Relation::natural_join performs an
-    // unconditional cartesian product" — natural_join must match rows on
+    // unconditional cartesian product" – natural_join must match rows on
     // shared column names, not emit every pair.
 
     #[test]

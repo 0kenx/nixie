@@ -18,7 +18,7 @@ pub struct ModelCompletionConfig {
     /// [`ValueFactoryConfig::zero_numerics`].
     pub use_minimal: bool,
     /// Whether to assign a default value to an unassigned uninterpreted
-    /// function application (a [`crate::ast::TermKind::Apply`] term — this
+    /// function application (a [`crate::ast::TermKind::Apply`] term – this
     /// also covers the regex sublanguage, which lowers to `Apply` under the
     /// hood; see `TermManager::mk_regex_op`). When `false`, such terms are
     /// left unassigned and recorded in [`ModelCompletion::incomplete_terms`]
@@ -48,7 +48,7 @@ pub struct ModelCompletion {
     completed: HashSet<TermId>,
     /// Terms `complete`/`complete_variables` attempted but could not assign a
     /// value to, either because their sort has no sound default
-    /// ([`ValueFactory::default_value`] returned `None` — an unresolved sort
+    /// ([`ValueFactory::default_value`] returned `None` – an unresolved sort
     /// parameter or a datatype sort) or because `complete_functions` /
     /// `complete_arrays` deliberately excluded them. Reset by [`Self::reset`].
     incomplete: HashSet<TermId>,
@@ -118,7 +118,7 @@ impl ModelCompletion {
         // they happened to be interned under, not a fixed magic number).
         // It also had no arm for `TermKind::Var(_)` at all, so every
         // variable completed via `complete_variables` silently fell
-        // through to the wrong `SortId(100)` default — assigning it an
+        // through to the wrong `SortId(100)` default – assigning it an
         // essentially arbitrary uninterpreted value regardless of its real
         // declared sort (Bool, Int, BitVec, ...).
         let Some(t) = manager.get(term) else {
@@ -148,7 +148,7 @@ impl ModelCompletion {
                 model.assign(term, value);
             }
             // Genuinely cannot be defaulted (e.g. a datatype or unresolved
-            // sort-parameter sort) — leave it unassigned rather than
+            // sort-parameter sort) – leave it unassigned rather than
             // fabricate a plausible-looking wrong value.
             None => {
                 self.incomplete.insert(term);
@@ -188,10 +188,10 @@ impl ModelCompletion {
     /// Delegates to the crate's single [`get_children`] definition, which
     /// matches every [`TermKind`] variant exhaustively. This function used to
     /// carry its own partial match with a `_ => {}` catch-all covering roughly
-    /// twenty of the ~110 variants: every other kind — `Select`/`Store`,
+    /// twenty of the ~110 variants: every other kind – `Select`/`Store`,
     /// `Apply`, `Concat` and the rest of the string ops, all of the
     /// floating-point ops, quantifier bodies, datatype constructors and
-    /// selectors — reported *no children at all*, so `complete_variables`
+    /// selectors – reported *no children at all*, so `complete_variables`
     /// silently never reached the variables underneath them and left them
     /// unassigned in the completed model. Adding a `TermKind` variant is now a
     /// compile error in one place instead of a silent gap here.

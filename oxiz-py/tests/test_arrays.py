@@ -1,7 +1,7 @@
 """Tests for array theory support in OxiZ Python bindings.
 
 Covers:
-- ArraySort(index_sort, elem_sort, tm)  — module-level sort constructor
+- ArraySort(index_sort, elem_sort, tm)  – module-level sort constructor
 - mk_var with "Array[Int,Int]" sort string
 - mk_select / mk_store on TermManager
 - Read-over-write sanity (AST structure tests only; no solver invocation)

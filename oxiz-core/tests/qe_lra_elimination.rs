@@ -5,7 +5,7 @@
 //! Each test fixes a quantifier-free matrix `φ(x, y)` with a single real
 //! quantified variable `x` and a single real free variable `y`, states the
 //! hand-derived quantifier-free equivalent `ψ(y)` of `∃x. φ`, and checks that
-//! **both** eliminators produce a formula logically equivalent to `ψ` — by
+//! **both** eliminators produce a formula logically equivalent to `ψ` – by
 //! evaluating the eliminated formula and `ψ` at a dense grid of `y` values
 //! (quarter steps over `[-10, 10]`, which straddles every integer breakpoint of
 //! these fixtures) and asserting they agree at every point. A `false success`
@@ -286,7 +286,7 @@ fn exists_open_interval_from_zero_to_y() {
 
 #[test]
 fn exists_negated_conjunction_via_de_morgan() {
-    // ∃x. ¬((x ≤ y) ∧ (x ≥ y + 1))  — the inner conjunction is unsatisfiable in
+    // ∃x. ¬((x ≤ y) ∧ (x ≥ y + 1))  – the inner conjunction is unsatisfiable in
     // x for every y, so its negation holds for some x ≡ true.
     check_both(
         |tm, x, y| {

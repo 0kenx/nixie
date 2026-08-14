@@ -1017,7 +1017,7 @@ mod tests {
         assert_eq!(roots.len(), 0);
     }
 
-    // ─── atom_constraint / feasible_region (previously an all-reals stub) ────
+    // ======== atom_constraint / feasible_region (previously an all-reals stub) ========
 
     fn ineq_atom(poly: Polynomial, kind: AtomKind) -> Atom {
         let max_var = poly.vars().into_iter().max().unwrap_or(0);

@@ -1,4 +1,4 @@
-//! Regression tests for `Solver::set_random_seed` — the wiring that makes the
+//! Regression tests for `Solver::set_random_seed` – the wiring that makes the
 //! SMT-LIB `:random-seed` option enforceable rather than a silent no-op.
 //!
 //! The seed feeds the CDCL engine's phase-randomization PRNG (sampled with
@@ -26,7 +26,7 @@ fn add_sat_instance(solver: &mut Solver) {
 
 #[test]
 fn seeding_preserves_sat_verdict() {
-    // Every seed — including the degenerate 0 and widely separated values — must
+    // Every seed – including the degenerate 0 and widely separated values – must
     // yield the same SAT verdict for a satisfiable instance.
     for seed in [0u64, 1, 42, 12345, u64::MAX] {
         let mut solver = Solver::new();
@@ -42,7 +42,7 @@ fn seeding_preserves_sat_verdict() {
 
 #[test]
 fn seeding_preserves_unsat_verdict() {
-    // PHP(3,2): 3 pigeons into 2 holes — UNSAT regardless of seed.
+    // PHP(3,2): 3 pigeons into 2 holes – UNSAT regardless of seed.
     for seed in [0u64, 7, 99991] {
         let mut solver = Solver::new();
         solver.set_random_seed(seed);

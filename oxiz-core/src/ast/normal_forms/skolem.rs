@@ -12,9 +12,7 @@ use crate::prelude::*;
 use crate::sort::SortId;
 use smallvec::SmallVec;
 
-// ===========================================================================
-// Skolemization
-// ===========================================================================
+// ======== Skolemization ========
 
 /// Skolemize a formula by eliminating existential quantifiers.
 ///
@@ -502,9 +500,7 @@ fn make_skolem_term(
     }
 }
 
-// ===========================================================================
-// Universal-quantifier elimination
-// ===========================================================================
+// ======== Universal-quantifier elimination ========
 
 /// Eliminate universal quantifiers by replacing them with fresh variables
 ///

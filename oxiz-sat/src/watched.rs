@@ -31,7 +31,7 @@ impl Watcher {
 /// walks it with a read/write index, and moves it back. With `Vec` that take/put
 /// is just a (ptr,len,cap) move; with `SmallVec` it copied the inline buffer
 /// (up to 128 bytes) on every propagated literal and paid a heap spill once a
-/// list exceeded the inline capacity — a measurable propagation hot spot.
+/// list exceeded the inline capacity – a measurable propagation hot spot.
 #[derive(Debug, Clone)]
 pub struct WatchLists {
     /// Watch list for each literal

@@ -20,9 +20,9 @@ use oxiz_proof::proof::Proof;
 use oxiz_proof::{InterpolantExtractor, Partition};
 use std::collections::{BTreeSet, HashMap};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Tiny propositional formula parser + truth-table evaluator (test-only)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[derive(Debug, Clone)]
 enum F {
@@ -184,9 +184,9 @@ fn validate_interpolant(interpolant: &str, a_formulas: &[&str], b_formulas: &[&s
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Scenarios
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The classic shape: A = p ∧ q, B = ¬p. Shared vocabulary is {p}.
 #[test]

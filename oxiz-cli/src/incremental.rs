@@ -3,7 +3,7 @@
 //! The default multi-file batch path gives *each file its own fresh context*,
 //! so a declaration in one file is invisible to the next (see
 //! `processor::process_files_sequential`). Incremental mode instead treats the
-//! entire input — every file, in order, or all of stdin — as **one continuous
+//! entire input – every file, in order, or all of stdin – as **one continuous
 //! incremental session against a single context**: earlier declarations and
 //! assertions remain in scope for later files, and `push`/`pop` span the whole
 //! session.
@@ -12,7 +12,7 @@
 //!
 //! `Context::execute_script` parses each call with a *fresh, script-local*
 //! symbol table (a constant declared by an earlier separate call is unknown to
-//! a later one — see the note in `main::enumerate_additional_models`). Feeding
+//! a later one – see the note in `main::enumerate_additional_models`). Feeding
 //! commands one at a time through separate `execute_script` calls would
 //! therefore fail the moment an assertion referenced a previously-declared
 //! symbol. Concatenating the whole session into one script and executing it

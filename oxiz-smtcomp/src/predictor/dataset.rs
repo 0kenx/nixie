@@ -37,7 +37,7 @@ impl Dataset {
 
     /// Build a dataset by joining benchmark metadata with run results.
     ///
-    /// * Only `Sat` and `Unsat` results are included — timeouts, errors, and
+    /// * Only `Sat` and `Unsat` results are included – timeouts, errors, and
     ///   unknowns are excluded to avoid polluting the training signal.
     /// * Matching is done by `path` equality.
     #[must_use]

@@ -9,7 +9,7 @@
 //! The invariant that makes this safe is the trail's propagation-queue
 //! contract: every literal *strictly before* the propagation head has had all of
 //! its consequences computed.  `propagate()` breaks that contract whenever it
-//! aborts — the conflict is found part way through a literal's watch list, so
+//! aborts – the conflict is found part way through a literal's watch list, so
 //! that literal's remaining watchers are never examined even though the head has
 //! moved past it.
 //!
@@ -19,7 +19,7 @@
 //! returns `Unsat` on the spot.  The head was then left past a literal whose
 //! conflicting clause was never re-examined, so the *next* `solve()` resumed
 //! propagation after it, never revisited the clause, and reported **`Sat` on a
-//! formula refuted by unit propagation alone** — handing the caller a model that
+//! formula refuted by unit propagation alone** – handing the caller a model that
 //! does not satisfy the clause database.
 //!
 //! `(3)`, `(¬3 ∨ 4)`, `(¬4)` is the shrunk witness: two level-0 units sit on the
@@ -122,7 +122,7 @@ fn test_incremental_probe_unit_propagation_unsat() {
     }
 
     // Smallest witness of the same shape, and with chronological backtracking
-    // off — the fix must not depend on that heuristic.
+    // off – the fix must not depend on that heuristic.
     let mut plain = probe_config();
     plain.enable_chronological_backtrack = false;
     for config in [probe_config(), plain] {
@@ -203,7 +203,7 @@ fn test_incremental_probe_model_is_valid() {
 /// inside a normal CI budget.  Any non-zero mismatch count is a soundness bug.
 #[test]
 fn test_incremental_probe_matches_reference() {
-    // xorshift64* — deterministic and dependency-free.
+    // xorshift64* – deterministic and dependency-free.
     let mut state: u64 = 0x2026_0728_5A7F_1200;
     let mut next = move || {
         state ^= state >> 12;
@@ -293,9 +293,9 @@ fn test_incremental_probe_matches_reference() {
 ///
 /// This guards a second, independent defect on the same reuse path.
 /// `pick_branch_var` consumes its candidates destructively (`pop_max` /
-/// `select`), and the no-phase-saving `backtrack` — which every
+/// `select`), and the no-phase-saving `backtrack` – which every
 /// `solve_with_assumptions` probe unwinds through, as do the vivification and
-/// distillation probes — used not to hand the freed variables back to the
+/// distillation probes – used not to hand the freed variables back to the
 /// decision heaps.  Successive probes therefore drained the heaps a little
 /// further each time; once they ran dry the search had nothing left to branch
 /// on, read the empty heap as "all variables assigned", and saved a model with

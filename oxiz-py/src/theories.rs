@@ -20,9 +20,7 @@ use pyo3::prelude::*;
 
 use crate::term::{PySort, PyTerm, PyTermManager, parse_rounding_mode};
 
-// =========================================================================
-// String theory combinators
-// =========================================================================
+// ======== String theory combinators ========
 
 /// Create a string literal Term.
 ///
@@ -92,9 +90,7 @@ pub fn SuffixOf(tm: &PyTermManager, suf: &PyTerm, s: &PyTerm) -> PyTerm {
     PyTerm::bare(inner.mk_str_suffixof(suf.id, s.id))
 }
 
-// =========================================================================
-// Floating-point sort and value constructors
-// =========================================================================
+// ======== Floating-point sort and value constructors ========
 
 /// Return the floating-point sort for a given (exponent-bits, significand-bits) format.
 ///
@@ -244,9 +240,7 @@ impl PyFPRoundingMode {
     }
 }
 
-// =========================================================================
-// Floating-point arithmetic combinators
-// =========================================================================
+// ======== Floating-point arithmetic combinators ========
 
 /// Floating-point addition.
 ///
@@ -290,9 +284,7 @@ pub fn fp_div(tm: &PyTermManager, rm: &str, lhs: &PyTerm, rhs: &PyTerm) -> PyRes
     Ok(PyTerm::bare(inner.mk_fp_div(rounding, lhs.id, rhs.id)))
 }
 
-// =========================================================================
-// Quantifier combinators
-// =========================================================================
+// ======== Quantifier combinators ========
 
 /// Construct a universally-quantified formula.
 ///

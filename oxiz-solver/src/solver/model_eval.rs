@@ -16,18 +16,18 @@
 //!   library cannot know how much stack its caller has: an embedder's worker
 //!   thread typically gets ~1 MiB, and a `fatal runtime error: stack overflow`
 //!   there is a process abort, not a verdict the caller can handle.  Nothing
-//!   bounds that depth from the outside either — the SMT-LIB parser's nesting
+//!   bounds that depth from the outside either – the SMT-LIB parser's nesting
 //!   limit does not apply to terms built through [`TermManager`]'s builder API,
 //!   nor to the lemmas the array-axiom refinement loop synthesises.
 //! * **Its arithmetic is checked.**  [`EvalVal::Num`] is a fixed-width
 //!   `Rational64`, so a sum, difference, product or negation of two
 //!   representable model values need not itself be representable.  Every
 //!   arithmetic step therefore goes through `checked_*` and reports
-//!   [`EvalOutcome::Unrepresentable`] rather than overflowing — see that
+//!   [`EvalOutcome::Unrepresentable`] rather than overflowing – see that
 //!   variant's documentation for why the unchecked version was a soundness bug
 //!   and not merely a robustness one.
 //!
-//! Reference: Z3's `smt_model_checker.cpp` plays the same role — re-checking a
+//! Reference: Z3's `smt_model_checker.cpp` plays the same role – re-checking a
 //! candidate model against the assertions before the verdict is trusted.
 
 use super::types::Model;
@@ -42,7 +42,7 @@ use smallvec::SmallVec;
 /// What evaluating a term under a candidate model produced.
 ///
 /// The two non-value answers are deliberately *not* the same thing, and the
-/// gate treats them differently — see [`Solver::model_refutes_assertions`].
+/// gate treats them differently – see [`Solver::model_refutes_assertions`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum EvalOutcome {
     /// A concrete value the model determines.
@@ -66,10 +66,10 @@ pub(super) enum EvalOutcome {
     /// kept apart from [`EvalOutcome::Undetermined`] because the gate cannot
     /// afford to shrug it off.  Before the arithmetic here was checked, an
     /// overflowing assertion aborted a debug build outright and, in release,
-    /// wrapped: `(< (+ 2^62 2^62) 0)` — false under the model, i.e. a genuine
-    /// violation — wrapped to `i64::MIN < 0` and reported `true`, so the gate
+    /// wrapped: `(< (+ 2^62 2^62) 0)` – false under the model, i.e. a genuine
+    /// violation – wrapped to `i64::MIN < 0` and reported `true`, so the gate
     /// waved the bad model through as `Sat`.  The mirror image
-    /// `(>= (+ 2^62 2^62) 0)` — true under the model — wrapped to `false` and
+    /// `(>= (+ 2^62 2^62) 0)` – true under the model – wrapped to `false` and
     /// refuted a perfectly good one.
     Unrepresentable,
 }
@@ -124,7 +124,7 @@ impl EvalOutcome {
 ///
 /// The recursive version wrote each of these as `match (rec(a)?, rec(b)?)`, and
 /// `?` on the left operand short-circuits before the right one is touched.
-/// Evaluation here is pure — no cache, no model mutation — so the only thing
+/// Evaluation here is pure – no cache, no model mutation – so the only thing
 /// that short-circuit ever changed was the cost, and it is kept for that.
 #[derive(Debug, Clone, Copy)]
 enum EagerKind {
@@ -136,7 +136,7 @@ enum EagerKind {
     Sub,
     /// unary `-`
     Neg,
-    /// `<` (`strict_less`) or `>`; both soften at the boundary — see
+    /// `<` (`strict_less`) or `>`; both soften at the boundary – see
     /// [`cmp_strict`].
     CmpStrict {
         /// `true` for `<`, `false` for `>`.
@@ -308,7 +308,7 @@ impl Frame {
 
     /// Fold one operand outcome into the frame.
     ///
-    /// Returns `Some` when that operand ends the frame there and then — the
+    /// Returns `Some` when that operand ends the frame there and then – the
     /// short-circuiting cases, where the remaining operands must not be
     /// evaluated.
     fn accept(&mut self, values: &mut Vec<EvalVal>, result: EvalOutcome) -> Option<EvalOutcome> {
@@ -506,7 +506,7 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
 /// Booleans come straight from the SAT assignment and are reliable in both
 /// directions.  Numeric equality is trustworthy only in the NEGATIVE direction:
 /// distinct arithmetic values genuinely falsify the equality, but a *collision*
-/// is not evidence — the LP model can assign two variables the same value even
+/// is not evidence – the LP model can assign two variables the same value even
 /// when they were never asserted equal.  Reporting a collision as
 /// `Undetermined` also keeps a negated equality (`distinct` / `not (= ..)`)
 /// inconclusive there instead of a false violation.
@@ -549,7 +549,7 @@ impl Solver {
     /// Returns `true` when it may not, for either of two reasons:
     ///
     /// * a top-level assertion evaluates to a concrete `false` under the model
-    ///   — the model provably violates it (this is the case the name refers
+    ///   – the model provably violates it (this is the case the name refers
     ///   to); or
     /// * a top-level assertion could not be evaluated *at all* because the
     ///   evaluator's fixed-width arithmetic could not represent an intermediate
@@ -570,11 +570,11 @@ impl Solver {
     /// an Int/Real variable is read from the *arithmetic solver*
     /// (`arith.value`), which reports `None` for a variable it does not
     /// actually constrain.  That `None` propagates to `Undetermined` and never
-    /// triggers a downgrade — so a `distinct` / comparison over variables that
+    /// triggers a downgrade – so a `distinct` / comparison over variables that
     /// `build_model` merely *defaulted* to 0 (a genuinely satisfiable formula)
     /// is never mistaken for a violation.  Combined with the strict-inequality
     /// boundary softening (see [`cmp_strict`]), the gate only fires on a
-    /// witness the theory genuinely determined yet the assignment falsifies —
+    /// witness the theory genuinely determined yet the assignment falsifies –
     /// the signature of the SAT core committing an inconsistent trail (e.g. a
     /// clause reported satisfied whose every disjunct is false).  In that case
     /// the reported `Sat` is spurious and the solver answers `Unknown` instead.
@@ -598,7 +598,7 @@ impl Solver {
     ///
     /// This is the *value-only* view of [`Self::eval_in_model_outcome`], for
     /// callers that act on a concrete value and treat every other answer alike
-    /// — currently the array-axiom instantiator, which asks "does the candidate
+    /// – currently the array-axiom instantiator, which asks "does the candidate
     /// model already satisfy this axiom instance?" and re-asserts the instance
     /// whenever the answer is not a definite `true`.  Collapsing
     /// [`EvalOutcome::Unrepresentable`] into `None` is right for that caller:
@@ -622,7 +622,7 @@ impl Solver {
     /// quantifier instantiation, so its violation means the candidate model
     /// contradicts the input itself.  The honest verdict is `Unknown`, not a
     /// continued round of instantiation against a model that can never
-    /// certify the goal — and not a wrong `Sat`.
+    /// certify the goal – and not a wrong `Sat`.
     ///
     /// This is the ground-assertion half of v0.3.2's
     /// `quantified_model_refutes_ground_assertions`; the congruence half is
@@ -657,7 +657,7 @@ impl Solver {
     ///
     /// `depth` is the nesting depth `term` itself sits at, charged against
     /// [`ENCODE_DEPTH_LIMIT`].  Now that the walk is iterative that limit is no
-    /// longer a stack bound — it is a plain *work* bound, with the visible
+    /// longer a stack bound – it is a plain *work* bound, with the visible
     /// outcome [`EvalOutcome::Undetermined`] for anything past it, which is the
     /// same answer the recursive version gave and therefore leaves the gate's
     /// verdict on deep terms unchanged.
@@ -665,7 +665,7 @@ impl Solver {
     /// IMPORTANT: `model.get` is consulted only for *leaf* / opaque terms (the
     /// `Var` and fallback arms of [`Self::open_in_model`]).  Operator terms
     /// (`and` / `or` / `=` / `+` / …) are ALWAYS recomputed structurally from
-    /// their children — never read back from the model cache.  `build_model`
+    /// their children – never read back from the model cache.  `build_model`
     /// records the SAT core's Boolean value for every atom and gate, and when
     /// that core commits an inconsistent trail those cached values are exactly
     /// what must not be trusted (e.g. an `or` gate cached `true` while both
@@ -756,7 +756,7 @@ impl Solver {
                 // For a numeric variable, take the value from the ARITHMETIC
                 // solver, not the built model.  `arith.value` returns `None` for
                 // a variable the solver does not actually constrain, which makes
-                // the whole evaluation inconclusive (never a false downgrade) —
+                // the whole evaluation inconclusive (never a false downgrade) –
                 // exactly the variables `build_model` would have defaulted to 0.
                 if sort == manager.sorts.int_sort || sort == manager.sorts.real_sort {
                     match self.arith.value(term) {
@@ -1021,8 +1021,8 @@ fn parse_value_term(term: TermId, manager: &TermManager) -> EvalOutcome {
 /// …) falls through to the opaque-leaf arm, reads nothing useful from the
 /// model, and answers [`EvalOutcome::Undetermined`].  An assertion built from
 /// bit-vector atoms is therefore *always* inconclusive through that gate, so a
-/// spurious `Sat` whose model violates a bit-vector assertion — the SAT core
-/// committed an inconsistent Boolean trail over the abstracted atoms — sails
+/// spurious `Sat` whose model violates a bit-vector assertion – the SAT core
+/// committed an inconsistent Boolean trail over the abstracted atoms – sails
 /// through unchallenged.  QF_BV regressions `bench_679.smt2` and
 /// `ext_con_064_002_0512.smt2` (both `:status unsat`) were answered `sat`
 /// through exactly this hole.
@@ -1030,8 +1030,8 @@ fn parse_value_term(term: TermId, manager: &TermManager) -> EvalOutcome {
 /// This helper closes it for the value-producing bit-vector operators by
 /// folding them concretely on [`num_bigint::BigUint`].  It returns `None`
 /// (≡ undetermined) for any leaf the model does not pin or any operator it
-/// does not model, which the gate treats as inconclusive — never as a
-/// refutation — so an uninterpreted bit-vector function or a too-wide term
+/// does not model, which the gate treats as inconclusive – never as a
+/// refutation – so an uninterpreted bit-vector function or a too-wide term
 /// cannot turn a genuine `Sat` into a spurious `Unknown`.
 ///
 /// The walk is an explicit-stack post-order traversal (see the module doc on
@@ -1289,20 +1289,20 @@ mod tests {
     use num_rational::Rational64;
     use oxiz_core::ast::{TermId, TermManager};
 
-    /// `2^62` fits `i64`, but `2^62 + 2^62 = 2^63` does not — the smallest
+    /// `2^62` fits `i64`, but `2^62 + 2^62 = 2^63` does not – the smallest
     /// round number that makes `Rational64` addition overflow.
     const HALF_MAX: i64 = 1 << 62;
 
     /// The stack the in-budget regression tests in this module run their
     /// evaluation on.  1 MiB is what an embedder's worker thread typically
-    /// gets, and a native stack overflow aborts the process — so "the closure
+    /// gets, and a native stack overflow aborts the process – so "the closure
     /// returned at all" is itself part of each assertion.
     const WORKER_STACK: usize = 1 << 20;
 
     /// The stack the *past-the-budget* test below runs on.  It is an eighth of
     /// [`WORKER_STACK`], paired with an eighth of that test's depth, so the
     /// bytes-per-frame threshold the test really pins (~21 B per level) is
-    /// unchanged while the term the test has to build — and keep interned —
+    /// unchanged while the term the test has to build – and keep interned –
     /// shrinks by 8x.  Never change one of the two without the other.
     const DEEP_WORKER_STACK: usize = 1 << 17;
 
@@ -1347,7 +1347,7 @@ mod tests {
 
     /// An overflowing `+` under an assertion the model genuinely **violates**.
     ///
-    /// `(< (+ 2^62 2^62) 0)` is false — `2^63` is positive — so the gate must
+    /// `(< (+ 2^62 2^62) 0)` is false – `2^63` is positive – so the gate must
     /// refuse the model.  Unchecked, this wrapped to `i64::MIN < 0` in release
     /// and reported `true`, hiding the violation; in debug it aborted with
     /// `attempt to add with overflow` before answering anything at all.
@@ -1365,7 +1365,7 @@ mod tests {
 
     /// The same overflow under an assertion the model **satisfies**.
     ///
-    /// `(>= (+ 2^62 2^62) 0)` is true, so refusing the model costs precision —
+    /// `(>= (+ 2^62 2^62) 0)` is true, so refusing the model costs precision –
     /// the caller answers `Unknown` for a formula it could have called `Sat`.
     /// That is the deliberate direction: a `false` answer from the gate is
     /// consumed as "report `Sat`", and an assertion the evaluator could not
@@ -1441,7 +1441,7 @@ mod tests {
     ///
     /// `distinct`, a numeric equality collision and a strict comparison at its
     /// boundary are all `Undetermined`, and none of them may downgrade a `Sat`
-    /// — that distinction is the whole reason the outcome is three-valued and
+    /// – that distinction is the whole reason the outcome is three-valued and
     /// not two.
     #[test]
     fn ordinary_inconclusiveness_never_downgrades() {
@@ -1551,8 +1551,8 @@ mod tests {
         assert!(refused.1);
     }
 
-    /// A chain past the evaluator's depth budget answers `Undetermined` — the
-    /// same answer the recursive version gave — rather than aborting the
+    /// A chain past the evaluator's depth budget answers `Undetermined` – the
+    /// same answer the recursive version gave – rather than aborting the
     /// process on the way there.
     ///
     /// Stack and depth scale together (1 MiB/50k -> 128 KiB/6.25k): the

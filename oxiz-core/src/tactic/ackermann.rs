@@ -41,7 +41,7 @@ impl<'a> AckermannizeTactic<'a> {
     /// An application whose arguments reference any quantifier-bound variable
     /// is therefore **not** collected; instead its function symbol is recorded
     /// in `tainted`. The caller then drops *every* application of a tainted
-    /// symbol — even its ground occurrences — because Ackermannizing only some
+    /// symbol – even its ground occurrences – because Ackermannizing only some
     /// occurrences of `f` while leaving quantified ones as real `f` would
     /// decouple the fresh variables from `f` (the linking constraint
     /// `v_a = f(a)` is absent), again unsoundly. If nothing survives, the
@@ -51,15 +51,15 @@ impl<'a> AckermannizeTactic<'a> {
     ///
     /// This used to carry a `bound: &mut Vec<Spur>` push/truncate scope stack
     /// so that a name only counted as bound *within* its binder. Combined
-    /// with the `visited` memo — which is keyed on `TermId` alone and shared
-    /// across the whole goal — that was unsound: because terms are
+    /// with the `visited` memo – which is keyed on `TermId` alone and shared
+    /// across the whole goal – that was unsound: because terms are
     /// hash-consed, a subterm `f(x)` occurring both at the top level and
     /// inside `(forall ((x Int)) ...)` is one single `TermId`. Whichever
     /// occurrence was reached first won; if that was the top-level one, the
     /// walk recorded `f(x)` as a ground application and `visited` then
     /// suppressed the quantified occurrence that would have tainted `f`. The
     /// rewrite step replaces terms by `TermId`, so `f(x)` inside the binder
-    /// was replaced by the ground fresh variable too — exactly the unsoundness
+    /// was replaced by the ground fresh variable too – exactly the unsoundness
     /// the taint mechanism exists to prevent.
     ///
     /// `bound_names` is now the set of *every* name bound by *any*
@@ -69,7 +69,7 @@ impl<'a> AckermannizeTactic<'a> {
     /// happens to share a name with some unrelated binder elsewhere is
     /// tainted and left alone. Over-tainting only makes the tactic decline to
     /// eliminate a symbol (incompleteness, reported honestly as
-    /// `NotApplicable`), whereas under-tainting corrupts the formula — and it
+    /// `NotApplicable`), whereas under-tainting corrupts the formula – and it
     /// makes the scope-insensitive `visited` memo correct by construction,
     /// since "does this term reference a bound name" no longer depends on the
     /// path by which the term was reached.
@@ -78,7 +78,7 @@ impl<'a> AckermannizeTactic<'a> {
     ///
     /// The descent uses an explicit heap stack: the return type is `()`, so a
     /// depth cap could only silently stop collecting applications partway
-    /// through — leaving some occurrences of `f` Ackermannized and others
+    /// through – leaving some occurrences of `f` Ackermannized and others
     /// not, which is precisely the decoupling described above. Children come
     /// from [`crate::ast::traversal::get_children`], which matches `TermKind`
     /// exhaustively; the previous hand-written match ended in `_ => {}` and so
@@ -159,7 +159,7 @@ impl<'a> AckermannizeTactic<'a> {
 
     /// Whether `term` references any variable name in `bound` (every name
     /// bound by any quantifier in the goal). Used to detect applications that
-    /// depend on bound variables — see [`Self::collect_func_apps`].
+    /// depend on bound variables – see [`Self::collect_func_apps`].
     fn references_bound_var(
         &self,
         term: TermId,
@@ -222,7 +222,7 @@ impl<'a> AckermannizeTactic<'a> {
         }
 
         // Drop every application of a symbol that had a quantified
-        // (bound-variable-dependent) occurrence — Ackermannizing it would be
+        // (bound-variable-dependent) occurrence – Ackermannizing it would be
         // unsound.
         if !tainted.is_empty() {
             all_apps.retain(|(func, _, _)| !tainted.contains(func));
@@ -322,8 +322,8 @@ impl<'a> AckermannizeTactic<'a> {
 /// signature. Given a model of the transformed sub-goal, this converter
 /// projects those fresh variables out, returning a model over the original
 /// variables. (The eliminated function symbols' interpretations are
-/// recoverable from the projected-out fresh-variable values — each fresh
-/// variable is exactly the value of its application — but a function table is
+/// recoverable from the projected-out fresh-variable values – each fresh
+/// variable is exactly the value of its application – but a function table is
 /// not representable in the variable-only [`TacticModel`], so it is not
 /// reconstructed here.)
 #[derive(Debug, Clone)]

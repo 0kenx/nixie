@@ -4,9 +4,9 @@
 //! These are black-box, whole-solver checks (the white-box mechanism tests
 //! live next to the code in `src/solver/tests.rs`, `src/vmtf.rs`, and
 //! `src/restart_model.rs`). The property under test here is the one that
-//! matters most for a heuristic port: every config preset — which now
+//! matters most for a heuristic port: every config preset – which now
 //! exercises VMTF, the stable/focused schedule, and reuse-trail restarts by
-//! default — must agree with every other preset (and with every mechanism
+//! default – must agree with every other preset (and with every mechanism
 //! individually disabled) on the SAT/UNSAT verdict. A branching or restart
 //! heuristic is free to change *how fast* a verdict is found; it must never
 //! change *which* verdict is found.

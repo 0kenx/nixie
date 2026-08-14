@@ -216,7 +216,7 @@ impl ResultantComputer {
 
         // Bareiss fraction-free Gaussian elimination to compute the determinant.
         // After full elimination the determinant is mat[0][0] (the (0,0) pivot after
-        // all eliminations, divided by accumulated pivots — but Bareiss tracks
+        // all eliminations, divided by accumulated pivots – but Bareiss tracks
         // the exact fraction-free result in the last surviving element).
         bareiss_det(mat)
     }
@@ -348,7 +348,7 @@ impl ResultantComputer {
             // Scalar leading coefficient: multiply disc by 1/lc.
             let lc_val = lc.constant_value();
             if lc_val.is_zero() {
-                // Degenerate: p's leading coeff is 0 — return disc unchanged.
+                // Degenerate: p's leading coeff is 0 – return disc unchanged.
                 return disc;
             }
             let inv_lc = lc_val.recip();
@@ -395,7 +395,7 @@ impl ResultantComputer {
     }
 }
 
-// ─── Bareiss fraction-free determinant ──────────────────────────────────────
+// ======== Bareiss fraction-free determinant ========
 
 /// Compute the determinant of a square matrix of polynomials using the
 /// Bareiss fraction-free Gaussian elimination algorithm.
@@ -467,7 +467,7 @@ fn bareiss_det(mut mat: Vec<Vec<Polynomial>>) -> Polynomial {
                         // Bareiss guarantees exact divisibility.
                         mat[row][j] = Polynomial::constant(num / den);
                     } else {
-                        // Exact polynomial pseudo-division — remainder should be 0.
+                        // Exact polynomial pseudo-division – remainder should be 0.
                         let (q, _r) = diff.pseudo_div_univariate(&prev_pivot);
                         mat[row][j] = q;
                     }
@@ -483,7 +483,7 @@ fn bareiss_det(mut mat: Vec<Vec<Polynomial>>) -> Polynomial {
     Polynomial::mul(&sign, &raw)
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────────
+// ======== tests ========
 
 #[cfg(test)]
 mod tests {
@@ -643,7 +643,7 @@ mod tests {
         );
     }
 
-    // -- Regression tests for MATH-3 --
+    // ======== Regression tests for MATH-3 ========
 
     #[test]
     fn test_default_resultant_method_is_sylvester() {

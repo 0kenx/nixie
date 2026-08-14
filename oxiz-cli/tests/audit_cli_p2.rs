@@ -1,10 +1,10 @@
 //! Regression tests for the cli-p2 audit findings:
 //!
-//! 1. `oxiz-cli/src/model_counter.rs` — `--count-models` used to always
+//! 1. `oxiz-cli/src/model_counter.rs` – `--count-models` used to always
 //!    report "Exact count: 0" (exact mode) or a fabricated statistical
 //!    estimate derived from text heuristics alone (approximate mode),
 //!    never actually invoking the solver.
-//! 2. `oxiz-cli/src/main.rs` — `--timeout` (and the config-file timeout)
+//! 2. `oxiz-cli/src/main.rs` – `--timeout` (and the config-file timeout)
 //!    were never enforced on the normal (non-portfolio) solving path, so
 //!    a hard instance could hang the CLI forever despite an explicit
 //!    user-supplied limit.
@@ -118,9 +118,9 @@ fn run_with_hard_kill(
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 1: --count-models must invoke the solver honestly.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn count_models_exact_reports_real_count_not_zero() {
@@ -229,9 +229,9 @@ fn count_models_approximate_invokes_solver_not_text_heuristic() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 2: --timeout must actually bound the normal solving path.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn timeout_bounds_a_hard_instance_and_reports_unknown() {

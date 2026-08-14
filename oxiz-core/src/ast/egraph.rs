@@ -144,8 +144,8 @@ impl EGraph {
     /// Implemented as the classic iterative two-pass union-find: the first
     /// pass walks the parent chain up to the root, the second re-points every
     /// node on that path directly at the root. The recursive form this
-    /// replaces consumed one call frame per link in the chain, and — with the
-    /// union step below now using union-by-rank — a chain can no longer grow
+    /// replaces consumed one call frame per link in the chain, and – with the
+    /// union step below now using union-by-rank – a chain can no longer grow
     /// linearly in the number of merges either.
     pub fn find(&mut self, id: EClassId) -> EClassId {
         // Pass 1: locate the root.
@@ -212,7 +212,7 @@ impl EGraph {
     ///
     /// The union is by rank: the shallower tree is attached under the deeper
     /// one, which keeps `find`'s parent chains near-constant. The returned id
-    /// is therefore *not* necessarily `find(id1)` — callers must use the
+    /// is therefore *not* necessarily `find(id1)` – callers must use the
     /// returned root (or call `find` again) rather than assume the first
     /// argument won.
     pub fn merge(&mut self, id1: EClassId, id2: EClassId) -> EClassId {
@@ -443,7 +443,7 @@ impl EGraph {
                 // `BigInt`-backed `IntConst`). An out-of-i64-range constant
                 // previously silently became `0`, which would unsoundly
                 // merge an arbitrary huge constant into the same congruence
-                // class as the literal `0`. Bail out honestly instead — the
+                // class as the literal `0`. Bail out honestly instead – the
                 // term simply cannot be represented in this e-graph.
                 let val_i64 = i64::try_from(val).ok()?;
                 (ENodeKind::IntConst(val_i64), Vec::new())

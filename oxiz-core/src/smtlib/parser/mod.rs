@@ -277,7 +277,7 @@ impl<'a> Parser<'a> {
 
     /// Enable or disable strict undeclared-symbol resolution.
     ///
-    /// When strict (`true`), an unknown symbol is a hard parse error — matching
+    /// When strict (`true`), an unknown symbol is a hard parse error – matching
     /// full-script semantics where every symbol must be declared. When lenient
     /// (`false`), an unknown symbol in a bare term is minted as a fresh
     /// `Bool`-sorted variable. Embedders parsing an isolated fragment against a

@@ -1,6 +1,6 @@
 # oxiz-theories TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 ## Soundness fixes (2026-07-31, v0.3.1)
 
@@ -512,7 +512,7 @@ The oxiz-theories crate is now **100% complete + advanced optimizations** with:
 
 ## Stub completions (2026-06-08)
 
-- [x] `ArithSolver::get_shared_equalities` — replaced `Vec::new()` stub with sound Nelson-Oppen propagation: model-based candidate generation + entailment verification via push/probe_strict/pop. Only emits `x=y` if both `x<y` and `x>y` are infeasible.
-- [x] `ArithSolver::notify_equality` — now actually enforces `x−y=0` via `simplex.add_eq`.
-- [x] `simplex.rs::optimize_linexpr` — new method: reduced-cost pricing, Bland's anti-cycling, ratio test, Unbounded detection; used by `optimize_min`/`optimize_max`.
-- [x] `optimize.rs::optimize_min` — replaced hardcoded `Rational64::zero()` stub with real `simplex.optimize_linexpr()` call.
+- [x] `ArithSolver::get_shared_equalities` – replaced `Vec::new()` stub with sound Nelson-Oppen propagation: model-based candidate generation + entailment verification via push/probe_strict/pop. Only emits `x=y` if both `x<y` and `x>y` are infeasible.
+- [x] `ArithSolver::notify_equality` – now actually enforces `x−y=0` via `simplex.add_eq`.
+- [x] `simplex.rs::optimize_linexpr` – new method: reduced-cost pricing, Bland's anti-cycling, ratio test, Unbounded detection; used by `optimize_min`/`optimize_max`.
+- [x] `optimize.rs::optimize_min` – replaced hardcoded `Rational64::zero()` stub with real `simplex.optimize_linexpr()` call.

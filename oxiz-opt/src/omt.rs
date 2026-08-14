@@ -262,8 +262,8 @@ impl OmtObjective {
 /// Compute the wall-clock deadline for one search call from `timeout_ms`
 /// (0 = no deadline). Shared by `optimize_binary_search`,
 /// `optimize_linear_search`, and `optimize_geometric_search` so that
-/// `OmtConfig::timeout_ms` — previously accepted into the config but never
-/// read anywhere in this module — actually bounds each search loop instead
+/// `OmtConfig::timeout_ms` – previously accepted into the config but never
+/// read anywhere in this module – actually bounds each search loop instead
 /// of running until `max_iterations` regardless of elapsed time.
 fn omt_deadline(timeout_ms: u64) -> Option<std::time::Instant> {
     if timeout_ms == 0 {
@@ -918,7 +918,7 @@ mod tests {
     }
 
     /// `OmtConfig::timeout_ms` used to be accepted into the config but never
-    /// read by `optimize_binary_search` — only `max_iterations` bounded the
+    /// read by `optimize_binary_search` – only `max_iterations` bounded the
     /// loop. This pins down that a wall-clock deadline (with an effectively
     /// unlimited `max_iterations`) now stops the search on its own, and that
     /// stopping early is reported honestly (`Satisfiable`, never a fabricated
@@ -942,7 +942,7 @@ mod tests {
         );
 
         // Deliberately slow checker: each call costs 10ms, so a 30ms deadline
-        // permits only a handful of iterations — far short of the ~30 needed
+        // permits only a handful of iterations – far short of the ~30 needed
         // to converge on this range. If the wall-clock deadline weren't
         // honored, this would instead run for the full `max_iterations`
         // budget (or until convergence).

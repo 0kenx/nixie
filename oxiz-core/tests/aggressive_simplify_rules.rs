@@ -22,9 +22,9 @@ fn aggressive_config() -> SimplificationConfig {
     SimplificationConfig { aggressive: true }
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 1 — De Morgan push-down: Not(And(a,b)) → Or(Not(a), Not(b))
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 1 – De Morgan push-down: Not(And(a,b)) → Or(Not(a), Not(b))
+// ========  ========
 
 #[test]
 fn test_de_morgan_not_and_pushdown() {
@@ -35,7 +35,7 @@ fn test_de_morgan_not_and_pushdown() {
 
     // And(a, b)
     let and_ab = manager.mk_and([a, b]);
-    // Not(And(a,b)) — mk_not only collapses Not(Not(_)), Not(true), Not(false);
+    // Not(And(a,b)) – mk_not only collapses Not(Not(_)), Not(true), Not(false);
     // Not(And(…)) survives construction.
     let not_and = manager.mk_not(and_ab);
 
@@ -55,9 +55,9 @@ fn test_de_morgan_not_and_pushdown() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 2 — Implies(a, false) → Not(a)
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 2 – Implies(a, false) → Not(a)
+// ========  ========
 
 #[test]
 fn test_implies_a_false_reduces_to_not_a() {
@@ -81,9 +81,9 @@ fn test_implies_a_false_reduces_to_not_a() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 3 — Implies(a, a) → true
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 3 – Implies(a, a) → true
+// ========  ========
 
 #[test]
 fn test_implies_reflexive_is_true() {
@@ -103,9 +103,9 @@ fn test_implies_reflexive_is_true() {
     assert_eq!(result, true_id, "Implies(a, a) should reduce to true");
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 4 — BvNot(BvNot(x)) → x
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 4 – BvNot(BvNot(x)) → x
+// ========  ========
 
 #[test]
 fn test_bv_double_not_eliminates() {
@@ -124,9 +124,9 @@ fn test_bv_double_not_eliminates() {
     assert_eq!(result, x, "BvNot(BvNot(x)) should reduce to x");
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 5 — BvAnd identity rules
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 5 – BvAnd identity rules
+// ========  ========
 
 #[test]
 fn test_bv_and_identities() {
@@ -166,9 +166,9 @@ fn test_bv_and_identities() {
     assert_eq!(r5, x, "BvAnd(x, x) should reduce to x");
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 6 — BvOr identity rules
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 6 – BvOr identity rules
+// ========  ========
 
 #[test]
 fn test_bv_or_identities() {
@@ -203,9 +203,9 @@ fn test_bv_or_identities() {
     assert_eq!(r5, x, "BvOr(x, x) should reduce to x");
 }
 
-// ---------------------------------------------------------------------------
-// Rule family 7 — BvXor identity rules
-// ---------------------------------------------------------------------------
+// ========  ========
+// Rule family 7 – BvXor identity rules
+// ========  ========
 
 #[test]
 fn test_bv_xor_identities() {
@@ -233,9 +233,9 @@ fn test_bv_xor_identities() {
     assert_eq!(r3, x, "BvXor(x, 0) should reduce to x");
 }
 
-// ---------------------------------------------------------------------------
-// Integration test 8 — Boolean-heavy goal
-// ---------------------------------------------------------------------------
+// ========  ========
+// Integration test 8 – Boolean-heavy goal
+// ========  ========
 
 /// A chain of Boolean rewrites that exercises multiple rule families in one goal.
 ///
@@ -256,7 +256,7 @@ fn test_integration_boolean_heavy_goal() {
     let and_ab = manager.mk_and([a, b]);
     let f = manager.mk_false();
 
-    // Implies(And(a,b), false) — mk_implies does NOT simplify this.
+    // Implies(And(a,b), false) – mk_implies does NOT simplify this.
     let impl_and_false = manager.mk_implies(and_ab, f);
     // Implies(a, a)
     let impl_aa = manager.mk_implies(a, a);
@@ -282,9 +282,9 @@ fn test_integration_boolean_heavy_goal() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Integration test 9 — BV-heavy goal
-// ---------------------------------------------------------------------------
+// ========  ========
+// Integration test 9 – BV-heavy goal
+// ========  ========
 
 /// Exercises BV identity rules across compound expressions.
 ///

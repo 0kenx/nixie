@@ -213,7 +213,7 @@ impl Solver {
     /// Every fact recorded here feeds a definite-conflict check in
     /// [`Self::check_dt_constraints`], which answers `Unsat` outright, so the
     /// descent is restricted to the sub-terms the assertion set genuinely
-    /// entails — see
+    /// entails – see
     /// [`super::term_walk::asserted_children`] for the rule and its rationale.
     /// The two boundaries this collector used to cross:
     ///
@@ -227,7 +227,7 @@ impl Solver {
     /// recursion: it runs on whatever stack `check_sat`'s caller happens to
     /// have, and an assertion's nesting depth is attacker-controlled, so one
     /// native frame per level is a process abort waiting to happen.  Children
-    /// are pushed in reverse so that popping visits them left to right — the
+    /// are pushed in reverse so that popping visits them left to right – the
     /// order the recursive descent had, which matters because several of the
     /// maps below are order-sensitive (`testers[0]` is compared against the
     /// rest, and `push` order decides it).
@@ -305,7 +305,7 @@ impl Solver {
                 }
                 // `And` / `Or` / `Not` are the only nodes that can carry an
                 // unconditional fact downwards, and `asserted_children` is the
-                // single place that decides which — in particular it refuses to
+                // single place that decides which – in particular it refuses to
                 // hand out `And` conjuncts at negative polarity.
                 TermKind::And(_) | TermKind::Or(_) | TermKind::Not(_) => {
                     let children =
@@ -348,7 +348,7 @@ impl Solver {
     /// same reason as [`Self::collect_dt_constraints_v2`]: the input's nesting
     /// depth is caller-controlled, and one native frame per level is a process
     /// abort waiting to happen.  Children are pushed in reverse so that popping
-    /// visits them left to right — the order the recursive descent had, which
+    /// visits them left to right – the order the recursive descent had, which
     /// the order-sensitive `Vec` pushes below depend on.  There is deliberately
     /// no `visited` set, exactly as before: a shared sub-term contributes its
     /// facts once per occurrence and can be reached at both polarities.
@@ -380,7 +380,7 @@ impl Solver {
                 }
                 // Check for x = Constructor(...) - only collect when in positive
                 // context; a negated equality is a DISequality.  No descent into the
-                // operands either — see `collect_dt_constraints_v2` for why an
+                // operands either – see `collect_dt_constraints_v2` for why an
                 // equality's children are a polarity boundary.
                 TermKind::Eq(lhs, rhs) if in_positive_context => {
                     if let Some(rhs_data) = manager.get(*rhs) {
@@ -486,7 +486,7 @@ mod tests {
 
     /// The polarity boundaries: a tester inside one disjunct of an `Or` is
     /// conditional and must not be harvested, and a *negated* `And` may hand
-    /// out nothing either — `(not (and a b))` is `(or (not a) (not b))`.
+    /// out nothing either – `(not (and a b))` is `(or (not a) (not b))`.
     #[test]
     fn conditional_testers_are_not_harvested() {
         let mut manager = TermManager::new();
@@ -509,7 +509,7 @@ mod tests {
     }
 
     /// `(not (or ((_ is cons) x) p))` *is* `(and (not ..) (not p))`, so the
-    /// tester underneath is entailed — negatively.
+    /// tester underneath is entailed – negatively.
     #[test]
     fn negated_disjunction_entails_its_disjuncts_negatively() {
         let mut manager = TermManager::new();
@@ -615,7 +615,7 @@ mod tests {
         let is_nil = manager.mk_dt_tester("nil", x);
 
         // Positive facts, nested: testers come out left to right, duplicates
-        // and all — each occurrence contributes.
+        // and all – each occurrence contributes.
         let inner = nested_and(&mut manager, is_nil, is_cons);
         let both = nested_and(&mut manager, is_cons, inner);
         let (testers, _) = collect_v1(&manager, both);
@@ -653,7 +653,7 @@ mod tests {
     }
 
     /// The legacy v1 collector walks a deeply nested conjunction on the heap
-    /// too — returning at all on a 128 KiB stack is the proof, since its old
+    /// too – returning at all on a 128 KiB stack is the proof, since its old
     /// recursive descent aborted the process on inputs this deep.
     #[test]
     fn v1_collector_walks_deep_nesting_on_a_worker_stack() {

@@ -198,7 +198,7 @@ impl PortfolioSolver {
     /// Create diverse solver configurations.
     ///
     /// Diversity spans three real, sound axes: restart schedule, the
-    /// [`OrderingStrategy`] (wired via variable relabeling — see
+    /// [`OrderingStrategy`] (wired via variable relabeling – see
     /// [`Self::ordering_relabel_map`]), and a distinct RNG seed per worker so
     /// that two workers sharing a strategy still explore different search
     /// trees instead of being identical clones.
@@ -387,7 +387,7 @@ impl PortfolioSolver {
 
     /// Apply a bijective arithmetic-variable `relabel` to `poly`, returning a
     /// polynomial denoting the same function with variable `v` renamed to
-    /// `relabel[v]`. Purely a renaming — value, degree structure, and
+    /// `relabel[v]`. Purely a renaming – value, degree structure, and
     /// satisfiability are preserved.
     fn relabel_polynomial(poly: &Polynomial, relabel: &[Var]) -> Polynomial {
         let terms: Vec<Term> = poly
@@ -805,7 +805,7 @@ mod tests {
     /// Regression test for the audit finding: `run_parallel_solvers` used
     /// to spawn fresh `NlsatSolver::new()` workers and never copy the base
     /// problem's clauses into them, so an empty (trivially `Sat`) problem
-    /// was solved instead — `PortfolioSolver::solve()` reported `Sat` for
+    /// was solved instead – `PortfolioSolver::solve()` reported `Sat` for
     /// every input, including directly contradictory (UNSAT) ones.
     #[test]
     fn test_portfolio_solve_reports_unsat_for_unsat_problem() {

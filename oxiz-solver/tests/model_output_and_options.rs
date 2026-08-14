@@ -1,6 +1,6 @@
 //! End-to-end tests for model-value output completeness, the `:print-success`
 //! option, named `(get-unsat-core)` minimization, and the SMT-LIB solver-mode
-//! rules that decide when a `get-*` query may answer at all — all driven
+//! rules that decide when a `get-*` query may answer at all – all driven
 //! through [`Context::execute_script`].
 
 use oxiz_solver::Context;
@@ -11,10 +11,10 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // get-model must print valid SMT-LIB values (never the invalid `?`) for
 // FP, Array, and uninterpreted-sort constants.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn get_model_uninterpreted_sort_value_is_valid() {
@@ -90,9 +90,9 @@ fn get_model_fp_value_is_valid() {
     );
 }
 
-// ---------------------------------------------------------------------
-// :print-success — emit `success` after each silently-succeeding command.
-// ---------------------------------------------------------------------
+// ========  ========
+// :print-success – emit `success` after each silently-succeeding command.
+// ========  ========
 
 #[test]
 fn print_success_emits_acknowledgements() {
@@ -135,10 +135,10 @@ fn print_success_get_option_reflects_enabled_state() {
     assert_eq!(output, vec!["success".to_string(), "true".to_string()]);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // (get-unsat-core) reports the named subset actually used in the
 // refutation, minimized to exclude irrelevant named assertions.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn named_unsat_core_reports_used_named_assertions() {
@@ -182,14 +182,14 @@ fn unsat_core_excludes_irrelevant_named_assertion() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // SMT-LIB 2.6 §4.1.1 (solver modes, Fig. 4.1): `get-model`, `get-value`,
 // `get-assignment`, `get-unsat-core`, `get-proof` and
 // `get-unsat-assumptions` are available only in `sat` / `unsat` mode.
 // `assert`, `push`, `pop`, `reset-assertions` and `reset` all return the
 // solver to `assert` mode, where those queries must report an error
 // instead of answering from a superseded assertion stack.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Helper: an SMT-LIB error S-expression, whatever its message.
 fn is_error(response: &str) -> bool {
@@ -300,7 +300,7 @@ fn test_get_model_after_check_sat_is_available() {
 }
 
 /// Control: a `check-sat` *inside* the pushed scope re-establishes `sat`
-/// mode, so the query answers again — invalidation is about staleness, not
+/// mode, so the query answers again – invalidation is about staleness, not
 /// about permanently disabling the command.
 #[test]
 fn test_get_model_available_again_after_recheck_in_new_scope() {
@@ -501,15 +501,15 @@ fn test_get_unsat_assumptions_invalidated_by_pop() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // (get-value ...) must agree with (get-model): a constant that occurs in
 // no assertion has a sort default, not an echo of itself.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_get_value_unconstrained_var_has_default() {
     // Sort-agnostic: Bool, Int, Real, BitVec and String all used to answer
-    // `((x x))` — the queried term echoed back, which is not a value.
+    // `((x x))` – the queried term echoed back, which is not a value.
     for (logic, sort, name, expected) in [
         ("QF_LIA", "Int", "i", "0"),
         ("QF_UF", "Bool", "b", "false"),
@@ -553,7 +553,7 @@ fn test_get_value_agrees_with_get_model_for_unconstrained_var() {
 }
 
 /// Control: completion must not overwrite a value the model really pinned
-/// down — a constrained variable still reports its own value.
+/// down – a constrained variable still reports its own value.
 #[test]
 fn test_get_value_constrained_var_reports_real_value() {
     let output = run(r#"
@@ -583,10 +583,10 @@ fn test_get_value_compound_over_unconstrained_var_is_completed() {
     assert_eq!(output[1], "(((+ x 1) 1))");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // SMT-LIB 2.6 §4.2.5: (reset-assertions) empties the assertion stack but
 // keeps the logic, the declarations and the options.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_reset_assertions_keeps_declarations() {
@@ -718,13 +718,13 @@ fn test_reset_clears_declarations_and_logic() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Datatype model construction.
 //
 // A `sat` verdict has to come with a witness that actually satisfies the
 // formula.  Before the datatype reconstruction existed, `build_model` assigned
 // no datatype-sorted term at all and `(get-model)` completed from the sort
-// default — the first nullary constructor — so `((_ is cons) l)` with
+// default – the first nullary constructor – so `((_ is cons) l)` with
 // `(= (head l) 7)` was answered `sat` (correctly; z3 agrees) with the witness
 // `l = nil`, which satisfies neither conjunct.  The verdict was sound, the
 // witness was not.
@@ -732,10 +732,10 @@ fn test_reset_clears_declarations_and_logic() {
 // Every test below therefore checks the witness *by substitution*: it pins each
 // reported constant to its reported value and re-solves.  A model that
 // satisfies the formula leaves the pinned problem `sat`; one that does not
-// makes it `unsat` — which is exactly what the old `l = nil` output did, so
+// makes it `unsat` – which is exactly what the old `l = nil` output did, so
 // these tests fail loudly against the previous behaviour rather than merely
 // observing that some model was printed.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The `List Int` declaration shared by the datatype model tests.
 const LST: &str = "(declare-datatype Lst ((nil) (cons (head Int) (tail Lst))))";
@@ -842,7 +842,7 @@ fn get_model_datatype_tester_witness_satisfies_formula() {
     );
 }
 
-/// Shape 2: nested reconstruction — two tester levels and a field below both.
+/// Shape 2: nested reconstruction – two tester levels and a field below both.
 #[test]
 fn get_model_datatype_nested_witness_satisfies_formula() {
     let model = model_must_satisfy(
@@ -904,7 +904,7 @@ fn get_model_datatype_nested_sort_field_witness_satisfies_formula() {
     );
 }
 
-/// Shape 6: an unconstrained datatype variable — any well-sorted value is
+/// Shape 6: an unconstrained datatype variable – any well-sorted value is
 /// legitimate, and the default must still be a *valid* one.  z3 prints `nil`.
 #[test]
 fn get_model_unconstrained_datatype_uses_a_valid_default() {
@@ -936,8 +936,8 @@ fn get_model_unconstrained_non_nullary_datatype_is_valid() {
     );
 }
 
-/// A selector applied to the wrong constructor is underspecified in SMT-LIB —
-/// `(head nil)` may be any `Int` — so `((_ is nil) l) ∧ (= (head l) 42)` is
+/// A selector applied to the wrong constructor is underspecified in SMT-LIB –
+/// `(head nil)` may be any `Int` – so `((_ is nil) l) ∧ (= (head l) 42)` is
 /// satisfiable, and the witness must not pretend otherwise.
 #[test]
 fn get_model_selector_on_wrong_constructor_still_yields_a_valid_witness() {
@@ -974,7 +974,7 @@ fn get_model_variable_equal_to_constructor_takes_its_value() {
     assert!(model.contains("(mk-pair 1 2)"), "{model}");
 }
 
-/// Two datatype constants asserted *equal* must report the same witness — one
+/// Two datatype constants asserted *equal* must report the same witness – one
 /// value per equality class, not one per term.
 #[test]
 fn get_model_equal_datatype_constants_share_one_witness() {
@@ -1005,7 +1005,7 @@ fn get_model_equal_datatype_constants_share_one_witness() {
 /// Two datatype terms the search proved *distinct* must not be reported with
 /// the same value.  For a single-constructor datatype the distinctness lives
 /// entirely in the fields, and the linear solver discharges disequalities by
-/// case split rather than by separating witnesses — so both sides used to come
+/// case split rather than by separating witnesses – so both sides used to come
 /// back `(mk-pair 0 0)`, a witness that violates the very disequality asserted.
 #[test]
 fn get_model_disequal_records_get_distinct_witnesses() {
@@ -1050,7 +1050,7 @@ fn get_model_disequal_records_respect_pinned_fields_and_equalities() {
 }
 
 /// `(get-value ..)` and `(get-model)` must never disagree about the same
-/// constant — including a reconstructed datatype value, and including a
+/// constant – including a reconstructed datatype value, and including a
 /// datatype *sub-term* that only exists inside such a value.
 #[test]
 fn get_value_and_get_model_agree_on_datatype_values() {
@@ -1110,9 +1110,9 @@ fn get_model_nullary_constructor_prints_without_parentheses() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Controls: non-datatype model output is unchanged by the datatype work.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Control: arithmetic model output is untouched.
 #[test]
@@ -1162,7 +1162,7 @@ fn control_bv_bool_string_model_output_is_unchanged() {
 }
 
 /// Control: an uninterpreted-sort constant still gets its `@uc_S_n` witness and
-/// an array constant still gets its `((as const ..) ..)` value — the datatype
+/// an array constant still gets its `((as const ..) ..)` value – the datatype
 /// arm must not have displaced either.
 #[test]
 fn control_uninterpreted_and_array_defaults_are_unchanged() {

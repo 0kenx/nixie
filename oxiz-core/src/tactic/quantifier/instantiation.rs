@@ -106,7 +106,7 @@ impl<'a> QuantifierInstantiationTactic<'a> {
     /// Only positive-polarity `Forall` terms are entailed by the goal as
     /// asserted facts, so only those may be instantiated soundly (∀x.φ(x) ⊢
     /// φ(t)).  A `Forall` under a negation, an `Implies` antecedent, or another
-    /// mixed-polarity context is *not* asserted — instantiating it as a fact is
+    /// mixed-polarity context is *not* asserted – instantiating it as a fact is
     /// unsound (it can turn SAT goals into UNSAT).
     ///
     /// Descent stops at any variable-binding boundary that is not a
@@ -128,14 +128,14 @@ impl<'a> QuantifierInstantiationTactic<'a> {
     ///
     /// Iterative (explicit heap stack over `(term, polarity)` pairs): the
     /// return type is `()`, so a depth cap could only silently drop
-    /// quantifiers — costing instantiations without any signal — while the
+    /// quantifiers – costing instantiations without any signal – while the
     /// native recursion it replaces aborted the process outright on a deeply
     /// nested Boolean skeleton.
     ///
     /// `visited` is keyed on `(TermId, polarity)`, which is exactly what the
     /// answer depends on. It stops a shared subformula of the hash-consed DAG
     /// from being re-expanded once per path (previously exponential) and, as
-    /// a side effect, keeps each quantifier out of `out` more than once —
+    /// a side effect, keeps each quantifier out of `out` more than once –
     /// duplicates only produced duplicate patterns and duplicate
     /// instantiation lemmas that consumed the caller's `max_instances`
     /// budget.

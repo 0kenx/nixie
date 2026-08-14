@@ -201,11 +201,11 @@ impl ResolutionGraph {
     ///
     /// * Depth was the resolution-DAG depth, unguarded. The return type is
     ///   `usize`, so there was no channel through which a depth cap could
-    ///   report giving up — a cap could only return a silently wrong depth.
+    ///   report giving up – a cap could only return a silently wrong depth.
     /// * The `visited` set was shared across the whole walk and never
     ///   unwound, so the *second* and later visits to a shared parent
     ///   returned `0` rather than that parent's depth. Any resolution DAG
-    ///   with sharing — i.e. every non-trivial one — got an understated
+    ///   with sharing – i.e. every non-trivial one – got an understated
     ///   depth. `memo` now carries each node's real depth, so sharing is
     ///   exploited instead of corrupting the answer.
     ///

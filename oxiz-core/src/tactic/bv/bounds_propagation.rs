@@ -10,7 +10,7 @@ use crate::prelude::*;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
-// ─── Public types ─────────────────────────────────────────────────────────────
+// ======== Public types ========
 
 /// Interval bounds for a bit-vector value (unsigned representation).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +47,7 @@ pub type BoundsStats = BvBoundsStats;
 /// Public API alias for `BvInterval`.
 pub type Interval = BvInterval;
 
-// ─── Main tactic ──────────────────────────────────────────────────────────────
+// ======== Main tactic ========
 
 /// Bit-vector bounds propagation tactic.
 ///
@@ -87,13 +87,13 @@ impl BvBoundsPropagation {
         &self.stats
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
+    // ======== Private helpers ========
 
     /// Compute bounds for `tid`, memoising the result.
     ///
     /// Iterative (explicit heap stack): the memo already stopped a shared
     /// sub-DAG from being re-analysed, but the walk itself still consumed one
-    /// native frame per nesting level — and the frames were fat, each holding
+    /// native frame per nesting level – and the frames were fat, each holding
     /// owned `BigUint` interval endpoints. The depth of a bit-vector term is
     /// set by the input formula, so the recursion could overflow the stack on
     /// a deeply nested expression. Bounds are now computed strictly bottom-up:
@@ -121,7 +121,7 @@ impl BvBoundsPropagation {
                         .ok_or_else(|| format!("term {:?} not found", current))?;
 
                     match &term.kind {
-                        // ── Binary bit-vector operators ────────────────────
+                        // ======== Binary bit-vector operators ========
                         TermKind::BvAdd(lhs, rhs)
                         | TermKind::BvSub(lhs, rhs)
                         | TermKind::BvMul(lhs, rhs)
@@ -136,13 +136,13 @@ impl BvBoundsPropagation {
                             tasks.push(BoundsTask::Visit(rhs));
                             tasks.push(BoundsTask::Visit(lhs));
                         }
-                        // ── Unary bit-vector operator ──────────────────────
+                        // ======== Unary bit-vector operator ========
                         TermKind::BvNot(arg) => {
                             let arg = *arg;
                             tasks.push(BoundsTask::Fold(current));
                             tasks.push(BoundsTask::Visit(arg));
                         }
-                        // ── Leaves (no operands to visit first) ────────────
+                        // ======== Leaves (no operands to visit first) ========
                         _ => {
                             let interval = self.leaf_bounds(&term.kind);
                             self.stats.bounds_computed += 1;
@@ -177,7 +177,7 @@ impl BvBoundsPropagation {
     /// Bounds for a term with no bit-vector operands of interest.
     fn leaf_bounds(&self, kind: &TermKind) -> BvInterval {
         match kind {
-            // ── Constants ─────────────────────────────────────────────────
+            // ======== Constants ========
             TermKind::BitVecConst { value, width } => {
                 let w = *width as usize;
                 let mask = mask_for(w);
@@ -189,7 +189,7 @@ impl BvBoundsPropagation {
                     width: w,
                 }
             }
-            // ── Variables (unconstrained) and every other term kind ───────
+            // ======== Variables (unconstrained) and every other term kind ========
             _ => full_range(self.default_width()),
         }
     }
@@ -272,7 +272,7 @@ impl Default for BvBoundsPropagation {
     }
 }
 
-// ─── Free arithmetic helpers ─────────────────────────────────────────────────
+// ======== Free arithmetic helpers ========
 
 /// Return the all-ones mask `2^width - 1`.
 fn mask_for(width: usize) -> BigUint {
@@ -440,7 +440,7 @@ fn bv_lshr(value: &BvInterval, shift: &BvInterval) -> BvInterval {
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tests {

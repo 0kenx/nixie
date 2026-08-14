@@ -400,7 +400,7 @@ pub struct ChcParser<'a> {
 /// Unlike the s-expression reader, term construction dispatches through a
 /// large per-operator `match`, so its native frames are fat; the depth is
 /// still attacker-controlled. `parse_term` returns a `Result`, so exceeding
-/// the bound is reported as a real parse error — the input is *rejected*,
+/// the bound is reported as a real parse error – the input is *rejected*,
 /// never silently truncated into a different (wrong) term.
 ///
 /// The value is chosen so that parsing at the limit is safe even when the
@@ -844,9 +844,9 @@ impl<'a> ChcParser<'a> {
     ///
     /// Extracts Horn clause structure from the formula and adds it to the CHC system.
     /// Handles three top-level shapes:
-    ///   - `(forall ((x Sort) ...) (=> body head))` — universal Horn clause
-    ///   - `(=> body head)` — bare implication
-    ///   - any other formula — treated as a constraint / query
+    ///   - `(forall ((x Sort) ...) (=> body head))` – universal Horn clause
+    ///   - `(=> body head)` – bare implication
+    ///   - any other formula – treated as a constraint / query
     fn process_assertion(&mut self, formula: TermId) -> Result<(), ParseError> {
         let Some(term_data) = self.terms.get(formula) else {
             return Err(ParseError::InvalidSyntax(
@@ -1162,9 +1162,9 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Regression tests for the `sweep-backend-misc` triage sweep.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// Decimal literals used to always parse as the constant `0`
     /// regardless of their actual text (`parse_atom`'s `Token::Decimal`
@@ -1389,7 +1389,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── process_assertion tests ───────────────────────────────────────────────
+    // ======== process_assertion tests ========
 
     /// A query assertion `(assert false)` should produce a query rule.
     #[test]
@@ -1445,7 +1445,7 @@ mod tests {
         assert_eq!(system.num_rules(), 2, "should have 2 Horn rules");
     }
 
-    /// 100k nested parentheses must parse without overflowing the stack —
+    /// 100k nested parentheses must parse without overflowing the stack –
     /// the nesting depth is directly attacker-controlled.
     #[test]
     fn parse_sexpr_survives_deep_nesting() {

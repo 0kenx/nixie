@@ -20,8 +20,8 @@ impl TheoryManager<'_> {
     /// atom may have been assigned either polarity: a disequality (`Eq` assigned
     /// false), a `~(a != b)`, or a Bool application assigned false all store
     /// their term as a theory reason.  We therefore emit, for each reason atom,
-    /// the literal opposite to its recorded assignment — `¬var` when the atom is
-    /// currently true, `var` when it is currently false — so the literal is
+    /// the literal opposite to its recorded assignment – `¬var` when the atom is
+    /// currently true, `var` when it is currently false – so the literal is
     /// false as required.  Emitting `¬var` unconditionally (the previous
     /// behaviour) produced a *true* literal for negatively-assigned atoms,
     /// yielding an unsound lemma.
@@ -29,24 +29,24 @@ impl TheoryManager<'_> {
     /// A reason term that names no SAT variable must be *accounted for*, never
     /// dropped.  Omitting one does not weaken the clause, it falsifies it: the
     /// clause then asserts that the surviving literals alone are contradictory.
-    /// That is how `(> (f a) (f b)) ∧ (a > b ∨ a = b)` was refuted — the
+    /// That is how `(> (f a) (f b)) ∧ (a > b ∨ a = b)` was refuted – the
     /// congruence-derived `f(a) = f(b)` carried `f(a)` as its reason, `f(a)` has
     /// no SAT variable, and the clause reduced to the unit `¬(f(a) > f(b))`,
     /// a level-0 conflict on a satisfiable formula.  Three cases exist, and each
     /// is now distinguished explicitly:
     ///
-    /// 1. the term names an atom the SAT core still has assigned — emit its
+    /// 1. the term names an atom the SAT core still has assigned – emit its
     ///    currently-false literal;
     /// 2. the term tags an equality the theory layer *derived* and propagated
-    ///    between theories — expand it into the EUF explanation recorded in
+    ///    between theories – expand it into the EUF explanation recorded in
     ///    [`DerivedReasons`] and resolve those terms in turn;
     /// 3. the term is a registered theory tautology (`10 ≠ 20`, `true ≠ false`,
-    ///    two term ids for the same constant) — it depends on no literal and
+    ///    two term ids for the same constant) – it depends on no literal and
     ///    contributes nothing.
     ///
     /// Anything else is a bug in whichever caller injected the reason.  It trips
     /// a `debug_assert!` so the next occurrence is loud, and falls back to
-    /// [`Self::full_assignment_conflict_clause`] — the negation of the whole
+    /// [`Self::full_assignment_conflict_clause`] – the negation of the whole
     /// current assignment, which is a valid (if maximally imprecise) lemma
     /// whenever the theories genuinely refute that assignment.
     ///
@@ -54,7 +54,7 @@ impl TheoryManager<'_> {
     ///
     /// The fallback itself can fail: with nothing assigned there is no literal
     /// to blame, and the negation of the empty assignment is the **empty
-    /// clause** — an unconditional top-level refutation.  Emitting that would
+    /// clause** – an unconditional top-level refutation.  Emitting that would
     /// turn a lost-justification bug into a silent false `Unsat` in release
     /// builds, where the `debug_assert!`s above are compiled out.  So the
     /// fallback is fallible too, and `None` travels all the way out: see
@@ -72,7 +72,7 @@ impl TheoryManager<'_> {
             //     The same liveness requirement as case (2) applies, for a
             //     stronger reason: `analyze_theory_conflict` needs every literal
             //     of the clause to be *false*, and an atom the SAT core has not
-            //     assigned has no false literal at all — `false_literal_of`
+            //     assigned has no false literal at all – `false_literal_of`
             //     would fall back to `¬var`, which is merely undefined.  A
             //     theory assertion whose reason atom is unassigned is one that
             //     outlived the trail entry that made it: a scope the manager
@@ -106,7 +106,7 @@ impl TheoryManager<'_> {
             //     no longer contains the literals that derived it.  Expanding
             //     such an explanation would put a literal that is *not* false
             //     into the clause, breaking the invariant
-            //     `analyze_theory_conflict` relies on — the same class of bug
+            //     `analyze_theory_conflict` relies on – the same class of bug
             //     as a missing explanation, and reported the same way.
             if let Some(mut justification) = self.derived_reasons.literals(term) {
                 if let Some(stale) = justification.find(|&lit| !self.reason_literal_is_live(lit)) {
@@ -140,7 +140,7 @@ impl TheoryManager<'_> {
 
         // An empty clause is an unconditional top-level refutation.  Reaching
         // one from a non-empty reason set would mean the theory tautologies
-        // alone are inconsistent, which they are not — so treat it as the same
+        // alone are inconsistent, which they are not – so treat it as the same
         // class of bug and fall back to the conservative lemma.
         if conflict.is_empty() && !terms.is_empty() {
             debug_assert!(
@@ -174,7 +174,7 @@ impl TheoryManager<'_> {
     /// stale justification is reported the same way wherever it enters.
     ///
     /// A term that names no SAT variable at all is not a literal and cannot go
-    /// stale — it resolves through the tautology / derived-equality cases
+    /// stale – it resolves through the tautology / derived-equality cases
     /// instead, so it counts as live here.  `assigned_level` (not the polarity
     /// map) is the authority: it is the map pruned on backtrack,
     /// so an entry means the assignment still holds.  The polarity map is
@@ -202,7 +202,7 @@ impl TheoryManager<'_> {
             Some(false) => Lit::pos(var),
             // Polarity unknown.  Unreachable from `terms_to_conflict_clause`,
             // which now rejects any reason atom missing from `assigned_level`,
-            // and `on_assignment` writes both maps together — so an entry in
+            // and `on_assignment` writes both maps together – so an entry in
             // `assigned_level` implies one in the polarity map.  Kept as a
             // total fallback for `full_assignment_conflict_clause`, matching
             // legacy behaviour rather than introducing a panic path.
@@ -216,7 +216,7 @@ impl TheoryManager<'_> {
     /// Every literal is false by construction, so the clause satisfies
     /// `analyze_theory_conflict`'s precondition, and it is entailed whenever the
     /// theories really do refute the current assignment.  It is the weakest
-    /// possible lemma — the search makes minimal progress from it — which is
+    /// possible lemma – the search makes minimal progress from it – which is
     /// exactly why it is reserved for the "cannot justify a reason" path that
     /// `debug_assert!` declares unreachable.  Ordered by variable index so the
     /// clause, and hence the whole search, stays deterministic.
@@ -229,7 +229,7 @@ impl TheoryManager<'_> {
     /// possible claim: the formula is refuted outright, in every context, no
     /// matter what was asserted.  Yet this function is only ever reached from a
     /// path that has just discovered it *cannot account for the justification*
-    /// of a conflict — so the one thing that is certain there is that no
+    /// of a conflict – so the one thing that is certain there is that no
     /// refutation has been established.  In a debug build the `debug_assert!`s
     /// above fire first; in a release build they are gone, and returning the
     /// empty clause would convert a lost-justification bug into a silent false
@@ -254,7 +254,7 @@ impl TheoryManager<'_> {
 /// "refuted, unconditionally, whatever was asserted".  Every code path that can
 /// produce one here is a path that has just failed to justify a conflict, so
 /// producing it would convert a lost-justification bug into a silent false
-/// `Unsat` — in release builds, where the `debug_assert!`s are gone.  These
+/// `Unsat` – in release builds, where the `debug_assert!`s are gone.  These
 /// tests drive the fallback directly, with no assignment on the table.
 #[cfg(test)]
 mod tests {
@@ -385,7 +385,7 @@ mod tests {
 
     /// A reason term that names no SAT variable, no recorded explanation and no
     /// registered tautology cannot be justified.  In a debug build the net fires
-    /// before anything can be emitted — that is what the `debug_assert!`s are
+    /// before anything can be emitted – that is what the `debug_assert!`s are
     /// for, and this pins that they are still armed.
     #[cfg(debug_assertions)]
     #[test]
@@ -401,8 +401,8 @@ mod tests {
 
     /// The release-build half of the test above, and the one that matters for
     /// soundness: with the `debug_assert!`s compiled out, an unjustifiable
-    /// conflict must **abort** — flagging `unjustified_conflict` so the owning
-    /// solver answers `Unknown` — and must never reach the SAT core as a clause,
+    /// conflict must **abort** – flagging `unjustified_conflict` so the owning
+    /// solver answers `Unknown` – and must never reach the SAT core as a clause,
     /// least of all as the empty one.
     #[cfg(not(debug_assertions))]
     #[test]

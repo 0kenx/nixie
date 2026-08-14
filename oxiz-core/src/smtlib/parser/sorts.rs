@@ -84,7 +84,7 @@ impl<'a> Parser<'a> {
             // SMT-LIB theory sort names. Previously these fell through to
             // the generic `Uninterpreted` fallback below, which silently
             // built a fresh free sort indistinguishable from an ordinary
-            // user-chosen name — so `(declare-const m RoundingMode)` looked
+            // user-chosen name – so `(declare-const m RoundingMode)` looked
             // like it worked but produced a variable the FP/regex theories
             // can never actually reason about (rounding modes are only ever
             // consumed as literal `RNE`/`RNA`/... symbols baked into `fp.*`
@@ -114,7 +114,7 @@ impl<'a> Parser<'a> {
             _ => {
                 // Check for sort alias first. The chain is followed
                 // *iteratively* by `resolve_sort_alias_chain`, which returns a
-                // name that is itself no longer an alias — so the recursive
+                // name that is itself no longer an alias – so the recursive
                 // call below descends exactly one level. Re-entering this
                 // function per link is what turned a cyclic alias table into
                 // unbounded recursion (`(define-sort A () A)` then
@@ -224,7 +224,7 @@ impl<'a> Parser<'a> {
     /// datatype sort spelled `name`.
     ///
     /// The `define-sort` handler uses this to reject an abbreviation whose
-    /// body names the abbreviation itself — directly (`(define-sort A () A)`),
+    /// body names the abbreviation itself – directly (`(define-sort A () A)`),
     /// through another abbreviation (`(define-sort A () B)` then
     /// `(define-sort B () A)`, whose body resolves back to `B`), or nested
     /// inside a compound body (`(define-sort A () (Array A Int))`, where the
@@ -255,7 +255,7 @@ impl<'a> Parser<'a> {
                 }
                 // A sort parameter's name is interned by `SortManager` itself
                 // (`mk_sort_parameter` / `define_parametric_sort`), so it must
-                // be resolved through the sort manager's own interner — see
+                // be resolved through the sort manager's own interner – see
                 // the matching arm split in `Printer::write_sort`.
                 SortKind::Parameter(spur) => {
                     if self.manager.sorts.resolve_spur(*spur) == name {
@@ -468,7 +468,7 @@ impl<'a> Parser<'a> {
     /// Convert a SortId to its canonical SMT-LIB2 string representation.
     ///
     /// Driven by an explicit worklist rather than by recursion. The return
-    /// type is a plain `String` — there is no error channel a depth cap could
+    /// type is a plain `String` – there is no error channel a depth cap could
     /// report through, so a cap here could only ever produce a *silently
     /// wrong* sort name. `(Array (Array (Array ...)))` nesting is bounded at
     /// [`MAX_SORT_PARSE_DEPTH`] when it comes from SMT-LIB text, but
@@ -526,7 +526,7 @@ impl<'a> Parser<'a> {
                         // A datatype sort's name is interned by `SortManager`
                         // itself (`mk_datatype_sort` / `declare_datatype`), not
                         // by the term manager, so it must be resolved through
-                        // the sort manager's own interner — the two are
+                        // the sort manager's own interner – the two are
                         // separate `Rodeo`s and crossing them yields the wrong
                         // string or an out-of-range key. Same for a parametric
                         // sort's head name (`declare_parametric_sort`).
@@ -602,7 +602,7 @@ mod tests {
     }
 
     /// A sort *parameter* and a parametric sort application used to both
-    /// render as the literal string `"Unknown"` — two different sorts
+    /// render as the literal string `"Unknown"` – two different sorts
     /// collapsing onto one name, which `define-sort`/`define-fun` then stored
     /// as the parameter's declared sort text. They now render honestly.
     #[test]
@@ -611,7 +611,7 @@ mod tests {
         let int_sort = manager.sorts.int_sort;
         // A sort parameter's name spur is minted by the *sort* manager in
         // every real producer (`mk_sort_parameter`,
-        // `instantiate_parametric_sort`, `define_parametric_sort`) — build it
+        // `instantiate_parametric_sort`, `define_parametric_sort`) – build it
         // the same way here so the pin reflects reality.
         let param = manager.sorts.mk_sort_parameter("T");
         // A parametric sort's head name lives in the *sort* manager's own

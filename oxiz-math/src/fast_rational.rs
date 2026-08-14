@@ -48,9 +48,9 @@ pub enum FastRational {
     Big(Box<BigRational>),
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // GCD helper
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Binary GCD (Stein's algorithm) for `i64` values.
 ///
@@ -82,9 +82,9 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
     (a << shift) as i64
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Construction & normalization
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl FastRational {
     /// Create a new `Small` rational, normalizing sign and reducing to lowest terms.
@@ -292,9 +292,9 @@ impl FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Small-path arithmetic (inlined for performance)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Add two small rationals, falling back to Big on overflow.
 #[inline]
@@ -373,9 +373,9 @@ fn div_small(a_num: i64, a_den: i64, b_num: i64, b_den: i64) -> Option<FastRatio
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: From conversions
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl From<i64> for FastRational {
     #[inline]
@@ -413,9 +413,9 @@ impl From<&BigRational> for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Zero, One
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Zero for FastRational {
     #[inline]
@@ -447,9 +447,9 @@ impl One for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Signed
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Signed for FastRational {
     fn abs(&self) -> Self {
@@ -512,9 +512,9 @@ impl num_traits::Num for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Neg
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Neg for FastRational {
     type Output = FastRational;
@@ -552,9 +552,9 @@ impl Neg for &FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Add
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Add for FastRational {
     type Output = FastRational;
@@ -616,9 +616,9 @@ impl AddAssign<&FastRational> for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Sub
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Sub for FastRational {
     type Output = FastRational;
@@ -680,9 +680,9 @@ impl SubAssign<&FastRational> for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Mul
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Mul for FastRational {
     type Output = FastRational;
@@ -744,9 +744,9 @@ impl MulAssign<&FastRational> for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Div
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Div for FastRational {
     type Output = FastRational;
@@ -795,7 +795,7 @@ impl Div<&FastRational> for &FastRational {
                 Some(r) => r,
                 // `debug_assert!` is compiled out in release builds, which
                 // previously let this fall through to `FastRational::zero()`
-                // — a silently wrong result rather than the documented
+                // – a silently wrong result rather than the documented
                 // panic. Division by zero must fail loudly in both profiles,
                 // matching `i64`'s own division-by-zero behavior.
                 None => panic!("FastRational: division by zero"),
@@ -826,9 +826,9 @@ impl DivAssign<&FastRational> for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Rem (required by Num)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Rem for FastRational {
     type Output = FastRational;
@@ -863,9 +863,9 @@ impl RemAssign for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: PartialEq, Eq
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl PartialEq for FastRational {
     fn eq(&self, other: &Self) -> bool {
@@ -887,9 +887,9 @@ impl PartialEq for FastRational {
 
 impl Eq for FastRational {}
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: PartialOrd, Ord
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl PartialOrd for FastRational {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -924,9 +924,9 @@ impl Ord for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Hash (consistent with Eq)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl Hash for FastRational {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -970,9 +970,9 @@ impl Hash for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Trait: Display
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl fmt::Display for FastRational {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -989,9 +989,9 @@ impl fmt::Display for FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Convenience: from_integer
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl FastRational {
     /// Create a `FastRational` from an integer.
@@ -1001,9 +1001,9 @@ impl FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Max / Min (used by simplex for clamping)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 impl FastRational {
     /// Returns the larger of self and other.
@@ -1019,9 +1019,9 @@ impl FastRational {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Tests
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[cfg(test)]
 mod tests {
@@ -1042,7 +1042,7 @@ mod tests {
         h.finish()
     }
 
-    // -- Construction and normalization --
+    // ======== Construction and normalization ========
 
     #[test]
     fn test_new_small_normalization() {
@@ -1083,7 +1083,7 @@ mod tests {
         assert_eq!(r, small(5, 2));
     }
 
-    // -- Arithmetic --
+    // ======== Arithmetic ========
 
     #[test]
     fn test_add() {
@@ -1137,7 +1137,7 @@ mod tests {
         assert_eq!(a, small(1, 2));
     }
 
-    // -- Overflow -> Big fallback --
+    // ======== Overflow -> Big fallback ========
 
     #[test]
     fn test_overflow_to_big() {
@@ -1151,7 +1151,7 @@ mod tests {
         assert_eq!(result.to_big_rational(), expected);
     }
 
-    // -- Comparison --
+    // ======== Comparison ========
 
     #[test]
     fn test_ord() {
@@ -1168,7 +1168,7 @@ mod tests {
         assert_eq!(s, b);
     }
 
-    // -- Hash consistency --
+    // ======== Hash consistency ========
 
     #[test]
     fn test_hash_consistency() {
@@ -1177,7 +1177,7 @@ mod tests {
         assert_eq!(hash_of(&s), hash_of(&b));
     }
 
-    // -- Signed, Zero, One --
+    // ======== Signed, Zero, One ========
 
     #[test]
     fn test_zero_one() {
@@ -1201,7 +1201,7 @@ mod tests {
         assert_eq!(small(3, 5).abs(), small(3, 5));
     }
 
-    // -- Misc methods --
+    // ======== Misc methods ========
 
     #[test]
     fn test_recip() {

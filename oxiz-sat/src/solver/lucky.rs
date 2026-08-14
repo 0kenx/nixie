@@ -1,11 +1,11 @@
-//! "Lucky" pre-solving phases — faithful port of CaDiCaL's `lucky.cpp`.
+//! "Lucky" pre-solving phases – faithful port of CaDiCaL's `lucky.cpp`.
 //!
 //! Before entering CDCL search, attempt to satisfy the formula without (much)
 //! search by testing a small set of structured phase assignments. Each
 //! strategy is *soundness-preserving*: a failed attempt is backtracked to the
 //! root with no lasting effect on the search state (phases, VSIDS, watches),
 //! because every strategy either
-//!   * performs a pure `O(|literals|)` scan *before* any assignment — so a
+//!   * performs a pure `O(|literals|)` scan *before* any assignment – so a
 //!     doomed guess never perturbs the watched-literal state (this is the key
 //!     difference from the old opt-in guess, which fired one giant doomed
 //!     propagation cascade on dense UNSAT); or
@@ -13,20 +13,20 @@
 //!     first conflict.
 //!
 //! Strategies (tried in CaDiCaL order, see `lucky_phases`):
-//!   1. `lucky_trivially(false)` — every clause has a negative literal
-//!   2. `lucky_trivially(true)`  — every clause has a positive literal
-//!   3. `lucky_ordered(false, true)`  — assume vars false, ascending, w/ flip
-//!   4. `lucky_ordered(true,  true)`  — assume vars true,  ascending, w/ flip
-//!   5. `lucky_ordered(false, false)` — descending
-//!   6. `lucky_ordered(true,  false)` — descending
-//!   7. `lucky_horn(false)`     — first negative literal of each clause
-//!   8. `lucky_horn(true)`      — first positive literal of each clause
+//!   1. `lucky_trivially(false)` – every clause has a negative literal
+//!   2. `lucky_trivially(true)`  – every clause has a positive literal
+//!   3. `lucky_ordered(false, true)`  – assume vars false, ascending, w/ flip
+//!   4. `lucky_ordered(true,  true)`  – assume vars true,  ascending, w/ flip
+//!   5. `lucky_ordered(false, false)` – descending
+//!   6. `lucky_ordered(true,  false)` – descending
+//!   7. `lucky_horn(false)`     – first negative literal of each clause
+//!   8. `lucky_horn(true)`      – first positive literal of each clause
 //!
 //! Flip / discrepancy (`lucky_discrepancy`, CaDiCaL
 //! `lucky_propagate_discrepancy`): when assuming a literal `dec` conflicts we
 //! flip to `¬dec`; if both polarities conflict the partial prefix is doomed and
 //! the strategy aborts. Unlike CaDiCaL this does not analyze a root-level
-//! conflict to learn a unit or prove UNSAT — that would mutate the clause
+//! conflict to learn a unit or prove UNSAT – that would mutate the clause
 //! database / VSIDS and break the snapshot/restore that keeps lucky
 //! transparent to the search (see `lucky_phases`).
 //!
@@ -40,7 +40,7 @@ use smallvec::SmallVec;
 /// Outcome of a single lucky strategy.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LuckyOutcome {
-    /// Strategy neither satisfied the formula nor proved it UNSAT — try the
+    /// Strategy neither satisfied the formula nor proved it UNSAT – try the
     /// next one (trail already restored to the root).
     Fail,
     /// A full model is on the trail (caller saves it).
@@ -50,10 +50,10 @@ enum LuckyOutcome {
 /// Outcome of a single discrepancy probe.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Discrepancy {
-    /// `dec` (or its flip) propagated without conflict — the variable is now
+    /// `dec` (or its flip) propagated without conflict – the variable is now
     /// assigned; the caller re-checks and advances.
     Ok,
-    /// Both `dec` and `¬dec` conflicted — abandon the strategy (trail left at
+    /// Both `dec` and `¬dec` conflicted – abandon the strategy (trail left at
     /// the conflicting level; caller backtracks to the root).
     BothConflict,
 }
@@ -99,7 +99,7 @@ impl Solver {
         //   * the two-watched-literal lists (propagation moves watches) and the
         //     clause literal order (`clause.swap` in propagate);
         //   * the per-mode tick counters, which drive the focused/stable
-        //     stabilization schedule — lucky's propagation would otherwise
+        //     stabilization schedule – lucky's propagation would otherwise
         //     shift the whole restart trajectory.
         // CaDiCaL avoids this by running lucky outside search accounting
         // (START/STOP); oxiz's solver is sensitive to all three, so we restore
@@ -177,11 +177,11 @@ impl Solver {
     /// succeed only when every live original clause contains an unassigned
     /// *positive* literal (then set everything true); otherwise require a
     /// *negative* literal (set everything false). A pure `O(|literals|)` scan
-    /// first — zero propagation on a doomed guess.
+    /// first – zero propagation on a doomed guess.
     fn lucky_trivially(&mut self, want_positive: bool) -> LuckyOutcome {
         debug_assert_eq!(self.trail.decision_level(), 0);
 
-        // Phase 1 — pure scan: bail before assigning anything if any clause
+        // Phase 1 – pure scan: bail before assigning anything if any clause
         // lacks an unassigned literal of the wanted polarity.
         let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
         for &id in &ids {
@@ -216,7 +216,7 @@ impl Solver {
             }
         }
 
-        // Phase 2 — scan passed: assign every free variable to the wanted
+        // Phase 2 – scan passed: assign every free variable to the wanted
         // polarity and confirm with one propagation per variable.
         for i in 0..self.num_vars {
             if self.lucky_interrupted() {
@@ -290,7 +290,7 @@ impl Solver {
                     }
                 }
                 // Not satisfied and no unassigned literal of the wanted
-                // polarity — this strategy cannot work.
+                // polarity – this strategy cannot work.
                 Some(None) => {
                     self.backtrack(0);
                     return LuckyOutcome::Fail;

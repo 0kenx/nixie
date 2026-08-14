@@ -82,7 +82,7 @@ impl UnsatCore {
     /// Deduplicate the core by removing repeated assertions.
     ///
     /// This does *not* attempt to shrink the core further (that requires a
-    /// solver to re-check unsatisfiability after each removal — see
+    /// solver to re-check unsatisfiability after each removal – see
     /// [`Self::minimize_with`]); it only drops assertions that name/term
     /// the exact same [`TermId`] as one already kept.
     pub fn minimize(&mut self) {
@@ -98,8 +98,8 @@ impl UnsatCore {
     /// it removed only if so; otherwise restore it. The result is a subset
     /// of the original core that is still reported unsatisfiable by
     /// `is_unsat` and from which no single further assertion can be
-    /// dropped without losing unsatisfiability (a "delta-minimal" — though
-    /// not necessarily globally minimum-cardinality — unsat core).
+    /// dropped without losing unsatisfiability (a "delta-minimal" – though
+    /// not necessarily globally minimum-cardinality – unsat core).
     ///
     /// Also deduplicates repeated assertions first (see [`Self::minimize`]),
     /// since a duplicate is trivially redundant regardless of what

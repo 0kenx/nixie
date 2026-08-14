@@ -254,8 +254,8 @@ impl TermGraph {
     /// a local catch-all here silently dropped the children of every kind it
     /// did not enumerate (function applications, array and string
     /// operations, `let`, `match`, floating point, ...), which made the
-    /// graph — and every free-variable and influence answer derived from it
-    /// — quietly wrong for those formulas.
+    /// graph – and every free-variable and influence answer derived from it
+    /// – quietly wrong for those formulas.
     fn get_children(kind: &TermKind) -> Vec<TermId> {
         crate::ast::traversal::get_children(kind).to_vec()
     }
@@ -282,7 +282,7 @@ impl TermGraph {
     /// Computed with an explicit stack so that a deep formula cannot
     /// overflow, and used instead of a depth ordering: in a shared DAG a
     /// node's recorded depth is its *first-visit* depth, which is not a
-    /// topological order — a parent could be processed before a child it
+    /// topological order – a parent could be processed before a child it
     /// shares with a shallower part of the formula, silently losing that
     /// child's free variables.
     fn postorder_nodes(&self) -> Vec<TermId> {

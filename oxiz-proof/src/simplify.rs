@@ -831,7 +831,7 @@ mod tests {
         assert_eq!(stats.demorgan_applications, 0);
     }
 
-    // -- todo-1147: combine_inference_chains regression tests --
+    // ======== todo-1147: combine_inference_chains regression tests ========
 
     #[test]
     fn test_combine_inference_chains_basic() {

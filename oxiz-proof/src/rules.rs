@@ -283,9 +283,7 @@ impl UnitPropagationValidator {
     }
 }
 
-// ============================================================================
-// Minimal propositional formula parser (shared by the CNF validators below)
-// ============================================================================
+// ======== Minimal propositional formula parser (shared by the CNF validators below) ========
 
 /// A tiny propositional formula, parsed from the `¬`/`∧`/`∨` textual notation
 /// used by this crate's CNF transformation validators.
@@ -317,7 +315,7 @@ impl Drop for Formula {
     /// [`parse_formula`] is iterative, so it happily builds a `¬`-chain one
     /// level deep per input character. The compiler-generated recursive
     /// `drop_in_place` would then overflow the stack when that formula goes out
-    /// of scope — after the validator has already returned its verdict, which
+    /// of scope – after the validator has already returned its verdict, which
     /// makes it a process abort with no diagnostic at all. Each node is
     /// dismantled into a shallow shell before being released, so the drop that
     /// runs for real is never more than a couple of levels deep.
@@ -847,9 +845,7 @@ impl CnfValidator {
     }
 }
 
-// ============================================================================
-// Minimal linear-arithmetic parser (shared by the Farkas validator)
-// ============================================================================
+// ======== Minimal linear-arithmetic parser (shared by the Farkas validator) ========
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CmpOp {
@@ -1428,9 +1424,9 @@ mod tests {
         assert!(display.contains("3"));
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // De Morgan / distributivity: real structural validation
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_demorgan_and_valid() {
@@ -1500,9 +1496,9 @@ mod tests {
         assert!(v.is_unchecked(), "{v:?}");
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Farkas certificate: real linear-combination arithmetic
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_farkas_valid_contradiction() {
@@ -1555,9 +1551,9 @@ mod tests {
         assert!(v.is_invalid(), "{v:?}");
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Congruence: real union-find over the given equalities
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_congruence_valid_direct() {
@@ -1601,9 +1597,9 @@ mod tests {
         assert!(v.is_valid(), "{v:?}");
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Transitivity: real bridging-term check
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_transitivity_valid() {

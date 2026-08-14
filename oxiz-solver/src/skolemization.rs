@@ -371,7 +371,7 @@ impl SkolemizationContext {
     /// `first_id`.
     ///
     /// Skolem symbols are named positionally (`sk!N` / `skf!N`), so two
-    /// contexts that both start at zero mint the *same* names — and, because
+    /// contexts that both start at zero mint the *same* names – and, because
     /// names are interned, the *same* symbols.  Two unrelated existentials
     /// sharing one witness symbol is a strengthening of the assertion set: it
     /// can turn a satisfiable problem unsatisfiable.  A caller that

@@ -267,7 +267,7 @@ impl AutomorphismDetector {
         // A shared signature is only a *necessary* condition for two variables to
         // be interchangeable, never a sufficient one: for `(a ∨ b) ∧ (c ∨ d)` all
         // four variables share a signature yet `a ↔ c` is not an automorphism.
-        // Emitting an unverified permutation is unsound — the downstream
+        // Emitting an unverified permutation is unsound – the downstream
         // lex-leader / symmetry-breaking predicates it feeds can exclude
         // legitimate models and flip a satisfiable formula to UNSAT. Every
         // candidate transposition is therefore verified to be a genuine

@@ -18,7 +18,7 @@ use super::tuple::Value;
 /// Three-valued outcome of checking a constraint against an assignment
 ///
 /// The CLP checker previously answered `bool`, which forced every case it
-/// could not decide into "satisfied" — and `solve` turns "all satisfied" into
+/// could not decide into "satisfied" – and `solve` turns "all satisfied" into
 /// `Sat`. `Unknown` keeps the undecided case distinguishable so it can be
 /// reported as `ClpResult::Unknown` instead of a wrong `Sat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,8 +57,8 @@ fn numeric_value(value: &Value) -> Option<BigRational> {
 ///
 /// Numeric values are compared numerically even across `Int64`/`UInt64`/
 /// `Rational`. Two values of the same non-numeric variant fall back to
-/// `Value`'s total order. Anything else — a `Null`, or a comparison between
-/// different variants — has no meaningful order and yields `None`, which the
+/// `Value`'s total order. Anything else – a `Null`, or a comparison between
+/// different variants – has no meaningful order and yields `None`, which the
 /// caller turns into `Unknown` rather than a fabricated verdict from the
 /// variant-rank tiebreak.
 fn compare_values(lhs: &Value, rhs: &Value) -> Option<Ordering> {
@@ -864,7 +864,7 @@ impl ClpSolver {
     /// Check a single constraint against the current assignment
     ///
     /// Returns [`CheckResult::Unknown`] whenever the constraint's truth value
-    /// is not determined — either because an operand is still unassigned, or
+    /// is not determined – either because an operand is still unassigned, or
     /// because the operands are not of a kind this checker can interpret
     /// (e.g. a `Linear` constraint over symbols). `Linear` in particular used
     /// to be hard-coded to "satisfied", so `solve` could answer `Sat` with an

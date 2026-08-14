@@ -63,10 +63,10 @@ enum OpKey {
 ///
 /// Returns `None` for terms that must not participate in congruence closure:
 ///
-/// * nullary terms (constants, variables, string/FP literals) — they have no
+/// * nullary terms (constants, variables, string/FP literals) – they have no
 ///   arguments, so congruence over them degenerates to syntactic identity,
 ///   which the hash-consed term manager already provides; and
-/// * binders (`Forall`, `Exists`, `Let`, `Match`) — congruence over a body
+/// * binders (`Forall`, `Exists`, `Let`, `Match`) – congruence over a body
 ///   that mentions bound variables is unsound, because equality of the
 ///   bodies is only meaningful relative to the binding context.
 ///
@@ -463,8 +463,8 @@ impl CongruenceClosure {
     ///
     /// Subterms are visited with an explicit worklist (never by recursion),
     /// so an arbitrarily deep term cannot overflow the stack. Every term with
-    /// a congruence signature — including uninterpreted function
-    /// applications `f(a1..an)` and datatype constructors/selectors/testers —
+    /// a congruence signature – including uninterpreted function
+    /// applications `f(a1..an)` and datatype constructors/selectors/testers –
     /// is registered in the signature table and in the use-lists of its
     /// arguments, which is what makes congruence propagation see it at all.
     pub fn add_term(&mut self, term: TermId, manager: &TermManager) {
@@ -609,7 +609,7 @@ impl CongruenceClosure {
             // equivalence class, not just `term` (the worklist entry) and
             // `root` (the current representative). A term can join the
             // class via an earlier merge without ever being pushed to the
-            // worklist itself or becoming the representative — e.g. class
+            // worklist itself or becoming the representative – e.g. class
             // {x, y, z} with root r: a use of `y` as an argument
             // (`use_list[y]`) would otherwise never be inspected when only
             // `term`/`root`'s own use-lists are consulted, silently

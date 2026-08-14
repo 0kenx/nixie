@@ -1,9 +1,9 @@
 //! Tests for the automatic CaDiCaL-style "lucky" pre-solving phases.
 //!
 //! Lucky runs by default (`enable_lucky = true`). These tests verify:
-//!   * soundness — every reported model satisfies the original clauses, and
+//!   * soundness – every reported model satisfies the original clauses, and
 //!     UNSAT is never reported for a satisfiable formula;
-//!   * coverage — the uniform / Horn / ordered-with-flip strategies actually
+//!   * coverage – the uniform / Horn / ordered-with-flip strategies actually
 //!     fire (`lucky_succeeded` > 0) on appropriately-shaped instances;
 //!   * the discrepancy flip path (forward/backward) finds models that need a
 //!     per-variable polarity flip;
@@ -44,9 +44,9 @@ fn fresh() -> Solver {
     Solver::new()
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Soundness: lucky must not change the SAT/UNSAT verdict.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lucky_unsat_stays_unsat() {
@@ -74,14 +74,14 @@ fn lucky_trivial_sat_unaffected() {
     assert_model_valid(&[vec![1, 2], vec![-1, 3]], s.model());
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Coverage: each strategy fires on an appropriately-shaped instance.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Every clause contains a negative literal → set everything false.
 #[test]
 fn lucky_uniform_negative_fires() {
-    // (¬a ∨ ¬b) ∧ (¬c) — all clauses have a negative literal.
+    // (¬a ∨ ¬b) ∧ (¬c) – all clauses have a negative literal.
     let mut s = fresh();
     let a = s.new_var();
     let b = s.new_var();
@@ -143,10 +143,10 @@ fn lucky_uniform_negative_many_vars() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Discrepancy flip: construct a model that requires flipping exactly one
 // variable off the default phase, and confirm lucky still finds a valid model.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lucky_flip_produces_valid_model() {
@@ -164,9 +164,9 @@ fn lucky_flip_produces_valid_model() {
     assert_eq!(s.model()[b.index()], LBool::True);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Disabling lucky: standard search must still solve correctly.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lucky_disabled_solves_correctly() {
@@ -193,10 +193,10 @@ fn lucky_disabled_solves_correctly() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Randomized soundness: lucky-on and lucky-off must agree, and any SAT model
 // must satisfy the original clauses.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lucky_random_soundness_matches_search() {
@@ -264,9 +264,9 @@ fn lucky_random_soundness_matches_search() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Empty / trivial formula: lucky returns early cleanly (no panic).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lucky_empty_formula_no_panic() {

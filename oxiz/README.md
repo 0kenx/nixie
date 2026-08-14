@@ -95,7 +95,7 @@ match solver.check(&mut tm) {
 | `standard` | Common features (`nlsat` + `optimization` + `proof`) | |
 | `full` | All features (`standard` + `spacer`) | |
 
-Note: the core SAT/theory solver (`Solver`, `TermManager`) is always available — it is not gated behind a `solver` feature.
+Note: the core SAT/theory solver (`Solver`, `TermManager`) is always available – it is not gated behind a `solver` feature.
 
 ## Theory Support
 

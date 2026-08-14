@@ -12,7 +12,7 @@
 //! (`Solver::invalidate_results`, called from `assert` / `push` / `pop` /
 //! `reset`); this module is the other half.  A setter that changed a lever the
 //! solve loop honours *without* announcing it would let the cached verdict of
-//! [`crate::solver::verdict_cache`] answer a question it was never asked —
+//! [`crate::solver::verdict_cache`] answer a question it was never asked –
 //! `(check-sat)` timing out, `:timeout` being raised, and the same `unknown`
 //! coming straight back out of the cache.  So the rule is mechanical: **every
 //! `&mut self` method in this module ends by calling
@@ -38,7 +38,7 @@ impl Solver {
     /// A model and an unsat core are statements about the *assertion stack*, and
     /// a setting change does not move it: a model that satisfied every assertion
     /// still satisfies them under a different timeout or random seed, so
-    /// `(get-model)` stays answerable.  A cached verdict is different — it is a
+    /// `(get-model)` stays answerable.  A cached verdict is different – it is a
     /// statement about what *this configuration's search* concluded, and
     /// `Unknown` in particular is a statement about resource exhaustion rather
     /// than about the goal.  Handing back an `Unknown` produced under a
@@ -106,7 +106,7 @@ impl Solver {
     /// This realises the SMT-LIB `:random-seed` option: the SAT solver samples a
     /// random phase with probability `random_polarity_prob` (nonzero by default),
     /// so the seed genuinely perturbs the decision order and hence which model is
-    /// returned for a satisfiable problem — while never affecting the sat/unsat
+    /// returned for a satisfiable problem – while never affecting the sat/unsat
     /// verdict (soundness is seed-independent).  A seed of `0` reproduces the
     /// default out-of-the-box behaviour.
     pub fn set_random_seed(&mut self, seed: u64) {
@@ -160,7 +160,7 @@ impl Solver {
         // assertions are not available at `set-logic` time.
     }
 
-    /// Feature-driven search-knob routing — the `CFG_AUTO` half of Z3's
+    /// Feature-driven search-knob routing – the `CFG_AUTO` half of Z3's
     /// `smt_setup.cpp`.
     ///
     /// Called once per [`Solver::check_core`] after [`StaticFeatures`] are
@@ -169,7 +169,7 @@ impl Solver {
     /// than the file name; the declared logic remains the coarse router (it
     /// picked the arithmetic solver in [`Self::set_logic`]).
     ///
-    /// `ufidl_shape` is `is_diff_logic(st) && has_uf(st) && logic-allows-DL` —
+    /// `ufidl_shape` is `is_diff_logic(st) && has_uf(st) && logic-allows-DL` –
     /// the shape `setup_QF_UFIDL(st)` fires on.
     ///
     /// # Soundness
@@ -324,7 +324,7 @@ impl Solver {
                     // reads this map to decide whether a shared And/Or gate may
                     // be given a one-sided (Plaisted-Greenbaum) encoding, and
                     // gates are hash-consed across assertions.  Silently skipping
-                    // an occurrence therefore does not mean "no information" — it
+                    // an occurrence therefore does not mean "no information" – it
                     // means the gate keeps whatever one-sided polarity some other
                     // assertion recorded, so the implication direction this
                     // occurrence needed may never be emitted and the gate is

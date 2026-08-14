@@ -13,7 +13,7 @@
 //! `lib.rs`) and had drifted onto an API that this crate never had:
 //! `Solver::trail_size()`, `Solver::get_trail_entry()`, `Solver::status()`,
 //! `SolverStatus`, `Assignment`, `Solver::get_arith_theory()`,
-//! `Solver::check_theory_model_validity()` — none of those exist. Several of
+//! `Solver::check_theory_model_validity()` – none of those exist. Several of
 //! its checks were also nonsense against *any* API: it tested
 //! `solver.trail_size() < 0` and `entry.decision_level < 0` on values that
 //! were compared against `usize` elsewhere in the same function, i.e. they
@@ -24,7 +24,7 @@
 //! # Deliberately absent: CDCL-trail and model-validity checks
 //!
 //! Unlike the SAT core, this crate does not own an assignment trail or a
-//! decision level — those live inside [`oxiz_sat::Solver`] and are already
+//! decision level – those live inside [`oxiz_sat::Solver`] and are already
 //! covered by `oxiz_sat::invariants`. The `Solver::trail` field here is an
 //! *undo journal* for `push`/`pop`, not a CDCL trail, so the only meaningful
 //! invariants over it are the context-stack ones below.

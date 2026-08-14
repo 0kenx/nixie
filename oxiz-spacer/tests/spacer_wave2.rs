@@ -1,10 +1,10 @@
 //! Wave-2 integration tests for oxiz-spacer.
 //!
 //! Covers:
-//! * SP-01 — inductive (MIC) generalization is wired into the PDR engine: a
+//! * SP-01 – inductive (MIC) generalization is wired into the PDR engine: a
 //!   safe instance still verifies with generalization enabled.
 //! * The unsafe path still surfaces a concrete counterexample.
-//! * spacer-distributed — the real `std::thread` parallel portfolio returns the
+//! * spacer-distributed – the real `std::thread` parallel portfolio returns the
 //!   same verdict as the sequential engine, actually spawns worker threads
 //!   (asserted via the coordinator's spawn counter), and terminates.
 

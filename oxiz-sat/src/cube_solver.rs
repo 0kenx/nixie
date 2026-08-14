@@ -184,7 +184,7 @@ impl ParallelCubeSolver {
         let start = Instant::now();
 
         // An internally inconsistent cube (a literal and its negation) is
-        // unsatisfiable regardless of the clause set — short-circuit it.
+        // unsatisfiable regardless of the clause set – short-circuit it.
         if !cube.is_consistent() {
             return CubeSolveResult {
                 cube: cube.clone(),

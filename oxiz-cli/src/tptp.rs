@@ -157,7 +157,7 @@ enum TermEmit<'a> {
 /// `PartialEq` impls of [`TptpFormula`] and [`TptpTerm`]. A `.p` file is
 /// untrusted input auto-detected by extension, so the bound is enforced through
 /// the parsers' existing `Result<_, String>` channel rather than left to
-/// whichever of those walks runs first — a recursive drop firing after the
+/// whichever of those walks runs first – a recursive drop firing after the
 /// parse has already returned would abort the process with no diagnostic at
 /// all. Matches `MAX_PARSE_DEPTH` in oxiz-core's SMT-LIB term parser.
 const MAX_TPTP_DEPTH: usize = 1024;
@@ -386,7 +386,7 @@ impl TptpFormula {
     ///
     /// Iterative (explicit heap stack): formula nesting is fully controlled by
     /// the `.p` file and `-> String` has no channel through which a depth cap
-    /// could report truncation — a truncated formula here would be handed to the
+    /// could report truncation – a truncated formula here would be handed to the
     /// solver as if it were the real problem. Output is byte-identical to the
     /// recursive formulation.
     fn to_smtlib2(&self) -> String {
@@ -639,7 +639,7 @@ impl TptpParser {
     /// continuations). The recursive-descent ladder this replaces cost roughly
     /// seven call frames per parenthesis level and one per `~`, over input that
     /// is an untrusted `.p` file auto-detected by extension and parsed on a
-    /// rayon worker thread with a ~2 MiB stack — so a depth cap large enough to
+    /// rayon worker thread with a ~2 MiB stack – so a depth cap large enough to
     /// be useful could never have fired there. Grammar, associativity and error
     /// messages are unchanged.
     fn parse_formula(&mut self) -> Result<TptpFormula, String> {
@@ -652,7 +652,7 @@ impl TptpParser {
                     "formula nesting exceeds the maximum supported depth of {MAX_TPTP_DEPTH}"
                 ));
             }
-            // ---- prefix operators, then an atomic formula ----
+            // ======== prefix operators, then an atomic formula ========
             let mut value = loop {
                 // Checked here as well as at `'descend`: a run of `~` or
                 // quantifier prefixes grows the continuation stack without
@@ -713,7 +713,7 @@ impl TptpParser {
                 break self.parse_atomic_relation()?;
             };
 
-            // ---- fold the completed value through the pending continuations ----
+            // ======== fold the completed value through the pending continuations ========
             loop {
                 let Some(cont) = conts.pop() else {
                     return Ok(value);

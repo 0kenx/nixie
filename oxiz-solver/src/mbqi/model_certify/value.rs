@@ -15,7 +15,7 @@ use crate::prelude::*;
 ///
 /// Every other sort makes the goal ineligible (see
 /// [`value_sort`]), so a `CertValue` is always a *concrete*
-/// element of the domain — never a symbolic residue.  That is what lets the
+/// element of the domain – never a symbolic residue.  That is what lets the
 /// certifier's verdict be a genuine model check rather than an approximation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CertValue {
@@ -93,7 +93,7 @@ pub(crate) fn value_sort(sort: SortId, manager: &TermManager) -> Option<ValueSor
 
 /// Read a term that is already a literal (`3`, `true`, `false`) as a value.
 ///
-/// Returns `None` for anything else — including a `Neg`/`Sub` that would fold
+/// Returns `None` for anything else – including a `Neg`/`Sub` that would fold
 /// to a literal.  A caller uses this to decide whether a *model entry* is
 /// concrete enough to become a pin, and a non-literal entry is simply skipped:
 /// the candidate interpretation is verified afterwards regardless of where its
@@ -119,13 +119,13 @@ pub(crate) fn rational_of(value: num_rational::Rational64) -> BigRational {
     BigRational::new(BigInt::from(*value.numer()), BigInt::from(*value.denom()))
 }
 
-/// Read a term that denotes a *rational literal* — `2.5`, `3`, `(- 2.5)` — as
+/// Read a term that denotes a *rational literal* – `2.5`, `3`, `(- 2.5)` – as
 /// an exact rational, or `None` for anything else.
 ///
 /// Unlike [`literal_value`] this folds a negation, because SMT-LIB writes a
 /// negative literal as `(- 2.5)` and the resulting `Neg` node is still a
 /// literal in every sense that matters here: its value is fixed by the term
-/// alone, with no interpretation involved.  Deeper arithmetic is *not* folded —
+/// alone, with no interpretation involved.  Deeper arithmetic is *not* folded –
 /// a pin has to come from something the goal states outright.
 pub(crate) fn rational_literal(term: TermId, manager: &TermManager) -> Option<BigRational> {
     // Iterative: `(- (- ... 2.5))` nests as deep as the input says, and a

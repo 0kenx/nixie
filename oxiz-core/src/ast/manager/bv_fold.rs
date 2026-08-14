@@ -9,9 +9,9 @@
 //! # Reducing operands first
 //!
 //! That range is a **precondition**, not a check.  A `BitVecConst` is not
-//! guaranteed to satisfy it — `TermManager::mk_bitvec` interns whatever value
+//! guaranteed to satisfy it – `TermManager::mk_bitvec` interns whatever value
 //! it is given, so a negative or oversized literal is reachable through the
-//! public API — and handing an unreduced operand to, say, [`bv_lshr`] produces
+//! public API – and handing an unreduced operand to, say, [`bv_lshr`] produces
 //! a result that is not a bit-vector value.  Reduce every operand through
 //! [`bv_wrap_unsigned`] before folding, which is what the term builder's own
 //! `bv_const_unsigned` does and what makes a negative literal mean the same
@@ -21,7 +21,7 @@
 //!
 //! This module is public so that every consumer in the workspace routes
 //! through *one* definition of each operator's semantics rather than keeping
-//! its own copy — the term builder, the rewriter, the bit-blaster, the model
+//! its own copy – the term builder, the rewriter, the bit-blaster, the model
 //! evaluator and the solver's early-conflict checks.  Independent copies have
 //! diverged in practice: a duplicate in the array cross-theory check read a
 //! shift distance out of its low 64-bit limb and so folded
@@ -50,8 +50,8 @@ use crate::prelude::*;
 /// Reduce `value` into the unsigned bit-vector range `[0, 2^width)`.
 ///
 /// A bit-vector value is unsigned by definition, so anything outside that
-/// range — a negative literal written by the user, an oversized constant, or
-/// a value handed back by a theory whose relaxation carries no domain bound —
+/// range – a negative literal written by the user, an oversized constant, or
+/// a value handed back by a theory whose relaxation carries no domain bound –
 /// must wrap two's-complement style before it can be interned or printed.
 /// This is the single canonical implementation of that wrap; the term
 /// builder, the SMT-LIB printer and the solver's model builder all route
@@ -113,43 +113,43 @@ fn shift_distance(amount: &BigInt, width: u32) -> Option<usize> {
     usize::try_from(amount).ok()
 }
 
-/// `bvadd` — addition modulo `2^width`.
+/// `bvadd` – addition modulo `2^width`.
 #[must_use]
 pub fn bv_add(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     bv_wrap_unsigned(&(lhs + rhs), width)
 }
 
-/// `bvsub` — subtraction modulo `2^width`.
+/// `bvsub` – subtraction modulo `2^width`.
 #[must_use]
 pub fn bv_sub(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     bv_wrap_unsigned(&(lhs - rhs), width)
 }
 
-/// `bvmul` — multiplication modulo `2^width`.
+/// `bvmul` – multiplication modulo `2^width`.
 #[must_use]
 pub fn bv_mul(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     bv_wrap_unsigned(&(lhs * rhs), width)
 }
 
-/// `bvand` — bitwise conjunction.
+/// `bvand` – bitwise conjunction.
 #[must_use]
 pub fn bv_and(lhs: &BigInt, rhs: &BigInt, _width: u32) -> BigInt {
     lhs & rhs
 }
 
-/// `bvor` — bitwise disjunction.
+/// `bvor` – bitwise disjunction.
 #[must_use]
 pub fn bv_or(lhs: &BigInt, rhs: &BigInt, _width: u32) -> BigInt {
     lhs | rhs
 }
 
-/// `bvxor` — bitwise exclusive disjunction.
+/// `bvxor` – bitwise exclusive disjunction.
 #[must_use]
 pub fn bv_xor(lhs: &BigInt, rhs: &BigInt, _width: u32) -> BigInt {
     lhs ^ rhs
 }
 
-/// `bvnot` — bitwise complement.
+/// `bvnot` – bitwise complement.
 ///
 /// Computed as `all_ones - value` rather than `!value`: `BigInt`'s `Not` is
 /// the infinite-precision two's-complement `-value - 1`, which is negative
@@ -159,7 +159,7 @@ pub fn bv_not(value: &BigInt, width: u32) -> BigInt {
     all_ones(width) - value
 }
 
-/// `bvshl` — left shift by an unsigned distance.
+/// `bvshl` – left shift by an unsigned distance.
 ///
 /// A distance of `width` or more shifts every bit out, so the result is zero
 /// (Reference: Z3's `bv_rewriter::mk_bv_shl`, which returns `mk_zero` for
@@ -172,7 +172,7 @@ pub fn bv_shl(value: &BigInt, amount: &BigInt, width: u32) -> BigInt {
     }
 }
 
-/// `bvlshr` — logical (zero-filling) right shift by an unsigned distance.
+/// `bvlshr` – logical (zero-filling) right shift by an unsigned distance.
 ///
 /// A distance of `width` or more yields zero (Reference: Z3's
 /// `bv_rewriter::mk_bv_lshr`).
@@ -184,7 +184,7 @@ pub fn bv_lshr(value: &BigInt, amount: &BigInt, width: u32) -> BigInt {
     }
 }
 
-/// `bvashr` — arithmetic (sign-filling) right shift by an unsigned distance.
+/// `bvashr` – arithmetic (sign-filling) right shift by an unsigned distance.
 ///
 /// A distance of `width` or more leaves only copies of the sign bit, so the
 /// result is all-ones for a negative value and zero otherwise (Reference:
@@ -209,7 +209,7 @@ pub fn bv_ashr(value: &BigInt, amount: &BigInt, width: u32) -> BigInt {
     }
 }
 
-/// `bvudiv` — unsigned division.
+/// `bvudiv` – unsigned division.
 ///
 /// **Division by zero is total**: SMT-LIB defines `(bvudiv s (_ bv0 m))` as
 /// the all-ones vector, so folding must produce `2^width - 1` rather than
@@ -224,7 +224,7 @@ pub fn bv_udiv(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     }
 }
 
-/// `bvurem` — unsigned remainder.
+/// `bvurem` – unsigned remainder.
 ///
 /// **Remainder by zero is total**: SMT-LIB defines `(bvurem s (_ bv0 m))` as
 /// `s` (Reference: Z3's `bv_rewriter::mk_bv_urem_core`, whose `hi_div0`
@@ -238,7 +238,7 @@ pub fn bv_urem(lhs: &BigInt, rhs: &BigInt, _width: u32) -> BigInt {
     }
 }
 
-/// `bvsdiv` — signed division, truncating towards zero.
+/// `bvsdiv` – signed division, truncating towards zero.
 ///
 /// **Division by zero is total**: unfolding the SMT-LIB definition of
 /// `bvsdiv` at `t = 0` gives `bvudiv s 0 = all-ones = -1` for a non-negative
@@ -261,7 +261,7 @@ pub fn bv_sdiv(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     bv_wrap_unsigned(&(signed_lhs / signed_rhs), width)
 }
 
-/// `bvsrem` — signed remainder, taking the sign of the *dividend*.
+/// `bvsrem` – signed remainder, taking the sign of the *dividend*.
 ///
 /// **Remainder by zero is total**: unfolding the SMT-LIB definition at
 /// `t = 0` gives `s` for both signs of `s` (Reference: Z3's
@@ -277,11 +277,11 @@ pub fn bv_srem(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     bv_wrap_unsigned(&(signed_lhs % signed_rhs), width)
 }
 
-/// `bvsmod` — signed modulus, taking the sign of the *divisor*.
+/// `bvsmod` – signed modulus, taking the sign of the *divisor*.
 ///
 /// **Modulus by zero is total**: unfolding the SMT-LIB definition at `t = 0`
 /// gives `s` (the `abs_t` is zero, so `u = bvurem abs_s 0 = abs_s`, and each
-/// surviving branch reduces back to `s`) — matching Z3's
+/// surviving branch reduces back to `s`) – matching Z3's
 /// `bv_rewriter::mk_bv_smod_core`, whose `hi_div0` branch returns `arg1`.
 #[must_use]
 pub fn bv_smod(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
@@ -313,13 +313,13 @@ pub fn bv_smod(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     bv_wrap_unsigned(&result, width)
 }
 
-/// `concat` — `lhs` occupies the high bits, `rhs` the low `rhs_width` bits.
+/// `concat` – `lhs` occupies the high bits, `rhs` the low `rhs_width` bits.
 #[must_use]
 pub fn bv_concat(lhs: &BigInt, rhs: &BigInt, rhs_width: u32) -> BigInt {
     (lhs << rhs_width as usize) | rhs
 }
 
-/// `(_ extract high low)` — the bits `high ..= low`, right-aligned.
+/// `(_ extract high low)` – the bits `high ..= low`, right-aligned.
 ///
 /// The caller must have checked `low <= high`.
 #[must_use]
@@ -366,7 +366,7 @@ mod tests {
     }
 
     /// `BigInt`'s division must truncate towards zero and its remainder must
-    /// follow the dividend's sign — `bvsdiv` / `bvsrem` fold on that.
+    /// follow the dividend's sign – `bvsdiv` / `bvsrem` fold on that.
     #[test]
     fn test_bigint_division_truncates_towards_zero() {
         assert_eq!(big(-7) / big(2), big(-3));

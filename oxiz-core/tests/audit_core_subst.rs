@@ -13,7 +13,7 @@
 use oxiz_core::ast::SubstitutionBuilder;
 use oxiz_core::{TermKind, TermManager};
 
-// ===================== Finding 2: sort-aware interning =====================
+// ======== Finding 2: sort-aware interning ========
 
 #[test]
 fn same_name_different_sort_do_not_alias() {
@@ -36,7 +36,7 @@ fn same_name_different_sort_do_not_alias() {
     assert_eq!(m.mk_var("x", real_sort), x_real);
 }
 
-// ===================== Finding 1: full-coverage substitution ================
+// ======== Finding 1: full-coverage substitution ========
 
 #[test]
 fn substitute_into_uninterpreted_application() {
@@ -138,7 +138,7 @@ fn substitute_into_distinct_and_div() {
     }
 }
 
-// ===================== Finding 1: binder handling ===========================
+// ======== Finding 1: binder handling ========
 
 #[test]
 fn substitute_does_not_touch_shadowed_bound_variable() {

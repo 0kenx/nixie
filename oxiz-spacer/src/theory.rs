@@ -274,7 +274,7 @@ impl TheoryIntegration {
     }
 
     /// Keep an atomic formula verbatim if it only mentions `vars_to_keep`
-    /// (or is ground), otherwise replace it by `true` — always a sound
+    /// (or is ground), otherwise replace it by `true` – always a sound
     /// over-approximation of anything.
     fn project_atom(atom: TermId, vars_to_keep: &[TermId], manager: &mut TermManager) -> TermId {
         if Self::uses_only_vars(atom, vars_to_keep, manager)
@@ -294,8 +294,8 @@ impl TheoryIntegration {
     /// arm that reported *any* term built from an operator it did not
     /// enumerate (`Ite`, `Implies`, `Apply`, `Select`/`Store`, bitvector and
     /// string operations, …) as "uses other variables" even when it
-    /// mentioned none at all. That last one is safe in direction — it only
-    /// over-projects — but it silently disabled projection for whole
+    /// mentioned none at all. That last one is safe in direction – it only
+    /// over-projects – but it silently disabled projection for whole
     /// theories. Descending uniformly answers the question exactly.
     ///
     /// A dangling id still answers `false`: nothing is known about it, and
@@ -815,9 +815,9 @@ mod tests {
         assert_eq!(generalized[0], x);
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Regression tests for the `sweep-backend-misc` triage sweep.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// `theory_generalize` used to rewrite `x < b` to `x <= b` (dropping
     /// the `-1` its own comment claimed to apply), for every sort

@@ -236,7 +236,7 @@ impl AssumptionCoreMinimizer {
     /// wasn't needed and stays removed; otherwise it is restored. This is
     /// the standard deletion-based ("linear search") core-minimization
     /// algorithm, and genuinely verifying each removal requires solver
-    /// access to the base formula `core` was extracted from — without that,
+    /// access to the base formula `core` was extracted from – without that,
     /// there is no sound way to know which assumptions are actually
     /// necessary, so a caller must pass the same (or an equivalent) solver
     /// instance.

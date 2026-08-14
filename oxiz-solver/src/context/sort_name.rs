@@ -121,7 +121,7 @@ impl Context {
     /// (with `n > 0`), `(_ FloatingPoint eb sb)`, or three-token
     /// `(Array dom rng)` yields [`OxizError::Unsupported`].  It used to
     /// resolve to `Bool` silently, which registered the declared constant
-    /// or function under the *wrong* sort — a silently corrupted model —
+    /// or function under the *wrong* sort – a silently corrupted model –
     /// so the malformed case now propagates as a real error to the
     /// declaring command instead.
     ///
@@ -210,8 +210,8 @@ impl Context {
                     range_expr: std::mem::take(range),
                 }),
                 // A compound form the sort printer never emits.  This used
-                // to fall back to `Bool` silently — a silently wrong sort
-                // on the declared symbol — and is now an honest error.
+                // to fall back to `Bool` silently – a silently wrong sort
+                // on the declared symbol – and is now an honest error.
                 _ => Err(Self::malformed_sort_error(name)),
             };
         }
@@ -378,8 +378,8 @@ mod tests {
     /// *returning* is the proof of the iterative conversion; the result is
     /// additionally pinned to the interned sort the builder API produces.
     ///
-    /// What the test pins is the *ratio* `stack / depth` — about 21 bytes of
-    /// stack per level — not the absolute depth: any recursive resolver needs
+    /// What the test pins is the *ratio* `stack / depth` – about 21 bytes of
+    /// stack per level – not the absolute depth: any recursive resolver needs
     /// far more than that per native frame and still dies here.  The pair was
     /// scaled down from 1 MiB / 50 000 by a factor of 8 on both sides because
     /// the *input re-scanning* is the bottleneck, not the converted walk:

@@ -1,8 +1,6 @@
 //! Restart strategies for SLS: RestartStrategy and RestartManager.
 
-// ============================================================================
-// Restart Strategies
-// ============================================================================
+// ======== Restart Strategies ========
 
 /// Restart strategy
 #[derive(Debug, Clone, Copy, PartialEq)]

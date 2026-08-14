@@ -18,7 +18,7 @@ pub const FEATURE_DIM: usize = 22;
 /// All fields are `f64` to simplify linear-algebra operations.
 /// The vector is split into two conceptual groups:
 ///
-/// * `theory_bits[0..10]` — one-hot encoding of detected theories
+/// * `theory_bits[0..10]` – one-hot encoding of detected theories
 ///   (order: uf, int, real, bv, array, string, fp, dt, nonlinear, quantifier)
 /// * 12 scalar features derived from structural analysis and file metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -1,8 +1,8 @@
 """Tests for quantifier support in OxiZ Python bindings.
 
 Covers:
-- oxiz.ForAll(tm, vars, body)   — universal quantifier combinator
-- oxiz.Exists(tm, vars, body)   — existential quantifier combinator
+- oxiz.ForAll(tm, vars, body)   – universal quantifier combinator
+- oxiz.Exists(tm, vars, body)   – existential quantifier combinator
 - TermManager.mk_forall / mk_exists
 - Multi-variable quantifiers
 - Nested quantifiers

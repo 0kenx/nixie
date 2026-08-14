@@ -1,8 +1,8 @@
 //! Characterisation and equivalence tests for [`Solver::evaluate_bv_expr`].
 //!
 //! The evaluator answers the array cross-theory check on *input-shaped* terms,
-//! so its exact answer on every arm — including the width-mismatch rejections
-//! and the total division/shift cases — is load bearing: a value that is off by
+//! so its exact answer on every arm – including the width-mismatch rejections
+//! and the total division/shift cases – is load bearing: a value that is off by
 //! one bit turns a satisfiable formula into a reported conflict.  Every arm is
 //! pinned here by value, and the whole corpus is pinned by digest.
 
@@ -51,7 +51,7 @@ impl Env {
         var
     }
 
-    /// A variable with no binding — the evaluator must give up on it.
+    /// A variable with no binding – the evaluator must give up on it.
     fn free_var(&mut self, name: &str, width: u32) -> TermId {
         let sort = self.manager.sorts.bitvec(width);
         self.manager.mk_var(name, sort)
@@ -69,7 +69,7 @@ impl Env {
     /// The width the node built from `operand` should carry.
     ///
     /// The fallback is reached only for the corpus's non-bit-vector poison
-    /// leaf, whose parent node's sort the evaluator never reads — it takes
+    /// leaf, whose parent node's sort the evaluator never reads – it takes
     /// widths off operand *values*, not off the node.
     fn width_of(&self, operand: TermId) -> u32 {
         self.manager
@@ -103,7 +103,7 @@ fn all_ones(width: u32) -> BigInt {
     (BigInt::one() << width as usize) - BigInt::one()
 }
 
-// ── Leaves ────────────────────────────────────────────────────────────────
+// ======== Leaves ========
 
 /// A literal evaluates to itself, carrying its own declared width.
 #[test]
@@ -124,7 +124,7 @@ fn bound_variable_takes_the_environment_width() {
     assert_eq!(env.eval(x), val(9, 8));
 }
 
-/// An unbound variable is not evaluable — never a defaulted zero.
+/// An unbound variable is not evaluable – never a defaulted zero.
 #[test]
 fn free_variable_is_not_evaluable() {
     let mut env = Env::new();
@@ -138,7 +138,7 @@ fn free_variable_is_not_evaluable() {
 /// The four bit-vector comparisons are Boolean-sorted predicates, not
 /// bit-vector expressions, and `select` is an array read with no model here.
 /// The `ite` in this list has a *bit-vector* condition, which is not a condition
-/// at all — `ite` with a genuine Boolean condition folds, and has its own tests.
+/// at all – `ite` with a genuine Boolean condition folds, and has its own tests.
 #[test]
 fn non_bitvector_kinds_are_not_evaluable() {
     let mut env = Env::new();
@@ -200,7 +200,7 @@ fn every_bitvector_kind_folds() {
     }
 }
 
-// ── Width propagation ─────────────────────────────────────────────────────
+// ======== Width propagation ========
 
 /// Every width-checked binary op refuses mismatched operand widths outright
 /// rather than picking one of the two widths.
@@ -252,7 +252,7 @@ fn a_mismatch_deep_inside_aborts_the_whole_term() {
     assert_eq!(env.eval(outer), None);
 }
 
-// ── Arithmetic ────────────────────────────────────────────────────────────
+// ======== Arithmetic ========
 
 /// `bvadd` wraps modulo `2^width`.
 #[test]
@@ -264,7 +264,7 @@ fn add_wraps() {
     assert_eq!(env.eval(sum), val(44, 8));
 }
 
-/// `bvsub` wraps modulo `2^width` and never yields a negative value —
+/// `bvsub` wraps modulo `2^width` and never yields a negative value –
 /// `0 - 1` is all-ones, not `-1`.
 #[test]
 fn sub_wraps_without_going_negative() {
@@ -341,7 +341,7 @@ fn division_extremes_stay_in_range() {
     assert_eq!(env.eval(remainder), val(0, 8));
 }
 
-// ── Bitwise ───────────────────────────────────────────────────────────────
+// ======== Bitwise ========
 
 /// `bvand` / `bvor` / `bvxor` are bitwise within the width.
 #[test]
@@ -357,7 +357,7 @@ fn bitwise_ops() {
     assert_eq!(env.eval(xor), val(0b0110, 8));
 }
 
-/// `bvnot` complements *within the width* — it does not leak the
+/// `bvnot` complements *within the width* – it does not leak the
 /// infinite-precision two's complement `-value - 1`.
 #[test]
 fn not_stays_within_the_width() {
@@ -375,7 +375,7 @@ fn not_stays_within_the_width() {
     assert_eq!(env.eval(flipped_one), val(254, 8));
 }
 
-// ── Shifts ────────────────────────────────────────────────────────────────
+// ======== Shifts ========
 
 /// A shift distance of at least the width shifts every bit out.
 #[test]
@@ -436,7 +436,7 @@ fn lshr_zero_fills() {
 /// evaluated to `x` instead of `0`.  On a 65-bit sort that distance is a
 /// perfectly well-sorted literal, and the wrong value feeds
 /// `check_cross_theory_conflict`, which reports UNSAT when two reads of one
-/// array index disagree — so the bug could manufacture a spurious `unsat`.
+/// array index disagree – so the bug could manufacture a spurious `unsat`.
 #[test]
 fn shift_distance_past_a_u64_limb_still_clears_the_value() {
     let mut env = Env::new();
@@ -459,8 +459,8 @@ fn shift_distance_past_a_u64_limb_still_clears_the_value() {
 ///
 /// `TermManager::mk_bitvec` does not normalise its argument, so a negative or
 /// oversized literal is reachable through the public API.  Every leaf here goes
-/// through `bv_fold::bv_wrap_unsigned` — the same reduction the term builder's
-/// `bv_const_unsigned`, the SMT-LIB printer and the model builder apply — so
+/// through `bv_fold::bv_wrap_unsigned` – the same reduction the term builder's
+/// `bv_const_unsigned`, the SMT-LIB printer and the model builder apply – so
 /// `(_ bv-1 8)` is `255` here exactly as it prints as `#xff`.
 ///
 /// Three behaviours have now been given for this input.  The original read the
@@ -492,7 +492,7 @@ fn out_of_range_literals_are_reduced() {
     assert_eq!(env.eval(var), val(254, 8));
 }
 
-// ── Signed operators, `concat` and `extract` ──────────────────────────────
+// ======== Signed operators, `concat` and `extract` ========
 
 /// `bvsdiv` reads both operands as two's complement and truncates **towards
 /// zero** (not floor): `-7 / 2` is `-3`, i.e. `249 / 2 = 253` at width 8.
@@ -530,7 +530,7 @@ fn sdiv_by_zero_is_total_and_sign_dependent() {
 }
 
 /// The signed extreme: `INT_MIN / -1` overflows in fixed-width two's
-/// complement, and SMT-LIB's answer is the wrapped one — `-128 / -1 = 128`,
+/// complement, and SMT-LIB's answer is the wrapped one – `-128 / -1 = 128`,
 /// which is `INT_MIN` again.  Exact `BigInt` arithmetic computes `128` and the
 /// reduction keeps it in range; nothing panics and nothing saturates.
 #[test]
@@ -691,9 +691,9 @@ fn new_kinds_compose() {
     assert_eq!(env.eval(matched), val(0xA6, 8));
 }
 
-// ── Structure ─────────────────────────────────────────────────────────────
+// ======== Structure ========
 
-/// A variable substituted under arithmetic — the pattern the cross-theory
+/// A variable substituted under arithmetic – the pattern the cross-theory
 /// check exists for: `x = 5` makes `bvadd(x, 1)` evaluate to `6`.
 #[test]
 fn variables_are_substituted_under_arithmetic() {
@@ -721,7 +721,7 @@ fn a_shared_subterm_evaluates_the_same_under_both_parents() {
 }
 
 /// A single unevaluable leaf anywhere in the term makes the whole term
-/// unevaluable — the failure is not swallowed at the arm that saw it.
+/// unevaluable – the failure is not swallowed at the arm that saw it.
 #[test]
 fn one_unevaluable_leaf_defeats_the_whole_term() {
     let mut env = Env::new();
@@ -735,7 +735,7 @@ fn one_unevaluable_leaf_defeats_the_whole_term() {
     assert_eq!(env.eval(term), None);
 }
 
-/// Nesting on the right-hand operand is evaluated too — a frame that forgot
+/// Nesting on the right-hand operand is evaluated too – a frame that forgot
 /// its second operand would silently reuse the first.
 #[test]
 fn right_hand_nesting_is_evaluated() {
@@ -751,7 +751,7 @@ fn right_hand_nesting_is_evaluated() {
     assert_eq!(env.eval(reversed), val(252, 8));
 }
 
-// ── `ite` and its conditions ──────────────────────────────────────────────
+// ======== `ite` and its conditions ========
 
 /// `ite` folds only the **taken** branch.
 ///
@@ -954,7 +954,7 @@ fn ite_composes_under_arithmetic() {
     assert_eq!(env.eval(sum), val(6, 8));
 }
 
-// ── Corpus equivalence ────────────────────────────────────────────────────
+// ======== Corpus equivalence ========
 
 /// A deterministic 64-bit xorshift, so the corpus below is reproducible
 /// without a random-number dependency.
@@ -1022,7 +1022,7 @@ impl Pool {
 /// Draw two operands and build one operator node over them, returning it with
 /// its expanded tree size.  `None` when the draw would exceed the tree cap.
 ///
-/// `op_count` selects how many shapes are in play — [`LEGACY_CORPUS_OPS`] for
+/// `op_count` selects how many shapes are in play – [`LEGACY_CORPUS_OPS`] for
 /// the corpus the pre-delegation implementation was compared against, or
 /// [`EXTENDED_CORPUS_OPS`] to include the newly covered kinds.  Slots `0..12`
 /// draw no extra randomness, so passing the legacy count reproduces the legacy
@@ -1128,7 +1128,7 @@ fn boundary_values(width: u32) -> [BigInt; 6] {
 ///
 /// The first layer is one pool per width whose operands always agree in width,
 /// so the arithmetic, bitwise and shift arms are exercised on terms that
-/// actually evaluate — including the wrap-around and total-division cases,
+/// actually evaluate – including the wrap-around and total-division cases,
 /// since every pool starts from that width's boundary literals.
 ///
 /// The second layer draws operands across widths and mixes in a free variable
@@ -1256,13 +1256,13 @@ fn corpus_digest(env: &Env, terms: &[TermId]) -> (u64, usize) {
 /// against.  Every one of its 4105 answers was compared term by term against a
 /// verbatim copy of that implementation:
 ///
-/// * **4099 identical** — same value at the same width, or `None` in both.
+/// * **4099 identical** – same value at the same width, or `None` in both.
 /// * **6 answered where it did not**, all reached through the three poison
 ///   leaves the corpus plants (`bvashr`, `bvsdiv`, `concat` over two width-4
 ///   literals) plus three terms built over them: `bvashr(0,1) = 0`,
 ///   `bvsdiv(0,1) = 0`, `concat(0,1) = 1@8`, `bvudiv(x, 0) = all-ones`,
 ///   `bvnot(0) = 15@4`, `bvand(0, x) = 0`.
-/// * **0 regressions** — no term it could answer is answered differently now.
+/// * **0 regressions** – no term it could answer is answered differently now.
 ///
 /// So `PINNED_EVALUABLE` is 3878 + 6, and the digest below differs from the
 /// recursive one (`10912996395759728779`) in exactly those six positions.  Any
@@ -1288,8 +1288,8 @@ const LEGACY_PINNED_DIGEST: u64 = 1_998_543_053_400_706_908;
 ///
 /// Same generator, but drawing from every shape as well: `bvashr`, `bvsdiv`,
 /// `bvsrem`, `concat`, in-range `extract`, and `ite` over each of the five
-/// comparisons.  Nothing pins these answers to a previous implementation —
-/// there was none — so the value tests above are what establish them and this
+/// comparisons.  Nothing pins these answers to a previous implementation –
+/// there was none – so the value tests above are what establish them and this
 /// digest is what keeps them from drifting.
 #[test]
 fn extended_corpus_matches_the_pinned_digest() {
@@ -1308,7 +1308,7 @@ const EXTENDED_PINNED_EVALUABLE: usize = 3901;
 /// FNV-1a digest over the extended corpus.
 const EXTENDED_PINNED_DIGEST: u64 = 9_613_999_152_448_810_278;
 
-// ── Native stack usage ────────────────────────────────────────────────────
+// ======== Native stack usage ========
 
 /// A left-nested chain of `depth` `bvnot`s over a bound variable, plus its
 /// expected value (`bvnot` is an involution, so an even chain is the identity).
@@ -1328,7 +1328,7 @@ fn not_chain(env: &mut Env, depth: usize) -> (TermId, BigInt) {
 
 /// The evaluator's native stack usage is constant in the term's depth.
 ///
-/// A 25 000-deep chain is evaluated on a **128 KiB** thread — one eighth of
+/// A 25 000-deep chain is evaluated on a **128 KiB** thread – one eighth of
 /// the 1 MiB embedders commonly give a worker, paired with one eighth of the
 /// historical 200 000 levels so the ~5 bytes of stack per level this pins is
 /// unchanged at a 64th of the construction cost.  The recursive

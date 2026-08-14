@@ -39,10 +39,10 @@ fn add_le2(solver: &mut LiaSolver, v1: VarId, c1: i64, v2: VarId, c2: i64, rhs: 
     solver.add_le(expr, reason);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Test 1: probe_variables succeeds on a constrained problem
-// ---------------------------------------------------------------------------
-/// Set up: x >= 1, 2x <= 9 (i.e. x <= 4.5 — the effective integer ceiling
+// ========  ========
+/// Set up: x >= 1, 2x <= 9 (i.e. x <= 4.5 – the effective integer ceiling
 /// is 4).  After calling `probe_variables` with max_probes = 20:
 ///   - The method must return `Ok` without panicking.
 ///   - The whole-problem check() must still return `Ok(true)` (SAT).
@@ -63,7 +63,7 @@ fn test_probe_variables_tightens_bounds() {
     // 2x <= 9  → x <= 4.5
     add_le_single(&mut solver, x, 2, 9, 2);
 
-    // Run probing — must not panic, must return Ok.
+    // Run probing – must not panic, must return Ok.
     // (probe_variables internally solves the LP; the constraints above make
     // it feasible so it should not return an error.)
     let result = solver.probe_variables(20);
@@ -84,11 +84,11 @@ fn test_probe_variables_tightens_bounds() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Test 2: feasibility_pump returns Ok on a satisfiable integer problem
-// ---------------------------------------------------------------------------
+// ========  ========
 /// Build a satisfiable LIA: x >= 0, y >= 0, x + y <= 10.
-/// The feasibility pump must return `Ok(Some(_))` or `Ok(None)` —
+/// The feasibility pump must return `Ok(Some(_))` or `Ok(None)` –
 /// in either case it must not error or panic.
 ///
 /// If it returns `Some(solution)`, we additionally verify the solution
@@ -107,7 +107,7 @@ fn test_feasibility_pump_finds_solution() {
     // x + y <= 10
     add_le2(&mut solver, x, 1, y, 1, 10, 2);
 
-    // Invoke feasibility pump — must not panic, must return Ok.
+    // Invoke feasibility pump – must not panic, must return Ok.
     // (The pump re-solves the LP internally.)
     let result = solver.feasibility_pump(10);
     assert!(
@@ -129,17 +129,17 @@ fn test_feasibility_pump_finds_solution() {
             "x + y must satisfy the upper-bound constraint"
         );
     }
-    // Ok(None) is a valid outcome — the pump may not converge in 10 iterations.
+    // Ok(None) is a valid outcome – the pump may not converge in 10 iterations.
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Test 3: manage_cuts on a fresh solver returns 0 deleted cuts
-// ---------------------------------------------------------------------------
+// ========  ========
 /// A freshly created `LiaSolver` has no active cuts.  Calling `manage_cuts`
 /// must return 0 and must not panic.
 ///
 /// We then add some cut records via `record_cut` (public API) and call
-/// `manage_cuts` again — it must not panic.  We cannot inspect `active_cuts`
+/// `manage_cuts` again – it must not panic.  We cannot inspect `active_cuts`
 /// directly from an integration test (it is `pub(super)`), but we can verify
 /// the public return value is consistent.
 #[test]
@@ -176,15 +176,15 @@ fn test_manage_cuts_purges_old_cuts() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Test 4: full solve path exercises all three heuristics end-to-end
-// ---------------------------------------------------------------------------
+// ========  ========
 /// Calls `LiaSolver::check()` on a small SAT problem.  Because `check()` now
 /// calls `probe_variables`, `feasibility_pump`, and (via `branch_and_bound`)
 /// `manage_cuts`, this verifies the integrated path does not regress existing
 /// SAT detection.
 ///
-/// Problem: x >= 1, x <= 3, x + y <= 5, y >= 0  — trivially SAT.
+/// Problem: x >= 1, x <= 3, x + y <= 5, y >= 0  – trivially SAT.
 #[test]
 fn test_full_solve_path_with_heuristics() {
     let mut solver = LiaSolver::new();
@@ -212,6 +212,6 @@ fn test_full_solve_path_with_heuristics() {
     assert!(result.is_ok(), "check() should not error on a SAT problem");
     assert!(
         result.expect("SAT problem should return Ok(true)"),
-        "the problem is satisfiable — check() should return true"
+        "the problem is satisfiable – check() should return true"
     );
 }

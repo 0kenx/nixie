@@ -1,10 +1,10 @@
-//! Static formula features — the oxiz port of Z3's `ast/static_features`.
+//! Static formula features – the oxiz port of Z3's `ast/static_features`.
 //!
 //! # What this is
 //!
 //! Z3 configures its CDCL(T) search in `smt/smt_setup.cpp`.  It has three
-//! config modes ([`ConfigMode`]); in two of them — `CFG_AUTO` (the default
-//! under `auto_config`) and `CFG_UNKNOWN` (no logic) — it does **not** trust the
+//! config modes ([`ConfigMode`]); in two of them – `CFG_AUTO` (the default
+//! under `auto_config`) and `CFG_UNKNOWN` (no logic) – it does **not** trust the
 //! logic string alone.  It walks the asserted formulas once, accumulates a bag
 //! of counts into a `static_features` struct, and then the per-logic
 //! `setup_QF_<X>(static_features & st)` routines pick the theory plugin and the
@@ -22,7 +22,7 @@
 //!
 //! and `setup_QF_IDL(st)` / `setup_QF_UFIDL(st)` gate the dense-DL solver,
 //! `RS_GEOMETRIC` restarts, `PS_CACHING` phase, etc. on `st.is_dense()` and
-//! the clause/UF counts — **not** on the file name.
+//! the clause/UF counts – **not** on the file name.
 //!
 //! # The "fake gate" this replaces
 //!
@@ -40,7 +40,7 @@
 //! collects the same features Z3 collects and exposes
 //! [`StaticFeatures::is_diff_logic`] / [`StaticFeatures::is_dense`] so the knob
 //! decisions can gate on the formula instead.  The logic string is still used
-//! as a coarse router (which arith solver to install) — exactly Z3's split.
+//! as a coarse router (which arith solver to install) – exactly Z3's split.
 //!
 //! # Faithfulness, and the deliberate generalisations
 //!
@@ -55,7 +55,7 @@
 //!   port would miss `(Sub x y)` (semantically `x - y`, plainly difference
 //!   logic).  We instead reduce the atom to a linear form `Σ cᵢ·xᵢ + k` and
 //!   accept it iff it has at most one `+1` coefficient and at most one `-1`
-//!   coefficient — i.e. exactly `{k, ±x + k, x − y + k}` and sign variants,
+//!   coefficient – i.e. exactly `{k, ±x + k, x − y + k}` and sign variants,
 //!   which is the same class Z3 accepts, independent of AST sugar and operand
 //!   orientation.
 //! * **`Lt`/`Gt` count as arithmetic inequalities.**  Z3's `update_core`
@@ -66,9 +66,9 @@
 //!   them as non-arithmetic.  We count all four comparison kinds; the diff-shape
 //!   test is identical.
 //!
-//! Everything else — clause/unit/bin-clause counting at the roots, the non-CNF
+//! Everything else – clause/unit/bin-clause counting at the roots, the non-CNF
 //! flag from nested gates, alien arithmetic terms (theory combination),
-//! `is_dense`, `arith_k_sum_is_small`, the distinct-UF-symbol count — is a
+//! `is_dense`, `arith_k_sum_is_small`, the distinct-UF-symbol count – is a
 //! direct port.
 
 use crate::prelude::*;
@@ -103,14 +103,14 @@ pub enum ConfigMode {
 /// can be read side by side; see `ast/static_features.h`.
 #[derive(Debug, Clone, Default)]
 pub struct StaticFeatures {
-    // --- clause structure (root handling in `process_root`) ---
+    // ======== clause structure (root handling in `process_root`) ========
     /// Whether every root is a clause or unit (no nested Boolean gates).
     pub cnf: bool,
     pub num_clauses: u64,
     pub num_bin_clauses: u64,
     pub num_units: u64,
 
-    // --- Boolean / formula structure (`update_core`) ---
+    // ======== Boolean / formula structure (`update_core`) ========
     pub num_bool_exprs: u64,
     pub num_bool_constants: u64,
     pub num_nested_formulas: u64,
@@ -121,13 +121,13 @@ pub struct StaticFeatures {
     /// for parity with Z3's `display_primitive`.
     pub num_eqs: u64,
 
-    // --- uninterpreted symbols ---
+    // ======== uninterpreted symbols ========
     pub num_uninterpreted_constants: u64,
     /// Distinct uninterpreted function symbols of positive arity
     /// (`m_num_uninterpreted_functions`).
     pub num_uninterpreted_functions: u64,
 
-    // --- theory presence (sort families seen) ---
+    // ======== theory presence (sort families seen) ========
     pub has_int: bool,
     pub has_real: bool,
     pub has_bv: bool,
@@ -138,29 +138,29 @@ pub struct StaticFeatures {
     has_fp: bool,
     has_string: bool,
 
-    // --- arithmetic atoms and their difference-logic subsets ---
+    // ======== arithmetic atoms and their difference-logic subsets ========
     pub num_arith_eqs: u64,
     pub num_diff_eqs: u64,
     pub num_arith_ineqs: u64,
     pub num_diff_ineqs: u64,
     /// Arithmetic "alien" terms (arith-sorted children of non-arith apps) and
-    /// non-Boolean `ite` then/else branches — `m_num_arith_terms`.
+    /// non-Boolean `ite` then/else branches – `m_num_arith_terms`.
     pub num_arith_terms: u64,
     pub num_diff_terms: u64,
     pub num_non_linear: u64,
 
-    // --- numeral magnitude (gates the small-int dense DL solver in Z3) ---
+    // ======== numeral magnitude (gates the small-int dense DL solver in Z3) ========
     /// Capped sum of `|numerals|` seen in arith atoms (`m_arith_k_sum`).
     arith_k_sum_abs: u64,
 
-    // --- cosmetic / structural ---
+    // ======== cosmetic / structural ========
     pub num_exprs: u64,
     pub num_roots: u64,
     pub num_sharing: u64,
 
-    // --- walk scratch ---
+    // ======== walk scratch ========
     /// Terms whose `update_core` has already run (Z3's `m_pre_processed`,
-    /// folded together with `m_post_processed` — a single visited set is
+    /// folded together with `m_post_processed` – a single visited set is
     /// equivalent because each term is counted exactly once).
     visited: FxHashSet<TermId>,
     /// Distinct UF function symbols of positive arity.
@@ -171,7 +171,7 @@ pub struct StaticFeatures {
 
 /// A linearised arithmetic term: `Σ cᵢ · xᵢ + k`.
 ///
-/// `xᵢ` are *atomic* sub-terms — anything that is not itself an arithmetic
+/// `xᵢ` are *atomic* sub-terms – anything that is not itself an arithmetic
 /// operator (variables, uninterpreted applications, selects, …) or an `ite`.
 /// Coefficients are `i64`; the constant `k` is folded into `const_term`.
 #[derive(Default)]
@@ -212,9 +212,9 @@ impl StaticFeatures {
         st
     }
 
-    // ---------------------------------------------------------------------
+    // ========  ========
     // Z3-derived predicates.  These are the gates the setup routines read.
-    // ---------------------------------------------------------------------
+    // ========  ========
 
     /// `is_in_diff_logic(st)`: every arithmetic equality, inequality and alien
     /// term is difference-logic-shaped.  Mirrors `smt_setup.cpp` exactly.
@@ -290,7 +290,7 @@ impl StaticFeatures {
     }
 
     /// The logic the formula's *features* imply, independent of the declared
-    /// logic string — the `setup_unknown(st)` classification.  Returns `None`
+    /// logic string – the `setup_unknown(st)` classification.  Returns `None`
     /// when the features do not single out one of the recognisable shapes
     /// (matching Z3's fall-through to the generic `setup_unknown()`).
     ///
@@ -307,7 +307,7 @@ impl StaticFeatures {
         }
         // Direct port of `setup_unknown(st)`'s theory-shape cascade.  Note
         // `num_theories()` includes UF as one theory, so pure DL is 1 theory
-        // and DL + UF is 2 — exactly Z3's `num_theories() == 1` / `== 2` tests.
+        // and DL + UF is 2 – exactly Z3's `num_theories() == 1` / `== 2` tests.
         if self.num_non_uf_theories() == 0 {
             return Some("QF_UF");
         }
@@ -331,10 +331,10 @@ impl StaticFeatures {
         None
     }
 
-    // ---------------------------------------------------------------------
+    // ========  ========
     // The walk.  Direct port of process_root / process_all / pre_process /
     // update_core; a single explicit stack replaces Z3's recursion.
-    // ---------------------------------------------------------------------
+    // ========  ========
 
     /// `process_root(e)`: classify the root as clause / unit / nested gate and
     /// seed the walk.  A root `(or …)` is a clause (and is itself never passed
@@ -406,7 +406,7 @@ impl StaticFeatures {
         let is_eq = matches!(td.kind, TermKind::Eq(_, _));
         let gate = is_gate(&td.kind, manager, e);
 
-        // --- nested Boolean gate ⇒ not CNF, and a nested formula ---
+        // ======== nested Boolean gate ⇒ not CNF, and a nested formula ========
         if gate {
             self.cnf = false;
             self.num_nested_formulas += 1;
@@ -428,7 +428,7 @@ impl StaticFeatures {
             }
         }
 
-        // --- is_bool(e) ---
+        // ======== is_bool(e) ========
         if sort_class(manager, sort) == SortClass::Bool {
             self.num_bool_exprs += 1;
             if is_zero_arity_uninterp(&td.kind) {
@@ -440,7 +440,7 @@ impl StaticFeatures {
             self.num_quantifiers += 1;
         }
 
-        // --- arithmetic comparison atoms (le/ge/lt/gt) ---
+        // ======== arithmetic comparison atoms (le/ge/lt/gt) ========
         if let Some((lhs, rhs)) = comparison_operands(&td.kind)
             && sort_class_term(manager, lhs) == SortClass::Arith
             && sort_class_term(manager, rhs) == SortClass::Arith
@@ -452,7 +452,7 @@ impl StaticFeatures {
             self.acc_num_term(manager, rhs);
         }
 
-        // --- numeral / rational detection (m_has_rational) ---
+        // ======== numeral / rational detection (m_has_rational) ========
         if let Some(v) = numeric_value(&td.kind) {
             if !v.is_integer() {
                 // a non-integral rational constant ⇒ the problem uses reals.
@@ -462,7 +462,7 @@ impl StaticFeatures {
         }
 
         // --- equalities: m_num_eqs, and m_num_arith_eqs when one side is a
-        // numeral (Z3 checks `is_numeral(arg1)`; we accept either side — see
+        // numeral (Z3 checks `is_numeral(arg1)`; we accept either side – see
         // the module docs). ---
         if let TermKind::Eq(lhs, rhs) = td.kind {
             self.num_eqs += 1;
@@ -483,10 +483,10 @@ impl StaticFeatures {
             }
         }
 
-        // --- non-linearity + UF detection inside arith heads ---
+        // ======== non-linearity + UF detection inside arith heads ========
         self.classify_arith_head(manager, &td.kind);
 
-        // --- uninterpreted constants / function symbols ---
+        // ======== uninterpreted constants / function symbols ========
         self.classify_uninterp(&td.kind);
 
         // --- the "alien" loop: arith-sorted children of non-arith, non-gate,
@@ -511,9 +511,9 @@ impl StaticFeatures {
         self.enqueue_children(manager, &td.kind);
     }
 
-    // ---------------------------------------------------------------------
+    // ========  ========
     // helpers folded out of update_core for readability
-    // ---------------------------------------------------------------------
+    // ========  ========
 
     /// `is_diff_term(arg)` + `acc_num(k)`: count one arith term (alien or
     /// ite-branch) and, if it is difference-logic-shaped, one diff term.
@@ -641,9 +641,9 @@ impl StaticFeatures {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Free helpers
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Coarse sort class for theory counting.  Note: [`SortClass::Arith`] covers
 /// both Int and Real; the `has_int`/`has_real` split is set in
@@ -808,9 +808,9 @@ fn numeric_value_of(manager: &TermManager, t: TermId) -> Option<Numeral> {
     manager.get(t).and_then(|td| numeric_value(&td.kind))
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Linear-form collection (replaces Z3's structural is_diff_term/is_diff_atom)
-// ---------------------------------------------------------------------
+// ========  ========
 
 struct LinearFormCollector;
 
@@ -923,7 +923,7 @@ impl LinearForm {
         self.linear && !self.saw_ite && self.vars.len() <= 1 && self.vars.values().all(|c| *c == 1)
     }
 
-    /// `is_diff_atom`: at most one `+1` and one `-1` coefficient, no others —
+    /// `is_diff_atom`: at most one `+1` and one `-1` coefficient, no others –
     /// i.e. the atom is `k`, `±x + k`, or `x − y + k` (up to overall sign).
     fn is_diff_atom(&self) -> bool {
         if !self.linear || self.saw_ite {
@@ -1008,7 +1008,7 @@ mod tests {
         let mut m = TermManager::new();
         let x = int_var(&mut m, "x");
         let y = int_var(&mut m, "y");
-        // (<= (+ x y) 5)  — not DL
+        // (<= (+ x y) 5)  – not DL
         let five = m.mk_int(5);
         let xy = m.mk_add([x, y]);
         let le = m.mk_le(xy, five);
@@ -1022,7 +1022,7 @@ mod tests {
         let mut m = TermManager::new();
         let x = int_var(&mut m, "x");
         let y = int_var(&mut m, "y");
-        // (< x y)  — strict; still DL after normalisation to x - y
+        // (< x y)  – strict; still DL after normalisation to x - y
         let lt = m.mk_lt(x, y);
         let st = features(&m, &[lt]);
         assert!(st.is_diff_logic());

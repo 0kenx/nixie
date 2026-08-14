@@ -5,7 +5,7 @@ Rust. It implements a modular CDCL(T) architecture that closely follows the desi
 leveraging Rust's safety guarantees and modern language features.
 
 Issues and pull requests are welcome. The sections below describe how the code is organized,
-styled, and tested — treat this as a technical reference for working in the codebase rather than a
+styled, and tested – treat this as a technical reference for working in the codebase rather than a
 process document.
 
 **Quick Links:**
@@ -214,7 +214,7 @@ mod tests {
 - Use `Result<T, E>` for operations that can fail
 - Define error types using `thiserror`
 - Avoid `unwrap()` and `expect()` except in tests or truly impossible cases. `clippy::unwrap_used`
-  is set to `deny` in the workspace lint table, and every member crate is covered — 13 declare it
+  is set to `deny` in the workspace lint table, and every member crate is covered – 13 declare it
   directly in their own `[lints.clippy]`, while `oxiz`, `oxiz-smtcomp`, `oxiz-py` and `oxiz-ml`
   inherit it via `[lints] workspace = true`. A stray `unwrap()` in production code therefore fails
   the build rather than merely warning.

@@ -24,9 +24,9 @@ use oxiz_proof::theory::TheoryRule;
 use oxiz_proof::{PremiseId as ReexportedPremiseId, PremiseTracker as ReexportedPremiseTracker};
 use oxiz_proof::{Proof as ReexportedProof, TheoryProof};
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 1: checker.rs verify_conclusions
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn verify_conclusions_default_off_accepts_semantically_bogus_proof() {
@@ -77,9 +77,9 @@ fn verify_conclusions_on_accepts_genuinely_valid_proof_via_public_api() {
     assert!(proof.check_with_config(config).is_valid());
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 2: conversion.rs drat_to_alethe
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn drat_to_alethe_marks_only_genuine_input_clauses_as_input() {
@@ -116,9 +116,9 @@ fn drat_to_alethe_refuses_to_fabricate_resolution_premises() {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Finding 3: lib.rs pub mod premise (CraigInterpolator public constructor)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn craig_interpolator_is_constructible_via_the_public_premise_api() {

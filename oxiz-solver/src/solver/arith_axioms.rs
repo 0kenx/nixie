@@ -4,8 +4,8 @@
 //! term shapes look like atoms but carry a meaning the simplex tableau cannot
 //! see on its own:
 //!
-//!   * `(div m n)` and `(mod m n)` — SMT-LIB *Euclidean* integer division;
-//!   * `(ite c a b)` at Int/Real sort — the desugaring of `abs`, `min`, `max`
+//!   * `(div m n)` and `(mod m n)` – SMT-LIB *Euclidean* integer division;
+//!   * `(ite c a b)` at Int/Real sort – the desugaring of `abs`, `min`, `max`
 //!     and of every hand-written conditional value.
 //!
 //! Handing those to the tableau as free variables is an over-approximation: it
@@ -20,12 +20,12 @@
 //! | term | axioms |
 //! |---|---|
 //! | `(mod m n)`, `(div m n)`, `n` a non-zero integer constant | `m = n·(div m n) + (mod m n)`, `0 <= (mod m n)`, `(mod m n) <= abs(n) - 1` |
-//! | `(mod m 0)`, `(div m 0)` | none — uninterpreted per SMT-LIB; only congruence `m1 = m2 => (mod m1 0) = (mod m2 0)` |
-//! | `(div m n)`, `(mod m n)`, `n` symbolic | none — the identity `m = n·q + r` is nonlinear; the atom stays gated |
+//! | `(mod m 0)`, `(div m 0)` | none – uninterpreted per SMT-LIB; only congruence `m1 = m2 => (mod m1 0) = (mod m2 0)` |
+//! | `(div m n)`, `(mod m n)`, `n` symbolic | none – the identity `m = n·q + r` is nonlinear; the atom stays gated |
 //! | `(ite c a b)` at Int/Real sort | `c => ite = a`, `¬c => ite = b` |
 //!
 //! Every axiom is a theorem of the theory, so adding it never changes
-//! satisfiability — it only removes the models that violate the term's
+//! satisfiability – it only removes the models that violate the term's
 //! definition.  A term whose axioms have been asserted is recorded in
 //! [`Solver::arith_defined_terms`]; the honesty gate in
 //! [`super::encode_guards`] answers `Unknown` for any arithmetic atom that
@@ -76,7 +76,7 @@ enum ArithDef {
 
 /// Classify `term`, or `None` when it needs no defining axiom (an ordinary
 /// variable, an uninterpreted application, …) or when no linear axiomatisation
-/// exists (a symbolic or out-of-`i64` divisor — those stay gated).
+/// exists (a symbolic or out-of-`i64` divisor – those stay gated).
 fn classify(term: TermId, manager: &TermManager) -> Option<ArithDef> {
     let node = manager.get(term)?;
     let is_int = node.sort == manager.sorts.int_sort;
@@ -116,7 +116,7 @@ fn classify(term: TermId, manager: &TermManager) -> Option<ArithDef> {
 const MAX_CONST_EVAL_DEPTH: u32 = 32;
 
 /// The `i64` value of a *constant* integer expression, or `None` when the term
-/// is not constant, does not fit in `i64`, or overflows while folding — in all
+/// is not constant, does not fit in `i64`, or overflows while folding – in all
 /// of which cases the enclosing `div`/`mod` stays gated rather than gaining a
 /// wrong axiom.
 ///
@@ -164,8 +164,8 @@ impl Solver {
     /// Assert the defining axioms of every internalised `div` / `mod` / numeric
     /// `ite` term that does not have them yet.
     ///
-    /// Driven from [`Solver::arith_terms`] — the set of terms the encoder
-    /// actually handed to the arithmetic solver — so a `div`/`mod` sub-term
+    /// Driven from [`Solver::arith_terms`] – the set of terms the encoder
+    /// actually handed to the arithmetic solver – so a `div`/`mod` sub-term
     /// that the simplifier folded away, or that only occurs inside a quantifier
     /// body, never costs a clause.
     ///
@@ -299,7 +299,7 @@ impl Solver {
 
     /// `c => ite = a` and `¬c => ite = b` for an Int/Real-sorted `(ite c a b)`.
     ///
-    /// This is what gives `(abs t)` — parsed as `(ite (>= t 0) t (- t))` — its
+    /// This is what gives `(abs t)` – parsed as `(ite (>= t 0) t (- t))` – its
     /// arithmetic meaning, including `(abs t) >= 0` (both branches are `>= 0`
     /// under their guard) and `(abs t) = t` / `= -t` under a known sign.
     fn assert_ite_axioms(
@@ -324,8 +324,8 @@ impl Solver {
 
     /// `m1 = m2 => (op m1 0) = (op m2 0)`.
     ///
-    /// Division and modulo by zero are *uninterpreted* in SMT-LIB — any value is
-    /// allowed — so the linear solver may treat each occurrence as a free
+    /// Division and modulo by zero are *uninterpreted* in SMT-LIB – any value is
+    /// allowed – so the linear solver may treat each occurrence as a free
     /// variable.  The one property it must not lose is that they denote a
     /// *function* of the dividend: `(mod i 0)` and `(mod j 0)` cannot differ
     /// once `i = j`.  Ackermann-style congruence over the finitely many

@@ -140,7 +140,7 @@ impl PolynomialFactorizer {
     fn berlekamp_zassenhaus(&mut self, poly: &[BigRational]) -> Vec<Vec<BigRational>> {
         // Explicit work-stack rather than recursion: each split peels one
         // linear factor off, so the recursion depth was the polynomial
-        // degree — attacker-controlled — with two `Vec<BigRational>`s and a
+        // degree – attacker-controlled – with two `Vec<BigRational>`s and a
         // `Vec<Vec<BigRational>>` accumulator per frame. The `Vec` return
         // type leaves nowhere to report a depth cap, so a cap could only
         // have dropped factors silently.
@@ -264,7 +264,7 @@ impl PolynomialFactorizer {
     ///
     /// Coefficients are stored highest-degree first, so a leading zero
     /// makes `remainder`'s `lead_div.is_zero()` guard fire and return the
-    /// dividend unchanged — which is what made the recursive `gcd` below
+    /// dividend unchanged – which is what made the recursive `gcd` below
     /// able to cycle forever.
     fn strip_leading_zeros(poly: &[BigRational]) -> Vec<BigRational> {
         let start = poly.iter().position(|c| !c.is_zero()).unwrap_or(poly.len());

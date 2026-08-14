@@ -20,7 +20,7 @@
 //! The layout used to be a single tracked `bench/z3_parity/results.json`,
 //! cited everywhere as *the* authoritative result while it actually held
 //! "whatever machine ran last". On 2026-07-31 a Linux run overwrote
-//! macOS-recorded numbers and nothing in the file signalled it — a run on
+//! macOS-recorded numbers and nothing in the file signalled it – a run on
 //! one platform could silently overwrite another platform's recorded
 //! evidence, and a genuine cross-platform verdict divergence would have
 //! been indistinguishable from a routine re-run. `results.json` is now the
@@ -31,7 +31,7 @@
 //! # Cost
 //!
 //! None worth mentioning: this reads committed JSON only. No `z3` binary,
-//! no solving, no benchmark execution — it runs anywhere `cargo test`
+//! no solving, no benchmark execution – it runs anywhere `cargo test`
 //! runs, including machines that have never had Z3 installed.
 
 use oxiz_z3_parity::{ParityReport, ParityResult, SCHEMA_VERSION, SCRATCH_RESULTS_FILE_NAME};
@@ -55,7 +55,7 @@ const EXPECTED_SCHEMA_VERSION: u32 = 1;
 const MAX_REPORTED_DIFFERENCES: usize = 25;
 
 /// One tracked record: the library's own on-disk envelope plus the file it
-/// came from. The schema itself is *not* redeclared here — `ParityReport`,
+/// came from. The schema itself is *not* redeclared here – `ParityReport`,
 /// `RunMetadata` and `ParityResult` are the writer's types, so this test
 /// cannot drift away from what the runner actually produces.
 struct TrackedRecord {
@@ -71,7 +71,7 @@ impl TrackedRecord {
     ///
     /// The z3 version is included deliberately: a verdict disagreement
     /// between records produced by *different* z3 versions is
-    /// unattributable — it says nothing about OxiZ until both sides are
+    /// unattributable – it says nothing about OxiZ until both sides are
     /// re-measured against the same z3 binary.
     fn describe(&self) -> String {
         format!(
@@ -148,7 +148,7 @@ fn load_record(path: &Path) -> TrackedRecord {
         panic!(
             "{file_name} does not deserialize into the harness's own `ParityReport` envelope \
              (`schema_version` + `metadata` + `results`): {e}. Note that the pre-envelope format \
-             was a bare array of results — such a file has to be migrated, not renamed."
+             was a bare array of results – such a file has to be migrated, not renamed."
         )
     });
 
@@ -159,7 +159,7 @@ fn load_record(path: &Path) -> TrackedRecord {
     }
 }
 
-/// All tracked records. Panics when none exist — see the message for why
+/// All tracked records. Panics when none exist – see the message for why
 /// an empty set is a regression rather than a benign "nothing to check".
 fn load_tracked_records() -> Vec<TrackedRecord> {
     let files = discover_tracked_files();
@@ -279,7 +279,7 @@ fn tracked_parity_records_agree_on_every_verdict() {
 
     // Fewer than two records: there is nothing to cross-check, so this
     // passes. (Zero records is already a hard failure inside
-    // `load_tracked_records` — the evidence would be missing entirely.)
+    // `load_tracked_records` – the evidence would be missing entirely.)
     if let [only] = records.as_slice() {
         eprintln!(
             "only one tracked parity record is present ({}); cross-environment agreement is \
@@ -330,7 +330,7 @@ fn tracked_parity_records_agree_on_every_verdict() {
         }
 
         // 2. Every benchmark present in both must carry the same verdict.
-        //    Timings are not compared — see `verdict_fields`.
+        //    Timings are not compared – see `verdict_fields`.
         for (key, reference_result) in &reference_index {
             let Some(result) = index.get(key) else {
                 // Already reported above as missing.
@@ -344,7 +344,7 @@ fn tracked_parity_records_agree_on_every_verdict() {
                 if reference_value != value {
                     push_difference(
                         format!(
-                            "benchmark {benchmark} (logic {logic}): field `{field}` differs — \
+                            "benchmark {benchmark} (logic {logic}): field `{field}` differs – \
                              {} says {reference_value}, {} says {value}",
                             reference.file_name, record.file_name
                         ),

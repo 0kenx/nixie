@@ -100,7 +100,7 @@ impl Solver {
     /// assertion is bounded by memory rather than by the native call stack.
     /// The task ordering reproduces the recursive traversal exactly, including
     /// the fact that an `And`'s own `domains.insert` runs *after* the scans of
-    /// its nested elements — so an inner domain for the same variable is
+    /// its nested elements – so an inner domain for the same variable is
     /// overwritten by the enclosing `And`, as before.
     pub(super) fn scan_for_pigeonhole(
         &self,
@@ -348,7 +348,7 @@ mod s8_iterative_tests {
     ///
     /// This depth and [`SMALL_STACK`] were scaled down together by a factor
     /// of 8 (from 60 000 on 1 MiB).  What these tests pin is the ~17 bytes of
-    /// stack available per level — far under any native frame — not the
+    /// stack available per level – far under any native frame – not the
     /// absolute depth, and the smaller pair costs a fraction of the memory
     /// the interner has to keep live.  Never raise one without the other.
     const DEEP: usize = 7_500;
@@ -410,7 +410,7 @@ mod s8_iterative_tests {
     }
 
     /// Semantic pin: bounds are still recognised in both operand orders, and
-    /// an *enclosing* `and`'s domain still wins over a nested one — the
+    /// an *enclosing* `and`'s domain still wins over a nested one – the
     /// post-order the recursive version had.
     #[test]
     fn s8_scan_for_pigeonhole_outer_domain_overrides_nested() {
@@ -427,7 +427,7 @@ mod s8_iterative_tests {
         // Inner: 1 <= x <= 2, written with the constant on the left of `Le`
         // (`Le(1, x)` is a lower bound) to pin both operand orders.  It is
         // wrapped in an `implies` so `mk_and`'s flattening cannot merge it
-        // into the enclosing conjunction — the nesting is the point here.
+        // into the enclosing conjunction – the nesting is the point here.
         let inner_lo = tm.mk_le(one, x);
         let inner_hi = tm.mk_le(x, two);
         let inner = tm.mk_and(vec![inner_lo, inner_hi]);

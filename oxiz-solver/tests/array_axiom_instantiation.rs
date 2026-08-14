@@ -148,7 +148,7 @@ fn nested_store_read_hits_outer_write_is_unsat() {
 }
 
 /// Extensionality witness: `a != b` while every *named* read agrees.  A witness
-/// index (distinct from `0` and `1`) can differ, so the formula is satisfiable —
+/// index (distinct from `0` and `1`) can differ, so the formula is satisfiable –
 /// the extensionality lemma must introduce such a witness rather than force a
 /// spurious `Unsat`, and the solver must not report `Unknown`.
 #[test]
@@ -183,7 +183,7 @@ fn select_congruence_over_equality_is_unsat() {
 
 /// Store equality via extensionality on a disequality that is genuinely
 /// contradictory: `a != store(a,i,v)` yet `select(a,i) = v` (so the store is a
-/// no-op and the arrays are actually equal at every index) — the witness index
+/// no-op and the arrays are actually equal at every index) – the witness index
 /// must collapse onto `i`, making the disequality unsatisfiable.
 #[test]
 fn store_noop_disequality_is_unsat() {
@@ -264,7 +264,7 @@ fn multi_alias_chain_observed_read_still_reaches_base() {
 ///
 /// Both base arrays are unconstrained, so a model exists trivially (choose the
 /// arrays so the two reads agree).  Nothing here entails a conflict, yet the
-/// index terms (`+`, `div`) are not syntactically comparable — the case that
+/// index terms (`+`, `div`) are not syntactically comparable – the case that
 /// stresses the RoW instantiation's "index relationship unknown" path.  The
 /// axiom layer must leave such a read unresolved (`eval_read` → `None`) rather
 /// than committing to a value and manufacturing a disequality conflict.
@@ -288,7 +288,7 @@ fn test_issue_22_read_over_write_arith_index() {
 /// `ite` and `+` in the index/value positions, wrapped in `(not (distinct …))`.
 ///
 /// `z3` answers `sat`; this pins that oxiz agrees.  The Euclidean constants
-/// involved — `(div 7 7) = 1`, `(mod (- 3) (- 5)) = 2`, `(abs 7) = 7` — are
+/// involved – `(div 7 7) = 1`, `(mod (- 3) (- 5)) = 2`, `(abs 7) = 7` – are
 /// covered independently by `oxiz-core/tests/audit_div_semantics.rs`.
 #[test]
 fn test_issue_22_full_reproducer() {
@@ -307,9 +307,9 @@ fn test_issue_22_full_reproducer() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Polarity boundary: facts must be unconditionally asserted
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `(not (and A B))` is `(or (not A) (not B))`, so neither conjunct is
 /// entailed.  The array pre-check's collector tracked polarity but passed it
@@ -339,7 +339,7 @@ fn test_array_bool_eq_polarity_boundary() {
     // Double negation reaches the store=store extensionality collector, which
     // had the same pass-through: the inner disequality flips back to positive
     // polarity and was recorded as an asserted `(= (store a 0 1) (store b 0 2))`.
-    // Satisfiable with `p = false` — the inner disequality is in fact valid, so
+    // Satisfiable with `p = false` – the inner disequality is in fact valid, so
     // the assertion reduces to `(not p)`.
     let double_negation = r#"
 (set-logic QF_ALIA)

@@ -1,4 +1,4 @@
-//! Proof manager — faithful port of `proof.hpp` / `proof.cpp` / `proof.rs`.
+//! Proof manager – faithful port of `proof.hpp` / `proof.cpp` / `proof.rs`.
 //!
 //! [`Proof`] is the central dispatcher: the solver reports every proof event
 //! (original/derived/deleted clause, status, conclusion, in-place clause
@@ -6,8 +6,8 @@
 //! every attached [`Tracer`] (DRAT/LRAT file tracers). This is the single
 //! choke-point design from upstream.
 //!
-//! In oxiz-sat internal literals are external (DIMACS) literals — there is no
-//! `External` variable-mapping layer — so clauses pass through verbatim.
+//! In oxiz-sat internal literals are external (DIMACS) literals – there is no
+//! `External` variable-mapping layer – so clauses pass through verbatim.
 //!
 //! # Clause-ID ownership
 //!
@@ -15,7 +15,7 @@
 //! the LRAT chain builders and the unit-clause id table). The in-place clause
 //! rewriting helpers ([`Proof::flush_clause`], [`Proof::strengthen_clause`],
 //! [`Proof::otfs_strengthen_clause`]) therefore take the freshly-allocated id
-//! as an explicit argument rather than bumping an internal counter — the only
+//! as an explicit argument rather than bumping an internal counter – the only
 //! departure from upstream's `++internal->clause_id` inside `Proof`.
 
 // The tracer API mirrors cadical's full `Tracer`/`Proof` surface verbatim; many
@@ -71,19 +71,19 @@ impl Proof {
         self.tracers.is_empty()
     }
 
-    /// `Proof::connect` — attach a tracer.
+    /// `Proof::connect` – attach a tracer.
     pub fn connect(&mut self, tracer: Box<dyn Tracer + Send + Sync>) {
         self.tracers.push(tracer);
     }
 
-    /// `Proof::disconnect` — remove all tracers. Upstream removes a specific
+    /// `Proof::disconnect` – remove all tracers. Upstream removes a specific
     /// `Tracer*`; pointer identity is not expressible for trait objects here,
     /// so we clear the lot (tracers are dropped with the solver).
     pub fn disconnect_all(&mut self) {
         self.tracers.clear();
     }
 
-    // -- original clauses ---------------------------------------------
+    // ======== original clauses ========
 
     /// `add_original_clause(id, redundant, clause)`.
     pub fn add_original_clause(&mut self, id: i64, redundant: bool, c: &[i32]) {
@@ -118,7 +118,7 @@ impl Proof {
         self.fan_delete_clause();
     }
 
-    // -- derived clauses ----------------------------------------------
+    // ======== derived clauses ========
 
     /// `add_derived_empty_clause(id, chain)`.
     pub fn add_derived_empty_clause(&mut self, id: i64, chain: &[i64]) {
@@ -171,7 +171,7 @@ impl Proof {
         self.fan_add_derived_clause();
     }
 
-    // -- deletion / weakening -----------------------------------------
+    // ======== deletion / weakening ========
 
     /// `delete_clause(id, redundant, clause)`.
     pub fn delete_clause(&mut self, id: i64, redundant: bool, c: &[i32]) {
@@ -209,7 +209,7 @@ impl Proof {
         self.delete_clause(id, false, c);
     }
 
-    // -- finalization -------------------------------------------------
+    // ======== finalization ========
 
     /// `finalize_clause(id, clause)`.
     pub fn finalize_clause(&mut self, id: i64, c: &[i32]) {
@@ -235,9 +235,9 @@ impl Proof {
         self.clause_id = 0;
     }
 
-    // -- in-place clause rewriting (flush / strengthen) ---------------
+    // ======== in-place clause rewriting (flush / strengthen) ========
 
-    /// `flush_clause` — drop falsified literals from a clause for the proof.
+    /// `flush_clause` – drop falsified literals from a clause for the proof.
     /// `new_id` is the freshly-allocated id for the rewritten clause (caller
     /// owns the monotonic counter); `kept` are the non-falsified literals;
     /// `chain` the LRAT hints.
@@ -251,7 +251,7 @@ impl Proof {
         self.fan_add_derived_clause();
     }
 
-    /// `strengthen_clause` — record a clause with one literal removed.
+    /// `strengthen_clause` – record a clause with one literal removed.
     /// `new_id` is the freshly-allocated id; `kept` the remaining literals;
     /// `chain` the LRAT hints.
     pub fn strengthen_clause(&mut self, new_id: i64, redundant: bool, kept: &[i32], chain: &[i64]) {
@@ -264,7 +264,7 @@ impl Proof {
         self.fan_add_derived_clause();
     }
 
-    /// `otfs_strengthen_clause` — on-the-fly strengthening.
+    /// `otfs_strengthen_clause` – on-the-fly strengthening.
     pub fn otfs_strengthen_clause(
         &mut self,
         new_id: i64,
@@ -290,7 +290,7 @@ impl Proof {
         self.clause_id = 0;
     }
 
-    // -- incremental / status / conclusions ---------------------------
+    // ======== incremental / status / conclusions ========
 
     /// `add_assumption(lit)`.
     pub fn add_assumption(&mut self, lit: i32) {
@@ -377,21 +377,21 @@ impl Proof {
         }
     }
 
-    /// `flush` — flush every attached file tracer.
+    /// `flush` – flush every attached file tracer.
     pub fn flush(&mut self, print: bool) {
         for t in self.tracers.iter_mut() {
             t.flush(print);
         }
     }
 
-    /// `close` — close every attached file tracer.
+    /// `close` – close every attached file tracer.
     pub fn close(&mut self, print: bool) {
         for t in self.tracers.iter_mut() {
             t.close(print);
         }
     }
 
-    // -- private fan-outs (mirror upstream's private dispatchers) -----
+    // ======== private fan-outs (mirror upstream's private dispatchers) ========
 
     fn fan_add_original_clause(&mut self, restore: bool) {
         let (id, redundant) = (self.clause_id, self.redundant);
@@ -422,7 +422,7 @@ impl Proof {
         self.clause_id = 0;
     }
 
-    // -- helpers used by the solver to gather a clause's external form --
+    // ======== helpers used by the solver to gather a clause's external form ========
 
     /// Push a literal onto the scratch clause buffer (mirrors
     /// `Proof::add_literal`). Kept `pub(super)` for the solver.

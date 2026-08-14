@@ -66,13 +66,13 @@ enum SkFrame {
 /// 1. **Fresh names per goal.**  A single monotone counter is threaded through
 ///    *all* assertions of the goal, so distinct existentials always receive
 ///    distinct Skolem symbols.  (Resetting the counter per assertion made
-///    {∃x.P(x), ∃x.¬P(x)} collapse to {P(sk_0), ¬P(sk_0)} — SAT → UNSAT.)
+///    {∃x.P(x), ∃x.¬P(x)} collapse to {P(sk_0), ¬P(sk_0)} – SAT → UNSAT.)
 ///
 /// 2. **Polarity.**  Only *effectively existential* quantifiers are Skolemized:
 ///    a `Exists` under positive polarity, or a `Forall` under negative
 ///    polarity.  Effectively *universal* quantifiers are kept and their bound
 ///    variables become the arguments of inner Skolem functions.  (Ignoring
-///    polarity let ¬(∃x.P(x)) become ¬P(sk_0) — UNSAT → SAT.)
+///    polarity let ¬(∃x.P(x)) become ¬P(sk_0) – UNSAT → SAT.)
 ///
 /// 3. **Real argument sorts.**  Skolem function arguments use the *actual*
 ///    sorts of the governing universal variables, not a hard-coded `Bool`.
@@ -130,7 +130,7 @@ impl<'a> SkolemizationTactic<'a> {
     /// This and its `skolemize_existential`/`skolemize_universal` helpers
     /// were a three-way mutual recursion over the assertion's Boolean and
     /// quantifier nesting, with no depth guard of any kind. The return type
-    /// is `TermId` — there is no error channel — and a cap could not be added
+    /// is `TermId` – there is no error channel – and a cap could not be added
     /// honestly: stopping partway would leave an existential un-Skolemized
     /// inside a formula the tactic reports as Skolemized, or (worse, on the
     /// `skolemize_existential` path, which drops the binder *before*
@@ -141,7 +141,7 @@ impl<'a> SkolemizationTactic<'a> {
     ///
     /// No memoization: the Skolemization of a subterm depends on its
     /// polarity, on the governing universals in scope, *and* on the mutable
-    /// fresh-name counter — two occurrences of one shared subterm must
+    /// fresh-name counter – two occurrences of one shared subterm must
     /// receive **different** Skolem symbols, so reusing a cached result would
     /// reintroduce exactly the name collision this tactic's point 1 exists to
     /// prevent.

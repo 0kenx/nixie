@@ -52,7 +52,7 @@ pub struct Trail {
     /// per-variable accessors read index `2 * var`. Kept separate from
     /// `var_info` so value reads don't pay the wider `VarInfo` stride.
     values: Vec<i8>,
-    /// Information for each variable (level / reason — the cold path)
+    /// Information for each variable (level / reason – the cold path)
     var_info: Vec<VarInfo>,
     /// Indices marking the start of each decision level
     level_starts: Vec<usize>,
@@ -103,7 +103,7 @@ impl Trail {
     }
 
     /// Raw per-literal truth value: `+1` true, `-1` false, `0` undefined.
-    /// The hottest BCP lookup — a single byte load indexed by literal code
+    /// The hottest BCP lookup – a single byte load indexed by literal code
     /// (no enum match, no sign branch). The solver maintains `values` at
     /// length `2 * num_vars`, so `lit.code()` is always in range.
     #[inline(always)]
@@ -291,7 +291,7 @@ impl Trail {
             // Reset the full VarInfo (not just `.value`): leaving `.level` stale
             // after backtracking made `Trail::level` report the *old* decision
             // level for unassigned variables. That corrupted every consumer of
-            // levels on unassigned vars — most importantly `compute_lbd`, which
+            // levels on unassigned vars – most importantly `compute_lbd`, which
             // is computed on the freshly-learned clause *after* backtracking
             // (so its literals above the backtrack level read stale levels and
             // produced garbage glue), and the Glucose-style restart EMA.
@@ -350,7 +350,7 @@ impl Trail {
     }
 }
 
-// --- pr/sat additions (upstream/API functions main's trail.rs lacks) ---
+// ======== pr/sat additions (upstream/API functions main's trail.rs lacks) ========
 // Representation-independent (prop_head only, or delegate to assign_at).
 impl Trail {
     /// Level-aware assign: main's `assign` hard-codes `current_level`, but the

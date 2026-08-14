@@ -283,7 +283,7 @@ impl Solver {
     ///
     /// The SMT-LIB parser expands nullary `define-fun` at every use site.  After
     /// we have processed `(= Name body)`, subsequent assertions that still carry
-    /// the raw `body` DAG should mention `Name` instead — otherwise Discord/EM/R
+    /// the raw `body` DAG should mention `Name` instead – otherwise Discord/EM/R
     /// are re-flattened on every mention (catastrophic on qi_1_h1).
     pub(super) fn fold_unit_eq_reps(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
         // The alias fold exists to give flattened table indices their define-fun
@@ -362,7 +362,7 @@ impl Solver {
             by_rep.entry(rep).or_default().push(idx);
         }
 
-        // (rep_total_score, key_score, var) — sorted for domain_priority.
+        // (rep_total_score, key_score, var) – sorted for domain_priority.
         let mut domain_priority_scored: Vec<(i64, i64, oxiz_sat::Var)> = Vec::new();
 
         for (rep, idxs) in by_rep {
@@ -548,7 +548,7 @@ impl Solver {
             self.table_index_domain_eqs
                 .insert(r, vec![(0, lit0), (1, lit1)]);
             self.case_split_terms.insert(r);
-            // Don't put these on domain_priority — index vars first; result
+            // Don't put these on domain_priority – index vars first; result
             // eqs should unit-prop from table implications once index is set.
         }
     }

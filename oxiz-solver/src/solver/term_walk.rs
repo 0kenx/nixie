@@ -155,7 +155,7 @@ pub(super) fn collect_structural_children(kind: &TermKind, out: &mut Vec<TermId>
                 out.push(case.body);
             }
         }
-        // Leaves (constants, variables, FP special values) — no sub-terms.
+        // Leaves (constants, variables, FP special values) – no sub-terms.
         _ => {}
     }
 }
@@ -171,30 +171,30 @@ pub(super) fn collect_structural_children(kind: &TermKind, out: &mut Vec<TermId>
 /// answers `Unsat` outright. Such a collector may only ever record facts that
 /// the assertion set genuinely entails, so it may only descend through nodes
 /// that preserve unconditional assertedness. Getting that wrong yields a false
-/// `Unsat` on a satisfiable formula — a soundness bug that has now been found
+/// `Unsat` on a satisfiable formula – a soundness bug that has now been found
 /// independently in the string, bit-vector, datatype, array and floating-point
 /// collectors. This function is the single place that rule is written down.
 ///
 /// # The rule
 ///
-/// * `And` at positive polarity — every conjunct is asserted, at positive
+/// * `And` at positive polarity – every conjunct is asserted, at positive
 ///   polarity.
-/// * `And` at **negative** polarity — *nothing*. `(not (and a b))` is
+/// * `And` at **negative** polarity – *nothing*. `(not (and a b))` is
 ///   `(or (not a) (not b))`, a disjunction, so neither conjunct is entailed.
 ///   This is the de Morgan trap that a naive `in_positive_context` pass-through
 ///   falls into.
-/// * `Or` at negative polarity — every disjunct is asserted negatively, since
+/// * `Or` at negative polarity – every disjunct is asserted negatively, since
 ///   `(not (or a b))` is `(and (not a) (not b))`.
-/// * `Or` at positive polarity — *nothing*; a disjunct is conditional.
-/// * `Not` — the body, with the polarity flipped.
-/// * Everything else — *nothing*. In particular `Eq`, `Implies`, `Xor` and
+/// * `Or` at positive polarity – *nothing*; a disjunct is conditional.
+/// * `Not` – the body, with the polarity flipped.
+/// * Everything else – *nothing*. In particular `Eq`, `Implies`, `Xor` and
 ///   `Ite` are all polarity boundaries. `Eq` deserves the emphasis: this AST has
 ///   no `Iff`, so a Boolean `(= a b)` is a `TermKind::Eq`, and it is satisfied
-///   just as well with *both* operands false — neither operand is entailed.
+///   just as well with *both* operands false – neither operand is entailed.
 ///
 /// A collector that needs to reach conditional sub-terms for a different
 /// purpose (enumerating conversion terms, discovering theory atoms) must use a
-/// separate walk that cannot write into the conflict maps — see
+/// separate walk that cannot write into the conflict maps – see
 /// `check_array.rs`'s `collect_facts` flag and `check_fp.rs`'s
 /// `collect_fp_constraints_extended_recurse`.
 pub(super) fn asserted_children(kind: &TermKind, positive: bool) -> Vec<(TermId, bool)> {
@@ -257,7 +257,7 @@ mod tests {
     }
 
     /// `Eq`, `Implies`, `Xor` and `Ite` are polarity boundaries at *either*
-    /// polarity — nothing below them is entailed.
+    /// polarity – nothing below them is entailed.
     #[test]
     fn polarity_boundaries_yield_nothing() {
         let mut manager = TermManager::new();
@@ -266,7 +266,7 @@ mod tests {
         let b = manager.mk_var("b", bool_sort);
         let c = manager.mk_var("c", bool_sort);
 
-        // A Bool-sorted `mk_eq` really is a `TermKind::Eq` — this AST has no
+        // A Bool-sorted `mk_eq` really is a `TermKind::Eq` – this AST has no
         // `Iff`, which is exactly why the boundary is easy to miss.
         let equality = manager.mk_eq(a, b);
         assert!(matches!(

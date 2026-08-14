@@ -16,13 +16,13 @@ impl LiaSolver {
             Ok(()) => {
                 // LP is feasible: run root-node preprocessing before B&B.
 
-                // Step 1: Probe variables — root bound tightening.
+                // Step 1: Probe variables – root bound tightening.
                 // Tentatively fixes each integer variable to its bounds and
                 // propagates implied tightenings. Failure is non-fatal; we
                 // proceed even if probing returns an error.
                 let _ = self.probe_variables(20);
 
-                // Step 2: Feasibility pump — opportunistic incumbent search.
+                // Step 2: Feasibility pump – opportunistic incumbent search.
                 // Try to find an integer-feasible solution cheaply before
                 // spending time in branch-and-bound. If the pump succeeds we
                 // pass the incumbent implicitly: branch_and_bound will verify
@@ -36,7 +36,7 @@ impl LiaSolver {
                     // detect the integer assignment quickly on its first pass.
                 }
 
-                // Step 3: Branch-and-bound — full integer feasibility check.
+                // Step 3: Branch-and-bound – full integer feasibility check.
                 self.branch_and_bound(0)
             }
             Err(_reasons) => {
@@ -52,7 +52,7 @@ impl LiaSolver {
     /// so that trying `x >= ceil(v)` never destroys the constraints needed for the
     /// sibling branch `x <= floor(v)`.  (The previous implementation called
     /// `simplex.reset()` between the two branches, which erased *every* constraint
-    /// and made the down-branch trivially satisfiable — a soundness bug that made
+    /// and made the down-branch trivially satisfiable – a soundness bug that made
     /// e.g. `2x = 1` over the integers report SAT.)
     ///
     /// On a satisfying leaf the winning branch's constraints are intentionally
@@ -101,7 +101,7 @@ impl LiaSolver {
                 }
             }
             Ok(()) => {
-                // Simplex hit its pivot budget — undecidable, report honestly.
+                // Simplex hit its pivot budget – undecidable, report honestly.
                 self.simplex.pop();
                 self.branch_stack.pop();
                 return Err(OxizError::Internal(

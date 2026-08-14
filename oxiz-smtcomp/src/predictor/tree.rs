@@ -15,7 +15,7 @@ use super::report::{TrainingConfig, TrainingReport};
 /// A single node in the regression tree.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TreeNode {
-    /// Terminal node — stores the mean `log1p(runtime)` of all training
+    /// Terminal node – stores the mean `log1p(runtime)` of all training
     /// samples that fell into this partition.
     Leaf {
         /// Mean target value (in log1p-space).

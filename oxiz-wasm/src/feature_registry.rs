@@ -1,4 +1,4 @@
-//! Feature Registry — compile-time feature gating for WASM bundle size control.
+//! Feature Registry – compile-time feature gating for WASM bundle size control.
 //!
 //! # Bundle size strategy
 //!
@@ -25,7 +25,7 @@
 //! # Using features
 //!
 //! ```toml
-//! # Cargo.toml — size-optimized WASM build
+//! # Cargo.toml – size-optimized WASM build
 //! [dependencies]
 //! oxiz-wasm = { version = "0.2.2", default-features = false, features = ["minimal"] }
 //! ```
@@ -39,7 +39,7 @@
 
 /// Describes which optional subsystems are compiled into this binary.
 ///
-/// Populated entirely from Cargo feature flags at compile time — zero runtime
+/// Populated entirely from Cargo feature flags at compile time – zero runtime
 /// overhead (all values are `const`).
 pub struct FeatureRegistry;
 

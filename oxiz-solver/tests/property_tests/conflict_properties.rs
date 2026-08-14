@@ -178,7 +178,7 @@ mod conflict_clause_properties {
             // answer is `Sat`; the solver may instead honestly answer `Unknown`
             // because its incremental LIA layer (simplex push/pop in
             // oxiz-theories) is sound but not guaranteed complete across a
-            // scope pop — a limitation orthogonal to conflict analysis (the pure
+            // scope pop – a limitation orthogonal to conflict analysis (the pure
             // Boolean analogue of this scenario returns `Sat`). Accepting
             // `Sat | Unknown` matches how every other arithmetic property in
             // this file already treats an honest `Unknown`, while still failing

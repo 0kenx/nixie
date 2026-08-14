@@ -1,7 +1,7 @@
 //! Regression tests for the "sat-final" fix wave.
 //!
 //! Covers two guarantees that live behind the public [`Solver`] API:
-//!  1. `solve_with_assumptions` returns a *complete* unsat core — every
+//!  1. `solve_with_assumptions` returns a *complete* unsat core – every
 //!     assumption that contributes to the conflict, not just the directly
 //!     falsified one.
 //!  2. DRAT proof logging emits a well-formed, empty-clause-terminated trace for

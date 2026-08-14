@@ -40,9 +40,9 @@ fn hash_with<T: Hash>(rs: &RandomState, t: &T) -> u64 {
     rs.hash_one(t)
 }
 
-// -------------------------------------------------------------------------
+// ========  ========
 // Finding 2: Weight numeric ordering / equality / hashing.
-// -------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn weight_big_int_greater_than_small_rational() {
@@ -72,9 +72,9 @@ fn weight_infinite_is_greatest_and_min_weight_correct() {
     assert_eq!(a.min_weight(&b), b);
 }
 
-// -------------------------------------------------------------------------
+// ========  ========
 // Finding 1: HybridSolver hard-clause support + real result propagation.
-// -------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn hybrid_hard_clause_forces_soft_violation() {
@@ -95,9 +95,9 @@ fn hybrid_hard_clause_forces_soft_violation() {
     assert_eq!(*solver.best_cost(), Weight::from(1));
 }
 
-// -------------------------------------------------------------------------
+// ========  ========
 // Finding 3: MaxSmtSolver is no longer a hollow stub.
-// -------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn maxsmt_solve_without_manager_fails_honestly() {
@@ -149,9 +149,9 @@ fn maxsmt_solve_with_hard_conflict_reports_weighted_cost() {
     assert!(!solver.is_satisfied(id));
 }
 
-// -------------------------------------------------------------------------
+// ========  ========
 // Finding 4: OMT binary search must not over-claim Optimal.
-// -------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn omt_binary_search_reports_satisfiable_on_iteration_budget() {
@@ -188,9 +188,9 @@ fn omt_binary_search_reports_satisfiable_on_iteration_budget() {
     );
 }
 
-// -------------------------------------------------------------------------
+// ========  ========
 // Finding: context.rs is_soft_satisfied recursive evaluation.
-// -------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn soft_compound_not_term_is_evaluated_recursively() {
@@ -228,9 +228,9 @@ fn soft_compound_not_term_unsatisfied_when_forced() {
     assert_eq!(ctx.cost(), Weight::from(1));
 }
 
-// -------------------------------------------------------------------------
+// ========  ========
 // Finding: preprocess BVE default off + no unsound soft resolution.
-// -------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn preprocess_bve_is_disabled_by_default() {

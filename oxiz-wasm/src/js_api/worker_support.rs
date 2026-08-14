@@ -234,12 +234,12 @@ struct WorkerInfo {
 ///
 /// OxiZ WASM does not enable the `atomics`/`bulk-memory` wasm target
 /// features and does not ship a browser `Worker` bootstrap script, so
-/// there is no real OS/browser-thread parallelism available here — the
+/// there is no real OS/browser-thread parallelism available here – the
 /// crate is built and used as an ordinary single-threaded WASM module.
 /// Rather than have `submit()` enqueue tasks that are never drained (a
 /// facade that silently loses work), `WorkerPool` round-robins submitted
 /// tasks across `worker_count` independent solver slots and executes
-/// them for real, cooperatively, on the calling thread — yielding to the
+/// them for real, cooperatively, on the calling thread – yielding to the
 /// JS event loop between tasks so the UI stays responsive. Every result
 /// returned by `execute()`/`drainQueue()` comes from actually running the
 /// task through a real [`WorkerHandler`], never a fabricated answer.

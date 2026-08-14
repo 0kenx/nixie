@@ -52,7 +52,7 @@ pub enum RegexOp {
 /// `Regex` nodes are shared through `Arc`, so the value a user sees as a
 /// *tree* is physically a *DAG*. A derived `Hash`/`PartialEq` walks that DAG
 /// as if it were a tree and therefore re-visits every shared node once per
-/// path that reaches it — exponential in the amount of sharing, on a type that
+/// path that reaches it – exponential in the amount of sharing, on a type that
 /// is used as a `FxHashMap` key on the `check_sat` path
 /// (`DerivativeCache`). Neither `Hash` nor `PartialEq` has an error channel,
 /// so that could not be capped, only removed.
@@ -62,7 +62,7 @@ pub enum RegexOp {
 /// never a walk). [`Hash`] writes that one `u64`; [`PartialEq`] rejects on it
 /// before doing any structural work and otherwise compares with an explicit
 /// stack. The cache is a pure function of `op`, so equal values still hash
-/// equally — the `Hash`/`Eq` contract is preserved.
+/// equally – the `Hash`/`Eq` contract is preserved.
 #[derive(Debug, Clone)]
 pub struct Regex {
     /// The operation
@@ -239,7 +239,7 @@ impl Drop for Regex {
     ///
     /// Compiler-generated drop glue recurses once per nesting level, so a
     /// regex deep enough to build is deep enough to abort the process at scope
-    /// exit — after the value has already been used successfully. Children are
+    /// exit – after the value has already been used successfully. Children are
     /// moved onto an explicit stack and only descended into when this was the
     /// last `Arc` referencing them; a node reached this way has had its
     /// operands taken already, so the nested `drop` the stack triggers is a
@@ -298,7 +298,7 @@ fn take_children(op: &mut RegexOp, out: &mut Vec<Arc<Regex>>) {
 /// The comparator was three mutually recursive functions
 /// (`regex_op_cmp` ↔ `regex_cmp` ↔ `regex_vec_cmp`) descending once per
 /// nesting level, invoked O(n log n) times by the `sort_by` in
-/// [`Regex::union`]/[`Regex::inter`] — i.e. on every `re.union`/`re.inter`
+/// [`Regex::union`]/[`Regex::inter`] – i.e. on every `re.union`/`re.inter`
 /// compile *and* on every derivative that rebuilds one. It returns `Ordering`,
 /// which has no channel for "too deep", and a truncated comparison is not a
 /// degraded answer: it breaks the total order `sort_by` requires. It is now a
@@ -619,7 +619,7 @@ impl Regex {
     /// here is the *input regex's* nesting depth, which every derivative step
     /// preserves or grows, and this is called O(states × alphabet) times by
     /// `regex_membership::search_word` and once per input character by
-    /// [`Regex::matches`]. The return type is `Arc<Regex>` — no error channel —
+    /// [`Regex::matches`]. The return type is `Arc<Regex>` – no error channel –
     /// so a depth cap could only fabricate a wrong language.
     pub fn derivative(&self, c: char) -> Arc<Regex> {
         // One shallow clone of the root: `Star` needs the node itself as an

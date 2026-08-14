@@ -146,7 +146,7 @@ impl From<i64> for DeltaRational {
 ///
 /// Coefficients and many simplex values are integers (denominator 1) in
 /// QF_LIA, but `num_rational`'s `Ratio::mul` still runs cross-gcd reduction
-/// on every multiply — the single largest cost in the simplex profile (~25%).
+/// on every multiply – the single largest cost in the simplex profile (~25%).
 /// When both operands are integers the product is `new_raw(a.n*b.n, 1)` with
 /// no gcd at all; otherwise we fall back to `Ratio::mul`.  `new_raw` is valid
 /// here because `(n, 1)` is already reduced with a positive denominator.

@@ -1,4 +1,4 @@
-//! SimplexSolver — LP solver for parametric analysis.
+//! SimplexSolver – LP solver for parametric analysis.
 //!
 //! This module provides a high-level LP interface used by
 //! `simplex_parametric` for sensitivity analysis and parametric
@@ -34,7 +34,7 @@ use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 use thiserror::Error;
 
-// ── public types ─────────────────────────────────────────────────────────────
+// ======== public types ========
 
 /// Error type for `SimplexSolver`.
 #[derive(Debug, Error, Clone)]
@@ -137,7 +137,7 @@ pub struct SolveResult {
     pub shadow_prices: Vec<BigRational>,
 }
 
-// ── main struct ──────────────────────────────────────────────────────────────
+// ======== main struct ========
 
 /// High-level LP solver for parametric analysis.
 ///
@@ -324,7 +324,7 @@ impl SimplexSolver {
         let total_cols = n + m + n_artificial;
         let rhs_col = total_cols; // index of RHS column
 
-        // ── build tableau ──────────────────────────────────────────────────
+        // ======== build tableau ========
         // tableau[i] has length total_cols + 1 (including RHS).
         let mut tab: Vec<Vec<BigRational>> = vec![vec![BigRational::zero(); total_cols + 1]; m];
 
@@ -391,7 +391,7 @@ impl SimplexSolver {
             obj_row[j] = c.clone();
         }
 
-        // ── eliminate basic variables from the objective row ──────────────
+        // ======== eliminate basic variables from the objective row ========
         // For each artificial basic variable (in Ge/Eq rows), subtract
         // M * (constraint row) from the objective row so the objective is
         // expressed purely in terms of non-basic variables.
@@ -409,7 +409,7 @@ impl SimplexSolver {
             }
         }
 
-        // ── primal simplex iterations ─────────────────────────────────────
+        // ======== primal simplex iterations ========
         const MAX_ITERS: usize = 50_000;
 
         for _iter in 0..MAX_ITERS {
@@ -445,7 +445,7 @@ impl SimplexSolver {
             );
         }
 
-        // ── extract solution ───────────────────────────────────────────────
+        // ======== extract solution ========
         // Check that all artificials are zero.
         let mut values = vec![BigRational::zero(); n];
         for (i, &bv) in basis.iter().enumerate() {
@@ -627,7 +627,7 @@ impl SimplexSolver {
     }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ======== helpers ========
 
 /// Build a `BigRational` from two `i64` values (numerator/denominator).
 #[cfg(test)]
@@ -635,7 +635,7 @@ pub(crate) fn big_rat(num: i64, den: i64) -> BigRational {
     BigRational::new(BigInt::from(num), BigInt::from(den))
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+// ======== tests ========
 
 #[cfg(test)]
 mod tests {
@@ -664,7 +664,7 @@ mod tests {
         SimplexSolver::new(obj, constraints)
     }
 
-    // ── basic feasibility ─────────────────────────────────────────────────
+    // ======== basic feasibility ========
 
     #[test]
     fn test_simple_2var_optimal() {
@@ -714,7 +714,7 @@ mod tests {
         assert!(result.objective >= r(0));
     }
 
-    // ── set_objective_coefficient ─────────────────────────────────────────
+    // ======== set_objective_coefficient ========
 
     #[test]
     fn test_set_objective_coefficient() {
@@ -737,7 +737,7 @@ mod tests {
         assert!(matches!(err, SimplexError::IndexOutOfBounds { .. }));
     }
 
-    // ── shadow_price ─────────────────────────────────────────────────────
+    // ======== shadow_price ========
 
     #[test]
     fn test_shadow_price_before_solve_errors() {
@@ -791,7 +791,7 @@ mod tests {
         let _ = sp2; // just ensure it doesn't error
     }
 
-    // ── parametric sensitivity ────────────────────────────────────────────
+    // ======== parametric sensitivity ========
 
     #[test]
     fn test_parametric_rhs_perturbation() {
@@ -824,7 +824,7 @@ mod tests {
         assert!(solver.last_result().is_none());
     }
 
-    // ── accessor API ──────────────────────────────────────────────────────
+    // ======== accessor API ========
 
     /// Exercise every public accessor in a single end-to-end sequence so that
     /// none are flagged as dead code.

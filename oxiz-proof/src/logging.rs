@@ -195,7 +195,7 @@ impl Drop for ProofLogger {
     }
 }
 
-// ──────────────────────────────── helpers ────────────────────────────────────
+// ======== helpers ========
 
 /// Write the 32-byte file header.
 fn write_header<W: Write>(w: &mut W) -> io::Result<()> {

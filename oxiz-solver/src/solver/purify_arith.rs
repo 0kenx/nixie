@@ -125,7 +125,7 @@ fn purify_rec(
     }
 
     match kind {
-        // --- leaves ---
+        // ======== leaves ========
         TermKind::IntConst(_)
         | TermKind::RealConst(_)
         | TermKind::Var(_)
@@ -134,7 +134,7 @@ fn purify_rec(
         | TermKind::StringLit(_)
         | TermKind::BitVecConst { .. } => term,
 
-        // --- arithmetic constructors: stay under arith ---
+        // ======== arithmetic constructors: stay under arith ========
         TermKind::Neg(a) => {
             let a = purify_rec(a, manager, state, interface, true);
             manager.mk_neg(a)
@@ -170,7 +170,7 @@ fn purify_rec(
         }
         TermKind::Ite(c, t, e) => {
             // Outside arith: keep ite, purify children in their contexts.
-            // (Under arith with non-constructor path already handled above —
+            // (Under arith with non-constructor path already handled above –
             // ite *is* a constructor so we keep structure.)
             let c = purify_rec(c, manager, state, interface, false);
             let branch_arith = under_arith || is_numeric_sort(manager, sort);
@@ -189,7 +189,7 @@ fn purify_rec(
             purify_rec(body, manager, state, interface, under_arith)
         }
 
-        // --- comparisons: operands enter arith ---
+        // ======== comparisons: operands enter arith ========
         TermKind::Eq(a, b) => {
             let a_sort = manager.get(a).map(|t| t.sort);
             let b_sort = manager.get(b).map(|t| t.sort);
@@ -228,7 +228,7 @@ fn purify_rec(
             manager.mk_ge(a, b)
         }
 
-        // --- boolean structure ---
+        // ======== boolean structure ========
         TermKind::Not(a) => {
             let a = purify_rec(a, manager, state, interface, false);
             manager.mk_not(a)

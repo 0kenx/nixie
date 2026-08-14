@@ -1105,7 +1105,7 @@ impl Solver {
     ///
     /// Superseded by [`Self::collect_fp_constraints_extended`], which tracks
     /// polarity; kept as the narrow reference version.  It carries no polarity
-    /// flag, so it may only ever descend through the conjuncts of an `And` —
+    /// flag, so it may only ever descend through the conjuncts of an `And` –
     /// every other Boolean node is a polarity boundary whose sub-terms are
     /// conditional, and the facts here feed a definite-conflict check.  Same
     /// shape as `check_string.rs::collect_string_constraints`.
@@ -1114,12 +1114,12 @@ impl Solver {
     /// `And`-conjunct descent used to recurse once per nesting level, and a
     /// term built directly through [`TermManager::intern_term`] can nest
     /// `And`s arbitrarily deep (`mk_and` flattens; the raw interner does
-    /// not), so a sufficiently deep conjunction overflowed the native stack —
+    /// not), so a sufficiently deep conjunction overflowed the native stack –
     /// a fatal, `catch_unwind`-proof process abort.  A depth cap is not an
     /// option: the return type is `()`, so a cap could only silently drop
     /// constraints and turn a definite conflict into a false `Sat`.
     /// Conjuncts are pushed in reverse so the pop order reproduces the
-    /// original left-to-right recursion exactly — `rounding_add_results` is a
+    /// original left-to-right recursion exactly – `rounding_add_results` is a
     /// `HashMap` whose later insertions overwrite earlier ones, so visit
     /// order is observable.  No `visited` set, matching both the original and
     /// [`Self::collect_fp_constraints_extended`] (see `check_fp/extended.rs`'s
@@ -1264,7 +1264,7 @@ impl Solver {
     ///
     /// When this holds and no definite FP conflict was found, the solver MUST
     /// answer `Unknown` rather than let the SAT core treat the atom as a free
-    /// Boolean — the latter would report `Sat` for formulas such as
+    /// Boolean – the latter would report `Sat` for formulas such as
     /// `fp.lt x y ∧ fp.lt y x`, which are unsatisfiable.
     pub(super) fn fp_atoms_need_theory(&self, manager: &TermManager) -> bool {
         let mut visited: FxHashSet<TermId> = FxHashSet::default();

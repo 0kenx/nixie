@@ -384,8 +384,8 @@ impl ProofChecker {
     /// Iterative (explicit heap stack): untrusted theory proofs from an
     /// external prover drive this directly, and their dependency chains are
     /// bounded only by the file. The `Enter`/`Exit` split keeps the original
-    /// ordering — premises are validated before the rule and conclusion checks
-    /// of the step that uses them — and the `in_progress`/`validated` sets keep
+    /// ordering – premises are validated before the rule and conclusion checks
+    /// of the step that uses them – and the `in_progress`/`validated` sets keep
     /// the walk linear in the number of steps.
     fn check_theory_step(
         &mut self,
@@ -703,9 +703,7 @@ impl Checkable for AletheProof {
     }
 }
 
-// ============================================================================
-// Semantic conclusion verification
-// ============================================================================
+// ======== Semantic conclusion verification ========
 //
 // `ProofTerm`/`TermRef` values are opaque SMT-LIB-style s-expression strings
 // (e.g. `"(= a b)"`, `"(f x y)"`). To check that a rule's conclusion actually
@@ -772,7 +770,7 @@ fn skip_ws(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
 /// Iterative: nesting here comes straight from an untrusted proof file, so the
 /// open lists live on an explicit heap stack (`open`) instead of the call stack.
 /// Depth is still bounded by [`MAX_SEXPR_DEPTH`] because the produced [`SExpr`]
-/// tree is walked recursively by its derived impls — see that constant.
+/// tree is walked recursively by its derived impls – see that constant.
 fn parse_sexpr_rec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<SExpr, String> {
     let mut open: Vec<Vec<SExpr>> = Vec::new();
 
@@ -1445,9 +1443,9 @@ mod tests {
         assert!(!result.is_valid());
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // verify_conclusions gating (audit finding proof-p3 / checker.rs:279)
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_verify_conclusions_off_accepts_bogus_trans_conclusion() {

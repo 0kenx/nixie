@@ -31,7 +31,7 @@ fn main() {
 
     let mut tm = TermManager::new();
 
-    // ===== Example 1: Boolean Simplification =====
+    // ======== Example 1: Boolean Simplification ========
     println!("--- Example 1: Boolean Simplification ---");
     let p = tm.mk_var("p", tm.sorts.bool_sort);
     let q = tm.mk_var("q", tm.sorts.bool_sort);
@@ -59,7 +59,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 2: Constant Propagation =====
+    // ======== Example 2: Constant Propagation ========
     println!("--- Example 2: Constant Propagation ---");
     let x = tm.mk_var("x", tm.sorts.int_sort);
     let y = tm.mk_var("y", tm.sorts.int_sort);
@@ -89,7 +89,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 3: Arithmetic Simplification =====
+    // ======== Example 3: Arithmetic Simplification ========
     println!("--- Example 3: Arithmetic Simplification ---");
     let a = tm.mk_var("a", tm.sorts.int_sort);
 
@@ -118,7 +118,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 4: De Morgan's Laws =====
+    // ======== Example 4: De Morgan's Laws ========
     println!("--- Example 4: De Morgan's Laws ---");
     let p1 = tm.mk_var("p1", tm.sorts.bool_sort);
     let q1 = tm.mk_var("q1", tm.sorts.bool_sort);
@@ -144,7 +144,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 5: Equation Solving =====
+    // ======== Example 5: Equation Solving ========
     println!("--- Example 5: Equation Solving Tactic ---");
     let x2 = tm.mk_var("x", tm.sorts.int_sort);
     let y2 = tm.mk_var("y", tm.sorts.int_sort);
@@ -176,7 +176,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 6: Contextual Simplification =====
+    // ======== Example 6: Contextual Simplification ========
     println!("--- Example 6: Contextual Simplification ---");
     let c = tm.mk_var("c", tm.sorts.bool_sort);
     let t = tm.mk_var("t", tm.sorts.int_sort);
@@ -206,7 +206,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 7: Stateless Tactic =====
+    // ======== Example 7: Stateless Tactic ========
     println!("--- Example 7: Stateless Tactic ---");
     let tactic7 = StatelessSimplifyTactic;
     println!("Tactic name: {}", tactic7.name());
@@ -224,7 +224,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 8: Empty Goal (Satisfiable) =====
+    // ======== Example 8: Empty Goal (Satisfiable) ========
     println!("--- Example 8: Empty Goal (Trivially Satisfiable) ---");
     let empty_goal = Goal::new(vec![]);
     let mut tactic8 = SimplifyTactic::new(&mut tm);
@@ -240,7 +240,7 @@ fn main() {
     }
     println!();
 
-    // ===== Example 9: False Goal (Unsatisfiable) =====
+    // ======== Example 9: False Goal (Unsatisfiable) ========
     println!("--- Example 9: False Goal (Trivially Unsatisfiable) ---");
     let false_term = tm.mk_false();
     let false_goal = Goal::new(vec![false_term]);

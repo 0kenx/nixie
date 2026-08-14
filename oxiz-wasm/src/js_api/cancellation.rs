@@ -211,7 +211,7 @@ impl Clone for CancellationToken {
 mod tests {
     use super::*;
 
-    // -- Local mode: pure Rust (`Rc<Cell<bool>>`), no JS host required --
+    // ======== Local mode: pure Rust (`Rc<Cell<bool>>`), no JS host required ========
 
     #[test]
     fn test_local_token_default_not_cancelled() {

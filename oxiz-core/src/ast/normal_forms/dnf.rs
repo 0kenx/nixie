@@ -376,14 +376,14 @@ fn distribute_and_over_or_multi(
     result
 }
 
-// ===========================================================================
+// ========  ========
 // DNF shape checks
 //
 // Not converted: switches to a strictly shallower function at every level
 // (is_dnf -> is_term_conjunction -> is_literal), so native call depth is
 // bounded by a small constant regardless of the input term's own depth. See
 // the parent module's doc comment.
-// ===========================================================================
+// ========  ========
 
 /// Check if a term is in DNF form
 #[must_use]

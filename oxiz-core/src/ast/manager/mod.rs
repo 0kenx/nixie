@@ -170,7 +170,7 @@ impl TermManager {
         self.terms.len() <= 2
     }
 
-    // ========================== Garbage Collection ==========================
+    // ======== Garbage Collection ========
 
     /// Perform garbage collection on unreachable terms
     ///
@@ -594,7 +594,7 @@ mod tests {
         assert!(vars.is_empty());
     }
 
-    // ==================== Quantifier Pattern Tests ====================
+    // ======== Quantifier Pattern Tests ========
 
     #[test]
     fn test_forall_without_patterns() {

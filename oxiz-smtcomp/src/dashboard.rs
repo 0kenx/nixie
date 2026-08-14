@@ -227,11 +227,11 @@ const CSS_INTERACTIVE: &str = r#"
 "#;
 
 /// JavaScript for search/filter, sortable columns, detail expander, and chart click-to-filter.
-/// All curly braces in this block are literal JS — NOT Rust format! placeholders.
+/// All curly braces in this block are literal JS – NOT Rust format! placeholders.
 const JS_INTERACTIVE: &str = r#"
 <script>
 (function() {
-    // ---- Search / filter ----
+    // ======== Search / filter ========
     var searchInput = document.getElementById('oxiz-search');
     function applyFilter(query, logicFilter, statusFilter) {
         var q = (query || '').toLowerCase();
@@ -261,7 +261,7 @@ const JS_INTERACTIVE: &str = r#"
         });
     }
 
-    // ---- Sortable columns ----
+    // ======== Sortable columns ========
     var sortState = { key: null, asc: true };
     document.querySelectorAll('th[data-sort-key]').forEach(function(th) {
         var indicator = document.createElement('span');
@@ -300,7 +300,7 @@ const JS_INTERACTIVE: &str = r#"
         });
     }
 
-    // ---- Row detail expander ----
+    // ======== Row detail expander ========
     document.querySelector('#resultsTable tbody').addEventListener('click', function(e) {
         var tr = e.target.closest('tr.data-row');
         if (!tr) return;
@@ -321,7 +321,7 @@ const JS_INTERACTIVE: &str = r#"
         tr.insertAdjacentElement('afterend', detailRow);
     });
 
-    // ---- Chart click-to-filter helpers ----
+    // ======== Chart click-to-filter helpers ========
     window.oxizSetLogicFilter = function(logic) {
         activeLogicFilter = (activeLogicFilter === logic) ? '' : logic;
         var q = searchInput ? searchInput.value : '';

@@ -1,7 +1,7 @@
 //! Exact and approximate model counting (#SAT)
 //!
 //! This module counts satisfying assignments ("models") of an SMT-LIB2
-//! script by actually driving [`Context`]'s solver — it never fabricates a
+//! script by actually driving [`Context`]'s solver – it never fabricates a
 //! count from text heuristics.
 //!
 //! * **Exact** counting enumerates models via the classic blocking-clause
@@ -235,7 +235,7 @@ impl ModelCounter {
     ///
     /// Loads `script` into `ctx` (so its declarations/assertions/any
     /// `check-sat` it contains run exactly as written), then repeatedly
-    /// solves, reads back the model, blocks it, and solves again — inside a
+    /// solves, reads back the model, blocks it, and solves again – inside a
     /// `push`/`pop` scope so the blocking clauses never leak into `ctx`'s
     /// permanent assertion set.
     fn count_exact(
@@ -263,7 +263,7 @@ impl ModelCounter {
     /// * If every declared variable is Boolean and the full assignment
     ///   space (`2^n`) clearly exceeds the configured sample budget, uses
     ///   XOR-hash estimation (real, randomized, solver-invoking).
-    /// * Otherwise (small space, or non-Boolean variables present — which
+    /// * Otherwise (small space, or non-Boolean variables present – which
     ///   the hashing scheme below does not cover) honestly falls back to
     ///   the same bounded enumeration used by exact mode.
     fn count_approximate(
@@ -439,7 +439,7 @@ struct EnumerationOutcome {
     /// `true` iff enumeration stopped because the solver reported `unsat`,
     /// or because [`enumerable_domain_size`] proved every possible
     /// assignment over the declared variables had already been found
-    /// satisfiable — either way every model was genuinely found, so
+    /// satisfiable – either way every model was genuinely found, so
     /// `found` is an exact count.
     exhausted: bool,
     /// `true` iff the solver reported `unknown` partway through, so `found`
@@ -470,7 +470,7 @@ struct EnumerationOutcome {
 ///   [`enumerable_domain_size`] computes the *exact* number of possible
 ///   assignments when that domain is provably finite (`Bool`, or a
 ///   fixed-width `BitVec`). Enumeration then stops the instant that many
-///   models have been found — every possible assignment has already been
+///   models have been found – every possible assignment has already been
 ///   confirmed satisfiable, so the count is exact by construction, without
 ///   spending one more `check_sat` call to have the solver "confirm" what
 ///   sort-level reasoning already proves.
@@ -769,8 +769,8 @@ fn sort_id_from_name(ctx: &mut Context, sort_name: &str) -> Option<oxiz_core::so
 /// produced by [`Context::get_model`], back into a concrete [`TermId`] for
 /// that sort. `get_model()`'s formatting (`Context::format_value` /
 /// `Context::default_value`) is the authoritative source of truth for what
-/// a variable's value "is" in the current model — including its default
-/// fallback for variables the solver never had to decide — so blocking
+/// a variable's value "is" in the current model – including its default
+/// fallback for variables the solver never had to decide – so blocking
 /// clauses are built from this string rather than from
 /// `Context::eval_in_model`, which does not apply that fallback.
 fn value_term_from_str(ctx: &mut Context, sort_name: &str, value: &str) -> Option<TermId> {
@@ -815,7 +815,7 @@ fn value_term_from_str(ctx: &mut Context, sort_name: &str, value: &str) -> Optio
 /// Build one random parity (XOR) constraint over `vars`: a random subset of
 /// `vars` (each included independently with probability 1/2), XORed
 /// together and constrained to equal a random target bit. Returns `None` if
-/// the random subset came up empty (the constraint would be trivial) —
+/// the random subset came up empty (the constraint would be trivial) –
 /// callers simply skip adding a constraint that round.
 fn random_parity_term(ctx: &mut Context, vars: &[TermId], rng: &mut SplitMix64) -> Option<TermId> {
     let selected: Vec<TermId> = vars.iter().copied().filter(|_| rng.next_bool()).collect();
@@ -829,8 +829,8 @@ fn random_parity_term(ctx: &mut Context, vars: &[TermId], rng: &mut SplitMix64) 
 }
 
 /// A tiny, dependency-free `splitmix64` PRNG. Used only to pick random
-/// Boolean subsets/target bits for hash-family parity constraints — not for
-/// anything security-sensitive — so we avoid pulling in the `rand` crate for
+/// Boolean subsets/target bits for hash-family parity constraints – not for
+/// anything security-sensitive – so we avoid pulling in the `rand` crate for
 /// a handful of pseudo-random bits.
 struct SplitMix64 {
     state: u64,
@@ -1113,7 +1113,7 @@ mod tests {
         assert!(result.is_exact);
     }
 
-    // -----------------------------------------------------------------
+    // ========  ========
     // Regression tests for the pathological-runtime fix: enumeration used
     // to have no way to stop short of the configured `--count-samples` cap
     // (default 1000), so a formula with an unbounded-domain variable (Int,
@@ -1123,7 +1123,7 @@ mod tests {
     // load, even for a "trivial" formula with only a couple of declared
     // variables. `enumerable_domain_size` + the wall-clock budget in
     // `enumerate_models_bounded` bound this properly.
-    // -----------------------------------------------------------------
+    // ========  ========
 
     /// Wall-clock duration assertions here are flaky under shared-machine /
     /// CI load (a loaded box can blow a generous budget on an otherwise-fast

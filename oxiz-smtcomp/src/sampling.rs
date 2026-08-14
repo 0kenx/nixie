@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(summary.logics_covered, 2);
     }
 
-    // --- Structural feature tests ---
+    // ======== Structural feature tests ========
 
     use crate::logic_detector::StructuralFeatures;
 

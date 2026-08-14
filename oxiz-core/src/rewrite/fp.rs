@@ -107,7 +107,7 @@ impl FpRewriter {
     }
 
     /// Check if a term is *provably* finite: a concrete finite literal or
-    /// zero. `!is_infinity(t)` is **not** the same thing — it is also true
+    /// zero. `!is_infinity(t)` is **not** the same thing – it is also true
     /// for a symbolic FP term (a free variable, or any expression this
     /// rewriter hasn't reduced to a literal), which could be assigned NaN,
     /// +inf, or -inf by a satisfying model. Rules like `inf + x -> inf` or
@@ -749,7 +749,7 @@ mod tests {
     fn test_fp_add_inf_plus_symbolic_not_folded_to_inf() {
         // Regression test: `inf + x -> inf` used to fire for *any* `x` that
         // wasn't syntactically an infinity/NaN literal, including a plain
-        // symbolic variable — unsound, since a model could assign that
+        // symbolic variable – unsound, since a model could assign that
         // variable NaN (inf + NaN = NaN, not inf).
         let (mut manager, mut ctx, mut rewriter) = setup();
 

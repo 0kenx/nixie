@@ -3,7 +3,7 @@
 //! Provides explicitly unrolled (4×) word-level bitwise operations on packed
 //! `&[u64]` slices.  The unrolled loops are intentionally structured so that
 //! LLVM's auto-vectoriser can emit SSE2/AVX2/NEON instructions depending on
-//! the target CPU — no nightly `std::simd` or unsafe code required.
+//! the target CPU – no nightly `std::simd` or unsafe code required.
 //!
 //! These functions are the hot path for constraint propagation when bit-vector
 //! widths exceed 64 bits (i.e., when the bitvector is stored as multiple u64
@@ -49,7 +49,7 @@ pub fn bv_and_words(a: &[u64], b: &[u64], out: &mut [u64]) {
     let chunks = n / 4;
     let remainder = n % 4;
 
-    // 4× unrolled body — LLVM fuses these into a single vectorised store
+    // 4× unrolled body – LLVM fuses these into a single vectorised store
     for i in 0..chunks {
         let base = i * 4;
         out[base] = a[base] & b[base];
@@ -169,7 +169,7 @@ pub fn bv_count_ones(a: &[u64]) -> u32 {
 
     for i in 0..chunks {
         let base = i * 4;
-        // These four statements are independent — the CPU executes them
+        // These four statements are independent – the CPU executes them
         // simultaneously on ports that support popcnt.
         count += a[base].count_ones();
         count += a[base + 1].count_ones();
@@ -198,7 +198,7 @@ pub fn bv_eq_words(a: &[u64], b: &[u64]) -> bool {
     let chunks = n / 4;
     let remainder = n % 4;
 
-    // Accumulate differences — any non-zero difference means inequality.
+    // Accumulate differences – any non-zero difference means inequality.
     let mut diff: u64 = 0;
 
     for i in 0..chunks {

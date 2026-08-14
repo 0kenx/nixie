@@ -56,7 +56,7 @@ pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> S
 ///
 /// This is the inverse of the lexer's literal decoding
 /// ([`crate::smtlib::Lexer`]), and the single place any string value is turned
-/// back into source text — every printer routes through it so the three copies
+/// back into source text – every printer routes through it so the three copies
 /// that used to exist cannot drift apart again.
 ///
 /// # The rules
@@ -66,7 +66,7 @@ pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> S
 /// defines is the doubled quote, and the Unicode Strings theory adds exactly
 /// two `\u` forms *on input*:
 ///
-/// * `"` is written `""` — one quote character.  The old `\"` re-parsed as a
+/// * `"` is written `""` – one quote character.  The old `\"` re-parsed as a
 ///   backslash followed by the end of the literal, silently truncating the
 ///   value and corrupting the rest of the output.
 /// * `\` stands for itself and is emitted verbatim, **unless** the character
@@ -86,7 +86,7 @@ pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> S
 /// lexer's `MAX_STRING_CODE_POINT`.
 ///
 /// Rust's `char` excludes the UTF-16 surrogate range `0xD800..=0xDFFF` by
-/// construction, so this function can never emit a surrogate escape — which
+/// construction, so this function can never emit a surrogate escape – which
 /// is exactly the range the lexer rejects as unrepresentable, so the two
 /// layers agree on the alphabet.
 ///
@@ -99,7 +99,7 @@ pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> S
 /// A `char` above `MAX_STRING_CODE_POINT` (`0x2FFFF`) is outside the alphabet
 /// of the Unicode Strings theory and has *no* literal spelling: a `\u{...}`
 /// escape denoting a larger value is not an escape sequence at all, so no
-/// reader — Z3's or OxiZ's — would read it back as one character.  Such a
+/// reader – Z3's or OxiZ's – would read it back as one character.  Such a
 /// value can only arise from a raw supplementary-plane character in the
 /// input; it is still written as `\u{...}` here, since there is no
 /// alternative encoding and the escape at least names the code point.
@@ -141,7 +141,7 @@ mod string_literal_tests {
     const MAX_CODE_POINT: u32 = 0x2_FFFF;
 
     /// Decode an SMT-LIB string literal with the real lexer, panicking on any
-    /// lexical error — the printer's output must always be clean input.
+    /// lexical error – the printer's output must always be clean input.
     fn decode(literal: &str) -> String {
         let mut lexer = Lexer::new(literal);
         let token = lexer
@@ -162,7 +162,7 @@ mod string_literal_tests {
     ///
     /// Every expected literal was cross-checked against z3 4.15 by feeding it
     /// back to z3 and comparing `str.len` and equality with the original.
-    /// Deterministic by construction — no RNG, no wall-clock.
+    /// Deterministic by construction – no RNG, no wall-clock.
     const CASES: &[(&str, &str)] = &[
         // Empty and plain ASCII: no escaping whatsoever.
         ("", r#""""#),
@@ -233,7 +233,7 @@ mod string_literal_tests {
     }
 
     /// Spec rule 1: `"` is written `""`, and that is the *only* in-literal
-    /// escape the core language defines. It is never written `\"` — a
+    /// escape the core language defines. It is never written `\"` – a
     /// backslash before a quote would end the literal, not escape it.
     #[test]
     fn test_string_literal_quote_is_doubled_never_backslashed() {
@@ -275,7 +275,7 @@ mod string_literal_tests {
     }
 
     /// Spec rule 3: the `\u` forms *are* recognised on input, so a backslash
-    /// that would begin one is escaped as `\u{5c}` — and only then.
+    /// that would begin one is escaped as `\u{5c}` – and only then.
     #[test]
     fn test_string_literal_backslash_before_u_is_escaped() {
         // The four-digit and the braced form, as literal text.
@@ -466,8 +466,8 @@ mod tests {
     use config::PrettyConfig;
     use pretty::PrettyPrinter;
 
-    /// All three renderers of a string value — the single-line printer, the
-    /// pretty printer, and `model::Value`'s `Display` — must produce the same
+    /// All three renderers of a string value – the single-line printer, the
+    /// pretty printer, and `model::Value`'s `Display` – must produce the same
     /// literal, because all three route through `format_string_literal`.
     /// Three separate copies of the escape rules is exactly how this defect
     /// survived for so long.
@@ -603,16 +603,16 @@ mod tests {
         assert_ne!(contingent, f);
     }
 
-    // ────────────────────────────────────────────────────────────────────
+    // ========  ========
     // Structural bit-vector constant folding.
     //
     // The comparison folding above only fires once the bound has actually
     // become a literal, so `bvadd`/`bvand`/`bvshl`/... over literal operands
     // must evaluate at construction time too.  Every expected value in this
     // section was cross-checked against z3 4.15.
-    // ────────────────────────────────────────────────────────────────────
+    // ========  ========
 
-    /// Build the `width`-bit literal `value` and return its printed form —
+    /// Build the `width`-bit literal `value` and return its printed form –
     /// the folding assertions below check the *literal* a fold produced, so
     /// they also pin the `#x` (width divisible by four) versus `#b` radix.
     fn literal_of(manager: &mut TermManager, value: u64, width: u32) -> String {
@@ -639,7 +639,7 @@ mod tests {
         );
     }
 
-    /// One folded operation per row, at five widths — including width 5,
+    /// One folded operation per row, at five widths – including width 5,
     /// which is not a multiple of four and therefore prints in binary.
     #[test]
     fn test_bv_structural_folding_per_operation() {
@@ -1005,7 +1005,7 @@ mod tests {
         assert!(output.contains("not"));
     }
 
-    // ==================== PrettyPrinter Tests ====================
+    // ======== PrettyPrinter Tests ========
 
     #[test]
     fn test_pretty_config_default() {
@@ -1128,7 +1128,7 @@ mod tests {
         assert!(output.contains("x"));
     }
 
-    // ==================== Model Printing Tests ====================
+    // ======== Model Printing Tests ========
 
     #[test]
     fn test_print_empty_model() {
@@ -1211,7 +1211,7 @@ mod tests {
         assert!(output.contains("#xff"));
     }
 
-    // ==================== Proof Printing Tests ====================
+    // ======== Proof Printing Tests ========
 
     #[test]
     fn test_print_empty_proof() {
@@ -1339,7 +1339,7 @@ mod tests {
         assert!(output.contains("farkas"));
     }
 
-    // ────────────────────────────────────────────────────────────────────
+    // ========  ========
     // Proof text quoting: `write_proof_rule`/`write_proof_node` embed four
     // pieces of free-form text (metadata values, `Assume` names, `TheoryLemma`
     // theory names, `Custom` rule names) into `(step ... :key "...")`-shaped
@@ -1347,7 +1347,7 @@ mod tests {
     // value raw, so a `"` in the text ended the literal early and corrupted
     // the rest of the proof; they now all route through
     // `format_string_literal`, exactly like the term printers.
-    // ────────────────────────────────────────────────────────────────────
+    // ========  ========
 
     /// Metadata values containing a quote, a backslash, a `\u`-prefixed
     /// literal substring, a non-ASCII code point, and a control character

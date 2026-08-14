@@ -3,7 +3,7 @@
 // solver classifies the problem once during preprocessing
 // (`solver::inprocess::classify_problem`) and uses the classification for
 // strategy selection (`inprocessing_beneficial`). Note: the classification is
-// deliberately NOT used to reorder arithmetic variables — this solver assigns
+// deliberately NOT used to reorder arithmetic variables – this solver assigns
 // arithmetic variables without per-variable backtracking, so the variable order
 // is completeness-critical and a naive reorder can make SAT instances
 // unsolvable. The connectivity/independent-group helpers remain unused.

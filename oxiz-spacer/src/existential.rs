@@ -333,15 +333,15 @@ impl ExistentialProjector {
     /// "yes, it may contain an existential" merely projects a conjunct away
     /// (a sound over-approximation), whereas answering "no" for a term that
     /// *does* mention an existential variable keeps that variable in the
-    /// projected formula — an unsound result, because Spacer then treats a
+    /// projected formula – an unsound result, because Spacer then treats a
     /// formula still quantified over Y as if it were over X alone.
     ///
     /// Two defects made the old recursive version answer "no" wrongly:
     ///
     /// * its `match` ended in `_ => false`, so an existential occurring
-    ///   under any kind it did not enumerate — `Ite`, `Implies`, `Xor`,
+    ///   under any kind it did not enumerate – `Ite`, `Implies`, `Xor`,
     ///   `Distinct`, `Neg`, `Select`/`Store`, `Apply`, every bitvector and
-    ///   string operation, a quantifier body, a `Let` body — was reported
+    ///   string operation, a quantifier body, a `Let` body – was reported
     ///   as absent;
     /// * a dangling `TermId` also answered `false`, i.e. "definitely no
     ///   existential", when nothing at all is known about it.
@@ -349,7 +349,7 @@ impl ExistentialProjector {
     /// Both are fixed here: descent is via
     /// [`oxiz_core::ast::traversal::get_children`] (exhaustive over
     /// `TermKind`, so a new variant is a compile error there rather than a
-    /// silent `false` here), and an unknown id answers `true` — the
+    /// silent `false` here), and an unknown id answers `true` – the
     /// conservative direction. Descending into quantifier bodies without
     /// tracking shadowing is likewise conservative: a *bound* variable that
     /// happens to share a name is reported as an occurrence, which can only
@@ -415,8 +415,8 @@ impl ExistentialProjector {
     /// `Le`/`Lt` and returned the term untouched under a `_ => term`
     /// fallthrough. Model-based projection therefore left existential
     /// variables *unsubstituted* whenever they occurred under any other
-    /// operator — `Add`, `Sub`, `Mul`, `Ge`, `Gt`, `Ite`, `Implies`,
-    /// `Select`/`Store`, `Apply`, a bitvector operation — so `mbp` returned
+    /// operator – `Add`, `Sub`, `Mul`, `Ge`, `Gt`, `Ite`, `Implies`,
+    /// `Select`/`Store`, `Apply`, a bitvector operation – so `mbp` returned
     /// a formula still mentioning the variables it was asked to eliminate.
     /// It also had no memo, so a shared DAG was re-expanded into fresh
     /// nodes exponentially, and no depth bound, so deep input overflowed
@@ -642,7 +642,7 @@ impl WitnessExtractor {
     /// needs the owning [`TermManager`]. This method therefore delegates to
     /// [`WitnessExtractor::extract_witnesses_with_terms`]. A previous version
     /// assigned an arbitrary (hash-ordered) model entry to every existential
-    /// variable, producing wrong values under wrong names — an unsound result
+    /// variable, producing wrong values under wrong names – an unsound result
     /// that this delegation removes.
     pub fn extract_witnesses(
         terms: &TermManager,
@@ -879,13 +879,13 @@ mod tests {
         assert!(info.has_existentials);
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Regression tests for the `sweep-backend-misc` triage sweep:
     // `ExistentialInfo::analyze` used to leave `existential_vars` always
     // empty (an unpopulated `SmallVec::new()`), so it was structurally
     // impossible for `ExistentialHandler::preprocess_rule` to ever
     // actually Skolemize anything, regardless of `has_existentials`.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// Build a rule whose head references one declared universal
     /// variable (`univ_x`) and one variable that is *not* declared in
@@ -1002,9 +1002,9 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Unbounded-recursion / conservativeness regressions.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// `contains_existential` must answer "yes" for an existential hidden
     /// under an operator the old enumeration did not descend into. Answering

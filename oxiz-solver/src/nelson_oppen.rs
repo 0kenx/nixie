@@ -690,7 +690,7 @@ mod tests {
         assert_eq!(combiner.stats.equalities_propagated, 1);
     }
 
-    // ===== Purification regression tests =====
+    // ======== Purification regression tests ========
     //
     // Before `purify_term` was rewritten it matched only `TermKind::Apply` and
     // fell through with `_ => Ok(term_id)`; on top of that its

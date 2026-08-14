@@ -274,10 +274,10 @@ fn test_pr28_backstop_preserves_sat_with_valid_model_across_push_pop() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // PR28 backstop, lazy theory mode: the rebuild must not run where there is
 // no shadow trail to rebuild *from*.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Lazy-mode twin of
 /// `pr30_soundness::test_pr30_purified_uf_arg_entailed_equality_false_sat`.

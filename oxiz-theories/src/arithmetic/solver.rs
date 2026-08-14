@@ -95,8 +95,8 @@ pub struct ArithSolver {
     /// consistency check is a pure function of `int_equalities` (it neither
     /// reads nor depends on the live simplex assignment), but it performs an
     /// O(rows·cols) fraction-free Gaussian elimination, so re-running it on
-    /// every theory check — which for an integer logic fires once per CDCL
-    /// propagation — dominates runtime on saturated LIA/DL inputs (e.g. the
+    /// every theory check – which for an integer logic fires once per CDCL
+    /// propagation – dominates runtime on saturated LIA/DL inputs (e.g. the
     /// mathsat `vhard` family, where it alone was ~80% of wall time).  The
     /// equality set changes only when an equality is asserted (`intern`-time)
     /// or retracted by `pop`, so the cache is invalidated at exactly those
@@ -105,7 +105,7 @@ pub struct ArithSolver {
     /// Propagation-only single-variable constant bounds, maintained in
     /// parallel with the simplex.  The simplex encodes every constraint
     /// (`add_le`/`add_eq`) as a *slack row* with the bound on the slack, so its
-    /// `lower`/`upper` arrays carry **no** bound on the original variables —
+    /// `lower`/`upper` arrays carry **no** bound on the original variables –
     /// which defeats cheap bound propagation.  This tracker records the direct
     /// single-variable constant bound each `assert_*` implies on its variable
     /// (e.g. `assert_eq([(x,1)], k)` ⇒ `x ∈ [k,k]`), so
@@ -113,7 +113,7 @@ pub struct ArithSolver {
     ///
     /// SOUND: every entry is a direct consequence of one asserted atom (its
     /// `reason` id).  Push/pop-scoped via the `prop_undo` trail (parallel to
-    /// the simplex's own trail).  Used for propagation only — never consulted
+    /// the simplex's own trail).  Used for propagation only – never consulted
     /// by `check()`/feasibility, so it cannot affect soundness of the solve.
     prop_lower: Vec<Option<PropBoundEntry>>,
     /// See [`Self::prop_lower`].
@@ -326,7 +326,7 @@ impl ArithSolver {
             }
         }
 
-        // Sort terms by variable ID — safe because sorting doesn't change the sign
+        // Sort terms by variable ID – safe because sorting doesn't change the sign
         // of the overall expression for inequalities (we don't negate afterwards).
         // NOTE: Sorting alone is also problematic because it reorders terms but the
         // sign is determined by all terms together.  We keep the sort for consistent
@@ -588,8 +588,8 @@ impl ArithSolver {
         // NOTE: no `record_prop_bound` here.  An equality's single-variable
         // constant bound is only sound for propagation when it is a GENUINE
         // `var = constant` (a plain variable directly equated to a numeric
-        // constant).  Equalities reached through EUF congruence — or whose
-        // linear parse dropped a non-constant operand — would record a bound
+        // constant).  Equalities reached through EUF congruence – or whose
+        // linear parse dropped a non-constant operand – would record a bound
         // whose single-atom reason is insufficient (the real justification is
         // an equality chain the prop tracker does not see), yielding unsound
         // propagation.  Genuine `var = const` equalities are recorded by the
@@ -600,7 +600,7 @@ impl ArithSolver {
     /// equality (a plain variable directly equated to a numeric constant),
     /// for use by cheap bound propagation.  SOUND: the bound is a direct,
     /// unconditional consequence of the asserted equality whose `reason` term
-    /// is supplied — no EUF chain is involved, so the single-atom reason is
+    /// is supplied – no EUF chain is involved, so the single-atom reason is
     /// sufficient.  Callers MUST verify the equality is genuine
     /// (`Var = IntConst/RealConst`) before calling.
     pub fn note_fixed_var(&mut self, term: TermId, value: Rational64, reason: TermId) {
@@ -615,7 +615,7 @@ impl ArithSolver {
     /// [`Simplex::propagate_bounds`] until it stops changing anything (bounded
     /// iterations).  This populates the simplex's `lower`/`upper` with the
     /// *transitive* bounds derived through tableau rows (e.g. a recurrence
-    /// `x1 = f(x0)` derives `x1`'s bound once `x0` is pinned) — the bounds the
+    /// `x1 = f(x0)` derives `x1`'s bound once `x0` is pinned) – the bounds the
     /// cheap single-variable prop tracker cannot see.
     ///
     /// Call ONCE per assertion (not per atom) so the O(tableau) cost is paid
@@ -730,7 +730,7 @@ impl ArithSolver {
         self.term_to_var.get(&term).map(|&var| {
             if self.is_integer {
                 // Prefer the integral assignment found by branch-and-bound when
-                // the last check() proved Sat — the raw LP optimum may be
+                // the last check() proved Sat – the raw LP optimum may be
                 // fractional for Int variables.
                 if let Some(v) = self.lia_model.get(&var) {
                     return *v;
@@ -806,8 +806,8 @@ impl ArithSolver {
         // Range over the ASSERTED (level-0) constraints only.  After a
         // satisfiable search the simplex still carries the model's
         // decision-level bounds (e.g. a decided `(= z -4)`); optimising over
-        // that state returns the model's value as the range — a *subset* of
-        // the true level-0 range — so the case-split `(t = lo ∨ … ∨ t = hi)`
+        // that state returns the model's value as the range – a *subset* of
+        // the true level-0 range – so the case-split `(t = lo ∨ … ∨ t = hi)`
         // would exclude reachable values and become an unsound permanent
         // clause (the `state_hygiene_audit` / `scope_rebase_adversarial`
         // inter-check `sat → unsat` regressions).  Popping to base leaves only
@@ -973,7 +973,7 @@ impl ArithSolver {
     const LIA_MAX_NODES: usize = 20_000;
 
     /// Collect the simplex variable ids of all interned (Int) terms, sorted for
-    /// deterministic branching order.  Slack variables are excluded — we only
+    /// deterministic branching order.  Slack variables are excluded – we only
     /// branch on the original integer-sorted variables.
     fn interned_int_vars(&self) -> Vec<VarId> {
         let mut vars: Vec<VarId> = self
@@ -1027,7 +1027,7 @@ impl ArithSolver {
     /// entries) produces rows that are integer linear combinations of the
     /// originals, hence consequences that every integer solution must satisfy.
     /// For any resulting row `sum c_j·x_j = d`, an integer solution requires
-    /// `gcd(c_j) | d`; if that fails — or a row reduces to `0 = d` with `d ≠ 0` —
+    /// `gcd(c_j) | d`; if that fails – or a row reduces to `0 = d` with `d ≠ 0` –
     /// the whole system is integer-infeasible.
     ///
     /// This catches cross-constraint parity infeasibility such as
@@ -1156,7 +1156,7 @@ impl ArithSolver {
         // unbounded variables cannot (e.g. `y = 2x ∧ y = 2z + 1`), converting a
         // would-be `Unknown` into a proven `Unsat`.  It only ever strengthens
         // (never weakens) the verdict, so running it here instead of ahead of
-        // B&B is sound — and it avoids re-running an O(rows·cols) fraction-free
+        // B&B is sound – and it avoids re-running an O(rows·cols) fraction-free
         // Gaussian elimination on every theory check when B&B already decided.
         // The check is a pure function of `int_equalities`, so its result is
         // memoised in `int_eq_infeasible_cache` (invalidated only when an
@@ -1187,7 +1187,7 @@ impl ArithSolver {
     /// - `Unsat(core)` if BOTH branches on the fractional variable are
     ///   infeasible (integer-infeasible);
     /// - `Unknown` if the depth/node budget is exhausted, or a sub-solve hit the
-    ///   simplex pivot limit — never a fabricated Sat/Unsat.
+    ///   simplex pivot limit – never a fabricated Sat/Unsat.
     fn bnb_recurse(
         &mut self,
         int_vars: &[VarId],
@@ -1261,7 +1261,7 @@ impl ArithSolver {
         match self.simplex.check() {
             Ok(()) => {
                 if self.simplex.resource_limit_reached() {
-                    // LP unresolved within the pivot budget — Unknown, not Sat.
+                    // LP unresolved within the pivot budget – Unknown, not Sat.
                     Ok(BranchOutcome::Unknown)
                 } else {
                     Ok(match self.bnb_recurse(int_vars, depth + 1, nodes)? {
@@ -1331,7 +1331,7 @@ impl Theory for ArithSolver {
         match self.simplex.check() {
             Ok(()) => {
                 // The pivot budget may have been exhausted without a definitive
-                // answer.  In that case the assignment is NOT a model — report
+                // answer.  In that case the assignment is NOT a model – report
                 // Unknown rather than a fabricated Sat.
                 if self.simplex.resource_limit_reached() {
                     return Ok(TheoryResult::Unknown);
@@ -1340,8 +1340,8 @@ impl Theory for ArithSolver {
             Err(reasons) => {
                 // `reasons` and the simplex constraints that carry these ids are
                 // pushed and popped together, so every id must resolve.  A miss
-                // would silently shrink the core — and a conflict explanation
-                // that loses one of its causes is not weaker, it is wrong — so
+                // would silently shrink the core – and a conflict explanation
+                // that loses one of its causes is not weaker, it is wrong – so
                 // assert it loudly and, in release, fall back to the full set of
                 // known reasons rather than a truncated one.
                 let mut terms: Vec<TermId> = Vec::with_capacity(reasons.len());
@@ -1363,12 +1363,12 @@ impl Theory for ArithSolver {
             }
         }
 
-        // Step 2 (LRA): the LP relaxation is exact — feasible LP ⇒ Sat.
+        // Step 2 (LRA): the LP relaxation is exact – feasible LP ⇒ Sat.
         if !self.is_integer {
             return Ok(TheoryResult::Sat);
         }
 
-        // Step 3 (LIA): the LP relaxation being feasible is NOT sufficient — a
+        // Step 3 (LIA): the LP relaxation being feasible is NOT sufficient – a
         // fractional assignment over Int variables must be resolved by
         // branch-and-bound before we may answer Sat.  Otherwise integer-
         // infeasible-but-LP-feasible systems (e.g. y = 2x ∧ y = 2z+1) would be
@@ -1515,7 +1515,7 @@ impl TheoryCombination for ArithSolver {
         //
         // Algorithm:
         // a) Collect interface variables (those mapped from interned terms).
-        // b) Group by current delta_value in the simplex model — same-valued vars
+        // b) Group by current delta_value in the simplex model – same-valued vars
         //    are candidates for equality.
         // c) For each adjacent same-bucket pair (x, y):
         //    i)  Probe: push, add x - y < 0 (strict), check → if UNSAT then
@@ -1531,7 +1531,7 @@ impl TheoryCombination for ArithSolver {
 
         // Need &mut self for probing; but the trait signature is &self.
         // We work around this by cloning the accumulated `shared_equalities` and
-        // returning them — the model-based probing path requires &mut self, so we
+        // returning them – the model-based probing path requires &mut self, so we
         // use an internal helper that takes &mut ArithSolver.
         self.shared_equalities.clone()
     }
@@ -1549,7 +1549,7 @@ impl ArithSolver {
     /// this arithmetic theory and other theories in the Nelson-Oppen combination.
     ///
     /// Only emits `x = y` if BOTH `x < y` and `x > y` are infeasible in the
-    /// current simplex state — this guarantees soundness: no false equality is
+    /// current simplex state – this guarantees soundness: no false equality is
     /// ever propagated.
     ///
     /// Uses probe-and-pop to avoid permanently modifying the simplex state.
@@ -1688,7 +1688,7 @@ impl ArithSolver {
     ///
     /// For a comparison atom `sum(coef_i·x_i) <op> constant`, returns
     /// `Some((truth, reason))` iff arithmetic *forces* the atom to `truth`
-    /// (true or false) — implemented as two push/check/pop probes: assert the
+    /// (true or false) – implemented as two push/check/pop probes: assert the
     /// atom (if infeasible, FALSE is forced) and assert its negation (if
     /// infeasible, TRUE is forced).  `reason` is the Farkas certificate.
     /// Sound by construction: the probes are on a scratch simplex scope.
@@ -1770,7 +1770,7 @@ impl ArithSolver {
     ///
     /// Optionally tighten the tableau's variable bounds first via
     /// [`Simplex::propagate_bounds`] (`tighten = true`) so derived (transitive)
-    /// bounds feed the expression derivation — needed to catch propagation
+    /// bounds feed the expression derivation – needed to catch propagation
     /// chains through tableau rows (e.g. finite-domain recurrences).
     #[must_use]
     pub fn derive_expr_bound_reasons(
@@ -1781,7 +1781,7 @@ impl ArithSolver {
     ) -> (ExplainedBound, ExplainedBound) {
         // NOTE: `tighten` is accepted for API stability but the tableau
         // tightening is now done ONCE per assertion by the caller
-        // ([`Self::tighten_tableau_bounds`]) rather than per-atom here —
+        // ([`Self::tighten_tableau_bounds`]) rather than per-atom here –
         // running `propagate_bounds` (O(tableau)) inside this per-atom method
         // made `=tight` O(tableau × atoms × assertions), far too slow.  The
         // populated simplex bounds are read below regardless.
@@ -2308,7 +2308,7 @@ mod tests {
         );
     }
 
-    // ---- Nelson-Oppen tests ----
+    // ======== Nelson-Oppen tests ========
 
     /// x <= y AND y <= x should yield an entailed equality.
     #[test]
@@ -2339,7 +2339,7 @@ mod tests {
         let sat = solver.check().expect("check should succeed");
         assert!(matches!(sat, TheoryResult::Sat), "Expected SAT");
 
-        // Both x < y and x > y should be infeasible — equality is entailed.
+        // Both x < y and x > y should be infeasible – equality is entailed.
         let eqs = solver.derive_shared_equalities();
         let has_xy = eqs
             .iter()
@@ -2423,7 +2423,7 @@ mod tests {
         solver.pop();
     }
 
-    // ---- push/pop state-rollback regression (term_to_var / var_to_term) ----
+    // ======== push/pop state-rollback regression (term_to_var / var_to_term) ========
 
     /// `pop()` must roll back `term_to_var` in lockstep with `var_to_term`.
     ///
@@ -2486,7 +2486,7 @@ mod tests {
     /// re-interned term that used to hold the recycled index.
     ///
     /// This is the recycled-index hazard the fix removes, observable purely
-    /// through the public `intern()` API: intern `a`, push, intern `b`, pop —
+    /// through the public `intern()` API: intern `a`, push, intern `b`, pop –
     /// then intern a brand-new `c` (which the simplex hands the index `b` used
     /// to occupy) and finally re-intern `b`. With the stale mapping still
     /// present, `intern(b)` would return the same index as `c`.
@@ -2515,7 +2515,7 @@ mod tests {
     /// Regression (GitHub issue #12): in LRA the assignment for a variable
     /// pinned at a *strict* bound is a delta-rational `r ± δ`.  `value()` must
     /// instantiate `δ` with a concrete positive rational, otherwise it reports
-    /// `x = 0` for `x > 0` — a witness that violates the asserted constraint.
+    /// `x = 0` for `x > 0` – a witness that violates the asserted constraint.
     #[test]
     fn regression_lra_strict_bound_model_instantiates_delta() {
         let mut solver = ArithSolver::lra();

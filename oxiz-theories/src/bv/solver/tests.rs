@@ -12,8 +12,8 @@ use super::*;
 /// into the SAT database mid-`solve()`; those clauses were *not* tracked in
 /// the learned-clause list, so `check()`'s per-probe `forget_learned_since`
 /// cleanup (and the enclosing `pop()`) could not remove them. Left behind,
-/// such a clause — implicitly resting on a since-retracted level-0 decision
-/// installed by `assert_const` — spuriously forced `Unsat` on the next
+/// such a clause – implicitly resting on a since-retracted level-0 decision
+/// installed by `assert_const` – spuriously forced `Unsat` on the next
 /// probe. `embedded_sat_config()` now disables that heuristic (and
 /// inprocessing) so the incremental cleanup contract stays exact.
 ///
@@ -254,9 +254,9 @@ fn extract_model_equalities_handles_width_over_64() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Wide-constant pinning
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `assert_const_big` must pin every bit of a value wider than 64 bits.
 ///
@@ -329,14 +329,14 @@ fn assert_const_reports_width_mismatch() {
     assert!(solver.assert_const(x, 1, 8));
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Width mismatch is reported, never asserted
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Every binary encoding must answer `false` for operands of different widths.
 ///
-/// These used to be `assert_eq!(va.width, vb.width)`, so a mixed-width term —
-/// which the term builder still accepts for `(bvadd x8 y16)` — aborted the
+/// These used to be `assert_eq!(va.width, vb.width)`, so a mixed-width term –
+/// which the term builder still accepts for `(bvadd x8 y16)` – aborted the
 /// whole process instead of being reported as unencodable.
 #[test]
 fn binary_ops_report_width_mismatch_instead_of_aborting() {

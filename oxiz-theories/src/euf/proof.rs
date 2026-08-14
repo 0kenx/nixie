@@ -64,7 +64,7 @@ impl ProofStep {
     ///
     /// A plain loop rather than recursion: `Symm`/`Trans`/`Cong` nesting is
     /// the proof's own depth, which is caller-controlled through the public
-    /// constructors, and the return type is `TermId` — a depth cap could only
+    /// constructors, and the return type is `TermId` – a depth cap could only
     /// name the wrong term as the equality's endpoint.
     fn endpoint(&self, want_right: bool) -> TermId {
         let mut node = self;

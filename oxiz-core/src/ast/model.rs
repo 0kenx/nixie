@@ -69,14 +69,14 @@ impl ModelValue {
     ///
     /// `value` is reduced modulo `2^width`, the standard SMT-LIB bit-vector
     /// reading, which also gives a negative integer its two's-complement bit
-    /// pattern. The result is exact for every width — nothing is truncated to
+    /// pattern. The result is exact for every width – nothing is truncated to
     /// 64 bits.
     #[must_use]
     pub fn from_bitvec_int(value: &BigInt, width: u32) -> Self {
         let modulus = BigInt::from(bitvec_mask(width)) + BigInt::one();
         let reduced = value.mod_floor(&modulus);
         // `mod_floor` by a positive modulus is non-negative, so discarding
-        // the sign from `into_parts` is exact — no fallible conversion whose
+        // the sign from `into_parts` is exact – no fallible conversion whose
         // failure branch would need an invented fallback value.
         Self::BitVec {
             value: reduced.into_parts().1,

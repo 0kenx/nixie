@@ -239,7 +239,7 @@ impl<'a> Spacer<'a> {
         // and predicate arguments that are plain variables).  For anything
         // outside it we return `Unknown` rather than risk an unsound answer.
         if !self.is_supported_fragment() {
-            debug!("Spacer: unsupported CHC fragment — returning Unknown");
+            debug!("Spacer: unsupported CHC fragment – returning Unknown");
             return Ok(SpacerResult::Unknown);
         }
 
@@ -628,7 +628,7 @@ impl<'a> Spacer<'a> {
     ///   `F_{level-1}(Q) ∧ C[body_args ↦ cur] ∧ post[cur_P ↦ head_args]`
     /// where `cur` are `Q`'s canonical current-state variables.  A SAT result
     /// exhibits a concrete state (read from the model as a cube of equalities)
-    /// that transitions in one step into the POB's bad state — a genuine
+    /// that transitions in one step into the POB's bad state – a genuine
     /// predecessor.  This is what makes `SpacerResult::Unsafe` reachable.
     fn find_predecessor(&mut self, pob_id: PobId) -> Result<Option<PobId>, SpacerError> {
         let (pred, level, depth, post) = {
@@ -697,7 +697,7 @@ impl<'a> Spacer<'a> {
             // Extract a concrete predecessor cube from the model.  Every state
             // variable must be pinned to a concrete value, otherwise the "cube"
             // would be an over-approximation and claiming Unsafe from it would
-            // be unsound — in that case we surface Unknown.
+            // be unsound – in that case we surface Unknown.
             let mut lits: Vec<TermId> = Vec::new();
             let mut underdetermined = false;
             for &v in &cur {
@@ -738,9 +738,9 @@ impl<'a> Spacer<'a> {
     ///
     /// The ungeneralized blocking lemma is `¬post`. When inductive
     /// generalization is enabled we compute a minimal subcube `c ⊆ post` such
-    /// that the *stronger* blocking clause `¬c` is still a sound frame lemma —
+    /// that the *stronger* blocking clause `¬c` is still a sound frame lemma –
     /// it excludes every initial state and (for `level > 0`) is inductive
-    /// relative to `F_{level-1}` — and return `¬c`. Because `post ⇒ c` we have
+    /// relative to `F_{level-1}` – and return `¬c`. Because `post ⇒ c` we have
     /// `¬c ⇒ ¬post`, so the generalized clause still blocks the bad state while
     /// excluding a strictly larger region. Without this, frames accumulate only
     /// exact single-cube exclusions and the engine cannot converge on
@@ -781,7 +781,7 @@ impl<'a> Spacer<'a> {
     /// MIC (Minimal Inductive Clause) generalization of a blocking cube.
     ///
     /// Starting from the literals of `post`, greedily drop literals as long as
-    /// the blocking clause `¬(∧ remaining)` stays a sound frame lemma — see
+    /// the blocking clause `¬(∧ remaining)` stays a sound frame lemma – see
     /// [`Self::subcube_is_inductive_blocker`]. The returned subcube is a
     /// non-empty subset of `post`'s literals. Increments
     /// [`SpacerStats::num_mic_attempts`] whenever a real (multi-literal)
@@ -824,9 +824,9 @@ impl<'a> Spacer<'a> {
     /// Check that the blocking clause `¬(∧ cube)` is a sound frame lemma at
     /// `level`:
     ///
-    /// * **Initiation** — `Init ∧ (∧ cube)` is UNSAT, so `¬(∧ cube)` holds in
+    /// * **Initiation** – `Init ∧ (∧ cube)` is UNSAT, so `¬(∧ cube)` holds in
     ///   every initial state. Checked at all levels.
-    /// * **Consecution** (`level > 0` only) — `¬(∧ cube)` is inductive relative
+    /// * **Consecution** (`level > 0` only) – `¬(∧ cube)` is inductive relative
     ///   to `F_{level-1}`: `F_{level-1} ∧ ¬(∧ cube) ∧ T ⇒ ¬(∧ cube)'` for every
     ///   transition rule, with the clause assumed on the current state
     ///   (standard Bradley relative inductive generalization).
@@ -1308,7 +1308,7 @@ mod tests {
     /// irrelevant literals from a blocking cube. The transition keeps `x`
     /// constant and only increments `y`, so blocking the bad cube
     /// `(x = 5 ∧ y = 3)` should generalize to the single-literal clause
-    /// `¬(x = 5)` — the `y = 3` literal is dropped because `¬(x = 5)` is
+    /// `¬(x = 5)` – the `y = 3` literal is dropped because `¬(x = 5)` is
     /// inductive on its own, whereas `¬(y = 3)` is not. This proves the
     /// generalized lemma is strictly shorter than the raw cube.
     #[test]

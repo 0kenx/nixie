@@ -313,14 +313,14 @@ impl BvSolver {
                 self.encode_mux(signed_quot[i], result_sign, neg_quot[i], quot_abs[i]);
             }
 
-            // Divide-by-zero value, which — unlike `bvudiv` — is *not* simply
+            // Divide-by-zero value, which – unlike `bvudiv` – is *not* simply
             // all-ones: unfolding the SMT-LIB definition of `bvsdiv` at `t = 0`
             // gives `bvudiv s 0 = -1` for a non-negative `s`, but
             // `bvneg (bvudiv (bvneg s) 0) = bvneg(-1) = 1` for a negative one.
             // (Reference: Z3's `bv_rewriter::mk_bv_sdiv_core`, whose `hi_div0`
             // branch builds `(ite (bvslt x 0) 1 #xff..f)`.)  Pinning the result
             // to all-ones for both signs made `(bvsdiv x #x0)` unable to take
-            // the value `1`, refuting satisfiable formulas — the constant
+            // the value `1`, refuting satisfiable formulas – the constant
             // folder in `bv_fold::bv_sdiv` already had the sign split, so the
             // two disagreed whenever the dividend stayed symbolic.
             //

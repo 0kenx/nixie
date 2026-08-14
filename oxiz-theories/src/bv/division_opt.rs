@@ -136,7 +136,7 @@ impl BarrettParams {
     /// Returns `None` for a zero divisor, a zero width, and for any width above
     /// [`Self::MAX_WIDTH`]: the reciprocal `floor(2^(2*width) / divisor)`
     /// is not representable then, and computing it would shift a `u128` by
-    /// `2*width >= 128` bits — an abort in debug builds and a silently wrong
+    /// `2*width >= 128` bits – an abort in debug builds and a silently wrong
     /// multiplier in release ones.  Callers treat `None` as "this optimization
     /// does not apply" and encode the division the ordinary way.
     #[must_use]
@@ -207,7 +207,7 @@ impl MontgomeryParams {
     /// Widest bit-vector for which Montgomery parameters are defined.
     ///
     /// `R = 2^width` and the inverse of the modulus modulo `R` are held in a
-    /// `u64`, which `1u128 << width` cannot produce once `width >= 64` — in
+    /// `u64`, which `1u128 << width` cannot produce once `width >= 64` – in
     /// debug builds that shift aborts, in release ones it wraps and every later
     /// multiplication is silently wrong.
     pub const MAX_WIDTH: usize = 63;
@@ -664,7 +664,7 @@ impl DivisionOptimizer {
         let mut result = aig.true_edge();
 
         for (i, &input) in inputs.iter().enumerate() {
-            // Bit `i` of a `u64` is `0` for every `i >= 64` — that is the value
+            // Bit `i` of a `u64` is `0` for every `i >= 64` – that is the value
             // of the bit, not a fallback, and reading it with a shift would
             // abort in debug builds.
             let bit = value
@@ -1155,7 +1155,7 @@ mod tests {
     }
 
     /// Encoding a division at a width with no Barrett reciprocal must still
-    /// produce a circuit — the abort was inside `or_insert_with`, on a path
+    /// produce a circuit – the abort was inside `or_insert_with`, on a path
     /// that only ever fell back to the standard divider anyway.
     #[test]
     fn encode_udiv_at_width_64_does_not_abort() {

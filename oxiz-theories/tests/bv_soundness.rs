@@ -11,9 +11,9 @@ use oxiz_core::ast::TermId;
 use oxiz_theories::bv::BvSolver;
 use oxiz_theories::{Theory, TheoryCheckResult};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Bug 1 regression: non-empty conflict clause
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Trivially UNSAT constraint (x = 1 AND x = 0 for a 1-bit variable).
 /// The conflict clause returned by `check()` must be non-empty.
@@ -26,12 +26,12 @@ fn test_empty_conflict_fixed() {
 
     // x = 1  (bit 0 forced true)
     solver.assert_const(x, 1, 1);
-    // x = 0  (bit 0 forced false) — contradiction
+    // x = 0  (bit 0 forced false) – contradiction
     solver.assert_const(x, 0, 1);
 
     // Fallback path: `assertion_guard_terms` is empty because the unit test
     // calls `assert_const` directly (not via `record_constraint_term`).
-    // The solver should fall back to the `assertions` list — but `assert_const`
+    // The solver should fall back to the `assertions` list – but `assert_const`
     // also does NOT go through `Theory::assert_true/false`, so both lists are
     // empty.  In this unit-test path the important invariant is that we get
     // an UNSAT result; we do NOT require a non-empty conflict term list because
@@ -55,7 +55,7 @@ fn test_empty_conflict_fixed_with_guard_terms() {
     solver.new_bv(x, 4);
     solver.new_bv(y, 4);
 
-    // x = 5, y = 5, x != y — UNSAT
+    // x = 5, y = 5, x != y – UNSAT
     solver.assert_const(x, 5, 4);
     solver.assert_const(y, 5, 4);
     solver.assert_neq(x, y);
@@ -89,7 +89,7 @@ fn test_conflict_clause_contains_all_guard_terms() {
     solver.new_bv(a, 8);
     solver.new_bv(b, 8);
 
-    // a = 100, b = 200, a = b — UNSAT
+    // a = 100, b = 200, a = b – UNSAT
     solver.assert_const(a, 100, 8);
     solver.assert_const(b, 200, 8);
     solver.assert_eq(a, b);
@@ -109,9 +109,9 @@ fn test_conflict_clause_contains_all_guard_terms() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Bug 1: SAT case should still work after the fix
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// SAT case: check() must still return Sat when the constraints are consistent.
 #[test]
@@ -135,12 +135,12 @@ fn test_sat_case_unaffected() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Bug 2 regression: recursive encoding
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Nested XOR and AND: bvxor(bvand(a,b), c) must be encoded correctly.
-/// All operands must be constrained — not left as free variables.
+/// All operands must be constrained – not left as free variables.
 #[test]
 fn test_nested_xor_and_sat() {
     let mut solver = BvSolver::new();
@@ -196,7 +196,7 @@ fn test_nested_xor_and_unsat() {
     solver.bv_xor(result, ab, c);
 
     // a=1, b=1 → ab=1; c=1 → xor(1,1)=0
-    // But we assert result=1 — contradiction
+    // But we assert result=1 – contradiction
     solver.assert_const(a, 1, 1);
     solver.assert_const(b, 1, 1);
     solver.assert_const(c, 1, 1);
@@ -260,7 +260,7 @@ fn test_memo_prevents_dup_encoding() {
     let mut solver = BvSolver::new();
     let a = TermId::new(1);
     let b = TermId::new(2);
-    let shared = TermId::new(3); // bvand(a, b) — used in two places
+    let shared = TermId::new(3); // bvand(a, b) – used in two places
     let result1 = TermId::new(4); // bvxor(shared, a)
     let result2 = TermId::new(5); // bvor(shared, b)
 
@@ -287,9 +287,9 @@ fn test_memo_prevents_dup_encoding() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Push/pop round-trip with guard terms
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// After a push/pop cycle the guard terms are restored to the pre-push state.
 #[test]
@@ -321,16 +321,16 @@ fn test_push_pop_restores_guard_terms() {
     solver.pop();
 
     // After pop: inner constraint and inner guard are removed.
-    // Outer constraint (x=3) remains — should be SAT.
+    // Outer constraint (x=3) remains – should be SAT.
     match solver.check().expect("outer check should not error") {
         TheoryCheckResult::Sat => {}
         other => panic!("Expected SAT after pop, got {:?}", other),
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // assert_neq: direct unit cases (the fn was previously dead code)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `assert_neq(x, x)` is unsatisfiable: a value cannot differ from itself.
 #[test]
@@ -383,9 +383,9 @@ fn test_assert_neq_with_equal_consts_is_unsat() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // assert_ule: direct unit cases (newly added comparator)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `x <= x` is satisfiable (reflexivity).
 #[test]
@@ -476,7 +476,7 @@ fn test_assert_ule_satisfied_by_consts_is_sat() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Incremental-check trail-rollback regression (leaked-model false UNSAT)
 //
 // `check()` calls the embedded SAT solver's `solve()`, which does not reset the
@@ -485,7 +485,7 @@ fn test_assert_ule_satisfied_by_consts_is_sat() {
 // the next probe, where a freshly asserted constant could contradict that
 // *arbitrary* model value and yield a spurious UNSAT.  `check()` now rolls the
 // trail back to the committed (asserted) prefix after every probe.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Direct reproduction at the theory level: `aux = x*3`, probe SAT; `aux ≠ x`,
 /// probe SAT; then `aux = 7`.  The final state `aux = x*3 ∧ aux ≠ x ∧ aux = 7`
@@ -515,7 +515,7 @@ fn test_incremental_mul_aux_diseq_then_const_is_sat() {
         other => panic!("Expected SAT after aux=x*3, got {:?}", other),
     }
 
-    // Probe 2: add aux != x — still satisfiable.
+    // Probe 2: add aux != x – still satisfiable.
     solver.assert_neq(aux, x);
     match solver.check().expect("check should not error") {
         TheoryCheckResult::Sat => {}
@@ -568,9 +568,9 @@ fn test_incremental_mul_aux_unreachable_const_is_unsat() {
 /// A refutation that runs through the bit-blasted comparator's *multi-literal*
 /// clauses must survive being re-checked.
 ///
-/// `BvSolver::check()` issues up to two `solve()` calls per probe — it
+/// `BvSolver::check()` issues up to two `solve()` calls per probe – it
 /// re-verifies an `Unsat` verdict by discarding the probe's lemmas and solving
-/// again — and callers may invoke `check()` repeatedly. Every one of those
+/// again – and callers may invoke `check()` repeatedly. Every one of those
 /// `solve()` calls therefore lands on an engine that has already searched.
 ///
 /// This is an end-to-end guard for the engine-level defect regression-tested in
@@ -585,7 +585,7 @@ fn test_incremental_mul_aux_unreachable_const_is_unsat() {
 /// comparator's definitional clauses is the only thing that can refute `5 <u 3`.
 ///
 /// Note this specific instance does **not** by itself reproduce the historical
-/// failure — it still answers `Unsat` against an engine with the propagation-head
+/// failure – it still answers `Unsat` against an engine with the propagation-head
 /// fix reverted, because the head does not happen to walk past both watched
 /// literals here. It is kept as a cheap guard on the real consumer's repeated
 /// `check()` pattern, not as a proof of that bug.

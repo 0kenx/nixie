@@ -837,7 +837,7 @@ pub struct LazyStats {
 mod tests {
     use super::*;
 
-    // ===== Substitution regression tests =====
+    // ======== Substitution regression tests ========
     //
     // `apply_substitution` used to be a local recursive walk whose `TermKind`
     // whitelist ended in `_ => term`, so a bound variable under any unlisted

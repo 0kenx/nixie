@@ -66,7 +66,7 @@ fn identity_function_is_certified() {
 }
 
 /// The same goal with a pin that contradicts the quantifier must *not*
-/// certify — the pin is verified, not assumed away.
+/// certify – the pin is verified, not assumed away.
 #[test]
 fn contradictory_pin_is_not_certified() {
     let mut goal = Goal::new();
@@ -218,7 +218,7 @@ fn commuting_composition_is_certified() {
 }
 
 /// An existential over `ℝ` is certified by *finding* the cell its witness lies
-/// in — here the pinned point `f(1/2) = 1/2`.
+/// in – here the pinned point `f(1/2) = 1/2`.
 #[test]
 fn existential_witness_is_found() {
     let mut goal = Goal::new();

@@ -1,11 +1,11 @@
-//! Variable Move-To-Front (VMTF) branching — faithful port of cadical's
+//! Variable Move-To-Front (VMTF) branching – faithful port of cadical's
 //! focused-mode decision queue (`queue.cpp`, `analyze.cpp::bump_queue`).
 //!
 //! Conflict-involved variables are moved to the tail of a doubly-linked list;
 //! the next decision is the most-recently-bumped *unassigned* variable, found
 //! by scanning backward from a persistent search pointer. The pointer is
 //! updated only for unassigned bumped variables (cadical `update_queue_unassigned`),
-//! so a decision never re-scans the whole list — the bug in the previous
+//! so a decision never re-scans the whole list – the bug in the previous
 //! implementation (which reset the pointer on every bump → O(n) per decision).
 
 use crate::literal::Var;
@@ -162,7 +162,7 @@ impl VMTF {
     /// bump timestamp is more recent than the search pointer's, move the
     /// pointer here (cadical `unassign` → `update_queue_unassigned`). This is
     /// what keeps the pointer at the most-recently-bumped unassigned variable
-    /// — without it the pointer stalls and every decision re-scans.
+    /// – without it the pointer stalls and every decision re-scans.
     pub fn notify_unassigned(&mut self, var: Var) {
         let v = match u32::try_from(var.index()) {
             Ok(v) if (v as usize) < self.btab.len() => v,
@@ -179,7 +179,7 @@ impl VMTF {
         }
     }
 
-    /// Bump timestamp of a variable (no list move) — kept for API compatibility.
+    /// Bump timestamp of a variable (no list move) – kept for API compatibility.
     pub fn activity(&self, var: Var) -> u64 {
         self.btab.get(var.index()).copied().unwrap_or(0)
     }

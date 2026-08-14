@@ -8,7 +8,7 @@
 //! `self.constants` (falling back to `Bool` when no same-named global
 //! constant existed). Since [`TermManager::mk_var`] hash-conses on the
 //! `(name, sort)` pair, guessing the wrong sort mints a *different* term than
-//! the one actually bound while the macro body was parsed — the substitution
+//! the one actually bound while the macro body was parsed – the substitution
 //! map's key then never matches anything in the body, `substitute` is a
 //! silent no-op, and the formal parameter is left dangling (free) in the
 //! "expanded" term instead of being replaced by the call-site argument.

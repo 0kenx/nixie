@@ -584,7 +584,7 @@ impl NlsatSolver {
     /// its polynomial under the current arithmetic model. A learned clause
     /// `¬l_1 ∨ … ∨ ¬l_k` is only sound if the conjunction `l_1 ∧ … ∧ l_k` is
     /// genuinely unsatisfiable over the reals; a clause built from "every atom
-    /// sharing a variable" is *not* — those atoms are frequently jointly
+    /// sharing a variable" is *not* – those atoms are frequently jointly
     /// satisfiable, so learning it can exclude real models and produce a wrong
     /// UNSAT.
     ///

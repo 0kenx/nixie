@@ -1,6 +1,6 @@
 # oxiz-opt TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness/hardening pass (recursive term-walks converted to explicit stacks, exhaustive error handling, clippy::unwrap_used denied)
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness/hardening pass (recursive term-walks converted to explicit stacks, exhaustive error handling, clippy::unwrap_used denied)
 
 
 ## Progress: ~100% Complete
@@ -265,9 +265,9 @@ All major features implemented. Only one optional enhancement remains (blocked b
 
 ## Stub completions (2026-06-08)
 
-- [x] `OptContext::check_sat` — replaced `Unknown` stub with real SAT check via `oxiz_solver::Solver`; model snapshot with `Model::eval`.
-- [x] `OptContext::optimize_maxsmt` — replaced `Unknown` stub with selector-based MaxSMT (selector `b_i ⇒ soft_i`, LIA cost-bound binary search).
-- [x] `OptContext::optimize_single_objective` — replaced `Unknown` stub by delegating to `oxiz_solver::Optimizer::{minimize,maximize}`.
-- [x] `OptContext::optimize_pareto` — replaced `Unknown` stub by delegating to `Optimizer::pareto_optimize`.
-- [x] `MaxSmtSolver::{solve_stratified,solve_core_guided}` — now delegate to shared `solve_maxsmt` helper.
+- [x] `OptContext::check_sat` – replaced `Unknown` stub with real SAT check via `oxiz_solver::Solver`; model snapshot with `Model::eval`.
+- [x] `OptContext::optimize_maxsmt` – replaced `Unknown` stub with selector-based MaxSMT (selector `b_i ⇒ soft_i`, LIA cost-bound binary search).
+- [x] `OptContext::optimize_single_objective` – replaced `Unknown` stub by delegating to `oxiz_solver::Optimizer::{minimize,maximize}`.
+- [x] `OptContext::optimize_pareto` – replaced `Unknown` stub by delegating to `Optimizer::pareto_optimize`.
+- [x] `MaxSmtSolver::{solve_stratified,solve_core_guided}` – now delegate to shared `solve_maxsmt` helper.
 - [x] Added `OptResult::Unbounded` variant.

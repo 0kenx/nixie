@@ -532,7 +532,7 @@ impl ClauseLearner {
     /// literals must be examined.
     fn enter_removal(&self, lit: TermId, visited: &mut FxHashSet<TermId>) -> RemovalStep {
         if !visited.insert(lit) {
-            // Already visited this node — avoid infinite looping.
+            // Already visited this node – avoid infinite looping.
             return RemovalStep::Done(true);
         }
 
@@ -543,7 +543,7 @@ impl ClauseLearner {
 
         // Retrieve the reason clause's literals.  If the underlying clause
         // database is not yet wired up, `get_clause_literals` returns an empty
-        // vec, which makes the (vacuous) per-literal check below succeed —
+        // vec, which makes the (vacuous) per-literal check below succeed –
         // harmless because no real literal will be removed from an empty
         // reason clause.
         let Ok(reason_lits) = self.get_clause_literals(reason_id) else {

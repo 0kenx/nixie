@@ -637,7 +637,7 @@ impl OptContext {
     /// `config.timeout_ms` (0 = no deadline). `new_solver()` already bounds each
     /// *individual* `Solver::check` to `timeout_ms`, but a search that issues many
     /// solver calls (binary search, Pareto enumeration, ...) needs this additional
-    /// wall-clock cap so the whole call — not just one solve inside it — actually
+    /// wall-clock cap so the whole call – not just one solve inside it – actually
     /// stops within roughly `timeout_ms`.
     fn deadline(&self) -> Option<std::time::Instant> {
         if self.config.timeout_ms == 0 {
@@ -929,11 +929,11 @@ impl OptContext {
     /// This drives its own binary-search (integer objectives) / strict-
     /// improvement (real objectives) loop directly against [`Self::new_solver`]
     /// rather than delegating to `oxiz_solver::Optimizer`, because the latter
-    /// builds every internal probe solver with no timeout at all — it has no
+    /// builds every internal probe solver with no timeout at all – it has no
     /// hook to honor `config.timeout_ms`. Every solver call here goes through
     /// `new_solver()` (so each individual `check` is itself timeout-bounded) and
     /// the loop additionally checks `Self::deadline_passed` between iterations,
-    /// so the whole search — not just one solve inside it — respects
+    /// so the whole search – not just one solve inside it – respects
     /// `timeout_ms`. On timeout the best feasible value found so far is
     /// reported as `Satisfiable`, never a fabricated `Optimal`.
     fn optimize_single_objective(&mut self) -> Result<OptResult, OptError> {
@@ -1268,7 +1268,7 @@ impl OptContext {
                     best_model = model;
                 }
                 RealBoundProbe::Unsat => {
-                    // No strictly-better solution exists — best_value is optimal.
+                    // No strictly-better solution exists – best_value is optimal.
                     converged = true;
                     break;
                 }
@@ -1297,8 +1297,8 @@ impl OptContext {
     /// [`Self::optimize_single_objective`]: `oxiz_solver::Optimizer` offers no
     /// timeout hook. `deadline` is checked before each solver call; a search
     /// that reaches the deadline (or the `max_points` cap) before the solver
-    /// proves no further improving point exists reports `Satisfiable` — the
-    /// front found so far — rather than a fabricated `Optimal`.
+    /// proves no further improving point exists reports `Satisfiable` – the
+    /// front found so far – rather than a fabricated `Optimal`.
     fn optimize_pareto(&mut self) -> Result<OptResult, OptError> {
         if self.objectives.is_empty() {
             return Ok(self.check_sat());
@@ -1460,7 +1460,7 @@ impl OptContext {
 
         // Recursively evaluate the (possibly compound) constraint term against
         // the model. A direct lookup alone would mis-report any non-leaf soft
-        // term — e.g. `(not p)` or `(<= x 3)` — as unsatisfied, over-counting
+        // term – e.g. `(not p)` or `(<= x 3)` – as unsatisfied, over-counting
         // the cost. `None` (undeterminable) is treated conservatively as
         // unsatisfied.
         matches!(model_eval_bool(soft.term, model, &self.terms), Some(true))

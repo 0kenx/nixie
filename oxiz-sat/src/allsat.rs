@@ -53,7 +53,7 @@ pub struct EnumerationConfig {
     /// Only find inclusion-minimal models: models whose true-literal set has
     /// no proper subset that is also a model. This is the standard logic
     /// definition of "minimal model" (Pareto-minimal under the subset
-    /// order), *not* minimum cardinality — a formula can have several
+    /// order), *not* minimum cardinality – a formula can have several
     /// incomparable inclusion-minimal models, and enumeration finds all of
     /// them.
     pub minimal_models: bool,
@@ -64,8 +64,8 @@ pub struct EnumerationConfig {
     ///
     /// This no longer has an independent effect: the underlying
     /// (superset-excluding) blocking clause it opted into is unsound as a
-    /// general-purpose optimization — see `AllSatEnumerator::create_blocking_clause`
-    /// — so it is now applied automatically, and only, when it is actually
+    /// general-purpose optimization – see `AllSatEnumerator::create_blocking_clause`
+    /// – so it is now applied automatically, and only, when it is actually
     /// sound (i.e. whenever `minimal_models` is set). The field is kept for
     /// API compatibility but setting it has no observable effect.
     pub block_positive_only: bool,
@@ -440,25 +440,25 @@ impl AllSatEnumerator {
     /// single total assignment.
     ///
     /// For `minimal_models` / `maximal_models` it is instead a *dominance*
-    /// clause, and using anything else is not merely a missed optimization —
+    /// clause, and using anything else is not merely a missed optimization –
     /// it is unsound and produces wrong results (see the module-level
     /// discussion above `shrink_to_minimal`). Concretely:
     ///
-    /// - `minimal_models`: "up-blocking" — only the *true* literals,
+    /// - `minimal_models`: "up-blocking" – only the *true* literals,
     ///   negated. This excludes every superset of `model`'s true-set (a
     ///   confirmed minimal model can never be dominated by removing this),
     ///   while an exact-assignment clause could accidentally remove the sole
     ///   remaining witness that a *later*, still-unclassified candidate is
     ///   non-minimal, causing that candidate to look like a local fixed
     ///   point and be misreported as minimal.
-    /// - `maximal_models`: "down-blocking" — the dual, only the *false*
+    /// - `maximal_models`: "down-blocking" – the dual, only the *false*
     ///   literals, negated. Excludes every subset of `model`'s true-set.
     ///
     /// Either filtered form can legitimately come out empty (e.g. a minimal
     /// model with an empty true-set, or a maximal model that is the unique
     /// global maximum): that correctly signals "nothing further to find" via
     /// [`Solver::add_clause`]'s empty-clause UNSAT path, which the caller
-    /// already treats as the (honest) completion of enumeration — it must
+    /// already treats as the (honest) completion of enumeration – it must
     /// not be papered over with a synthetic extra literal.
     ///
     /// `EnumerationConfig::block_positive_only` no longer has an independent
@@ -751,8 +751,8 @@ mod tests {
 
     /// Inclusion-minimal models among `sat`: those whose true-literal set has
     /// no *proper subset* that is also in `sat`. (Note: this is the standard
-    /// logic definition of "minimal model" — Pareto-minimal by the subset
-    /// order — which is *not* the same as minimum-cardinality; a formula can
+    /// logic definition of "minimal model" – Pareto-minimal by the subset
+    /// order – which is *not* the same as minimum-cardinality; a formula can
     /// have several incomparable inclusion-minimal models.)
     fn inclusion_minimal(sat: &[u8]) -> HashSet<u8> {
         sat.iter()

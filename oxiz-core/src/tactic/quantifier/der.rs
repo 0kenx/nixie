@@ -15,9 +15,7 @@ use smallvec::SmallVec;
 use super::subst::substitute_single_var;
 use crate::tactic::{Goal, TacticResult};
 
-// ============================================================================
-// Destructive Equality Resolution (DER)
-// ============================================================================
+// ======== Destructive Equality Resolution (DER) ========
 
 /// Configuration for Destructive Equality Resolution
 #[derive(Debug, Clone)]
@@ -164,7 +162,7 @@ impl<'a> DerTactic<'a> {
     ///
     /// The walk is driven by a heap [`Vec`] of [`DerFrame`]s rather than
     /// native recursion. The old version recursed once per level of *term*
-    /// nesting and guarded that with `DerConfig::max_depth` (default 10) — a
+    /// nesting and guarded that with `DerConfig::max_depth` (default 10) – a
     /// cap on a `TermId`-returning function, so all it could do was silently
     /// stop applying DER at the eleventh level of `And`/`Or`/`Not` nesting.
     /// Now Boolean structure is traversed without limit and `max_depth`
@@ -172,7 +170,7 @@ impl<'a> DerTactic<'a> {
     ///
     /// Each frame owns the parent state its recursive counterpart kept in
     /// live locals, so every result a frame consumes was queued by that same
-    /// frame — there is no "pop an empty stack" case to guard.
+    /// frame – there is no "pop an empty stack" case to guard.
     ///
     /// # Memoization
     ///
@@ -282,7 +280,7 @@ impl<'a> DerTactic<'a> {
             } if qdepth > self.config.max_depth => {
                 // Beyond the configured quantifier-alternation budget: leave
                 // this quantifier exactly as it is. DER skips an elimination,
-                // which is always sound — it never mis-eliminates.
+                // which is always sound – it never mis-eliminates.
                 let _ = (vars, body, patterns);
                 results.push(term_id);
             }
@@ -779,8 +777,8 @@ impl<'a> DerTactic<'a> {
             // ∀x.(x ≠ t) ≡ false.
             //
             // The `is_target_diseq` guard is load-bearing: this arm used to
-            // fire on *any* `Not(_)` body. A body such as `¬P(x)` — or a
-            // disequality on a different term, `x ≠ t2` — would then have
+            // fire on *any* `Not(_)` body. A body such as `¬P(x)` – or a
+            // disequality on a different term, `x ≠ t2` – would then have
             // been replaced by `false`, turning a satisfiable assertion
             // unsatisfiable. (Today's callers only reach this function with
             // an `eq` extracted from this same body, so the unguarded version

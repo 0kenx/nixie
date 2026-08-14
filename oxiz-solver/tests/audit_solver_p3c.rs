@@ -13,7 +13,7 @@
 //!   4. `reset` must clear quantifier / MBQI / e-matching / nlsat state so a
 //!      fresh problem is not contaminated by the previous one.
 //!   5. The Tseitin encoder must not overflow the native stack on
-//!      adversarially deep formulas — it answers `Unknown` instead.
+//!      adversarially deep formulas – it answers `Unknown` instead.
 //!   +  `push`/`pop` must restore theory state (a popped scope must become
 //!      satisfiable again).
 
@@ -35,9 +35,9 @@ fn run_script(script: &str) -> Vec<SolverResult> {
         .collect()
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// push / pop soundness — a popped scope must be satisfiable again
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// push / pop soundness – a popped scope must be satisfiable again
+// ========  ========
 
 #[test]
 fn pushpop_bool_restores_satisfiability() {
@@ -71,13 +71,13 @@ fn pushpop_arith_restores_satisfiability() {
     assert_eq!(r, vec![SolverResult::Unsat, SolverResult::Sat]);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 2 — unhandled arithmetic atoms must be Unknown, not spurious
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 2 – unhandled arithmetic atoms must be Unknown, not spurious
+// ========  ========
 
 #[test]
 fn mod_atom_is_not_spuriously_decided() {
-    // (mod x 3) ∈ [0,3), so (> (mod x 3) 5) is unsat — but the linear solver
+    // (mod x 3) ∈ [0,3), so (> (mod x 3) 5) is unsat – but the linear solver
     // cannot encode `mod`.  It must answer Unknown, never a fabricated verdict.
     let r = run_script(r#"(declare-const x Int)(assert (> (mod x 3) 5))(check-sat)"#);
     assert_eq!(r, vec![SolverResult::Unknown]);
@@ -108,9 +108,9 @@ fn plain_linear_arithmetic_still_decided() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 4 — reset must clear quantifier / MBQI state
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 4 – reset must clear quantifier / MBQI state
+// ========  ========
 
 #[test]
 fn reset_clears_quantifier_state() {
@@ -135,9 +135,9 @@ fn reset_clears_quantifier_state() {
     assert_eq!(r.last(), Some(&SolverResult::Sat));
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 5 — deep formulas must not overflow the stack
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 5 – deep formulas must not overflow the stack
+// ========  ========
 
 #[test]
 fn deep_formula_answers_unknown_not_overflow() {
@@ -161,9 +161,9 @@ fn deep_formula_answers_unknown_not_overflow() {
     assert_eq!(solver.check(&mut tm), SolverResult::Unknown);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 1 — wall-clock timeout must be enforced and never fabricate Sat
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 1 – wall-clock timeout must be enforced and never fabricate Sat
+// ========  ========
 
 #[test]
 fn timeout_on_quantified_search_terminates_without_fabricating_sat() {
@@ -171,7 +171,7 @@ fn timeout_on_quantified_search_terminates_without_fabricating_sat() {
     // deadline is enforced (between rounds and inside every theory callback).
     // The formula is UNSAT: f(x) = f(x-1)+1 with f(0)=0 forces f(5)=5, which
     // contradicts f(5) < 3.  With a tiny budget the solver must terminate
-    // promptly and must NEVER answer Sat — Unknown (timed out) or Unsat (if
+    // promptly and must NEVER answer Sat – Unknown (timed out) or Unsat (if
     // refuted first) are both acceptable, Sat is not.
     let mut tm = TermManager::new();
     let int = tm.sorts.int_sort;
@@ -210,7 +210,7 @@ fn timeout_on_quantified_search_terminates_without_fabricating_sat() {
     let result = solver.check(&mut tm);
     let elapsed = start.elapsed();
 
-    // Must have terminated — the whole point of the timeout.
+    // Must have terminated – the whole point of the timeout.
     assert!(
         elapsed < std::time::Duration::from_secs(30),
         "timeout was not enforced: solve ran for {elapsed:?}"
@@ -239,8 +239,8 @@ fn generous_timeout_still_solves_small_problem() {
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// LIA depth-2 disjunction (package-note item 2) — KNOWN spurious UNSAT.
+// ========  ========
+// LIA depth-2 disjunction (package-note item 2) – KNOWN spurious UNSAT.
 //
 // x0=0 ∧ (x1=x0±1) ∧ (x2=x1±1) ∧ x2=2 is Sat (x1=1, x2=2), yet the solver
 // returns Unsat.  Investigation (see the audit notes) traced this to the
@@ -250,7 +250,7 @@ fn generous_timeout_still_solves_small_problem() {
 // the owned solver-glue files affects the outcome.  The fix therefore lives
 // outside this package's owned files.  Kept as an `#[ignore]`d executable
 // specification of the expected (Sat) behaviour.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 #[ignore = "spurious UNSAT rooted in oxiz-sat theory conflict learning; outside owned files"]

@@ -6,7 +6,7 @@
 //! sound if the rest of the engine maintains the invariants it implies:
 //!
 //!  * a learned clause's asserting literal is assigned at its **true**
-//!    implication level — the maximum level over the clause's other literals —
+//!    implication level – the maximum level over the clause's other literals –
 //!    and a **unit** learned clause therefore lands at level 0, not at whatever
 //!    level the search happens to sit at after the rollback;
 //!  * the trail is consequently no longer sorted by decision level, so rollback
@@ -16,7 +16,7 @@
 //! When those invariants were violated, a unit lemma was pinned inside a
 //! decision level as a second reason-less "decision".  Conflict analysis at that
 //! level then hit it while literals were still unresolved, terminated the 1-UIP
-//! loop early, and emitted a clause *stronger* than what resolution derives —
+//! loop early, and emitted a clause *stronger* than what resolution derives –
 //! yielding a false `Unsat` on satisfiable input.
 //!
 //! Every test here runs with `chrono_backtrack_threshold: 0`, which forces the
@@ -72,21 +72,21 @@ fn brute_force_is_sat(num_vars: usize, cnf: &[Vec<i32>]) -> bool {
 
 /// The minimal instance reduced from a differential fuzz run against an
 /// exhaustive oracle.  Every literal is forced by unit propagation once the
-/// first decision is taken — `¬10, 6, ¬3, ¬11, 8, 1, 5` is the unique model — so
+/// first decision is taken – `¬10, 6, ¬3, ¬11, 8, 1, 5` is the unique model – so
 /// the correct verdict is unambiguously `Sat`.
 ///
 /// The historical failure ran like this (levels shown as `@level`):
 ///
 /// 1. a conflict at level 5 learns `(10 ∨ ¬11)` with assertion level 1, and the
 ///    chronological rollback stops at level 3.  `10` is then recorded `@3`
-///    although `¬11` — the only other literal of its reason — sits `@1`, so its
+///    although `¬11` – the only other literal of its reason – sits `@1`, so its
 ///    true implication level is 1.
 /// 2. a conflict at level 3 resolves that inflated level into the unit lemma
 ///    `(¬10)`, which is likewise installed at level 1 instead of level 0, as a
 ///    reason-less "decision" in the middle of level 1's trail block.
 /// 3. the next conflict at level 1 walks the trail backwards, reaches that
 ///    planted decision while one conflict-level literal is still unresolved,
-///    stops early, and emits the unit `(10)` — the exact negation of the lemma
+///    stops early, and emits the unit `(10)` – the exact negation of the lemma
 ///    from step 2, and not something resolution derives.  `10` and `¬10` are now
 ///    both units, so the solver reports `Unsat`.
 #[test]
@@ -110,14 +110,14 @@ fn test_chrono_backtracking_soundness_minimal() {
     );
 
     // Same verdict without chronological backtracking, and with the production
-    // threshold — the fix must not depend on the heuristic being switched off.
+    // threshold – the fix must not depend on the heuristic being switched off.
     let mut plain = chrono_config(0);
     plain.enable_chronological_backtrack = false;
     assert_eq!(solve_cnf(11, cnf, plain), SolverResult::Sat);
     assert_eq!(solve_cnf(11, cnf, chrono_config(100)), SolverResult::Sat);
 }
 
-/// The model reported for the minimal instance must actually satisfy it — a
+/// The model reported for the minimal instance must actually satisfy it – a
 /// `Sat` verdict backed by a broken trail would still be a bug.
 #[test]
 fn test_chrono_backtracking_minimal_model_is_valid() {
@@ -162,7 +162,7 @@ fn test_chrono_backtracking_minimal_model_is_valid() {
 ///
 /// The instance below forces a conflict whose 1-UIP lemma is a unit: `a` is
 /// decided, and `(¬a ∨ b)`, `(¬a ∨ ¬b)` refute it immediately.  The lemma `(¬a)`
-/// is a consequence of the formula alone, so it belongs at level 0 — and the
+/// is a consequence of the formula alone, so it belongs at level 0 – and the
 /// solver must end up with `a` permanently false there, whatever level the
 /// rollback landed on.
 #[test]
@@ -198,7 +198,7 @@ fn test_unit_lemma_is_pinned_at_root_level() {
 /// inside a normal CI budget.
 #[test]
 fn test_chrono_backtracking_matches_reference() {
-    // xorshift64* — deterministic and dependency-free.
+    // xorshift64* – deterministic and dependency-free.
     let mut state: u64 = 0x2026_0728_C0FF_EE01;
     let mut next = move || {
         state ^= state >> 12;

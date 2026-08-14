@@ -112,7 +112,7 @@ mod lint_regression_tests {
 #[cfg(test)]
 mod free_vars_binder_tests {
     //! Regression tests for: "free_vars counts quantifier-bound variables
-    //! as free" — `Forall`/`Exists`/`Let` binders must shadow their bound
+    //! as free" – `Forall`/`Exists`/`Let` binders must shadow their bound
     //! names from the free-variable result.
     use super::*;
 

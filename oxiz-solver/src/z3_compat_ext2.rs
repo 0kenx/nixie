@@ -1,18 +1,18 @@
-//! Z3 API Compatibility Layer — Extension 2
+//! Z3 API Compatibility Layer – Extension 2
 //!
 //! This module implements seven additional Z3-compatible surfaces on top of
 //! the core types defined in [`crate::z3_compat`] and the first extension
 //! layer in [`crate::z3_compat::ext`]:
 //!
-//! - [`Z3Statistics`]         — key/value statistics after solving
-//! - [`Z3Params`] / [`ParamVal`] — solver parameter bags
-//! - [`Z3Probe`]              — goal-analysis probes (size, depth, is-qfbv, …)
-//! - [`Z3Goal`]               — goal wrapper for tactic input
-//! - [`Z3Tactic`]             — named tactic factory + combinators
-//! - [`Z3ApplyResult`]        — result of tactic application
-//! - [`Z3DatatypeSort`] / [`Z3Constructor`] — algebraic datatype declarations
+//! - [`Z3Statistics`]         – key/value statistics after solving
+//! - [`Z3Params`] / [`ParamVal`] – solver parameter bags
+//! - [`Z3Probe`]              – goal-analysis probes (size, depth, is-qfbv, …)
+//! - [`Z3Goal`]               – goal wrapper for tactic input
+//! - [`Z3Tactic`]             – named tactic factory + combinators
+//! - [`Z3ApplyResult`]        – result of tactic application
+//! - [`Z3DatatypeSort`] / [`Z3Constructor`] – algebraic datatype declarations
 //! - `check_assumptions` / `unsat_core` methods on [`Z3Solver`]
-//! - [`Z3AstVector`]          — a simple ordered collection of boolean terms
+//! - [`Z3AstVector`]          – a simple ordered collection of boolean terms
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -29,7 +29,7 @@ use oxiz_theories::datatype::{Constructor, DatatypeDecl};
 use crate::solver::SolverConfig;
 use crate::z3_compat::{Bool, SatResult, Z3Context, Z3Solver};
 
-// ─── Z3Statistics ────────────────────────────────────────────────────────────
+// ======== Z3Statistics ========
 
 /// Z3-style statistics object produced after a `check()` call.
 ///
@@ -106,7 +106,7 @@ impl std::fmt::Display for Z3Statistics {
     }
 }
 
-// ─── Z3Solver::statistics ─────────────────────────────────────────────────────
+// ======== Z3Solver::statistics ========
 
 impl Z3Solver {
     /// Return a snapshot of solver statistics after the last `check()` call.
@@ -116,7 +116,7 @@ impl Z3Solver {
     }
 }
 
-// ─── Z3Params / ParamVal ─────────────────────────────────────────────────────
+// ======== Z3Params / ParamVal ========
 
 /// A parameter value that can be stored in a [`Z3Params`] bag.
 #[derive(Debug, Clone)]
@@ -219,7 +219,7 @@ impl Z3Solver {
     }
 }
 
-// ─── Z3Goal ──────────────────────────────────────────────────────────────────
+// ======== Z3Goal ========
 
 /// Analogue of `z3::Goal`.
 ///
@@ -292,7 +292,7 @@ impl Z3Goal {
     }
 }
 
-// ─── Z3ApplyResult ────────────────────────────────────────────────────────────
+// ======== Z3ApplyResult ========
 
 /// Analogue of `z3::ApplyResult`.
 ///
@@ -319,7 +319,7 @@ impl Z3ApplyResult {
     }
 }
 
-// ─── TacticKind — internal enum ───────────────────────────────────────────────
+// ======== TacticKind – internal enum ========
 
 /// Internal representation of a tactic, used to allow cheap cloning and
 /// combinator construction without requiring all concrete tactic types to
@@ -656,9 +656,9 @@ impl TacticKind {
 /// Lazily-built, process-wide [`TacticRegistry`].
 ///
 /// [`default_registry`] allocates and registers all 19 canonical tactics on
-/// every call.  `apply_named_tactic` is on a hot path — the `Repeat` and `Then`
+/// every call.  `apply_named_tactic` is on a hot path – the `Repeat` and `Then`
 /// combinators in [`TacticKind::apply_to_goal`] can invoke it up to 1000 times
-/// for a single `Z3Tactic::apply` — so we build the registry exactly once and
+/// for a single `Z3Tactic::apply` – so we build the registry exactly once and
 /// share it behind a [`OnceLock`](std::sync::OnceLock).
 ///
 /// This is only sound because [`TacticRegistry`] is `Send + Sync`: its factory
@@ -698,7 +698,7 @@ fn apply_named_tactic(name: &str, goal: &Goal) -> TacticResult {
     }
 }
 
-// ─── Z3Tactic ────────────────────────────────────────────────────────────────
+// ======== Z3Tactic ========
 
 /// Analogue of `z3::Tactic`.
 ///
@@ -715,7 +715,7 @@ impl Z3Tactic {
     /// Names are resolved through the canonical
     /// [`TacticRegistry`](oxiz_core::tactic::TacticRegistry), so every tactic
     /// registered by
-    /// [`default_registry`](oxiz_core::tactic::default_registry) is reachable —
+    /// [`default_registry`](oxiz_core::tactic::default_registry) is reachable –
     /// e.g. `"simplify"`, `"propagate-values"`, `"ctx-solver-simplify"`,
     /// `"bit-blast"`, `"ackermannize"`, `"solve-eqs"`, `"nnf"`, `"tseitin-cnf"`,
     /// `"fm"`, `"pb2bv"`, `"split"`, `"skip"`, and more.
@@ -793,7 +793,7 @@ impl Z3Tactic {
     }
 }
 
-// ─── Z3Probe ─────────────────────────────────────────────────────────────────
+// ======== Z3Probe ========
 
 /// Internal enum of concrete probe implementations.
 ///
@@ -857,14 +857,14 @@ impl Z3Probe {
     /// Create a probe by name.
     ///
     /// Supported names:
-    /// - `"size"` — number of assertions
-    /// - `"num-exprs"` / `"num-consts"` — total unique term nodes
-    /// - `"depth"` — maximum term depth
-    /// - `"has-quantifiers"` / `"is-quantified"` — quantifier check
-    /// - `"is-linear"` / `"is-qflia"` — linearity check
-    /// - `"is-qfbv"` / `"has-bitvector"` — bitvector check
-    /// - `"has-array"` — array check
-    /// - any unrecognised name — constant 0.0
+    /// - `"size"` – number of assertions
+    /// - `"num-exprs"` / `"num-consts"` – total unique term nodes
+    /// - `"depth"` – maximum term depth
+    /// - `"has-quantifiers"` / `"is-quantified"` – quantifier check
+    /// - `"is-linear"` / `"is-qflia"` – linearity check
+    /// - `"is-qfbv"` / `"has-bitvector"` – bitvector check
+    /// - `"has-array"` – array check
+    /// - any unrecognised name – constant 0.0
     #[must_use]
     pub fn new(_ctx: &Z3Context, name: &str) -> Self {
         let kind = match name {
@@ -904,7 +904,7 @@ impl Z3Probe {
     }
 }
 
-// ─── Z3DatatypeSort / Z3Constructor ──────────────────────────────────────────
+// ======== Z3DatatypeSort / Z3Constructor ========
 
 /// A field specification in a [`Z3Constructor`].
 #[derive(Debug, Clone)]
@@ -1071,7 +1071,7 @@ fn sort_name_to_id(ctx: &Z3Context, name: &str) -> SortId {
     }
 }
 
-// ─── Z3Solver: check_assumptions + unsat_core ────────────────────────────────
+// ======== Z3Solver: check_assumptions + unsat_core ========
 
 impl Z3Solver {
     /// Check satisfiability under a list of additional assumptions.
@@ -1108,7 +1108,7 @@ impl Z3Solver {
     }
 }
 
-// ─── Z3AstVector ─────────────────────────────────────────────────────────────
+// ======== Z3AstVector ========
 
 /// Analogue of `z3::AstVector`.
 ///
@@ -1174,7 +1174,7 @@ impl Z3AstVector {
     }
 }
 
-// ─── TermManager read-only helpers ───────────────────────────────────────────
+// ======== TermManager read-only helpers ========
 // The core TermManager does not yet expose a `mk_true_ro` / `mk_false_ro` that
 // takes `&self`.  We add a small compatibility shim via a local trait to avoid
 // an immutable borrow while calling methods that internally need `&mut self`
@@ -1200,7 +1200,7 @@ impl TermManagerExt for TermManager {
                 }
             }
         }
-        TermId(0) // fallback — should never be reached
+        TermId(0) // fallback – should never be reached
     }
 
     fn mk_false_ro(&self) -> TermId {
@@ -1217,7 +1217,7 @@ impl TermManagerExt for TermManager {
     }
 }
 
-// ─── Z3FuncInterp / Z3FuncEntry / Z3Value ────────────────────────────────────
+// ======== Z3FuncInterp / Z3FuncEntry / Z3Value ========
 
 /// A model value exposed through the Z3 compat layer.
 ///
@@ -1329,7 +1329,7 @@ impl Z3FuncInterp {
     }
 }
 
-// ─── Z3Model::get_func_interp ─────────────────────────────────────────────────
+// ======== Z3Model::get_func_interp ========
 
 impl crate::z3_compat::Z3Model {
     /// Return the full interpretation of an uninterpreted function `f` in this
@@ -1352,7 +1352,7 @@ impl crate::z3_compat::Z3Model {
     }
 }
 
-// ─── Re-export convenience items ─────────────────────────────────────────────
+// ======== Re-export convenience items ========
 
 /// Re-export `DatatypeDecl`, `Constructor`, `Selector`, and `Field` from the
 /// theories crate so downstream code can use them without a direct dep on
@@ -1362,7 +1362,7 @@ pub use oxiz_theories::datatype::{
     Selector as DtSelector,
 };
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tactic_combinator_tests {

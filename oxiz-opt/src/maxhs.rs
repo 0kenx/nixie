@@ -480,9 +480,9 @@ mod tests {
         assert!(!solver.config.use_cores);
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Regression tests for the `sweep-backend-misc` triage sweep.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// `compute_hitting_set` used to greedily hit each MCS with its own
     /// locally-cheapest member, ignoring cross-MCS synergy -- a

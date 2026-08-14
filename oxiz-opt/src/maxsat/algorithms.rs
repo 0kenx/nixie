@@ -136,7 +136,7 @@ impl MaxSatSolver {
     /// where `unit` is the greatest common divisor of every (common-
     /// denominator-scaled) weight in the instance. Violating `k` copies of
     /// a duplicated clause then costs exactly `k * unit`, i.e. the original
-    /// weight when fully violated — so finding the true minimum number of
+    /// weight when fully violated – so finding the true minimum number of
     /// violated unit-weight copies is exactly equivalent to solving the
     /// original weighted instance.
     ///
@@ -146,9 +146,9 @@ impl MaxSatSolver {
     /// core-guided relaxation. This deliberately avoids relying on
     /// `oxiz_sat`'s assumption-based *unsat-core content* (only the
     /// Sat/Unsat/Unknown verdict is used): `analyze_assumption_conflict`
-    /// can return an incomplete core — sufficient to prove *some*
+    /// can return an incomplete core – sufficient to prove *some*
     /// unsatisfiability but not necessarily the full set of assumptions
-    /// truly responsible — which silently breaks the accounting invariants
+    /// truly responsible – which silently breaks the accounting invariants
     /// that core-guided weight-splitting schemes (WPM1) or shared
     /// at-most-one relaxation groups (Fu-Malik-style) depend on. Bounding
     /// satisfiability via an explicit, verified cardinality constraint has
@@ -280,7 +280,7 @@ impl MaxSatSolver {
     /// search. Reusing a single incremental solver across assumption calls
     /// with *different, unrelated* single-literal assumptions risks
     /// cross-contamination if a clause learned while resolving one
-    /// assumption's conflict is not properly scoped to that assumption —
+    /// assumption's conflict is not properly scoped to that assumption –
     /// rebuilding from scratch has no such risk, at the cost of redoing
     /// some work.
     fn solve_by_cardinality_search(
@@ -291,7 +291,7 @@ impl MaxSatSolver {
     ) -> Result<MaxSatResult, MaxSatError> {
         use crate::totalizer::{Totalizer, TotalizerClause};
 
-        // NOTE: must scan `items`' literals too, not just the hard clauses —
+        // NOTE: must scan `items`' literals too, not just the hard clauses –
         // when there are few (or zero) hard clauses, the soft-clause
         // literals can use variable indices past whatever the hard clauses
         // reference. Missing this caused the freshly allocated indicator

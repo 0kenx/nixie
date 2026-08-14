@@ -66,9 +66,9 @@ fn eq_side_matching(
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 1: div / mod must not become subtraction.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn div_is_not_subtraction() {
@@ -105,9 +105,9 @@ fn mod_is_not_subtraction() {
     let _ = eq_side_matching(&m, asserts[0], |k| matches!(k, TermKind::Mod(_, _)));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 2: real division and Int/Real conversions.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn real_division_stays_in_arithmetic() {
@@ -193,9 +193,9 @@ fn divisible_lowers_to_mod_equals_zero() {
     let _ = eq_side_matching(&m, asserts[0], |k| matches!(k, TermKind::Mod(_, _)));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 3: undeclared symbols must be rejected in a real script.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn undeclared_symbol_in_script_is_error() {
@@ -239,9 +239,9 @@ fn quantifier_bound_vars_not_rejected() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 4: indexed BV ops must be real bit-vector terms.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn bv_width(m: &TermManager, t: oxiz_core::ast::TermId) -> Option<u32> {
     let sort = m.get(t)?.sort;
@@ -308,7 +308,7 @@ fn repeat_produces_correct_width() {
     assert_eq!(bv_width(&m, side), Some(24), "repeat width wrong");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Nesting depth guard: pathological nesting yields an error, not a crash.
 //
 // The parser collects operands on an explicit heap frame stack rather than by
@@ -317,14 +317,14 @@ fn repeat_produces_correct_width() {
 // and its error message is part of the observable contract.
 //
 // The recursive-descent version needed ~2.9 KiB of native stack per nesting
-// level in the release profile, so reaching the 1024 limit took ~3 MiB — more
+// level in the release profile, so reaching the 1024 limit took ~3 MiB – more
 // than a libtest thread's ~2 MiB and far more than the ~1 MiB an embedder's
 // worker thread may have. The process then died of a stack overflow *before*
 // the limit could report anything, which is precisely what the limit exists to
 // prevent. `deeply_nested_term_survives_a_one_mib_stack` below is the test that
 // actually pins that down; the rest would pass on a big enough stack either
 // way.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `(- (- (- ... 0 ...)))` nested `depth` levels deep.
 fn nested_minus(depth: usize) -> String {
@@ -384,8 +384,8 @@ fn nesting_just_over_the_limit_is_rejected() {
 /// thread with a conventional ~1 MiB stack must get an error *value* back for
 /// pathological input, not a process abort.
 ///
-/// A Rust stack overflow is not a panic — it is a fatal runtime abort that
-/// `catch_unwind` cannot intercept — so the only way to assert on it is to run
+/// A Rust stack overflow is not a panic – it is a fatal runtime abort that
+/// `catch_unwind` cannot intercept – so the only way to assert on it is to run
 /// the parse on a thread whose stack size is pinned small and observe that the
 /// thread returns at all. If the parser ever regains a stack-depth dependence,
 /// this test does not fail: it kills the whole test process, which is exactly
@@ -471,7 +471,7 @@ fn deep_let_nesting_keeps_scopes_balanced() {
     parse_script(&script, &mut manager).expect("let bindings must not leak out of their scope");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 5: an undeclared head symbol must not become an unconstrained
 // uninterpreted function.
 //
@@ -479,10 +479,10 @@ fn deep_let_nesting_keeps_scopes_balanced() {
 // silently became a 2-ary uninterpreted predicate; z3 reports
 // `(error "unknown function/constant str.<")`. The rule now is: resolve
 // against every declaration table first (define-fun, datatype constructors and
-// selectors, declare-fun, declare-const, let), then reject — always in script
+// selectors, declare-fun, declare-const, let), then reject – always in script
 // mode, and additionally in bare-term mode when the name lives in a reserved
 // SMT-LIB theory namespace.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Parse a script and return the error message, asserting that it failed.
 fn parse_script_err(script: &str) -> String {
@@ -539,7 +539,7 @@ fn unknown_indexed_identifier_is_rejected() {
     assert!(msg.contains("unknown"), "unexpected message: {msg}");
 }
 
-// --- Control tests: QF_UF and friends must not regress. --------------------
+// ======== Control tests: QF_UF and friends must not regress. ========
 
 #[test]
 fn control_declared_function_application_still_uninterpreted() {
@@ -649,9 +649,9 @@ fn bare_term_mode_still_rejects_reserved_theory_namespace() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 6: SMT-LIB Unicode Strings operators and string-literal escapes.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The value of a string-literal term.
 fn string_lit(m: &TermManager, t: oxiz_core::ast::TermId) -> String {
@@ -976,7 +976,7 @@ fn surrogate_escape_is_rejected() {
 /// The defect this guards: both printers used to emit C-style escapes
 /// (`s.replace('\\', "\\\\").replace('"', "\\\"")` in `basic.rs` and
 /// `pretty.rs`), and `model::Value`'s `Display` emitted none at all. SMT-LIB
-/// has no `\"` escape — a quote is written `""` — and no `\\` escape either,
+/// has no `\"` escape – a quote is written `""` – and no `\\` escape either,
 /// so back then:
 ///
 /// * a value containing `"` printed as `\"`, which re-parses as a backslash
@@ -988,7 +988,7 @@ fn surrogate_escape_is_rejected() {
 /// The printer now emits `"` as `""`, `\` verbatim *unless* the text
 /// following it would be read back as a `\u` escape (in which case the
 /// backslash is written `\u{5c}`), and every code point outside printable
-/// ASCII as `\u{...}` — see `smtlib::printer::format_string_literal`, the one
+/// ASCII as `\u{...}` – see `smtlib::printer::format_string_literal`, the one
 /// encoder all three sites share.
 #[test]
 fn string_values_round_trip_through_the_printer() {
@@ -1023,9 +1023,9 @@ fn string_values_round_trip_through_the_printer() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 7: indexed identifiers are theory constructs, so an unrecognised one
-// must be an error too — the `str.<` failure mode applies to `(_ f i)` heads
+// must be an error too – the `str.<` failure mode applies to `(_ f i)` heads
 // as well, and there the *name* often looks known.
 //
 // Guards the standard `((_ extract i j) x)` spelling (which used to fall
@@ -1033,7 +1033,7 @@ fn string_values_round_trip_through_the_printer() {
 // `(= ((_ extract 3 0) #xab) #xc)` and tripping a `mk_bv_concat` debug
 // assertion), its range/sort checks, and the remaining unimplemented indexed
 // operators.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn extract_standard_spelling_is_a_real_bitvector() {

@@ -17,10 +17,10 @@ fn rat(n: i64) -> BigRational {
     BigRational::from_integer(BigInt::from(n))
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-math/src/interval.rs — Interval::mul openness must not exclude an
+// ========  ========
+// oxiz-math/src/interval.rs – Interval::mul openness must not exclude an
 // attainable value tied at the extremum through a different (closed) corner.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn interval_mul_keeps_attainable_zero_closed() {
@@ -44,10 +44,10 @@ fn interval_mul_keeps_attainable_zero_closed() {
     assert!(product.contains(&rat(0)));
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-math/src/fast_rational.rs — division by zero must panic in both
+// ========  ========
+// oxiz-math/src/fast_rational.rs – division by zero must panic in both
 // debug and release, never silently yield 0.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 #[should_panic(expected = "division by zero")]
@@ -67,10 +67,10 @@ fn fast_rational_big_div_by_zero_panics() {
     let _ = a / b;
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-math/src/mpfr.rs — ArbitraryFloat::one() must equal 1, not
+// ========  ========
+// oxiz-math/src/mpfr.rs – ArbitraryFloat::one() must equal 1, not
 // 2^(precision-1); align_with must not silently truncate shifted-out bits.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn arbitrary_float_one_is_exactly_one() {
@@ -90,7 +90,7 @@ fn arbitrary_float_round_up_sees_truncated_bits() {
     // precision=4: representable values around 1.0 are k/8 for k in
     // [8,15], i.e. 1.0, 1.125, 1.25, ... The exact sum of 1.0 and a tiny
     // positive epsilon (far below precision) is slightly more than 1.0, so
-    // RoundUp (round toward +infinity) must return something > 1.0 — never
+    // RoundUp (round toward +infinity) must return something > 1.0 – never
     // exactly 1.0, which would violate "round toward +infinity" by
     // returning a value below the true sum.
     let precision = Precision::new(4);
@@ -104,10 +104,10 @@ fn arbitrary_float_round_up_sees_truncated_bits() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-math/src/delta_rational.rs — scaling by a non-integer rational must
+// ========  ========
+// oxiz-math/src/delta_rational.rs – scaling by a non-integer rational must
 // not silently drop the infinitesimal (strict-inequality) coefficient.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn delta_rational_mul_by_fraction_preserves_strictness() {
@@ -155,9 +155,9 @@ fn delta_rational_mul_exact_rational_stays_exact() {
     assert_eq!(scaled.delta_coeff, 0);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // oxiz-math/src/polynomial/extended_ops.rs
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn polynomial_isolate_roots_finds_root_at_zero() {
@@ -211,7 +211,7 @@ fn polynomial_eval_still_panics_on_missing_variable_as_documented() {
 #[test]
 fn polynomial_resultant_univariate_is_exact_not_approximated() {
     // Res(f, g) = lc(f)^deg(g) * prod_{f(r)=0} g(r). For f = x-2 (root
-    // r=2, monic) and g = x-3: Res = g(2) = 2-3 = -1 exactly — this must
+    // r=2, monic) and g = x-3: Res = g(2) = 2-3 = -1 exactly – this must
     // come out as the *exact* small integer, not whatever a
     // primitive()-approximated value happens to be.
     let p = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-2, &[])]); // x - 2
@@ -259,10 +259,10 @@ fn polynomial_as_dense_i64_accepts_true_univariate() {
     assert_eq!(p.as_dense_i64(2), Some(vec![1, 0, 3]));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // oxiz-math/src/rewrite (via oxiz-core) is covered separately in
 // oxiz-core/tests/audit_sweep_core_math.rs.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[allow(dead_code)]
 fn unused_rational64_reference(_r: Rational64) {}

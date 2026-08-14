@@ -5,7 +5,7 @@
 //! Nelson–Oppen dispatch path.
 //!
 //! Two layers of coverage:
-//! 1. Fixture sweeps — every `.smt2` file under
+//! 1. Fixture sweeps – every `.smt2` file under
 //!    `bench/extended_theories/QF_{AUFBV,ALIA,ABV}/` and
 //!    `bench/z3_parity/benchmarks/QF_{AUFBV,ALIA,ABV}/`
 //! 2. Hand-crafted inline regression tests for select+store across
@@ -13,16 +13,16 @@
 
 use oxiz_solver::{Context, SolverResult};
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Fixture sweep helpers
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Parse the expected status from an SMT-LIB2 script.
 ///
 /// Recognised patterns (case-insensitive, in order of priority):
-/// - `(set-info :status sat|unsat|unknown)`  — SMT-LIB2 metadata
-/// - `; expected: sat|unsat|unknown`          — our own comment convention
-/// - `;; expected: sat|unsat|unknown`         — double-semicolon variant
+/// - `(set-info :status sat|unsat|unknown)`  – SMT-LIB2 metadata
+/// - `; expected: sat|unsat|unknown`          – our own comment convention
+/// - `;; expected: sat|unsat|unknown`         – double-semicolon variant
 fn parse_expected_status(content: &str) -> Option<SolverResult> {
     for line in content.lines() {
         let trimmed = line.trim();
@@ -71,7 +71,7 @@ fn run_script(script: &str) -> SolverResult {
             _ => {}
         }
     }
-    // No check-sat output found — treat as unknown.
+    // No check-sat output found – treat as unknown.
     SolverResult::Unknown
 }
 
@@ -91,7 +91,7 @@ fn check_fixture(path: &std::path::Path) -> Result<(), String> {
     let actual = run_script(&content);
 
     // Allow Unknown as a valid "we couldn't decide" outcome even when the
-    // oracle says sat/unsat — incomplete solvers are permitted to return
+    // oracle says sat/unsat – incomplete solvers are permitted to return
     // Unknown for any formula without being incorrect.  We only count it as
     // a failure when the solver asserts the *wrong* definitive answer.
     match (expected, actual) {
@@ -132,9 +132,9 @@ fn sweep_dir(dir: &str) -> Vec<String> {
     failures
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Fixture sweep tests
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// All QF_ABV fixtures from z3_parity benchmarks
 #[test]
@@ -226,10 +226,10 @@ fn sweep_extended_qf_alia() {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Hand-crafted inline regression tests
-// QF_ABV — Arrays + BitVectors
-// ──────────────────────────────────────────────────────────────────
+// QF_ABV – Arrays + BitVectors
+// ========  ========
 
 /// Basic read-over-write axiom: select(store(a, i, v), i) = v
 #[test]
@@ -300,12 +300,12 @@ fn inline_qf_abv_bv_ordering_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Hand-crafted inline regression tests
-// QF_AUFBV — Arrays + UF + BitVectors
-// ──────────────────────────────────────────────────────────────────
+// QF_AUFBV – Arrays + UF + BitVectors
+// ========  ========
 
-/// Store then select at the same index — should be SAT (tautology)
+/// Store then select at the same index – should be SAT (tautology)
 #[test]
 fn inline_qf_aufbv_store_select_tautology_sat() {
     let script = r#"
@@ -335,7 +335,7 @@ fn inline_qf_aufbv_extensionality_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-/// Store then read at a *different* index (non-interfering) — SAT
+/// Store then read at a *different* index (non-interfering) – SAT
 #[test]
 fn inline_qf_aufbv_store_read_different_index_sat() {
     let script = r#"
@@ -363,7 +363,7 @@ fn inline_qf_aufbv_store_conflict_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-/// Nested store chains — earlier store is shadowed at the overwritten index
+/// Nested store chains – earlier store is shadowed at the overwritten index
 #[test]
 fn inline_qf_aufbv_nested_store_shadow_sat() {
     let script = r#"
@@ -380,10 +380,10 @@ fn inline_qf_aufbv_nested_store_shadow_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Hand-crafted inline regression tests
-// QF_ALIA — Arrays + Linear Integer Arithmetic
-// ──────────────────────────────────────────────────────────────────
+// QF_ALIA – Arrays + Linear Integer Arithmetic
+// ========  ========
 
 /// Basic integer array read-over-write: select(store(a, 0, x), 0) = x → SAT
 #[test]
@@ -479,9 +479,9 @@ fn inline_qf_alia_read_over_write_tautology_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Cross-theory interaction tests
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// QF_ABV: select-equality read conflict (two reads from same array+index must agree)
 #[test]
@@ -530,13 +530,13 @@ fn inline_qf_abv_byte_buffer_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Theory-combination justification regressions
 //
 // When congruence closure derives `f(a) = f(b)` from `a = b`, that equality
 // crosses into the arithmetic tableau.  `ArithSolver` stores one reason term
 // per assertion, so the equality could only be tagged with one of its own
-// operands — `f(a)`, `(select arr i)` — and those name no SAT atom.
+// operands – `f(a)`, `(select arr i)` – and those name no SAT atom.
 // `TheoryManager::terms_to_conflict_clause` used to *drop* reason terms with no
 // SAT variable, so a conflict resting on such an equality produced a clause
 // blaming only the arithmetic atoms.  A clause that omits part of its
@@ -546,14 +546,14 @@ fn inline_qf_abv_byte_buffer_sat() {
 //
 // The equality now carries its congruence-closure explanation
 // (`EufSolver::explain_eq`) and the clause expands it back into literals.
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `f(a) > f(b)` with `a > b ∨ a = b`.
 ///
 /// The `a = b` branch makes congruence derive `f(a) = f(b)`, which contradicts
 /// `f(a) > f(b)`.  The clause must blame `a = b`; when it did not, the unit
 /// `¬(f(a) > f(b))` refuted the whole formula at level 0.  Satisfiable via the
-/// `a > b` branch — z3 agrees.
+/// `a > b` branch – z3 agrees.
 #[test]
 fn uf_congruence_equality_into_arith_keeps_its_justification_sat() {
     let script = r#"
@@ -755,7 +755,7 @@ fn nested_application_acyclic_chain_control_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-/// The conflict clause's literals really do entail the conflict — asserted
+/// The conflict clause's literals really do entail the conflict – asserted
 /// through the unsat core, which is exactly the set of named assertions the
 /// refutation's clauses name.
 ///
@@ -797,24 +797,24 @@ fn unsat_core_of_congruence_derived_arith_conflict_names_the_equality() {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Congruence under backtracking: a doubly-nested application whose argument
 // value comes from a case split
 //
 // `intern_app` used to hand a new term the node of an already-interned
 // congruent application.  The equality that justified that sharing is retracted
 // by `pop`; the term-to-node mapping is not.  So once `a = 0` had been tried and
-// backtracked, `f(0)` stayed pinned to `f(a)`'s node — with no node, no use-list
+// backtracked, `f(0)` stayed pinned to `f(a)`'s node – with no node, no use-list
 // entry and no signature of its own.  The second congruence step,
 // `f(f(a)) = f(0)` once `f(a) = 0`, therefore became undiscoverable, the tableau
 // never learned `f(f(a))`'s value, and the solver answered `sat` on a formula
 // with no model.  Every ingredient is needed: double nesting, `a` chosen by a
-// decision, and `f(a)`'s value chosen by a decision — hence the controls below,
+// decision, and `f(a)`'s value chosen by a decision – hence the controls below,
 // each of which removes exactly one and was answered correctly all along.
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// The reproducer.  `a ∈ {0,1,2}` and `f(0), f(1), f(2) ∈ {0,1,2}`, so `f(a)`
-/// is in `{0,1,2}` and `f(f(a))` is too — `2 < f(f(a))` has no model.
+/// is in `{0,1,2}` and `f(f(a))` is too – `2 < f(f(a))` has no model.
 #[test]
 fn nested_application_under_case_split_unsat() {
     let script = r#"
@@ -831,7 +831,7 @@ fn nested_application_under_case_split_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-/// The same shape at domain size two — the minimal form of the defect.
+/// The same shape at domain size two – the minimal form of the defect.
 #[test]
 fn nested_application_under_case_split_two_valued_unsat() {
     let script = r#"
@@ -966,7 +966,7 @@ fn nested_application_pure_uf_control_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Bounded differential testing against a brute-force oracle
 //
 // Small UF+LIA and Array+LIA formulas are generated from a fixed seed (no
@@ -974,7 +974,7 @@ fn nested_application_pure_uf_control_sat() {
 // checked against exhaustive enumeration.  Theory combination is where wrong
 // answers hide, and a generated corpus finds the shapes hand-written cases do
 // not.
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// The finite domain the differential formulas live on: `{0, 1, 2}`.
 const DIFF_DOMAIN: usize = 3;
@@ -1062,7 +1062,7 @@ enum DiffFlavour {
     Uf,
     /// `arr : (Array Int Int)`, read with `select`.
     Array,
-    /// `g : U -> U` over a declared, uninterpreted sort — pure QF_UF, with no
+    /// `g : U -> U` over a declared, uninterpreted sort – pure QF_UF, with no
     /// arithmetic anywhere.  The domain is pinned by `distinct` constants
     /// instead of integer literals, so the same enumeration decides it.
     UninterpretedSort,
@@ -1109,7 +1109,7 @@ impl DiffFlavour {
     ///
     /// The closure assertions pin both variables and the symbol's value at every
     /// domain point into `{0, 1, 2}`.  With them the enumeration below is a
-    /// *complete* oracle — a model exists iff one exists in the box — so both
+    /// *complete* oracle – a model exists iff one exists in the box – so both
     /// answers can be asserted.  Without them it is only sound in one direction
     /// (a model found in the box really is a model), which is the direction that
     /// catches a false `unsat`.
@@ -1222,7 +1222,7 @@ impl DiffRng {
 }
 
 /// Generate one atom.  `arithmetic` is false for the pure-QF_UF flavour, which
-/// has no `<` and no `+` — only equalities between terms of the sort.
+/// has no `<` and no `+` – only equalities between terms of the sort.
 fn diff_gen_atom(rng: &mut DiffRng, terms: &[DiffTerm], arithmetic: bool) -> DiffAtom {
     let pick = |rng: &mut DiffRng| terms[rng.below(terms.len())];
     if !arithmetic {
@@ -1338,7 +1338,7 @@ fn diff_check_bounded_terms(
 ///
 /// Nothing bounds the terms here, so a model found in the box is a genuine
 /// model (extend the symbol arbitrarily outside `D`) while failing to find one
-/// proves nothing.  That makes the oracle sound in exactly one direction — the
+/// proves nothing.  That makes the oracle sound in exactly one direction – the
 /// one that exposes a false `unsat`, which is the failure a conflict clause
 /// missing part of its justification produces.  Nested applications are in
 /// scope here.
@@ -1411,17 +1411,17 @@ fn differential_array_lia_never_refutes_a_satisfiable_formula() {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Two-sided differential runs over the *nesting-heavy* corpus.
 //
 // The bounded preamble pins the symbol's value at every domain point, so the box
 // is closed under any depth of nesting and the enumeration stays a complete
 // oracle: both `sat` and `unsat` can be demanded.  This is the corpus that
-// exhibits the congruence-under-backtracking defect — a doubly-nested
-// application whose argument value comes from a case split — so it is run for
+// exhibits the congruence-under-backtracking defect – a doubly-nested
+// application whose argument value comes from a case split – so it is run for
 // all three flavours, including pure QF_UF where no arithmetic is involved at
 // all and the congruence has to carry the whole refutation.
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn differential_uf_lia_nested_bounded_matches_brute_force_oracle() {

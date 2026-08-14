@@ -690,7 +690,7 @@ mod tests {
     /// `DEEP_GRAPH_STACK / depth`, not either number alone. So the WASM-native
     /// pair of 1 MiB and a 200,000-node chain is scaled down by 8, to a 128 KiB
     /// stack and 25,000-node chains: the same ~5 bytes per frame, at an eighth
-    /// of the graph-building cost. Stack and depth are deliberately tied —
+    /// of the graph-building cost. Stack and depth are deliberately tied –
     /// restoring the longer chains without also restoring the larger stack
     /// would silently stop every test below from catching a recursive rewrite.
     const DEEP_GRAPH_STACK: usize = 1 << 17;

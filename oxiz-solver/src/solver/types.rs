@@ -589,7 +589,7 @@ impl Model {
     /// Returns the simplified/evaluated term.
     ///
     /// Runs on an explicit heap-allocated frame stack, so nesting depth is
-    /// bounded by memory rather than by the native call stack — this is a
+    /// bounded by memory rather than by the native call stack – this is a
     /// public entry point (the `(get-value ...)` path) and callers control
     /// the depth of the terms they hand in.  Shared sub-terms of the
     /// hash-consed DAG are evaluated once per call through a per-call memo
@@ -610,7 +610,7 @@ impl Model {
             // Open `current`, descending through operators until some term
             // produces a value.
             let mut value = loop {
-                // Direct model assignment — checked before anything else,
+                // Direct model assignment – checked before anything else,
                 // exactly as the recursive version did.
                 if let Some(val) = self.get(current) {
                     break val;
@@ -683,7 +683,7 @@ impl Model {
                     // the body and evaluate that. encode.rs leaves `let`
                     // un-expanded (it encodes the body with the bound vars
                     // free), so without this arm a let-wrapped assertion is
-                    // an opaque leaf to the evaluator — `(get-value)`/
+                    // an opaque leaf to the evaluator – `(get-value)`/
                     // `(get-model)` and the CLI `--validate-model` then can't
                     // reduce it (false-alarm). Each level substitutes one
                     // `let`'s bindings and moves to its body, so this always
@@ -935,7 +935,7 @@ impl Model {
                     EvalFrame::Neg { term } => {
                         // Arithmetic constant folding; the residual case is a
                         // *negation* term.  (The recursive version built a
-                        // boolean `not` here — a wrong-operator defect that
+                        // boolean `not` here – a wrong-operator defect that
                         // produced an ill-sorted term for an unassigned
                         // arithmetic operand.)
                         let folded = match manager.get(value).map(|t| t.kind.clone()) {
@@ -1034,7 +1034,7 @@ fn term_kind_is_false(term: TermId, manager: &TermManager) -> bool {
 /// finished value) plus per-operator progress; a frame that still needs an
 /// operand pushes itself back and re-enters the open loop.
 enum EvalFrame {
-    /// `not` — one operand.
+    /// `not` – one operand.
     Not { term: TermId },
     /// `and` (`conjunction`) or `or`: operands evaluated left to right with
     /// the recursive version's short-circuiting; `acc` holds the operands
@@ -1046,23 +1046,23 @@ enum EvalFrame {
         next: usize,
         acc: Vec<TermId>,
     },
-    /// `=>` — waiting on the antecedent.
+    /// `=>` – waiting on the antecedent.
     ImpliesLhs { term: TermId, rhs: TermId },
-    /// `=>` — waiting on the consequent.
+    /// `=>` – waiting on the consequent.
     ImpliesRhs { term: TermId, lhs_val: TermId },
-    /// `ite` — waiting on the condition.
+    /// `ite` – waiting on the condition.
     IteCond {
         term: TermId,
         then_br: TermId,
         else_br: TermId,
     },
-    /// `ite` with a non-constant condition — waiting on the then-branch.
+    /// `ite` with a non-constant condition – waiting on the then-branch.
     IteThen {
         term: TermId,
         cond_val: TermId,
         else_br: TermId,
     },
-    /// `ite` with a non-constant condition — waiting on the else-branch.
+    /// `ite` with a non-constant condition – waiting on the else-branch.
     IteElse {
         term: TermId,
         cond_val: TermId,
@@ -1071,9 +1071,9 @@ enum EvalFrame {
     /// The child's value *is* this term's value (`ite` on a constant
     /// condition evaluating only the selected branch).
     Forward { term: TermId },
-    /// `=` — waiting on the left operand.
+    /// `=` – waiting on the left operand.
     EqLhs { term: TermId, rhs: TermId },
-    /// `=` — waiting on the right operand.
+    /// `=` – waiting on the right operand.
     EqRhs { term: TermId, lhs_val: TermId },
     /// Unary arithmetic negation.
     Neg { term: TermId },
@@ -1085,17 +1085,17 @@ enum EvalFrame {
         next: usize,
         acc: Vec<TermId>,
     },
-    /// Binary `-` — waiting on the left operand.
+    /// Binary `-` – waiting on the left operand.
     SubLhs { term: TermId, rhs: TermId },
-    /// Binary `-` — waiting on the right operand.
+    /// Binary `-` – waiting on the right operand.
     SubRhs { term: TermId, lhs_val: TermId },
-    /// `div` (`is_div`) or `mod` — waiting on the dividend.
+    /// `div` (`is_div`) or `mod` – waiting on the dividend.
     DivModLhs {
         term: TermId,
         rhs: TermId,
         is_div: bool,
     },
-    /// `div` (`is_div`) or `mod` — waiting on the divisor.
+    /// `div` (`is_div`) or `mod` – waiting on the divisor.
     DivModRhs {
         term: TermId,
         lhs_val: TermId,

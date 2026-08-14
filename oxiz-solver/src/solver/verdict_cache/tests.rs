@@ -6,7 +6,7 @@
 //! 1. **A hit answers the question that was asked.**  The cached verdict must
 //!    agree with what a solver that never saw the earlier call would say.
 //! 2. **A settings change is not "nothing happened".**  Every mutator of
-//!    something a `check` reads must make the next `check` run for real —
+//!    something a `check` reads must make the next `check` run for real –
 //!    mechanically, so a setter added later cannot quietly opt out.
 //! 3. **The observable consequences of a re-run actually arrive.**  A verdict is
 //!    not the only output: turning unsat-core production on after a cached
@@ -35,8 +35,8 @@ fn assert_unsat_goal(solver: &mut Solver, manager: &mut TermManager) {
 ///
 /// # Why this is a table and not a handful of scenarios
 ///
-/// The rule stated in `solver::config` is mechanical — *every* `&mut self`
-/// method there ends by calling `Solver::settings_changed` — precisely because
+/// The rule stated in `solver::config` is mechanical – *every* `&mut self`
+/// method there ends by calling `Solver::settings_changed` – precisely because
 /// the failure it prevents is silent.  A setter that skips it produces no error,
 /// no warning and no wrong answer on the goal it was tested with; it produces a
 /// stale answer later, on somebody else's session, to a question that was never
@@ -78,7 +78,7 @@ fn every_settings_mutator_drops_the_cached_verdict() {
         assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
         assert!(
             solver.last_check.is_some(),
-            "{name}: precondition — the check above must have left a cached verdict"
+            "{name}: precondition – the check above must have left a cached verdict"
         );
 
         mutate(&mut solver);
@@ -91,7 +91,7 @@ fn every_settings_mutator_drops_the_cached_verdict() {
     }
 }
 
-/// The fingerprint alone — with the invalidation hook out of the picture —
+/// The fingerprint alone – with the invalidation hook out of the picture –
 /// still refuses a verdict computed under different settings.
 ///
 /// The hook above and the fingerprint are deliberately redundant.  This pin is
@@ -194,8 +194,8 @@ fn a_cache_hit_agrees_with_a_solver_that_never_saw_the_first_call() {
 /// # How "did it actually search?" is observed
 ///
 /// Through the cumulative propagation counter.  It is the one output of a
-/// `check` that a cache hit provably cannot move — a hit returns before the
-/// solve loop — and that a real search on a non-trivial goal provably does move.
+/// `check` that a cache hit provably cannot move – a hit returns before the
+/// solve loop – and that a real search on a non-trivial goal provably does move.
 /// Verdict equality cannot distinguish the two cases, which is exactly why the
 /// staleness holes this pins were invisible: the replayed answer was the *right*
 /// answer for the old settings.
@@ -204,7 +204,7 @@ fn a_cache_hit_agrees_with_a_solver_that_never_saw_the_first_call() {
 /// the solve loop honours `SolverConfig::timeout_ms`, an `Unknown` produced by
 /// exhausting it is a statement about the budget rather than about the goal, and
 /// before this the fingerprint carried `max_conflicts` and `max_decisions` and
-/// nothing else — so `(check-sat)` → `unknown` → `(set-option :timeout ...)` →
+/// nothing else – so `(check-sat)` → `unknown` → `(set-option :timeout ...)` →
 /// `(check-sat)` handed the same `unknown` straight back out of the cache
 /// without re-searching.
 #[test]
@@ -214,7 +214,7 @@ fn a_settings_change_between_checks_makes_the_next_check_search_again() {
 
     // All but one of the assignments to four Booleans excluded by a clause
     // each: satisfiable, by exactly one model, and only reachable by
-    // propagating.  Satisfiable on purpose — a refuted goal keeps its
+    // propagating.  Satisfiable on purpose – a refuted goal keeps its
     // level-0 conflict, so a re-run of *that* would exit before doing enough
     // work to be visible here, and this pin would then be measuring nothing.
     const BITS: usize = 4;
@@ -262,7 +262,7 @@ fn a_settings_change_between_checks_makes_the_next_check_search_again() {
     );
 }
 
-/// Turning unsat-core production on after a cached `Unsat` must produce a core —
+/// Turning unsat-core production on after a cached `Unsat` must produce a core –
 /// a *named* one.
 ///
 /// The verdict is the same either way, which is exactly why this hole was
@@ -273,7 +273,7 @@ fn a_settings_change_between_checks_makes_the_next_check_search_again() {
 ///
 /// Fixing the cache alone left the symptom in place at script level, because
 /// `Solver::assert_named` *also* only wrote the assertion's name down when the
-/// flag was already on — so a session that asserted first and enabled the option
+/// flag was already on – so a session that asserted first and enabled the option
 /// afterwards got a re-run and an anonymous core.  That is the same defect one
 /// layer down (state captured under one setting, read under another), and the
 /// names asserted below are what distinguish the two: `is_some()` alone would
@@ -308,7 +308,7 @@ fn enabling_unsat_cores_after_a_cached_unsat_produces_a_named_core() {
         .clone();
     assert!(
         core.names.iter().any(|n| n == "pos") && core.names.iter().any(|n| n == "neg"),
-        "the core must name the assertions the caller named, not merely exist — \
+        "the core must name the assertions the caller named, not merely exist – \
          an option that arrives after the assertions must still be honoured; \
          got {:?}",
         core.names

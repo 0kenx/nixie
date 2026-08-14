@@ -35,7 +35,7 @@ impl Solver {
                 // (reduce_clause_database skips len<=2 clauses), so edges in
                 // the binary implication graph are always valid. The previous
                 // per-edge validation (clauses.get + 2x contains) was a major
-                // BCP bottleneck — ~5 ops per binary edge per propagation.
+                // BCP bottleneck – ~5 ops per binary edge per propagation.
                 // In incremental mode (pop/forget), edges could go stale; that
                 // path would need edge invalidation, not per-propagation checks.
 
@@ -43,7 +43,7 @@ impl Solver {
                 if value < 0 {
                     // Conflict in binary clause. `lit`'s remaining implication
                     // edges (and its whole watch list) have not been examined,
-                    // so put it back on the queue before bailing out — see
+                    // so put it back on the queue before bailing out – see
                     // `Trail::requeue_last_propagated` (preserves the
                     // propagation-queue contract so a later solve() re-visits it).
                     self.trail.requeue_last_propagated();
@@ -95,7 +95,7 @@ impl Solver {
                 let clause = match self.clauses.get_mut(watcher.clause) {
                     Some(c) if !c.deleted => c,
                     _ => {
-                        // Deleted clause — drop (don't advance write).
+                        // Deleted clause – drop (don't advance write).
                         continue;
                     }
                 };
@@ -166,7 +166,7 @@ impl Solver {
             if let Some(conflict) = conflict_found {
                 // The watch list was abandoned mid-scan, so `lit` is only
                 // partially propagated. Re-queue it so the invariant "everything
-                // before the head is fully propagated" survives the abort — see
+                // before the head is fully propagated" survives the abort – see
                 // `Trail::requeue_last_propagated`.
                 self.trail.requeue_last_propagated();
                 return Some(conflict);
@@ -215,8 +215,8 @@ impl Solver {
                 // "false at level 0" and resolved away, so the learned binary
                 // dropped a literal that was not false at all.  That clause is
                 // not implied by the formula, and since it goes straight into the
-                // binary implication graph — where it both propagates and serves
-                // as a conflict reason — it yields a wrong top-level UNSAT on
+                // binary implication graph – where it both propagates and serves
+                // as a conflict reason – it yields a wrong top-level UNSAT on
                 // satisfiable input (QF_UF quasigroup `iso_brn*`).
                 if !self.trail.lit_value(reason_lit).is_false() {
                     return;
@@ -255,7 +255,7 @@ impl Solver {
 
                 // Register the clause in the two ledgers that make a learned
                 // clause retractable, exactly as the main CDCL loop's 1-UIP
-                // learning step does — see `Solver::solve` in `solver/mod.rs`,
+                // learning step does – see `Solver::solve` in `solver/mod.rs`,
                 // which pushes to `learned_clause_ids` *and* to the current
                 // assertion level's list in both its unit and its general
                 // branch.  (`Solver::learn_clause` in `solver/learn.rs`, used
@@ -271,7 +271,7 @@ impl Solver {
                 // * `learned_clause_count()` reports `learned_clause_ids.len()`,
                 //   so callers computing "originals" as
                 //   `num_clauses() - learned_clause_count()` counted these as
-                //   *original* clauses — the whole reported symptom of task #28
+                //   *original* clauses – the whole reported symptom of task #28
                 //   ("repeated check-sat grows the original clause database").
                 // * `forget_learned_since` splits `learned_clause_ids`, so the
                 //   bit-vector theory's incremental safety net (see its doc
@@ -282,7 +282,7 @@ impl Solver {
                 //   resolution that produces `other_lit | implied` discharges
                 //   the reason clause's remaining literals because they are
                 //   false *at level 0*, and level-0 facts here are only
-                //   level-0 for the current assertion scope — `add_clause`
+                //   level-0 for the current assertion scope – `add_clause`
                 //   installs a unit as a level-0 trail assignment and `pop`
                 //   rolls the trail back.  A surviving hyper-binary clause
                 //   whose level-0 premises have just been retracted is no

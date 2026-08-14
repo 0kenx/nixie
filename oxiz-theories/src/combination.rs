@@ -1098,7 +1098,7 @@ impl TheoryCombiner {
         /// Iterative on purpose: `union` below links by the smaller raw
         /// `TermId` (for determinism) rather than by rank, so feeding
         /// equalities in descending-id order builds a chain of length N before
-        /// any compression happens — and N is the number of model equalities,
+        /// any compression happens – and N is the number of model equalities,
         /// i.e. caller-controlled. The return type is `TermId`, so a depth cap
         /// could only hand back a non-representative and silently split a
         /// class.

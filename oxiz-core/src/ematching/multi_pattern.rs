@@ -406,8 +406,8 @@ impl MultiPatternMatcher {
     /// `FxHashMap`) *by value* into every frame and recursed once per level
     /// of pattern nesting. The explicit stack visits the (pattern, term)
     /// pairs in the same depth-first, left-to-right order, so the order in
-    /// which variables are bound — and therefore which inconsistent binding
-    /// is detected first — is unchanged.
+    /// which variables are bound – and therefore which inconsistent binding
+    /// is detected first – is unchanged.
     fn match_recursive(
         &self,
         pattern: TermId,

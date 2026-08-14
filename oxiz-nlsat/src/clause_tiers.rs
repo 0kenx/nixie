@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Overlaps the
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. Overlaps the
 // existing Glucose-style `reduce_learned` (protects LBD<=2 glue, sorts by LBD
 // then activity) already used by the solver; a full 3-tier engine is duplicative
 // churn for uncertain gain. Fold its policy into reduce_learned if ever needed.

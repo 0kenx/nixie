@@ -4,7 +4,7 @@
 use crate::prelude::*;
 
 /// Largest code point in the alphabet of the SMT-LIB 2.6 Unicode Strings
-/// theory (`0x2FFFF`, i.e. 196607 — the BMP plus the two next planes).
+/// theory (`0x2FFFF`, i.e. 196607 – the BMP plus the two next planes).
 /// A `\u` escape denoting a larger value is **not** an escape sequence at
 /// all, so its backslash stands for itself.
 ///
@@ -27,12 +27,12 @@ fn hex_digit_value(byte: u8) -> Option<u32> {
 /// The SMT-LIB 2.6 Unicode Strings theory defines exactly two escape forms
 /// inside a string literal:
 ///
-/// * `\ud₃d₂d₁d₀` — exactly four hexadecimal digits;
-/// * `\u{d₀}` … `\u{d₄d₃d₂d₁d₀}` — one to five hexadecimal digits in braces.
+/// * `\ud₃d₂d₁d₀` – exactly four hexadecimal digits;
+/// * `\u{d₀}` … `\u{d₄d₃d₂d₁d₀}` – one to five hexadecimal digits in braces.
 ///
 /// Both denote the character whose code point is that hexadecimal number,
 /// which must be in the range `0..=0x2FFFF`. **Any other occurrence of `\` is not an
-/// escape sequence and stands for itself** — including `\u{}`, a six-digit
+/// escape sequence and stands for itself** – including `\u{}`, a six-digit
 /// braced form, a too-large code point, and a `\` followed by anything else.
 ///
 /// Reference: Z3's `zstring.cpp` (`zstring::is_escape_char`), mirrored here
@@ -253,7 +253,7 @@ impl<'a> Lexer<'a> {
                 let num = self.read_numeral();
                 // SMT-LIB `<numeral>` grammar: `0 | a non-empty sequence of
                 // digits not starting with 0`. A leading zero followed by
-                // more digits (e.g. `007`) is not a valid numeral — record
+                // more digits (e.g. `007`) is not a valid numeral – record
                 // it as a lexical error rather than silently accepting a
                 // token some scripts may rely on rejecting (and to avoid a
                 // C-style octal misreading). This check applies only to the
@@ -398,7 +398,7 @@ impl<'a> Lexer<'a> {
     /// The returned `String` is the literal's *value*: the doubled-quote
     /// escape `""` is folded to a single `"`, and the two SMT-LIB Unicode
     /// Strings escape forms (`\ud₃d₂d₁d₀` and `\u{d...}`) are decoded to the
-    /// single character they denote. Any other backslash stands for itself —
+    /// single character they denote. Any other backslash stands for itself –
     /// see [`scan_unicode_escape`].
     fn read_string_lit(&mut self, start_of_token: usize) -> String {
         let mut result = String::new();

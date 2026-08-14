@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. A warm-start
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. A warm-start
 // cache of approximate root brackets whose cross-backtrack reuse is lost because
 // backtrack clears all arithmetic state each conflict; low priority until
 // incremental backtracking (see incremental_cad) lands.

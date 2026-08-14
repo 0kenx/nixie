@@ -125,7 +125,7 @@ impl Assignment {
         &self.trail
     }
 
-    // ========== Arithmetic Variable Operations ==========
+    // ======== Arithmetic Variable Operations ========
 
     /// Check if an arithmetic variable is assigned.
     pub fn is_arith_assigned(&self, var: Var) -> bool {
@@ -196,7 +196,7 @@ impl Assignment {
         self.arith_values.iter().filter(|v| v.is_some()).count()
     }
 
-    // ========== Boolean Variable Operations ==========
+    // ======== Boolean Variable Operations ========
 
     /// Check if a boolean variable is assigned.
     pub fn is_bool_assigned(&self, var: BoolVar) -> bool {
@@ -258,7 +258,7 @@ impl Assignment {
         }
     }
 
-    // ========== Decision Level Operations ==========
+    // ======== Decision Level Operations ========
 
     /// Push a new decision level.
     pub fn push_level(&mut self) {

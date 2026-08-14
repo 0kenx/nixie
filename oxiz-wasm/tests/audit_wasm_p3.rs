@@ -52,10 +52,10 @@ use oxiz_wasm::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
-// ====================================================================
+// ========  ========
 // model.rs: getUnsatCore returns a real (named-assertion-based) core,
 // not every assertion.
-// ====================================================================
+// ========  ========
 
 /// Regression: `getUnsatCore` must return the *names* of the unsat core's
 /// assertions (as `(get-unsat-core)` does), not a dump of every
@@ -136,10 +136,10 @@ fn test_get_unsat_core_without_option_enabled_is_honest() {
     assert!(result.is_err());
 }
 
-// ====================================================================
+// ========  ========
 // solver_core.rs: executeAsync/executeWithProgress must not break
 // multi-line commands at a fixed line-count boundary.
-// ====================================================================
+// ========  ========
 
 /// Build a script whose single `(assert ...)` command spans well over 20
 /// lines -- the old fixed-size chunker would have split straight through
@@ -185,10 +185,10 @@ async fn test_execute_with_progress_handles_multiline_command_spanning_chunk_bou
     );
 }
 
-// ====================================================================
+// ========  ========
 // streaming.rs: nextModelEntry streams real entries; startModelStream
 // returns a controller connected to the internally retained one.
-// ====================================================================
+// ========  ========
 
 #[wasm_bindgen_test]
 fn test_streaming_next_model_entry_yields_real_entries() {
@@ -232,11 +232,11 @@ fn test_streaming_start_model_stream_controller_is_connected() {
     assert_eq!(dequeued.sequence(), 0);
 }
 
-// ====================================================================
+// ========  ========
 // worker_support.rs: WorkerPool actually executes tasks; WorkerHandler's
 // "solve" task surfaces assertion failures instead of silently answering
 // "sat".
-// ====================================================================
+// ========  ========
 
 #[wasm_bindgen_test]
 fn test_worker_handler_solve_answers_real_unsat() {

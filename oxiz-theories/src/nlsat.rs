@@ -32,9 +32,9 @@ use oxiz_nlsat::solver::{NlsatSolver, SolverResult};
 use oxiz_nlsat::types::AtomKind;
 use std::collections::HashMap;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Public result type for dispatch functions
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Concrete arithmetic assignment produced by a nonlinear decision procedure.
 ///
@@ -72,9 +72,9 @@ impl NlDispatchResult {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Term→Polynomial translator
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Translates `TermId` AST nodes to `Polynomial` values for use with
 /// the NLSAT / NIA solver.
@@ -251,9 +251,9 @@ impl PolyVarSource for TermPolyTranslator<'_> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Shared iterative term→polynomial translation
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// The one thing the two translators do differently: mint (or look up) the
 /// polynomial variable index for a term.
@@ -326,7 +326,7 @@ impl PolyFrame {
     }
 }
 
-/// Sum a list of polynomials left to right, starting from zero — which is also
+/// Sum a list of polynomials left to right, starting from zero – which is also
 /// exactly what a one-element list needs, so unary nodes can reuse it instead
 /// of asserting their operand is present.
 fn fold_add(parts: Vec<Polynomial>) -> Polynomial {
@@ -477,9 +477,9 @@ fn translate_poly<S: PolyVarSource>(
     carry
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Helper: nonlinearity detection
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Returns `true` if `term_id` (recursively) contains a `Mul` node where at
 /// least two non-constant operands are multiplied together.
@@ -627,7 +627,7 @@ fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
             TermKind::Forall { .. } | TermKind::Exists { .. } | TermKind::Match { .. } => {
                 return true;
             }
-            // `let` is a transparent local binding — walk into it so a
+            // `let` is a transparent local binding – walk into it so a
             // nonlinear product bound by a let is still detected.
             TermKind::Let { bindings, body } => {
                 for &(_, v) in bindings.iter() {
@@ -665,9 +665,9 @@ fn contains_non_polynomial_ops(term_id: TermId, manager: &TermManager) -> bool {
     false
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Polynomial atom (internal representation)
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[derive(Debug, Clone)]
 struct PolyAtom {
@@ -677,9 +677,9 @@ struct PolyAtom {
     positive: bool,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Assertion-level translation (integer mode)
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Whether `sort` is Int or Real.
 fn is_numeric_sort(manager: &TermManager, sort: oxiz_core::sort::SortId) -> bool {
@@ -694,7 +694,7 @@ fn is_array_sort_id(manager: &TermManager, sort: oxiz_core::sort::SortId) -> boo
 }
 
 /// A top-level equality whose operands are array-sorted (or one is) is an
-/// array-theory structural fact, not an arithmetic constraint — skip it.
+/// array-theory structural fact, not an arithmetic constraint – skip it.
 fn is_array_structural_eq(manager: &TermManager, lhs: TermId, rhs: TermId) -> bool {
     let ls = manager.get(lhs).map(|t| t.sort);
     let rs = manager.get(rhs).map(|t| t.sort);
@@ -732,7 +732,7 @@ fn is_arith_interface_eq(manager: &TermManager, lhs: TermId, rhs: TermId) -> boo
 }
 
 /// `incomplete` is set to `true` whenever some part of the assertion could
-/// **not** be captured as a pure conjunction of polynomial atoms — an
+/// **not** be captured as a pure conjunction of polynomial atoms – an
 /// unrecognized top-level connective (`Or`/`Not`/`Distinct`/`Ite`/…) or a
 /// comparison whose operand does not translate to a polynomial (e.g. it
 /// contains `Div`/`Mod`/an uninterpreted apply). The dispatcher must treat a
@@ -848,9 +848,9 @@ fn extract_poly_atoms(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // NIA dispatch: public entry point
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Dispatch nonlinear integer arithmetic assertions to the `NiaSolver`.
 ///
@@ -994,7 +994,7 @@ pub fn dispatch_nia_constraints(
     // bounded concrete enumeration that verifies the full formula before Sat.
     // Catches the industrial QF_NIA termination-VC SAT instances the CAD core
     // bails on. Gated by the caller's `model_search` config (a budget
-    // decision, never a soundness one — the search can only turn `unknown`
+    // decision, never a soundness one – the search can only turn `unknown`
     // into `sat`).
     if model_search
         && let Some(r) = crate::nl_model_search::try_model_based_nia_search(assertions, manager)
@@ -1048,7 +1048,7 @@ pub fn dispatch_nia_constraints(
     // set as a conjunction of translatable atoms. If any top-level term was
     // dropped (a disjunction, an untranslatable operand, …) the solver worked
     // on a strictly weaker problem, so its model may violate the dropped
-    // constraint — fall through to CDCL(T) instead of trusting Sat. Array
+    // constraint – fall through to CDCL(T) instead of trusting Sat. Array
     // `store` definitions likewise constrain purified select constants beyond
     // the pure-arith relaxation, so a store-bearing formula's Sat is not
     // trustworthy from this path (the ground-ANIA pre-check handles the
@@ -1104,9 +1104,9 @@ fn extract_nia_model(translator: &TermPolyTranslator<'_>) -> HashMap<TermId, Big
     out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // NRA dispatch (real arithmetic)
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 struct RealPolyTranslator<'a> {
     manager: &'a TermManager,
@@ -1315,9 +1315,9 @@ pub fn dispatch_nra_constraints(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // NlsatTheory – Theory trait wrapper
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[derive(Debug, Clone)]
 struct NlsatContextState {
@@ -1445,9 +1445,9 @@ impl Theory for NlsatTheory {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Unit tests
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[cfg(test)]
 mod tests {
@@ -1458,7 +1458,7 @@ mod tests {
         BigRational::from_integer(n.into())
     }
 
-    // ── Theory trait tests ────────────────────────────────────────────────────
+    // ======== Theory trait tests ========
 
     #[test]
     fn test_nlsat_theory_new() {
@@ -1511,7 +1511,7 @@ mod tests {
         assert!(matches!(result, TheoryResult::Sat));
     }
 
-    // ── Translator unit tests ──────────────────────────────────────────────────
+    // ======== Translator unit tests ========
 
     #[test]
     fn test_translator_constant() {
@@ -1573,7 +1573,7 @@ mod tests {
         let mut nia = NiaSolver::new();
         let mut t = TermPolyTranslator::new(&manager, &mut nia, true);
         let poly = t.translate(square).expect("x*x should translate");
-        // x^2 — single term, degree 2
+        // x^2 – single term, degree 2
         assert_eq!(poly.num_terms(), 1);
         assert_eq!(poly.total_degree(), 2);
     }
@@ -1607,7 +1607,7 @@ mod tests {
 
     #[test]
     fn test_translator_triple_product() {
-        // (* x y z) — degree-3 monomial
+        // (* x y z) – degree-3 monomial
         let mut manager = TermManager::new();
         let int_sort = manager.sorts.int_sort;
         let x = manager.mk_var("x", int_sort);
@@ -1645,7 +1645,7 @@ mod tests {
         assert_eq!(poly.total_degree(), 2);
     }
 
-    // ── term_is_nonlinear tests ────────────────────────────────────────────────
+    // ======== term_is_nonlinear tests ========
 
     #[test]
     fn test_term_is_nonlinear_square() {
@@ -1683,7 +1683,7 @@ mod tests {
         assert!(!term_is_nonlinear(c, &manager));
     }
 
-    // ── dispatch integration tests ─────────────────────────────────────────────
+    // ======== dispatch integration tests ========
 
     #[test]
     fn test_dispatch_nia_x_squared_eq_4_sat() {

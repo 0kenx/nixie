@@ -167,7 +167,7 @@ fn preprocess_then_solve_finds_true_optimum() {
 }
 
 /// `OptContext::optimize()` must not coerce rational weights to 1: with hard
-/// constraints forcing *exactly one* of p, q true (p ∨ q, and ¬p ∨ ¬q — an
+/// constraints forcing *exactly one* of p, q true (p ∨ q, and ¬p ∨ ¬q – an
 /// XOR, so there is a genuine trade-off), soft `p` weight 3/2 (rational) vs
 /// soft `q` weight 1 (integer), the true optimum sacrifices the *cheaper*
 /// integer weight (p=true, q=false => cost 1, satisfying soft `p` and
@@ -176,7 +176,7 @@ fn preprocess_then_solve_finds_true_optimum() {
 ///
 /// Soft terms are plain variables (not `¬p`/`¬q`) because
 /// `OptContext::is_soft_satisfied` looks the soft term up directly in the
-/// model map, which only contains base-variable assignments — a
+/// model map, which only contains base-variable assignments – a
 /// pre-existing, separate limitation unrelated to the weight-coercion fix
 /// under test here.
 #[test]

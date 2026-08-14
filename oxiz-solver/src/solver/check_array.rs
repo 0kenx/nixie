@@ -4,8 +4,8 @@
 //! submodules, because both walk *input-shaped* term structure and both are
 //! written as explicit heap frame stacks rather than as native recursion:
 //!
-//! * [`eval_bv`] — bit-vector expressions, for the cross-theory select check.
-//! * [`eval_int`] — integer expressions modulo read-over-write, for the
+//! * [`eval_bv`] – bit-vector expressions, for the cross-theory select check.
+//! * [`eval_int`] – integer expressions modulo read-over-write, for the
 //!   ordering check.
 
 #[allow(unused_imports)]
@@ -44,7 +44,7 @@ impl Solver {
         // `(not (= X Y))` whose operands are store chains that normalise to the
         // SAME base and the SAME last-write-wins `{index -> value}` map is
         // provably unsatisfiable (the arrays are identical), so it is an
-        // instant `unsat` — no CDCL(T) iteration.  This is what decides the
+        // instant `unsat` – no CDCL(T) iteration.  This is what decides the
         // `storecomm` family (two permutations of the same writes) in O(chain)
         // instead of the O(rounds × re-solve) lazy-refinement loop, which on
         // deep chains times out and turns a soundness fix into a sea of TOs.
@@ -241,7 +241,7 @@ impl Solver {
         // honesty story; the SAT-side honesty gate lives in
         // `array_atoms_need_theory` (consulted by the Context layer), because the
         // EUF congruence core alone can place two store terms in one class
-        // WITHOUT enforcing element-wise agreement — a source of spurious `Sat`.
+        // WITHOUT enforcing element-wise agreement – a source of spurious `Sat`.
         for &(x, y) in &self.collect_positive_array_term_equalities(manager) {
             if self.store_extensionality_conflict(x, y, manager) {
                 return true;
@@ -368,7 +368,7 @@ impl Solver {
     /// whatever stack `check_sat`'s caller has, and an assertion's nesting
     /// depth is attacker-controlled, so one native frame per level is a process
     /// abort waiting to happen.  Children are pushed in reverse so they pop
-    /// left to right — the recursive order, which matters because
+    /// left to right – the recursive order, which matters because
     /// `select_values` is `insert`ed into and the *first* write for an
     /// `(array, index)` pair wins (a later one becomes a read conflict
     /// instead).
@@ -376,33 +376,33 @@ impl Solver {
     /// Each worklist entry carries two flags, both of which the recursive
     /// version passed down:
     ///
-    /// * `in_positive_context` — whether an odd number of `Not`s has been
+    /// * `in_positive_context` – whether an odd number of `Not`s has been
     ///   crossed.  Only [`super::term_walk::asserted_children`] decides which
     ///   children inherit assertedness, and at which polarity; in particular an
     ///   `And` hands out its conjuncts only at *positive* polarity, because
     ///   `(not (and a b))` is `(or (not a) (not b))` and entails neither.
-    /// * `collect_facts` — whether the term's own truth value is asserted at
+    /// * `collect_facts` – whether the term's own truth value is asserted at
     ///   all.  It is `false` for the operands of an equality: `(= a b)` asserts
     ///   only that `a` and `b` are *equal*, NOT that either holds on its own,
     ///   so a nested Boolean equality such as
     ///   `(= p (= (select (store a 3 5) 3) 6))` must not yield an asserted
-    ///   read-over-write fact — doing so produced a spurious UNSAT for a
+    ///   read-over-write fact – doing so produced a spurious UNSAT for a
     ///   formula that is SAT with `p = false`.  An entry with `collect_facts`
     ///   clear is dropped immediately, exactly as the recursive version
     ///   returned at once; the flag is kept rather than folded away so the
     ///   equality arm's descent stays visible where the reasoning for it is.
     ///
-    /// Re-visits are pruned by a set keyed on `(TermId, polarity)` — NOT on
+    /// Re-visits are pruned by a set keyed on `(TermId, polarity)` – NOT on
     /// `TermId` alone, because on a shared-subterm DAG the same term is
     /// reachable under both polarities and each polarity yields different
     /// facts (dropping the second visit lost the negated-select fact).  Two
     /// visits at the *same* polarity, though, are exact duplicates: what a
     /// fact-collecting visit does is a function of `(term, polarity)` only, so
-    /// a repeat could only append copies of facts already recorded — and
+    /// a repeat could only append copies of facts already recorded – and
     /// `select_values` keeps the first write for a key, so a repeat cannot
     /// even manufacture a spurious read conflict against itself.  Without the
-    /// set, a ladder like `(and x (not (not x)))` — buildable with shared
-    /// `let` bindings — walks `x` once per *path*, which doubles per level:
+    /// set, a ladder like `(and x (not (not x)))` – buildable with shared
+    /// `let` bindings – walks `x` once per *path*, which doubles per level:
     /// sixty levels of linear-size input became 2⁶⁰ visits and `check_sat`
     /// never returned.  Entries with `collect_facts` clear bypass the set
     /// entirely: they do nothing when popped, and letting one mark its term
@@ -436,7 +436,7 @@ impl Solver {
                 continue;
             }
 
-            // A repeat at the same polarity is an exact duplicate — see the
+            // A repeat at the same polarity is an exact duplicate – see the
             // doc comment for why the polarity must be part of the key.
             if !visited.insert((term, in_positive_context)) {
                 continue;
@@ -459,7 +459,7 @@ impl Solver {
                         }
                     }
 
-                    // Check for (select a i) = v — only in positive context
+                    // Check for (select a i) = v – only in positive context
                     if in_positive_context {
                         if let Some((array, index)) = self.extract_select(*lhs, manager) {
                             if let Some(&existing_val) = select_values.get(&(array, index)) {
@@ -871,14 +871,14 @@ impl Solver {
         false
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // ========  ========
     // Array variable alias resolution
     //
     // These methods handle the pattern:
     //   (declare-const B Array)
     //   (assert (= B (store A i v)))   ← B is an alias for the store term
     //   (assert (= (select B i) W))    ← select must resolve through B's alias
-    // ──────────────────────────────────────────────────────────────────────────
+    // ========  ========
 
     /// Collect array variable aliases from assertions.
     ///
@@ -953,7 +953,7 @@ impl Solver {
     ///
     /// Because we cannot create new TermIds here (no mutable manager), we instead
     /// return the *original select term* with its array replaced by the alias
-    /// target if the alias target is a Store — but since we cannot mutate the
+    /// target if the alias target is a Store – but since we cannot mutate the
     /// term graph, we return a synthetic representation by returning the raw
     /// store term that would be the array operand.
     ///
@@ -976,7 +976,7 @@ impl Solver {
             return None;
         }
         aliases.get(array)?;
-        // Return the select term unchanged — evaluate_select_axiom will resolve
+        // Return the select term unchanged – evaluate_select_axiom will resolve
         // it via the alias map passed through the wrapper.
         // (We signal "this needs alias resolution" by returning Some(select_term).)
         Some(select_term)
@@ -1091,14 +1091,14 @@ impl Solver {
         select_values.entry((*array, *index)).or_insert(*stored_val);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // ========  ========
     // Alias-derived BV ordering conflict detection
     //
     // Pattern:
     //   (= B (store A i w))           ← B aliases the store
     //   (= val (select B i))           ← val is bound to select(B, i) = w (by axiom)
     //   (bvugt val w)                  ← requires val > w, but val = w → UNSAT
-    // ──────────────────────────────────────────────────────────────────────────
+    // ========  ========
 
     /// Check for BV ordering conflicts that arise when a variable is derived
     /// from an alias-resolved array select.
@@ -1415,7 +1415,7 @@ impl Solver {
     /// decide soundly on its own: it may unify the two store terms into a single
     /// class without ever checking that their bases agree element-wise. Reflexive
     /// equalities (`X == Y`) are trivially satisfiable and excluded. Equalities
-    /// appearing under a `Not` (i.e. disequalities) are excluded — a disequality
+    /// appearing under a `Not` (i.e. disequalities) are excluded – a disequality
     /// of two distinct store terms is soundly satisfiable by keeping them apart.
     fn collect_positive_array_term_equalities(
         &self,
@@ -1428,8 +1428,8 @@ impl Solver {
 
     /// Polarity-aware walker for
     /// [`Solver::collect_positive_array_term_equalities`]. Descends only into the
-    /// sub-terms that are unconditionally asserted — see
-    /// [`super::term_walk::asserted_children`] — and records a store=store
+    /// sub-terms that are unconditionally asserted – see
+    /// [`super::term_walk::asserted_children`] – and records a store=store
     /// equality only at positive polarity.
     ///
     /// The descent used to pass `positive` straight through an `And`, which made
@@ -1437,7 +1437,7 @@ impl Solver {
     /// asserted and refuted a formula that is satisfiable with `p = false`.
     ///
     /// Iterative, and pushing children in reverse so they pop left to right,
-    /// for the same reasons as [`Solver::collect_array_constraints`] — as is
+    /// for the same reasons as [`Solver::collect_array_constraints`] – as is
     /// the `(TermId, polarity)`-keyed revisit set, without which a shared
     /// Boolean sub-DAG is re-walked once per *path* to it, which doubles per
     /// level on a `(and x (not (not x)))` ladder.  A repeat at the same
@@ -1582,7 +1582,7 @@ impl Solver {
     /// how the (free) index/value variables are interpreted, so a disequality
     /// that depends on them being different is unsatisfiable.  Returns `None`
     /// when equality is not concretely decidable (different bases, differing
-    /// index sets, or differing value terms that might yet coincide) — those
+    /// index sets, or differing value terms that might yet coincide) – those
     /// defer to the lazy refinement loop.
     fn store_chains_concretely_equal(
         x: TermId,
@@ -1623,11 +1623,11 @@ impl Solver {
     /// Three shapes are recognised:
     ///   (1) `not(= A B)` with A,B concretely-equal store chains;
     ///   (2) `not(= (select A k) (select B k))` with A,B concretely equal and
-    ///       the same index `k` (congruence forces the reads equal) — the
+    ///       the same index `k` (congruence forces the reads equal) – the
     ///       Skolemised-extensionality shape (`k = sk(A, B)`);
     ///   (3) `not(= u v)` where `u`,`v` are int variables each defined by
     ///       `u = (select A k)`, `v = (select B k)` with A,B concretely equal
-    ///       and the same `k` — the named-chain `pp_sf` shape.
+    ///       and the same `k` – the named-chain `pp_sf` shape.
     ///
     /// Polarity-aware (only `not(= …)` actually asserted) and iterative, like
     /// [`Solver::scan_positive_array_eq`].
@@ -1716,7 +1716,7 @@ impl Solver {
     /// the two terms into one class without enforcing that their bases agree at
     /// every index). Trusting the resulting assignment would risk a spurious
     /// `Sat`, so the caller (the `Context` command layer) downgrades `Sat` to
-    /// `Unknown` when this returns `true` — never reporting `Sat` while an
+    /// `Unknown` when this returns `true` – never reporting `Sat` while an
     /// unchecked array atom remains.
     ///
     /// [`store_extensionality_conflict`]: Solver::store_extensionality_conflict

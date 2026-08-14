@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 ///
 /// LBD = number of distinct decision levels among the literals, excluding level 0.
 /// Level-0 literals are excluded because they are consequences of unit propagation at the
-/// root level and are always true — they do not contribute to the "block distance" that
+/// root level and are always true – they do not contribute to the "block distance" that
 /// measures how spread across the search tree a learned clause is.
 ///
 /// This is an O(n) computation with no heap allocation in the common case
@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 /// This is the standard Glucose/MiniSat LBD definition applied to the **actual learned
 /// (1-UIP) clause literals**, so the value it returns satisfies `lbd <= literals.len()`.
 /// It is a pure function (no shared scratch state) so it can be called at sites where a
-/// `&mut self` borrow of the solver is unavailable — in particular after `self.learnt`
+/// `&mut self` borrow of the solver is unavailable – in particular after `self.learnt`
 /// has been finalized but while `&self.trail` is borrowed to fire the external hook.
 fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
     let mut levels: SmallVec<[u32; 32]> = SmallVec::new();
@@ -71,15 +71,15 @@ impl Solver {
         // clause's literals. In textbook CDCL this always equals
         // `trail.decision_level()`, because propagation is run to completion at
         // every level before a new decision is taken. However, clauses added
-        // *on the fly* — theory reason/lemma clauses in CDCL(T), or clauses
-        // encountered after chronological backtracking — can be falsified at a
+        // *on the fly* – theory reason/lemma clauses in CDCL(T), or clauses
+        // encountered after chronological backtracking – can be falsified at a
         // level strictly BELOW the current decision level. Running 1-UIP
         // resolution relative to `decision_level()` in that situation is
         // unsound for backtracking: the conflict clause contributes NO literal
         // at the pivot level, so the current-level counter starts at 0, the
         // trail walk underflows it, and the asserting literal ends up at a level
         // <= the computed backtrack level. Backtracking then fails to unassign
-        // that variable and `learn_clause` re-assigns it in place — corrupting
+        // that variable and `learn_clause` re-assigns it in place – corrupting
         // the trail (observed as a wrong top-level UNSAT on disjunctive LIA).
         // Anchoring the analysis at the genuine conflict level restores the
         // 1-UIP invariant (asserting literal strictly above the backtrack
@@ -98,13 +98,13 @@ impl Solver {
         };
 
         // A conflict whose genuine level is 0 has EVERY literal falsified under
-        // unconditional (level-0) assignments — a root-level refutation, so the
+        // unconditional (level-0) assignments – a root-level refutation, so the
         // instance is UNSAT. This can happen above decision level 0 when an
         // on-the-fly clause (a theory reason/lemma clause) is added already
         // fully falsified at the root: the watched-literal scheme only visits it
         // on the next propagation, which may run at a higher decision level.
         // There is no asserting literal to learn, so we return an empty clause
-        // (backtrack level 0) — the caller treats an empty learned clause as
+        // (backtrack level 0) – the caller treats an empty learned clause as
         // fundamental UNSAT, exactly as `analyze_theory_conflict` already does.
         // Fabricating a 1-UIP clause here instead would resolve the trail's
         // bottom literal into a spurious unit clause that contradicts a
@@ -163,7 +163,7 @@ impl Solver {
                 // and must NOT be added to the learned clause. We skip it BY VALUE
                 // rather than by a fixed index, because binary-implication-graph
                 // propagation (propagate.rs) records the reason without moving the
-                // implied literal to index 0 — so the propagated literal may sit at
+                // implied literal to index 0 – so the propagated literal may sit at
                 // index 1. Skipping index 0 positionally would drop the false
                 // antecedent at index 0, producing over-strong (unsound) learned
                 // clauses. For the initial conflict clause `p` is None, so every
@@ -203,8 +203,8 @@ impl Solver {
             //
             // The level check is what makes this walk correct under
             // chronological backtracking. The trail is no longer sorted by
-            // decision level — a literal implied at a low level can sit near the
-            // top of the trail — so "the last `seen` literal" is not necessarily
+            // decision level – a literal implied at a low level can sit near the
+            // top of the trail – so "the last `seen` literal" is not necessarily
             // a conflict-level literal any more. Resolving on a lower-level one
             // would decrement the conflict-level counter for a literal that was
             // never counted in it, terminating the 1-UIP loop early and emitting
@@ -264,8 +264,8 @@ impl Solver {
         // VMTF move-to-front: bump conflict-involved variables (cadical sorts
         // them by bump-order first to preserve relative order; the bump is
         // idempotent for vars already at the tail). Sort `vars_to_bump` in
-        // place — its only later use (external-heuristic notification) is
-        // order-independent — avoiding a per-conflict SmallVec clone.
+        // place – its only later use (external-heuristic notification) is
+        // order-independent – avoiding a per-conflict SmallVec clone.
         if self.config.use_vmtf {
             // Sort by bump timestamp (cadical MSORT on `analyzed_bumped_rank`)
             // to preserve relative queue order of bumped variables.
@@ -286,7 +286,7 @@ impl Solver {
         // reason (a decision, or a theory propagation whose explanation is not a
         // clause in the database). If `counter` has not reached 0 by then, some
         // conflict-level literals were counted but never resolved away, and they
-        // are simply missing from `self.learnt` — an over-strong clause, which is
+        // are simply missing from `self.learnt` – an over-strong clause, which is
         // unsound: it can drive the solver to a bogus root-level unit and hence
         // to a false `unsat`. Every such literal is still `seen`, and its
         // contribution to the resolvent is the negation of its trail assignment
@@ -425,7 +425,7 @@ impl Solver {
     }
 
     /// Move the two highest-level literals of `self.learnt` into the watched
-    /// positions — `learnt[0]` highest, `learnt[1]` second highest — and return
+    /// positions – `learnt[0]` highest, `learnt[1]` second highest – and return
     /// `learnt[0]`'s decision level.
     ///
     /// This is the standard "watch the two literals falsified latest" invariant.
@@ -466,7 +466,7 @@ impl Solver {
     /// Minimize the learned clause by removing redundant literals
     ///
     /// A literal can be removed if it is implied by the remaining literals.
-    /// Build the RUP hint chain for the empty clause — faithful to cadical's
+    /// Build the RUP hint chain for the empty clause – faithful to cadical's
     /// `build_chain_for_empty`. With the level-0 flush every level-0 literal is
     /// a unit with an id, so the chain is simply `[unit id of each conflict
     /// literal's true form] ++ [conflict clause id]`: under the (empty) negation
@@ -492,10 +492,10 @@ impl Solver {
         self.lrat_chain.push(self.proof_clause_id(cid));
     }
 
-    /// LRAT-path learned-clause minimization with RUP-chain extension —
+    /// LRAT-path learned-clause minimization with RUP-chain extension –
     /// faithful port of cadical's `minimize_clause` / `minimize_literal` /
     /// `calculate_minimize_chain`. Drops redundant literals from the 1-UIP
-    /// LRAT-path learned-clause minimization with RUP-chain extension —
+    /// LRAT-path learned-clause minimization with RUP-chain extension –
     /// faithful port of cadical's `minimize_clause` / `minimize_literal` /
     /// `calculate_minimize_chain`. Drops redundant literals from the 1-UIP
     /// clause and extends [`Solver::lrat_chain`] with each removed literal's
@@ -509,7 +509,7 @@ impl Solver {
         // `learnt[0]` is the asserting literal and is always kept. Process the
         // rest in trail (assignment) order so that an earlier clause literal a
         // later one resolves through is already decided (kept→`MF_KEEP`, or
-        // dropped→`MF_REMOVABLE`) before it is reached — the recursive base case
+        // dropped→`MF_REMOVABLE`) before it is reached – the recursive base case
         // (cadical `minimize_sort_clause`).
         let asserting = self.learnt[0];
         let mut order: SmallVec<[Lit; 16]> = self.learnt[1..].iter().copied().collect();
@@ -602,12 +602,12 @@ impl Solver {
     }
 
     /// Iterative reason-graph walk collecting the LRAT chain for a minimized-away
-    /// literal `lit` (TRUE form) — faithful port of `calculate_minimize_chain`.
+    /// literal `lit` (TRUE form) – faithful port of `calculate_minimize_chain`.
     /// Reason-clause ids go to [`Solver::mini_chain`] in post-order; level-0
     /// units go to [`Solver::unit_chain`]. Per-var flags indexed by `var.index()`.
     ///
     /// The stack uses **1-based** variable indices so that the "emit this var's
-    /// reason id" marker (the negated index) never collides with var index 0 —
+    /// reason id" marker (the negated index) never collides with var index 0 –
     /// cadical is safe because its `vidx` is already 1-based, but oxiz vars are
     /// 0-based, so `-0 == 0` would otherwise alias var 0 with its own marker.
     fn calculate_minimize_chain_lrat(&mut self, lit: Lit) {
@@ -632,7 +632,7 @@ impl Solver {
             let level = self.trail.level(var);
             if level == 0 {
                 // Every level-0 literal is a unit with an id (level-0 flush), so
-                // reference it directly — cadical's level-0 branch.
+                // reference it directly – cadical's level-0 branch.
                 if (f & MF_SEEN) != 0 {
                     continue;
                 }
@@ -644,7 +644,7 @@ impl Solver {
             }
             let reason = self.trail.reason(var);
             let Reason::Propagation(cid) = reason else {
-                // No usable reason (Decision at level>0 / Theory) — skip.
+                // No usable reason (Decision at level>0 / Theory) – skip.
                 continue;
             };
             // level > 0 (or level-0 propagated): mark added, walk its reason clause.
@@ -826,9 +826,9 @@ impl Solver {
     /// - Literals that are themselves redundant (recursive)
     pub(super) fn lit_is_redundant(&mut self, lit: Lit) -> bool {
         // Recursive (MiniSat-style) self-subsumption: a learned-clause literal
-        // `lit` is redundant iff every literal in its antecedent chain — other
+        // `lit` is redundant iff every literal in its antecedent chain – other
         // than level-0 facts and literals already present in the learned clause
-        // — is itself redundant, bottoming out at decisions (which are not
+        // – is itself redundant, bottoming out at decisions (which are not
         // implied by anything). The previous implementation gave up on the
         // first literal that was neither level-0 nor already in the clause,
         // so it only ever performed one level of resolution and left the
@@ -865,7 +865,7 @@ impl Solver {
                 }
                 let rvar = rlit.var();
                 if self.trail.level(rvar) == 0 {
-                    continue; // unconditional root fact — always removable
+                    continue; // unconditional root fact – always removable
                 }
                 if self.seen[rvar.index()] {
                     continue; // already in the learned clause, or already visited
@@ -897,8 +897,8 @@ impl Solver {
         &mut self,
         conflict_lits: &[Lit],
     ) -> (u32, SmallVec<[Lit; 16]>) {
-        // A well-formed theory conflict clause is fully falsified — every literal
-        // is assigned false on the trail — which is what makes the 1-UIP
+        // A well-formed theory conflict clause is fully falsified – every literal
+        // is assigned false on the trail – which is what makes the 1-UIP
         // resolution below well-defined. The MBQI / quantifier-instantiation path,
         // however, can hand us a "conflict" clause that still contains an
         // UNASSIGNED literal. The usual cause is a variable that was assigned when
@@ -934,8 +934,8 @@ impl Solver {
 
         let mut counter = 0;
 
-        // Anchor the analysis at the genuine conflict level — the highest
-        // decision level among the (all-false) theory conflict literals —
+        // Anchor the analysis at the genuine conflict level – the highest
+        // decision level among the (all-false) theory conflict literals –
         // rather than `trail.decision_level()`. A theory conflict can be
         // reported while the SAT trail sits at a strictly higher decision level
         // than any literal actually involved in the conflict; running 1-UIP
@@ -997,7 +997,7 @@ impl Solver {
 
         while counter > 0 {
             if index == 0 {
-                break; // Avoid underflow — no more trail entries
+                break; // Avoid underflow – no more trail entries
             }
             index -= 1;
             if index >= self.trail.assignments().len() {
@@ -1123,16 +1123,16 @@ impl Solver {
     /// propagate its open literal instead of driving 1-UIP resolution.
     ///
     /// The learned clause is the full, deduplicated theory lemma (dropping a
-    /// literal without resolving it would be unsound — the lemma's validity does
+    /// literal without resolving it would be unsound – the lemma's validity does
     /// not carry over to any strict subset). It is returned with an unassigned
-    /// literal at index 0 — the asserting / watch-0 literal that `learn_clause`
-    /// will propagate — and the highest-level false literal at index 1 (watch 1).
+    /// literal at index 0 – the asserting / watch-0 literal that `learn_clause`
+    /// will propagate – and the highest-level false literal at index 1 (watch 1).
     ///
     /// The backtrack level is the maximum decision level among the *assigned*
     /// (false) literals only; an unassigned literal's `VarInfo.level` is stale and
     /// must never be consulted. After backtracking to that level every false
     /// literal remains assigned false and index 0 remains unassigned, so the
-    /// clause is unit and propagates index 0 — exactly the two-watched-literal
+    /// clause is unit and propagates index 0 – exactly the two-watched-literal
     /// contract `learn_clause` relies on. Computing the level from assigned
     /// literals alone is what keeps it in range with the live trail.
     fn analyze_theory_asserting_lemma(
@@ -1160,7 +1160,7 @@ impl Solver {
                     asserting_idx = Some(idx);
                 }
             } else {
-                // Assigned (false, or — for the defensive already-satisfied case —
+                // Assigned (false, or – for the defensive already-satisfied case –
                 // true). Bump it so the heuristics still learn from the event.
                 vars_to_bump.push(lit.var());
             }
@@ -1212,7 +1212,7 @@ impl Solver {
     }
 
     /// Extract the core of assumptions responsible for a *directly conflicting*
-    /// assumption — one whose required polarity is already falsified on the trail
+    /// assumption – one whose required polarity is already falsified on the trail
     /// when it is about to be asserted (index `conflict_idx`).
     ///
     /// The failed assumption's variable sits on the trail with the opposite phase,
@@ -1222,7 +1222,7 @@ impl Solver {
     /// not merely the failed one. The previous implementation only ever returned
     /// the single failed assumption (its `seen`-based guard was never populated
     /// for this path), so a core such as `{a, b}` for
-    /// `a ∧ b ∧ (¬a ∨ ¬b)` under `[a, b]` came back as just `{b}` — an incomplete,
+    /// `a ∧ b ∧ (¬a ∨ ¬b)` under `[a, b]` came back as just `{b}` – an incomplete,
     /// and therefore unsound-for-minimisation, core.
     pub(super) fn extract_assumption_core(
         &mut self,
@@ -1243,7 +1243,7 @@ impl Solver {
     /// previous implementation inspected only each assumption's *own* trail value
     /// and a never-populated `seen` array, so it systematically dropped
     /// assumptions that contributed only indirectly (through propagated literals)
-    /// and, when it found nothing, fell back to returning *every* assumption —
+    /// and, when it found nothing, fell back to returning *every* assumption –
     /// a safe but maximally imprecise core.
     pub(super) fn analyze_assumption_conflict(
         &mut self,
@@ -1392,9 +1392,9 @@ mod tests {
     use super::*;
     use crate::trail::Trail;
 
-    // ---------------------------------------------------------------------------
+    // ========  ========
     // Tests for compute_lbd_from_literals
-    // ---------------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_compute_lbd_all_same_level() {
@@ -1506,13 +1506,13 @@ mod tests {
         assert_eq!(lbd, 0, "empty literal set → LBD = 0");
     }
 
-    // ---------------------------------------------------------------------------
+    // ========  ========
     // Integration test: conflict analysis passes LBD to the external hook
-    // ---------------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_conflict_analysis_passes_lbd_to_hook() {
-        // Solve PHP(3,2) — the same UNSAT formula used in the external_branching tests.
+        // Solve PHP(3,2) – the same UNSAT formula used in the external_branching tests.
         // A ConflictLbdRecordingHeuristic records all LBD values received via
         // on_conflict_var_with_lbd.  After solving, assert:
         //   1. at least one call was made (conflicts happened)
@@ -1527,7 +1527,7 @@ mod tests {
 
         impl BranchingHeuristic for ConflictLbdRecordingHeuristic {
             fn select(&mut self, _candidates: &[Var], _scores: &[f64]) -> Option<Var> {
-                None // always defer — VSIDS drives the solve
+                None // always defer – VSIDS drives the solve
             }
 
             fn on_conflict_var_with_lbd(&mut self, _var: Var, lbd: u32) {
@@ -1584,7 +1584,7 @@ mod tests {
     #[test]
     fn test_lbd_matches_learned_clause_glue() {
         // The LBD passed to the hook must be the glue score of the ACTUAL learned
-        // (1-UIP) clause — i.e. the distinct decision-level count of `self.learnt` —
+        // (1-UIP) clause – i.e. the distinct decision-level count of `self.learnt` –
         // NOT the distinct-level count of the larger `vars_to_bump` union.
         //
         // We solve a crafted UNSAT instance with clause deletion effectively disabled
@@ -1764,19 +1764,19 @@ mod tests {
         assert!(
             observed_max as usize <= max_learnt_len,
             "max hook LBD {observed_max} must not exceed the largest learned clause length \
-             {max_learnt_len} — proves LBD is computed from the learned clause, not vars_to_bump"
+             {max_learnt_len} – proves LBD is computed from the learned clause, not vars_to_bump"
         );
     }
 
-    // ---------------------------------------------------------------------------
+    // ========  ========
     // Regression: conflict clause whose literals all sit BELOW the current
     // decision level (an on-the-fly / theory-lemma-style clause).
-    // ---------------------------------------------------------------------------
+    // ========  ========
 
     /// Root cause of the disjunctive-LIA wrong-UNSAT: `analyze` used to anchor
     /// its 1-UIP resolution at `trail.decision_level()`. When the conflict
     /// clause contains NO literal at that level (its highest literal is at a
-    /// strictly lower level — as happens for theory reason/lemma clauses added
+    /// strictly lower level – as happens for theory reason/lemma clauses added
     /// mid-search), the pivot-level counter starts at 0, the trail walk
     /// underflows it, and the asserting literal comes out at or below the
     /// computed backtrack level. Backtracking then fails to unassign the
@@ -1814,7 +1814,7 @@ mod tests {
 
         // Conflict clause (v0 ∨ v1): both literals are FALSE (v0 = false,
         // v1 = false), so the clause is falsified. Its highest literal level is
-        // 1 — strictly below the current decision level 2.
+        // 1 – strictly below the current decision level 2.
         let conflict = solver.clauses.add_learned([Lit::pos(v0), Lit::pos(v1)]);
 
         let (backtrack_level, learnt) = solver.analyze(conflict);
@@ -1850,7 +1850,7 @@ mod tests {
     }
 
     /// End-to-end guard: a normal (current-level) conflict must be unaffected by
-    /// the conflict-level anchoring — the asserting literal still sits at the
+    /// the conflict-level anchoring – the asserting literal still sits at the
     /// current decision level and the backtrack level below it.
     #[test]
     fn test_analyze_normal_current_level_conflict_unaffected() {
@@ -1889,13 +1889,13 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------------------
+    // ========  ========
     // Regression: theory conflict clause containing an UNASSIGNED literal.
     //
     // The MBQI / quantifier-instantiation path builds its conflict clause from a
     // per-atom polarity map that is not pruned on every SAT backtrack (notably a
     // restart). It can therefore hand `analyze_theory_conflict` a "conflict" whose
-    // clause still lists a variable that has since been unassigned — its
+    // clause still lists a variable that has since been unassigned – its
     // `VarInfo.level` left stale at the level it last held. Two OxiZ z3-parity
     // reproducers (`injective_unsat.smt2`, `nested_quantifiers.smt2`) drove
     // exactly this and panicked at the theory trail-consistency `debug_assert`
@@ -1908,7 +1908,7 @@ mod tests {
     // The fix recognizes such a clause as an *asserting theory lemma* (unit under
     // the current assignment) and propagates its one open literal, keeping the
     // whole (valid) lemma. These tests reconstruct the exact trail shape by hand.
-    // ---------------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_theory_conflict_stale_unassigned_literal_is_asserting() {
@@ -1960,8 +1960,8 @@ mod tests {
 
         assert!(!learnt.is_empty(), "learned clause must not be empty");
 
-        // The asserting literal (index 0) is the unassigned one — the clause is
-        // unit and will propagate it — so backtracking never leaves it assigned.
+        // The asserting literal (index 0) is the unassigned one – the clause is
+        // unit and will propagate it – so backtracking never leaves it assigned.
         assert_eq!(
             learnt[0].var(),
             v1,
@@ -1972,14 +1972,14 @@ mod tests {
             "the asserting literal must be unassigned"
         );
 
-        // Backtrack level is the max level among the *assigned* (false) literals —
+        // Backtrack level is the max level among the *assigned* (false) literals –
         // never the unassigned literal's stale level 5.
         assert_eq!(
             backtrack_level, 3,
             "backtrack level must be the max assigned (false) level, not the stale 5"
         );
 
-        // Soundness: the full theory lemma is preserved — every original literal is
+        // Soundness: the full theory lemma is preserved – every original literal is
         // present exactly once, none dropped (dropping would strengthen the clause
         // and could be unsound).
         let mut got: Vec<Lit> = learnt.to_vec();

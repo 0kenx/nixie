@@ -187,7 +187,7 @@ pub struct Solver {
     /// original application to its purified twin's model value instead of
     /// echoing it (pr30: purification_preserves_get_value_on_original_application).
     /// Accumulates across `assert`s; a stale entry only makes eval try a proxy
-    /// that is no longer asserted (harmless — eval falls back to the original).
+    /// that is no longer asserted (harmless – eval falls back to the original).
     pub(super) numarg_proxies: FxHashMap<TermId, TermId>,
     /// Care-graph split pairs for trailed dedup.
     pub(super) care_split_pairs: FxHashSet<(TermId, TermId)>,
@@ -254,8 +254,8 @@ pub struct Solver {
     /// therefore only valid when the cached polarity covers the one the arm
     /// would use now (`Both` covers everything).  `collect_polarities` only
     /// ever *widens* a term's polarity, so on a widening miss the term is
-    /// re-encoded — emitting the missing direction (plus harmless duplicates
-    /// of the old one) — and the entry settles at `Both`.  Every other arm's
+    /// re-encoded – emitting the missing direction (plus harmless duplicates
+    /// of the old one) – and the entry settles at `Both`.  Every other arm's
     /// clause set is polarity-independent, so those entries are stored as
     /// `Both` directly.
     ///
@@ -280,7 +280,7 @@ pub struct Solver {
     /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
     /// internalised by the encoder, recorded as `(select_term, array, index)`.
     /// Populated at encode time and retracted on `pop`/`reset` via the trail.
-    /// Pure bookkeeping for now — no propagation — so Stages 2–5 can react to
+    /// Pure bookkeeping for now – no propagation – so Stages 2–5 can react to
     /// reads/writes during the CDCL search instead of collecting them afresh
     /// each lazy-refinement round.
     #[allow(dead_code)]
@@ -334,7 +334,7 @@ pub struct Solver {
     ///
     /// Folded in incrementally (see `entailed_int_consts_upto`) to keep the
     /// scan linear in the number of assertions over a whole run instead of
-    /// quadratic, and dropped wholesale by `pop` — an entry justified by a
+    /// quadratic, and dropped wholesale by `pop` – an entry justified by a
     /// retracted assertion must never survive it.
     pub(super) entailed_int_consts: FxHashMap<TermId, num_bigint::BigInt>,
     /// How many entries of `assertions` have been folded into
@@ -349,7 +349,7 @@ pub struct Solver {
     /// search: it encodes the round's instantiation / e-matching lemmas, calls
     /// [`Self::rebase_theory_state`] and builds a fresh `TheoryManager`.  Both
     /// facts a "repeated `check-sat` costs no clauses" claim needs are in this
-    /// one vector — `len()` says how many boundaries were crossed (a plateau
+    /// one vector – `len()` says how many boundaries were crossed (a plateau
     /// measured over calls that cross none measures nothing), and the values say
     /// what each crossing cost.  See `solver::scope_rebase_tests`.
     #[cfg(test)]
@@ -358,7 +358,7 @@ pub struct Solver {
     /// was computed from; see [`verdict_cache`].  Dropped by
     /// [`Self::invalidate_results`], the same hook that drops `model`.
     pub(super) last_check: Option<(GoalFingerprint, SolverResult)>,
-    /// Monotone counter of *settings* changes — see [`Self::settings_changed`].
+    /// Monotone counter of *settings* changes – see [`Self::settings_changed`].
     ///
     /// Bumped by every mutator of something a [`Self::check`] reads that is not
     /// the assertion stack (the logic, the SAT engine's random seed, the
@@ -375,7 +375,7 @@ pub struct Solver {
     /// [`MAX_CASE_SPLIT_ROUNDS`] in `int_case_split`.
     pub(super) case_split_rounds: u32,
     /// Static formula features collected from `self.assertions` at the start of
-    /// the most recent [`Solver::check_core`] — the oxiz port of Z3's
+    /// the most recent [`Solver::check_core`] – the oxiz port of Z3's
     /// `ast/static_features`.  `None` before the first check (or after the goal
     /// changed via [`Solver::invalidate_results`]); feature-driven knob
     /// decisions (VSIDS, the difference-logic bound-propagation family) re-read
@@ -414,7 +414,7 @@ pub struct Solver {
 ///
 /// Lowering the cap is *honest*: the flag routes to `Unknown`, never to a
 /// wrong answer.  The completeness cost is confined to formulas nested
-/// deeper than 512 — the SMT-LIB parser already refuses raw nesting past
+/// deeper than 512 – the SMT-LIB parser already refuses raw nesting past
 /// 1024 (`MAX_PARSE_DEPTH`), so only the 513..=1024 band of parseable
 /// scripts (and arbitrarily deep API-built terms) moves from "encoded" to
 /// "honest `Unknown`", whereas the old 2000 admitted terms whose encoding
@@ -605,7 +605,7 @@ impl Solver {
     /// only carry meaning once `Solver::instantiate_arith_axioms` has asserted
     /// their defining axioms.  `check_core` axiomatises everything reachable
     /// from the assertions up front, but a lemma generated *during* the search
-    /// can internalise a fresh such term afterwards — an MBQI instantiation, or
+    /// can internalise a fresh such term afterwards – an MBQI instantiation, or
     /// an array read-over-write lemma whose `ite` is Int-sorted.  Each round
     /// here supplies the missing definitions and re-solves; when no definition
     /// can be supplied (a symbolic divisor) the verdict degrades to `Unknown`
@@ -615,16 +615,16 @@ impl Solver {
     ///
     /// One `check` is one MBQI search, and it leaves no trace of itself behind:
     /// the candidate pool, dedup filter, blind-instantiation guard and round
-    /// budget are snapshotted on entry and restored on exit — see
+    /// budget are snapshotted on entry and restored on exit – see
     /// [`MBQIIntegration::restore_search_state`] for the field-by-field split
     /// between goal state and search state.
     ///
     /// Above that, a repeated query on a goal the caller has not touched is
     /// answered from the previous verdict rather than run again.  Re-running is
-    /// not idempotent — the SAT solver keeps what it learned, so the second
+    /// not idempotent – the SAT solver keeps what it learned, so the second
     /// search ends on a different model, and a model-based instantiator handed a
     /// different model emits lemmas over ground terms that did not exist before
-    /// — and those clauses can never be retracted, because the assertion stack
+    /// – and those clauses can never be retracted, because the assertion stack
     /// never moved (task #28).  The cache is dropped by
     /// `Solver::invalidate_results`, the same hook that drops the model and
     /// unsat core beside it, and is additionally gated on a structural
@@ -750,8 +750,8 @@ impl Solver {
     /// (`push_theory_scope`) and unwinds them from its own `level_stack` on
     /// backtrack.  A CDCL(T) search that ends `Sat` **never backtracks**, so it
     /// returns with the EUF / arithmetic / bit-vector solvers several scopes
-    /// deep, holding every assertion the winning branch made.  A fresh manager —
-    /// built for the next MBQI round, or for the next `check` — starts with
+    /// deep, holding every assertion the winning branch made.  A fresh manager –
+    /// built for the next MBQI round, or for the next `check` – starts with
     /// `level_stack == vec![0]`, and from that instant those scopes are
     /// *unreachable*: `on_backtrack(l)` pops only while `level_stack.len() > l +
     /// 1`, which is already false.  The branch's facts are committed for the
@@ -763,7 +763,7 @@ impl Solver {
     /// form drops the SAT trail to the root.  The next round then asserts `x ≠ 1`
     /// into a tableau that still contains the leaked `x = 1`, the arithmetic
     /// solver refutes it at decision level 0, and `solve_with_theory` answers
-    /// `Unsat` on a satisfiable goal — before conflict analysis runs, so no
+    /// `Unsat` on a satisfiable goal – before conflict analysis runs, so no
     /// honesty net is even consulted.
     ///
     /// # What the next round is entitled to
@@ -771,7 +771,7 @@ impl Solver {
     /// Exactly the facts implied by the **root-level** SAT trail: the original
     /// ground assertions, plus every quantifier instance / e-matching lemma MBQI
     /// chose to keep.  The kept lemmas are universally justified instantiations,
-    /// so they are sound at the base scope — and they are not stored in the
+    /// so they are sound at the base scope – and they are not stored in the
     /// theory solvers at all.  They live in the SAT clause database, where
     /// [`Self::encode`] put them and `oxiz_sat::Solver::add_clause` committed
     /// their unit consequences at the root.  What must *not* survive is the
@@ -786,16 +786,16 @@ impl Solver {
     /// the SAT side is already at the root (`add_clause` calls
     /// `backtrack_to_root` for a unit lemma without notifying the theory layer).
     /// Unwinding the theory scopes alone leaves the next round replaying the
-    /// whole trail — decisions included — into what it believes is the base
+    /// whole trail – decisions included – into what it believes is the base
     /// scope, which commits the *new* branch's facts permanently instead of the
     /// old one's: the same defect, one round later, and now unrecoverable.
     ///
     /// Dropping the trail to the root and re-deriving the theory state from it is
     /// the alignment that actually holds.  `solve_with_theory` restarts with
     /// `theory_processed == 0` and replays the entire trail through
-    /// `TheoryManager::on_assignment`, so the three solvers are repopulated —
+    /// `TheoryManager::on_assignment`, so the three solvers are repopulated –
     /// through the ordinary assert path, re-interning terms and re-registering
-    /// theory variables as they go — from exactly the constraints that are active
+    /// theory variables as they go – from exactly the constraints that are active
     /// now.  Nothing is re-encoded, so the clause database and the
     /// [`Self::encoded_terms`] memo are untouched and the clause count plateaus
     /// across rounds (`scope_rebase_tests::clause_count_plateaus_across_rounds`).
@@ -812,7 +812,7 @@ impl Solver {
     /// what is currently asserted, and all four call this function: `check`'s
     /// entry, the array-axiom refinement boundary, the MBQI round boundary, and
     /// [`Self::pop`].  They are deliberately *not* allowed to hand-roll the set
-    /// — see the comment in `pop`, where an open-coded copy of it drifted (it
+    /// – see the comment in `pop`, where an open-coded copy of it drifted (it
     /// omitted `bv.reset()`).  [`Self::reset`] is the one exception: it performs
     /// a strictly larger teardown that also drops the quantifier engines, the
     /// term/variable tables and every side cache, so it does not reduce to this.
@@ -820,7 +820,7 @@ impl Solver {
     /// # Invariant: theory-variable registrations are re-derived, never carried
     ///
     /// The encoder registers theory variables directly into these long-lived
-    /// solvers as it internalises a term — `Solver::register_arith_atom` calls
+    /// solvers as it internalises a term – `Solver::register_arith_atom` calls
     /// `ArithSolver::intern`, the `Var` arm of `encode_depth` calls it and
     /// `BvSolver::new_bv`.  Those registrations are wiped by the resets here, so
     /// the invariant this function relies on is:
@@ -834,21 +834,21 @@ impl Solver {
     /// linear expression they are given, `TheoryManager::process_constraint`
     /// re-interns EUF nodes through `intern_term_for_congruence` (plus
     /// `intern_arith_shared_terms` for the arithmetic operands), and
-    /// `bit_blast_bv_pair` re-blasts both operands — falling back to
-    /// `BvSolver::new_bv` for a leaf — before every BV check.  The replay runs
+    /// `bit_blast_bv_pair` re-blasts both operands – falling back to
+    /// `BvSolver::new_bv` for a leaf – before every BV check.  The replay runs
     /// `on_assignment` over the *whole* trail, so each of those paths is taken
     /// again for every atom that is still asserted.
     ///
     /// The encoder-side memos (`Solver::arith_terms`, `Solver::bv_terms`,
     /// `Solver::tracked_compound_terms`) are *not* cleared, and deliberately so:
-    /// they gate assert-time work — journalling a `TrailOp`, walking a compound
-    /// term — and not the theory-solver registration, which the replay owns.
+    /// they gate assert-time work – journalling a `TrailOp`, walking a compound
+    /// term – and not the theory-solver registration, which the replay owns.
     /// Clearing them would re-journal trail operations for assertions that are
     /// already on the trail.  The consequence to be aware of is the converse: a
     /// term in `arith_terms` that appears in *no* asserted constraint (so the
     /// replay never re-interns it) loses its `ArithSolver` variable and hence
     /// its model value.  That is a model-completeness matter, not a soundness
-    /// one — such a term is unconstrained by construction, so any value
+    /// one – such a term is unconstrained by construction, so any value
     /// satisfies it, `Model` completion supplies one, and the candidate model is
     /// still put through `Solver::model_refutes_assertions` before any `Sat`.
     fn rebase_theory_state(&mut self) {
@@ -859,7 +859,7 @@ impl Solver {
         // The bit-vector solver additionally accumulates unit facts at its own
         // base level (`assert_const` pinning `x = 5`), which are not wired into
         // `Solver::push` / `pop` at all and would otherwise outlive both the
-        // check and a user `pop` — a stale `x = 5` refuting a later `(= x 6)`.
+        // check and a user `pop` – a stale `x = 5` refuting a later `(= x 6)`.
         self.bv.reset();
         self.diff.reset();
         // The tableau these explanations were read out of is gone, and so are
@@ -952,15 +952,15 @@ impl Solver {
         // `self.last_features`, dropped by `invalidate_results` whenever the
         // assertion stack moves).  This is the oxiz port of Z3's
         // `ast/static_features` walk; the feature-driven knob decisions below
-        // — the difference-logic bound-propagation family gate and the VSIDS
-        // branching heuristic — read it instead of the declared logic string,
+        // – the difference-logic bound-propagation family gate and the VSIDS
+        // branching heuristic – read it instead of the declared logic string,
         // because the logic string is only the coarse half of Z3's router
         // (CFG_LOGIC); the real configuration comes from the formula (CFG_AUTO).
         //
         // Z3's `CFG_AUTO` uses the declared logic to pick the setup *family*
         // and lets features refine the knobs within it, so a DL knob applies
         // when the formula is difference-logic-shaped AND the logic is a DL
-        // logic (or is absent — the `setup_unknown(st)` path, classified purely
+        // logic (or is absent – the `setup_unknown(st)` path, classified purely
         // from features).  See `solver::static_features` for the mapping to
         // `smt_setup.cpp`.  The `Copy` predicates are read inside a block so
         // the `&mut` borrow of `self.last_features` ends before
@@ -969,12 +969,12 @@ impl Solver {
             let features = self
                 .last_features
                 .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions));
-            // VSIDS is a pure branching heuristic — always sound — so it may
+            // VSIDS is a pure branching heuristic – always sound – so it may
             // follow the features (Z3's `setup_QF_UFIDL(st)` shape: difference
             // logic + uninterpreted functions).  The declared logic still gates
             // the family when present (`is_dl_logic`), the `CFG_AUTO` split.
             // (The bound-propagation `is_dl_family` gate stays logic-driven in
-            // `TheoryManager::new` — it is soundness-sensitive and oxiz's
+            // `TheoryManager::new` – it is soundness-sensitive and oxiz's
             // derived-reason variant is only validated on declared-DL input.)
             //
             // The feature signal is collected on the *preprocessed* assertions
@@ -986,8 +986,8 @@ impl Solver {
             // inputs (e.g. the mathsat `vhard` family) and would drop VSIDS,
             // regressing them ~10⁴×.  Because VSIDS is sound, the gate falls
             // back to the declared logic as a second signal: a declared
-            // `QF_UFIDL`/`UFIDL` (the validated DL+UF family) also gets VSIDS —
-            // exactly the pre-feature logic-string route — so no real QF_UFIDL
+            // `QF_UFIDL`/`UFIDL` (the validated DL+UF family) also gets VSIDS –
+            // exactly the pre-feature logic-string route – so no real QF_UFIDL
             // input loses the heuristic to a purification artifact.
             features.has_uf()
                 && (features.is_diff_logic()
@@ -1002,8 +1002,8 @@ impl Solver {
         // This gate is deliberately the *first* thing after the two trivial
         // verdicts above.  `assert` sets the flag by skipping the deep term
         // entirely (see `encode.rs`), and every stage between here and the
-        // CDCL(T) loop — the axiom instantiators, the five early-conflict
-        // collectors, and the nonlinear/FP/string model attempts — walks those
+        // CDCL(T) loop – the axiom instantiators, the five early-conflict
+        // collectors, and the nonlinear/FP/string model attempts – walks those
         // same assertion terms.  Several of those walks recurse natively, so
         // running any of them on a term already known to exceed the encoder's
         // safe depth crashes the process instead of reaching this answer: a
@@ -1014,7 +1014,7 @@ impl Solver {
         // Cost of the earlier position: one of those collectors could have
         // refuted the assertion set outright, and an `Unsat` derived from a
         // partial encoding is still sound.  That precision is given up
-        // knowingly — it only applies to inputs that carry an assertion deeper
+        // knowingly – it only applies to inputs that carry an assertion deeper
         // than `ENCODE_DEPTH_LIMIT`, which the gate was already going to
         // answer `Unknown` for unless a collector happened to refute them
         // first, and "answers `Unknown`" beats "aborts the process".
@@ -1088,7 +1088,7 @@ impl Solver {
         }
 
         // Honesty gate (soundness): there is no complete String / FP theory
-        // wired into the CDCL(T) core — `encode.rs` maps string and FP atoms to
+        // wired into the CDCL(T) core – `encode.rs` maps string and FP atoms to
         // fresh SAT variables, and the checks above only detect a fixed set of
         // definite conflicts.  If any such atom survives without a proven
         // conflict, we must answer `Unknown` instead of letting the SAT core
@@ -1111,7 +1111,7 @@ impl Solver {
         // Honesty gate (soundness): an arithmetic comparison / equality atom that
         // could not be turned into a linear constraint (it contains Div/Mod, a
         // nonlinear product, or an out-of-range constant) has no theory
-        // constraint attached — `encode.rs` left it as a free Boolean.  Trusting
+        // constraint attached – `encode.rs` left it as a free Boolean.  Trusting
         // the SAT layer to guess a truth value for such an atom yields a
         // spurious Sat/Unsat.  If the nonlinear dispatch above could not decide
         // the problem and such an atom survives, answer `Unknown`.
@@ -1143,9 +1143,9 @@ impl Solver {
         // Seam 1 of 2: rebuild all three incremental theory solvers from the
         // live assertion set before this check starts searching.
         //
-        // The previous `check` on this solver ended either `Sat` — in which case
+        // The previous `check` on this solver ended either `Sat` – in which case
         // it never backtracked and left the theory solvers several decision
-        // scopes deep, holding that check's branch facts — or `Unsat`, which
+        // scopes deep, holding that check's branch facts – or `Unsat`, which
         // returns from `solve_with_theory` without unwinding either.  Nothing
         // between two `check` calls pops those scopes: `Solver::pop` is the only
         // other place that clears them, and a script need never call it.  An
@@ -1169,7 +1169,7 @@ impl Solver {
 
         // Eager finite-domain splits on equality-ite table indices (0..N with
         // N small).  Gives CDCL concrete `(= idx k)` atoms so flattened table
-        // covering clauses unit-propagate — critical for tool-generated QF_LIA
+        // covering clauses unit-propagate – critical for tool-generated QF_LIA
         // lookup problems where the first SAT model otherwise disagrees with
         // arithmetic and trips the model-refutation honesty gate.
         self.eager_table_index_case_split(manager);
@@ -1440,7 +1440,7 @@ impl Solver {
                             // to root for the unit lemmas, but the incremental
                             // theory solvers still hold the facts committed by the
                             // just-refuted candidate model (e.g. a stale
-                            // `select = 6`) — including any left in scopes this
+                            // `select = 6`) – including any left in scopes this
                             // round's search never unwound.
                             self.rebase_theory_state();
                             // After backtracking to root and resetting the
@@ -1490,7 +1490,7 @@ impl Solver {
                     // `y = 3`) cannot certify the goal; answer `Unknown` rather
                     // than a wrong `Sat` (pr30#3).  Also refuse the verdict
                     // when a *ground* assertion evaluates false under the model
-                    // — the ground part is independent of instantiation, so its
+                    // – the ground part is independent of instantiation, so its
                     // violation means the candidate contradicts the input
                     // itself (mirrors v0.3.2's
                     // `quantified_model_refutes_ground_assertions`).
@@ -1505,7 +1505,7 @@ impl Solver {
                     // Certified `sat`: for the fragments `mbqi::model_certify`
                     // covers, a *total* interpretation of every symbol can be
                     // constructed from this candidate model and checked
-                    // against every assertion — quantified ones included, over
+                    // against every assertion – quantified ones included, over
                     // their whole infinite domain.  When that check passes we
                     // hold a model in the ordinary semantic sense, so `sat`
                     // follows outright and MBQI has nothing left to add.  When
@@ -1551,7 +1551,7 @@ impl Solver {
                             quantifier: _,
                             reason,
                         } => {
-                            // Turn the reason into a blocking clause — but only
+                            // Turn the reason into a blocking clause – but only
                             // if *every* reason term names a literal.  Skipping
                             // the ones that do not would not weaken the clause,
                             // it would strengthen it into a claim the reason
@@ -1732,13 +1732,13 @@ impl Solver {
                                 // this situation.
                                 //
                                 // We may still soundly answer Sat in one case:
-                                // when every quantifier is *trivially valid* —
+                                // when every quantifier is *trivially valid* –
                                 // its body simplifies to `True` in every model
                                 // (e.g. `forall x. f(x) = f(x)`).  Such
                                 // quantifiers add no constraint, so the model the
                                 // SAT/theory layer already found satisfies the
                                 // whole formula.  Otherwise the honest answer is
-                                // Unknown — never fabricate Sat for an unverified
+                                // Unknown – never fabricate Sat for an unverified
                                 // quantifier.
                                 self.unsat_core = None;
                                 if self.quantifiers_trivially_valid(manager) {
@@ -1777,7 +1777,7 @@ impl Solver {
                     // took, holding that branch's facts.  The lemmas encoded
                     // just above exist to *retract* that very branch, and the
                     // fresh manager below would assert their consequences on top
-                    // of the facts they contradict — in scopes it cannot reach,
+                    // of the facts they contradict – in scopes it cannot reach,
                     // because it numbers its own `level_stack` from zero.  That
                     // is the task-#26 false `unsat`.
                     //
@@ -1838,13 +1838,13 @@ impl Solver {
     /// The unsat core is carried under one condition, which is a soundness
     /// condition and not merely a bounds check.  With `:produce-unsat-cores` on
     /// every assumption is itself a tracked assertion, and `build_unsat_core`
-    /// lists *every* tracked assertion — so a core computed here names an
+    /// lists *every* tracked assertion – so a core computed here names an
     /// assumption index whenever any assumption was in play.  Such an index is
     /// past the end of the post-`pop` `assertions` vector: it dangles, exactly
     /// the failure the rule exists to prevent, and `invariants::check_unsat_core`
     /// rejects it.  Conversely a core that survives the range check is one that
     /// named no assumption at all, which makes it a core of the surviving stack.
-    /// So: keep it when every index still resolves, drop it otherwise — and
+    /// So: keep it when every index still resolves, drop it otherwise – and
     /// `(get-unsat-core)` then answers the standard "not available" error rather
     /// than a set that is not unsatisfiable on its own.
     ///
@@ -1895,7 +1895,7 @@ impl Solver {
     /// `true` only with a total interpretation in hand that it has checked
     /// against every assertion, quantifiers included, over the whole of their
     /// domain.  A `false` answer claims nothing and leaves the caller's
-    /// existing behaviour — ultimately `unknown` — in place.
+    /// existing behaviour – ultimately `unknown` – in place.
     fn certify_quantified_sat(&mut self, manager: &TermManager) -> bool {
         let Some(model) = self.model.as_ref() else {
             return false;
@@ -1908,7 +1908,7 @@ impl Solver {
     ///
     /// The SAT core can accept a trail where two function applications
     /// `f(a)`, `f(b)` with `a = b` (under the model) are assigned *different*
-    /// results — a model that violates EUF congruence and therefore cannot
+    /// results – a model that violates EUF congruence and therefore cannot
     /// certify the quantified goal. When that happens the sound verdict is
     /// `Unknown`, not `Sat` (pr30#3: a quantifier over `f` left `f` un-purified,
     /// so the literal argument `3` never reached the care graph and the
@@ -2015,7 +2015,7 @@ impl Solver {
     /// Sound sufficient check used only at the MBQI incompleteness fallback.
     ///
     /// Returns `true` iff every assertion that carries a quantifier is
-    /// *trivially valid* — i.e. it simplifies to `True` in every model.  In
+    /// *trivially valid* – i.e. it simplifies to `True` in every model.  In
     /// that case the quantifiers add no constraint and the model already found
     /// by the SAT/theory layer satisfies the whole formula, so answering `Sat`
     /// is sound.  Any quantified assertion we cannot prove trivially valid
@@ -2040,8 +2040,8 @@ impl Solver {
     ///
     /// This is a sound (never over-claiming) syntactic check: a term is valid
     /// when it simplifies to `True`, when it is `forall x. body` with a valid
-    /// body, or when it is a conjunction of valid terms.  Every other shape —
-    /// including a universal whose body is merely satisfiable — yields `false`.
+    /// body, or when it is a conjunction of valid terms.  Every other shape –
+    /// including a universal whose body is merely satisfiable – yields `false`.
     fn term_is_valid(&mut self, term: TermId, manager: &mut TermManager) -> bool {
         let simplified = self.mbqi.deep_simplify(term, manager);
         match manager.get(simplified).map(|t| t.kind.clone()) {
@@ -2068,7 +2068,7 @@ impl Solver {
         }
         // Honesty gate (soundness): an assertion the encoder refused because
         // it nests deeper than `ENCODE_DEPTH_LIMIT` contributed *no clauses at
-        // all*, so even the pure-SAT view of the problem is incomplete — a
+        // all*, so even the pure-SAT view of the problem is incomplete – a
         // verdict over the remaining clauses would be a guess about a formula
         // this solver never saw.  Same rule as `check_core`'s top gate.
         if self.encode_depth_exceeded {
@@ -2255,7 +2255,7 @@ impl Solver {
     pub fn push(&mut self) {
         // A `push` opens a scope the previous verdict knew nothing about.  It
         // adds no assertion by itself, so the old model would still satisfy the
-        // stack *at this instant* — but the only way to observe it is to ask
+        // stack *at this instant* – but the only way to observe it is to ask
         // after the `assert`s that follow, by which time it is stale.  Dropping
         // it here rather than at the first following `assert` keeps the rule
         // stated once ("the verdict belongs to the stack it was computed on")
@@ -2330,7 +2330,7 @@ impl Solver {
                             // Remove the constraint.  Every site that records a
                             // parsed linear constraint for a variable also
                             // records this op for the same variable, so the two
-                            // maps are retracted together — a surviving
+                            // maps are retracted together – a surviving
                             // `var_to_parsed_arith` entry would keep feeding a
                             // retracted inequality to the arithmetic solver.
                             self.var_to_constraint.remove(&var);
@@ -2371,7 +2371,7 @@ impl Solver {
                         TrailOp::ArrayAxiomInstanceAdded { term } => {
                             // The lemma clause for this instance is retracted
                             // with the scope's clauses, so its dedup entry must
-                            // go as well — otherwise a later scope would never
+                            // go as well – otherwise a later scope would never
                             // re-assert an axiom it still needs.
                             self.array_axiom_instances.remove(&term);
                         }
@@ -2427,7 +2427,7 @@ impl Solver {
             // and the truncation above may have retracted it.  Dropping the map
             // wholesale (rather than journalling each entry) keeps a popped
             // `(assert (= n 5))` from making a later quantifier's `(< i n)`
-            // look like the concrete bound `i <= 4` — an unsound expansion.
+            // look like the concrete bound `i <= 4` – an unsound expansion.
             // The next quantified assertion re-folds the surviving assertions,
             // so the only cost is one linear re-scan per `pop`.
             self.entailed_int_consts.clear();
@@ -2457,7 +2457,7 @@ impl Solver {
             self.dt_axioms_incomplete = state.dt_axioms_incomplete;
 
             // The Tseitin memo is retracted per entry, by the
-            // `TrailOp::EncodedTermAdded` arm of the undo loop above — not
+            // `TrailOp::EncodedTermAdded` arm of the undo loop above – not
             // cleared wholesale, as it once was.  The clear was justified by
             // "`sat.pop()` retracts the definitional clauses of everything in
             // the memo", which holds only for entries written *inside* the
@@ -2465,7 +2465,7 @@ impl Solver {
             // `TrailOp::VarCreated` is journalled) its SAT variable, so dropping
             // it made the next `encode` walk the term again and re-emit
             // byte-identical clauses that `oxiz_sat::Solver::add_clause` cannot
-            // recognise as duplicates — one extra copy of the encoding per
+            // recognise as duplicates – one extra copy of the encoding per
             // `(push)(pop)` pair, growing without bound (task #28).  See
             // `Solver::memoize_encoding` for why the journalled `previous` value
             // makes the per-entry retraction exact.
@@ -2480,7 +2480,7 @@ impl Solver {
             // scratch, so after a `check` the depth bears no relation to the
             // depth `Solver::push` left behind.  A single `pop` here therefore
             // retracted an arbitrary search scope and left facts derived from the
-            // retracted assertions committed — an MBQI instantiation lemma
+            // retracted assertions committed – an MBQI instantiation lemma
             // (`f(7) = 1`) survived its scope and refuted the satisfiable
             // `(= (f k) 2)` that followed the `pop`.
             //
@@ -2488,7 +2488,7 @@ impl Solver {
             // every `check`: `Solver::check` builds a fresh `TheoryManager` and
             // `solve_with_theory` replays the *entire* SAT trail through it, so
             // each solver is repopulated from exactly the constraints that are
-            // active in the current context — which is precisely what
+            // active in the current context – which is precisely what
             // [`Self::rebase_theory_state`] documents and does.
             //
             // Routing through it (rather than repeating three of its five lines
@@ -2500,7 +2500,7 @@ impl Solver {
             // The `sat.backtrack_to_root()` the rebase performs first is a no-op
             // here: `sat.pop()` above already ends at decision level 0, and
             // `Trail::backtrack_to_with_callback` returns immediately when asked
-            // for a level it is already at — in particular it does not disturb
+            // for a level it is already at – in particular it does not disturb
             // the propagation head that `sat.pop()` deliberately rewound.
             self.rebase_theory_state();
             #[cfg(feature = "std")]
@@ -2528,7 +2528,7 @@ impl Solver {
         // Quantifier reasoning state must be cleared too: leaving the previous
         // problem's quantifiers, e-matching triggers, Skolem candidates, and the
         // `has_quantifiers` flag in place would make a subsequent `check` apply
-        // stale quantifiers (and take the MBQI path) for a brand-new formula —
+        // stale quantifiers (and take the MBQI path) for a brand-new formula –
         // a correctness defect.  Rebuild the engines from scratch.
         self.mbqi = MBQIIntegration::new();
         self.ematch_engine = EmatchingEngine::new(EmatchingConfig::default());

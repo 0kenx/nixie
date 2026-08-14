@@ -312,7 +312,7 @@ impl Loader {
     /// Load a benchmark and return the shared [`Arc<Benchmark>`].
     ///
     /// When a cache is attached and hits, the returned `Arc` points to the
-    /// same allocation as the cached entry — callers can compare pointer
+    /// same allocation as the cached entry – callers can compare pointer
     /// identity via [`Arc::ptr_eq`] to verify a cache hit. Misses (or absence
     /// of a cache) produce a fresh `Arc` wrapping the newly parsed benchmark;
     /// the fresh value is inserted into the cache when one is present.
@@ -450,14 +450,14 @@ impl Loader {
             }
         }
 
-        // Also try to read from file header — first the explicit
+        // Also try to read from file header – first the explicit
         // `(set-logic ...)` directive, then fall back to the automatic
         // theory-feature detector when no directive is present.
         if let Some(src) = content {
             if let Some(explicit) = Self::extract_logic_from_content(src) {
                 return Some(explicit);
             }
-            // No explicit header — let the logic detector infer one from
+            // No explicit header – let the logic detector infer one from
             // the theory keywords present in the benchmark source.
             let detected = crate::logic_detector::detect_logic(src);
             // The detector never returns an empty string; treat the "ALL"
@@ -672,7 +672,7 @@ impl ParseCache {
     /// freshness mismatch the stale entry is evicted so the next call will
     /// parse fresh content.
     ///
-    /// `get` touches the LRU recency of the returned entry — repeated hits
+    /// `get` touches the LRU recency of the returned entry – repeated hits
     /// keep a hot benchmark from being evicted.
     pub fn get(
         &self,
@@ -969,7 +969,7 @@ mod tests {
         let _c_first = loader.load_cached(&meta_c).expect("load c");
         assert_eq!(cache.len(), 2, "cache must stay at capacity after eviction");
 
-        // `b` is gone — a fresh load must produce a new Arc.
+        // `b` is gone – a fresh load must produce a new Arc.
         let b_second = loader
             .load_cached(&meta_b)
             .expect("reload b after eviction");

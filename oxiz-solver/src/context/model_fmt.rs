@@ -30,12 +30,12 @@ use super::{Context, RawFuncInterp};
 /// - Datatype constructor expansion **must** be bounded, because the walk
 ///   steps through the datatype *definition* table and that edge can close
 ///   a genuine cycle: `(declare-datatype T ((c (f (Array Int T)))))` has no
-///   finite ground value at all — every expansion of `c` needs a value of
+///   finite ground value at all – every expansion of `c` needs a value of
 ///   `(Array Int T)`, which needs a value of `T` again.  (An earlier fix
 ///   threaded a shared budget through both halves of the cycle after the
 ///   original code reset its counter to 0 at every datatype re-entry and
 ///   recursed forever on `(get-model)`.)  When the budget is exhausted the
-///   walk yields the honest placeholder `?` — visibly not a value — rather
+///   walk yields the honest placeholder `?` – visibly not a value – rather
 ///   than fabricating a wrong finite value for an ill-founded sort.
 const DT_DEFAULT_EXPANSION_LIMIT: u32 = 16;
 
@@ -110,8 +110,8 @@ impl Context {
         let mut model = Vec::new();
         // An empty assertion stack is satisfied by *every* assignment, so the
         // solver answers `sat` without ever building a model.  Completing from
-        // the sort defaults is exact there, not a guess — with nothing asserted
-        // no constraint exists that a completion could violate — whereas
+        // the sort defaults is exact there, not a guess – with nothing asserted
+        // no constraint exists that a completion could violate – whereas
         // reporting "no model available" for a `sat` verdict is simply wrong.
         // Any other missing model is a genuine extraction failure and stays
         // `None`, so a real assignment is never fabricated.
@@ -128,7 +128,7 @@ impl Context {
         // Witness bookkeeping for unconstrained uninterpreted-sort constants:
         // `per_sort_next` is the next fresh witness index for a sort, and
         // `class_witness` maps an EUF congruence class (or a lone, never-equated
-        // term) to its already-assigned index — so constants proven equal share
+        // term) to its already-assigned index – so constants proven equal share
         // one witness while distinct constants get distinct ones.
         let mut per_sort_next: crate::prelude::HashMap<SortId, usize> =
             crate::prelude::HashMap::new();
@@ -209,7 +209,7 @@ impl Context {
 
         // Resolve `func_name` to the EUF function-symbol id.  For an `Apply`
         // term the EUF id is the underlying value of the function-name `Spur`,
-        // so we recover it from any matching application term (read-only — no
+        // so we recover it from any matching application term (read-only – no
         // mutable interner access required).
         let mut func_id: Option<u32> = None;
         for idx in 0..(self.terms.len() as u32) {
@@ -349,10 +349,10 @@ impl Context {
     /// Sort parameters render as their name and parametric applications as
     /// `(Name arg...)`, matching [`oxiz_core::smtlib::SmtLibPrinter`]; both
     /// used to print as the literal string `Unknown`, which collapsed every
-    /// such sort — however many and however different — onto one name.
+    /// such sort – however many and however different – onto one name.
     ///
     /// The walk over nested `Array`/parametric sorts is an explicit heap stack
-    /// ([`SortNameFrame`]) — array-sort nesting is input-controlled (the
+    /// ([`SortNameFrame`]) – array-sort nesting is input-controlled (the
     /// builder API composes sorts in O(1) stack, and chained `define-sort`
     /// grows a sort by one level per command), so native recursion here was
     /// an unbounded stack risk with no error channel to cap it honestly.
@@ -360,7 +360,7 @@ impl Context {
     /// memoized; the memo is restricted to genuinely shared sorts so that a
     /// deep unshared chain does not pay quadratic memory for cached copies
     /// of every suffix.  (The *output* still spells shared sorts out in
-    /// full each time — SMT-LIB sort syntax has no sharing — so output
+    /// full each time – SMT-LIB sort syntax has no sharing – so output
     /// size, not the walk, remains the inherent cost on heavily shared
     /// sorts.)
     fn format_sort_name(&self, sort: SortId) -> String {
@@ -598,7 +598,7 @@ impl Context {
     /// ill-founded datatypes, which have no ground value at all.
     ///
     /// The walk is an explicit heap stack ([`DefaultValueFrame`]), so array
-    /// nesting of any depth is rendered in full — the pre-conversion code
+    /// nesting of any depth is rendered in full – the pre-conversion code
     /// both recursed natively and truncated every value below 512 sort
     /// levels to a wrong `?`.  The datatype arm expands constructors:
     ///
@@ -606,7 +606,7 @@ impl Context {
     /// - compound constructors render as an application of the field
     ///   defaults (`(mk-pair 0 0)`), the constructor chosen by the shared
     ///   [`default_constructor_index`](crate::solver::model_builder::default_constructor_index)
-    ///   policy — the first one with no datatype-sorted field, so a
+    ///   policy – the first one with no datatype-sorted field, so a
     ///   well-founded construction bottoms out immediately, matching the
     ///   solver's own reconstruction of an underdetermined datatype term;
     /// - expansion is bounded by [`DT_DEFAULT_EXPANSION_LIMIT`], the one
@@ -644,7 +644,7 @@ impl Context {
                     SortKind::FloatingPoint { eb, sb } => break format!("(_ +zero {eb} {sb})"),
                     // A constant array whose every entry is the range's
                     // default value.  Descending into the range charges no
-                    // constructor expansion — the sort graph alone is
+                    // constructor expansion – the sort graph alone is
                     // acyclic, so this edge cannot close a cycle.
                     SortKind::Array { range, .. } => {
                         let range = *range;
@@ -762,13 +762,13 @@ impl Context {
     /// parameters, and ill-founded datatypes).
     ///
     /// Used to complete the model before a `(get-value ...)` evaluation, so a
-    /// query over an unconstrained constant — including inside a compound term
-    /// such as `(+ x 1)` — reduces to a real value instead of echoing itself.
+    /// query over an unconstrained constant – including inside a compound term
+    /// such as `(+ x 1)` – reduces to a real value instead of echoing itself.
     ///
     /// Delegates to the solver's
     /// [`ground_default_term`](crate::solver::model_builder::ground_default_term),
     /// which is also what fills in an unconstrained *field* of a reconstructed
-    /// datatype value — one definition of "the default of this sort" rather
+    /// datatype value – one definition of "the default of this sort" rather
     /// than one per caller.
     fn default_value_term(&mut self, sort: SortId) -> Option<TermId> {
         crate::solver::model_builder::ground_default_term(&mut self.terms, sort)
@@ -779,7 +779,7 @@ impl Context {
     ///
     /// `(get-value ...)` and `(get-model)` must never disagree about the same
     /// constant, and `get_model`'s uninterpreted-sort witnesses (`@uc_S_n`) are
-    /// numbered across the whole declaration list — so the answer is read back
+    /// numbered across the whole declaration list – so the answer is read back
     /// out of `get_model` itself rather than recomputed.
     fn unassigned_const_value(&self, term: TermId, model: &crate::solver::Model) -> Option<String> {
         let index = self.declared_consts.iter().position(|d| d.term == term)?;
@@ -797,7 +797,7 @@ impl Context {
     /// missing/superseded check result is reported as an error rather than
     /// answered from stale state.  Each term is evaluated in the current model,
     /// which is first *completed* with the sort defaults `get_model` reports for
-    /// unconstrained declared constants — otherwise `Model::eval` returns an
+    /// unconstrained declared constants – otherwise `Model::eval` returns an
     /// unassigned constant unchanged and `(get-value (x))` answered `((x x))`,
     /// echoing the term instead of producing a value.
     pub(super) fn format_get_value(&mut self, terms: &[TermId]) -> String {
@@ -907,7 +907,7 @@ impl Context {
 mod tests {
     use super::*;
 
-    // ===== default_value semantic pins ==================================
+    // ======== default_value semantic pins ========
     //
     // Every expected string below was captured from the pre-conversion
     // recursive implementation, so these tests prove the explicit-stack
@@ -1041,7 +1041,7 @@ mod tests {
     ///
     /// Depth is 2000 rather than the usual 50k-100k deep-nesting depth
     /// because the *output* of `default_value` is inherently quadratic in
-    /// array depth — every level embeds its own full sort name — so 100k
+    /// array depth – every level embeds its own full sort name – so 100k
     /// levels would be a multi-gigabyte string; output construction, not
     /// the walk, is the bottleneck.  The walk machinery itself is proven at
     /// 12 500 levels on a 128 KiB stack by the `format_sort_name` tests
@@ -1080,7 +1080,7 @@ mod tests {
         handle.join().expect("deep default-value must not overflow");
     }
 
-    // ===== format_sort_name =============================================
+    // ======== format_sort_name ========
 
     /// Leaf and compound sort names, pinned against the pre-conversion
     /// recursive renderer.
@@ -1168,7 +1168,7 @@ mod tests {
     /// not once per path.
     ///
     /// Depth is 20 rather than the usual 50-60 doubling levels because the
-    /// *output* is inherently exponential in doubling depth — SMT-LIB sort
+    /// *output* is inherently exponential in doubling depth – SMT-LIB sort
     /// syntax has no sharing, so the rendered text of level `n` has length
     /// `12 * 2^n - 9` and 60 levels would be an exabyte-scale string no
     /// algorithm could materialize.  At depth 20 the test pins the exact
@@ -1190,7 +1190,7 @@ mod tests {
         assert!(name.starts_with("(Array (Array "));
     }
 
-    // ===== get_model through the public surface =========================
+    // ======== get_model through the public surface ========
 
     /// An unconstrained array constant round-trips its sort and default
     /// value through `(get-model)` exactly as before the conversion.
@@ -1207,7 +1207,7 @@ mod tests {
         );
     }
 
-    // ===== parameter / parametric sort names ============================
+    // ======== parameter / parametric sort names ========
 
     /// A sort *parameter* renders as its declared name. It used to render as
     /// the literal string "Unknown", so every parameter of every definition

@@ -761,8 +761,8 @@ async fn main() {
     };
 
     // `--threads N`, when explicitly set (i.e. != the clap default), sizes the
-    // global Rayon pool used for parallel *file* processing and — via
-    // `execute_and_format` — routes a single-problem solve through the
+    // global Rayon pool used for parallel *file* processing and – via
+    // `execute_and_format` – routes a single-problem solve through the
     // N-worker portfolio. Configure the pool here, once, before any parallel
     // work starts. (`build_global` fails harmlessly if a pool already exists.)
     if args.threads != DEFAULT_THREADS && args.threads >= 1 {
@@ -821,7 +821,7 @@ async fn main() {
     } else if args.incremental {
         // Incremental mode streams top-level commands against a single
         // persistent context (carried across files), honoring push/pop and
-        // cross-file declarations — see `incremental::run_incremental`.
+        // cross-file declarations – see `incremental::run_incremental`.
         incremental::run_incremental(&mut ctx, &args, verbosity);
     } else if args.input.is_empty() {
         run_stdin(&mut ctx, &args, verbosity);
@@ -1349,7 +1349,7 @@ fn enumerate_additional_models(ctx: &mut Context, max_models: usize) -> Vec<Stri
     // `push` is a state-changing command: per SMT-LIB 2.6 §4.1.1 it returns the
     // solver to `assert` mode, so the cached check result (and with it
     // `get_model`/`eval_in_model`) is invalidated.  Re-establish `sat` inside
-    // the fresh scope — the assertion set is unchanged, so this simply restores
+    // the fresh scope – the assertion set is unchanged, so this simply restores
     // the model the loop below reads to build its first blocking clause.
     if ctx.check_sat() != oxiz_solver::SolverResult::Sat {
         ctx.pop();
@@ -1623,7 +1623,7 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
     // Portfolio / parallel routing. Reached when the user asked for the
     // portfolio strategy (by name, `--preset`, or `--auto-tune`), enabled
     // `--portfolio-mode`, OR set an explicit `--threads N` (N != the clap
-    // default) without `--parallel` file processing — in which case a single
+    // default) without `--parallel` file processing – in which case a single
     // problem is solved by N portfolio workers (the real wiring of `--threads`
     // into the parallel-solving entry point). `--strategy portfolio` requested
     // by name thus dispatches to the real parallel-portfolio solver instead of

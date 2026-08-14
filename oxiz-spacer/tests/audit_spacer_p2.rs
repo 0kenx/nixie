@@ -19,9 +19,9 @@ use oxiz_spacer::invariant::{InferenceResult, InvariantInference};
 use oxiz_spacer::parser::ChcParser;
 use oxiz_spacer::pdr::{Spacer, SpacerResult};
 
-// ---------------------------------------------------------------------------
-// Finding 1: is_init_reachable — Unsafe must be detectable at level 0
-// ---------------------------------------------------------------------------
+// ========  ========
+// Finding 1: is_init_reachable – Unsafe must be detectable at level 0
+// ========  ========
 
 #[test]
 fn spacer_reports_unsafe_when_bad_is_initial() {
@@ -53,9 +53,9 @@ fn spacer_reports_unsafe_when_bad_is_initial() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Finding 2: model-based predecessor search — multi-step Unsafe is reachable
-// ---------------------------------------------------------------------------
+// ========  ========
+// Finding 2: model-based predecessor search – multi-step Unsafe is reachable
+// ========  ========
 
 #[test]
 fn spacer_reports_unsafe_multistep() {
@@ -104,9 +104,9 @@ fn spacer_reports_unsafe_multistep() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Finding 3: is_lemma_inductive — a real invariant proves Safe (not fabricated)
-// ---------------------------------------------------------------------------
+// ========  ========
+// Finding 3: is_lemma_inductive – a real invariant proves Safe (not fabricated)
+// ========  ========
 
 #[test]
 fn spacer_reports_safe_for_real_invariant() {
@@ -157,9 +157,9 @@ fn spacer_reports_safe_for_real_invariant() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 4: ChcParser preserves predicate applications
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn parser_preserves_predicate_applications() {
@@ -198,9 +198,9 @@ fn parser_preserves_predicate_applications() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 5: BMC disjoins multiple transition rules (nondeterminism)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn bmc_disjoins_nondeterministic_rules() {
@@ -266,7 +266,7 @@ fn bmc_disjoins_nondeterministic_rules() {
     // contradictory (x'=x+1 ∧ x'=x-1) and yields a spurious Safe.  The exact
     // depth the underlying solver reports can vary (its LIA search over
     // disjunctions is incomplete), so we only require that a counterexample is
-    // found — never Safe.
+    // found – never Safe.
     assert!(
         matches!(result, BmcResult::Unsafe(_)),
         "with rules disjoined, x = 2 is reachable and BMC must report Unsafe, got {:?}",
@@ -274,9 +274,9 @@ fn bmc_disjoins_nondeterministic_rules() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 6: Houdini drops contradictory candidates via real SMT queries
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn houdini_drops_non_inductive_candidates() {

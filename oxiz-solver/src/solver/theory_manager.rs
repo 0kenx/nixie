@@ -37,7 +37,7 @@ fn theory_trace_enabled() -> bool {
 }
 
 /// Incremental arithmetic bound-propagation mode, set from `OXIZ_BOUND_PROP`
-/// (read once and cached).  The z3 `:arith-bound-prop` analogue — see
+/// (read once and cached).  The z3 `:arith-bound-prop` analogue – see
 /// [`TheoryManager::derive_arith_bound_propagations`].
 ///
 /// **Default-on for QF_UFIDL** (validated net-positive: closes the vhard
@@ -45,11 +45,11 @@ fn theory_trace_enabled() -> bool {
 /// the `is_dl_family` (QF_UFIDL) gate and the matching `set_branching_vsids`
 /// gate fire, so non-QF_UFIDL logics are unaffected by the default.
 ///
-/// * unset (default) — `Tighten` (on; the recommended mode for QF_UFIDL).
-/// * `"0"` / `"off"` / `"false"` — `Off` (escape hatch: disables even for
+/// * unset (default) – `Tighten` (on; the recommended mode for QF_UFIDL).
+/// * `"0"` / `"off"` / `"false"` – `Off` (escape hatch: disables even for
 ///   QF_UFIDL).
-/// * `"tight"` — `Tighten` (explicit; same as default).
-/// * any other non-empty value (e.g. `"1"`, `"on"`) — `Direct` (cheaper;
+/// * `"tight"` – `Tighten` (explicit; same as default).
+/// * any other non-empty value (e.g. `"1"`, `"on"`) – `Direct` (cheaper;
 ///   catches only the first propagation level).
 #[cfg(feature = "std")]
 pub(crate) fn arith_bound_prop_mode() -> BoundPropMode {
@@ -85,7 +85,7 @@ pub(crate) use derived_reasons::DerivedReasons;
 /// The SAT core drives theory state incrementally through `on_assignment` /
 /// `on_new_level` / `on_backtrack`, but its conflict analysis can (on some
 /// formulas) compute a wrong backtrack level and *overwrite* a variable's
-/// assignment in place — flipping a decision literal's polarity without ever
+/// assignment in place – flipping a decision literal's polarity without ever
 /// popping the theory scope that recorded the old polarity.  The incremental
 /// EUF / arith / BV solvers only support level-scoped `pop`, not point removal
 /// of a single mid-level assertion, so a flipped literal would otherwise leave
@@ -135,7 +135,7 @@ enum DlPrimaryResult {
 }
 
 /// Feed a DL atom using the INCREMENTAL add+check API (`add_*_check`, seeded
-/// SPFA — O(affected) per edge), returning a conflict if the edge creates a
+/// SPFA – O(affected) per edge), returning a conflict if the edge creates a
 /// negative cycle.  This is the cheap DL-primary path (vs the on-demand
 /// rebuild which was 97% of theory time).
 fn feed_dl_atom_inc(
@@ -191,15 +191,15 @@ fn direct_const_value(manager: &oxiz_core::ast::TermManager, t: TermId) -> Optio
     }
 }
 
-/// If `(= lhs rhs)` is a GENUINE `term = constant` equality — `rhs` a numeric
+/// If `(= lhs rhs)` is a GENUINE `term = constant` equality – `rhs` a numeric
 /// constant and `lhs` a non-constant Int/Real-sorted term (a plain variable,
 /// an uninterpreted-function application like `(Succ 0)`, an array select, an
-/// `ite`, … — anything the linear parser treats as ONE opaque arithmetic
-/// variable) — return the constant's value.  Such a bound is a direct,
+/// `ite`, … – anything the linear parser treats as ONE opaque arithmetic
+/// variable) – return the constant's value.  Such a bound is a direct,
 /// unconditional consequence of the single asserted equality, so its
 /// single-atom reason is sufficient and the cheap derived-reason propagator
 /// stays sound.  Equalities whose `rhs` is itself a term (e.g. `(= a b)`, or
-/// a term whose linear parse folded to a constant) record no bound — their
+/// a term whose linear parse folded to a constant) record no bound – their
 /// real justification may be an EUF/tableau chain the prop tracker cannot
 /// summarize.
 fn genuine_fixed_var(lhs: TermId, rhs: TermId, manager: &TermManager) -> Option<Rational64> {
@@ -286,12 +286,12 @@ pub(crate) struct TheoryManager<'a> {
     var_to_term: &'a Vec<TermId>,
     /// `const TermId -> proxy TermId` map from `purify_numeric_uf_args`.  Because
     /// that pass uses a *global* substitute, a constant abstracted out of one
-    /// UF application is replaced *everywhere* — including in arithmetic like
+    /// UF application is replaced *everywhere* – including in arithmetic like
     /// `(+ x 1)` -> `(+ x __oxiz_numarg)`, which destroys difference-logic
     /// shape.  Inverting this map lets the DL-primary path fold those proxies
     /// back into the atom's constant, restoring DL shape.
     numarg_proxies: &'a FxHashMap<TermId, TermId>,
-    /// Canonical `IntConst(0)` term — the DL solver's zero reference for
+    /// Canonical `IntConst(0)` term – the DL solver's zero reference for
     /// absolute single-variable bounds (`x ≤ k` is fed as the edge
     /// `zero → x` of weight `k`).  Registered as an ordinary DL variable; a
     /// free zero gives correct feasibility (bounds `x ≤ k`, `x ≥ k'` form a
@@ -358,8 +358,8 @@ pub(crate) struct TheoryManager<'a> {
     /// If the same value `v` appears again (e.g., as a fresh TermId created
     /// during MBQI instantiation), we merge the new node with the existing
     /// canonical node rather than appending another entry.  This keeps the
-    /// number of distinct entries — and therefore the number of pairwise
-    /// disequality edges — bounded by the number of *distinct* integer literal
+    /// number of distinct entries – and therefore the number of pairwise
+    /// disequality edges – bounded by the number of *distinct* integer literal
     /// values in the original formula, not by the total number of term IDs
     /// created across all MBQI iterations (which grows without bound).
     interned_int_constants: FxHashMap<i64, u32>,
@@ -374,8 +374,8 @@ pub(crate) struct TheoryManager<'a> {
     ///
     /// The value half of the key is the constant's *full* little-endian limb
     /// sequence, not a `u64` digest of it.  Keying on the low 64 bits merged
-    /// two genuinely different wide constants — `0` and `2^64` at width 128
-    /// share those bits — into one EUF class, which turned a satisfiable
+    /// two genuinely different wide constants – `0` and `2^64` at width 128
+    /// share those bits – into one EUF class, which turned a satisfiable
     /// `(distinct (g a) (g b))` into `unsat`.
     interned_bv_constants: FxHashMap<(SmallVec<[u64; 2]>, u32), u32>,
     /// Canonical EUF nodes for Boolean true and false values.
@@ -391,7 +391,7 @@ pub(crate) struct TheoryManager<'a> {
     /// exhaustion the manager returns `TheoryCheckResult::Sat` to make the SAT
     /// solver stop searching; that `Sat` is a resource signal, not a model.
     /// The owning `Solver` reads this flag after `solve_with_theory` and, when
-    /// set, answers `Unknown` instead of trusting the `Sat` — so a dropped
+    /// set, answers `Unknown` instead of trusting the `Sat` – so a dropped
     /// conflict never turns into a fabricated satisfiability result.
     resource_exhausted: bool,
     /// Set to `true` when a theory reported a conflict whose justification this
@@ -401,7 +401,7 @@ pub(crate) struct TheoryManager<'a> {
     /// Read like [`Self::resource_exhausted`], and for the same reason: the
     /// conflict was *dropped*, so a subsequent `Sat` rests on an assignment the
     /// theories may already have refuted and the owning `Solver` must answer
-    /// `Unknown`.  An `Unsat` reached from other conflicts stays sound —
+    /// `Unknown`.  An `Unsat` reached from other conflicts stays sound –
     /// dropping a lemma only ever removes refutations.
     ///
     /// This is a bug channel, not a resource one: every path that sets it is
@@ -452,7 +452,7 @@ pub(crate) struct TheoryManager<'a> {
     /// Decision level at which each entry of the polarity map currently
     /// holds, pruned on backtrack.  Unlike `assignment_trail` this is
     /// maintained in *both* eager and lazy theory modes, because it backs
-    /// [`Self::full_assignment_conflict_clause`] — the sound fallback used
+    /// [`Self::full_assignment_conflict_clause`] – the sound fallback used
     /// when a theory reason cannot be justified.
     assigned_level: FxHashMap<Var, u32>,
     /// Reason terms that are theory *tautologies*: facts the theory layer
@@ -470,7 +470,7 @@ pub(crate) struct TheoryManager<'a> {
     ///
     /// `ArithSolver` records a single `TermId` per assertion, so an equality
     /// propagated out of congruence closure (`f(a) = f(b)` because `a = b`) can
-    /// only be tagged with one of its own operands — a term that names no
+    /// only be tagged with one of its own operands – a term that names no
     /// literal.  The EUF explanation of that equality is kept here, keyed by the
     /// tag, and [`Self::terms_to_conflict_clause`] expands the tag into those
     /// literals.  Without this the conflict clause would blame only the
@@ -692,8 +692,8 @@ impl<'a> TheoryManager<'a> {
     /// the owning `Solver` answer `Unknown`.
     ///
     /// Routing every call site through here is what keeps the empty clause
-    /// unrepresentable.  The alternative — returning "the negation of the empty
-    /// assignment" — is the empty clause, i.e. a claim that the input is
+    /// unrepresentable.  The alternative – returning "the negation of the empty
+    /// assignment" – is the empty clause, i.e. a claim that the input is
     /// refuted unconditionally, produced by a code path whose whole premise is
     /// that it does not know why anything is refuted.  Answering `Unknown`
     /// loses a verdict; emitting that clause invents one.
@@ -714,7 +714,7 @@ impl<'a> TheoryManager<'a> {
     ///     `select = v`;
     ///   * read-over-write-DIFFERENT: if `i ≠ j` is a *proven* disequality, the
     ///     axiom forces `select = select(b, j)` (the `select(b, j)` term is
-    ///     pre-created at encode time — see `ArrayTheory::add_row_target` —
+    ///     pre-created at encode time – see `ArrayTheory::add_row_target` –
     ///     because this pass holds `&TermManager` and cannot `mk_select`).
     ///
     /// Merge the consequence in EUF; if that exposes a contradiction with an
@@ -762,7 +762,7 @@ impl<'a> TheoryManager<'a> {
     /// Array extensionality theory propagation (Stage 5): for each array
     /// equality atom `(= a b)` whose operands are PROVEN disequal (`a ≠ b`)
     /// while the witness reads `select(a, k)` and `select(b, k)` are EUF-equal,
-    /// extensionality forces `a = b` — a contradiction.  Return the conflict.
+    /// extensionality forces `a = b` – a contradiction.  Return the conflict.
     /// SOUND: fires only on a real `a = b` derivation (reads equal at the
     /// witness) contradicting an asserted `a ≠ b`.
     fn check_array_extensionality(&mut self) -> Option<TheoryCheckResult> {
@@ -792,8 +792,8 @@ impl<'a> TheoryManager<'a> {
     /// Open one theory scope on the EUF, arithmetic and bit-vector solvers.
     ///
     /// Every push of the three solvers goes through here (and every pop through
-    /// [`Self::pop_theory_scope`]) so that `derived_reasons` — which outlives
-    /// this manager — tracks their true depth.  Counting scopes from
+    /// [`Self::pop_theory_scope`]) so that `derived_reasons` – which outlives
+    /// this manager – tracks their true depth.  Counting scopes from
     /// `level_stack` instead would restart at zero for every manager, while a
     /// CDCL(T) search that ends in `Sat` never backtracks and therefore hands
     /// the next manager solvers that are still several scopes deep.
@@ -824,7 +824,7 @@ impl<'a> TheoryManager<'a> {
     /// Rebuild all incremental theory state from the deduplicated shadow trail.
     ///
     /// Invoked when the SAT core overwrites a variable's assignment in place
-    /// (flips a decision literal's polarity without a matching backtrack — a
+    /// (flips a decision literal's polarity without a matching backtrack – a
     /// wrong assertion-level result from its conflict analysis).  The
     /// incremental EUF / arith / BV solvers still reflect the stale polarity and,
     /// because they support only level-scoped `pop` (not point removal of a
@@ -835,7 +835,7 @@ impl<'a> TheoryManager<'a> {
     ///
     /// Replay continues through every level even after a conflict is found, so
     /// that `level_stack` ends fully populated (`current_level + 1` entries) and
-    /// any later backtrack — to any level — pops a matching number of scopes.
+    /// any later backtrack – to any level – pops a matching number of scopes.
     /// The first conflict encountered is remembered and returned; a returned
     /// `Conflict` triggers the SAT core to backtrack, which the now-consistent
     /// scope stack handles correctly.
@@ -950,7 +950,7 @@ impl<'a> TheoryManager<'a> {
     ///
     /// The equality crosses a theory boundary, so it must arrive at the tableau
     /// with an **explanation**: `ArithSolver` stores one `TermId` per assertion
-    /// and the only term ids available here — `t1`, `t2` — name no literal, so a
+    /// and the only term ids available here – `t1`, `t2` – name no literal, so a
     /// conflict resting on the equality would be blamed on the arithmetic atoms
     /// alone.  We therefore ask congruence closure why `t1 = t2` holds
     /// ([`EufSolver::explain_eq`]) and record that answer under the tag `t1` in
@@ -1021,7 +1021,7 @@ impl<'a> TheoryManager<'a> {
     /// tableau, and the only place allowed to tag an arithmetic assertion with a
     /// term that names no literal.  It upholds two invariants:
     ///
-    /// * an equality congruence closure cannot explain is **not propagated** —
+    /// * an equality congruence closure cannot explain is **not propagated** –
     ///   skipping it only costs completeness, whereas asserting an unexplainable
     ///   fact makes every conflict that uses it unsound;
     /// * an equality that *is* propagated has its explanation recorded under the
@@ -1078,7 +1078,7 @@ impl<'a> TheoryManager<'a> {
     /// is free to pick another model that honours the equality.  The previous
     /// implementation reported it as a conflict and built the clause from the
     /// two disagreeing terms, which asserts that those two atoms are jointly
-    /// contradictory — nothing entails that.  We instead resolve the
+    /// contradictory – nothing entails that.  We instead resolve the
     /// disagreement the Nelson-Oppen way: hand the (explained) equality to the
     /// tableau via [`Self::assert_explained_equality`] and let it decide, so a
     /// conflict is reported only when arithmetic really is refuted and comes
@@ -1097,8 +1097,8 @@ impl<'a> TheoryManager<'a> {
         let mut witness: FxHashMap<u32, (TermId, Rational64)> = FxHashMap::default();
 
         // `term_to_var` is a hash map, so iterate in term-id order: which member
-        // of a class becomes the witness — and hence which equality is asserted
-        // — must not depend on hash iteration order.
+        // of a class becomes the witness – and hence which equality is asserted
+        // – must not depend on hash iteration order.
         let mut shared_terms: Vec<TermId> = self.term_to_var.keys().copied().collect();
         shared_terms.sort_unstable_by_key(|t| t.raw());
         for term in shared_terms {
@@ -1130,10 +1130,10 @@ impl<'a> TheoryManager<'a> {
     /// Bidirectional Nelson–Oppen combination to a fixpoint.
     ///
     /// tip's [`Self::model_based_combination`] is one direction of the equality
-    /// exchange — it propagates EUF-derived equalities *into* arithmetic (two
+    /// exchange – it propagates EUF-derived equalities *into* arithmetic (two
     /// shared terms in one EUF class with different arithmetic values must be
     /// equal, so assert the equality and let the tableau refute it).  The other
-    /// direction — arithmetic-**entailed** equalities propagated *into* EUF —
+    /// direction – arithmetic-**entailed** equalities propagated *into* EUF –
     /// was missing, and its absence is the source of the non-convex
     /// QF_UFLIA/QF_UFIDL false-SAT: arithmetic can force `x = y` (e.g. two
     /// `ite`-result terms both pinned to `2·t`) while EUF holds them distinct
@@ -1147,7 +1147,7 @@ impl<'a> TheoryManager<'a> {
     /// Farkas reason ([`ArithSolver::entailed_equal_reason`]) and are
     /// recorded under their tag in [`derived_reasons`], so a conflict that cites
     /// the resulting EUF merge expands back to the arithmetic atoms that forced
-    /// it — the merge is a *deduction*, never a guess, so it cannot cause a
+    /// it – the merge is a *deduction*, never a guess, so it cannot cause a
     /// false `unsat`.
     fn nelson_oppen_combine(&mut self) -> TheoryCheckResult {
         use oxiz_theories::Theory;
@@ -1155,11 +1155,11 @@ impl<'a> TheoryManager<'a> {
 
         const NO_MAX_ROUNDS: usize = 8;
         for _ in 0..NO_MAX_ROUNDS {
-            // ---- arithmetic → EUF: propagate entailed equalities. ----
+            // ======== arithmetic → EUF: propagate entailed equalities. ========
             //
             // Care graph (cvc5-style watched differences): difference-constraint
             // pairs (x − y ≤ c) + live EUF disequality operands.  No model-equal
-            // filter — the probe is sound regardless and catches chain-derived
+            // filter – the probe is sound regardless and catches chain-derived
             // equalities the model-equal filter misses.
             let mut candidates: rustc_hash::FxHashSet<(TermId, TermId)> =
                 rustc_hash::FxHashSet::default();
@@ -1411,13 +1411,13 @@ impl<'a> TheoryManager<'a> {
     ///
     /// For each UNASSIGNED `Le`/`Lt`/`Ge`/`Gt` atom `e ◦ c`, derive a SOUND
     /// bound on `e` from the variable bounds (the Dutertre–de Oliveira
-    /// relaxation — never tighter than the true bound), and if that bound
+    /// relaxation – never tighter than the true bound), and if that bound
     /// already forces the comparison, emit the atom's literal with the
     /// bound's antecedent atoms as the reason.
     ///
     /// This is the z3 `:arith-bound-prop` analogue: cheap (`O(atoms)`, no LP
     /// solve), sound (a looser bound that still forces ⇒ genuinely forced),
-    /// and the single mechanism that closes finite-domain QF_UFIDL (vhard*) —
+    /// and the single mechanism that closes finite-domain QF_UFIDL (vhard*) –
     /// asserting `(= x k)` pins `x ∈ [k,k]`, which forces every `x ◦ c` ite
     /// condition at the *current* (low) decision level, so conflicts that the
     /// recurrence eventually triggers are detected shallowly (level ~2, like
@@ -1429,14 +1429,14 @@ impl<'a> TheoryManager<'a> {
     /// the first propagation level).
     ///
     /// Equality atoms are EXCLUDED (the `Le`-placeholder landmine: a `not(=)`
-    /// disequality is the disjunction `x<y ∨ x>y`, never a single comparison —
+    /// disequality is the disjunction `x<y ∨ x>y`, never a single comparison –
     /// see `encode.rs`).
     fn derive_arith_bound_propagations(
         &mut self,
         tighten: bool,
     ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         use oxiz_theories::arithmetic::DeltaRational;
-        // Collect candidate atoms as a flat `(var, constant, less, strict)` list —
+        // Collect candidate atoms as a flat `(var, constant, less, strict)` list –
         // all `Copy`, so no per-candidate allocation.  The atom's term vector is
         // fetched lazily into a single reused buffer below, which removes the
         // `Vec<(Var, Vec<terms>, …)>` allocation that dominated this
@@ -1495,7 +1495,7 @@ impl<'a> TheoryManager<'a> {
             // passing constant = 0; `constant` is the atom's RHS THRESHOLD,
             // compared below, NOT part of the expression.  (Passing `constant`
             // here would fold the threshold into the expression and make the
-            // check read `e + c ◦ c` ≡ `e ◦ 0` — a soundness bug for any atom
+            // check read `e + c ◦ c` ≡ `e ◦ 0` – a soundness bug for any atom
             // with a non-zero threshold.)
             let (lo, hi) = self.arith.derive_expr_bound_reasons(
                 &terms_buf,
@@ -1583,7 +1583,7 @@ impl<'a> TheoryManager<'a> {
 
     /// If `t` is a `__oxiz_numarg` proxy (a fresh variable that
     /// `purify_numeric_uf_args` substituted for a numeric constant), return the
-    /// constant's value.  Linear scan of `numarg_proxies` (the map is small —
+    /// constant's value.  Linear scan of `numarg_proxies` (the map is small –
     /// one entry per distinct numeric UF-arg constant, e.g. ~28 on vhard7).
     fn proxy_const_value(&self, t: TermId) -> Option<Rational64> {
         for (const_t, proxy_t) in self.numarg_proxies.iter() {
@@ -1612,9 +1612,9 @@ impl<'a> TheoryManager<'a> {
         is_positive: bool,
     ) -> DlPrimaryResult {
         use oxiz_theories::DiffLogicResult;
-        // Fold every constant sub-term — whether a `purify_numeric_uf_args`
+        // Fold every constant sub-term – whether a `purify_numeric_uf_args`
         // proxy (`__oxiz_numarg`, recoverable via `numarg_proxies`) or a bare
-        // `IntConst`/`RealConst` — into the atom's RHS constant, leaving only
+        // `IntConst`/`RealConst` – into the atom's RHS constant, leaving only
         // the real variable terms.  This restores the difference-logic shape
         // that the global purification substitute destroyed (it turned
         // `(+ x 1)` into `(+ x __oxiz_numarg)`), so the DL solver can feed atoms
@@ -1699,7 +1699,7 @@ impl<'a> TheoryManager<'a> {
     }
 
     /// Difference-logic theory propagation using the incrementally-maintained
-    /// `self.diff` (no per-call rebuild — the cost that made the old on-demand
+    /// `self.diff` (no per-call rebuild – the cost that made the old on-demand
     /// version 97% of theory time).  For each unassigned DL atom, test
     /// entailment via `sssp_from`/`entailed_from_sssp` over `self.diff`'s
     /// graph (per-source SSSP, amortised via a per-call cache).  SOUND only
@@ -1902,7 +1902,7 @@ impl<'a> TheoryManager<'a> {
     /// congruence steps (e.g., `f(select(a,x)) = f(select(a,y))`).
     ///
     /// Iterative: `Apply` arguments and `Select` operands are interned through
-    /// an explicit frame stack (post-order, left to right — the recursive
+    /// an explicit frame stack (post-order, left to right – the recursive
     /// order), so operand nesting depth cannot overflow the native call
     /// stack.  `euf.term_to_node` remains the cross-call memo, so shared
     /// sub-terms of the hash-consed DAG are interned once.
@@ -1995,7 +1995,7 @@ impl<'a> TheoryManager<'a> {
                 // integer value.  When the same value appears again (e.g. as a
                 // fresh TermId created during MBQI instantiation) we merge the
                 // new node into the canonical one.  This bounds the number of
-                // entries — and therefore of pairwise disequality edges — to the
+                // entries – and therefore of pairwise disequality edges – to the
                 // number of *distinct* literal values in the formula, preventing
                 // the O(n²) blowup that arises when MBQI creates many fresh
                 // TermIds for the same integer literal across iterations.
@@ -2044,7 +2044,7 @@ impl<'a> TheoryManager<'a> {
     /// `f(a)=f(b)` congruence works while arithmetic stays in the ArithSolver.
     ///
     /// Iterative: `Apply` arguments and `Select` operands are interned through
-    /// an explicit [`InternFrame`] stack in post-order, left to right — exactly
+    /// an explicit [`InternFrame`] stack in post-order, left to right – exactly
     /// the order the recursive version used, which matters because
     /// `intern_app` assigns node indices in creation order.  Operand nesting
     /// depth is therefore bounded by memory rather than by the native call
@@ -2125,7 +2125,7 @@ impl<'a> TheoryManager<'a> {
                 //
                 // The key carries every limb of the value.  Truncating it to
                 // the low 64 bits made `0` and `2^64` the *same* key at width
-                // 128, so the two constants were merged into one EUF class —
+                // 128, so the two constants were merged into one EUF class –
                 // and the merge was recorded as tautological, which is exactly
                 // what it was not.  `(distinct (g a) (g b))` over those two
                 // constants was then reported `unsat`.
@@ -2195,15 +2195,15 @@ impl<'a> TheoryManager<'a> {
     /// Register every shared term of a parsed arithmetic constraint in EUF.
     ///
     /// `intern_term_for_congruence` descends only through the *arguments* of an
-    /// application, so an application buried inside an arithmetic expression —
-    /// the `f(a)` of `(+ (f a) b)` — never reached congruence closure at all.
+    /// application, so an application buried inside an arithmetic expression –
+    /// the `f(a)` of `(+ (f a) b)` – never reached congruence closure at all.
     /// With `a = b` asserted, `f(a) = f(b)` was therefore never derived and
     /// `(= a b) ∧ (> (+ (f a) b) (+ (f b) a))` came back `sat`, a model that
     /// does not exist.  The same hole swallowed `(select arr i)` under `(+ …)`.
     ///
     /// The linear parser has already reduced the expression to exactly the
-    /// opaque terms the tableau reasons about, so interning those — and only
-    /// those — is both necessary and sufficient: after it, the two solvers share
+    /// opaque terms the tableau reasons about, so interning those – and only
+    /// those – is both necessary and sufficient: after it, the two solvers share
     /// the same atoms and every congruence the tableau could use is available.
     fn intern_arith_shared_terms(&mut self, var: Var, manager: &TermManager) {
         let Some(parsed) = self.var_to_parsed_arith.get(&var) else {
@@ -2367,7 +2367,7 @@ impl<'a> TheoryManager<'a> {
                         // single-atom reason is sufficient (no EUF chain), so
                         // the cheap derived-reason propagator stays sound.
                         // Other equalities (EUF-mediated, or whose linear parse
-                        // dropped an operand) are skipped — their bound's
+                        // dropped an operand) are skipped – their bound's
                         // reason would be incomplete.
                         if let Some(fv) = genuine_fixed_var(lhs, rhs, manager) {
                             self.arith.note_fixed_var(lhs, fv, parsed.reason_term);
@@ -2410,10 +2410,10 @@ impl<'a> TheoryManager<'a> {
                     // The previous implementation dispatched on a whitelist of
                     // "BV operation" kinds that listed only the arithmetic and
                     // bitwise ops (`bvadd`/`bvmul`/`bvand`/`bvudiv`/...).  Every
-                    // BV term whose head was outside that list — `concat`,
+                    // BV term whose head was outside that list – `concat`,
                     // `extract`, the shifts `bvshl`/`bvlshr`/`bvashr`, and any
                     // BV-sorted `ite` (which is what `bvsmod`, `bvcomp`,
-                    // `rotate_*`, `zero_extend`/`sign_extend` lower to) — matched
+                    // `rotate_*`, `zero_extend`/`sign_extend` lower to) – matched
                     // none of the cases, left `did_assert` false, and so was
                     // never asserted into the embedded SAT solver at all.  The
                     // atom then survived as a *free boolean*, and the solver
@@ -2422,9 +2422,9 @@ impl<'a> TheoryManager<'a> {
                     // where every model is impossible).
                     //
                     // `bv_check_eq` bit-blasts both sides with
-                    // `encode_bv_term_recursive` — which handles the full BV
+                    // `encode_bv_term_recursive` – which handles the full BV
                     // TermKind set and pins `BitVecConst` leaves to their concrete
-                    // bits — asserts the bit-level equality and consults the
+                    // bits – asserts the bit-level equality and consults the
                     // embedded SAT solver.  It is the same path the negative-`Eq`
                     // and `Diseq` branches already take, so the four polarities of
                     // a BV (dis)equality now share one encoding.
@@ -2508,7 +2508,7 @@ impl<'a> TheoryManager<'a> {
                 self.intern_arith_shared_terms(var, manager);
 
                 // Check if this is a BV comparison.  Detect it from the operand
-                // *sorts*, exactly as the `Eq` arm above does — `bv_terms` only
+                // *sorts*, exactly as the `Eq` arm above does – `bv_terms` only
                 // holds BV-sorted *variables*, so keying off it silently skipped
                 // every comparison whose sides are both compound, such as
                 // `(bvugt (bvxor x x) (bvand #xff x))`, leaving the atom as a
@@ -2547,7 +2547,7 @@ impl<'a> TheoryManager<'a> {
                         //
                         // `new_bv` alone allocates a fresh, completely
                         // unconstrained bit-vector for whatever term it is
-                        // handed — including `BitVecConst` operands.  A
+                        // handed – including `BitVecConst` operands.  A
                         // comparison such as `(bvult x #b00000000)` then reads
                         // as `x <u c` for an arbitrary `c`, which is trivially
                         // satisfiable, so the BV solver could never refute the
@@ -2776,7 +2776,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // cache.  A BV-sorted `ite` whose selector is a bare boolean variable
         // gets a *free* variable inside that solver, so without this link the
         // embedded search can take the branch the outer search has ruled out
-        // and both halves look consistent — a false `sat` for
+        // and both halves look consistent – a false `sat` for
         // `(= (ite c #x01 #x02) x) ∧ ¬c ∧ (= x #x01)`.  Only variables that
         // actually carry a term are replayed: `term_for_var`'s `TermId::new(0)`
         // fallback would otherwise pin an unrelated term.
@@ -2835,7 +2835,7 @@ impl TheoryCallback for TheoryManager<'_> {
         //
         // If the SAT core has assigned this variable before (and not yet
         // backtracked past it) with the OPPOSITE polarity, it has overwritten
-        // its own trail — a wrong assertion-level bug in conflict analysis.  The
+        // its own trail – a wrong assertion-level bug in conflict analysis.  The
         // incremental theory state still holds the old polarity's assertions and
         // cannot be surgically undone, so we replace the trail entry and rebuild
         // theory state from the corrected trail.  A re-assignment with the SAME
@@ -2871,14 +2871,14 @@ impl TheoryCallback for TheoryManager<'_> {
                 self.statistics.theory_propagations += 1;
 
                 // Process the flipped literal against the current (stale) state
-                // first.  If it stays consistent, keep that result — the extra
+                // first.  If it stays consistent, keep that result – the extra
                 // over-constraint from the not-yet-popped old polarity is
                 // harmless here and preserves the existing search trajectory.
                 // Only when it manufactures a conflict do we pay for a full
                 // rebuild from the corrected, deduplicated trail: that conflict
                 // may be spurious (a stale artefact of the SAT core's wrong
                 // backtrack level, the wrong-UNSAT cause) so we must re-derive
-                // the authoritative verdict — `Conflict` if genuinely
+                // the authoritative verdict – `Conflict` if genuinely
                 // inconsistent, `Sat` if the stale state fabricated it.
                 let direct = self.process_constraint(var, constraint, is_positive, self.manager);
                 let result = if matches!(direct, TheoryCheckResult::Conflict(_)) {
@@ -2936,7 +2936,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // analogue).  Env-gated (`OXIZ_BOUND_PROP`); validated sound before
         // default-enabling.  Fires after a successful arith assertion so that
         // asserting `(= x k)` (which pins `x ∈ [k,k]`) immediately forces every
-        // `x ◦ c` ite condition at the current decision level — the mechanism
+        // `x ◦ c` ite condition at the current decision level – the mechanism
         // that shallows conflicts on finite-domain QF_UFIDL from ~96 to ~2.
         #[cfg(feature = "std")]
         if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
@@ -2993,7 +2993,7 @@ impl TheoryCallback for TheoryManager<'_> {
         }
 
         // DL conflict backstop at full assignment using the incrementally-
-        // maintained solver (one full `check()` here is cheap — once per final
+        // maintained solver (one full `check()` here is cheap – once per final
         // check, not per atom).  A negative cycle is a sound refutation.
         if let oxiz_theories::DiffLogicResult::Conflict(cycle_terms) = self.diff.check() {
             return self.conflict_from_terms(&cycle_terms);
@@ -3098,8 +3098,8 @@ impl TheoryCallback for TheoryManager<'_> {
                         // `le`/`ge` atoms.  The clause `(eq ∨ ¬le ∨ ¬ge)` then
                         // forces `eq`, EUF merges `t` with `v` using the `eq`
                         // atom (SAT-backed reason), and congruence closure
-                        // collapses the nested chain — deterministically.
-                        // Cost: O(#ite-terms) — one value lookup + at most one
+                        // collapses the nested chain – deterministically.
+                        // Cost: O(#ite-terms) – one value lookup + at most one
                         // probe per term (only the constant it's assigned).
                         let mut theory_props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
                         for &term in self.ite_result_terms {
@@ -3180,7 +3180,7 @@ impl TheoryCallback for TheoryManager<'_> {
                         // The arithmetic solver could not decide this state
                         // (e.g. LIA branch-and-bound / LP budget exhausted).
                         // Returning a plain `Sat` here would fabricate a model
-                        // the solver never verified — an unsound `Sat`.  Flag
+                        // the solver never verified – an unsound `Sat`.  Flag
                         // resource exhaustion so the owning solver answers
                         // `Unknown`, and stop the search by reporting Sat.
                         self.resource_exhausted = true;
@@ -3223,7 +3223,7 @@ impl TheoryCallback for TheoryManager<'_> {
         self.assigned_level.retain(|_var, &mut lvl| lvl <= level);
 
         // Pop EUF, Arith, and BV states if needed.  Each pop also drops the
-        // derived-equality explanations recorded in the scope it retracts —
+        // derived-equality explanations recorded in the scope it retracts –
         // and, just as importantly, keeps the ones recorded at or below the
         // surviving depth: those assertions are still in the tableau, and
         // forgetting their explanation leaves a later conflict citing one of

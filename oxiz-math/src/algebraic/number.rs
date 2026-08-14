@@ -80,7 +80,7 @@ impl AlgebraicNumber {
         lower: BigRational,
         upper: BigRational,
     ) -> Result<Self, AlgebraicNumberError> {
-        // Reject the zero polynomial — it has infinitely many roots.
+        // Reject the zero polynomial – it has infinitely many roots.
         if poly.degree() == 0 && poly.coeffs.first().is_none_or(Zero::is_zero) {
             return Err(AlgebraicNumberError::ZeroPolynomial);
         }
@@ -151,7 +151,7 @@ impl AlgebraicNumber {
         let mid_value = self.minimal_poly.eval(&mid);
 
         if mid_value.is_zero() {
-            // Exact root — collapse to a point.
+            // Exact root – collapse to a point.
             self.lower = mid.clone();
             self.upper = mid;
         } else {
@@ -208,7 +208,7 @@ impl AlgebraicNumber {
             other.refine();
 
             if self.refinement_level > 1000 {
-                // Cannot separate after 1 000 steps — treat as equal.
+                // Cannot separate after 1 000 steps – treat as equal.
                 return Ordering::Equal;
             }
         }
@@ -390,7 +390,7 @@ impl AlgebraicNumber {
     }
 }
 
-// ─── private helpers ────────────────────────────────────────────────────────
+// ======== private helpers ========
 
 /// Substitute x → −x in a polynomial: p(−x).
 ///
@@ -473,7 +473,7 @@ fn sign_variations(seq: &[Polynomial], point: &BigRational) -> usize {
     signs.windows(2).filter(|w| w[0] != w[1]).count()
 }
 
-// ─── square-free helpers ─────────────────────────────────────────────────────
+// ======== square-free helpers ========
 
 /// Compute the square-free part of a univariate polynomial over Q:
 /// `sqfp(p) = p / gcd(p, p′)`.
@@ -572,7 +572,7 @@ fn make_monic(p: Polynomial) -> Polynomial {
     Polynomial::new(coeffs)
 }
 
-// ─── resultant helpers ──────────────────────────────────────────────────────
+// ======== resultant helpers ========
 
 /// Compute `q(k - t)` as a polynomial in `t`, where `q` is a univariate poly
 /// over Q and `k` is a rational constant.
@@ -862,7 +862,7 @@ fn isolate_root_in_interval(
     Err(AlgebraicNumberError::NonIsolatingInterval)
 }
 
-// ─── trait impls ────────────────────────────────────────────────────────────
+// ======== trait impls ========
 
 impl PartialEq for AlgebraicNumber {
     fn eq(&self, other: &Self) -> bool {
@@ -888,7 +888,7 @@ impl Ord for AlgebraicNumber {
     }
 }
 
-// ─── tests ──────────────────────────────────────────────────────────────────
+// ======== tests ========
 
 #[cfg(test)]
 mod tests {
@@ -1006,7 +1006,7 @@ mod tests {
         assert_eq!(neg2.eval(&rat(2)), -poly2.eval(&rat(2)));
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────────
+    // ======== helpers ========
 
     /// Construct √2 as an `AlgebraicNumber` (root of x²−2 in [1,2]).
     fn sqrt2() -> AlgebraicNumber {
@@ -1020,7 +1020,7 @@ mod tests {
         AlgebraicNumber::new(poly, rat(1), rat(2)).expect("√3 construction")
     }
 
-    // ── new tests for non-rational add / mul ─────────────────────────────────
+    // ======== new tests for non-rational add / mul ========
 
     /// √2 + √3 ≈ 3.1462…
     /// Verify the sum isolates exactly one root and the minimal poly
@@ -1070,7 +1070,7 @@ mod tests {
         let b = sqrt3();
         let mut prod = a.mul(&b).expect("√2 * √3 should succeed");
 
-        // Verify the product is in (2, 3) — the correct isolating interval for √6.
+        // Verify the product is in (2, 3) – the correct isolating interval for √6.
         assert!(
             prod.lower < num_rational::BigRational::new(BigInt::from(3), BigInt::from(1)),
             "lower bound should be < 3"

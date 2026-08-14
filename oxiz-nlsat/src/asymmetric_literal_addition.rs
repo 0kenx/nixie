@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Sound but
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. Sound but
 // marginal: its isolated unit propagation over a supplied clause set duplicates
 // the goal of vivification (which IS wired, and runs against the solver's real
 // BCP), with lower real strength. Prefer vivification.

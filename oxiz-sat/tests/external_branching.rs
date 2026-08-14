@@ -6,9 +6,9 @@ use oxiz_sat::{
     BoxedBranchingHeuristic, BranchingHeuristic, Lit, Solver, SolverConfig, SolverResult, Var,
 };
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Test heuristics
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A heuristic that always picks the first candidate and counts calls.
 struct CountingHeuristic {
@@ -42,7 +42,7 @@ impl BranchingHeuristic for DeferringHeuristic {
 
 /// A heuristic that counts on_conflict_var invocations.
 /// Does not override select (uses default no-op for conflict calls
-/// in structs that do override — but here we track via a shared counter).
+/// in structs that do override – but here we track via a shared counter).
 struct ConflictCountingHeuristic {
     conflict_hook_count: Arc<Mutex<usize>>,
 }
@@ -73,10 +73,10 @@ impl BranchingHeuristic for HighestScoreHeuristic {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Helper to build a tiny 2-variable SAT formula: (a OR b) AND (NOT a OR b)
 // satisfiable with b=true, a=anything
-// ---------------------------------------------------------------------------
+// ========  ========
 fn build_simple_sat(solver: &mut Solver) -> (Var, Var) {
     let a = solver.new_var();
     let b = solver.new_var();
@@ -85,9 +85,9 @@ fn build_simple_sat(solver: &mut Solver) -> (Var, Var) {
     (a, b)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Tests
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_external_branching_default_none() {
@@ -258,7 +258,7 @@ fn test_external_branching_config_clone() {
 #[test]
 fn test_external_branching_receives_conflict_calls() {
     // Wire a ConflictCountingHeuristic as external_branching.
-    // Solve PHP(3,2) — 3 pigeons, 2 holes — which is UNSAT and requires real CDCL
+    // Solve PHP(3,2) – 3 pigeons, 2 holes – which is UNSAT and requires real CDCL
     // search with genuine conflict analysis (not resolvable by unit propagation alone).
     // Assert that on_conflict_var was invoked at least once.
     let conflict_hook_count = Arc::new(Mutex::new(0usize));

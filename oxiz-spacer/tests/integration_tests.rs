@@ -68,7 +68,7 @@ fn test_simple_counter_invariant() {
 ///
 /// DEFERRED / still ignored: the sequential PDR engine (`pdr.rs`, outside this
 /// task's ownership) does not yet detect the counterexample for a *decrementing*
-/// counter — it exhausts its SMT-query budget (~60s) and returns `Unknown`
+/// counter – it exhausts its SMT-query budget (~60s) and returns `Unknown`
 /// instead of `Unsafe`. Blocking-based counterexample extraction for this
 /// fragment is an engine limitation to be fixed in `pdr.rs`, not in the
 /// distributed / existential / BMC modules covered here.

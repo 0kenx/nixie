@@ -319,8 +319,8 @@ impl<'a> Parser<'a> {
     /// That retry is a *loop*, not a tail call: skipping used to `return
     /// self.parse_command()`, and because a live `cmd_name: String` has to be
     /// dropped after the call returns, LLVM cannot turn it into a jump. A
-    /// script of N unknown commands — a documented, tested, fully valid input
-    /// ("lenient interoperability") — therefore consumed N native stack
+    /// script of N unknown commands – a documented, tested, fully valid input
+    /// ("lenient interoperability") – therefore consumed N native stack
     /// frames and aborted the process well before N reached a million.
     pub fn parse_command(&mut self) -> Result<Option<Command>> {
         loop {
@@ -730,7 +730,7 @@ impl<'a> Parser<'a> {
 
                 // Create placeholder vars for parameters, reusing the
                 // already-resolved sort rather than re-parsing it from text.
-                // Keep the exact TermIds — call-site expansion substitutes by
+                // Keep the exact TermIds – call-site expansion substitutes by
                 // id, not by recreating vars from name/sort (a wrong sort would
                 // intern a different var and leave free parameters in the body).
                 let mut param_vars = Vec::with_capacity(params.len());
@@ -765,7 +765,7 @@ impl<'a> Parser<'a> {
                 // For nullary define-fun, inline it directly as a binding.
                 // Because that inlining is a *substitution* at every later
                 // occurrence, the depth of `body` is charged against the
-                // parser's nesting budget here — a chain of such definitions
+                // parser's nesting budget here – a chain of such definitions
                 // otherwise builds an arbitrarily deep term while every
                 // individual command stays shallow. See
                 // `Parser::charge_binding_depth`.
@@ -837,8 +837,8 @@ impl<'a> Parser<'a> {
     /// genuinely unrecognized commands) and then fail with an explicit,
     /// honest error. Used for commands whose semantics we understand well
     /// enough to know that silently ignoring them would risk a wrong
-    /// sat/unsat answer (e.g. `define-fun-rec`), so — unlike truly unknown
-    /// commands — they must never be balance-skipped and continued past.
+    /// sat/unsat answer (e.g. `define-fun-rec`), so – unlike truly unknown
+    /// commands – they must never be balance-skipped and continued past.
     fn reject_command(&mut self, cmd_name: &str, reason: &str) -> Result<Command> {
         let position = self.lexer.position();
         let mut depth = 1;
@@ -871,7 +871,7 @@ impl<'a> Parser<'a> {
         Ok(default)
     }
 
-    /// Parse `(declare-datatypes (...) (...))` — multi-datatype form
+    /// Parse `(declare-datatypes (...) (...))` – multi-datatype form
     fn parse_declare_datatypes(&mut self) -> Result<Command> {
         // (declare-datatypes ((name1 arity1) (name2 arity2) ...)
         //                    ((constructors1 ...) (constructors2 ...)))
@@ -899,8 +899,8 @@ impl<'a> Parser<'a> {
         }
 
         // Register every declared name's sort *before* any constructor group is
-        // parsed, so that a field mentioning one of them — the recursive
-        // `(tail Lst)`, or a mutually recursive `(left Tree)` — resolves to the
+        // parsed, so that a field mentioning one of them – the recursive
+        // `(tail Lst)`, or a mutually recursive `(left Tree)` – resolves to the
         // datatype's own sort instead of a fresh uninterpreted one.
         for dt_name in &datatype_names {
             let dt_sort = self.manager.sorts.mk_datatype_sort(dt_name);
@@ -1005,7 +1005,7 @@ impl<'a> Parser<'a> {
         Ok((constructors, ctor_defs))
     }
 
-    /// Parse `(declare-datatype name (...))` — single-datatype form
+    /// Parse `(declare-datatype name (...))` – single-datatype form
     fn parse_declare_datatype(&mut self) -> Result<Command> {
         let name = self.expect_symbol()?;
         self.expect_lparen()?;

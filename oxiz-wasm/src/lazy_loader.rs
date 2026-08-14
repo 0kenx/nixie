@@ -282,8 +282,8 @@ impl LazyLoader {
     ///
     /// The dependency graph is walked iteratively (explicit heap stack) and the
     /// resulting dependencies-first order is loaded in a flat loop, so a long
-    /// acyclic dependency chain no longer nests one `Box::pin`ned future — and
-    /// one poll frame — per level on the 1 MiB WASM stack.
+    /// acyclic dependency chain no longer nests one `Box::pin`ned future – and
+    /// one poll frame – per level on the 1 MiB WASM stack.
     pub async fn load_theory(&mut self, name: &str) -> LoadResult<()> {
         if self.is_loaded(name) {
             return Err(LoadError::AlreadyLoaded(name.to_string()));
@@ -809,7 +809,7 @@ mod tests {
 
     /// `check_dependency_cycle` used to recurse once per dependency level, so
     /// the cycle detector died on a deep *acyclic* graph before it could report
-    /// anything — on a 1 MiB WASM stack, where that is an unrecoverable trap.
+    /// anything – on a 1 MiB WASM stack, where that is an unrecoverable trap.
     /// A stack overflow aborts the process rather than failing a test, so
     /// *returning at all* is the assertion.
     ///
@@ -817,7 +817,7 @@ mod tests {
     /// `stack_size / depth`, not either number alone. So the WASM-native pair of
     /// 1 MiB and a 100,000-long chain is scaled down by 8, to a 128 KiB stack
     /// and a 12,500-long chain: the same ~10 bytes per frame, at an eighth of
-    /// the allocation. The two constants are deliberately tied — restoring the
+    /// the allocation. The two constants are deliberately tied – restoring the
     /// longer chain without also restoring the larger stack would silently stop
     /// this test from catching a recursive rewrite.
     #[test]

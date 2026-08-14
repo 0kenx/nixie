@@ -102,7 +102,7 @@ fn test_pattern_matching_simple() {
     assert_eq!(bindings.get(&x_name), Some(&one));
 }
 
-// ===========================================================================
+// ========  ========
 // `substitute_single_var` regression tests
 //
 // The helper used to match only a 21-arm whitelist of `TermKind`s and end in
@@ -113,7 +113,7 @@ fn test_pattern_matching_simple() {
 // merely degrade the result -- it leaves the eliminated variable *free* in a
 // formula the tactic reports as an equisatisfiable rewrite, which can flip
 // UNSAT to SAT (and, with a name collision, SAT to UNSAT).
-// ===========================================================================
+// ========  ========
 
 /// End-to-end: `∃x:BV8. (x = #x05 ∧ x <u #x01)` is UNSAT, but DER used to
 /// rewrite it to `x <u #x01` with `x` free -- which is SAT (take `x = 0`).
@@ -238,7 +238,7 @@ fn der_substitutes_through_a_datatype_constructor() {
     assert_eq!(result, expected);
 }
 
-// ===========================================================================
+// ========  ========
 // `DerTactic` existential-path regression tests
 //
 // `remove_from_and_and_substitute` used to drop *every* conjunct that was an
@@ -248,7 +248,7 @@ fn der_substitutes_through_a_datatype_constructor() {
 // exact disequality being resolved via `is_target_diseq`; the ∃ path never
 // got the same treatment, so every *other* equality on x was silently lost.
 // Losing a conjunct weakens the formula, so this turns UNSAT into SAT.
-// ===========================================================================
+// ========  ========
 
 /// `∃x. (x = 5 ∧ x = 6)` is UNSAT (nothing equals both). DER used to drop
 /// *both* equalities -- the one it resolved and the surviving constraint --
@@ -588,9 +588,9 @@ fn substitute_survives_a_deeply_nested_term_on_a_tiny_stack() {
     assert!(old_leaf_gone, "the old leaf x must not remain");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Group C1: explicit-stack conversions (DER, Skolemization, instantiation)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `DerTactic::apply_der` used to recurse once per level of *term* nesting and
 /// guard that with `DerConfig::max_depth` (default 10). It now walks with an

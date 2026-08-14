@@ -3,8 +3,8 @@
 //! `--minimize-core` runs a real minimal-unsat-core search: starting from the
 //! full assertion set, it repeatedly drops one assertion and re-checks
 //! satisfiability, keeping the assertion removed whenever the remainder is
-//! still `unsat`. The result is a *1-minimal* core — removing any single
-//! remaining assertion makes it satisfiable — which is a stronger guarantee
+//! still `unsat`. The result is a *1-minimal* core – removing any single
+//! remaining assertion makes it satisfiable – which is a stronger guarantee
 //! than the conservative core `(get-unsat-core)` reports for `:named`
 //! assertions.
 //!

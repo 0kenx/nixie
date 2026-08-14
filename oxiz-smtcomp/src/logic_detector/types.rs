@@ -56,7 +56,7 @@ pub struct TheoryBits {
 impl TheoryBits {
     /// Whether any theory bit is set.
     ///
-    /// Used by the logic mapper to distinguish "no signal — probably a pure
+    /// Used by the logic mapper to distinguish "no signal – probably a pure
     /// Boolean script" from "something interesting was detected".
     #[must_use]
     pub fn is_empty(&self) -> bool {

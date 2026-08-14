@@ -276,7 +276,7 @@ impl PyTermManager {
     ///
     /// Args:
     ///     name: Variable name.
-    ///     sort_name: Sort descriptor — see :func:`parse_sort_name` for the full
+    ///     sort_name: Sort descriptor – see :func:`parse_sort_name` for the full
     ///         grammar.  Examples: ``"Bool"``, ``"Int"``, ``"Real"``,
     ///         ``"String"``, ``"BitVec[32]"``, ``"Float[8,24]"``,
     ///         ``"Array[Int,Bool]"``.
@@ -948,10 +948,10 @@ impl PyTermManager {
 /// - ``"Int"``
 /// - ``"Real"``
 /// - ``"String"``
-/// - ``"BitVec[N]"`` — N-bit bitvector
-/// - ``"Float[eb,sb]"`` or ``"FP[eb,sb]"`` — floating-point with *eb* exponent bits
+/// - ``"BitVec[N]"`` – N-bit bitvector
+/// - ``"Float[eb,sb]"`` or ``"FP[eb,sb]"`` – floating-point with *eb* exponent bits
 ///   and *sb* significand bits (including the implicit leading bit)
-/// - ``"Array[D,R]"`` — array from sort D to sort R (nested bracketed sorts)
+/// - ``"Array[D,R]"`` – array from sort D to sort R (nested bracketed sorts)
 ///
 /// This parser is iterative (explicit heap stack). `Array[...]` nesting is
 /// bounded only by the length of the Python string, so a one-liner such as

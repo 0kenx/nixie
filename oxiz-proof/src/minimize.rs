@@ -8,7 +8,7 @@
 //!
 //! `compress.rs` removes *structurally redundant* nodes (unreachable steps, trivial
 //! identity rewrites). `minimize.rs` goes further: it performs **hash-cons
-//! deduplication** — collapsing any two nodes that share the same rule, conclusion
+//! deduplication** – collapsing any two nodes that share the same rule, conclusion
 //! text, argument list, and premise count into a single canonical node, then
 //! re-trims the proof until no further removal is possible.
 
@@ -18,9 +18,9 @@ use rustc_hash::FxHashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Configuration
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Configuration for [`ProofMinimizer`].
 #[derive(Debug, Clone)]
@@ -62,9 +62,9 @@ impl MinimizeConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Result
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Statistics returned by [`ProofMinimizer::minimize`].
 #[derive(Debug, Clone, Default)]
@@ -77,9 +77,9 @@ pub struct MinimizeResult {
     pub duplicates_collapsed: usize,
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Hash key for candidate duplicates
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// An opaque u64 that identifies a node's *semantic fingerprint*:
 /// derived from its rule variant, conclusion text, argument list, and
@@ -109,9 +109,9 @@ impl ConclusionHash {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Equality check (full structural equality on the node step)
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Full structural equality check between two [`ProofNode`]s after the
 /// hash-cons candidate match. Because two different inference rules might
@@ -140,9 +140,9 @@ fn nodes_are_equal(proof: &Proof, lhs: ProofNodeId, rhs: ProofNodeId) -> bool {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Core minimization helpers
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Rebuild `proof` retaining only the nodes in the dependency cone of
 /// `root_id`, rewriting premise references through `id_remap`.
@@ -249,7 +249,7 @@ fn dedup_pass(proof: &Proof) -> (FxHashMap<ProofNodeId, ProofNodeId>, usize) {
                 collapsed += 1;
             }
             Some(_) => {
-                // Hash collision but not structurally equal — keep this node
+                // Hash collision but not structurally equal – keep this node
                 // as a separate canonical (the first one stays canonical, this
                 // one remains unmapped).
             }
@@ -262,9 +262,9 @@ fn dedup_pass(proof: &Proof) -> (FxHashMap<ProofNodeId, ProofNodeId>, usize) {
     (remap, collapsed)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Public API
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Proof minimizer that performs hash-cons deduplication followed by
 /// iterative dependency-cone reduction until a fixed point.
@@ -342,28 +342,28 @@ impl Default for ProofMinimizer {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Tests
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proof::Proof;
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Helper: build a proof with two axiom-nodes whose conclusions are
     // identical through the `update_conclusion` backdoor.
     //
     // Because Proof::add_axiom deduplicates by conclusion at construction
     // time, we construct them with distinct conclusions first, then rename
     // one to match the other.
-    // ------------------------------------------------------------------
+    // ========  ========
     fn proof_with_duplicate_axioms() -> (Proof, ProofNodeId, ProofNodeId) {
         let mut proof = Proof::new();
         let a1 = proof.add_axiom("p"); // id=0, conclusion="p"
         let a2 = proof.add_axiom("q"); // id=1, conclusion="q"
-        // Rename a2 to also conclude "p" — now two nodes share "p".
+        // Rename a2 to also conclude "p" – now two nodes share "p".
         proof.update_conclusion(a2, "p");
         // Add an inference over both so both are in the root's cone.
         let root = proof.add_inference("merge", vec![a1, a2], "merged_p");
@@ -453,7 +453,7 @@ mod tests {
         proof.update_conclusion(a1, "p_orig"); // duplicate of a0
         let layer1 = proof.add_inference("l1", vec![a0, a1], "layer1_out");
 
-        // Layer 2 duplicates — different conclusion namespace
+        // Layer 2 duplicates – different conclusion namespace
         let a2 = proof.add_axiom("r_orig");
         let a3 = proof.add_axiom("r_dup_raw");
         proof.update_conclusion(a3, "r_orig"); // duplicate of a2
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn test_disable_dedup_preserves_size() {
         // Build a minimal proof with all distinct conclusions and all nodes
-        // reachable from root — nothing to trim, nothing to dedup.
+        // reachable from root – nothing to trim, nothing to dedup.
         let mut proof = Proof::new();
         let a1 = proof.add_axiom("distinct_x");
         let a2 = proof.add_axiom("distinct_y");

@@ -27,12 +27,12 @@ Outputs (under --out, default bench/differential/results/<label>/):
   summary.json    solved / agree / disagree / timeouts / PAR-2 + (with
                   --validate-models) model-validity, family-suspect and trusted
                   counts (see TRUST MODEL below).
-  families.json   per-family rollup (disagreements, sat model status) — the
+  families.json   per-family rollup (disagreements, sat model status) – the
                   family-neighbour view.
 
 Exit codes:
   1  if any *soundness* disagreement (oxiz sat where z3 unsat, or vice-versa)
-     is found — this gates a PR. Timeouts/unknown are not soundness failures.
+     is found – this gates a PR. Timeouts/unknown are not soundness failures.
   2  if --baseline is given and a regression is detected relative to it
      (agree_z3 down, or disagree_soundness up, or a previously-agreeing
      instance now disagrees). Reported in addition to the soundness exit.
@@ -51,7 +51,7 @@ with z3 IS a correct answer (the instance genuinely is satisfiable). But
                      with the assertions (z3: asserts∧model = sat). Real solve.
   sat_model_invalid  oxiz sat but its model contradicts the assertions (z3:
                      asserts∧model = unsat). The sat is bogus OR the model
-                     emitter is broken — either way, not trustworthy evidence.
+                     emitter is broken – either way, not trustworthy evidence.
   sat_family_suspect an agreeing sat that lives in a family containing ANY
                      disagreement (verdict or model_invalid) for this solver.
                      The QF_ANIA pattern: one over-eager-sat mechanism scores
@@ -123,7 +123,7 @@ def run_one(cmd, path, timeout, stdin_text=None):
 # SMT-LIB layout: smt-lib/non-incremental/<LOGIC>/<FAMILY>/.../<file>.smt2
 # The "family" is the benchmark series right under the logic dir, so e.g.
 # QF_ANIA/20211213-GrandProduct-Ozdemir/{sound,unsound}/* collapse to one
-# family — which is exactly what lets the neighbour check catch the ANIA
+# family – which is exactly what lets the neighbour check catch the ANIA
 # over-eager-sat pattern (err on sound/*, score on unsound/*).
 def family_key(logic: str, path: str) -> str:
     needle = "/" + logic + "/"
@@ -183,7 +183,7 @@ def build_z3_consistency_script(orig_text: str, defs) -> str:
     (matching the file's |...| quoting); model names not present as declared
     nullary symbols are skipped (internal auxiliaries, not user variables).
     Unknown idents in val (e.g. oziz's @uc_I_N uninterpreted witnesses) are
-    declared. Function models are SKIPPED — this can only make the check
+    declared. Function models are SKIPPED – this can only make the check
     *lenient* (more 'sat'), never a false 'unsat', because (G_constants ∧ F)
     unsat already implies no function extension rescues F, hence oziz's claimed
     model can't satisfy F.
@@ -282,7 +282,7 @@ def validate_model(z3_bin, oxiz_bin, oxiz_extra, path, orig_text, timeout):
     if zr == "sat":
         return "valid", f"z3: consistent ({len(defs)} define-fun(s) pinned)"
     if zr == "unknown":
-        return "valid", "z3: unknown (treated as consistent — not a bad-model signal)"
+        return "valid", "z3: unknown (treated as consistent – not a bad-model signal)"
     return "z3_err", zr
 
 

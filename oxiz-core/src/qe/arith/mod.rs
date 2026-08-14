@@ -57,9 +57,9 @@ impl LinearElimResult {
 /// Eliminate one existentially-quantified linear arithmetic variable.
 ///
 /// Integer variables are handled by Cooper's algorithm and real variables by
-/// Loos–Weispfenning virtual substitution. When elimination is not possible —
+/// Loos–Weispfenning virtual substitution. When elimination is not possible –
 /// `var` is not a plain arithmetic variable, or the formula is outside the
-/// supported linear fragment — the original formula is returned as
+/// supported linear fragment – the original formula is returned as
 /// [`LinearElimResult::NotApplied`] rather than being silently presented as an
 /// eliminated result.
 pub fn eliminate_linear(var: TermId, formula: TermId, tm: &mut TermManager) -> LinearElimResult {

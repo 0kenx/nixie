@@ -104,9 +104,9 @@ fn skolem_candidate_walk_survives_a_small_stack() {
         .expect("the skolem-candidate walk must return on 128 KiB instead of overflowing it");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Behaviour preservation: families already covered before this change.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Shallow, hand-checkable formula exercising connectives already covered
 /// before this change (`And`, `Eq`, `Forall`, `Apply`), pinning the exact
@@ -222,10 +222,10 @@ fn skolem_candidate_walk_preserves_remaining_previously_covered_connectives() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Newly covered families: each was in the old `_ => {}` catch-all and so
 // could never find a nested Skolem application before this change.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// Regression: every BitVector `TermKind` fell into the pre-fix `_ => {}`
 /// catch-all -- this is the task's own motivating example, `(bvadd (sk!0 x)
@@ -425,11 +425,11 @@ fn skolem_candidate_found_under_xor() {
     );
 }
 
-// =====================================================================
+// ========  ========
 // Tseitin-encoder hardening: memoisation (`Solver::encoded_terms`),
 // iterative `extract_linear_terms`, iterative arith-split walks, and the
 // depth-cap stack-budget measurement.
-// =====================================================================
+// ========  ========
 
 use super::super::{SolverConfig, SolverResult};
 use num_rational::Rational64;
@@ -513,7 +513,7 @@ fn tseitin_memo_encodes_each_doubling_dag_node_once() {
 /// clauses.  Asserting `f` itself afterwards widens `f`'s polarity to `Both`,
 /// and the encoder must *re-encode* `f` to emit the missing `f => (p or q)`
 /// direction.  A memo keyed on `TermId` alone would return the cached literal
-/// and skip those clauses, leaving `f` under-constrained — this formula
+/// and skip those clauses, leaving `f` under-constrained – this formula
 /// (`(f => c) ∧ f ∧ ¬p ∧ ¬q`, unsatisfiable because `f = p ∨ q`) would then
 /// come back `Sat`.
 #[test]
@@ -581,7 +581,7 @@ fn tseitin_memo_shared_subterm_keeps_sat_verdict() {
 /// produce a normal `Unknown`, never a process abort.  The assert-time
 /// `term_exceeds_encode_depth` pre-check (explicit stack) flags the term
 /// before any recursive pass sees it, and `check_core` consults
-/// `encode_depth_exceeded` *first* — before the axiom instantiators and the
+/// `encode_depth_exceeded` *first* – before the axiom instantiators and the
 /// five theory collectors walk the over-deep assertion.  A stack overflow is
 /// a fatal abort `catch_unwind` cannot intercept, so this thread returning at
 /// all is the assertion.
@@ -625,7 +625,7 @@ fn deep_assertion_answers_unknown_on_a_small_stack() {
 /// A chain exactly [`super::super::ENCODE_DEPTH_LIMIT`] deep passes the
 /// pre-check, so `encode_depth` recurses to the full cap.  Running it on a
 /// 1 MiB thread proves the cap fires *before* the native stack dies on the
-/// smallest stack an embedder plausibly hands us — at the cap's value at the
+/// smallest stack an embedder plausibly hands us – at the cap's value at the
 /// time of writing, measured at `opt-level = 1` (this workspace's dev
 /// profile), the whole at-cap descent fits with headroom; see the constant's
 /// doc comment for the measured numbers.
@@ -665,7 +665,7 @@ fn encode_at_cap_depth_survives_a_one_mib_stack() {
 /// `extract_linear_terms` is reached with the *whole operand* of a shallow
 /// comparison atom (`(< chain 0)` is depth 2 for the encoder but `DEPTH`
 /// for the linear parser), and its frames used to stack on top of
-/// `encode_depth`'s — so it must never recurse natively.  The deep `Sub`
+/// `encode_depth`'s – so it must never recurse natively.  The deep `Sub`
 /// chain doubles as a semantic pin: `((x - 1) - 1) - ...` must fold to
 /// exactly `x - DEPTH`, proving the conversion did not perturb scales.
 #[test]
@@ -769,7 +769,7 @@ fn extract_linear_terms_deep_nested_mul_on_a_small_stack() {
 }
 
 /// Behaviour pins for the iterative `extract_linear_terms`: exact
-/// coefficient lists (including order — callers see the append order),
+/// coefficient lists (including order – callers see the append order),
 /// constant folding through `Mul`, and every nonlinear reject the recursive
 /// version produced.
 #[test]
@@ -856,7 +856,7 @@ fn extract_linear_terms_semantic_pins() {
 
     // Failure leaves the caller's buffers untouched (the recursive version
     // left partial writes; the only caller discards them on None, so the
-    // cleaner behaviour is safe — pin it so it stays deliberate).
+    // cleaner behaviour is safe – pin it so it stays deliberate).
     let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
     let mut constant = Rational64::zero();
     let pre_seeded = (z, Rational64::from_integer(7));
@@ -874,7 +874,7 @@ fn extract_linear_terms_semantic_pins() {
 }
 
 /// The two arith-split walks run on MBQI instantiation results, which are
-/// produced mid-`check` and never pass the assert-time depth gate — their
+/// produced mid-`check` and never pass the assert-time depth gate – their
 /// visited sets bound *work* on shared DAGs but not chain depth, so both were
 /// converted to explicit stacks.  A 12 500-deep chain through their recursive
 /// arms must return on a 128 KiB thread.
@@ -928,7 +928,7 @@ fn arith_split_walks_still_emit_trichotomy_clauses() {
 
     // One negated equality => exactly one trichotomy clause (3 literals over
     // atoms `encode` creates on demand; clause count grows by exactly one
-    // clause per pair beyond the atoms' own definitional clauses — assert
+    // clause per pair beyond the atoms' own definitional clauses – assert
     // growth, not an exact count, to stay robust to atom-encoding details).
     let eq_xy = manager.mk_eq(x, y);
     let neq = manager.mk_not(eq_xy);
@@ -949,9 +949,7 @@ fn arith_split_walks_still_emit_trichotomy_clauses() {
     );
 }
 
-// =====================================================================
-// Depth-guard measurement coverage and the sticky-flag `Sat` gate.
-// =====================================================================
+// ======== Depth-guard measurement coverage and the sticky-flag `Sat` gate. ========
 
 /// The assert-time depth pre-check must measure nesting through *datatype
 /// constructor* arguments: `succ(succ(...))` is one level per constructor.
@@ -961,7 +959,7 @@ fn arith_split_walks_still_emit_trichotomy_clauses() {
 /// and was handed to the native-recursive passes the guard exists to
 /// protect.  The pin: a 12 500-deep chain (still 24x past the guard's 512)
 /// must trip the guard at assert time, and `check` must answer an honest
-/// `Unknown` — returning at all on a 128 KiB thread is the no-overflow half
+/// `Unknown` – returning at all on a 128 KiB thread is the no-overflow half
 /// of the proof.
 #[test]
 fn depth_guard_measures_datatype_constructor_chains() {
@@ -1005,14 +1003,14 @@ fn depth_guard_measures_datatype_constructor_chains() {
 }
 
 /// The `check()` wrapper must degrade `Sat` to `Unknown` whenever
-/// `encode_depth_exceeded` is set — `check_core`'s top-of-function gate is
+/// `encode_depth_exceeded` is set – `check_core`'s top-of-function gate is
 /// not enough on its own, because MBQI instantiation results and E-matching
 /// lemmas are encoded *mid-loop*, after that gate has already been
 /// consulted, and `encode_depth`'s cap can flip the flag between the gate
 /// and a `Sat` exit.  Constructed here through the one deterministic path
 /// that reaches a `Sat` verdict with the flag already set: an empty
 /// assertion set (`check_core` answers `Sat` before its flag gate) after a
-/// direct over-cap `encode` — exactly the call the MBQI loop makes for an
+/// direct over-cap `encode` – exactly the call the MBQI loop makes for an
 /// over-deep lemma.  A truncated encoding only ever drops clauses, so
 /// `Unsat` would remain sound; `Sat` may rest on the missing constraints
 /// and must not survive.
@@ -1046,8 +1044,8 @@ fn sat_verdict_degrades_to_unknown_after_mid_search_truncation() {
 
 /// `check_sat_only` skips the theory layer but must still respect the two
 /// facts `assert` records *outside* the SAT clause database: an asserted
-/// `False` (no clause is emitted for it — only `has_false_assertion` is set)
-/// and an encoder-refused over-deep assertion (no clauses at all — only
+/// `False` (no clause is emitted for it – only `has_false_assertion` is set)
+/// and an encoder-refused over-deep assertion (no clauses at all – only
 /// `encode_depth_exceeded` is set).  Solving the remaining clauses alone
 /// answered `Sat` for both, a silently wrong verdict rather than a
 /// documented limitation of the pure-SAT entry point.

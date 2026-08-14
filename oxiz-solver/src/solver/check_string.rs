@@ -42,8 +42,8 @@ impl Solver {
         // Check 0: constant-equality conflicts.  Every collected equality holds
         // unconditionally (they come from conjunctive contexts only), so terms
         // linked by them share a value.  A class that is forced to two *different*
-        // string constants — `s = "x" ∧ s = "y"`, `a = "p" ∧ b = "q" ∧ a = b`, or
-        // a bare `"x" = "y"` — is refuted by constant propagation alone.
+        // string constants – `s = "x" ∧ s = "y"`, `a = "p" ∧ b = "q" ∧ a = b`, or
+        // a bare `"x" = "y"` – is refuted by constant propagation alone.
         // Reference: Z3's theory_seq.cpp reduces constant-vs-constant sequence
         // equalities to `false` in `solve_eqs`.
         if self.propagate_string_equalities(manager, &string_equalities, &mut string_assignments) {
@@ -149,7 +149,7 @@ impl Solver {
     /// # Why this is the missing half of the ground string procedure
     ///
     /// [`oxiz_theories::string::solve_ground_string_model`] can already
-    /// *evaluate* every ground string operator — that is how a satisfiable
+    /// *evaluate* every ground string operator – that is how a satisfiable
     /// ground formula gets its `Sat` certificate.  What it deliberately never
     /// produces is `Unsat`: a formula whose evaluation comes out `false` merely
     /// fails to verify, and the solver then reported the honest but far too
@@ -162,7 +162,7 @@ impl Solver {
     /// Two independent properties are needed, and they are kept strictly apart:
     ///
     /// * **Value.**  [`eval_ground_bool`] runs with an empty model, so a
-    ///   variable — of any sort — evaluates to `None` and the `None` propagates.
+    ///   variable – of any sort – evaluates to `None` and the `None` propagates.
     ///   A `Some(v)` answer therefore holds in *every* interpretation.  Because
     ///   such a value is the same wherever the term occurs, evaluating a term is
     ///   safe regardless of the polarity it sits at.
@@ -176,8 +176,8 @@ impl Solver {
     /// A node that hands out asserted children needs no evaluation of its own:
     /// `And`⁺, `Or`⁻ and `Not` are refuted exactly when one of the children the
     /// walk already visits is, so skipping them avoids re-evaluating the whole
-    /// sub-tree once per level of an `And` spine.  Every other node — including
-    /// `And`⁻ and `Or`⁺, where de Morgan makes the children conditional — is
+    /// sub-tree once per level of an `And` spine.  Every other node – including
+    /// `And`⁻ and `Or`⁺, where de Morgan makes the children conditional – is
     /// evaluated as a unit.
     fn ground_string_conflict(&self, manager: &TermManager) -> bool {
         // Keep non-string problems off this path entirely: the evaluator is
@@ -225,8 +225,8 @@ impl Solver {
     ///
     /// One linear, visited-set-deduplicated walk over the whole assertion DAG,
     /// shared by the three presence tests in this module.  It descends through
-    /// *every* structural child, including conditional ones, so — unlike
-    /// [`asserted_children`] — its answer says nothing about whether a sub-term
+    /// *every* structural child, including conditional ones, so – unlike
+    /// [`asserted_children`] – its answer says nothing about whether a sub-term
     /// is asserted.  It may therefore only ever gate work; it must never be used
     /// to justify a conflict.
     fn any_subterm(
@@ -412,7 +412,7 @@ impl Solver {
     /// assertion states the opposite.  Descending through `And` alone keeps
     /// every fact positive by construction.
     ///
-    /// The walk is an explicit heap worklist rather than recursion — an
+    /// The walk is an explicit heap worklist rather than recursion – an
     /// assertion's nesting depth is attacker-controlled and this runs on
     /// whatever stack `check_sat`'s caller has.  Conjuncts are pushed in
     /// reverse so they pop left to right, matching the recursive order, which
@@ -527,7 +527,7 @@ impl Solver {
 
                     // No descent into `lhs`/`rhs`: the only formulas reachable from
                     // an equality's operands sit behind a Boolean equality, which is
-                    // a polarity boundary — their facts are not unconditional.
+                    // a polarity boundary – their facts are not unconditional.
                 }
 
                 // Handle And: every conjunct is asserted too.
@@ -708,7 +708,7 @@ impl Solver {
                         }
                     }
 
-                    // No descent into the operands — see
+                    // No descent into the operands – see
                     // `collect_string_constraints` for why an equality's
                     // children are a polarity boundary.
                 }
@@ -727,7 +727,7 @@ impl Solver {
     ///
     /// These atoms are mapped to fresh SAT variables by `encode.rs` and are
     /// never evaluated by a real string theory, so a positive `Sat` answer that
-    /// relies on them is unsound.  Bare string literals are excluded — they only
+    /// relies on them is unsound.  Bare string literals are excluded – they only
     /// participate through structural equality, which the EUF core handles.
     fn is_string_theory_atom(kind: &TermKind) -> bool {
         matches!(
@@ -759,7 +759,7 @@ impl Solver {
     /// ([`oxiz_theories::string::solve_ground_string_model`]).
     ///
     /// Returns `true` only when a concrete assignment to every string variable
-    /// makes the whole assertion set evaluate to `true` — a sound `Sat`
+    /// makes the whole assertion set evaluate to `true` – a sound `Sat`
     /// certificate. When no such witness is found within the search bounds it
     /// returns `false`, and the caller keeps the honest `Unknown` verdict.
     ///
@@ -792,7 +792,7 @@ impl Solver {
     /// The ground procedure's evaluator only knows string variables, so it
     /// declines to certify anything whose assertions also mention a free
     /// Boolean / arithmetic variable.  In that case fall back to the values that
-    /// the unconditional equalities *force* — still sound, just narrower.
+    /// the unconditional equalities *force* – still sound, just narrower.
     pub(super) fn extract_string_model(&self, model: &mut Model, manager: &mut TermManager) {
         if !self.has_string_sorted_var(manager) {
             return;
@@ -861,7 +861,7 @@ impl Solver {
     ///
     /// When this holds and no definite string conflict was found, the solver
     /// MUST answer `Unknown` rather than let the SAT core treat the atom as a
-    /// free Boolean — the latter would report `Sat` for unsatisfiable formulas
+    /// free Boolean – the latter would report `Sat` for unsatisfiable formulas
     /// such as `(= s "abc") ∧ (str.contains s "xyz")`.
     pub(super) fn string_atoms_need_theory(&self, manager: &TermManager) -> bool {
         self.any_subterm(manager, |_, kind| Self::is_string_theory_atom(kind))
@@ -921,7 +921,7 @@ mod tests {
         concats
     }
 
-    /// A two-conjunct `And` the builder cannot flatten into its parent — see
+    /// A two-conjunct `And` the builder cannot flatten into its parent – see
     /// `check_dt.rs`'s twin for why `mk_and` will not do.
     fn nested_and(manager: &mut TermManager, first: TermId, second: TermId) -> TermId {
         let bool_sort = manager.sorts.bool_sort;
@@ -930,7 +930,7 @@ mod tests {
 
     /// An asserted `(= x "abc")` pins `x`; the same equality inside one
     /// disjunct of an `Or`, or under a `Not`, is conditional and must not be
-    /// harvested — `(or (= x "short") (= (str.len x) 10))` is satisfiable and
+    /// harvested – `(or (= x "short") (= (str.len x) 10))` is satisfiable and
     /// the length check would otherwise refute it.
     #[test]
     fn only_unconditional_equalities_are_collected() {
@@ -984,7 +984,7 @@ mod tests {
         let b = manager.mk_var("b", string_sort);
         let c = manager.mk_var("c", string_sort);
         let d = manager.mk_var("d", string_sort);
-        // `(str.++ (str.++ a b) (str.++ c d))` — both a left and a right spine.
+        // `(str.++ (str.++ a b) (str.++ c d))` – both a left and a right spine.
         let left = manager.mk_str_concat(a, b);
         let right = manager.mk_str_concat(c, d);
         let concat = manager.mk_str_concat(left, right);
@@ -996,7 +996,7 @@ mod tests {
     }
 
     /// A `str.++` chain 25 000 deep is flattened on the heap, not the native
-    /// stack — this is the shape (`(str.++ x1 … xN)` folded into nested binary
+    /// stack – this is the shape (`(str.++ x1 … xN)` folded into nested binary
     /// nodes) that aborted the process before.
     #[test]
     fn deep_concat_chain_flattens_on_a_worker_stack() {

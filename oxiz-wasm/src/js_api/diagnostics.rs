@@ -362,7 +362,7 @@ impl WasmSolver {
     }
 }
 
-// Private helper methods (no wasm_bindgen — not exported to JS)
+// Private helper methods (no wasm_bindgen – not exported to JS)
 impl WasmSolver {
     /// Parse a sort name string into a SortId
     pub(crate) fn parse_sort(

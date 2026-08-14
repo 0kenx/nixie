@@ -127,7 +127,7 @@ fn unsatisfiable_universal_is_not_certified() {
     ));
 }
 
-/// A goal outside both fragments — here a bit-vector — declines in both
+/// A goal outside both fragments – here a bit-vector – declines in both
 /// engines, so the caller keeps its `unknown`.
 #[test]
 fn foreign_sort_is_declined_by_both_engines() {

@@ -91,9 +91,7 @@ pub enum Diag {
     Unit,
 }
 
-// =============================================================================
-// Level 1 BLAS: Vector-Vector Operations
-// =============================================================================
+// ======== Level 1 BLAS: Vector-Vector Operations ========
 
 /// DDOT: Compute the dot product of two vectors.
 ///
@@ -398,9 +396,7 @@ pub fn dasum(x: &[f64]) -> f64 {
     sum
 }
 
-// =============================================================================
-// Level 2 BLAS: Matrix-Vector Operations
-// =============================================================================
+// ======== Level 2 BLAS: Matrix-Vector Operations ========
 
 /// DGEMV: General matrix-vector multiplication.
 ///
@@ -586,9 +582,7 @@ pub fn dtrsv(uplo: UpLo, trans: Transpose, diag: Diag, n: usize, a: &[f64], b: &
     }
 }
 
-// =============================================================================
-// Level 3 BLAS: Matrix-Matrix Operations
-// =============================================================================
+// ======== Level 3 BLAS: Matrix-Matrix Operations ========
 
 /// DGEMM: General matrix-matrix multiplication with cache blocking.
 ///
@@ -925,9 +919,7 @@ fn dtrsm_right(
     }
 }
 
-// =============================================================================
-// LP-Specific Operations
-// =============================================================================
+// ======== LP-Specific Operations ========
 
 /// Configuration for BLAS operations in LP context.
 #[derive(Debug, Clone)]
@@ -1067,9 +1059,7 @@ mod tests {
         a.len() == b.len() && a.iter().zip(b.iter()).all(|(&ai, &bi)| approx_eq(ai, bi))
     }
 
-    // =============================================================================
-    // Level 1 BLAS Tests
-    // =============================================================================
+    // ======== Level 1 BLAS Tests ========
 
     #[test]
     fn test_ddot() {
@@ -1182,9 +1172,7 @@ mod tests {
         assert!(approx_eq(dasum(&x), 15.0));
     }
 
-    // =============================================================================
-    // Level 2 BLAS Tests
-    // =============================================================================
+    // ======== Level 2 BLAS Tests ========
 
     #[test]
     fn test_dgemv_notrans() {
@@ -1268,9 +1256,7 @@ mod tests {
         assert!(approx_eq_vec(&b, &[3.0, 2.0]));
     }
 
-    // =============================================================================
-    // Level 3 BLAS Tests
-    // =============================================================================
+    // ======== Level 3 BLAS Tests ========
 
     #[test]
     fn test_dgemm_basic() {
@@ -1431,9 +1417,7 @@ mod tests {
         assert!(approx_eq_vec(&b, &[4.0, 6.0, 2.0, 4.0]));
     }
 
-    // =============================================================================
-    // LP Integration Tests
-    // =============================================================================
+    // ======== LP Integration Tests ========
 
     #[test]
     fn test_blas_lp_config() {

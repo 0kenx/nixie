@@ -68,7 +68,7 @@ pub(super) fn needs_ite_elimination(sort: SortId, manager: &TermManager) -> bool
 /// ground as one at the top level and must be hoisted by
 /// [`Solver::eliminate_nonbool_ite`] just the same. Stopping at `let`
 /// (an earlier, over-conservative reading of "binder") silently dropped
-/// the mux axioms for every `ite` inside a wrapping `let` — e.g. the
+/// the mux axioms for every `ite` inside a wrapping `let` – e.g. the
 /// QF_UFIDL `vhard7` instance is one big `(let (...) (and … ite …))`, and
 /// skipping its body turned a sound `unknown` into a wrong `sat`. (v0.3.2
 /// carries that same wrong `sat`; this is a main-side fix beyond upstream.)
@@ -100,7 +100,7 @@ pub(super) fn collect_ground_subterms(term: TermId, manager: &TermManager) -> Ve
         if matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
             continue; // opaque: never descend into a quantifier's scope
         }
-        // `Let` is NOT opaque here — see the function doc comment.
+        // `Let` is NOT opaque here – see the function doc comment.
         for child in get_children(&node.kind).into_iter().rev() {
             stack.push(child);
         }
@@ -133,15 +133,15 @@ impl Solver {
     /// It used to be gated on `produce_unsat_cores`, which made unsat-core
     /// production silently order-dependent: a session that asserted first and
     /// set `:produce-unsat-cores` afterwards got `unsat` and an *empty* core,
-    /// because the names were never written down — and nothing along the way
+    /// because the names were never written down – and nothing along the way
     /// reported that the option had arrived too late to be honoured.
     ///
     /// The gate belongs on *producing* a core, where it still is
     /// (`Solver::build_unsat_core`, `Solver::build_unsat_core_trivial_false`
     /// and `Solver::minimize_unsat_core` all check the flag), not on
     /// remembering what the caller asserted.  What it saved
-    /// was one `Vec` push and one trail entry per assertion — the SAT-level work
-    /// of core tracking was never behind this branch — so nothing is paid for
+    /// was one `Vec` push and one trail entry per assertion – the SAT-level work
+    /// of core tracking was never behind this branch – so nothing is paid for
     /// the sessions that never ask for a core beyond the assertion names they
     /// themselves supplied.
     ///
@@ -169,7 +169,7 @@ impl Solver {
     /// direction retracted with that scope, so `pop` must put the narrower
     /// pre-scope coverage back rather than forget the term altogether.
     ///
-    /// A write that changes nothing is not journalled — re-encoding a term at
+    /// A write that changes nothing is not journalled – re-encoding a term at
     /// the coverage it already has emits duplicate clauses but no new memo
     /// state, and a trail entry for it would only make `pop` do redundant work.
     fn memoize_encoding(&mut self, term: TermId, lit: Lit, polarity: Polarity) {
@@ -189,7 +189,7 @@ impl Solver {
     /// cache), so asserting it again inside a `push` re-runs this code for a
     /// variable the outer scope already owns.  Journalling that repeat write
     /// would make the matching `pop` delete a constraint that is still active,
-    /// leaving the atom without any theory meaning — the solver then loses the
+    /// leaving the atom without any theory meaning – the solver then loses the
     /// refutation that depends on it (`(or (= x 1) (= x 2)) ∧ (= x 5)` stopped
     /// being provably `unsat` after such a scope).  Recording only the first
     /// write keeps the trail entry paired with the scope that owns the fact.
@@ -222,8 +222,8 @@ impl Solver {
     /// Returns: (terms with coefficients, constant, constraint_type).
     ///
     /// Results are cached by `reason` (the comparison term id).
-    /// `ParsedArithConstraint` is purely structural — it depends only on the
-    /// term graph — so the cache is safe to retain across CDCL backtracks.
+    /// `ParsedArithConstraint` is purely structural – it depends only on the
+    /// term graph – so the cache is safe to retain across CDCL backtracks.
     pub(super) fn parse_arith_comparison(
         &mut self,
         lhs: TermId,
@@ -287,7 +287,7 @@ impl Solver {
     /// stacked *on top of* [`Solver::encode_depth`]'s at the leaf (the encoder
     /// calls [`Solver::parse_arith_comparison`] from a comparison arm), so the
     /// true worst-case native stack was `encode_depth × cap + this walk × its
-    /// own depth` — the encoder's depth cap never bounded it.  Worse, the
+    /// own depth` – the encoder's depth cap never bounded it.  Worse, the
     /// encoder does not descend into arithmetic operands at all: a single
     /// shallow atom `(< deep-arith-chain 0)` reached this walk with the whole
     /// chain, and `parse_arith_comparison` is also called from theory paths
@@ -301,7 +301,7 @@ impl Solver {
     /// most one factor is non-constant, so each factor is evaluated into a
     /// *fresh* accumulation context and classified when it completes.  The
     /// suspended parent context travels inside the `Mul` frame itself, which
-    /// makes the "stack empty at finalize" case unrepresentable — no `pop().
+    /// makes the "stack empty at finalize" case unrepresentable – no `pop().
     /// expect(..)` is needed anywhere.
     ///
     /// On failure the caller's buffers are untouched (the recursive version
@@ -338,7 +338,7 @@ impl Solver {
         /// the product of every *other* (constant) factor keeps the result
         /// linear (`2·(a − 1) = 2a − 2`).  The previous code rejected such a
         /// factor outright, which silently dropped the atom's theory meaning
-        /// and reported `sat`/`unknown` for goals that were in fact linear —
+        /// and reported `sat`/`unknown` for goals that were in fact linear –
         /// a false `sat` on the `20170829-Rodin` family
         /// (`not (< (+ (* 2 (- a 1)) b 1) (+ (* 2 a) b)))`.
         struct MulFrame {
@@ -407,8 +407,8 @@ impl Solver {
                         //       later instantiation that produces `f(k) <= 10`.
                         //
                         // Nested applications (`f(f(k))`) are opaque arithmetic variables
-                        // exactly like flat ones.  Excluding them — the mirror of the old
-                        // restriction in `track_theory_vars` — did not make the solver
+                        // exactly like flat ones.  Excluding them – the mirror of the old
+                        // restriction in `track_theory_vars` – did not make the solver
                         // conservative, it made it *wrong*: failing the linear parse leaves
                         // the whole atom without a theory meaning, so it survives as a free
                         // boolean and the solver reports `sat` for formulas it never
@@ -445,7 +445,7 @@ impl Solver {
                         // arithmetic atom, exactly like `(select a i)`.  Without this the
                         // linear parse of `(= (head l) 10)` failed, no constraint reached the
                         // tableau, and `(= (head l) 10) ∧ (= (head l) 11)` was answered `sat`
-                        // — the accessor is one ground term and cannot hold two values.
+                        // – the accessor is one ground term and cannot hold two values.
                         // `dt_axioms` supplies the rest of the accessor's meaning; here it
                         // only has to be *a* variable so that two occurrences agree.
                         TermKind::DtSelector { .. } => {
@@ -498,7 +498,7 @@ impl Solver {
                         // Integer `div`/`mod` and Int/Real-sorted `ite`: opaque arithmetic
                         // atoms.  Their meaning is not expressible as a linear combination
                         // of their operands, so the linear solver gets a variable and the
-                        // *definition* arrives separately as ground axioms — see
+                        // *definition* arrives separately as ground axioms – see
                         // [`Solver::instantiate_arith_axioms`].  Until those axioms are
                         // asserted the term stays in nobody's theory, which is exactly what
                         // the honesty gate in `encode_guards` watches for.
@@ -520,8 +520,8 @@ impl Solver {
                         }
 
                         // Not linear.  The catch-all is the honest reject
-                        // channel here — "shape the linear solver cannot
-                        // represent" — so a future `TermKind` variant fails
+                        // channel here – "shape the linear solver cannot
+                        // represent" – so a future `TermKind` variant fails
                         // the parse (and the atom stays gated) rather than
                         // being mis-folded.
                         _ => return None,
@@ -532,7 +532,7 @@ impl Solver {
                         // Classify the factor whose evaluation just completed
                         // into the current (per-factor) level.
                         if cur.terms.is_empty() {
-                            // Pure constant factor — absorb into the running
+                            // Pure constant factor – absorb into the running
                             // product of constant factors.
                             frame.const_product *= cur.constant;
                         } else {
@@ -676,7 +676,7 @@ impl Solver {
         // Grammar-driven arithmetic purification (QF_ANIA): under +,-,*,div,mod
         // and arith comparisons, replace non-arith numeric subterms (select,
         // compound, …) with fresh constants + interface equalities, so NIA sees
-        // pure polynomials.  Gated to NIA/NRA/NIRA/`ALL` — it rewrites foreign
+        // pure polynomials.  Gated to NIA/NRA/NIRA/`ALL` – it rewrites foreign
         // numeric subterms (notably `str.len`/`str.indexof` in QF_S) into fresh
         // vars the string theory cannot consume.
         let purify = match self.logic.as_deref() {
@@ -833,8 +833,8 @@ impl Solver {
     /// This complements *model-based* equality merging with *axiom-based*
     /// combination: CDCL decides the equality atoms, the arithmetic solver
     /// **validates** each decision via `check()` (a plain consistency test, no
-    /// reason extraction), and EUF merges with the equality atom — which carries
-    /// a SAT variable — as the reason.  Soundness is thus structural: only
+    /// reason extraction), and EUF merges with the equality atom – which carries
+    /// a SAT variable – as the reason.  Soundness is thus structural: only
     /// logically-valid clauses are added, and every merge is justified by an
     /// assigned atom.
     ///
@@ -857,7 +857,7 @@ impl Solver {
         // are all QF_*.  On a quantified goal the fresh eq/le/ge Boolean
         // structure it introduces perturbs MBQI's model-based instantiation
         // (shifting convergence and risking spurious / missed instantiations),
-        // so it is scoped out there — quantified combination falls back to the
+        // so it is scoped out there – quantified combination falls back to the
         // existing model-based path.  This also keeps the axiomatization
         // idempotent across the repeated `check`s of an MBQI search.
         if self.has_quantifiers {
@@ -1197,12 +1197,12 @@ impl Solver {
     /// bit-vector as a fresh unconstrained `BvVar`.  A `let`-bound
     /// bit-vector such as `?v_0` (bound to `(extract 255 64 a)`) therefore
     /// loses its link to its definition, so a formula whose only `let`-free
-    /// reading is UNSAT reads as SAT — e.g. `bench_679.smt2` and
+    /// reading is UNSAT reads as SAT – e.g. `bench_679.smt2` and
     /// `ext_con_064_002_0512.smt2` (both `:status unsat`) were answered
     /// `sat`.
     ///
-    /// Expanding `let` here — before the assertion is stored and before any
-    /// encoder runs — guarantees no downstream pass ever observes a `Let`
+    /// Expanding `let` here – before the assertion is stored and before any
+    /// encoder runs – guarantees no downstream pass ever observes a `Let`
     /// node, so each `let`-bound name is replaced by its definition
     /// everywhere it is used.
     ///
@@ -1352,7 +1352,7 @@ impl Solver {
     /// `term` qualifies.
     ///
     /// The rewrite is an equivalence, not a strengthening (see
-    /// [`finite_expand`]): the whole substituted body — guard included — is
+    /// [`finite_expand`]): the whole substituted body – guard included – is
     /// emitted for every point of the interval, and the interval provably
     /// contains the entire region where the guard (`forall`) or the body
     /// (`exists`) can be true.  So the expanded assertion is interchangeable
@@ -1404,7 +1404,7 @@ impl Solver {
     /// Each assertion's top-level `And` spine is walked, because a conjunct of
     /// an unconditionally asserted conjunction is itself unconditionally
     /// asserted.  Nothing below a disjunction, negation, implication or
-    /// quantifier is collected — those equalities are conditional and would not
+    /// quantifier is collected – those equalities are conditional and would not
     /// hold in every model, so using one as a quantifier bound could expand
     /// over the wrong interval.
     ///
@@ -1463,8 +1463,8 @@ impl Solver {
     /// assertion `term` asserts **unconditionally**.
     ///
     /// MBQI turns a registered universal into ground instances that it adds to
-    /// the SAT core as hard unit clauses — and, when an instance evaluates to
-    /// `false`, as the empty clause — so a quantifier the assertion set does not
+    /// the SAT core as hard unit clauses – and, when an instance evaluates to
+    /// `false`, as the empty clause – so a quantifier the assertion set does not
     /// entail must never be registered. `(not (forall ((x Int)) (P x)))` is
     /// `∃x. ¬P(x)`, not a universal fact; registering it refuted the satisfiable
     /// `(not (forall ((x Int)) (P x))) ∧ (not (P 5))`. The same held for a
@@ -1473,7 +1473,7 @@ impl Solver {
     ///
     /// [`Solver::encode`] cannot make this call: it is the Tseitin transform and
     /// visits every sub-term at every polarity. So the decision is made here, on
-    /// the asserted spine, with [`super::term_walk::asserted_children`] — the
+    /// the asserted spine, with [`super::term_walk::asserted_children`] – the
     /// shared definition of "unconditionally asserted" also used by the
     /// `check_*.rs` definite-conflict collectors.
     ///
@@ -1549,7 +1549,7 @@ impl Solver {
             {
                 // Seeded from the solver-wide counter: a fresh context always
                 // starts at `sk!0` / `skf!0`, so two Skolemized quantifiers
-                // would otherwise share one witness symbol — a strengthening
+                // would otherwise share one witness symbol – a strengthening
                 // that can turn `sat` into `unsat`.
                 let mut sk_ctx =
                     crate::skolemization::SkolemizationContext::with_first_id(self.next_skolem_id);
@@ -1565,7 +1565,7 @@ impl Solver {
                     // universal quantifiers can be instantiated with them.
                     self.collect_skolem_candidates(skolemized, manager);
                 } else {
-                    // Skolemization failed — fall back to original
+                    // Skolemization failed – fall back to original
                     self.mbqi.add_quantifier(term, manager);
                     let _ = self.ematch_engine.register_quantifier(term, manager);
                 }
@@ -1605,7 +1605,7 @@ impl Solver {
     /// without the memo, a shared sub-term of the hash-consed DAG was
     /// re-descended once per *edge*, which is `2^n` re-encodes and `2^n`
     /// duplicate clauses on a doubling DAG (each level referencing the
-    /// previous twice) — a hang at roughly depth 40.  The assert-time
+    /// previous twice) – a hang at roughly depth 40.  The assert-time
     /// pre-check `term_exceeds_encode_depth` cannot catch that input: it
     /// measures depth and deliberately prunes shared nodes.
     ///
@@ -1632,7 +1632,7 @@ impl Solver {
     /// `(= a (ite c t e))` (non-Bool sort) holds iff `(c -> a=t) & (~c -> a=e)`.
     /// EUF has no built-in `ite`, so without these clauses the `ite` is interned
     /// as an opaque leaf and the conditional equality never reaches congruence
-    /// closure — a false-SAT on mux-heavy QF_UF (e.g. firewire). Only the forward
+    /// closure – a false-SAT on mux-heavy QF_UF (e.g. firewire). Only the forward
     /// direction is added (soundness needs the theory to detect every conflict);
     /// each generated `(= a t)` / `(= a e)` atom recurses through `encode_depth`,
     /// so nested `ite`s are handled. Bool-sorted `ite`s are left to the gate
@@ -1682,7 +1682,7 @@ impl Solver {
     /// by a fresh constant `v` of sort `s`, with two side-conditions conjoined:
     /// `(=> c (= v t))` and `(=> (not c) (= v e))`. Once encoded, these pin
     /// `(= v t)` when `c` is true and `(= v e)` when `c` is false, so EUF merges
-    /// the selected branch — recovering the conditional-equality semantics an
+    /// the selected branch – recovering the conditional-equality semantics an
     /// opaque `ite` leaf would lose. Handles `ite` in every position,
     /// superseding the narrower [`encode_nonbool_ite_equality`] clauses (kept as
     /// a no-op backstop). Bool-sorted `ite`s are left for the gate encoder. The
@@ -1703,7 +1703,7 @@ impl Solver {
         // desugared into a BitVec ite, so eliminating them would delete the
         // structure the blaster recurses on and yield a false `sat`.
         // The walk (`collect_ground_subterms`) stops at quantifier binders but
-        // descends into `let` — see its doc comment.
+        // descends into `let` – see its doc comment.
         for st in collect_ground_subterms(term, manager) {
             let Some(t) = manager.get(st) else {
                 continue;
@@ -1762,7 +1762,7 @@ impl Solver {
     /// (so not completed) nor encoded as a SAT atom when the application is a
     /// theory term the theory interns directly. Two such arguments that are
     /// logically equal but syntactically distinct never merge, and congruence
-    /// over the application never fires — a false-SAT. Abstracting each to a
+    /// over the application never fires – a false-SAT. Abstracting each to a
     /// fresh variable `v` with `(= v (and a b))` makes the argument a variable
     /// (now completed) while the defining equality ties `v` to the gate. Bool
     /// variables and Bool applications are left alone (already handled).
@@ -1823,7 +1823,7 @@ impl Solver {
     /// arguments, so a constant or arithmetic-compound argument such as
     /// `f(3)` or `f(fmt1 + 1)` is never an arithmetic interface term: an
     /// arithmetic-derived equality like `y = 3` (from `y = x+1, x = 2`) cannot
-    /// propagate to EUF, and the congruence `f(y) = f(3)` never fires — the
+    /// propagate to EUF, and the congruence `f(y) = f(3)` never fires – the
     /// root cause of the QF_UFLIA / QF_UFIDL false-SAT.  Replacing `f(arg)`
     /// with `f(v)` plus the defining equality `v = arg` makes `v` a shared
     /// term (UF argument + arithmetic variable via the equality), so the
@@ -1878,7 +1878,7 @@ impl Solver {
             }
             if let TermKind::Apply { func, args } = &t.kind {
                 // Per-function gate: never purify the numeric arguments of a
-                // function that appears in a quantifier — its ground pins must
+                // function that appears in a quantifier – its ground pins must
                 // reach MBQI/model-certification as clean `Eq`. An unrelated
                 // quantifier over another function does not suppress this one.
                 if self.quantifier_uf_funcs.contains(func) {
@@ -1944,7 +1944,7 @@ impl Solver {
     /// literal for the sub-term.  The truncated encoding is deliberately
     /// incomplete: `check` observes the flag and answers `Unknown` rather than
     /// crashing the process with a stack overflow or trusting a partial model.
-    /// Nothing is memoised on this path — the term was *not* encoded, and a
+    /// Nothing is memoised on this path – the term was *not* encoded, and a
     /// later shallower occurrence must still get a real encoding.
     pub(super) fn encode_depth(
         &mut self,
@@ -2203,7 +2203,7 @@ impl Solver {
                 // Extract the array domain sort (if any) in a SEPARATE borrow
                 // before `lhs_term`, and immediately pre-create the
                 // extensionality witness terms (mk_var/mk_select) while
-                // `manager` is free — `lhs_term` below will borrow it
+                // `manager` is free – `lhs_term` below will borrow it
                 // immutably for the rest of this arm.
                 let array_domain_sort = manager.get(*lhs).and_then(|t| {
                     manager.sorts.get(t.sort).and_then(|s| {
@@ -2280,7 +2280,7 @@ impl Solver {
 
                     // Soundness: an equality between array-sorted terms (e.g.
                     // `(= (store ...) (store ...))` or `(= (store ...) b)`) is
-                    // *not* a free Boolean — it can only be satisfied/discharged
+                    // *not* a free Boolean – it can only be satisfied/discharged
                     // by the array decision procedure (read-over-write +
                     // extensionality).  The operands are array terms, so flag
                     // `has_array_ops` so `check_core`'s lazy array-axiom
@@ -2289,7 +2289,7 @@ impl Solver {
                     // reported for an UNSAT goal (observed on the `storecomm`
                     // family: a disequality of two provably-equal store chains).
                     // (Extensionality witness was pre-created above, before
-                    // `lhs_term` borrowed `manager` — no action needed here.)
+                    // `lhs_term` borrowed `manager` – no action needed here.)
 
                     // Pre-parse arithmetic equality for ArithSolver
                     // Only for Int/Real sorts, not BitVec
@@ -2525,7 +2525,7 @@ impl Solver {
                 // We deliberately do NOT populate `var_to_parsed_arith`: that
                 // path parses BV operands as plain *unsigned* non-negative
                 // integers and asserts them into the linear ArithSolver.  For a
-                // signed comparison that is wrong — mixing signed and unsigned
+                // signed comparison that is wrong – mixing signed and unsigned
                 // orders over the same shared integer variable yields spurious
                 // UNSAT (e.g. `(bvslt x #b0000) ∧ (bvult #b0100 x)` is SAT with
                 // x = 9, but the unsigned arith parse derives x < 0 ∧ x > 4).
@@ -2842,8 +2842,8 @@ impl Solver {
         }
     }
 
-    /// Walk a term and give every arithmetic disequality source —
-    /// `Not(Eq(a, b))` and `Distinct(a, b, ...)` — the trichotomy clause
+    /// Walk a term and give every arithmetic disequality source –
+    /// `Not(Eq(a, b))` and `Distinct(a, b, ...)` – the trichotomy clause
     /// `(a = b) OR (a < b) OR (a > b)`, so the ArithSolver knows about the
     /// disequality and doesn't assign both sides equal values.
     ///
@@ -2862,7 +2862,7 @@ impl Solver {
     /// never native recursion: it runs on MBQI instantiation results, which
     /// are produced *during* `check` and never pass the assert-time
     /// `term_exceeds_encode_depth` gate, and instantiation can compose depth
-    /// round over round — so the reachable depth is input-controlled and the
+    /// round over round – so the reachable depth is input-controlled and the
     /// `()` return type leaves no honest way to cap it.  The visited set
     /// bounds re-expansion of shared DAG nodes (work), not chain depth.
     pub(super) fn add_arith_diseq_split(&mut self, term: TermId, manager: &mut TermManager) {
@@ -2901,8 +2901,8 @@ impl Solver {
                     }
                 }
                 TermKind::And(args) | TermKind::Or(args) => {
-                    // Reverse push so children pop — and their clauses are
-                    // emitted — left-to-right, as the recursive DFS did.
+                    // Reverse push so children pop – and their clauses are
+                    // emitted – left-to-right, as the recursive DFS did.
                     for &arg in args.iter().rev() {
                         stack.push(arg);
                     }

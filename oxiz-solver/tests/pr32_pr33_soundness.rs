@@ -28,9 +28,7 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// =======================================================================
-// PR #32 -- lookup-table flattening
-// =======================================================================
+// ======== PR #32 -- lookup-table flattening ========
 
 /// A 5-key lookup spine, pinned at a key that is *not* the first arm: `sat`,
 /// and `get-value` on the *original* `ite` expression the user wrote (not
@@ -264,9 +262,7 @@ fn test_pr32_domain_first_branching_opt_in_matches_default_verdict() {
     assert_eq!(default_result.1, Some(30), "idx = 3 must select the 30 arm");
 }
 
-// =======================================================================
-// PR #33 -- equality-logic transitivity preprocessor
-// =======================================================================
+// ======== PR #33 -- equality-logic transitivity preprocessor ========
 
 /// The textbook case straight from the requirements: `a = b`, `b = c`, and
 /// `a != c` asserted propositionally. Transitively inconsistent, so `unsat`
@@ -461,7 +457,7 @@ fn test_pr33_pure_equality_positive_case_both_verdicts() {
 /// values *of the declared sort*.
 ///
 /// An uninterpreted sort has no literals, so the only honest value is an
-/// abstract witness — the same `@uc_S_n` form the model layer already uses for
+/// abstract witness – the same `@uc_S_n` form the model layer already uses for
 /// any unconstrained constant of such a sort. Reporting a concrete `Int` tag
 /// instead (which is what a class index printed straight into the model looks
 /// like) is a sort error in the output. The witnesses also have to *respect the

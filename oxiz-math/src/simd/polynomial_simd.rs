@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(result, vec![1.0, 0.0, 4.0]);
     }
 
-    // -- Regression tests for MATH-4 (poly_divide / simd_poly_gcd stub) --
+    // ======== Regression tests for MATH-4 (poly_divide / simd_poly_gcd stub) ========
 
     #[test]
     fn test_poly_divide_exact() {

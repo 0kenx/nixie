@@ -2,8 +2,8 @@
 //! equality instead of a Boolean atom.
 //!
 //! [`ArithSolver`](oxiz_theories::ArithSolver) records exactly one `TermId` per
-//! assertion, so an equality propagated out of congruence closure — `f(a) =
-//! f(b)` because `a = b` — can only be tagged with one of its own operands, a
+//! assertion, so an equality propagated out of congruence closure – `f(a) =
+//! f(b)` because `a = b` – can only be tagged with one of its own operands, a
 //! term that names no literal.  `TheoryManager::terms_to_conflict_clause`
 //! expands such a tag back into the literals that justify it, and this table is
 //! where those literals live.
@@ -32,7 +32,7 @@
 //!
 //! The depth counter lives here for the same reason the entries do.  A
 //! `TheoryManager` numbers scopes from its own `level_stack`, which restarts at
-//! the base scope for every manager — but a CDCL(T) search that ends in `Sat`
+//! the base scope for every manager – but a CDCL(T) search that ends in `Sat`
 //! never backtracks, so it hands the next manager theory solvers that are still
 //! several scopes deep.  Counting from the manager would therefore stamp the
 //! next round's shallow scopes with the same numbers as the previous round's
@@ -42,7 +42,7 @@
 //!
 //! A tag with an explanation recorded but *no* literals is meaningful and must
 //! be preserved: it is an equality that holds structurally and rests on no
-//! assertion, so it contributes nothing to a conflict clause — which is a very
+//! assertion, so it contributes nothing to a conflict clause – which is a very
 //! different statement from "the justification was lost".
 
 use oxiz_core::ast::TermId;
@@ -117,7 +117,7 @@ impl DerivedReasons {
     ///
     /// An empty iterator and `None` mean opposite things: the former is a fully
     /// accounted-for equality that depends on no literal, the latter is a tag
-    /// whose justification is unknown — which callers must treat as a bug
+    /// whose justification is unknown – which callers must treat as a bug
     /// rather than silently drop.
     pub(crate) fn literals(&self, tag: TermId) -> Option<impl Iterator<Item = TermId> + '_> {
         self.entries

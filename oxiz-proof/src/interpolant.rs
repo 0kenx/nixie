@@ -1159,9 +1159,9 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Clause / literal parsing
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_parse_clause_literals_disjunction() {
@@ -1194,10 +1194,10 @@ mod tests {
         assert_eq!(find_pivot("(or p q)", "(or r s)"), None);
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // End-to-end interpolant extraction (exact-formula checks; the full
     // A=>I / I&B-UNSAT semantic validation lives in tests/interpolant_mcmillan.rs)
-    // ------------------------------------------------------------------
+    // ========  ========
 
     /// Classic shape: A = p ∧ q, B = ¬p. Interpolant is `p`.
     #[test]

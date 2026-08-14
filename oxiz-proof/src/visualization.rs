@@ -180,7 +180,7 @@ impl ProofVisualizer {
     ///
     /// This is a *tree* rendering: a premise shared by several inferences is
     /// printed once under each of them, exactly as the recursive version did.
-    /// On a heavily shared proof DAG that output is exponentially large — use
+    /// On a heavily shared proof DAG that output is exponentially large – use
     /// [`VisualizationFormat::Dot`], which renders the DAG itself, instead.
     fn visualize_ascii_tree<W: Write>(&self, proof: &Proof, writer: &mut W) -> io::Result<()> {
         if let Some(root) = proof.root() {

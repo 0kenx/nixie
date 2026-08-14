@@ -1,19 +1,19 @@
 //! Criterion benchmarks for the Simplex arithmetic solver.
 //!
 //! Covers four scenarios:
-//!   - `bench_simplex_small`  — 10-variable LP
-//!   - `bench_simplex_medium` — 50-variable LP
-//!   - `bench_simplex_large`  — 200-variable LP
-//!   - `bench_pivot_hot_path` — isolated pivot() microbenchmark (2-variable tableau)
+//!   - `bench_simplex_small`  – 10-variable LP
+//!   - `bench_simplex_medium` – 50-variable LP
+//!   - `bench_simplex_large`  – 200-variable LP
+//!   - `bench_pivot_hot_path` – isolated pivot() microbenchmark (2-variable tableau)
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use num_rational::Rational64;
 use oxiz_theories::arithmetic::{LinExpr, Simplex};
 use std::hint::black_box;
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Helper builders
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Build a Simplex instance with `n` variables and the following constraint
 /// structure (a dense chain that forces many pivots):
@@ -94,9 +94,9 @@ fn build_pivot_bench() -> Simplex {
     simplex
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Benchmark functions
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn bench_simplex_small(c: &mut Criterion) {
     let mut group = c.benchmark_group("simplex");
@@ -161,9 +161,9 @@ fn bench_pivot_hot_path(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Criterion wiring
-// ---------------------------------------------------------------------------
+// ========  ========
 
 criterion_group!(
     simplex_benches,

@@ -16,9 +16,9 @@
 use oxiz_core::ast::{RoundingMode, TermManager};
 use oxiz_solver::{Solver, SolverResult};
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Finding 1: string atoms must never yield a spurious Sat
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `(= s "abc") ∧ (str.contains s "xyz")` is UNSAT ("abc" does not contain
 /// "xyz"). The solver must not report `Sat`.
@@ -67,11 +67,11 @@ fn str_prefixof_is_not_free_sat() {
 
 /// A lone `(str.contains s t)` over two free string variables is genuinely
 /// SATISFIABLE (e.g. `s = t = ""`, since every string contains the empty
-/// string — Z3 returns exactly this model). The ground string solver now
+/// string – Z3 returns exactly this model). The ground string solver now
 /// constructs and *verifies* such a witness, so the honest answer is `Sat`.
 ///
 /// The soundness guarantee this file pins is "no *spurious* `Sat` for an
-/// unsatisfiable formula" — covered by `str_contains_is_not_free_sat` and
+/// unsatisfiable formula" – covered by `str_contains_is_not_free_sat` and
 /// `str_prefixof_is_not_free_sat`, which remain non-`Sat`. Returning a verified
 /// `Sat` for a genuinely satisfiable formula strengthens, not weakens, that
 /// guarantee.
@@ -89,9 +89,9 @@ fn lone_satisfiable_string_atom_is_verified_sat() {
     assert_eq!(solver.check(&mut manager), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Finding 2: FP atoms must never yield a spurious Sat
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `fp.lt x y ∧ fp.lt y x` is UNSAT. The generic conflict check only catches
 /// `gt × lt`, so both-`lt` slips through; the honesty gate must turn it into a
@@ -118,7 +118,7 @@ fn fp_two_lt_is_not_free_sat() {
 }
 
 /// The sound direct-contradiction check (`x > y ∧ x < y`) must still be caught
-/// as `Unsat` — the honesty gate does not mask genuine conflicts.
+/// as `Unsat` – the honesty gate does not mask genuine conflicts.
 #[test]
 fn fp_gt_and_lt_same_pair_is_unsat() {
     let mut solver = Solver::new();
@@ -136,9 +136,9 @@ fn fp_gt_and_lt_same_pair_is_unsat() {
     assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Finding 3: negated equalities are disequalities (no spurious Unsat)
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `(fp.isZero z) ∧ (not (= y (fp.div RNE z z))) ∧ (not (fp.isNaN y))` is
 /// satisfiable (`y` is simply any non-NaN value distinct from `0/0 = NaN`).
@@ -236,12 +236,12 @@ fn test_fp_disjunctive_fact_not_unconditional() {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Gate is targeted: non-FP / non-string formulas are unaffected
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// A pure Boolean formula with no FP/string atoms must still be decided (`Sat`)
-/// — the honesty gate must not over-fire.
+/// – the honesty gate must not over-fire.
 #[test]
 fn boolean_formula_still_decided() {
     let mut solver = Solver::new();

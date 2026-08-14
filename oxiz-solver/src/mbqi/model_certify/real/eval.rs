@@ -2,7 +2,7 @@
 //!
 //! Given a candidate interpretation (finite pin tables plus one affine default
 //! per function) this evaluates a closed formula to a truth value, deciding any
-//! `∀`/`∃` over `ℝ` it contains — not by sampling, but by computing the body as
+//! `∀`/`∃` over `ℝ` it contains – not by sampling, but by computing the body as
 //! an exact piecewise function of the bound variable and reading every cell.
 //!
 //! Everything runs on an explicit heap stack, so formula depth is bounded by
@@ -90,7 +90,7 @@ struct Machine<'a> {
 /// Decide the closed formula `term` under `interp`.
 ///
 /// Answers `Ok(true)` only when the formula is true under the interpretation
-/// *everywhere* — a genuine model check, quantifiers included.
+/// *everywhere* – a genuine model check, quantifiers included.
 pub(crate) fn evaluate(
     term: TermId,
     interp: &RealInterp,

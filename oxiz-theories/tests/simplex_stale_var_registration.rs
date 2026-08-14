@@ -7,7 +7,7 @@
 //! solved through MBQI, backtracks (pops) the arithmetic context. A caller
 //! that caches term -> variable-index mappings can then *replay* a variable
 //! index that was created at a deeper level and has since been removed by the
-//! pop — i.e. an index that now lies past the end of the bounds arrays. The
+//! pop – i.e. an index that now lies past the end of the bounds arrays. The
 //! original benchmark (`bench/z3_parity/benchmarks/UFLRA/real_composition.smt2`)
 //! panicked at `simplex/mod.rs` inside `can_increase` with
 //! `index out of bounds: the len is N but the index is N`.
@@ -54,14 +54,14 @@ fn add_ge_with_unregistered_variable_index_does_not_panic() {
 }
 
 /// Exercises the pricing path (`find_pivot_col` / `can_increase`) with an
-/// out-of-range variable in an *infeasible* starting row, and — crucially —
+/// out-of-range variable in an *infeasible* starting row, and – crucially –
 /// verifies the constraint is actually *enforced* rather than silently dropped.
 ///
 /// A registered variable `x0` is pinned to `x0 <= 0`, while `x0 + x_stale >= 10`
 /// makes the constraint's slack infeasible at the start; the only way to
 /// satisfy it is to raise the unregistered `x_stale`. Without the fix the row
-/// referenced an index past `upper` (either panicking in `can_increase`, or —
-/// via the `update_assignment` stale-ref guard — being dropped so `x_stale`
+/// referenced an index past `upper` (either panicking in `can_increase`, or –
+/// via the `update_assignment` stale-ref guard – being dropped so `x_stale`
 /// stayed 0). The value assertion catches the dropped-constraint case that a
 /// bare "returns Ok" check would miss.
 #[test]

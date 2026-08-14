@@ -1,10 +1,10 @@
-//! Known-unsound SMT-LIB instances — soundness regression guards.
+//! Known-unsound SMT-LIB instances – soundness regression guards.
 //!
 //! These five instances are UNSAT (verified by z3) on which some oxiz build
 //! has answered `sat`. They are checked in as guards so a future change can
 //! never silently (re)introduce the wrong verdict without a test going red.
 //!
-//! Each test asserts only **soundness** — the solver must not answer `sat` on
+//! Each test asserts only **soundness** – the solver must not answer `sat` on
 //! an UNSAT instance. It does *not* require the solver to reach `unsat`: oz
 //! times out on some of these (notably `vhard7`), and `unknown`/timeout is a
 //! sound answer. Pinning `!= sat` is the soundness bar; reaching `unsat` is a
@@ -21,7 +21,7 @@
 //!
 //! | instance | logic | z3 | main | integrate(0.3.2) | status |
 //! |----------|-------|----|------|------------------|--------|
-//! | vhard7            | QF_UFIDL | unsat | —(timeout) | **sat** | FIXED on this branch (collect_ground_subterms `let` descent); test is live |
+//! | vhard7            | QF_UFIDL | unsat | –(timeout) | **sat** | FIXED on this branch (collect_ground_subterms `let` descent); test is live |
 //! | bench_679         | QF_BV    | unsat | sat | sat | pre-existing main BV bug (bvule/bvshl path); v0.3.2 correct → port candidate; `#[ignore]` |
 //! | ext_con_064_002_0512 | QF_BV  | unsat | sat | sat | pre-existing main BV bug; `#[ignore]` |
 //! | storecomm_t3_np_sf_ni_00010_001 | QF_AUFLIA | unsat | sat | sat | pre-existing main bug; `#[ignore]` |
@@ -65,7 +65,7 @@ fn assert_not_sat(label: &str, rel: &str, timeout_ms: u64) {
         res,
         SolverResult::Sat,
         "{label}: solver answered sat on a z3-UNSAT instance (soundness bug). \
-         verdict={res:?}; expected unsat (z3) — unknown/timeout is acceptable."
+         verdict={res:?}; expected unsat (z3) – unknown/timeout is acceptable."
     );
 }
 
@@ -77,10 +77,10 @@ const TIMEOUT_MS: u64 = 6_000;
 /// `--ignored`.
 const IGNORED_TIMEOUT_MS: u64 = 10_000;
 
-// ─── vhard7: the branch regression. MUST pass. ───────────────────────────
+// ======== vhard7: the branch regression. MUST pass. ========
 //
 // `git bisect` on vhard7 localizes the branch's wrong-Sat to 0c526e9c, whose
-// `collect_ground_subterms` treated `let` as opaque — so the mux axioms for
+// `collect_ground_subterms` treated `let` as opaque – so the mux axioms for
 // the `ite`s inside vhard7's wrapping `let` were never emitted. Fixed in
 // bb73c30c (descend into `let`, keep `Forall`/`Exists` opaque). oz (=v0.3.2)
 // still returns the wrong `sat` here; main times out. This test pins that the
@@ -95,7 +95,7 @@ fn vhard7_is_not_sat() {
     );
 }
 
-// ─── Pre-existing on main (also wrong on integrate). Known-failing guards. ─
+// ======== Pre-existing on main (also wrong on integrate). Known-failing guards. ========
 
 #[ignore = "pre-existing main BV soundness bug: bench_679 (bvule/bvshl-heavy) \
             returns sat where z3 says unsat. v0.3.2 answers unsat correctly, so \
@@ -116,7 +116,7 @@ fn bench_679_is_not_sat() {
             on integrate and v0.3.2). NOTE: in a debug build this test currently \
             returns `unknown` before the wrong-`sat` is reached (debug is too slow \
             to hit the bad state inside the budget), so it only fails under \
-            `--release` or a much larger budget — the guard is real but \
+            `--release` or a much larger budget – the guard is real but \
             release-only for this instance. Un-ignore when fixed."]
 #[test]
 fn ext_con_064_is_not_sat() {

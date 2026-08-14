@@ -160,7 +160,7 @@ impl FormatValidator {
     //
     // Driven by an explicit stack rather than recursion. The recursion depth
     // here was the length of the longest premise chain, which grows linearly
-    // with the number of learned clauses in a resolution proof — a realistic
+    // with the number of learned clauses in a resolution proof – a realistic
     // proof from a long solver run overflowed the stack while merely being
     // *validated*.
     //

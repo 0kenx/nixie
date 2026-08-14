@@ -6,13 +6,13 @@ This document invites researchers, developers, and the broader formal methods co
 
 ## What is OxiZ?
 
-OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Satisfiability Modulo Theories) solver. It is developed as part of the COOLJAPAN open-source ecosystem and is designed to match — and ultimately surpass — the capabilities of state-of-the-art solvers such as Z3, while offering the safety, reproducibility, and ergonomics that Rust uniquely provides.
+OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Satisfiability Modulo Theories) solver. It is developed as part of the COOLJAPAN open-source ecosystem and is designed to match – and ultimately surpass – the capabilities of state-of-the-art solvers such as Z3, while offering the safety, reproducibility, and ergonomics that Rust uniquely provides.
 
 **Key facts about OxiZ (v0.3.1):**
 
-- Honest, non-fabricated parity against a real `z3` 4.15.4 binary across **19 SMT-LIB logic families** (168 benchmark instances, `bench/z3_parity`): **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite under the honest comparator (`Unknown` never counts as a match). All 19 logic families are at 100% of this differential parity suite — a claim scoped to the suite, not a blanket "100% Z3 compatibility"; see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) for the full per-logic breakdown and known gaps
+- Honest, non-fabricated parity against a real `z3` 4.15.4 binary across **19 SMT-LIB logic families** (168 benchmark instances, `bench/z3_parity`): **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite under the honest comparator (`Unknown` never counts as a match). All 19 logic families are at 100% of this differential parity suite – a claim scoped to the suite, not a blanket "100% Z3 compatibility"; see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) for the full per-logic breakdown and known gaps
 - **9,668 unit tests** passing, 8 skipped (`cargo nextest run --workspace --all-features`) across all crates, plus 110 doc-tests
-- Zero unsafe C/C++ dependencies — pure Rust from end to end
+- Zero unsafe C/C++ dependencies – pure Rust from end to end
 - Proof-producing: generates DRAT, Alethe, LFSC, Coq, Lean, and Isabelle certificates
 - Supports Craig interpolation and Spacer/PDR for model checking workloads
 - StarExec-compatible stdin/stdout interface via the `smtcomp2026` binary
@@ -23,33 +23,33 @@ OxiZ is actively developed at: [https://github.com/cool-japan/oxiz](https://gith
 
 ## Why OxiZ for SMT-COMP 2026?
 
-### 1. Broad logic coverage — 19 divisions implemented, honest per-division status
+### 1. Broad logic coverage – 19 divisions implemented, honest per-division status
 
-OxiZ has implementations across the following SMT-LIB logic families. Status reflects real, measured results from `bench/z3_parity` (a real `z3` binary, honest comparator — `Unknown` never counts as a match) as of v0.3.1, not an aspirational "all ready" claim:
+OxiZ has implementations across the following SMT-LIB logic families. Status reflects real, measured results from `bench/z3_parity` (a real `z3` binary, honest comparator – `Unknown` never counts as a match) as of v0.3.1, not an aspirational "all ready" claim:
 
 | Division | Status |
 |----------|--------|
 | QF_LIA   | ✅ Ready (16/16 Correct) |
 | QF_LRA   | ✅ Ready (16/16 Correct) |
 | QF_BV    | ✅ Ready (15/15 Correct) |
-| QF_S     | ✅ Ready (10/10 Correct — ground string decision procedure) |
-| QF_FP    | ✅ Ready (10/10 Correct — concrete FP model finder) |
+| QF_S     | ✅ Ready (10/10 Correct – ground string decision procedure) |
+| QF_FP    | ✅ Ready (10/10 Correct – concrete FP model finder) |
 | QF_DT    | ✅ Ready (10/10 Correct) |
 | QF_A     | ✅ Ready (10/10 Correct) |
 | QF_NIA   | ✅ Ready (1/1 Correct on the parity suite; broader NIA branch-and-bound has known scoping gaps, see `TODO.md`) |
 | QF_NRA   | 🔶 Alpha (irrational-root isolation still open; not yet part of the parity suite) |
-| UFLIA    | ✅ Ready (20/20 Correct — Skolem witness synthesis + CEGAR on top of the MBQI SAT certifier) |
-| UFLRA    | ✅ Ready (10/10 Correct — symbolic model certification over the Reals + quasi-macro detection) |
-| AUFLIA   | ✅ Ready (10/10 Correct — finite-range quantifier expansion) |
+| UFLIA    | ✅ Ready (20/20 Correct – Skolem witness synthesis + CEGAR on top of the MBQI SAT certifier) |
+| UFLRA    | ✅ Ready (10/10 Correct – symbolic model certification over the Reals + quasi-macro detection) |
+| AUFLIA   | ✅ Ready (10/10 Correct – finite-range quantifier expansion) |
 | AUFLIRA  | ✅ Ready (5/5 Correct) |
 | QF_ALIA  | ✅ Ready (5/5 Correct) |
 | QF_AUFBV | ✅ Ready (5/5 Correct) |
 | QF_ABV   | ✅ Ready (5/5 Correct) |
 | QF_NIRA  | ✅ Ready (5/5 Correct) |
-| QF_IDL   | ⬜ Not yet part of `bench/z3_parity` — no measured data to report |
-| QF_RDL   | ⬜ Not yet part of `bench/z3_parity` — no measured data to report |
+| QF_IDL   | ⬜ Not yet part of `bench/z3_parity` – no measured data to report |
+| QF_RDL   | ⬜ Not yet part of `bench/z3_parity` – no measured data to report |
 
-Aggregate result across the 168 benchmarks that make up the measured divisions above: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** — all 19 measured divisions are individually at 100% of this suite (which is a statement about the differential parity suite, not a blanket "100% Z3 compatibility" claim; `QF_NRA`, `QF_IDL` and `QF_RDL` are not part of it) — see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) and the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`) for the authoritative, per-benchmark breakdown. "Authoritative" has a precise meaning here: every tracked snapshot must agree on the verdict of every benchmark (`oxiz_result`, `z3_result`, `match_status`) and may differ only in the machine-dependent timings, a rule enforced on every `cargo test` by `bench/z3_parity/tests/cross_env_verdict_agreement.rs`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of one local run and carries no such guarantee. The z3 version is part of the evidence: the recorded baseline is z3 4.15.4, and a snapshot measured against a different z3 cannot be compared verdict-for-verdict with one that was not.
+Aggregate result across the 168 benchmarks that make up the measured divisions above: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** – all 19 measured divisions are individually at 100% of this suite (which is a statement about the differential parity suite, not a blanket "100% Z3 compatibility" claim; `QF_NRA`, `QF_IDL` and `QF_RDL` are not part of it) – see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) and the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`) for the authoritative, per-benchmark breakdown. "Authoritative" has a precise meaning here: every tracked snapshot must agree on the verdict of every benchmark (`oxiz_result`, `z3_result`, `match_status`) and may differ only in the machine-dependent timings, a rule enforced on every `cargo test` by `bench/z3_parity/tests/cross_env_verdict_agreement.rs`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of one local run and carries no such guarantee. The z3 version is part of the evidence: the recorded baseline is z3 4.15.4, and a snapshot measured against a different z3 cannot be compared verdict-for-verdict with one that was not.
 
 ### 2. Pure Rust: safety, reproducibility, and auditability
 
@@ -145,9 +145,9 @@ cargo run --release -p oxiz-smtcomp -- --generate-starexec-package ./oxiz-smtcom
 
 This produces a `.zip` archive containing:
 
-- `bin/smtcomp2026` — the solver binary (statically linked)
-- `bin/starexec_run_default` — the StarExec run script
-- `README` — version information and contact details
+- `bin/smtcomp2026` – the solver binary (statically linked)
+- `bin/starexec_run_default` – the StarExec run script
+- `README` – version information and contact details
 
 ### Step 6: Register at SMT-COMP 2026
 
@@ -205,20 +205,20 @@ OxiZ is positioned as a competitive entrant in all 19 divisions and a **first-of
 ## Known Areas for Improvement
 
 Noted here for transparency ahead of the competition submission, not as a formal call for
-external contribution — OxiZ is Apache-2.0 licensed and the source is at
+external contribution – OxiZ is Apache-2.0 licensed and the source is at
 [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz):
 
-- **SIMD BV propagation** (`oxiz-theories/src/bv/`) — the bit-vector solver currently uses scalar
+- **SIMD BV propagation** (`oxiz-theories/src/bv/`) – the bit-vector solver currently uses scalar
   propagation loops in several places; SIMD-accelerated word-level propagation (AVX2/AVX-512 on
   x86-64, NEON on AArch64) could improve throughput on large BV benchmarks.
-- **MBQI instantiation tuning** (`oxiz-solver/src/mbqi/`) — model-based quantifier instantiation
+- **MBQI instantiation tuning** (`oxiz-solver/src/mbqi/`) – model-based quantifier instantiation
   is sensitive to the order and selection of terms used for instantiation; heuristics for term
   scoring, ground term selection, and iteration bounds have room for improvement.
-- **String theory performance** (`oxiz-theories/src/strings/`) — handles core SMT-LIB string
+- **String theory performance** (`oxiz-theories/src/strings/`) – handles core SMT-LIB string
   constraints but has room for improved automata-based reasoning and length constraint propagation.
-- **Proof export verification** (`oxiz-proof/`) — Alethe and LFSC proof terms are generated but
+- **Proof export verification** (`oxiz-proof/`) – Alethe and LFSC proof terms are generated but
   not yet checked against reference proof checkers (`alethe-proof-checker`, LFSC) in CI.
-- **Benchmark-specific preprocessing** — pre-solving heuristics, symmetry breaking, and formula
+- **Benchmark-specific preprocessing** – pre-solving heuristics, symmetry breaking, and formula
   simplification tuned to specific SMT-COMP benchmark families.
 
 ---
@@ -231,6 +231,6 @@ The OxiZ project is grateful to the SMT-COMP organizers for maintaining an open 
 
 ---
 
-*OxiZ — COOLJAPAN OU (Team Kitasan)*
+*OxiZ – COOLJAPAN OU (Team Kitasan)*
 *Repository: [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz)*
 *Competition contact: open an issue with tag `[SMT-COMP 2026]`*

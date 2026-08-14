@@ -24,7 +24,7 @@ use oxiz_core::smtlib::{Command, parse_script};
 fn main() {
     println!("=== OxiZ Core: SMT-LIB2 Parsing ===\n");
 
-    // ===== Example 1: Simple Boolean Formula =====
+    // ======== Example 1: Simple Boolean Formula ========
     println!("--- Example 1: Boolean Satisfiability ---");
     let input1 = r#"
         (set-logic QF_UF)
@@ -48,7 +48,7 @@ fn main() {
         }
     }
 
-    // ===== Example 2: Integer Arithmetic =====
+    // ======== Example 2: Integer Arithmetic ========
     println!("\n--- Example 2: Linear Integer Arithmetic ---");
     let input2 = r#"
         (set-logic QF_LIA)
@@ -75,7 +75,7 @@ fn main() {
         }
     }
 
-    // ===== Example 3: Quantified Formula =====
+    // ======== Example 3: Quantified Formula ========
     println!("\n--- Example 3: Quantified Formula ---");
     let input3 = r#"
         (set-logic LIA)
@@ -98,7 +98,7 @@ fn main() {
         }
     }
 
-    // ===== Example 4: Bitvector Logic =====
+    // ======== Example 4: Bitvector Logic ========
     println!("\n--- Example 4: Bitvector Arithmetic ---");
     let input4 = r#"
         (set-logic QF_BV)
@@ -122,7 +122,7 @@ fn main() {
         }
     }
 
-    // ===== Example 5: Array Theory =====
+    // ======== Example 5: Array Theory ========
     println!("\n--- Example 5: Theory of Arrays ---");
     let input5 = r#"
         (set-logic QF_AUFLIA)
@@ -148,7 +148,7 @@ fn main() {
         }
     }
 
-    // ===== Example 6: Error Handling =====
+    // ======== Example 6: Error Handling ========
     println!("\n--- Example 6: Error Handling ---");
     let malformed_input = r#"
         (set-logic QF_LIA)
@@ -168,7 +168,7 @@ fn main() {
         }
     }
 
-    // ===== Example 7: Incremental Commands =====
+    // ======== Example 7: Incremental Commands ========
     println!("\n--- Example 7: Incremental Solving (Push/Pop) ---");
     let input7 = r#"
         (set-logic QF_LIA)
@@ -195,7 +195,7 @@ fn main() {
         }
     }
 
-    // ===== Example 8: Options and Metadata =====
+    // ======== Example 8: Options and Metadata ========
     println!("\n--- Example 8: Options and Metadata ---");
     let input8 = r#"
         (set-info :source "Example from documentation")
@@ -221,7 +221,7 @@ fn main() {
         }
     }
 
-    // ===== Example 9: Multiple Assertions =====
+    // ======== Example 9: Multiple Assertions ========
     println!("\n--- Example 9: Multiple Assertions ---");
     let input9 = r#"
         (set-logic QF_LIA)

@@ -1,4 +1,4 @@
-# OxiZ Python Bindings — z3-python Parity Matrix
+# OxiZ Python Bindings – z3-python Parity Matrix
 
 Status as of version 0.3.1.
 

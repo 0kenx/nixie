@@ -16,7 +16,7 @@ use core::fmt::Write;
 /// in native stack than a basic-print level: at every level past
 /// `PrettyConfig::break_depth`, [`PrettyPrinter::should_break`] calls
 /// [`PrettyPrinter::term_width`], which runs a whole nested
-/// `Printer::print_term` walk over that subterm — up to `MAX_PRINT_DEPTH`
+/// `Printer::print_term` walk over that subterm – up to `MAX_PRINT_DEPTH`
 /// (2000) further frames of ~250 bytes each, i.e. about half of a 1 MiB
 /// thread stack, *inside* the deepest pretty frame. Measured directly: with
 /// this constant at 2000, `deeply_nested_term_truncates_instead_of_overflowing`
@@ -26,8 +26,8 @@ use core::fmt::Write;
 /// full budget with room to spare.
 ///
 /// Before this existed, `PrettyPrinter::write_term`'s `depth` parameter was a
-/// *formatting* input only — compared against `config.break_depth` to decide
-/// line breaking — and nothing terminated the recursion at all, so printing a
+/// *formatting* input only – compared against `config.break_depth` to decide
+/// line breaking – and nothing terminated the recursion at all, so printing a
 /// deep term aborted the process outright.
 const MAX_PRETTY_PRINT_DEPTH: usize = 512;
 
@@ -38,7 +38,7 @@ pub struct PrettyPrinter<'a> {
     ///
     /// `term_width` re-prints a whole subterm with the basic printer just to
     /// measure it, and [`PrettyPrinter::should_break`] asks for that
-    /// measurement at every level it descends through — so an unmemoised
+    /// measurement at every level it descends through – so an unmemoised
     /// pretty-print costs O(size x depth) basic-print work, and a shared DAG
     /// node reachable by many paths is re-printed once per path. The measured
     /// width is a pure function of the `TermId` (the nested basic walk always
@@ -1101,8 +1101,8 @@ mod tests {
     }
 
     /// `PrettyPrinter::write_term`'s `depth` parameter used to be a
-    /// *formatting* input only — compared against `config.break_depth` to
-    /// decide line breaking — and nothing terminated the recursion, so
+    /// *formatting* input only – compared against `config.break_depth` to
+    /// decide line breaking – and nothing terminated the recursion, so
     /// pretty-printing a deep term aborted the process. It now degrades to
     /// the same `...` truncation marker the basic printer uses.
     ///
@@ -1139,7 +1139,7 @@ mod tests {
     }
 
     /// The `term_width` memo must not change what is printed: the same
-    /// printer reused across calls, and a fresh printer per call, agree — on
+    /// printer reused across calls, and a fresh printer per call, agree – on
     /// a term whose subterms are shared (the same `TermId` reachable from
     /// several parents), which is exactly the case the memo collapses.
     #[test]
@@ -1168,7 +1168,7 @@ mod tests {
 
     /// A deep chain makes `should_break` measure a subterm at every level:
     /// unmemoised that is O(size x depth) basic-print work, memoised it is
-    /// linear. The assertion is only that the print is correct and returns —
+    /// linear. The assertion is only that the print is correct and returns –
     /// the memo is a cost fix, not a semantic one.
     #[test]
     fn deep_chain_prints_with_one_width_measurement_per_node() {

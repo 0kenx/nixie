@@ -59,7 +59,7 @@ pub enum OmegaResult {
 enum ShadowValue {
     /// The gap reduces to a constant (no other variables remain).
     Const(i64),
-    /// The gap still depends on other variables — undecidable here.
+    /// The gap still depends on other variables – undecidable here.
     Symbolic,
 }
 
@@ -137,13 +137,13 @@ impl OmegaTester {
     /// and dark shadow tests, and reports whether the projection is
     /// satisfiable, unsatisfiable, or undetermined:
     ///
-    /// * `Unsatisfiable` — some lower/upper bound pair yields an empty real
+    /// * `Unsatisfiable` – some lower/upper bound pair yields an empty real
     ///   interval that reduces to a constant contradiction, or a
     ///   variable-free constraint is violated.
-    /// * `Satisfiable` — every constraint mentions only `var`, every real
+    /// * `Satisfiable` – every constraint mentions only `var`, every real
     ///   shadow is (constantly) non-empty, and every dark shadow holds, so an
     ///   integer solution is guaranteed.
-    /// * `Unknown` — the projection still involves other variables (the exact
+    /// * `Unknown` – the projection still involves other variables (the exact
     ///   Omega splitting/recursion is not carried out here), so no sound
     ///   definite answer can be given.
     pub fn eliminate(&mut self, var: VarId) -> OmegaResult {
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_real_shadow_detects_unsat() {
-        // x ≤ 3  ∧  x ≥ 5  (i.e. -x ≤ -5) — empty interval.
+        // x ≤ 3  ∧  x ≥ 5  (i.e. -x ≤ -5) – empty interval.
         let mut tester = OmegaTester::default_config();
         tester.add_constraint(constraint(&[(0, 1)], 3));
         tester.add_constraint(constraint(&[(0, -1)], -5));
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_other_variables_are_unknown() {
-        // x ≤ y ∧ x ≥ 0 — projection still depends on y → Unknown.
+        // x ≤ y ∧ x ≥ 0 – projection still depends on y → Unknown.
         let mut tester = OmegaTester::default_config();
         tester.add_constraint(constraint(&[(0, 1), (1, -1)], 0)); // x - y ≤ 0
         tester.add_constraint(constraint(&[(0, -1)], 0)); // -x ≤ 0

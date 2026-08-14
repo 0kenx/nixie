@@ -16,8 +16,8 @@
 //! composite term (`mk_add`, `mk_mul`, …) is interned by its structure, so
 //! distinct terms always receive distinct, non-colliding handles and a
 //! composite handle can never be mistaken for a constant. It is *not* wired
-//! into the real solver — `bv_rewriter.rs` is the authoritative AST-backed
-//! rewriter — but its simplification helpers are internally sound.
+//! into the real solver – `bv_rewriter.rs` is the authoritative AST-backed
+//! rewriter – but its simplification helpers are internally sound.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -592,7 +592,7 @@ impl AdvancedBvRewriter {
     /// is no `mk_neg`), and the both-constant case is already folded by the
     /// callers before this check is reached, so there is no additional
     /// information to exploit here. It therefore conservatively returns
-    /// `false` — a *sound* under-approximation: the `x + (-x) → 0` rule simply
+    /// `false` – a *sound* under-approximation: the `x + (-x) → 0` rule simply
     /// never fires, which can miss a simplification but never produces a wrong
     /// result.
     fn is_negation(&self, _lhs: BvHandle, _rhs: BvHandle) -> bool {
@@ -611,7 +611,7 @@ impl AdvancedBvRewriter {
     //
     // Constants are interned by value; composites by structure. Every handle
     // returned here is either an interned constant (present in `constants`) or
-    // a fresh interned composite handle — never a fabricated `0`, and never a
+    // a fresh interned composite handle – never a fabricated `0`, and never a
     // collision between a composite and a constant.
 
     fn mk_const(&mut self, value: u64, width: usize) -> Result<BvHandle, String> {
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(rewriter.stats.rewrites_applied, 0);
     }
 
-    // ── TODO-1012: sound handle allocation (no fake 0, no collisions) ─────
+    // ======== TODO-1012: sound handle allocation (no fake 0, no collisions) ========
 
     #[test]
     fn test_composite_handles_are_distinct_and_nonzero() {

@@ -233,7 +233,7 @@ mod tests {
     /// enclosing `"..."` term quotation every proposition is wrapped in, but
     /// `conclusion_to_prop` already routes every conclusion through
     /// `escape_string` before embedding it, turning `"` into `\"`. This pins
-    /// that the *whole* export pipeline — not just the helper in isolation —
+    /// that the *whole* export pipeline – not just the helper in isolation –
     /// keeps the outer quotation balanced when a conclusion contains one.
     #[test]
     fn test_export_proof_conclusion_with_quote_keeps_outer_quotes_balanced() {

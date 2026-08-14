@@ -19,9 +19,9 @@
 //! SMT-LIB strings are sequences of Unicode scalar values, and the rest of the
 //! string theory (`ground_solver::eval`, `solver`, `word_eq`, …) counts one
 //! scalar as one character. This module follows the same convention: every
-//! position and length exposed or consumed here — `find_all_positions`,
+//! position and length exposed or consumed here – `find_all_positions`,
 //! `count_occurrences`, `compute_result_length`, `estimate_result_bounds`, and
-//! the regex scan internals — is measured in `char`s, never in UTF-8 bytes.
+//! the regex scan internals – is measured in `char`s, never in UTF-8 bytes.
 //! For pure-ASCII input the two coincide, so ASCII behaviour is unchanged.
 
 use super::regex::Regex;
@@ -941,7 +941,7 @@ mod tests {
         assert_eq!(result, "ttest");
     }
 
-    // --- Unicode (multi-byte) regression tests -------------------------
+    // ======== Unicode (multi-byte) regression tests ========
     //
     // Every position in this module is a character index; the byte-indexed
     // predecessors of these functions panicked with "byte index N is not a

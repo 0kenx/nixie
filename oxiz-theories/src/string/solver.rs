@@ -1847,12 +1847,12 @@ mod tests {
         assert!(matches!(result, TheoryResult::Unsat(_)));
     }
 
-    // ------------------------------------------------------------------
+    // ========  ========
     // Honesty (theories-string): `check()` must NOT report `Sat` while word
     // equations or regex constraints on unassigned variables remain
     // unresolved. Determinable equations are resolved (staying Sat/Unsat);
     // genuinely-undecided ones yield `Unknown`.
-    // ------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn audit_resolvable_var_suffix_equation_is_sat() {

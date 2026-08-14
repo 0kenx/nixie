@@ -21,7 +21,7 @@ use std::path::Path;
 /// a different `W` (e.g. `Cursor<Vec<u8>>`).
 ///
 /// `Debug` is derived so its output for `DratWriter<BufWriter<File>>`
-/// — the upstream form — is byte-identical to pre-fork.
+/// – the upstream form – is byte-identical to pre-fork.
 #[derive(Debug)]
 pub struct DratWriter<W: Write + Send = BufWriter<File>> {
     writer: Option<W>,
@@ -73,7 +73,7 @@ impl<W: Write + Send> DratWriter<W> {
     /// byte stream is identical; pass `Cursor<Vec<u8>>` to capture
     /// the DRAT proof in memory.
     ///
-    /// The caller controls buffering — wrap in `BufWriter` to match
+    /// The caller controls buffering – wrap in `BufWriter` to match
     /// `enable(&path)`'s buffering exactly.
     pub fn enable_writer(&mut self, w: W) -> std::io::Result<()> {
         self.writer = Some(w);
@@ -155,11 +155,11 @@ impl<W: Write + Send> Drop for DratWriter<W> {
 
 /// LRAT proof emitter, parameterized over the underlying writer `W`.
 ///
-/// Mirrors [`DratWriter`] — defaults to `BufWriter<File>` so existing
+/// Mirrors [`DratWriter`] – defaults to `BufWriter<File>` so existing
 /// callers see no change; pass a different `W` to capture in memory.
 ///
 /// `Debug` is derived so its output for `LratWriter<BufWriter<File>>`
-/// — the upstream form — is byte-identical to pre-fork.
+/// – the upstream form – is byte-identical to pre-fork.
 #[derive(Debug)]
 pub struct LratWriter<W: Write + Send = BufWriter<File>> {
     writer: Option<W>,
@@ -171,7 +171,7 @@ pub struct LratWriter<W: Write + Send = BufWriter<File>> {
 
 impl LratWriter<BufWriter<File>> {
     /// Create a new LRAT proof logger (disabled). Default-typed for
-    /// source compatibility — see [`DratWriter::new`].
+    /// source compatibility – see [`DratWriter::new`].
     pub fn new() -> Self {
         Self {
             writer: None,
@@ -247,9 +247,9 @@ impl<W: Write + Send> LratWriter<W> {
             //
             // The hint section is a mandatory part of every LRAT *addition* line
             // and MUST always be terminated by a trailing `0`, even when there are
-            // no hints. Emitting a hint-less line (`<id> <lits> 0`) — as the
+            // no hints. Emitting a hint-less line (`<id> <lits> 0`) – as the
             // previous implementation did for original clauses and any clause
-            // added with an empty hint slice — produces a line with a single `0`
+            // added with an empty hint slice – produces a line with a single `0`
             // terminator, which LRAT checkers parse as "literals continue" and
             // then choke on the missing second `0`. Writing the second `0`
             // unconditionally yields the well-formed `<id> <lits> 0 0` for the
@@ -295,7 +295,7 @@ impl<W: Write + Send> LratWriter<W> {
             // id of the *most recently added* clause, and a deletion line does NOT
             // introduce a new clause id. The previous implementation wrote
             // `self.next_id` and then incremented it, which both mis-tagged the
-            // line (using a not-yet-assigned id) and burned a fresh id — so the
+            // line (using a not-yet-assigned id) and burned a fresh id – so the
             // next genuine `add_clause` skipped an id, desynchronising every
             // subsequent hint reference and breaking LRAT checkers. Use the last
             // assigned id (`next_id - 1`) and leave `next_id` untouched.
@@ -610,7 +610,7 @@ mod tests {
         fs::remove_file(&path).expect("test operation should succeed");
     }
 
-    // === enable_writer: in-memory DRAT/LRAT capture ===
+    // ======== enable_writer: in-memory DRAT/LRAT capture ========
 
     #[test]
     fn test_drat_enable_writer_captures_to_cursor() {
@@ -682,7 +682,7 @@ mod tests {
             .expect("test operation should succeed");
         fs::remove_file(&path).ok();
 
-        // Writer variant — a Vec<u8> behind a shared Mutex wrapped in a
+        // Writer variant – a Vec<u8> behind a shared Mutex wrapped in a
         // BufWriter so the buffering matches `enable(&path)` exactly.
         let (captured, sink) = shared_sink();
 
@@ -711,7 +711,7 @@ mod tests {
         );
     }
 
-    // === LRAT in-memory capture (mirrors the DRAT tests above) ===
+    // ======== LRAT in-memory capture (mirrors the DRAT tests above) ========
 
     #[test]
     fn test_lrat_enable_writer_captures_to_cursor() {
@@ -770,7 +770,7 @@ mod tests {
             .expect("test operation should succeed");
         fs::remove_file(&path).ok();
 
-        // Writer variant — shared Mutex<Vec<u8>> behind a BufWriter so the
+        // Writer variant – shared Mutex<Vec<u8>> behind a BufWriter so the
         // buffering matches `enable(&path)` exactly.
         let (captured, sink) = shared_sink();
 
@@ -799,7 +799,7 @@ mod tests {
         );
     }
 
-    // === enable_writer reassignment: bytes land in the new sink ===
+    // ======== enable_writer reassignment: bytes land in the new sink ========
 
     #[test]
     fn test_drat_enable_writer_reassigns_sink() {
@@ -879,7 +879,7 @@ mod tests {
         assert_eq!(b_bytes, b"1 1 2 0 0\n");
     }
 
-    // === LRAT format-spec regressions (delete id + hint-less line fixes) ===
+    // ======== LRAT format-spec regressions (delete id + hint-less line fixes) ========
 
     #[test]
     fn test_lrat_delete_does_not_consume_id() {
@@ -911,7 +911,7 @@ mod tests {
 
     #[test]
     fn test_lrat_original_clause_line_is_well_formed() {
-        // An original (hint-less) clause must emit `<id> <lits> 0 0` — the second
+        // An original (hint-less) clause must emit `<id> <lits> 0 0` – the second
         // `0` terminates the mandatory (empty) hint section.
         let captured: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = BufWriter::new(SharedSink(captured.clone()));

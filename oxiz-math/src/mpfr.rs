@@ -215,7 +215,7 @@ impl ArbitraryFloat {
         // Normalized mantissa (top bit set, `precision` bits wide) is
         // `2^(precision-1)`; since the representation is `mantissa *
         // 2^exponent` (see the struct docs), representing the value `1`
-        // requires `exponent = 1 - precision`, not `0` — `exponent = 0`
+        // requires `exponent = 1 - precision`, not `0` – `exponent = 0`
         // here previously produced `2^(precision-1)` instead of `1`.
         let mantissa = BigUint::one() << (precision.bits() - 1);
         let exponent = 1 - precision.bits() as i64;

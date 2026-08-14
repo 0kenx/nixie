@@ -111,7 +111,7 @@ pub struct UfRewriter {
     ///
     /// Keyed by the *exact* argument list rather than a 64-bit hash of it:
     /// a hash-only key can collide for two genuinely different argument
-    /// lists (rare, but not impossible — e.g. adversarial input, or simply
+    /// lists (rare, but not impossible – e.g. adversarial input, or simply
     /// enough distinct applications), which would silently rewrite `f(a,b)`
     /// to the cached result of an unrelated `f(c,d)`.
     congruence_cache: FxHashMap<(Spur, SmallVec<[TermId; 4]>), TermId>,
@@ -983,14 +983,14 @@ mod tests {
         assert_eq!(result, expected);
     }
 
-    // =======================================================================
+    // ========  ========
     // Inlining budget (`UfRewriterConfig::max_inline_depth`)
     //
     // These drive the rewriter through `enable_beta_reduction: false,
     // enable_inlining: true`, which is the configuration that reaches
     // `try_inline` at all -- with beta reduction on it fires first on the
     // same precondition. See `rewrite_apply`.
-    // =======================================================================
+    // ========  ========
 
     /// A rewriter that inlines (and does not beta-reduce) with the given
     /// budget.

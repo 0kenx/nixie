@@ -1,5 +1,5 @@
 #!/bin/bash
-# wasm_build.sh — Build OxiZ WASM and report bundle size.
+# wasm_build.sh – Build OxiZ WASM and report bundle size.
 #
 # Usage:
 #   ./scripts/wasm_build.sh              # minimal (size-optimized, default)
@@ -60,7 +60,7 @@ if command -v wasm-opt &>/dev/null; then
   ls -lh "${PKG_DIR}"/*.wasm 2>/dev/null
 else
   echo ""
-  echo "  (wasm-opt not found — install binaryen for additional ~10-15% size reduction)"
+  echo "  (wasm-opt not found – install binaryen for additional ~10-15% size reduction)"
 fi
 
 echo ""

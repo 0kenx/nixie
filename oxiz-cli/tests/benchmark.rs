@@ -236,7 +236,7 @@ fn bench_json_output() {
 }
 
 /// Regression test for the `OXIZ_TIMING_TESTS` gate: when disabled, a
-/// wildly-over-budget duration must NOT panic — only the solve/output
+/// wildly-over-budget duration must NOT panic – only the solve/output
 /// assertions run.
 ///
 /// This used to set/remove the real `OXIZ_TIMING_TESTS` process environment

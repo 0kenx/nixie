@@ -365,7 +365,7 @@ impl Ieee754Engine {
     /// with a sticky flag recording whether the true quotient has a nonzero
     /// remainder. Because both operands lie in `[2^127, 2^128)`, the exact
     /// quotient `dividend / divisor` lies in `(0.5, 2.0)`, so `q` (that quotient
-    /// scaled by `2^127`) lies in `(2^126, 2^128)` — its MSB is at bit 126 or 127,
+    /// scaled by `2^127`) lies in `(2^126, 2^128)` – its MSB is at bit 126 or 127,
     /// exactly what the caller's normalization step expects.
     ///
     /// The running remainder must hold 129 bits: after the shift-in step it can
@@ -373,7 +373,7 @@ impl Ieee754Engine {
     /// conditional subtraction restores the invariant `remainder < divisor`. The
     /// earlier implementation kept the remainder in a bare `u128` and shifted it
     /// left *before* subtracting, which silently dropped bit 127 whenever the
-    /// remainder's MSB was set — corrupting every division whose dividend
+    /// remainder's MSB was set – corrupting every division whose dividend
     /// mantissa was smaller than the divisor's (the exact quotient in `(0.5, 1)`
     /// case), returning zero. Tracking the overflow bit explicitly fixes that.
     #[must_use]

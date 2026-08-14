@@ -3,7 +3,7 @@
 //! Everything here is a *function of already-evaluated operand values*: no
 //! access to the model, the cache, or the term manager, and no recursion into
 //! sub-terms. That separation is what lets [`super::ModelEvaluator::eval`] be a
-//! flat loop over an explicit frame stack — the driver decides *when* an
+//! flat loop over an explicit frame stack – the driver decides *when* an
 //! operator's operands are available, this module decides *what* the operator
 //! computes from them.
 //!
@@ -19,10 +19,10 @@ use num_bigint::BigInt;
 use num_rational::Rational64;
 use num_traits::{CheckedDiv, CheckedSub, ToPrimitive};
 
-// ===== Bitvector arithmetic helpers =====
+// ======== Bitvector arithmetic helpers ========
 //
 // `Value::BitVec` stores a bitvector as `(declared_width: u32, magnitude:
-// u64)` — the magnitude is capped at 64 bits regardless of the declared
+// u64)` – the magnitude is capped at 64 bits regardless of the declared
 // width (see the `BitVecConst` arm of `ModelEvaluator::eval_leaf` for why: a
 // magnitude that does not fit `u64` is surfaced as an explicit error rather
 // than fabricated). The helpers below encode that representation's
@@ -33,7 +33,7 @@ use num_traits::{CheckedDiv, CheckedSub, ToPrimitive};
 //   SMT-LIB `FixedSizeBitVectors` theory directly.
 // - For `width > 64`, only magnitudes `< 2^64 <= 2^(width-1)` are ever
 //   representable, so such values are *always* non-negative in their true
-//   `width`-bit interpretation — the "effective width" for sign/shift
+//   `width`-bit interpretation – the "effective width" for sign/shift
 //   purposes is therefore capped at 64.
 
 /// Effective width used for masking/sign checks: `Value::BitVec`'s
@@ -110,7 +110,7 @@ fn from_rational(r: Rational64) -> EvalResult {
 /// The error an arithmetic operator reports when its exact result is not
 /// representable.
 ///
-/// `Value` arithmetic is fixed width — `i64` integers and `Rational64` reals —
+/// `Value` arithmetic is fixed width – `i64` integers and `Rational64` reals –
 /// so an overflowing result has no faithful `Value`. Every arithmetic arm is
 /// written with `checked_*` so that this is what the caller gets, in *both*
 /// build profiles: an unchecked `+`/`-`/`*` aborts a debug build with `attempt
@@ -128,7 +128,7 @@ pub(super) fn arith_overflow(op: &str) -> EvalResult {
 /// eagerly, left to right, before combining them.
 ///
 /// The n-ary and short-circuiting operators (`and`, `or`, `distinct`, `+`,
-/// `*`, `ite`) are *not* here — their evaluation order depends on the operand
+/// `*`, `ite`) are *not* here – their evaluation order depends on the operand
 /// values, so they live in the driver's [`super::Op`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EagerKind {
@@ -152,9 +152,9 @@ pub(super) enum EagerKind {
     Mod,
     /// unary `-`
     Neg,
-    /// `<` — also used for `>` with the operands swapped.
+    /// `<` – also used for `>` with the operands swapped.
     Lt,
-    /// `<=` — also used for `>=` with the operands swapped.
+    /// `<=` – also used for `>=` with the operands swapped.
     Le,
     /// `bvnot`
     BvNot,
@@ -205,7 +205,7 @@ pub(super) enum EagerKind {
 /// driver before it gets here.
 pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Value]) -> EvalResult {
     match (kind, values) {
-        // ----- Boolean -------------------------------------------------
+        // ======== Boolean ========
         (EagerKind::Not, [a]) => match a {
             Value::Bool(b) => EvalResult::Ok(Value::Bool(!b)),
             _ => EvalResult::Error("Not: expected bool".to_string()),
@@ -220,7 +220,7 @@ pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Val
         },
         (EagerKind::Eq, [a, b]) => EvalResult::Ok(Value::Bool(a == b)),
 
-        // ----- Arithmetic ----------------------------------------------
+        // ======== Arithmetic ========
         (EagerKind::Sub, [a, b]) => match (a, b) {
             (Value::Int(x), Value::Int(y)) => match (*x).checked_sub(*y) {
                 Some(d) => EvalResult::Ok(Value::Int(d)),
@@ -263,7 +263,7 @@ pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Val
             _ => EvalResult::Error("Le: expected numbers".to_string()),
         },
 
-        // ----- Bitvectors ----------------------------------------------
+        // ======== Bitvectors ========
         (EagerKind::BvNot, [a]) => match a {
             Value::BitVec(w, v) => EvalResult::Ok(Value::BitVec(*w, !v & bv_mask(*w))),
             _ => EvalResult::Error("BvNot: expected bitvector".to_string()),
@@ -302,7 +302,7 @@ pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Val
             _ => EvalResult::Error("BvConcat: expected bitvectors".to_string()),
         },
 
-        // ----- Arrays ---------------------------------------------------
+        // ======== Arrays ========
         //
         // `select` looks up the index in the array's exception list (most
         // recently `store`d entry wins), falling back to the array's default
@@ -319,7 +319,7 @@ pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Val
             _ => EvalResult::Error("Select: expected array".to_string()),
         },
         // `store` produces a new array value with `(index, value)` appended as
-        // the newest exception on top of the evaluated base array — `select`
+        // the newest exception on top of the evaluated base array – `select`
         // resolves ties by walking the exception list from the end, so this
         // correctly shadows any prior binding for the same index without
         // needing to search-and-replace here.
@@ -332,7 +332,7 @@ pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Val
             _ => EvalResult::Error("Store: expected array".to_string()),
         },
 
-        // ----- Strings --------------------------------------------------
+        // ======== Strings ========
         (EagerKind::StrLen, [a]) => match a {
             // SMT-LIB counts Unicode codepoints, not UTF-8 bytes.
             Value::String(s) => match i64::try_from(s.chars().count()) {
@@ -426,7 +426,7 @@ pub(super) fn combine_eager(kind: &EagerKind, operands: &[TermId], values: &[Val
 /// the operand sort: Int operands mean Euclidean integer division `(div a b)`
 /// (`a = b*q + r`, `0 <= r < |b|`, via [`i64::div_euclid`], e.g. `(div -7 2) =
 /// -4`); Real operands mean exact rational division. `int_sorted` is decided by
-/// the *sort* of the numerator term — not the evaluated value's runtime shape —
+/// the *sort* of the numerator term – not the evaluated value's runtime shape –
 /// because a Real-sorted quotient such as `(/ 3.0 2.0)` can have
 /// integer-valued operands yet must not truncate.
 fn combine_div(int_sorted: bool, a: &Value, b: &Value) -> EvalResult {

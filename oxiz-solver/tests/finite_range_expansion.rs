@@ -2,17 +2,17 @@
 //!
 //! A quantifier whose own guard pins every bound Int variable to a concrete
 //! finite interval is rewritten at assert time into the *logically equivalent*
-//! finite conjunction (`forall`) / disjunction (`exists`) over that interval —
+//! finite conjunction (`forall`) / disjunction (`exists`) over that interval –
 //! see `oxiz-solver/src/solver/encode/finite_expand.rs`.  The quantifier then
 //! disappears entirely and the ordinary ground solver decides the problem, so
 //! `sat` here is a genuine ground model, not an MBQI guess.
 //!
 //! Two halves are pinned:
 //!
-//! * `*_sat` — the satisfiable goals the expansion makes decidable, including
+//! * `*_sat` – the satisfiable goals the expansion makes decidable, including
 //!   the three `bench/z3_parity/benchmarks/AUFLIA` scripts the capability was
 //!   built for (`z3_parity_*`);
-//! * `*_unsat` / soundness — the same machinery must never turn a satisfiable
+//! * `*_unsat` / soundness – the same machinery must never turn a satisfiable
 //!   goal into a spurious `unsat` (the rewrite is an equivalence, so *both*
 //!   directions are pinned), and must decline every shape whose bounds are not
 //!   provably concrete.
@@ -31,9 +31,9 @@ fn check(script: &str) -> String {
         .unwrap_or_else(|| "<no check-sat output>".to_string())
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The z3_parity AUFLIA benchmarks this capability targets.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `bench/z3_parity/benchmarks/AUFLIA/array_search.smt2`.
 ///
@@ -117,9 +117,9 @@ fn z3_parity_array_max() {
     assert_eq!(r, "sat", "m = 9 is the maximum, achieved at j = 3");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Soundness: the expansion is an equivalence, so `unsat` must survive it.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The same existential shape as `array_search`, but with every index in range
 /// pinned to a different value: no witness exists and the expanded disjunction
@@ -197,9 +197,9 @@ fn multi_variable_box_sat_and_unsat() {
     assert_eq!(check(&script("(assert (= (f 1 2) 40))")), "unsat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Polarity: the rewrite is an equivalence, so it is legal under a negation too.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `¬∃x ∈ [0, 2]. f(x) = 7` together with `f(1) = 7` is unsatisfiable.  A
 /// rewrite that merely *strengthened* or *weakened* the existential instead of
@@ -234,11 +234,11 @@ fn negated_bounded_exists_outside_range_sat() {
     assert_eq!(r, "sat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Nesting: an inner quantifier that reads the outer bound variable.
-// ---------------------------------------------------------------------------
+// ========  ========
 
-/// `∀i ∈ [0,1]. ∃j ∈ [0,1]. a[j] = i` with `a = [0, 1]` — satisfiable.
+/// `∀i ∈ [0,1]. ∃j ∈ [0,1]. a[j] = i` with `a = [0, 1]` – satisfiable.
 #[test]
 fn nested_bounded_quantifiers_sat() {
     let r = check(
@@ -255,7 +255,7 @@ fn nested_bounded_quantifiers_sat() {
     assert_eq!(r, "sat");
 }
 
-/// The unsatisfiable companion — and the direct regression guard for the
+/// The unsatisfiable companion – and the direct regression guard for the
 /// capture hazard: splicing the inner existential's expansion in place while it
 /// still mentions the outer `i` makes the capture-avoiding substituter
 /// alpha-rename the `∀`, which turned `i` into a free constant and answered
@@ -276,9 +276,9 @@ fn nested_bounded_quantifiers_unsat() {
     assert_eq!(r, "unsat", "neither a[0] nor a[1] can equal 0");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Empty ranges.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `∀x ∈ ∅` constrains nothing: the goal stays satisfiable even though the
 /// consequent is contradicted at a point outside the (empty) range.
@@ -310,9 +310,9 @@ fn empty_range_exists_is_unsat() {
     assert_eq!(r, "unsat", "an empty existential range has no witness");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Fall-through: shapes the expansion must decline.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A 201-point interval exceeds the default budget of 64, so the quantifier
 /// keeps its ordinary MBQI path.  Whatever that path concludes, it must never
@@ -335,7 +335,7 @@ fn over_budget_range_falls_through_without_unsoundness() {
 }
 
 /// An unconstrained symbolic bound is not a concrete interval, so nothing is
-/// expanded — `n` could be arbitrarily large and the witness arbitrarily far
+/// expanded – `n` could be arbitrarily large and the witness arbitrarily far
 /// out.  Refuting this would be unsound.
 #[test]
 fn unpinned_symbolic_bound_falls_through_without_unsoundness() {

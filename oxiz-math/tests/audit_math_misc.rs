@@ -27,10 +27,10 @@ fn next_prime_after(start: u64) -> BigInt {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // rational/mod.rs: number-theory helpers must be correct beyond the old
 // trial-division limit (100_000 / 1_000_000), and must never hang.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn is_square_free_false_for_square_of_prime_beyond_trial_division_limit() {
@@ -124,10 +124,10 @@ fn factorize_public_api_reconstructs_n_and_reports_errors_honestly() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // fast_rational.rs: i64::MIN must never be silently corrupted by
 // saturating_abs before reaching gcd_i64.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn fast_rational_mul_i64_min_matches_bigint_arithmetic() {
@@ -139,10 +139,10 @@ fn fast_rational_mul_i64_min_matches_bigint_arithmetic() {
     assert_eq!(result.to_big_rational(), expected);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // simplex.rs: a non-basic variable violating its own (newly tightened)
 // bound must be repaired, not silently ignored by check().
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn simplex_detects_infeasibility_from_non_basic_bound_violation() {

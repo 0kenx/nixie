@@ -744,7 +744,7 @@ fn reduce_bounds(expr: &Regex, state: &mut BoundsState<'_>) -> LengthBounds {
                 let (part_min, part_max) = part_bounds?;
                 // Overflow means the bound is not representable, which
                 // is reported as "no bound known" (`None`) rather than
-                // wrapped into a small — and therefore wrong — bound.
+                // wrapped into a small – and therefore wrong – bound.
                 min = min.checked_add(part_min)?;
                 max = match (max, part_max) {
                     (Some(m), Some(pm)) => m.checked_add(pm),

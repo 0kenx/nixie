@@ -31,9 +31,9 @@ use super::types::{Model, SolverResult};
 /// Which nonlinear backend `dispatch_nl_solver` should invoke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NlBackend {
-    /// Integer / mixed (NIA, NIRA, ANIA) — `NiaSolver` with per-sort integrality.
+    /// Integer / mixed (NIA, NIRA, ANIA) – `NiaSolver` with per-sort integrality.
     Nia,
-    /// Pure real nonlinear — `NlsatSolver`.
+    /// Pure real nonlinear – `NlsatSolver`.
     Nra,
 }
 
@@ -43,7 +43,7 @@ enum NlBackend {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 enum NlAtom {
-    /// `sq_term = const` — the square term equals a constant
+    /// `sq_term = const` – the square term equals a constant
     SqEq {
         sq_term: TermId,
         val: Rational64,
@@ -122,7 +122,7 @@ impl Solver {
 
         // Explicit nonlinear logics win over shape detection.
         // Note: `NIRA` does NOT contain `NIA` as a substring (it is N-I-R-A),
-        // so match it explicitly — NIRA routes to the NIA backend (per-sort
+        // so match it explicitly – NIRA routes to the NIA backend (per-sort
         // integrality in the translator keeps Real vars real).
         if logic.contains("NIA") || logic.contains("NIRA") {
             return Some(NlBackend::Nia);
@@ -240,7 +240,7 @@ impl Solver {
         // If sq > 0 (sq >= 1 for int, sq > 0 for real) and a > 0, then
         // a*sq >= a (int) or a*sq > 0 (real), so c - a*sq < c (for positive a).
         // When d = 0 (y >= 0) and c = 0: c - a*sq = -a*sq <= -a < 0,
-        // but we need var >= 0 — contradiction.
+        // but we need var >= 0 – contradiction.
         //
         // Concretely, check:
         //   sq > 0  AND  sq + v = 0  AND  v >= 0
@@ -324,7 +324,7 @@ impl Solver {
                 // If deriv_sign < 0, then as sq increases (sq > 0), var decreases.
                 // At sq = 0: var = var_expr_at_sq_zero
                 // For all sq > 0: var < var_expr_at_sq_zero
-                // If var_expr_at_sq_zero <= bound, then for sq > 0: var < bound — contradiction with var >= bound.
+                // If var_expr_at_sq_zero <= bound, then for sq > 0: var < bound – contradiction with var >= bound.
 
                 if deriv_sign < Rational64::zero() && var_expr_at_sq_zero <= *bound {
                     return true;

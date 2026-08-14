@@ -31,7 +31,7 @@ fn solved_instance_with_inprocessing_logs_pure_and_subsumed_deletions_to_drat() 
         ..SolverConfig::default()
     });
 
-    // PHP(3,2): 3 pigeons, 2 holes — UNSAT, and small enough to solve
+    // PHP(3,2): 3 pigeons, 2 holes – UNSAT, and small enough to solve
     // quickly while still forcing multiple conflicts (reusing the same
     // construction the DRAT well-formedness regression test uses, which
     // reliably drives several conflicts / backjumps to decision level 0).
@@ -63,7 +63,7 @@ fn solved_instance_with_inprocessing_logs_pure_and_subsumed_deletions_to_drat() 
     solver.add_clause_dimacs(&[10, 11, 12]); // (p ∨ q ∨ r)
 
     // Decoy giving w1, w2, p, q, r an opposite-polarity occurrence each, so
-    // none of them is independently pure (only var 7 / `y` is) — keeps the
+    // none of them is independently pure (only var 7 / `y` is) – keeps the
     // (p ∨ q ∨ r) deletion attributable to subsumption alone.
     solver.add_clause_dimacs(&[-8, -9, -10, -11, -12]);
 

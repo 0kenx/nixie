@@ -3,12 +3,12 @@
 //! The solver is split across three files along the seams of what each one is
 //! responsible for:
 //!
-//! * this module — the e-graph's data model (`ENode`, the trails, the context
+//! * this module – the e-graph's data model (`ENode`, the trails, the context
 //!   stack), term interning, and the [`Theory`] implementation (`push`/`pop`/
 //!   `reset`);
-//! * [`congruence`] — everything that *mutates* the e-graph: use lists,
+//! * [`congruence`] – everything that *mutates* the e-graph: use lists,
 //!   signature-table maintenance and merge propagation;
-//! * [`explain`] — everything that *justifies* a derived equality: conflict
+//! * [`explain`] – everything that *justifies* a derived equality: conflict
 //!   detection and proof-forest explanation.
 //!
 //! Reference: Z3's `euf_egraph.cpp` for the overall congruence-closure design.
@@ -314,7 +314,7 @@ pub struct EufSolver {
     /// exactly one entry off the recorded node's list. This removes use-list
     /// entries appended to *pre-existing* nodes during a popped scope
     /// (truncation alone only reclaims the lists of nodes created in the scope,
-    /// leaving stale entries on older nodes — which would corrupt congruence
+    /// leaving stale entries on older nodes – which would corrupt congruence
     /// once a popped node index is reused by a later `intern`).
     use_list_trail: Vec<u32>,
     /// Scope checkpoints into use_list_trail, parallel to sig_trail_limits.
@@ -329,13 +329,13 @@ pub struct EufSolver {
     explain_generation: u32,
     /// Reusable distance table for try_explain_equality. Each entry packs the
     /// lexicographic cost `(max_edge_stamp << 32) | hop_count` of the best known
-    /// path from the source, so ties on the bottleneck break by shortest path —
+    /// path from the source, so ties on the bottleneck break by shortest path –
     /// an earliest *and* compact explanation.
     explain_dist: Vec<u64>,
     /// Reusable priority queue for try_explain_equality's search, ordered by
     /// `(packed_cost, node)` ascending.
     explain_heap: crate::prelude::BinaryHeap<core::cmp::Reverse<(u64, u32)>>,
-    /// Reusable parent-pointer table for explain_equality — parallel to explain_visited.
+    /// Reusable parent-pointer table for explain_equality – parallel to explain_visited.
     explain_parent: Vec<Option<(u32, usize)>>,
     /// Reusable worklist of node pairs whose equality still has to be explained.
     ///
@@ -445,7 +445,7 @@ impl EufSolver {
     /// argument classes that hold right now, but `term_to_node` survives `pop()`
     /// (its entries are dropped by node index, and the borrowed index belongs to
     /// an older, still-live node).  After `a = 0` was retracted, `f(0)` therefore
-    /// stayed pinned to `f(a)`'s node — so `f(0)` had no node, no use-list entry
+    /// stayed pinned to `f(a)`'s node – so `f(0)` had no node, no use-list entry
     /// and no signature of its own, the congruence `f(f(a)) = f(0)` could never be
     /// discovered, and the solver answered `sat` for
     /// `a ∈ {0,1} ∧ f(0),f(1) ∈ {0,1} ∧ f(f(a)) > 1`, which has no model.
@@ -581,7 +581,7 @@ impl EufSolver {
     /// classes of `a` and `b` (i.e. `a` and `b` are PROVEN disequal, not merely
     /// "not currently known equal").  For the array theory's
     /// read-over-write-DIFFERENT propagation (deferred until that pass gains
-    /// `&mut` manager access — see `TheoryManager::propagate_array_read_over_write`).
+    /// `&mut` manager access – see `TheoryManager::propagate_array_read_over_write`).
     /// O(#asserted-disequalities); a watch index can speed it up later.
     #[allow(dead_code)]
     pub fn are_proven_disequal(&self, a: u32, b: u32) -> bool {
@@ -620,7 +620,7 @@ impl EufSolver {
     /// `a ≠ b` facts currently asserted.  Used by theory combination as a
     /// *care graph*: the only shared-term pairs whose equality could possibly
     /// conflict with EUF are these, so an arithmetic entailment probe need only
-    /// run on them (and only when arithmetic's model already equates the two) —
+    /// run on them (and only when arithmetic's model already equates the two) –
     /// O(#disequalities) instead of O(n²) over the whole interface.
     pub fn live_diseq_pairs(&self) -> Vec<(TermId, TermId)> {
         self.diseqs
@@ -630,7 +630,7 @@ impl EufSolver {
     }
 
     /// Every term that appears as the argument of a function application in
-    /// the e-graph — the structural EUF interface (congruence fires on these
+    /// the e-graph – the structural EUF interface (congruence fires on these
     /// terms' equality).
     pub fn app_argument_terms(&self) -> rustc_hash::FxHashSet<TermId> {
         let mut out: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
@@ -687,7 +687,7 @@ impl EufSolver {
     /// records:
     /// - `arg_reps`: the canonical equivalence-class representative (node index,
     ///   obtained via [`find_immutable`](Self::find_immutable)) of each argument,
-    /// - `arg_class_terms`: every `TermId` interned into each argument's class —
+    /// - `arg_class_terms`: every `TermId` interned into each argument's class –
     ///   so the caller can pick whichever member carries a concrete model value,
     /// - `result_rep`: the canonical class representative of the application
     ///   itself,
@@ -879,7 +879,7 @@ impl Theory for EufSolver {
 
             // Also truncate related structures. Truncation removes the adjacency
             // lists of nodes created in the popped scope, but NOT edges appended to
-            // pre-existing nodes' lists — those are undone via proof_trail below.
+            // pre-existing nodes' lists – those are undone via proof_trail below.
             self.use_list.truncate(num_nodes);
             self.proof_forest.truncate(num_nodes);
             self.node_sig_key.truncate(num_nodes);

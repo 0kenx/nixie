@@ -6,7 +6,7 @@
 use super::*;
 
 impl TheoryCombiner {
-    /// Check if a lemma is cached (exact match) — test helper only
+    /// Check if a lemma is cached (exact match) – test helper only
     fn is_lemma_cached(&self, lemma: &TheoryLemma) -> bool {
         self.lemma_cache.contains_key(lemma)
     }
@@ -314,7 +314,7 @@ fn test_is_lemma_subsumed() {
     assert!(!combiner.is_lemma_subsumed(&[TermId::new(5)], &[TermId::new(6)], TheoryId::EUF));
 }
 
-// ---- New LRU-cache integration tests ----
+// ======== New LRU-cache integration tests ========
 
 #[test]
 fn test_lru_cache_evicts_at_capacity() {

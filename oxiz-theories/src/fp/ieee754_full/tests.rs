@@ -346,9 +346,9 @@ fn test_fma_operation() {
     assert_eq!(result.to_f32(), Some(10.0));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // IEEE 754 remainder (round-to-nearest-integer quotient) regression tests.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_rem_5_3_is_negative_one() {
@@ -434,10 +434,10 @@ fn test_rem_f64_vectors() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Single-rounded fused multiply-add regression tests. f32/f64 `mul_add` is the
 // hardware/std single-rounded reference for the matching format.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_fma_matches_std_mul_add_f32() {
@@ -562,8 +562,8 @@ fn test_fma_special_cases() {
 /// Regression: `div128` previously kept the running remainder in a bare `u128`
 /// and shifted it left before subtracting, silently dropping bit 127 whenever
 /// the remainder's MSB was set. Every division whose dividend mantissa was
-/// smaller than the divisor's (true quotient in `(0.5, 1)`) — e.g. `10/3`,
-/// `1/3`, `9/3` — therefore returned `0.0`. The 129-bit remainder fix makes the
+/// smaller than the divisor's (true quotient in `(0.5, 1)`) – e.g. `10/3`,
+/// `1/3`, `9/3` – therefore returned `0.0`. The 129-bit remainder fix makes the
 /// quotient bit-exact against the host `f64` divider for the RNE mode.
 #[test]
 fn test_division_quotient_below_one_is_exact() {
@@ -589,7 +589,7 @@ fn test_division_quotient_below_one_is_exact() {
 }
 
 /// Regression: directed rounding on division must bracket the round-to-nearest
-/// result — `RTP` never below and `RTN` never above the exact quotient — so
+/// result – `RTP` never below and `RTN` never above the exact quotient – so
 /// `fp.div RTP` and `fp.div RTN` of `10/3` straddle `3.3333…`.
 #[test]
 fn test_division_directed_rounding_brackets_rne() {

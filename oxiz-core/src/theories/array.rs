@@ -295,13 +295,13 @@ impl ArrayTheory {
     /// This is an equality-establishing predicate, so the conservative
     /// direction is `false`: a `true` answer asserts that the two arrays agree,
     /// and every caller may act on that assertion. It therefore requires
-    /// positive evidence for every known index —
+    /// positive evidence for every known index –
     ///
     /// * both arrays must have a registered select at that index, and
     /// * the two select terms must be identical.
     ///
-    /// Missing evidence — no index is known at all, or only one of the two
-    /// arrays has a select at some index — yields `false` ("not proven
+    /// Missing evidence – no index is known at all, or only one of the two
+    /// arrays has a select at some index – yields `false` ("not proven
     /// equal"), not `true`. The previous direction returned `true` for exactly
     /// those cases, i.e. it claimed extensional equality for two arrays about
     /// which nothing was known.

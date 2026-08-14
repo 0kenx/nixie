@@ -3,8 +3,8 @@
 //! Diagnosed bug: `ArithSolver::pop()` truncated `var_to_term` but did NOT roll
 //! back `term_to_var`. Because the underlying simplex recycles variable indices
 //! across a pop (its per-variable arrays shrink), the stale `term_to_var`
-//! entries made `intern()` replay indices that now belong to a different — or
-//! not-yet-created — variable. Downstream constraints could then attach to a
+//! entries made `intern()` replay indices that now belong to a different – or
+//! not-yet-created – variable. Downstream constraints could then attach to a
 //! recycled index, a correctness/performance hazard.
 //!
 //! These tests exercise the behaviour purely through the public API:

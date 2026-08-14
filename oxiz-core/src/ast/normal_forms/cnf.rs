@@ -108,7 +108,7 @@ fn run_cnf_step(
             let kind = manager.get(id).map(|t| t.kind.clone());
 
             if !negate {
-                // ===== to_cnf_cached (plain) =====
+                // ======== to_cnf_cached (plain) ========
                 match kind {
                     None
                     | Some(
@@ -167,7 +167,7 @@ fn run_cnf_step(
                     }
                 }
             } else {
-                // ===== to_cnf_not (CNF of Not(id)) =====
+                // ======== to_cnf_not (CNF of Not(id)) ========
                 match kind {
                     Some(TermKind::True) => {
                         let f = manager.mk_false();
@@ -407,7 +407,7 @@ fn distribute_or_over_and_multi(
     result
 }
 
-// ===========================================================================
+// ========  ========
 // CNF shape checks and clause extraction
 //
 // Not converted: each of these switches to a strictly shallower function at
@@ -415,7 +415,7 @@ fn distribute_or_over_and_multi(
 // extract_clause_literals), so native call depth is bounded by a small
 // constant regardless of the input term's own depth. See the module doc
 // comment.
-// ===========================================================================
+// ========  ========
 
 /// Check if a term is in CNF form
 #[must_use]

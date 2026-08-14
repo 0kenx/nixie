@@ -323,8 +323,8 @@ impl ConvexityHandler {
     ///
     /// Unit disjunctions are resolved immediately. Non-unit disjunctions are split
     /// according to the configured strategy. Under [`CaseSplitStrategy::Lazy`],
-    /// non-unit disjunctions are *deferred* — set aside and restored to the pending
-    /// queue before returning `Ok(None)` — rather than re-queued in place, which
+    /// non-unit disjunctions are *deferred* – set aside and restored to the pending
+    /// queue before returning `Ok(None)` – rather than re-queued in place, which
     /// would otherwise loop forever. Because every iteration removes one item from
     /// the pending queue (and deferred items are held aside, never re-enqueued
     /// within the same pass), the loop is guaranteed to terminate.

@@ -9,7 +9,7 @@ use oxiz_solver::{Context, SolverResult};
 /// an asserted read-over-write fact.
 ///
 /// `(= p (= (select (store a 3 5) 3) 6))` binds a Boolean `p` to the *value* of
-/// the inner select-equality.  The inner equality is NOT asserted on its own —
+/// the inner select-equality.  The inner equality is NOT asserted on its own –
 /// the whole formula is satisfiable with `p = false`.  The old collector
 /// recursed into the outer equality's operands in a positive context and
 /// recorded the inner `select(store a 3 5, 3) = 6` as an asserted fact, then the

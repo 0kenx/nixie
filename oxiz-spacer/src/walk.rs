@@ -8,7 +8,7 @@
 //!   from parsed CHC/SMT input, so a `(and (and (and …)))` chain of arbitrary
 //!   depth is attacker-controlled. Every one of these walks returns a plain
 //!   `bool`/`()`/`usize` with *no* error channel, so a depth cap could only
-//!   ever produce a silently wrong answer — strictly worse than the stack
+//!   ever produce a silently wrong answer – strictly worse than the stack
 //!   overflow it would replace. The fix is a heap-allocated `Vec` stack,
 //!   which is bounded only by available memory.
 //! * **Exponential re-expansion.** Terms are hash-consed, so the "tree" is
@@ -19,7 +19,7 @@
 //!   interprets binders (they only classify or collect).
 //!
 //! Child enumeration uses [`oxiz_core::ast::traversal::get_children`], which
-//! matches *exhaustively* over [`TermKind`] with no catch-all arm — so a new
+//! matches *exhaustively* over [`TermKind`] with no catch-all arm – so a new
 //! term variant becomes a compile error there rather than a silently skipped
 //! subterm here. The per-site hand-written `match` arms these walks replaced
 //! all ended in `_ => false` / `_ => {}`, which silently ignored whole
@@ -41,7 +41,7 @@ use rustc_hash::FxHashSet;
 /// holds for at least one of them.
 ///
 /// `pred` receives the node's own [`TermId`] together with its kind, or
-/// `None` when the id is absent from `manager` (a dangling id — callers
+/// `None` when the id is absent from `manager` (a dangling id – callers
 /// decide what that means for them, since the honest answer is "unknown").
 /// The walk stops as soon as `pred` returns `true`.
 ///

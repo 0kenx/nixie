@@ -15,7 +15,7 @@
 //! `check_string_constraints` -> `ground_string_conflict` -> `eval_ground_bool`,
 //! and an `(str.++ x1 … xN)` application is folded into `N` nested binary
 //! `StrConcat` nodes, so `N` is attacker-controlled. Measured on a 1 MiB worker
-//! stack — what an embedder's thread typically gets — the recursive version
+//! stack – what an embedder's thread typically gets – the recursive version
 //! survived a nesting depth of **2448** and died at 2452, i.e. roughly **428
 //! bytes of native stack per level**; an lldb backtrace of the original crash
 //! showed ~2425 frames and `EXC_BAD_ACCESS`. That is an abort, not an answer
@@ -24,7 +24,7 @@
 //! [`super::MAX_EVAL_DEPTH`] was supposed to prevent exactly this and could
 //! never do so: at 4096 it sat almost twice as deep as the stack could reach,
 //! so the process always died before the guard was consulted. With the walk on
-//! the heap the guard is no longer a stack bound at all — it is now a plain
+//! the heap the guard is no longer a stack bound at all – it is now a plain
 //! resource bound that genuinely fires, and its outcome is the evaluator's
 //! ordinary `None`. Both callers read that in the safe direction: a refutation
 //! that cannot be computed is not reported, and a model that cannot be verified
@@ -36,7 +36,7 @@
 //! property of the driver, and they are preserved exactly:
 //!
 //! * `and` stops at the first `false`, `or` at the first `true`, and both keep
-//!   scanning past an operand they cannot evaluate — `false ∧ unknown` is
+//!   scanning past an operand they cannot evaluate – `false ∧ unknown` is
 //!   `Some(false)`;
 //! * `distinct` evaluates every operand and answers `false` as soon as two
 //!   *known* operands collide, even if others are unknown;
@@ -47,7 +47,7 @@
 //! * every other operator is eager and gives up at the first operand with no
 //!   value.
 //!
-//! Evaluation is pure — `&self`, no cache, no model mutation — so operand
+//! Evaluation is pure – `&self`, no cache, no model mutation – so operand
 //! *order* is unobservable in the result; it is preserved anyway, because it
 //! decides how much work an unknown operand saves.
 
@@ -321,13 +321,13 @@ impl ModelBuilder<'_> {
     /// [`MAX_EVAL_DEPTH`] budget, …).
     ///
     /// Note: this is a total structural *interpreter* over the typed SMT term
-    /// AST — it walks `TermKind` nodes and computes their SMT-LIB semantics. It
+    /// AST – it walks `TermKind` nodes and computes their SMT-LIB semantics. It
     /// executes no external or user code (the name `eval` refers to term
     /// evaluation, not dynamic code evaluation).
     ///
     /// `depth` is the nesting depth `term` itself sits at.  The walk runs on an
     /// explicit heap stack, so native stack usage is constant in the nesting
-    /// depth of `term` — see the module documentation for the measurements that
+    /// depth of `term` – see the module documentation for the measurements that
     /// made that necessary.
     pub(super) fn eval(&self, term: TermId, depth: usize) -> Option<Val> {
         let mut frames: Vec<Frame> = Vec::new();
@@ -376,9 +376,9 @@ impl ModelBuilder<'_> {
                 }
             };
 
-            // The frame that produced `finished` is still on the stack — the
+            // The frame that produced `finished` is still on the stack – the
             // `Step::Need` arm above is the only one that does not reach here,
-            // and it `continue`s — so this never actually declines.
+            // and it `continue`s – so this never actually declines.
             let frame = frames.pop()?;
             values.truncate(frame.base);
             if frames.is_empty() {
@@ -517,7 +517,7 @@ impl ModelBuilder<'_> {
                 depth,
             )),
             // The `RegLan` operand is compiled, never evaluated, so only the
-            // subject and the replacement reach the value stack — in that
+            // subject and the replacement reach the value stack – in that
             // order, exactly as the recursive version evaluated them.
             TermKind::StrReplaceRe(s, re, r) => Opened::Frame(Frame::binary(
                 *s,
@@ -803,7 +803,7 @@ impl Frame {
 ///
 /// Spec (SMT-LIB Unicode Strings, `str.substr s m n`): the unique word `w` with
 /// `s = a·w·b`, `|a| = m` and `|w| = min(n, |s| - m)` when `0 ≤ m < |s|` and
-/// `n > 0`; the empty string in every other case — in particular for `m < 0`,
+/// `n > 0`; the empty string in every other case – in particular for `m < 0`,
 /// `m ≥ |s|` (the issue #23 shape) and `n ≤ 0`.
 fn eval_substr(s: &Val, i: &Val, l: &Val) -> Option<Val> {
     let chars: Vec<char> = s.as_str()?.chars().collect();
@@ -974,8 +974,8 @@ mod tests {
         assert_eq!(mismatching, Some(false));
     }
 
-    /// Past the depth budget the evaluator declines with `None` — the visible
-    /// outcome of the resource bound — instead of aborting the process on the
+    /// Past the depth budget the evaluator declines with `None` – the visible
+    /// outcome of the resource bound – instead of aborting the process on the
     /// way there.  Both callers read `None` in the safe direction: no
     /// refutation is reported and no model is certified.
     #[test]

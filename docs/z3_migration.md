@@ -160,7 +160,7 @@ result = s.check_sat(tm)
 # result == oxiz.SolverResult.Sat
 ```
 
-**OxiZ (SMT-LIB2 string API — simpler for most use cases):**
+**OxiZ (SMT-LIB2 string API – simpler for most use cases):**
 ```python
 import oxiz
 
@@ -310,7 +310,7 @@ result = s.check_sat(tm)
 ```
 
 The OxiZ CLI also supports unsat core extraction, proof generation, and
-interactive REPL mode — features accessible from the terminal that complement
+interactive REPL mode – features accessible from the terminal that complement
 the Python API.
 
 ---
@@ -355,11 +355,11 @@ OxiZ supports the following SMT-LIB2 logic identifiers. Pass them to
 
 | Feature | Z3 | OxiZ Status |
 |---------|-----|------------|
-| Python operator overloading (`x + y`, `x == y`) | Full support | Not supported — use `tm.mk_*` methods or `assert_formula` |
-| Tactic framework (`z3.Tactic`, `z3.Then`, `z3.Or`) | Rich tactic combinators | Limited — CLI exposes strategy options; Python API does not yet expose tactics |
-| `z3.Solver.assertions()` | Returns assertion list as Z3 exprs | Not available — assertion introspection is not yet exposed |
-| `z3.ForAll` / `z3.Exists` | Python-level quantifier creation | Not available in Python API — use SMT-LIB2 string assertions with `(forall ...)` |
-| `z3.FP*` floating-point operations | Full IEEE 754 support | Partial — `QF_FP` benchmarks pass; Python term API for FP not yet exposed |
+| Python operator overloading (`x + y`, `x == y`) | Full support | Not supported – use `tm.mk_*` methods or `assert_formula` |
+| Tactic framework (`z3.Tactic`, `z3.Then`, `z3.Or`) | Rich tactic combinators | Limited – CLI exposes strategy options; Python API does not yet expose tactics |
+| `z3.Solver.assertions()` | Returns assertion list as Z3 exprs | Not available – assertion introspection is not yet exposed |
+| `z3.ForAll` / `z3.Exists` | Python-level quantifier creation | Not available in Python API – use SMT-LIB2 string assertions with `(forall ...)` |
+| `z3.FP*` floating-point operations | Full IEEE 754 support | Partial – `QF_FP` benchmarks pass; Python term API for FP not yet exposed |
 | Algebraic numbers in models | Z3 returns algebraic number objects | OxiZ returns rational string approximations |
 | `z3.Probe` | Formula probing | Not available |
 | `z3.ParOr` / parallel tactics | Native parallel tactics | Portfolio solving available via CLI `--parallel` flag |
@@ -367,7 +367,7 @@ OxiZ supports the following SMT-LIB2 logic identifiers. Pass them to
 | Recursive functions | `z3.RecFunction` | Not yet supported |
 | SMTCOMP-mode output | `--smt2` flag | `--smtcomp` flag on CLI |
 | Unsat core production | Automatic | Must enable: `solver.set_option('produce-unsat-cores', 'true')` |
-| Model completion for UF | Automatic in Z3 | Partial — may return `unknown` for underspecified UF models |
+| Model completion for UF | Automatic in Z3 | Partial – may return `unknown` for underspecified UF models |
 
 > **Tip for porting Z3 scripts:** The fastest migration path is to translate
 > Python-level formula construction into SMT-LIB2 string calls via

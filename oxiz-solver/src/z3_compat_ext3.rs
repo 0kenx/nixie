@@ -1,21 +1,21 @@
-//! Z3 API Compatibility Layer — Extension 3
+//! Z3 API Compatibility Layer – Extension 3
 //!
 //! This module adds three further Z3-compatible surfaces on top of the core
 //! types in [`crate::z3_compat`] and the earlier extension layers
 //! ([`crate::z3_compat::ext`], [`crate::z3_compat::ext2`]):
 //!
-//! - **Sort introspection** — [`Z3Sort`] / [`Z3SortKind`].  Mirrors Z3's
+//! - **Sort introspection** – [`Z3Sort`] / [`Z3SortKind`].  Mirrors Z3's
 //!   `Sort::kind()`, `bv_size()`, `array_domain()`, `array_range()` and
 //!   `name()`, plus helpers on [`Z3Context`] to recover the sort of a term
 //!   ([`Z3Context::sort_of_bool`], [`Z3Context::sort_of_int`],
 //!   [`Z3Context::sort_of_real`], [`Z3Context::sort_of_bv`],
 //!   [`Z3Context::sort_of_term`]).
-//! - **Term substitution** — [`Z3Context::substitute`], which replaces
+//! - **Term substitution** – [`Z3Context::substitute`], which replaces
 //!   subterms throughout an expression.  A thin adapter over
 //!   [`TermManager::substitute`]: it converts Z3's `&[(from, to)]` pair slice
 //!   into the map that routine takes, and inherits its iterative,
 //!   capture-avoiding, exhaustive-by-construction behaviour.
-//! - **Quantifier patterns / triggers** — [`Z3Pattern`],
+//! - **Quantifier patterns / triggers** – [`Z3Pattern`],
 //!   [`Z3Context::mk_pattern`], [`Z3Context::forall_with_patterns`] and
 //!   [`Z3Context::exists_with_patterns`].  Backed by
 //!   [`TermManager::mk_forall_with_patterns`] /
@@ -34,7 +34,7 @@ use oxiz_core::sort::{SortId, SortKind};
 
 use crate::z3_compat::{BV, Bool, Int, Real, Z3Context};
 
-// ─── Z3SortKind ───────────────────────────────────────────────────────────────
+// ======== Z3SortKind ========
 
 /// The high-level kind of a [`Z3Sort`], mirroring `z3::SortKind`.
 ///
@@ -63,7 +63,7 @@ pub enum Z3SortKind {
     Other,
 }
 
-// ─── Z3Sort ───────────────────────────────────────────────────────────────────
+// ======== Z3Sort ========
 
 /// Analogue of `z3::Sort`.
 ///
@@ -186,7 +186,7 @@ impl core::fmt::Display for Z3Sort {
     }
 }
 
-// ─── Z3Context: sort accessor helpers ────────────────────────────────────────
+// ======== Z3Context: sort accessor helpers ========
 
 impl Z3Context {
     /// Internal: clone the shared term-manager handle.
@@ -241,7 +241,7 @@ impl Z3Context {
     }
 }
 
-// ─── Term substitution ────────────────────────────────────────────────────────
+// ======== Term substitution ========
 
 impl Z3Context {
     /// Substitute subterms within `expr`.
@@ -294,7 +294,7 @@ impl Z3Context {
     }
 }
 
-// ─── Quantifier patterns / triggers ───────────────────────────────────────────
+// ======== Quantifier patterns / triggers ========
 
 /// Analogue of `z3::Pattern`.
 ///
@@ -383,7 +383,7 @@ impl Z3Context {
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ======== Tests ========
 
 #[cfg(test)]
 mod tests {

@@ -390,7 +390,7 @@ mod tests {
         assert!(!result.is_zero());
     }
 
-    // -- Regression tests for MATH-2 (PolynomialGcd was a broken stub) --
+    // ======== Regression tests for MATH-2 (PolynomialGcd was a broken stub) ========
 
     /// Build the univariate polynomial `x^2` (variable 0).
     fn poly_x_squared() -> Polynomial {

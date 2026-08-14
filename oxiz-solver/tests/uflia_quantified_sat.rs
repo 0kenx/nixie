@@ -4,7 +4,7 @@
 //! These are the integer counterparts of `uflra_quantified_sat`: goals whose
 //! quantifiers alternate over `Int`, an infinite domain with no finite
 //! expansion.  A `sat` verdict here means `mbqi::model_certify` built a total
-//! interpretation — pin tables plus a searched default — and *checked* every
+//! interpretation – pin tables plus a searched default – and *checked* every
 //! assertion under it, deciding each quantifier by enumerating one
 //! representative per region of the critical set.
 

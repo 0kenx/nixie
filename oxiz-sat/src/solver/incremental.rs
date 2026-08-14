@@ -1,7 +1,7 @@
 //! Incremental-probe state management.
 //!
-//! These helpers let a caller that drives the solver *incrementally* — asserting
-//! more clauses and calling [`Solver::solve`] repeatedly — roll the search state
+//! These helpers let a caller that drives the solver *incrementally* – asserting
+//! more clauses and calling [`Solver::solve`] repeatedly – roll the search state
 //! back to the committed (asserted) prefix after each probe.  They exist for the
 //! bit-vector theory's embedded solver (`BvSolver::check`), whose probe pattern
 //! exposes two ways a probe's residue can otherwise stay behind and turn a
@@ -72,8 +72,8 @@ impl Solver {
     /// This unassigns every literal added after `trail_size` (re-inserting the
     /// freed variables into the decision heaps so a later solve can branch on
     /// them again) and resets the decision level to 0.  It does **not** touch
-    /// the clause database, so all originally-asserted constraints — and any
-    /// clauses learned so far — remain in force; only the working assignment is
+    /// the clause database, so all originally-asserted constraints – and any
+    /// clauses learned so far – remain in force; only the working assignment is
     /// reset to the committed prefix.
     ///
     /// Crucially this is how `BvSolver::check()` avoids letting one
@@ -95,7 +95,7 @@ impl Solver {
             //
             // It is tempting to skip the rewind here on the grounds that
             // `backtrack_with_phase_saving` already clamps the head to the
-            // rollback boundary — but that clamp is a *no-op when the search is
+            // rollback boundary – but that clamp is a *no-op when the search is
             // already at level 0*, which is precisely the state this branch
             // sees. A probe whose `solve()` ended in a level-0 conflict returns
             // without growing the trail (so `current_size == trail_size`) and
@@ -122,7 +122,7 @@ impl Solver {
         // Re-arm unit propagation over the retained prefix.
         //
         // `backtrack_to_size` parks the propagation head at the end of the
-        // surviving trail — correct for ordinary CDCL backtracking, where every
+        // surviving trail – correct for ordinary CDCL backtracking, where every
         // surviving literal has already been propagated *and its consequences
         // are still on the trail*.  That does not hold here: the discarded
         // suffix includes level-0 consequences of the retained prefix (e.g. the
@@ -130,7 +130,7 @@ impl Solver {
         // operand), so leaving the head at the end tells the next `solve()`
         // that a prefix whose implications have just been erased is fully
         // propagated.  The solve then starts with no unit information at all and
-        // has to rediscover it by search — turning a propagation-only refutation
+        // has to rediscover it by search – turning a propagation-only refutation
         // into an exponential one (observed as multi-second `unsat` answers for
         // 24-bit bit-vector comparisons, and timeouts at 32 bits).  Rewinding
         // the head re-derives the prefix's consequences on the next propagate;

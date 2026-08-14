@@ -7,7 +7,7 @@
 //! * **The rebase really reaches the base scope.**  The absolute depth counter
 //!   in [`DerivedReasons`](super::theory_manager::DerivedReasons) is the only
 //!   place the EUF / arithmetic / bit-vector solvers' true depth is tracked
-//!   across `TheoryManager` lifetimes — a manager numbers scopes from its own
+//!   across `TheoryManager` lifetimes – a manager numbers scopes from its own
 //!   `level_stack`, which restarts at zero.  A rebase that left the counter
 //!   above zero would mean scopes are still open and the leak is still there.
 //! * **Re-derivation costs no clauses.**  The facts the next round is entitled
@@ -18,7 +18,7 @@
 //!   without bound across rounds.
 //!
 //! A clause total on its own cannot tell those two designs apart, because it
-//! cannot tell whether a round boundary was crossed at all — see
+//! cannot tell whether a round boundary was crossed at all – see
 //! `mbqi_round_boundaries_are_crossed_once_and_then_saturate` for the mistake
 //! that made, and for why the boundary is now counted directly
 //! (`Solver::mbqi_round_clauses`) before anything is claimed about its cost.
@@ -29,7 +29,7 @@
 //! not what one MBQI round costs inside a single `check`, but what a whole
 //! `check` costs when the caller repeats it on a goal it has not touched.  The
 //! answer must be "nothing", and three separate mechanisms used to make it
-//! something —
+//! something –
 //!
 //! * hyper-binary-resolution clauses that no ledger recorded, so they could be
 //!   neither forgotten nor retracted (and were misreported as original clauses
@@ -38,7 +38,7 @@
 //!   `learned_clauses_are_all_registered_in_the_learned_clause_ledger`;
 //! * a `pop` that dropped the whole Tseitin memo, including entries whose
 //!   clauses it did *not* retract, so the next `check` re-emitted them verbatim
-//!   — linear, unbounded growth per `(push)(pop)` pair:
+//!   – linear, unbounded growth per `(push)(pop)` pair:
 //!   `a_no_op_push_pop_between_checks_does_not_re_encode_the_goal`;
 //! * quantifier-search state outliving the search that produced it, so a
 //!   repeated `check` started somewhere else and derived genuinely new lemmas
@@ -46,21 +46,21 @@
 //!   at the root cause, and `re_running_the_search_on_an_unchanged_goal_converges`
 //!   end to end.
 //!
-//! Above all three sits a fourth change — the repeated-`check` verdict cache —
+//! Above all three sits a fourth change – the repeated-`check` verdict cache –
 //! and it is the reason the pins come in pairs.  A caller repeating
 //! `(check-sat)` never reaches the search machinery at all now, so a pin written
 //! from the caller's vantage point pins the cache and nothing beneath it.  Every
 //! mechanism above therefore also has a pin that drops the cached verdict first
 //! (`VerdictCache::Bypassed`) and makes all twelve calls search for real.  The
-//! cache's own contract — that a hit answers what a fresh solver would, and that
-//! any settings change makes the next call search again — lives in
+//! cache's own contract – that a hit answers what a fresh solver would, and that
+//! any settings change makes the next call search again – lives in
 //! `solver::verdict_cache::tests`.
 //!
 //! All three pins measure `ClauseDatabase::num_original` through
 //! `oxiz_sat::Solver::num_original_clauses`, never `num_clauses()` minus
 //! `learned_clause_count()`.  The latter subtracts the *registry* size from the
 //! *database* size, so an unregistered learned clause shows up as an original
-//! one — a pin written that way would have pinned the accounting bug in place
+//! one – a pin written that way would have pinned the accounting bug in place
 //! instead of catching it.
 
 use crate::Context;
@@ -131,7 +131,7 @@ fn rebase_returns_the_theory_solvers_to_the_base_scope() {
 /// This is the airtight half of the "re-derivation costs no clauses" claim: it
 /// pins the mechanism directly rather than inferring it from a total.  A design
 /// that recovered the kept lemmas by re-encoding them would grow both counters
-/// here — once per MBQI round, and rounds are bounded only by
+/// here – once per MBQI round, and rounds are bounded only by
 /// `max_mbqi_iterations`.
 #[test]
 fn the_rebase_adds_no_clauses_and_no_memo_entries() {
@@ -186,8 +186,8 @@ const MULTI_ROUND_BENCHMARK: &str = r#"
 ///
 /// It measured only the clause total across repeated `(check-sat)` calls and
 /// asserted a plateau, on the stated rationale that "the benchmark takes more
-/// than one MBQI round — round 1 picks a branch, the instantiation lemma
-/// retracts it, round 2 re-solves — so each call exercises the round-boundary
+/// than one MBQI round – round 1 picks a branch, the instantiation lemma
+/// retracts it, round 2 re-solves – so each call exercises the round-boundary
 /// rebase".  That rationale is false, and the assertion could not detect that it
 /// was false.  Measured here: the boundary counts per call are `[1, 0, 0, …]`.
 /// Only the *first* call crosses a boundary at all; calls 2..N run no rebase and
@@ -205,7 +205,7 @@ const MULTI_ROUND_BENCHMARK: &str = r#"
 /// still in the clause database and the theory state re-derived after the rebase
 /// is complete enough to satisfy the goal without re-instantiating.  A rebase
 /// that dropped a fact would show up as `[1, 1, 1, …]` with a clause count
-/// climbing per call — which is the actual failure mode, and which the old
+/// climbing per call – which is the actual failure mode, and which the old
 /// assertion would also have caught only by accident.
 #[test]
 fn mbqi_round_boundaries_are_crossed_once_and_then_saturate() {
@@ -245,7 +245,7 @@ fn mbqi_round_boundaries_are_crossed_once_and_then_saturate() {
     assert!(
         EXPECTED_BOUNDARIES[0] > 0,
         "the first call must cross a boundary, or the clause assertion below is \
-         vacuous — that is precisely how the previous version of this test failed"
+         vacuous – that is precisely how the previous version of this test failed"
     );
 
     assert!(
@@ -267,19 +267,19 @@ fn mbqi_round_boundaries_are_crossed_once_and_then_saturate() {
 /// Chosen to cover every shape that was observed to grow, plus quiet controls
 /// that must stay quiet:
 ///
-/// * `two-quant-arith` — the goal from the original report.  Its growth was the
+/// * `two-quant-arith` – the goal from the original report.  Its growth was the
 ///   hyper-binary-resolution clauses that no ledger recorded.
-/// * `mixed-arith`, `divmod` — `div` / `mod` / numeric-`ite` terms, whose
+/// * `mixed-arith`, `divmod` – `div` / `mod` / numeric-`ite` terms, whose
 ///   defining axioms are asserted *during* `check`.  These are what a `pop`
 ///   that dropped the Tseitin memo made the encoder emit all over again.
-/// * `arith-heavy` — answers `unknown`, so every `check` used to re-run the
+/// * `arith-heavy` – answers `unknown`, so every `check` used to re-run the
 ///   whole MBQI round budget; the goal where the late-onset (call ≥ 4) growth
 ///   showed up.
-/// * `two-quant-diseq` — a goal whose *learned* clauses still legitimately move
+/// * `two-quant-diseq` – a goal whose *learned* clauses still legitimately move
 ///   at a late call (ordinary conflict-driven learning), which is why these pins
 ///   assert on the original count only.
 /// * `one-quant`, `multi-round`, `two-quant-three-const`, `nested-impl`,
-///   `uflra` — controls that never grew and must not start.
+///   `uflra` – controls that never grew and must not start.
 const REPEATED_CHECK_BENCHMARKS: &[(&str, &str)] = &[
     ("one-quant", QUANTIFIED_BENCHMARK),
     ("multi-round", MULTI_ROUND_BENCHMARK),
@@ -407,7 +407,7 @@ const REPEATED_CHECKS: usize = 12;
 /// Whether the sampler below lets the verdict cache answer a repeated query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VerdictCache {
-    /// Leave it in force — this is what a real caller sees.
+    /// Leave it in force – this is what a real caller sees.
     InForce,
     /// Drop the cached verdict before every iteration, so each `(check-sat)`
     /// runs a real search.
@@ -424,7 +424,7 @@ enum VerdictCache {
 /// `script` on a fresh context seeded with `benchmark`.
 ///
 /// Returns `(verdicts, original_clause_counts)`.  `script` is whatever is run
-/// per iteration — `(check-sat)` on its own, or with something interleaved
+/// per iteration – `(check-sat)` on its own, or with something interleaved
 /// before it.
 fn sample_original_clauses_over_repeated_checks(
     benchmark: &str,
@@ -464,13 +464,13 @@ fn sample_original_clauses(
 ///
 /// # The failure mode
 ///
-/// A `check` is allowed to *learn* — conflict clauses, and quantifier
+/// A `check` is allowed to *learn* – conflict clauses, and quantifier
 /// instantiation lemmas it keeps for later rounds.  It is not allowed to keep
 /// **encoding**.  Every original clause after the first call is a definition or
 /// a lemma the solver emitted for a goal that already had one, and it can never
 /// be reclaimed: the assertion stack did not move, so no `pop` will ever retract
-/// it.  A caller that polls `(check-sat)` in a loop — a portfolio driver, an
-/// interactive session, a fuzzer — pays for that forever.
+/// it.  A caller that polls `(check-sat)` in a loop – a portfolio driver, an
+/// interactive session, a fuzzer – pays for that forever.
 ///
 /// Three distinct mechanisms produced it (task #28), and all three are pinned
 /// here because they are indistinguishable from this vantage point:
@@ -479,8 +479,8 @@ fn sample_original_clauses(
 ///    (`oxiz_sat::Solver::check_hyper_binary_resolution`) added clauses to the
 ///    database as learned but recorded them in neither `learned_clause_ids` nor
 ///    the assertion level's clause list.  They were invisible to
-///    `forget_learned_since`, un-retractable by `pop`, and — because
-///    `learned_clause_count()` reports the *registry* — made every
+///    `forget_learned_since`, un-retractable by `pop`, and – because
+///    `learned_clause_count()` reports the *registry* – made every
 ///    "`num_clauses()` minus learned" computation misreport them as original.
 ///    That misreport is what the ticket originally described.  This pin measures
 ///    `ClauseDatabase::num_original` directly, so it cannot be fooled the same
@@ -491,7 +491,7 @@ fn sample_original_clauses(
 /// 3. **Quantifier-search residue surviving the check that produced it.**  The
 ///    MBQI candidate pool, instantiation dedup filter and round counter used to
 ///    outlive their search, so the *next* `check` on the same goal started
-///    somewhere else and derived genuinely new lemmas — new terms, new SAT
+///    somewhere else and derived genuinely new lemmas – new terms, new SAT
 ///    variables, new clauses, several calls in.  `Solver::check` now restores
 ///    that state and, above it, answers a repeated query from the previous
 ///    verdict instead of re-running a search that is not idempotent (the SAT
@@ -534,14 +534,14 @@ fn repeated_checks_on_an_unchanged_goal_add_no_original_clauses() {
 /// takes its bounded step, so that [`SETTLED_BY`] (half of this) lands in the
 /// flat tail and the "bounded step, not unbounded trend" property is what the
 /// assertion actually measures.  The convergence property the test below pins
-/// is onset-independent in spirit — it only needs a long flat tail — but the
+/// is onset-independent in spirit – it only needs a long flat tail – but the
 /// `SETTLED_BY = FORCED_RERUNS / 2` cut means the bounded MBQI steps must
 /// finish inside the first half.  SAT/arithmetic heuristic changes (VSIDS,
 /// static-features routing, bound propagation) shift *when* a re-run hands MBQI
 /// a model that derives a fresh instantiation lemma, so the window has to be
 /// wide enough for the slowest *definite-verdict* goal's (heuristic-dependent)
 /// last step.  `unknown` goals are exempt from the convergence assertion below
-/// — MBQI on an `unknown` goal is open-ended exploration and legitimately never
+/// – MBQI on an `unknown` goal is open-ended exploration and legitimately never
 /// settles (the only one in the matrix, `arith-heavy`, is still adding clauses
 /// at call 1000: `…, 733×…, 739×…`); they are covered by the root-cause pin
 /// `a_check_leaves_the_mbqi_search_state_where_it_found_it`.  The slowest
@@ -551,7 +551,7 @@ fn repeated_checks_on_an_unchanged_goal_add_no_original_clauses() {
 /// with room for further heuristic drift, and the full 600-call run confirms
 /// every definite-verdict goal is flat in its second half.  (Sequences are
 /// deterministic: identical across repeated builds, `--test-threads=1`, and
-/// `cargo nextest` parallel — `oxiz` uses `FxHashMap` and deterministic CDCL,
+/// `cargo nextest` parallel – `oxiz` uses `FxHashMap` and deterministic CDCL,
 /// so widening is a valid fix and not papering over run-to-run noise.)
 const FORCED_RERUNS: usize = 600;
 
@@ -562,7 +562,7 @@ const FORCED_RERUNS: usize = 600;
 ///
 /// The pin above measures what a caller sees, and a caller sees the verdict
 /// cache: calls 2..12 there never enter the search at all.  That makes it a good
-/// pin on the *fix* and no pin at all on the machinery *underneath* it — it
+/// pin on the *fix* and no pin at all on the machinery *underneath* it – it
 /// would go on passing if
 /// [`MBQIIntegration::restore_search_state`](crate::mbqi::MBQIIntegration::restore_search_state)
 /// were deleted tomorrow.  Here the cached verdict is dropped before every call,
@@ -575,8 +575,8 @@ const FORCED_RERUNS: usize = 600;
 /// the second search takes a different route through the same goal, ends on a
 /// different model, and hands a model-based instantiator different
 /// counterexamples.  On the two quantified goals that gives a handful of
-/// bounded steps — each a one-time instantiation lemma the caller pays for once
-/// — after which the count holds flat forever.  `arith-heavy` (an `unknown`
+/// bounded steps – each a one-time instantiation lemma the caller pays for once
+/// – after which the count holds flat forever.  `arith-heavy` (an `unknown`
 /// goal with two quantifiers, where MBQI has the most room to diverge) is the
 /// slowest: it takes several steps and only settles around call ~325 (see
 /// [`FORCED_RERUNS`]); `mixed-arith` settles around call ~223; every other goal
@@ -597,8 +597,8 @@ const FORCED_RERUNS: usize = 600;
 /// experiences.
 ///
 /// Note what is deliberately *not* asserted here: verdict stability.  A forced
-/// re-run may legitimately answer differently — on an `unknown` goal a second
-/// search can get further — and it is the cached path above that owes a caller a
+/// re-run may legitimately answer differently – on an `unknown` goal a second
+/// search can get further – and it is the cached path above that owes a caller a
 /// stable answer.
 #[test]
 fn re_running_the_search_on_an_unchanged_goal_converges() {
@@ -625,7 +625,7 @@ fn re_running_the_search_on_an_unchanged_goal_converges() {
         // *definite* `sat`/`unsat` verdict: there MBQI has a fixed
         // refutation/witness to settle on, so its bounded instantiation steps
         // finish and the count goes flat.  A goal that answers `unknown` is one
-        // MBQI never finishes with — every forced re-run can hand it a different
+        // MBQI never finishes with – every forced re-run can hand it a different
         // model and a fresh instantiation lemma, so the count drifts upward by
         // design (exploration, not residue).  Such goals are covered instead by
         // the root-cause pin
@@ -645,7 +645,7 @@ fn re_running_the_search_on_an_unchanged_goal_converges() {
         assert!(
             tail.iter().all(|&c| c == plateau),
             "{name}: re-running the search on a goal the caller has not touched \
-             must converge — a count still climbing halfway through the window is \
+             must converge – a count still climbing halfway through the window is \
              a search feeding on its own residue, and every clause it adds is a \
              definition or lemma for a goal that already had one, which no `pop` \
              will ever retract; counts were {originals:?}"
@@ -664,8 +664,8 @@ fn re_running_the_search_on_an_unchanged_goal_converges() {
 /// Asserted per call rather than only at the end, because the two halves of the
 /// old bug appear at different times: the residue that makes the next search
 /// reach further shows up immediately, while the round counter creeping towards
-/// `max_rounds` — after which the goal silently stops being instantiated at all
-/// — takes several calls.
+/// `max_rounds` – after which the goal silently stops being instantiated at all
+/// – takes several calls.
 #[test]
 fn a_check_leaves_the_mbqi_search_state_where_it_found_it() {
     for (name, benchmark) in REPEATED_CHECK_BENCHMARKS {
@@ -690,7 +690,7 @@ fn a_check_leaves_the_mbqi_search_state_where_it_found_it() {
                 before,
                 "{name}, call {call}: a finished search must leave neither its \
                  dedup filter, nor its round counter, nor its blind-instantiation \
-                 guard, nor the ground terms it harvested for itself behind — the \
+                 guard, nor the ground terms it harvested for itself behind – the \
                  goal still has exactly the {candidates} candidate(s) the caller \
                  registered"
             );
@@ -700,47 +700,47 @@ fn a_check_leaves_the_mbqi_search_state_where_it_found_it() {
 
 /// Goals excluded from the no-op-`push`/`pop` pin below, with the reason.
 ///
-/// `push` and `pop` both invalidate the cached verdict — they are assertion-
-/// stack commands, and SMT-LIB puts the solver back into assert mode — so each
+/// `push` and `pop` both invalidate the cached verdict – they are assertion-
+/// stack commands, and SMT-LIB puts the solver back into assert mode – so each
 /// call there really does re-run the search.  A re-run is not idempotent: the
 /// SAT solver keeps its learned clauses, takes a different route, and hands MBQI
 /// a different model, which instantiates at different ground terms.  On a goal
 /// whose model violates a quantifier under one of those routes, MBQI takes one
 /// or more *bounded* steps (a handful of instantiation lemmas) and the count
-/// then stops moving — rather than the per-call, never-terminating re-encoding
+/// then stops moving – rather than the per-call, never-terminating re-encoding
 /// this test exists to catch.  Pinning strict equality on such a goal would pin
 /// the SAT heuristics, not a real defect.
 ///
 /// The goals currently in this category, each confirmed to reproduce the *same*
 /// step in the forced-rerun path of
 /// [`re_running_the_search_on_an_unchanged_goal_converges`] with no
-/// `(push 1)(pop 1)` anywhere — i.e. the step is MBQI on a re-run, not a `pop`
+/// `(push 1)(pop 1)` anywhere – i.e. the step is MBQI on a re-run, not a `pop`
 /// re-encoding defect.  Counts measured over 600 forced re-runs (see
 /// [`FORCED_RERUNS`]):
 ///
-/// * `arith-heavy` (answers `unknown`) — MBQI never finishes with an `unknown`
+/// * `arith-heavy` (answers `unknown`) – MBQI never finishes with an `unknown`
 ///   goal, so its count drifts upward without bound by design (still adding
 ///   clauses at call 1000: `[418, 481×14, 538, 544, 550×112, 607×99, 721×93,
 ///   733×…, 739×…]`).  It is exempt from the convergence test for the same
 ///   reason and is pinned only at the root cause.  This is upstream's original
 ///   exemption (`v0.3.2` measured `[474×4, 531×…]`, one step at call 5);
 ///   VSIDS / static-features routing / bound propagation shifted the onset.
-/// * `two-quant-arith` — a single `+24` step at call ~9: `[7×9, 31×…]`.
-/// * `mixed-arith` — three bounded steps settling around call ~223 to 51:
+/// * `two-quant-arith` – a single `+24` step at call ~9: `[7×9, 31×…]`.
+/// * `mixed-arith` – three bounded steps settling around call ~223 to 51:
 ///   `[33×83, 39×26, 45×125, 51×…]`.
 ///
-/// Nothing about these goals goes unpinned as a result — the exemption is from
+/// Nothing about these goals goes unpinned as a result – the exemption is from
 /// *this* test's strict-equality assertion, not from the property:
 ///
 /// * [`repeated_checks_on_an_unchanged_goal_add_no_original_clauses`] covers
 ///   them without the interleave (there the cache holds, and equality does
 ///   apply);
 /// * [`re_running_the_search_on_an_unchanged_goal_converges`] covers the
-///   definite-verdict goals here (`two-quant-arith`, `mixed-arith`) — each
-///   takes its bounded step(s) and the count then stops moving — while
+///   definite-verdict goals here (`two-quant-arith`, `mixed-arith`) – each
+///   takes its bounded step(s) and the count then stops moving – while
 ///   `arith-heavy` (`unknown`) is exempt there too;
 ///   *with* every re-run forced, asserting the weaker property that does hold
-///   for the definite-verdict goals — each takes its bounded step(s) and the
+///   for the definite-verdict goals – each takes its bounded step(s) and the
 ///   count then stops moving (verified flat in the second half of the window,
 ///   see [`FORCED_RERUNS`]);
 /// * [`a_check_leaves_the_mbqi_search_state_where_it_found_it`] covers them
@@ -756,7 +756,7 @@ const RE_ENCODE_PIN_EXEMPT: &[&str] = &["arith-heavy", "two-quant-arith", "mixed
 /// premise that `sat.pop()` retracts the definitional clauses of everything in
 /// it.  That premise holds only for terms first encoded *inside* the popped
 /// scope.  Entries written at an outer level had their clauses left in place and
-/// their memo entry dropped — and since `TrailOp::VarCreated` is journalled, the
+/// their memo entry dropped – and since `TrailOp::VarCreated` is journalled, the
 /// terms kept their SAT variables too.  The next `check` therefore walked them
 /// again and re-emitted literal-identical definitional clauses over identical
 /// variables, which `oxiz_sat::Solver::add_clause` (no duplicate detection)
@@ -767,8 +767,8 @@ const RE_ENCODE_PIN_EXEMPT: &[&str] = &["arith-heavy", "two-quant-arith", "mixed
 /// with no plateau.  Measured before the fix on this matrix: `mixed-arith` went
 /// 28 → 37 → 46 → … → 127 over these twelve calls, and `arith-heavy` 474 → 3267.
 /// The memo is now retracted entry by entry (`TrailOp::EncodedTermAdded`), which
-/// keeps the outer entries whose clauses survive and restores — rather than
-/// drops — an entry whose polarity coverage was widened inside the scope.
+/// keeps the outer entries whose clauses survive and restores – rather than
+/// drops – an entry whose polarity coverage was widened inside the scope.
 ///
 /// The goals with `div` / `mod` / numeric-`ite` terms carry this test: their
 /// defining axioms are asserted from inside `check`, so they are the ones with
@@ -830,15 +830,15 @@ fn learned_clauses_are_all_registered_in_the_learned_clause_ledger() {
                 sat.num_learned_clauses(),
                 "{name}, round {round}: every clause the database flags as learned \
                  must be in `learned_clause_ids`, or it can be neither forgotten \
-                 nor retracted — and callers subtracting the registry from the \
+                 nor retracted – and callers subtracting the registry from the \
                  total will report it as an original clause"
             );
         }
     }
 }
 
-/// Crossing an MBQI round boundary costs a *bounded* number of clauses — the
-/// round's own new lemmas — and never re-pays for the rounds before it.
+/// Crossing an MBQI round boundary costs a *bounded* number of clauses – the
+/// round's own new lemmas – and never re-pays for the rounds before it.
 ///
 /// This is the half the test above cannot reach: its benchmark crosses exactly
 /// one boundary, so it has no second round to compare against.  Here the first
@@ -848,7 +848,7 @@ fn learned_clauses_are_all_registered_in_the_learned_clause_ledger() {
 /// re-encoding them through `Solver::encode` instead of replaying the SAT trail.
 /// Round `k` would then re-emit every lemma kept from rounds `1..k`, so the
 /// per-round increment would *grow with `k`* and the total would be
-/// super-linear in the number of rounds — unbounded over a long MBQI loop, whose
+/// super-linear in the number of rounds – unbounded over a long MBQI loop, whose
 /// only cap is `max_mbqi_iterations`.  The assertion is therefore on the shape
 /// of the increments (no round costs more than the first), not on a total, which
 /// is what makes it sensitive to the design difference rather than to the

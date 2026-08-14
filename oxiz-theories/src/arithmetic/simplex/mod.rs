@@ -468,7 +468,7 @@ pub struct Simplex {
     /// because it hit `max_pivots` without proving feasibility or infeasibility.
     ///
     /// When this flag is set, an `Ok(())` result from `check()` MUST NOT be
-    /// interpreted as "satisfiable" — the LP state is unresolved (an incomplete
+    /// interpreted as "satisfiable" – the LP state is unresolved (an incomplete
     /// resource-limited run), and callers deciding satisfiability have to report
     /// `Unknown` rather than `Sat`.  See [`Simplex::resource_limit_reached`].
     resource_limit: bool,
@@ -559,8 +559,8 @@ impl Simplex {
     ///
     /// Every code path that can hand a variable index to the tableau or the
     /// bounds arrays routes through this, so a variable index the caller
-    /// cached and replayed across a backtrack (which shrank the arrays) — or
-    /// any other stale/out-of-range index — can never index past the parallel
+    /// cached and replayed across a backtrack (which shrank the arrays) – or
+    /// any other stale/out-of-range index – can never index past the parallel
     /// arrays and panic. The replayed index is simply reinstated as a fresh
     /// variable, and the `NewVar` undo records pushed here keep `pop` correct.
     fn ensure_var(&mut self, idx: usize) {
@@ -630,7 +630,7 @@ impl Simplex {
             // Constraint `dr + dd·δ >= 0`.  Non-negative `dd` can never be
             // violated by a positive δ, and a non-positive `dr` means the
             // delta-rational assignment already violates this bound (the state
-            // is infeasible) — nothing to instantiate.
+            // is infeasible) – nothing to instantiate.
             if !dd.is_negative() || !dr.is_positive() {
                 return;
             }
@@ -998,7 +998,7 @@ impl Simplex {
         // basis and bounds.  [`Simplex::check`] always runs [`crash_basis`]
         // (which snaps nonbasics to their bounds and calls `update_assignment`)
         // immediately before this, and `make_feasible` is private with no other
-        // caller — so recomputing again here was a redundant full pass on every
+        // caller – so recomputing again here was a redundant full pass on every
         // theory check.
         for _ in 0..self.max_pivots {
             let violating = self.find_violating();
@@ -1405,8 +1405,8 @@ impl Simplex {
         // basic variable's assignment changes only if its (new) row references
         // `basic_var`.  Those are exactly the entering variable's new row
         // (`new_expr`) and the rows just rewritten by substitution
-        // (`row_updates`).  Recomputing every basic — as the old full
-        // `update_assignment()` did — was pure waste and the dominant cost:
+        // (`row_updates`).  Recomputing every basic – as the old full
+        // `update_assignment()` did – was pure waste and the dominant cost:
         // ~40-52% of QF_UFLIA runtime was `Ratio::mul`/`reduce` driven by that
         // per-pivot full re-evaluation.  This computes identical values.
         let leaving = basic_var as usize;
@@ -1455,7 +1455,7 @@ impl Simplex {
     ///
     /// Returns `None` if the row references a stale (out-of-range) variable,
     /// in which case the caller leaves that basic variable's assignment
-    /// untouched — matching [`Simplex::update_assignment`]'s `has_stale_ref`
+    /// untouched – matching [`Simplex::update_assignment`]'s `has_stale_ref`
     /// skip, so targeted updates stay consistent with the full recompute.
     fn eval_expr(&self, expr: &LinExpr) -> Option<DeltaRational> {
         let num_vars = self.assignment.len();

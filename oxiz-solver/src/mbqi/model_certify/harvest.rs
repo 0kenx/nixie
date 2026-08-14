@@ -3,7 +3,7 @@
 //! Two passes over the assertion set:
 //!
 //! * [`harvest`] collects everything the certifier needs to *build* a candidate
-//!   interpretation — the applied function symbols with their result sorts, the
+//!   interpretation – the applied function symbols with their result sorts, the
 //!   free constants, the integer literals, and the names some quantifier binds.
 //! * [`region_stable`] decides whether the goal is inside the fragment the
 //!   finite check is complete for.  This is the certifier's soundness gate:
@@ -47,7 +47,7 @@ const MAX_HARVEST_NODES: usize = 100_000;
 /// Iterative with an explicit heap stack: assertion shape is user input, and a
 /// native recursion would trade a stack overflow for the depth guard this walk
 /// does not need.  Returning `None` on an unknown `TermKind` is the honest
-/// answer — a symbol the certifier cannot interpret cannot be part of a model
+/// answer – a symbol the certifier cannot interpret cannot be part of a model
 /// it claims to have verified.
 pub(crate) fn harvest(assertions: &[TermId], manager: &TermManager) -> Option<Harvest> {
     let mut out = Harvest::default();
@@ -109,9 +109,9 @@ pub(crate) fn supported_children(kind: &TermKind) -> Option<SmallVec<[TermId; 4]
         | TermKind::Gt(l, r)
         | TermKind::Ge(l, r) => SmallVec::from_slice(&[*l, *r]),
         TermKind::Ite(c, t, e) => SmallVec::from_slice(&[*c, *t, *e]),
-        // Everything else — `Div`/`Mod` (whose SMT-LIB corner cases the
+        // Everything else – `Div`/`Mod` (whose SMT-LIB corner cases the
         // certifier does not reproduce), reals, bit-vectors, arrays, strings,
-        // floating point, datatypes — is outside the vocabulary.
+        // floating point, datatypes – is outside the vocabulary.
         _ => return None,
     };
     Some(out)
@@ -150,15 +150,15 @@ enum Position {
 /// If every occurrence of a bound variable `v` is either
 ///
 /// * a direct argument of an uninterpreted function, or
-/// * an operand of a comparison whose other operands are region-stable — an
+/// * an operand of a comparison whose other operands are region-stable – an
 ///   integer literal, a constant, a function application, or another bound
-///   variable —
+///   variable –
 ///
 /// then the truth of the body depends on `v` only through `v`'s region:
 ///
 /// * every application mentioning a `v` drawn from a gap misses the pin table
 ///   (pinned arguments are all in `C`), so it returns the default, identically
-///   for every point of that gap — and so does every application built on top
+///   for every point of that gap – and so does every application built on top
 ///   of it, because function results are in `C` too;
 /// * every comparison compares `v` against a value in `C` (a literal, a
 ///   constant, or a function result) or against another bound variable, whose
@@ -248,7 +248,7 @@ pub(crate) fn region_stable(
 /// A bound-variable operand is admissible only when *every other* operand is
 /// region-stable on its own: a literal, a free constant, a function
 /// application, or another bound variable.  An arithmetic operand (`y + 1`)
-/// is not — its value moves with the variable it mentions, so two points of
+/// is not – its value moves with the variable it mentions, so two points of
 /// one region could compare differently.
 fn comparison_ok(
     operands: &[TermId],
@@ -296,7 +296,7 @@ fn is_region_stable_operand(
 ///
 /// A model entry `f(3, 4) := 7` becomes a pin; `c := 5` becomes a constant's
 /// value.  Entries whose key or value is not fully literal (`f(x, sk(x)) := 1`)
-/// are skipped — the resulting interpretation is verified against every
+/// are skipped – the resulting interpretation is verified against every
 /// assertion afterwards, so a missing pin costs completeness, never soundness.
 pub(crate) fn read_model(
     assignments: &FxHashMap<TermId, TermId>,

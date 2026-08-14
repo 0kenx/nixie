@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn test_disjunctive_cut() {
         // A disjunctive (split) cut must be derived from the actual simplex
-        // tableau row of a fractional basic variable — never fabricated from a
+        // tableau row of a fractional basic variable – never fabricated from a
         // scalar value. Build a small LP whose optimum is fractional.
         let mut solver = LiaSolver::new();
         let x = solver.new_var();

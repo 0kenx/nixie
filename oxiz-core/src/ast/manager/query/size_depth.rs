@@ -24,7 +24,7 @@ use crate::ast::traversal::get_children;
 use crate::prelude::*;
 
 impl TermManager {
-    // ===== Term Analysis =====
+    // ======== Term Analysis ========
 
     /// Compute the size (number of nodes) of a term.
     #[must_use]

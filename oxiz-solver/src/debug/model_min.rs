@@ -277,7 +277,7 @@ impl ModelMinimizer {
     /// This used to be a two-call recursion (`Both halves are needed` below
     /// descends into the left half, mutates the essential set, then descends
     /// into the right half). Its return type is `()`, so it has no channel
-    /// through which a depth cap could report truncation — a cap could only
+    /// through which a depth cap could report truncation – a cap could only
     /// silently return a wrong `ModelMinResult`. The recursion is therefore
     /// converted to an explicit stack that preserves the original traversal
     /// order, the original check counts, and the original mutations of
@@ -576,7 +576,7 @@ mod tests {
     ///
     /// Honest scaling note: unlike a term walk, this driver's *nesting depth*
     /// is logarithmic in the input (each frame halves its index range), so a
-    /// 50 000-level nesting is not constructible here at all — 2^50000
+    /// 50 000-level nesting is not constructible here at all – 2^50000
     /// assignments do not fit in memory. The deepest tree an input of `n`
     /// assignments can produce is `log2(n)` levels, and it is produced by
     /// forcing the two-way `both halves are needed` arm at every node, which

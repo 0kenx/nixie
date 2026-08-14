@@ -227,8 +227,8 @@ impl Default for TreeConfig {
 /// call). This is correct but grows more expensive as the buffer grows, so
 /// for a one-shot large dataset prefer calling [`DecisionTree::fit`] directly;
 /// use [`DecisionTree::clear_training_buffer`] to forget accumulated online
-/// samples. The buffer is intentionally **not serialized** — only the fitted
-/// tree structure is (see the `#[serde(skip)]` below) — so a saved/loaded
+/// samples. The buffer is intentionally **not serialized** – only the fitted
+/// tree structure is (see the `#[serde(skip)]` below) – so a saved/loaded
 /// model reproduces identical predictions without carrying its raw training
 /// history around.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -573,7 +573,7 @@ impl DecisionTree {
 
     /// Discard every sample accumulated through the online training interface.
     ///
-    /// The already-fitted tree is left untouched — this only forgets the raw
+    /// The already-fitted tree is left untouched – this only forgets the raw
     /// history that future online [`Model::train`] calls would otherwise keep
     /// refitting from, so it is the way to bound the incremental-refit cost
     /// once a model has stabilised.
@@ -653,7 +653,7 @@ impl Model for DecisionTree {
         // whole tree from every sample accumulated so far (see the
         // type-level docs on the incremental-refit policy). This fixes the
         // previous behaviour, which refit the tree on *only* the current
-        // sample — discarding all prior structure — and always reported a
+        // sample – discarding all prior structure – and always reported a
         // hardcoded loss of 0.0.
         if target.is_empty() {
             return Err(ModelError::EmptyInput);
@@ -814,7 +814,7 @@ mod tests {
 
     /// A decision tree must reach high *training* accuracy on a cleanly
     /// separable synthetic dataset when driven through the online
-    /// `train_batch` interface — the previous `train` impl refit on only the
+    /// `train_batch` interface – the previous `train` impl refit on only the
     /// last sample, so it could never learn a multi-sample rule.
     #[test]
     fn test_decision_tree_batch_train_reaches_high_accuracy() {

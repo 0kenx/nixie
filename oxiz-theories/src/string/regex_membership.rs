@@ -11,7 +11,7 @@
 //! - [`search_word`]: given a compiled regex (typically the intersection of a
 //!   variable's positive memberships and the complements of its negative
 //!   memberships, together with any length bounds), decide whether the language
-//!   is non-empty and, if so, return the shortest accepted word — the concrete
+//!   is non-empty and, if so, return the shortest accepted word – the concrete
 //!   witness used to build a satisfying string model.
 //!
 //! The search is a breadth-first exploration of the finite Brzozowski
@@ -54,7 +54,7 @@ pub type Membership = (bool, Arc<Regex>, TermId);
 pub enum VarModel {
     /// A concrete witness string satisfying every membership and length bound.
     Assign(String),
-    /// The combined language is provably empty — the memberships are jointly
+    /// The combined language is provably empty – the memberships are jointly
     /// unsatisfiable. Carries the explaining origin terms.
     Conflict(Vec<TermId>),
     /// Undecided within the search bounds; caller must report `Unknown`.
@@ -439,7 +439,7 @@ fn build_alphabet(regex: &Arc<Regex>) -> (Vec<char>, bool) {
 ///
 /// Explicit stack plus a pointer-keyed visited set: the operand structure is an
 /// `Arc`-shared DAG, so the recursive version re-walked every shared node once
-/// per path reaching it (exponential), and it returned `()` — no channel a
+/// per path reaching it (exponential), and it returned `()` – no channel a
 /// depth limit could have used. Skipping an already-visited node is
 /// unobservable: a repeat contributes only duplicate endpoints, which the
 /// caller deduplicates anyway, and duplicate ranges, which only feed a
@@ -486,7 +486,7 @@ fn next_char(c: char) -> Option<char> {
     char::from_u32(n)
 }
 
-/// Pick a character that lies in no explicit character set and no range — a
+/// Pick a character that lies in no explicit character set and no range – a
 /// representative for the "matches everything / matches the complement" class.
 fn pick_fresh(explicit: &FxHashSet<char>, ranges: &[(char, char)]) -> Option<char> {
     let uncovered =
@@ -515,8 +515,8 @@ fn pick_fresh(explicit: &FxHashSet<char>, ranges: &[(char, char)]) -> Option<cha
 /// Which `str.replace_re*` operator is being evaluated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceReMode {
-    /// `str.replace_re`: replace the *shortest leftmost* match — including an
-    /// empty one — and stop.
+    /// `str.replace_re`: replace the *shortest leftmost* match – including an
+    /// empty one – and stop.
     First,
     /// `str.replace_re_all`: replace, left to right, every shortest
     /// **non-empty** match.
@@ -529,7 +529,7 @@ pub enum ReplaceReMode {
 /// The scan is quadratic in the input length (one restart per start position)
 /// and a single derivative can grow the regex, so an unbounded run on an
 /// adversarial input would not terminate in useful time.  Exceeding the budget
-/// yields `None`, which the caller turns into an honest `unknown` — never into
+/// yields `None`, which the caller turns into an honest `unknown` – never into
 /// a value.
 const MAX_REPLACE_RE_STEPS: usize = 1 << 20;
 
@@ -579,12 +579,12 @@ fn shortest_match_at(
 /// * `(str.replace_re s r t)` is "the string obtained by replacing the
 ///   shortest leftmost match of `r` in `s`, if any, by `t`.  Note that if the
 ///   language of `r` contains the empty string, the result is to prepend `t`
-///   to `s`" — the empty match at position 0 *is* the shortest leftmost match,
+///   to `s`" – the empty match at position 0 *is* the shortest leftmost match,
 ///   so no special case is needed beyond admitting length-0 matches.
 /// * `(str.replace_re_all s r t)` is "the string obtained by replacing,
 ///   left-to-right, each shortest **non-empty** match of `r` in `s` by `t`".
-///   Empty matches are excluded here — otherwise the rewrite would not
-///   terminate — so a position with only an empty match simply contributes its
+///   Empty matches are excluded here – otherwise the rewrite would not
+///   terminate – so a position with only an empty match simply contributes its
 ///   own character and the scan advances by one.
 ///
 /// Reference: Z3 declares both operators in `seq_decl_plugin.cpp` but its
@@ -609,7 +609,7 @@ pub fn replace_re(
         ReplaceReMode::First => {
             // `i == chars.len()` is still a candidate start position: a
             // nullable regex matches the empty string there. (It also matches
-            // at position 0, so in practice the loop returns much earlier —
+            // at position 0, so in practice the loop returns much earlier –
             // but the bound keeps the scan total.)
             while i <= chars.len() {
                 if let Some(len) = shortest_match_at(regex, &chars, i, 0, &mut budget).ok()? {
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn compile_and_match_range_star_concat() {
         let mut m = TermManager::new();
-        // ".*[0-9]" — any string ending in a digit.
+        // ".*[0-9]" – any string ending in a digit.
         let t = parse(
             &mut m,
             r#"(str.in_re s (re.++ (re.* re.allchar) (re.range "0" "9")))"#,
@@ -792,7 +792,7 @@ mod tests {
         assert_eq!(all("abcabc", &b, "X"), "aXcaXc");
 
         // Leftmost wins over shortest: the match at position 1 is chosen even
-        // though "bc" and "b" both start there — then the shortest of those.
+        // though "bc" and "b" both start there – then the shortest of those.
         let bc_or_b = Regex::union(vec![Regex::literal("bc"), Regex::literal("b")]);
         assert_eq!(first("abcabc", &bc_or_b, "X"), "aXcabc");
     }
@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn replace_re_handles_an_empty_matching_regex() {
         // "if the language of r contains the empty string, the result is to
-        // prepend t to s" — because the empty match at position 0 *is* the
+        // prepend t to s" – because the empty match at position 0 *is* the
         // shortest leftmost match.
         let epsilon = Regex::literal("");
         assert_eq!(first("abc", &epsilon, "X"), "Xabc");

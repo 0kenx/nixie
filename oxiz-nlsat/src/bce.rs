@@ -1,9 +1,9 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired because it is
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired because it is
 // unsound for SMT here: blocked-clause elimination is model-preserving only for
 // theory-free literals. An SMT blocking literal's atom carries a polynomial-sign
 // meaning, so a clause that looks "blocked" propositionally can still be needed
-// to derive a theory conflict — removing it can turn UNSAT into wrong SAT.
+// to derive a theory conflict – removing it can turn UNSAT into wrong SAT.
 //! Blocked Clause Elimination (BCE)
 //!
 //! This module implements blocked clause elimination, a preprocessing technique that

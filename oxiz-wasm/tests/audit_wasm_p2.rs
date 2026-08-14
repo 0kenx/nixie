@@ -27,9 +27,7 @@ fn get_str(obj: &wasm_bindgen::JsValue, key: &str) -> Option<String> {
         .and_then(|v| v.as_string())
 }
 
-// ====================================================================
-// minimize / maximize actually change the optimum (not silently dropped)
-// ====================================================================
+// ======== minimize / maximize actually change the optimum (not silently dropped) ========
 
 /// Regression: `minimize` must actually constrain the reported optimum.
 /// Previously `minimize()` was a no-op (the command was parsed and
@@ -152,9 +150,7 @@ fn test_lexicographic_priority_order() {
     );
 }
 
-// ====================================================================
-// assertSoft / MaxSMT actually influences the result
-// ====================================================================
+// ======== assertSoft / MaxSMT actually influences the result ========
 
 /// Regression: `assertSoft` must actually make the solver prefer satisfying
 /// the soft constraint. Previously `assertSoft` was a no-op.
@@ -199,9 +195,7 @@ fn test_assert_soft_rejects_non_bool_sort() {
     );
 }
 
-// ====================================================================
-// computeInterpolant: honest failure instead of a fake interpolant
-// ====================================================================
+// ======== computeInterpolant: honest failure instead of a fake interpolant ========
 
 /// Regression: `computeInterpolant` must never return
 /// `(and <partition A>)` (or any other fabricated non-interpolant) as a
@@ -220,7 +214,7 @@ fn test_compute_interpolant_never_returns_fake_result() {
         vec!["(< y 0)".to_string(), "(= x y)".to_string()],
     );
 
-    // The old implementation returned `Ok("(and (> x 0))")` here — a
+    // The old implementation returned `Ok("(and (> x 0))")` here – a
     // non-interpolant. The fix must not return `Ok` with a fabricated
     // formula; an honest error is required instead.
     assert!(

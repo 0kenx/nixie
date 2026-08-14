@@ -32,9 +32,9 @@ fn expect_int_optimal(result: OptimizationResult, tm: &TermManager) -> BigInt {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// opt-5 — integer maximize under a strict upper bound
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// opt-5 – integer maximize under a strict upper bound
+// ========  ========
 
 /// `x < 10` (strict), maximize `x` -> the integer optimum is `9`, not `10`.
 /// The only pre-existing maximize regression used a non-strict `x <= 10`
@@ -86,9 +86,9 @@ fn test_integer_minimize_strict_lower_bound_gives_one() {
     assert_eq!(value, BigInt::from(1), "x > 0 should minimize to 1, not 0");
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// opt-6 — UNSAT that genuinely requires arithmetic (LIA) theory reasoning
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// opt-6 – UNSAT that genuinely requires arithmetic (LIA) theory reasoning
+// ========  ========
 
 /// `x >= 5 AND x <= 3` is UNSAT purely by LIA bound reasoning: there is no
 /// shared propositional atom to refute (unlike `x = y AND x != y`), so this
@@ -137,10 +137,10 @@ fn test_arithmetic_ordering_contradiction_is_unsat() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// opt-3 — a large-magnitude *finite* optimum must not be misreported
+// ========  ========
+// opt-3 – a large-magnitude *finite* optimum must not be misreported
 // Unbounded
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `x` pinned to a narrow window around `2^45` (well beyond the old fixed
 /// `2^40` single-probe cap): minimizing must find the exact finite optimum,
@@ -253,9 +253,9 @@ fn test_real_minimize_large_magnitude_optimum_not_unbounded() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// opt-4 — no-objective optimize() must not fabricate a numeric value
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// opt-4 – no-objective optimize() must not fabricate a numeric value
+// ========  ========
 
 /// With no objectives registered, `optimize` degrades to a plain
 /// satisfiability check. It must still report `Optimal` with a model on a

@@ -23,7 +23,7 @@ impl Solver {
     /// loses it on the next rollback and plants a second reason-less literal
     /// inside a decision level, which breaks the termination invariant of the
     /// 1-UIP walk in [`Solver::analyze`] and lets it emit clauses that are
-    /// stronger than what resolution derives — a direct route to a false `unsat`.
+    /// stronger than what resolution derives – a direct route to a false `unsat`.
     ///
     /// The clause is asserted only when it really is unit under the
     /// post-backtrack assignment. A degenerate analysis result (two literals at
@@ -39,7 +39,7 @@ impl Solver {
         };
 
         if self.trail.is_assigned(asserting.var()) {
-            // Already satisfied is fine — nothing to install. Already *falsified*
+            // Already satisfied is fine – nothing to install. Already *falsified*
             // is not: every caller backtracks to a level strictly below the
             // asserting literal's own before getting here (`analyze` and
             // `analyze_theory_conflict` both assert that invariant, and
@@ -68,7 +68,7 @@ impl Solver {
         let mut level = 0;
         for &lit in &lits[1..] {
             if !self.trail.lit_value(lit).is_false() {
-                // Not actually unit — do not fabricate a propagation.
+                // Not actually unit – do not fabricate a propagation.
                 return;
             }
             level = level.max(self.trail.level(lit.var()));
@@ -180,7 +180,7 @@ impl Solver {
             // This restores for learned clauses the same invariant `add_clause`
             // already maintains for original ones (see `watch_rank`).  It is a
             // latent-hole fix found while chasing the QF_UF quasigroup wrong
-            // answers, not the cause of those — they were traced to
+            // answers, not the cause of those – they were traced to
             // `check_hyper_binary_resolution`.
             let lit0 = learnt_clause[0];
             let mut best = 1;
@@ -253,11 +253,11 @@ impl Solver {
     /// clause is unit under the current assignment and propagates
     /// `propagated_lit`.  The clause is registered as a two-watched learned
     /// clause so that, after any later backtrack, BCP re-derives the
-    /// propagation as soon as the reasons are re-established — the
+    /// propagation as soon as the reasons are re-established – the
     /// two-watched-literal invariant that keeps the clause enforced.
     ///
     /// `reason_lits` MUST be non-empty.  An empty reason denotes an
-    /// *unconditional* theory fact — a level-0 unit, which cannot be
+    /// *unconditional* theory fact – a level-0 unit, which cannot be
     /// two-watched and which would break 1-UIP conflict analysis if used as a
     /// mid-level propagation reason (the unit resolves to nothing, so the
     /// propagated literal becomes a spurious UIP and the learned clause can
@@ -269,7 +269,7 @@ impl Solver {
     /// and swapped into positions 0 and 1 of the stored clause, because the
     /// watcher / propagation loop assumes the watched literals live there.
     /// `propagated_lit` is currently unassigned (the caller only propagates
-    /// unassigned variables) and so is the highest-ranked literal — it stays
+    /// unassigned variables) and so is the highest-ranked literal – it stays
     /// at index 0; the second watch is the latest-falsified reason, so a watch
     /// always fires on re-falsification.  The previous code watched indices 0
     /// and 1 blindly, which on a clause whose index-1 literal was false below
@@ -371,7 +371,7 @@ impl Solver {
     /// Force an *unconditional* theory fact (a propagation the theory reported
     /// with an empty reason clause) as a permanent level-0 unit.
     ///
-    /// Must be called at decision level 0 — the caller backtracks to the root
+    /// Must be called at decision level 0 – the caller backtracks to the root
     /// first (see `install_theory_units`).  Stores the unit lemma `[lit]` as a
     /// Core-tier clause (so the DRAT proof records it and it survives clause-db
     /// reduction) and assigns `lit` as a level-0 decision so it persists across
@@ -432,7 +432,7 @@ impl Solver {
                 // reason. While a clause is a reason its `lits[0]` is the literal
                 // it propagated and is never swapped away (any watcher visit that
                 // would touch it finds it true and bails), so checking `lits[0]`
-                // alone is both necessary and sufficient — O(1) instead of the
+                // alone is both necessary and sufficient – O(1) instead of the
                 // previous O(clause-length) scan over every clause every
                 // reduction.
                 let is_reason = matches!(
@@ -670,8 +670,8 @@ impl Solver {
     ///
     /// A false `Unsat` merely fails to solve; a false `Sat` hands every
     /// downstream consumer an assignment they will trust. Verifying the finished
-    /// model is one linear pass, so in debug builds — which covers every test and
-    /// CI run — this converts such corruption into a loud, precisely localised
+    /// model is one linear pass, so in debug builds – which covers every test and
+    /// CI run – this converts such corruption into a loud, precisely localised
     /// failure instead of a silently wrong answer. It compiles to nothing in
     /// release, so the shipped hot path is unaffected.
     ///
@@ -696,8 +696,8 @@ impl Solver {
 
     /// Safety net for the CDCL(T) entry point [`Solver::solve_with_theory`].
     ///
-    /// The full check above cannot be used there, but the reason it cannot —
-    /// `TheoryCallback`-injected lemmas whose validity `oxiz-sat` does not own —
+    /// The full check above cannot be used there, but the reason it cannot –
+    /// `TheoryCallback`-injected lemmas whose validity `oxiz-sat` does not own –
     /// applies only to *learned* clauses: theory reason clauses and theory lemmas
     /// all enter through `ClauseDb::add_learned`, as do the resolvents that 1-UIP
     /// analysis derives over them. **Original** clauses are a different matter
@@ -732,8 +732,8 @@ impl Solver {
     /// cannot vouch for learned clauses pass `include_learned == false`.
     ///
     /// Unit clauses are excluded because the database is not what enforces them.
-    /// `add_clause` never stores a unit at all — it assigns the literal at level
-    /// 0 — and the copies that learned units leave behind carry no watches; their
+    /// `add_clause` never stores a unit at all – it assigns the literal at level
+    /// 0 – and the copies that learned units leave behind carry no watches; their
     /// force comes solely from that level-0 trail assignment. An incremental
     /// caller that retracts the assignment (`pop`, `restore_to_trail_size`)
     /// without also dropping the record leaves a lemma the formula no longer
@@ -790,7 +790,7 @@ impl Solver {
     /// has both watched literals false while unsatisfied
     /// (`crate::invariants::check_watched_literals`), and no live clause is a
     /// hanging unit (`crate::invariants::check_unit_propagation_complete`).
-    /// Call this only at a fixpoint — mid-scan both are routinely and
+    /// Call this only at a fixpoint – mid-scan both are routinely and
     /// harmlessly violated. Compiles to nothing in release builds.
     #[cfg(debug_assertions)]
     pub(super) fn debug_check_fixpoint_invariants(&self, context: &str) {
@@ -840,7 +840,7 @@ impl Solver {
 
     /// Debug-only net: a freshly learned clause's stored LBD matches
     /// recomputing it right now. Only sound to call in the instant right
-    /// after `clause_id` was learned and its `lbd` field set — see
+    /// after `clause_id` was learned and its `lbd` field set – see
     /// `crate::invariants::check_learned_clause_lbd`'s doc comment for why
     /// this cannot be a standing, whole-database invariant. Compiles to
     /// nothing in release builds.
@@ -857,7 +857,7 @@ impl Solver {
     /// Vivification and inprocessing strengthening shrink a clause in place. If
     /// the removed literal sat at a watched position (index 0 or 1), the stale
     /// watcher would keep pointing at a literal no longer in the clause, breaking
-    /// watch firing — a watched literal becoming false would no longer re-examine
+    /// watch firing – a watched literal becoming false would no longer re-examine
     /// the clause, causing missed unit propagations and, if index 0 were removed
     /// repeatedly, a clause left effectively unwatched (a missed conflict). This
     /// detaches the old watches (always keyed on the pre-removal literals at
@@ -913,7 +913,7 @@ impl Solver {
         self.watches.add(w1.negate(), Watcher::new(clause_id, w0));
 
         // Record the in-place strengthening in the proof: add the shorter
-        // clause (RUP-derivable — vivification proved it entailed) then delete the
+        // clause (RUP-derivable – vivification proved it entailed) then delete the
         // original, keeping the proof's clause set consistent with the database.
         if self.proof.is_some() {
             let new_lits: SmallVec<[Lit; 8]> = lits.iter().copied().collect();
@@ -1053,7 +1053,7 @@ impl Solver {
 
     /// Run propagation capped at `limit` steps. Returns `(conflict, aborted)`:
     /// `aborted=true` means the step budget was hit before propagation finished
-    /// — treat as "bail this probe" (neither a real conflict nor a complete
+    /// – treat as "bail this probe" (neither a real conflict nor a complete
     /// model). Used by preprocessing passes (probing/vivify) so a single
     /// doomed cascade can't run unbounded (a ~7s slowdown on Urquhart).
     pub(super) fn propagate_bounded(&mut self, limit: u64) -> (bool, bool) {
@@ -1067,7 +1067,7 @@ impl Solver {
     }
 
     /// Failed-literal probing with on-the-fly hyper-binary resolution
-    /// (cadical-style, simplified — no dominator LCA).
+    /// (cadical-style, simplified – no dominator LCA).
     ///
     /// Probe each still-unassigned literal `r` at decision level 1 and run BCP.
     ///   * If the probe conflicts, `r` is a *failed literal*: force `¬r` as a
@@ -1075,7 +1075,7 @@ impl Solver {
     ///   * If it does not conflict, every literal `q` forced during the probe by
     ///     a *non-binary* clause satisfies `r → q` (the clause became unit solely
     ///     because `r` made its other literals false), so the binary clause
-    ///     `(¬r ∨ q)` is implied — add it as a learned binary (a hyper-binary
+    ///     `(¬r ∨ q)` is implied – add it as a learned binary (a hyper-binary
     ///     resolvent) when not already present. This enriches the binary
     ///     implication graph, making later propagation/probing stronger.
     ///
@@ -1114,7 +1114,7 @@ impl Solver {
                 self.force_level0(r.negate());
                 failed += 1;
             } else if aborted {
-                // Cascade hit the step cap — densely constrained, skip.
+                // Cascade hit the step cap – densely constrained, skip.
                 self.backtrack(0);
             } else {
                 self.derive_hyper_binaries(r, &mut hyper);
@@ -1154,7 +1154,7 @@ impl Solver {
             // LBD of 0 at `Clause::learned`'s default gave every HBR clause an
             // artificially easy path into permanent Core retention via
             // `record_usage`'s `lbd <= 2` promote, regardless of quality).
-            // This site used to be the exception — the LBD-0 invariant
+            // This site used to be the exception – the LBD-0 invariant
             // (debug) caught it on the pigeonhole case.
             let lbd = self.compute_lbd(&[r.negate(), q]);
             if let Some(clause) = self.clauses.get_mut(id) {
@@ -1176,7 +1176,7 @@ impl Solver {
     /// unit propagation. If a probe leads to a conflict, the opposite polarity
     /// is implied by the current level-0 facts, so we add it as a permanent
     /// level-0 unit and propagate. This deduces forced assignments that plain
-    /// unit propagation cannot — it is the technique that lets cadical solve
+    /// unit propagation cannot – it is the technique that lets cadical solve
     /// structured instances such as `simon` with zero search decisions. Bounded
     /// by a propagation budget so it never dominates on huge instances.
     ///
@@ -1278,7 +1278,7 @@ impl Solver {
         // `subsumption_elimination` retire clauses by setting `Clause::deleted`
         // directly on `self.clauses` (they don't go through
         // `ClauseDatabase::remove`) and report only a count, not which ids were
-        // touched. `drat_delete(id)` can't be used afterwards either — by
+        // touched. `drat_delete(id)` can't be used afterwards either – by
         // design it refuses to read literals off a clause already marked
         // deleted, to avoid ever emitting a deletion line with garbage
         // literals. Without this snapshot the deletions below would never
@@ -1395,7 +1395,7 @@ impl Solver {
             // so `l_k` can be dropped while the clause stays F-entailed.
             //
             // The previous implementation asserted only ¬l_k and, on conflict,
-            // concluded F ⊨ l_k (a backbone) — then removed l_k. That is the
+            // concluded F ⊨ l_k (a backbone) – then removed l_k. That is the
             // wrong direction: F ⊨ l_k does NOT imply F ⊨ C \ {l_k}, so the
             // shrunken clause excluded legitimate models and could flip SAT to
             // UNSAT whenever inprocessing was enabled. This version negates the
@@ -1476,7 +1476,7 @@ mod tests {
     /// elimination and subsumption elimination retire original clauses
     /// directly on the clause database (setting `Clause::deleted` without
     /// going through `ClauseDatabase::remove`), and every clause they retire
-    /// must show up as a `d`-line in the DRAT proof — not just the separate
+    /// must show up as a `d`-line in the DRAT proof – not just the separate
     /// on-the-fly-strengthening path (`remove_literal_and_rewatch`), which
     /// already logged correctly before this fix.
     #[test]
@@ -1502,7 +1502,7 @@ mod tests {
         solver.add_clause([Lit::pos(p), Lit::pos(q), Lit::pos(r)]);
 
         // Decoy giving w1, w2, p, q, r an opposite-polarity occurrence each,
-        // so none of them is independently pure (only `y` is) — this keeps
+        // so none of them is independently pure (only `y` is) – this keeps
         // the (p ∨ q ∨ r) deletion attributable to subsumption alone rather
         // than being pre-empted by pure-literal elimination on `r`.
         solver.add_clause([

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Inert data types
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. Inert data types
 // whose only consumer would be a sound projection-based explain path. The current
 // multivariate conflict certifier (solver::decide::certify_sign_conflict) returns
 // plain Vec<Literal> clauses, so these wrappers have no consumer yet; wire in

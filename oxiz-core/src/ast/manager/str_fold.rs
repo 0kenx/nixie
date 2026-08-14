@@ -19,7 +19,7 @@
 //!   [`str_lt`] compares `chars()` explicitly so the property is not silently
 //!   relied upon.
 //! * [`str_to_code`] is `-1` for *every* string that is not exactly one
-//!   character long — including the empty string.
+//!   character long – including the empty string.
 //! * [`str_from_code`] is `""` outside the alphabet `[0, 0x2FFFF]`, not an
 //!   error and not a saturating value.
 
@@ -46,19 +46,19 @@ pub fn str_cmp(lhs: &str, rhs: &str) -> Ordering {
     lhs.chars().cmp(rhs.chars())
 }
 
-/// `str.<` — strict lexicographic order over code points.
+/// `str.<` – strict lexicographic order over code points.
 #[must_use]
 pub fn str_lt(lhs: &str, rhs: &str) -> bool {
     str_cmp(lhs, rhs) == Ordering::Less
 }
 
-/// `str.<=` — the reflexive closure of [`str_lt`].
+/// `str.<=` – the reflexive closure of [`str_lt`].
 #[must_use]
 pub fn str_le(lhs: &str, rhs: &str) -> bool {
     str_cmp(lhs, rhs) != Ordering::Greater
 }
 
-/// `str.to_code` — the code point of the only character of `s` when `s` is a
+/// `str.to_code` – the code point of the only character of `s` when `s` is a
 /// singleton string, and `-1` for every other string (including `""` and any
 /// string of two or more characters).
 #[must_use]
@@ -81,7 +81,7 @@ pub enum FromCode {
     /// The operand is a UTF-16 surrogate (`0xD800..=0xDFFF`).
     ///
     /// The theory *does* include these code points in its alphabet, so the
-    /// specified result is a one-character string — but OxiZ's strings are
+    /// specified result is a one-character string – but OxiZ's strings are
     /// Rust `String`s (sequences of Unicode scalar values), which cannot hold
     /// a lone surrogate, and the lexer already rejects `\u{d800}` in literals
     /// for the same reason.  Folding to `""` would be a *wrong* answer rather
@@ -91,7 +91,7 @@ pub enum FromCode {
     Unrepresentable,
 }
 
-/// `str.from_code` — the singleton string whose only character is the code
+/// `str.from_code` – the singleton string whose only character is the code
 /// point `n` when `n` lies in `[0, 0x2FFFF]`, and `""` otherwise.
 ///
 /// See [`FromCode::Unrepresentable`] for the surrogate range, which this

@@ -11,7 +11,7 @@
 //! The recursive version of this evaluator needed roughly 640 bytes of native
 //! stack per nesting level, so a term only ~1700 levels deep killed the whole
 //! process with `fatal runtime error: stack overflow` on the ~1 MiB stack an
-//! embedder's worker thread typically gets — an abort, not an [`EvalResult`]
+//! embedder's worker thread typically gets – an abort, not an [`EvalResult`]
 //! the caller could handle. Nothing bounded that depth either: the SMT-LIB
 //! parser's own nesting limit does not apply to terms built directly through
 //! [`TermManager`]'s builder API.
@@ -19,16 +19,16 @@
 //! The module is split along the seam between *driving* an evaluation and
 //! *defining* what each operator computes:
 //!
-//! * this module — [`EvalResult`], [`EvalCache`], [`ModelEvaluator`] and the
+//! * this module – [`EvalResult`], [`EvalCache`], [`ModelEvaluator`] and the
 //!   post-order driver, including the per-frame state that records how far a
 //!   pending operator has got through its operands;
-//! * [`combine`] — the ~60 pure operator implementations, each a function of
+//! * [`combine`] – the ~60 pure operator implementations, each a function of
 //!   already-evaluated operand [`Value`]s.
 //!
 //! Short-circuit semantics are a property of the *driver*, not of the
 //! combiners: `ite` evaluates its condition and then only the taken branch,
 //! and `and` / `or` / `distinct` / `+` / `*` stop at the first operand that
-//! decides the result. Every other operator is eager — it evaluates all of its
+//! decides the result. Every other operator is eager – it evaluates all of its
 //! operands even when an earlier one already failed, because the recursive
 //! version matched on a tuple of `self.eval(..)` calls and so did the same.
 //!
@@ -172,8 +172,8 @@ enum Op {
         operands: SmallVec<[TermId; 4]>,
     },
     /// n-ary `+` (`product = false`) or `*`, folded into `acc` as each operand
-    /// arrives so that the fold order — and therefore any arithmetic overflow
-    /// it can provoke — matches the recursive version exactly.
+    /// arrives so that the fold order – and therefore any arithmetic overflow
+    /// it can provoke – matches the recursive version exactly.
     Arith {
         /// Operand term ids in evaluation order.
         operands: SmallVec<[TermId; 4]>,
@@ -193,11 +193,11 @@ enum Op {
         /// How far the `ite` has got.
         state: IteState,
     },
-    /// `(func operands...)` — an uninterpreted function application, or a
+    /// `(func operands...)` – an uninterpreted function application, or a
     /// regex operator (`re.++`, `str.to_re`, ...), which lowers to `Apply`
     /// under the hood (see `TermManager::mk_regex_op`). Every operand is
     /// evaluated before `func` is looked up in the model, mirroring `Eager`'s
-    /// "evaluate everything, remember the first failure" rule — there being
+    /// "evaluate everything, remember the first failure" rule – there being
     /// no recursive predecessor to match here, since `Apply` was previously
     /// left entirely unhandled.
     Apply {
@@ -298,7 +298,7 @@ impl Frame {
 
     /// Fold `incoming` (when there is one) into the frame, then say what the
     /// frame needs next. `model` is only consulted by `Op::Apply`, once all
-    /// of its operands are in — see `request`.
+    /// of its operands are in – see `request`.
     fn advance(
         &mut self,
         values: &mut Vec<Value>,
@@ -315,13 +315,13 @@ impl Frame {
 
     /// Fold one operand result into the frame.
     ///
-    /// Returns `Some` when that operand ends the frame there and then — the
+    /// Returns `Some` when that operand ends the frame there and then – the
     /// short-circuiting arms, where the remaining operands must *not* be
     /// evaluated.
     fn accept(&mut self, values: &mut Vec<Value>, result: EvalResult) -> Option<EvalResult> {
         match &mut self.op {
             Op::Eager { .. } | Op::Apply { .. } => {
-                // Eager operators (and `Apply`, which follows the same rule —
+                // Eager operators (and `Apply`, which follows the same rule –
                 // see its doc) evaluate every operand even after one has
                 // failed, so a failure is remembered rather than returned.
                 match result {
@@ -489,7 +489,7 @@ impl Frame {
                             Some(interp) => {
                                 EvalResult::Ok(interp.evaluate(&values[self.base..]).clone())
                             }
-                            // No stored interpretation for this function —
+                            // No stored interpretation for this function –
                             // genuinely absent, not an error. This is also
                             // where every regex operator (`re.++`, `str.to_re`,
                             // ...) lands: they lower to `Apply` too (see
@@ -667,7 +667,7 @@ impl<'a> ModelEvaluator<'a> {
             TermKind::BitVecConst { value, width } => {
                 // Convert BigInt to u64, without silently truncating out-of-range
                 // values to 0. `Value::BitVec` stores its payload as a u64
-                // magnitude alongside a (possibly >64) declared width — see
+                // magnitude alongside a (possibly >64) declared width – see
                 // `Value`'s Display impl in model/mod.rs, which zero-extends
                 // the u64 magnitude out to `width` bits. That representation
                 // is exact as long as the constant's magnitude fits in u64;
@@ -762,7 +762,7 @@ impl<'a> ModelEvaluator<'a> {
             TermKind::Lt(a, b) => Opened::Frame(Frame::binary(term, *a, *b, EagerKind::Lt)),
             TermKind::Le(a, b) => Opened::Frame(Frame::binary(term, *a, *b, EagerKind::Le)),
             // `a > b` is `b < a`, and the recursive version passed the
-            // operands to `eval_lt` in that swapped order — so the *right*
+            // operands to `eval_lt` in that swapped order – so the *right*
             // operand is evaluated first. Keep it: evaluation order is
             // observable through the cache.
             TermKind::Gt(a, b) => Opened::Frame(Frame::binary(term, *b, *a, EagerKind::Lt)),
@@ -848,7 +848,7 @@ impl<'a> ModelEvaluator<'a> {
             }
 
             // Uninterpreted function application (and, under the hood, every
-            // regex operator — see `Op::Apply`'s doc comment).
+            // regex operator – see `Op::Apply`'s doc comment).
             TermKind::Apply { func, args } => Opened::Frame(Frame::new(
                 term,
                 Op::Apply {

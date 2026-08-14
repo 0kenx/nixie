@@ -31,7 +31,7 @@ callback interface.
 | **E-matching** | Always when quantifiers are present | Speed: fires on concrete ground terms |
 | **MBQI** | When E-matching is insufficient or no triggers exist | Completeness: model-driven, can find witnesses without syntactic triggers |
 
-The two engines are not mutually exclusive — OxiZ runs E-matching first on each
+The two engines are not mutually exclusive – OxiZ runs E-matching first on each
 check iteration and falls back to MBQI when E-matching produces no new
 instantiations.
 
@@ -103,7 +103,7 @@ the trigger patterns of a universally quantified formula.
 | `ematching::mod_time` | Tracks which terms are "new" since the last matching round, avoiding redundant work |
 | `ematching::trigger` | Trigger (pattern) extraction heuristics |
 | `ematching::multi_pattern` | Optimized matching when a quantifier has multiple trigger terms |
-| `ematching::relevancy` | Relevancy propagation — only instantiates on terms likely to be useful |
+| `ematching::relevancy` | Relevancy propagation – only instantiates on terms likely to be useful |
 | `ematching::quantifier_inst` | Deduplicates identical instantiations |
 
 ### How E-matching fires
@@ -166,7 +166,7 @@ quantifier-free formulation. Compare:
 (check-sat)
 ```
 
-**Quantifier-free (fast — use QF_ALIA and concrete selects):**
+**Quantifier-free (fast – use QF_ALIA and concrete selects):**
 ```smt2
 (set-logic QF_ALIA)
 (declare-const a (Array Int Int))
@@ -238,7 +238,7 @@ search time:
 OxiZ's E-matching engine reads `:pattern` and `:no-pattern` annotations from
 SMT-LIB2 formulas. These are the primary mechanism for guiding instantiation.
 
-### `:pattern` — positive trigger
+### `:pattern` – positive trigger
 
 A `:pattern` annotation specifies the ground term shape that must appear before
 the quantifier is instantiated. The pattern must contain all bound variables.
@@ -248,7 +248,7 @@ the quantifier is instantiated. The pattern must contain all bound variables.
 (declare-fun f (Int) Int)
 (declare-fun g (Int) Int)
 
-; Pattern: (f x) — E-matching fires when any ground (f c) appears
+; Pattern: (f x) – E-matching fires when any ground (f c) appears
 (assert (forall ((x Int))
   (! (=> (>= (f x) 0) (>= (g x) 0))
      :pattern ((f x)))))
@@ -268,7 +268,7 @@ comma-separated set of terms that must all appear simultaneously):
      :pattern ((f x y) (f y x)))))   ; both must appear
 ```
 
-### `:no-pattern` — excluded trigger
+### `:no-pattern` – excluded trigger
 
 Prevents a specific term from being used as a trigger. Useful when heuristic
 trigger selection picks a term that causes excessive instantiation:
@@ -341,7 +341,7 @@ but not by E-matching alone. Expected behavior: MBQI will attempt to find
 witnesses, but may time out on complex nonlinear instances.
 
 ```smt2
-; This is in NIA (nonlinear) territory — MBQI only, no E-matching trigger
+; This is in NIA (nonlinear) territory – MBQI only, no E-matching trigger
 (assert (forall ((x Int)) (>= (* x x) 0)))
 ```
 
@@ -351,9 +351,9 @@ small enough to enumerate explicitly.
 ### 4. Nested quantifiers with shared variables
 
 ```smt2
-; x appears in both the outer and inner binder — shadowing
+; x appears in both the outer and inner binder – shadowing
 (assert (forall ((x Int))
-  (forall ((x Int))   ; shadows outer x — almost certainly a mistake
+  (forall ((x Int))   ; shadows outer x – almost certainly a mistake
     (= (f x) 0))))
 ```
 

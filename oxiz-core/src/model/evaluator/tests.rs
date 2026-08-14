@@ -31,7 +31,7 @@ fn test_eval_result() {
 }
 
 // Regression tests for: "Model evaluator silently truncates big integer
-// and wide BV constants to 0" — a BigInt IntConst or BitVecConst that
+// and wide BV constants to 0" – a BigInt IntConst or BitVecConst that
 // does not fit the fixed-width `Value` representation must surface an
 // explicit `EvalResult::Error`, never a fabricated 0.
 
@@ -161,7 +161,7 @@ fn test_eval_mod_euclidean_still_works() {
 //
 // Every one of these evaluates a *representable* input to an unrepresentable
 // result. Untreated, each aborts the process in a debug build (`attempt to
-// … with overflow`) and — worse — silently wraps in a release build, handing
+// … with overflow`) and – worse – silently wraps in a release build, handing
 // the caller a model value that is simply wrong. The contract these pin down
 // is the one the `IntConst`/`BitVecConst` arms already follow: an
 // unrepresentable result is an explicit `EvalResult::Error`, in *both*
@@ -265,7 +265,7 @@ fn test_eval_real_div_overflow_errors_not_panic() {
 #[test]
 fn test_eval_bvextract_width_overflow_errors_not_panic() {
     // `((_ extract u32::MAX 0) x)` computes `high - low + 1`, which overflows
-    // u32 — a debug panic, and a wrap to width 0 in release.
+    // u32 – a debug panic, and a wrap to width 0 in release.
     assert_overflow_error("((_ extract u32::MAX 0) x)", |manager, model| {
         let bv_sort = manager.sorts.bitvec(8);
         let x = manager.mk_var("x", bv_sort);
@@ -307,12 +307,12 @@ fn test_eval_arithmetic_near_the_limit_still_works() {
 // A Real *literal* evaluates to `Value::Rational(1/1)`, while every *computed*
 // Real result goes through `combine::from_rational`, which reports an integral
 // rational as `Value::Int`. Under the derived `PartialEq` the two were
-// different values, so a true equality between them evaluated to `false` —
+// different values, so a true equality between them evaluated to `false` –
 // a wrong answer on well-sorted, single-sort input, not merely a cosmetic
 // mismatch. The same `==` backs `distinct`, `select`'s index lookup and
 // `FuncInterp::evaluate`.
 
-/// `(+ 0.5 0.5)` — a Real-sorted term whose value normalizes to `Value::Int`.
+/// `(+ 0.5 0.5)` – a Real-sorted term whose value normalizes to `Value::Int`.
 fn half_plus_half(manager: &mut TermManager) -> TermId {
     let half = manager.mk_real(Rational64::new(1, 2));
     manager.mk_add([half, half])
@@ -393,7 +393,7 @@ fn test_eval_select_finds_a_store_whose_index_has_the_other_shape() {
 }
 
 // Regression tests for: "ModelEvaluator cannot evaluate BV
-// comparisons/shifts/div, strings, arrays" — truth tables for the
+// comparisons/shifts/div, strings, arrays" – truth tables for the
 // newly implemented BV division/remainder/shift/comparison/
 // concat/extract, array select/store, and string ops.
 
@@ -629,7 +629,7 @@ fn test_eval_bvconcat_result_wider_than_64_bits_errors() {
     let lhs = bv(&mut manager, 1, 40);
     let rhs = bv(&mut manager, 1, 30);
     // Interned raw: `mk_bv_concat` folds two literals into a single wide
-    // literal, and the point here is the evaluator's `BvConcat` arm — it
+    // literal, and the point here is the evaluator's `BvConcat` arm – it
     // must refuse a result too wide for its 64-bit `Value::BitVec` rather
     // than silently truncate it.
     let sort = manager.sorts.bitvec(70);
@@ -806,14 +806,14 @@ fn test_eval_string_order_and_char_codes() {
     ));
 }
 
-// ===== Deep-nesting regression tests =====
+// ======== Deep-nesting regression tests ========
 //
 // Regression tests for: "ModelEvaluator::eval recurses once per term-nesting
 // level and has no depth guard, so a deep term aborts the process with
 // `fatal runtime error: stack overflow` instead of returning a result."
 //
-// Every one of these builds its term with a plain `for` loop — a recursive
-// builder would overflow before the evaluation under test even started — and
+// Every one of these builds its term with a plain `for` loop – a recursive
+// builder would overflow before the evaluation under test even started – and
 // runs the evaluation on a thread with an explicitly small (1 MiB) stack, the
 // size an embedder's worker thread typically gets. A stack overflow aborts the
 // whole process, so "the call returned at all" *is* the assertion; the value
@@ -836,7 +836,7 @@ const LARGE: usize = 5_000;
 /// Run `body` on a thread with a deliberately small stack and return its value.
 ///
 /// A stack overflow inside `body` aborts the process rather than unwinding, so
-/// this helper cannot turn one into a test failure — that is the point. The
+/// this helper cannot turn one into a test failure – that is the point. The
 /// test run itself fails, loudly, which is the signal.
 fn on_small_stack<T, F>(body: F) -> T
 where
@@ -1079,8 +1079,8 @@ fn test_store_chain_nests_in_value_position_but_stays_flat_in_array_position() {
 #[test]
 fn test_deep_array_value_in_model_evaluates_on_a_small_stack() {
     // `eval` hands the model's value back by *clone* and caches another
-    // clone, and every one of those — plus the final drop of the model, the
-    // cache and the result — used to recurse once per nesting level.
+    // clone, and every one of those – plus the final drop of the model, the
+    // cache and the result – used to recurse once per nesting level.
     // 50 000 is comfortably past where the derived traits aborted.
     const DEPTH: usize = 50_000;
     let (depth, tail) = on_small_stack(|| {
@@ -1124,7 +1124,7 @@ fn test_deep_array_value_in_model_evaluates_on_a_small_stack() {
     assert_eq!(tail, Value::Int(7));
 }
 
-// ===== Short-circuit contract =====
+// ======== Short-circuit contract ========
 
 /// `ite` must evaluate only the taken branch: a failure hiding in the untaken
 /// one has to stay invisible, at any nesting depth.
@@ -1249,7 +1249,7 @@ fn test_connectives_short_circuit_before_a_failing_operand() {
     );
 }
 
-// ===== Failure-precedence contract =====
+// ======== Failure-precedence contract ========
 //
 // The eager operators matched on a tuple of both operands' results, whose
 // pattern order made `Undefined` outrank `Error` no matter which side it came
@@ -1360,7 +1360,7 @@ fn test_eager_binary_still_evaluates_the_second_operand_after_a_failure() {
     assert_eq!(evaluator.cache_size(), 1);
 }
 
-// ===== `Apply` wired to `Model::func_interps` =====
+// ======== `Apply` wired to `Model::func_interps` ========
 //
 // Regression tests for: "a model holding a complete `FuncInterp` for `f`
 // still evaluates `(f x)` to `EvalResult::Undefined`". `TermKind::Apply`

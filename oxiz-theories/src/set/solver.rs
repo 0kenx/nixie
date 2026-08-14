@@ -245,7 +245,7 @@ impl SetExpr {
     ///
     /// Explicit stack: `SetExpr` nests as deeply as the caller builds it and
     /// this returns `()`, so a depth cap could only drop variables from the
-    /// answer — and a caller that acts on an incomplete variable set is
+    /// answer – and a caller that acts on an incomplete variable set is
     /// silently wrong rather than merely incomplete.
     fn collect_vars(&self, vars: &mut FxHashSet<SetVarId>) {
         let mut stack: Vec<&SetExpr> = vec![self];
@@ -778,7 +778,7 @@ impl SetSolver {
     ///
     /// For complex sub-expressions each arm recursively decomposes the operands
     /// and then constrains the fresh auxiliary variable to be semantically equal
-    /// to the expression — without ever calling `add_equal_constraint` with the
+    /// to the expression – without ever calling `add_equal_constraint` with the
     /// same complex expression (which would trigger infinite recursion).
     fn extract_var(&mut self, expr: &SetExpr) -> SetResult<SetVarId> {
         // Explicit stack, not recursion. `SetExpr` nests as deeply as the

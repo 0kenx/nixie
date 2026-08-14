@@ -15,7 +15,7 @@
 //! different counterexamples, instantiates at different ground terms, and emits
 //! lemmas over SAT variables that did not exist before.  Those clauses are
 //! original clauses added with no assertion behind them, and nothing will ever
-//! retract them — the assertion stack did not move, so no `pop` covers them.  A
+//! retract them – the assertion stack did not move, so no `pop` covers them.  A
 //! caller polling `(check-sat)` in a loop pays for that permanently.  Measured
 //! on a UFLIA goal that answers `unknown`: flat for four calls, then +57
 //! original clauses at call 5, which is why the growth first read as
@@ -32,8 +32,8 @@
 //! the verdict; a mismatch anywhere runs the search.  A mutation that escaped it
 //! would have to add no assertion, allocate no SAT variable, emit no clause,
 //! journal no undo entry, register no quantifier or instantiation candidate, and
-//! leave every solver setting — the whole [`SolverConfig`], the unsat-core and
-//! branching switches, the declared logic and the SAT engine's random seed —
+//! leave every solver setting – the whole [`SolverConfig`], the unsat-core and
+//! branching switches, the declared logic and the SAT engine's random seed –
 //! exactly as it found them.  That is, to change nothing a `check` can read.
 //!
 //! Two hooks keep the second half of that true rather than merely hoped for.
@@ -45,7 +45,7 @@
 //!
 //! Both hooks are defence in depth: emptied out, the fingerprint alone still
 //! refuses every stale query, because it carries by value everything they
-//! announce (this was measured — see the mutation testing recorded in the ticket
+//! announce (this was measured – see the mutation testing recorded in the ticket
 //! for #28).  They earn their place by being *cheap* and by failing safe in the
 //! opposite direction: they drop a live cache entry rather than keep a dead one,
 //! so a hook added to a new mutator can never introduce a stale read even if the
@@ -68,7 +68,7 @@ mod tests;
 /// appends to `assertions` (and journals a trail op), `push` / `pop` change the
 /// scope depth (and `pop` truncates the trail), `declare-const` grows the MBQI
 /// candidate pool, and `reset` zeroes all of them.  The settings half is
-/// carried whole rather than field by field — see [`Self::settings_epoch`] and
+/// carried whole rather than field by field – see [`Self::settings_epoch`] and
 /// [`Self::config`].
 ///
 /// Comparing one of these is a handful of integer comparisons: `SolverConfig`
@@ -82,9 +82,9 @@ pub(crate) struct GoalFingerprint {
     num_assertions: usize,
     /// `Solver::named_assertions.len()`
     num_named_assertions: usize,
-    /// `Solver::context_stack.len()` — the open `push` depth.
+    /// `Solver::context_stack.len()` – the open `push` depth.
     num_scopes: usize,
-    /// `Solver::trail.len()` — the undo journal's length.
+    /// `Solver::trail.len()` – the undo journal's length.
     trail_len: usize,
     /// Number of SAT variables allocated so far.
     num_sat_vars: usize,
@@ -98,7 +98,7 @@ pub(crate) struct GoalFingerprint {
     num_mbqi_candidates: usize,
     /// `Solver::has_false_assertion`
     has_false_assertion: bool,
-    /// `Solver::settings_epoch` — bumped by every setter in `solver::config`.
+    /// `Solver::settings_epoch` – bumped by every setter in `solver::config`.
     ///
     /// This is what covers the settings a fingerprint cannot hold by value: the
     /// declared logic (a `String`, and copying it per call would put an
@@ -108,9 +108,9 @@ pub(crate) struct GoalFingerprint {
     /// The whole search configuration, by value.
     ///
     /// Not a hand-picked subset, and deliberately so.  Anything the solve loop
-    /// honours — `timeout_ms`, `max_conflicts`, `max_decisions`, `theory_mode`,
+    /// honours – `timeout_ms`, `max_conflicts`, `max_decisions`, `theory_mode`,
     /// `simplify`, `proof`, `finite_expansion_budget`, the preprocessing
-    /// switches — changes what a `check` may conclude, and above all *whether*
+    /// switches – changes what a `check` may conclude, and above all *whether*
     /// it concludes: an `Unknown` is a statement about the budget, not about the
     /// goal, so replaying one across a budget change answers a question that was
     /// not asked.  Holding the struct whole means a field added to
@@ -123,11 +123,11 @@ pub(crate) struct GoalFingerprint {
     /// different config here and re-runs, while a repeated `check_with_limits`
     /// under the same limits sees the same one and hits.
     config: SolverConfig,
-    /// `Solver::produce_unsat_cores` — a cached `Unsat` computed with core
+    /// `Solver::produce_unsat_cores` – a cached `Unsat` computed with core
     /// production off has no core to hand to a caller who has since turned it
     /// on.
     produce_unsat_cores: bool,
-    /// `Solver::theory_aware_branching` — changes the decision order, hence
+    /// `Solver::theory_aware_branching` – changes the decision order, hence
     /// which model a satisfiable goal yields and whether a budgeted search
     /// finishes.
     theory_aware_branching: bool,
@@ -139,7 +139,7 @@ impl Solver {
     /// # The rule
     ///
     /// A model and an unsat core are statements *about a particular assertion
-    /// stack*.  Z3 applies the corresponding rule at the context level — any
+    /// stack*.  Z3 applies the corresponding rule at the context level – any
     /// change to the assertion stack invalidates the previous verdict, which is
     /// also SMT-LIB 2.6 §4.1.1's mode machine (`assert`, `push`, `pop`,
     /// `reset-assertions` and `reset` all return the solver to `assert` mode,
@@ -150,21 +150,21 @@ impl Solver {
     ///
     /// # Why each field is or is not cleared
     ///
-    /// * `model` — a model of the *old* stack need not satisfy the new one
+    /// * `model` – a model of the *old* stack need not satisfy the new one
     ///   (`assert` strengthens it, `pop` replaces it wholesale).  Cleared.
-    /// * `unsat_core` — its `indices` name positions in `assertions`, which
+    /// * `unsat_core` – its `indices` name positions in `assertions`, which
     ///   `pop` truncates.  A survivor is not merely imprecise, it *dangles*:
     ///   `Solver::minimize_unsat_core` indexes `assertions` by them and the
     ///   structural net [`crate::invariants::check_unsat_core`] rejects them.
     ///   Cleared.
-    /// * `proof` — the `Option` carries the `:produce-proofs` setting, so it is
+    /// * `proof` – the `Option` carries the `:produce-proofs` setting, so it is
     ///   emptied in place rather than taken: dropping it to `None` would
     ///   silently *disable* proof production for the rest of the session.
-    /// * `statistics` — cumulative over the solver's whole life, not a verdict
+    /// * `statistics` – cumulative over the solver's whole life, not a verdict
     ///   about one stack; SMT-LIB's `(get-info :all-statistics)` is not gated on
     ///   solver mode either.  Deliberately kept (see [`Self::reset_statistics`]
     ///   for the explicit way to zero it).
-    /// * `last_check` — the verdict itself, cached so that asking the same
+    /// * `last_check` – the verdict itself, cached so that asking the same
     ///   question twice does not re-run the search (see this module's docs).  It is a
     ///   verdict about the old stack in exactly the way `model` is, so it is
     ///   cleared through exactly the same hook.
@@ -181,7 +181,7 @@ impl Solver {
         }
     }
 
-    /// Structural summary of the current goal — see [`GoalFingerprint`].
+    /// Structural summary of the current goal – see [`GoalFingerprint`].
     pub(super) fn goal_fingerprint(&self) -> GoalFingerprint {
         GoalFingerprint {
             num_assertions: self.assertions.len(),
@@ -215,7 +215,7 @@ impl Solver {
     /// `check` run a real search on a goal nothing has changed, which is what
     /// the task-#28 pins in `solver::scope_rebase_tests` need in order to
     /// observe what the search machinery beneath the cache does when it is run
-    /// twice.  Production code has no business asking for that — a repeat is
+    /// twice.  Production code has no business asking for that – a repeat is
     /// answered from the cache precisely because re-running is not idempotent.
     #[cfg(test)]
     pub(crate) fn forget_cached_verdict(&mut self) {

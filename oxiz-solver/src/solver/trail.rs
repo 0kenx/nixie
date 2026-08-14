@@ -106,15 +106,15 @@ impl super::Solver {
     /// until the author classifies it, which is the whole point.  Each field is
     /// tagged with why it needs no undo, or with the mechanism that undoes it:
     ///
-    /// - `INVARIANT` — configuration, or a cache keyed by immutable term
+    /// - `INVARIANT` – configuration, or a cache keyed by immutable term
     ///   structure (interning, parse/simplify memos).  Never derived from
     ///   *which* assertions are active, so it is valid in every scope.
-    /// - `TRAIL` — undone by a [`TrailOp`] replayed above.
-    /// - `SNAPSHOT` — restored from [`ContextState`] and checked below.
-    /// - `SCOPED` — owned by a sub-solver with its own push/pop, or returned to
+    /// - `TRAIL` – undone by a [`TrailOp`] replayed above.
+    /// - `SNAPSHOT` – restored from [`ContextState`] and checked below.
+    /// - `SCOPED` – owned by a sub-solver with its own push/pop, or returned to
     ///   its base state by [`super::Solver::rebase_theory_state`], which `pop`
     ///   calls (it is also every `check`'s first act).
-    /// - `RESULT` — output of the last `check`, not an input to the next one.
+    /// - `RESULT` – output of the last `check`, not an input to the next one.
     ///   Discarded by [`super::Solver::invalidate_results`] at the top of `pop`:
     ///   a verdict belongs to the assertion stack it was computed on, and an
     ///   unsat core additionally *indexes* that stack.
@@ -122,7 +122,7 @@ impl super::Solver {
     /// `polarities` is the one entry that survives a `pop` by design:
     /// `collect_polarities` merges monotonically towards `Both`, so a stale
     /// entry can only make the Tseitin encoder emit *both* implication
-    /// directions — never fewer clauses than the live assertions require.
+    /// directions – never fewer clauses than the live assertions require.
     pub(super) fn debug_assert_scope_restored(&self, state: &ContextState) {
         let super::Solver {
             config: _,          // INVARIANT: user configuration
@@ -237,11 +237,11 @@ impl super::Solver {
             // cached verdict belongs to the assertion stack it was computed on,
             // exactly as `model` does)
             certification_failure: _, // RESULT: cleared with the cached verdict
-            settings_epoch: _,        // INVARIANT: monotone — it counts *settings*
+            settings_epoch: _,        // INVARIANT: monotone – it counts *settings*
             // mutations, which are not scoped by push/pop; rolling it back would
             // let a cached verdict from before a `set-option` be matched again
             // after the pop.
-            next_skolem_id: _, // INVARIANT: monotone — a popped scope's Skolem
+            next_skolem_id: _, // INVARIANT: monotone – a popped scope's Skolem
             // names must never be handed out again, so this counter deliberately
             // survives `pop` (re-using an id would alias two distinct witnesses).
             case_split_terms: _, // PER-SEARCH: cleared at `check_core` entry, so a
@@ -311,7 +311,7 @@ impl FpConstraintCollector {
     /// the recursion could exhaust the native stack (a fatal,
     /// `catch_unwind`-proof process abort), and without a visited set a
     /// shared sub-DAG of the hash-consed term graph was re-expanded once per
-    /// path — `2^n` visits for an `n`-level doubling DAG.  A depth cap is not
+    /// path – `2^n` visits for an `n`-level doubling DAG.  A depth cap is not
     /// an option: the return type is `()`, so a cap could only silently drop
     /// facts and make [`Self::check_conflicts`] miss a definite conflict.
     ///
@@ -780,7 +780,7 @@ impl FpConstraintCollector {
 
 /// Regression tests for [`FpConstraintCollector::collect`]'s conversion from
 /// native recursion (no depth guard, no visited set) to an explicit worklist
-/// with a `TermId`-keyed visited set — see `collect`'s doc comment for the
+/// with a `TermId`-keyed visited set – see `collect`'s doc comment for the
 /// full rationale.
 #[cfg(test)]
 mod tests {
@@ -863,7 +863,7 @@ mod tests {
 
     /// The named worst case of the recursion sweep: a doubling DAG
     /// (`d_{i+1} = fp.add(d_i, d_i)`) made the unmemoized original perform
-    /// `2^60` visits — effectively a hang.  With the visited set the walk is
+    /// `2^60` visits – effectively a hang.  With the visited set the walk is
     /// linear, records each distinct addition exactly once, and finishes
     /// immediately.
     #[test]
@@ -889,7 +889,7 @@ mod tests {
 
     /// A `fp.add` chain 12 500 levels deep must be walked on a 128 KiB stack:
     /// a native stack overflow is a fatal abort `catch_unwind` cannot
-    /// intercept, so returning at all — with the full fact count — is the
+    /// intercept, so returning at all – with the full fact count – is the
     /// assertion.
     #[test]
     fn collect_survives_a_deep_fp_add_chain_on_a_small_stack() {

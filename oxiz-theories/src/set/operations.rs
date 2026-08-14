@@ -1323,11 +1323,11 @@ mod tests {
         assert_eq!(result_must.len(), 1);
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // `NarySetOp::flatten` / `collect_leaves` cycle-safety regression tests
     // (audit: a cyclic `result_to_idx` chain made the leaf-collecting
     // recursion loop forever; `flatten` itself had no prior test coverage).
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn test_flatten_normal_nested_union() {

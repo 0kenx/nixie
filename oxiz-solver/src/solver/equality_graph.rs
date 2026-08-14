@@ -3,9 +3,9 @@
 //! Transitivity Constraints", TOCL; the construction the `eq_diamond`
 //! benchmark family of Strichman & Rozanov is designed to exercise).
 //!
-//! For pure **Equality Logic** — Boolean combinations of `(= a b)` and
+//! For pure **Equality Logic** – Boolean combinations of `(= a b)` and
 //! `(not (= a b))` over constants, with no functions, arithmetic, bit-vectors,
-//! arrays, strings, or quantifiers — the congruence-closure / CDCL(T) core can
+//! arrays, strings, or quantifiers – the congruence-closure / CDCL(T) core can
 //! blow up exponentially on disjunctive equality chains. We instead recover the
 //! lost transitivity of equality *statically*: build the equality graph, make
 //! it chordal by elimination (adding fresh auxiliary "chord" variables for fill
@@ -24,7 +24,7 @@
 //!
 //! Because the SAT core plus these clauses is a *complete* decision procedure
 //! for the formula, when the preprocessing applies we solve with plain SAT and
-//! skip the CDCL(T) loop entirely — otherwise the EUF theory would keep emitting
+//! skip the CDCL(T) loop entirely – otherwise the EUF theory would keep emitting
 //! the long chain-conflict clauses that cause the original exponential blowup.
 
 use crate::solver::Solver;
@@ -59,7 +59,7 @@ impl Solver {
                 // plain SAT and never drives the EUF theory, so without this
                 // `get_model` would mint distinct `@uc` witnesses for
                 // constants the user asserted equal. Re-derive the equality
-                // classes from the SAT model into EUF — the independent
+                // classes from the SAT model into EUF – the independent
                 // union-find backstop for the pure-equality fragment.
                 self.reconcile_euf_from_equality_model(manager);
                 self.unsat_core = None;

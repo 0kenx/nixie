@@ -52,9 +52,7 @@ fn distinct_vars_with_prefix(
     found
 }
 
-// ============================================================================
-// Finding 1: Fourier-Motzkin op_limit abort must not discard constraints.
-// ============================================================================
+// ======== Finding 1: Fourier-Motzkin op_limit abort must not discard constraints. ========
 
 /// Reproduces the audited bug: with an op_limit small enough to abort before
 /// any pair is resolved, a genuinely UNSAT system of bound constraints on a
@@ -153,9 +151,7 @@ fn test_fm_detects_unsat_without_op_limit_pressure() {
     assert!(matches!(result, TacticResult::Solved(SolveResult::Unsat)));
 }
 
-// ============================================================================
-// Finding 2: lia2card auxiliary variable names must be globally unique.
-// ============================================================================
+// ======== Finding 2: lia2card auxiliary variable names must be globally unique. ========
 
 /// Reproduces the audited bug: encoding a single `Exactly(k, vars)`
 /// constraint via the sequential-counter internally performs two separate

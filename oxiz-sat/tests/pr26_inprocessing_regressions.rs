@@ -4,19 +4,19 @@
 //! binary implication graph, and AND/XOR gate congruence detection feeding
 //! ELS.
 //!
-//! These are black-box, whole-solver checks (the white-box mechanism tests —
+//! These are black-box, whole-solver checks (the white-box mechanism tests –
 //! Tarjan SCC unit tests, gate-detection unit tests, resolution/growth-bound
-//! unit tests — live next to the code in `src/solver/{bve,equiv,congruence,
+//! unit tests – live next to the code in `src/solver/{bve,equiv,congruence,
 //! probe}.rs`). The property under test here is the one that matters most
 //! for an opt-in preprocessing pass: turning a mechanism on must never change
 //! the SAT/UNSAT verdict, and for SAT results the returned model must be a
-//! genuine model of the *original* problem — including for any variable the
+//! genuine model of the *original* problem – including for any variable the
 //! mechanism eliminated from the live clause set, since a wrong
 //! reconstructed value there is exactly the kind of bug verdict-agreement
 //! alone cannot catch (a wrong model still reports `Sat`).
 //!
 //! Vivification and subsumption/self-subsumption strengthening are NOT
-//! reimplemented here — OxiZ already has them, wired into
+//! reimplemented here – OxiZ already has them, wired into
 //! `Solver::inprocess` (`Preprocessor::subsumption_elimination` and
 //! `Solver::strengthen_clauses_inprocessing`, gated by
 //! `SolverConfig::enable_inprocessing`). `test_pr26_vivify_subsumption_already_covered_by_inprocess`
@@ -38,7 +38,7 @@ fn clause_satisfied(solver: &Solver, clause: &[Lit]) -> bool {
 }
 
 /// Assert every clause in `clauses` is satisfied by `solver`'s model and that
-/// no variable in `0..num_vars` is left `Undef` — the check that actually
+/// no variable in `0..num_vars` is left `Undef` – the check that actually
 /// catches a wrong model-reconstruction value, not just a wrong verdict.
 fn assert_model_is_total_and_satisfies(solver: &Solver, clauses: &[Vec<Lit>], num_vars: usize) {
     for (i, clause) in clauses.iter().enumerate() {
@@ -128,9 +128,9 @@ fn build_equivalence_instance(solver: &mut Solver) -> (Vec<Vec<Lit>>, Var, Var, 
     (clauses, a, b, c)
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Probing (failed-literal probing + hyper-binary resolution)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_probe_unsat_verdict_agrees_on_off() {
@@ -189,9 +189,9 @@ fn test_pr26_probe_sat_verdict_and_model_agree_on_off() {
     assert_model_is_total_and_satisfies(&on, &clauses_on, 4);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Bounded variable elimination (BVE)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_bve_model_reconstruction_satisfies_original_clauses() {
@@ -204,7 +204,7 @@ fn test_pr26_bve_model_reconstruction_satisfies_original_clauses() {
     assert_model_is_total_and_satisfies(&solver, &clauses, 5);
     // Non-vacuity guard: without this, the test cannot distinguish "BVE
     // eliminated vv and reconstruction restored it correctly" from "BVE
-    // never fired and ordinary search assigned vv directly" — the whole
+    // never fired and ordinary search assigned vv directly" – the whole
     // point of a *reconstruction* test is to exercise the reconstruction
     // path, not just re-confirm the model is valid.
     assert!(
@@ -250,9 +250,9 @@ fn test_pr26_bve_sat_verdict_agrees_on_off() {
     assert_model_is_total_and_satisfies(&on, &clauses_on, 5);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Equivalent-literal substitution (ELS)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_els_model_reconstruction_satisfies_original_clauses() {
@@ -264,7 +264,7 @@ fn test_pr26_els_model_reconstruction_satisfies_original_clauses() {
     assert_eq!(solver.solve(), SolverResult::Sat);
     assert_model_is_total_and_satisfies(&solver, &clauses, 4);
     // a≡b and a≡c form one 3-member SCC, which ELS must collapse to a single
-    // representative — at least 2 of the 3 have to be folded away. Without
+    // representative – at least 2 of the 3 have to be folded away. Without
     // this the test would pass vacuously even if `fold_equivalent_literals`
     // never actually fired (verdict + model validity alone can't tell the
     // difference between "ELS folded the class" and "ELS was a no-op and
@@ -332,9 +332,9 @@ fn test_pr26_els_detects_self_contradiction_as_unsat() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Gate congruence (feeds ELS)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_gates_congruence_model_reconstruction_satisfies_original_clauses() {
@@ -394,11 +394,11 @@ fn test_pr26_gates_unsat_verdict_agrees_on_off() {
     assert_eq!(on.solve(), SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Vivification / subsumption: already covered by the existing
 // `Solver::inprocess` pipeline (`Preprocessor::subsumption_elimination` +
 // `Solver::strengthen_clauses_inprocessing`), not reimplemented here.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_vivify_subsumption_already_covered_by_inprocess() {
@@ -449,9 +449,9 @@ fn test_pr26_vivify_subsumption_already_covered_by_inprocess() {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Deferred Part-1 fixes applied in this pass: regression coverage
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr26_lazy_hyper_binary_guard_preserves_verdict() {

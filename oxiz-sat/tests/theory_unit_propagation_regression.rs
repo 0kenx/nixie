@@ -1,6 +1,6 @@
 //! Regression: theory-propagated literals with EMPTY reason clauses.
 //!
-//! An empty reason means the theory is reporting an *unconditional* fact — the
+//! An empty reason means the theory is reporting an *unconditional* fact – the
 //! literal is a consequence of nothing currently on the trail (a level-0
 //! theory lemma). `add_theory_reason_clause` (learn.rs) used to build a *unit*
 //! clause `[lit]` for this case, store it, and let the caller
@@ -15,7 +15,7 @@
 //!      the propagated one, which is skipped), so `lit` behaves like a
 //!      decision root and can be picked as the unique implication point. The
 //!      learned clause then negates a genuinely-forced atom, contradicting the
-//!      stale unit and yielding a spurious level-0 conflict — a false UNSAT.
+//!      stale unit and yielding a spurious level-0 conflict – a false UNSAT.
 //!
 //! The fix: an unconditional theory fact must live at decision level 0 as a
 //! permanent unit (stored Core-tier, assigned as a level-0 decision), so it
@@ -68,7 +68,7 @@ impl TheoryCallback for UnconditionalPropagationTheory {
 
     fn final_check(&mut self) -> TheoryCheckResult {
         // Reject any model that violates the unconditional fact or the test's
-        // expectations — a sound solver must satisfy them.
+        // expectations – a sound solver must satisfy them.
         // (We cannot read the trail from here, so we only enforce that the
         // search reached a full assignment without spuriously declaring UNSAT;
         // the model assertions in the test body do the real checking.)
@@ -152,7 +152,7 @@ fn empty_reason_propagation_survives_conflict_and_backtrack() {
     }
 }
 
-/// A mock theory that propagates a NON-empty-reason literal — the path that
+/// A mock theory that propagates a NON-empty-reason literal – the path that
 /// `add_theory_reason_clause` handles with a two-watched clause. This must keep
 /// working (and re-derive the propagation after backtrack) so the fix does not
 /// regress the reasoned-propagation case.

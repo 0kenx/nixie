@@ -187,7 +187,7 @@ impl ProofReplayer {
     /// checking that all references are backward-pointing.
     ///
     /// Returns `Ok(VerificationResult)` even when the proof is logically
-    /// incomplete or invalid — the caller can inspect the variant to determine
+    /// incomplete or invalid – the caller can inspect the variant to determine
     /// the outcome.  Only hard I/O or format errors are returned as `Err`.
     pub fn replay_from_file(path: &Path) -> ReplayResult<VerificationResult> {
         let mut replayer = Self::new();
@@ -250,7 +250,7 @@ impl ProofReplayer {
         &self.stats
     }
 
-    // ────────────────────────────── internals ────────────────────────────────
+    // ======== internals ========
 
     /// Add a decoded log record to the in-memory proof DAG.
     fn incorporate_record(&mut self, record: LogRecord) -> ReplayResult<()> {
@@ -315,7 +315,7 @@ impl Default for ProofReplayer {
     }
 }
 
-// ──────────────────────────── binary decoding ────────────────────────────────
+// ======== binary decoding ========
 
 /// An in-memory representation of one decoded log record.
 struct LogRecord {

@@ -93,8 +93,8 @@ Two files, two different jobs:
 
 | File | Tracked? | Role |
 |------|----------|------|
-| `results.json` | **No** — git-ignored | Scratch output of the most recent local run *on this machine*. Every run overwrites it. Never cite it as evidence. |
-| `results.<os>-<arch>.json` | **Yes** — committed | The recorded parity result **for one environment** (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`). This is what `README.md`, `TODO.md` and `docs/smtcomp2026_participation.md` point at when they say "authoritative". |
+| `results.json` | **No** – git-ignored | Scratch output of the most recent local run *on this machine*. Every run overwrites it. Never cite it as evidence. |
+| `results.<os>-<arch>.json` | **Yes** – committed | The recorded parity result **for one environment** (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`). This is what `README.md`, `TODO.md` and `docs/smtcomp2026_participation.md` point at when they say "authoritative". |
 
 A run writes both files itself, so publishing a result is just a matter of committing the right
 one: stage `results.<os>-<arch>.json` for the environment you actually ran on, never `results.json`
@@ -128,11 +128,11 @@ and never another environment's snapshot. A machine may only speak for itself.
 }
 ```
 
-`results` holds the `ParityResult` objects the runner already produced — the field set is
+`results` holds the `ParityResult` objects the runner already produced – the field set is
 unchanged from the pre-schema single-file format. `metadata.benchmark_count` must equal
 `results.len()`, and `metadata.os` / `metadata.arch` must match the file's own name, so a snapshot
 cannot be filed under another environment's identity. `metadata.z3_version` is the version probed
-from the binary at run time, and is `null` when no `z3` could be probed — never a guessed or
+from the binary at run time, and is `null` when no `z3` could be probed – never a guessed or
 transcribed value on a generated file. `metadata.provenance` is absent on generated files; see
 below.
 
@@ -143,9 +143,9 @@ below.
 > machine-dependent and are expected to differ.
 
 This is what makes a per-logic table in `README.md` a statement about OxiZ rather than about one
-laptop. It was verified by hand when the layout was introduced — 168 benchmarks × 3 verdict fields
+laptop. It was verified by hand when the layout was introduced – 168 benchmarks × 3 verdict fields
 across the macOS record and a fresh Linux run, zero mismatches, with `oxiz_time` and `z3_time` the
-only fields that differed anywhere in the file — and it is now a standing check:
+only fields that differed anywhere in the file – and it is now a standing check:
 `tests/cross_env_verdict_agreement.rs` discovers every tracked snapshot, validates the envelope,
 and fails with the offending benchmark, field and both values whenever two snapshots disagree. It
 reads committed JSON only: no `z3` binary, no solving, so it runs in any environment.
@@ -154,7 +154,7 @@ reads committed JSON only: no `z3` binary, no solving, so it runs in any environ
 
 The suite used to write a single tracked `results.json` that every document cited as *the*
 authoritative result, while it actually held "whatever machine ran last". On 2026-07-31 a Linux
-run overwrote macOS-recorded numbers and nothing in the file signalled it — one platform could
+run overwrote macOS-recorded numbers and nothing in the file signalled it – one platform could
 silently overwrite another platform's recorded evidence, and a genuine cross-platform divergence
 would have been indistinguishable from a routine re-run. Splitting the record per environment
 makes both the overwrite impossible and the divergence visible.
@@ -164,7 +164,7 @@ makes both the overwrite impossible and the divergence visible.
 A snapshot produced by an actual run carries no `provenance` field. `results.macos-aarch64.json`
 does: it was migrated from the single tracked `results.json` as recorded at commit `540b7d0`.
 Metadata that had to be **reconstructed** during that migration (the environment, the tool
-versions, the timestamp) is an attribution, not a measurement — the per-benchmark verdicts and
+versions, the timestamp) is an attribution, not a measurement – the per-benchmark verdicts and
 timings are exactly as recorded, but a reconstructed metadata field must not be read as if it had
 been measured at run time.
 
@@ -187,7 +187,7 @@ verdict, so a solver cannot inflate its parity score by declining to answer.
 
 - **Correct**: Both solvers returned the *same decisive* answer (SAT/SAT or UNSAT/UNSAT)
 - **Wrong**: Disagreement on SAT/UNSAT (critical bug!)
-- **Inconclusive**: Either or both solvers answered UNKNOWN — including UNKNOWN/UNKNOWN. No parity claim can be made, because the decisive answer (if any) was never cross-checked
+- **Inconclusive**: Either or both solvers answered UNKNOWN – including UNKNOWN/UNKNOWN. No parity claim can be made, because the decisive answer (if any) was never cross-checked
 - **Timeout**: One or both solvers exceeded the 60s timeout
 - **Error**: Parse error or execution failure
 
@@ -201,12 +201,12 @@ For the **v0.3.1 release**, every logic family in the suite must be **100% Corre
 0 Inconclusive, 0 Timeout and 0 Error**, which is the currently recorded result in *every* tracked
 `results.<os>-<arch>.json` snapshot (`results.macos-aarch64.json`, `results.linux-x86_64.json`):
 **168/168 Correct** across all 19 logic families against a real `z3` 4.15.4 binary. The snapshots
-agree on every benchmark's verdict — that agreement is itself part of the pass criteria and is
+agree on every benchmark's verdict – that agreement is itself part of the pass criteria and is
 checked by `tests/cross_env_verdict_agreement.rs`; only the recorded timings differ between them.
 
 Two rules are non-negotiable regardless of the headline number:
 
-- **0 Wrong** is a hard blocker — any decisive disagreement is a soundness bug.
+- **0 Wrong** is a hard blocker – any decisive disagreement is a soundness bug.
 - Any `Inconclusive`, `Timeout` or `Error` case must be reported as such and never re-labelled
   `Correct`, so the reported figure always reflects cross-checked decisive answers only.
 
@@ -242,7 +242,7 @@ fresh (but fully reproducible) slice of each logic's formula space.
 - **Generator** (`src/generator.rs`): a dependency-free, seeded PRNG
   (SplitMix64) drives recursive term/formula builders for `QF_LIA`,
   `QF_LRA`, `QF_BV`, and `QF_UF`. `generate_script(logic, seed)` is a pure
-  function of its two arguments — no wall-clock time or OS entropy is ever
+  function of its two arguments – no wall-clock time or OS entropy is ever
   consulted, so any failing case is trivially reproducible from its
   `(logic, seed)` pair alone. Arithmetic terms are kept linear (constant
   \* subterm only, never variable \* variable) so `QF_LIA`/`QF_LRA` scripts
@@ -251,7 +251,7 @@ fresh (but fully reproducible) slice of each logic's formula space.
   write it to a scratch file, execute it through both `oxiz_runner::run_oxiz`
   (library call, in-process with a timeout) and `z3_runner::run_z3` (the
   `z3` binary discovered on `PATH`), and reuse `comparator::compare_results`
-  — the same comparison logic the curated benchmark suite uses — to
+  – the same comparison logic the curated benchmark suite uses – to
   classify the outcome. `Unknown` on either side is `Inconclusive` (skipped,
   no parity claim), a definite `Sat`/`Unsat` disagreement is `Wrong` (a real
   bug), and `summarize()` buckets a batch of outcomes accordingly.
@@ -264,7 +264,7 @@ fresh (but fully reproducible) slice of each logic's formula space.
 
 Two `cargo test` entry points under `tests/`:
 
-1. **Always-on smoke test** (`tests/difftest_smoke.rs`) — a fixed seed,
+1. **Always-on smoke test** (`tests/difftest_smoke.rs`) – a fixed seed,
    ~25 generated cases per logic (100 total). Runs as part of a plain
    `cargo test` in this crate with **no extra flags**. Like the existing
    `z3_runner` tests, it self-skips (prints a message, does not fail) when
@@ -272,7 +272,7 @@ Two `cargo test` entry points under `tests/`:
    Whenever Z3 *is* present, this is a real regression check: an OxiZ
    change that flips a sat/unsat verdict on any of the 100 fixed cases
    fails the test.
-2. **Full sweep, opt-in** (`tests/difftest_full.rs`) — gated behind an
+2. **Full sweep, opt-in** (`tests/difftest_full.rs`) – gated behind an
    environment variable so it never runs by accident:
 
    ```bash
@@ -280,8 +280,8 @@ Two `cargo test` entry points under `tests/`:
    ```
 
    Tunable via:
-   - `OXIZ_DIFFTEST_CASES` (default `200`) — cases generated per logic.
-   - `OXIZ_DIFFTEST_SEED` (default `42`) — base PRNG seed (each logic
+   - `OXIZ_DIFFTEST_CASES` (default `200`) – cases generated per logic.
+   - `OXIZ_DIFFTEST_SEED` (default `42`) – base PRNG seed (each logic
      derives its own seed from this so the four sweeps don't replay
      correlated streams).
 
@@ -291,7 +291,7 @@ Two `cargo test` entry points under `tests/`:
 ### Scope and honesty notes
 
 - This harness targets **sat/unsat verdict parity only** (same contract as
-  the curated benchmark suite above) — it does not validate model values or
+  the curated benchmark suite above) – it does not validate model values or
   proofs.
 - A `Wrong` verdict is the only thing that fails a differential test;
   `Unknown`/`Timeout`/solver `Error` on either side is reported but treated
@@ -334,7 +334,7 @@ Example:
 
 3. Run the parity suite to validate
 4. Commit the benchmark together with **your own environment's** `results.<os>-<arch>.json`
-   (see "Result Files" above). Do **not** commit `results.json` — it is git-ignored scratch — and
+   (see "Result Files" above). Do **not** commit `results.json` – it is git-ignored scratch – and
    do **not** overwrite another environment's snapshot with your run's numbers: adding a benchmark
    means every other tracked snapshot is now missing it, which
    `tests/cross_env_verdict_agreement.rs` will report by name. Ask a maintainer on the other

@@ -52,9 +52,9 @@ fn rat(n: i64) -> BigRational {
     BigRational::from_integer(BigInt::from(n))
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 1: carmichael_lambda beyond the old trial_division limit.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn carmichael_lambda_correct_for_large_prime_beyond_trial_division_limit() {
@@ -106,9 +106,9 @@ fn carmichael_lambda_small_values_still_correct() {
     assert_eq!(carmichael_lambda(&BigInt::zero()), BigInt::one());
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Finding 2: NraSolver::check_sat now decides linear inequality systems.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn nra_solver_decides_classic_strict_contradiction() {

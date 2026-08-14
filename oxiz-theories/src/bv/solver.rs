@@ -125,7 +125,7 @@ impl BvSolver {
     /// `BvSolver::check()` drives the SAT solver *incrementally*: it asserts
     /// clauses, runs a full `solve()`, then discards that probe's search
     /// residue so the next probe sees only the honestly-asserted clauses. The
-    /// residue cleanup relies on two contracts — `restore_to_trail_size`
+    /// residue cleanup relies on two contracts – `restore_to_trail_size`
     /// (roll the trail back to the committed prefix) and `forget_learned_since`
     /// (drop exactly the clauses this probe *learned*). The second contract
     /// only covers clauses registered in the SAT solver's learned-clause list.
@@ -136,21 +136,21 @@ impl BvSolver {
     /// enclosing `pop()`, and leak into later probes. Because the bit-vector
     /// unit constraints installed by `assert_const`/`assert_eq` sit on the
     /// trail as bare level-0 decisions, such a leaked clause can implicitly
-    /// depend on a since-retracted assignment and spuriously force `Unsat` —
+    /// depend on a since-retracted assignment and spuriously force `Unsat` –
     /// e.g. turning the genuinely satisfiable `a = x*3 ∧ a ≠ x ∧ a = 7` into a
     /// false `Unsat` once an earlier probe has run.
     ///
     /// The two offenders are **lazy hyper-binary resolution** (adds derived
     /// binary clauses mid-search) and **inprocessing** (adds/rewrites clauses
-    /// between search rounds). Both are pure performance heuristics — disabling
-    /// them costs only speed, never soundness or completeness — so the embedded
+    /// between search rounds). Both are pure performance heuristics – disabling
+    /// them costs only speed, never soundness or completeness – so the embedded
     /// solver turns them off to keep the incremental cleanup contract exact.
     ///
     /// Chronological backtracking, by contrast, is left **on** (the workspace
     /// default): it never adds a clause to the database, so it does not touch
     /// the cleanup contract above.  It was briefly disabled here while
     /// `oxiz-sat` recorded a learned clause's asserting literal at the
-    /// post-backtrack decision level instead of at its true implication level —
+    /// post-backtrack decision level instead of at its true implication level –
     /// which pinned unit lemmas inside a decision level and let conflict
     /// analysis emit clauses stronger than resolution derives, refuting
     /// satisfiable bit-blasted circuits such as `x <=u (x bvxor x)`.  That is
@@ -225,7 +225,7 @@ impl BvSolver {
     /// Every binary bit-level encoding goes through this: a caller that hands
     /// over operands of *different* widths (which the term builder does not
     /// currently reject for `(bvadd x8 y16)`) has asked for a circuit that does
-    /// not exist, and the honest answer is "not encodable" — not an
+    /// not exist, and the honest answer is "not encodable" – not an
     /// `assert_eq!` that aborts the process, and not a circuit wired from the
     /// bits that happen to line up.
     fn binop_bits(&self, a: TermId, b: TermId) -> Option<(BvVar, BvVar)> {
@@ -236,7 +236,7 @@ impl BvSolver {
 
     /// Assert equality: a = b
     ///
-    /// Returns `false` — asserting nothing — when either operand has not been
+    /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted or the two have different widths.
     pub fn assert_eq(&mut self, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
@@ -256,7 +256,7 @@ impl BvSolver {
 
     /// Assert disequality: a != b
     ///
-    /// Returns `false` — asserting nothing — when either operand has not been
+    /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted or the two have different widths.
     pub fn assert_neq(&mut self, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
@@ -294,7 +294,7 @@ impl BvSolver {
 
     /// Assert unsigned less than: a < b
     ///
-    /// Returns `false` — asserting nothing — when either operand has not been
+    /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted or the two have different widths.
     pub fn assert_ult(&mut self, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
@@ -333,7 +333,7 @@ impl BvSolver {
     /// `ule(a, b)` is equivalent to `NOT(ult(b, a))`: encode the unsigned
     /// comparison `b < a` into a fresh SAT variable and assert its negation.
     ///
-    /// Returns `false` — asserting nothing — when either operand has not been
+    /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted or the two have different widths.
     pub fn assert_ule(&mut self, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
@@ -355,7 +355,7 @@ impl BvSolver {
     /// really does fit in a `u64`.  A caller holding a *wider* constant must
     /// use [`Self::assert_const_big`] (or [`Self::assert_const_limbs`]):
     /// truncating it to a `u64` here would pin the wrong bits and admit
-    /// assignments the constant forbids — the shape that answered `sat` for
+    /// assignments the constant forbids – the shape that answered `sat` for
     /// `x = 2^64 ∧ x <u 1` at width 128.
     ///
     /// Returns `false` when `term` already has a bit-vector of a *different*
@@ -386,7 +386,7 @@ impl BvSolver {
     /// `BigInt`-backed literal can pass `value.iter_u64_digits()` directly
     /// without first deciding on a sign-carrying big-integer type.  A limb
     /// beyond the end of the slice reads as `0`, which is the value of that bit
-    /// in the little-endian encoding — not a fallback.  See
+    /// in the little-endian encoding – not a fallback.  See
     /// [`Self::assert_const`] for the return value.
     pub fn assert_const_limbs(&mut self, term: TermId, limbs: &[u64], width: u32) -> bool {
         let bv = self.new_bv(term, width).clone();
@@ -408,7 +408,7 @@ impl BvSolver {
     /// Concatenate two bit vectors: result = high ++ low
     /// result[0..low.width-1] = low, result[low.width..low.width+high.width-1] = high
     ///
-    /// Returns `false` — encoding nothing — when either operand has not been
+    /// Returns `false` – encoding nothing – when either operand has not been
     /// bit-blasted, or when `result` already denotes a bit-vector whose width
     /// is not the sum of the operand widths.
     pub fn concat(&mut self, result: TermId, high: TermId, low: TermId) -> bool {
@@ -439,7 +439,7 @@ impl BvSolver {
     /// Extract a bit range from a bit vector: result = bv\[high:low\]
     /// Extract bits from position `low` to `high` (inclusive)
     ///
-    /// Returns `false` — encoding nothing — when `bv` has not been bit-blasted
+    /// Returns `false` – encoding nothing – when `bv` has not been bit-blasted
     /// or the range `[low, high]` does not lie inside it.  An out-of-range
     /// extraction is a malformed term, not a reason to abort the process.
     pub fn extract(&mut self, result: TermId, bv: TermId, high: u32, low: u32) -> bool {
@@ -509,7 +509,7 @@ impl BvSolver {
     /// in lockstep with the outer decision levels, so it is retracted on
     /// backtrack exactly like the (dis)equality and comparison assertions. The
     /// value is also remembered so a selector that is *first encoded later*
-    /// still picks it up — the outer assignment and the bit-blasting can happen
+    /// still picks it up – the outer assignment and the bit-blasting can happen
     /// in either order.
     pub fn assert_bool_value(&mut self, term: TermId, value: bool) {
         let previous = self.outer_bool.insert(term, value);
@@ -723,7 +723,7 @@ impl BvSolver {
 
     /// Bitwise NOT: result = ~a
     ///
-    /// Returns `false` — encoding nothing — when `a` has not been bit-blasted
+    /// Returns `false` – encoding nothing – when `a` has not been bit-blasted
     /// or `result` already has a different width.
     pub fn bv_not(&mut self, result: TermId, a: TermId) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
@@ -742,7 +742,7 @@ impl BvSolver {
 
     /// Bitwise AND: result = a & b
     ///
-    /// Returns `false` — encoding nothing — when an operand has not been
+    /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     pub fn bv_and(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
@@ -761,7 +761,7 @@ impl BvSolver {
 
     /// Bitwise OR: result = a | b
     ///
-    /// Returns `false` — encoding nothing — when an operand has not been
+    /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     pub fn bv_or(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
@@ -780,7 +780,7 @@ impl BvSolver {
 
     /// Bitwise XOR: result = a ^ b
     ///
-    /// Returns `false` — encoding nothing — when an operand has not been
+    /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     pub fn bv_xor(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
@@ -799,7 +799,7 @@ impl BvSolver {
 
     /// Negation (two's complement): result = -a = ~a + 1
     ///
-    /// Returns `false` — encoding nothing — when `a` has not been bit-blasted
+    /// Returns `false` – encoding nothing – when `a` has not been bit-blasted
     /// or `result` already has a different width.
     pub fn bv_neg(&mut self, result: TermId, a: TermId) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
@@ -824,7 +824,7 @@ impl BvSolver {
 
     /// Addition: result = a + b
     ///
-    /// Returns `false` — encoding nothing — when an operand has not been
+    /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     pub fn bv_add(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
@@ -841,7 +841,7 @@ impl BvSolver {
 
     /// Subtraction: result = a - b = a + (-b)
     ///
-    /// Returns `false` — encoding nothing — when an operand has not been
+    /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     pub fn bv_sub(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
@@ -874,7 +874,7 @@ impl BvSolver {
 
     /// Multiplication: result = a * b (using shift-and-add)
     ///
-    /// Returns `false` — encoding nothing — when an operand has not been
+    /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     pub fn bv_mul(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
@@ -894,7 +894,7 @@ impl BvSolver {
     /// positions below, or as a constant-0 for the low `shift_amount` bits.
     /// Used to constant-fold `bvmul(x, 2^k)` without the expensive multiplier.
     ///
-    /// Returns `false` — encoding nothing — when `a` has not been bit-blasted,
+    /// Returns `false` – encoding nothing – when `a` has not been bit-blasted,
     /// `a` is not `width` bits wide, or `result` already has a different width.
     pub fn bv_shl_const(&mut self, result: TermId, a: TermId, shift: u32, width: u32) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
@@ -918,7 +918,7 @@ impl BvSolver {
 
     /// Signed less than: a < b (two's complement)
     ///
-    /// Returns `false` — asserting nothing — when either operand has not been
+    /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted, the two have different widths, or the width is zero (a
     /// zero-width vector has no sign bit).
     pub fn assert_slt(&mut self, a: TermId, b: TermId) -> bool {
@@ -971,7 +971,7 @@ impl BvSolver {
 
     /// Signed less than or equal: a <= b
     ///
-    /// Returns `false` — asserting nothing — when either operand has not been
+    /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted, the two have different widths, or the width is zero (a
     /// zero-width vector has no sign bit).
     pub fn assert_sle(&mut self, a: TermId, b: TermId) -> bool {
@@ -1013,7 +1013,7 @@ impl BvSolver {
         false
     }
 
-    // ===== Helper encoding functions =====
+    // ======== Helper encoding functions ========
 
     /// Encode bit equality: a <=> b
     fn encode_bit_eq(&mut self, a: Var, b: Var) {
@@ -1229,7 +1229,7 @@ impl BvSolver {
             .add_clause([Lit::pos(out), Lit::pos(a), Lit::pos(b)]);
     }
 
-    // ===== Additional helper encoding functions =====
+    // ======== Additional helper encoding functions ========
 
     /// Encode: out = 1 iff all bits in the list are 0
     fn encode_all_zero(&mut self, out: Var, bits: &[Var]) {
@@ -1464,7 +1464,7 @@ impl BvSolver {
     }
 
     /// Truth value the model assigns to a Bool-sorted term that was encoded
-    /// into this solver by [`Self::encode_bool_node`] — the `ite` selectors and
+    /// into this solver by [`Self::encode_bool_node`] – the `ite` selectors and
     /// the comparisons underneath them.
     ///
     /// Returns `None` for a term that was never encoded as a boolean node, so
@@ -1494,7 +1494,7 @@ impl BvSolver {
     }
 
     /// Whether every bit of `term`'s bit-vector has a *defined* value (true or
-    /// false, not `Undef`) in the model snapshot — i.e. the solver actually
+    /// false, not `Undef`) in the model snapshot – i.e. the solver actually
     /// assigned this leaf, as opposed to leaving it free.
     ///
     /// The model-verification gate uses this to distinguish a genuinely
@@ -1601,7 +1601,7 @@ impl Theory for BvSolver {
         let result = match solve_result {
             SolverResult::Sat => {
                 // Snapshot the satisfying assignment BEFORE rolling the trail
-                // back — the rollback discards the model, so `get_value` must
+                // back – the rollback discards the model, so `get_value` must
                 // consult this captured copy to recover real values.
                 self.last_sat_model = self.sat.model().to_vec();
                 Ok(TheoryResult::Sat)
@@ -1625,7 +1625,7 @@ impl Theory for BvSolver {
         };
 
         // Keep this probe's satisfying *model* on the trail so the next
-        // `check()` resumes incrementally from it — `solve()` does not reset
+        // `check()` resumes incrementally from it – `solve()` does not reset
         // the trail on entry, so a freshly asserted clause the model already
         // satisfies is decided with zero re-propagation, instead of re-walking
         // the whole bit-blasted formula from the level-0 prefix every probe.

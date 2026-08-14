@@ -153,7 +153,7 @@ impl Solver {
         //
         //   * BV structure (arithmetic, bitwise, shifts, concat/extract), BV
         //     (dis)equalities and BV *comparisons* are all genuinely bit-blasted
-        //     — with constant operands pinned to their concrete bits — so
+        //     – with constant operands pinned to their concrete bits – so
         //     `BvSolver::get_value` is a real witness.
         //   * Unsigned BV comparisons are *additionally* relaxed into the linear
         //     `ArithSolver` as unbounded integers.  That relaxation carries no
@@ -180,7 +180,7 @@ impl Solver {
 
             // `get_value_big` rather than `get_value`: the latter answers `None`
             // for every bit-vector wider than 64 bits, so a 96-bit witness fell
-            // through to the arithmetic relaxation and finally to `0` — the
+            // through to the arithmetic relaxation and finally to `0` – the
             // model printed `#x000…0` for a variable the search had pinned to a
             // huge constant.
             let bv_value = self.bv.get_value_big(term);
@@ -212,8 +212,8 @@ impl Solver {
             // declared width.  The arithmetic relaxation has no domain bound, so
             // it can hand back a negative or oversized integer (`(bvult x #x00)`
             // used to yield `x = -1`, printed as the malformed `#x-1`).  Wrap
-            // into `[0, 2^width)` — the two's-complement reading SMT-LIB
-            // prescribes — before interning the constant.
+            // into `[0, 2^width)` – the two's-complement reading SMT-LIB
+            // prescribes – before interning the constant.
             let value_term =
                 manager.mk_bitvec(oxiz_core::ast::bv_wrap_unsigned(&raw_value, width), width);
             model.set(term, value_term);
@@ -236,8 +236,8 @@ impl Solver {
     /// the assertions mention.
     ///
     /// Without this the model simply has no entry for a datatype constant and
-    /// `(get-model)` completes it from the sort default — the datatype's first
-    /// nullary constructor — so `((_ is cons) l) ∧ (= (head l) 7)` was answered
+    /// `(get-model)` completes it from the sort default – the datatype's first
+    /// nullary constructor – so `((_ is cons) l) ∧ (= (head l) 7)` was answered
     /// `sat` (correctly) with the witness `l = nil`, which satisfies neither
     /// conjunct.  The verdict was sound; the witness was not.
     ///
@@ -251,11 +251,11 @@ impl Solver {
     /// [`Solver::model_refutes_assertions`] runs *after* `build_model` and
     /// downgrades a `Sat` whose model provably falsifies an assertion.  Every
     /// entry added here is datatype-sorted with a [`TermKind::DtConstructor`]
-    /// value, and `Solver::parse_value_term` — the only way a model entry
-    /// reaches that gate — recognises exactly `True`/`False`/`IntConst`/
+    /// value, and `Solver::parse_value_term` – the only way a model entry
+    /// reaches that gate – recognises exactly `True`/`False`/`IntConst`/
     /// `RealConst`.  A datatype entry therefore always evaluates to `None`
-    /// ("inconclusive"), never to `Some(Bool(false))`, so no reconstruction —
-    /// complete, partial, or absent — can turn a correct `sat` into `unknown`.
+    /// ("inconclusive"), never to `Some(Bool(false))`, so no reconstruction –
+    /// complete, partial, or absent – can turn a correct `sat` into `unknown`.
     fn extract_datatype_model(&self, model: &mut Model, manager: &mut TermManager) {
         // O(1) guard: datatype lemmas exist iff the assertion set mentions a
         // datatype term, so a datatype-free problem never pays for the walk.
@@ -341,12 +341,12 @@ impl Solver {
     /// own: `(assert (not (= p q)))` over `(mk-pair (fst Int) (snd Int))` leaves
     /// the linear solver free to report the same value for `(fst p)` and
     /// `(fst q)` (it discharges disequalities by case split, not by separating
-    /// witnesses — the same effect `Solver::eval_in_model` documents for
+    /// witnesses – the same effect `Solver::eval_in_model` documents for
     /// `distinct`), so both sides reconstructed to `(mk-pair 0 0)`.
     ///
     /// The repair only ever re-values a field whose accessor occurs in *no*
-    /// assertion — one nothing in the formula constrains, where every value of
-    /// the sort is equally legitimate — so it can only turn a wrong witness into
+    /// assertion – one nothing in the formula constrains, where every value of
+    /// the sort is equally legitimate – so it can only turn a wrong witness into
     /// a right one, never the reverse.  See [`Solver::separate_dt_value`] for
     /// why that, and not the arithmetic solver's `value()`, is the pin test.
     fn separate_disequal_dt_values(
@@ -387,7 +387,7 @@ impl Solver {
     ///
     /// Read from the encoded `Eq` atoms rather than from `var_to_constraint`, so
     /// it sees every equality the Tseitin encoder internalised regardless of
-    /// which theory ended up owning it — including the reconstruction axiom's
+    /// which theory ended up owning it – including the reconstruction axiom's
     /// own `t = Ci(sel(t)…)`, which relates every opaque datatype term to a
     /// constructor application.  Ordered by term id for determinism.
     fn decided_dt_equalities(&self, model: &Model, manager: &TermManager) -> DecidedEqualities {
@@ -426,7 +426,7 @@ impl Solver {
     /// value changes.
     ///
     /// Only fields of the outermost constructor are considered, and only
-    /// `Int`/`Real` ones whose accessor occurs in *no* assertion — for every
+    /// `Int`/`Real` ones whose accessor occurs in *no* assertion – for every
     /// member of the equality class, so a field pinned through a term the search
     /// proved equal to `term` is left alone too.  That is the criterion that
     /// makes the repair safe: a term the assertions never mention has no
@@ -435,7 +435,7 @@ impl Solver {
     /// also invisible to [`Solver::model_refutes_assertions`], which evaluates
     /// nothing but the assertions.  Note that the arithmetic solver's own
     /// `value()` is *not* a usable pin test: it reports a value for every
-    /// tableau variable, constrained or not — reporting `0` for both `(fst p)`
+    /// tableau variable, constrained or not – reporting `0` for both `(fst p)`
     /// and `(fst q)` is exactly how the collision arises.
     ///
     /// A datatype all of whose scalar fields are pinned keeps its colliding
@@ -519,8 +519,8 @@ impl Solver {
     /// Restricted to *datatype-sorted* terms on purpose.  Recording a scalar
     /// field value here instead would put a number in front of
     /// [`Solver::model_refutes_assertions`] that no theory had committed to, and
-    /// an unconstrained accessor such as `(head nil)` — which SMT-LIB leaves
-    /// free — could then "falsify" `(= (head nil) 42)` and downgrade a correct
+    /// an unconstrained accessor such as `(head nil)` – which SMT-LIB leaves
+    /// free – could then "falsify" `(= (head nil) 42)` and downgrade a correct
     /// `sat` to `unknown`.  A datatype value is inert for that gate (see
     /// [`Solver::extract_datatype_model`]), so memoising one is always safe.
     fn record_dt_value(term: TermId, value: TermId, model: &mut Model) {
@@ -531,7 +531,7 @@ impl Solver {
 
     /// Build the constructor value of the datatype term `term`, or `None` when
     /// it cannot be determined (unknown sort, contradictory testers, or an
-    /// ill-founded blind regress — see below).
+    /// ill-founded blind regress – see below).
     ///
     /// `None` is always safe: the term simply keeps no model entry and
     /// `(get-model)` falls back to the sort default, exactly as before this pass
@@ -542,12 +542,12 @@ impl Solver {
     /// The walk runs on an explicit heap stack of [`DtBuildFrame`]s, so a value
     /// of any depth the search actually committed to is reconstructed *in
     /// full*.  (A previous version cut the walk at a fixed depth and silently
-    /// substituted sort defaults past the bound — a printed model that need not
+    /// substituted sort defaults past the bound – a printed model that need not
     /// satisfy the constraints.)  Termination no longer relies on a depth cap;
     /// it is structural:
     ///
     /// * *Literal* steps descend into the arguments of an existing constructor
-    ///   application — strictly smaller terms.
+    ///   application – strictly smaller terms.
     /// * *Informed* steps (at least one tester literal of the term is decided,
     ///   or the term already has a memoised value) each consume a distinct
     ///   entry of the finite model, and the accessor terms along one path are
@@ -556,7 +556,7 @@ impl Solver {
     ///   fallback) are deterministic per sort.  Along a run of consecutive
     ///   blind steps that has left every *informative spine* (see
     ///   [`Solver::informative_spines`]), a repeated sort proves the
-    ///   deterministic expansion would repeat forever — an ill-founded regress
+    ///   deterministic expansion would repeat forever – an ill-founded regress
     ///   with no ground value, reported honestly as `None`, never as a
     ///   fabricated value.  Off-spine blind runs are therefore bounded by the
     ///   number of distinct datatype sorts, and on-spine blind steps by the
@@ -660,7 +660,7 @@ impl Solver {
             return DtOpened::Done(None);
         };
 
-        // A literal constructor application is its own value — but its
+        // A literal constructor application is its own value – but its
         // arguments need not be (`(cons (head l) nil)`), so rebuild them.
         // Arguments are strictly smaller existing terms, so the blind-run
         // tracking restarts below them.
@@ -696,7 +696,7 @@ impl Solver {
         } else {
             // Pure sort-default fallback with no reachable fact below: the
             // expansion of `sort` is deterministic, so a repeat proves an
-            // infinite regress.  `None` is the honest answer — inventing a
+            // infinite regress.  `None` is the honest answer – inventing a
             // value here is exactly what this reconstruction exists to avoid.
             if blind.contains(&sort) {
                 return DtOpened::Done(None);
@@ -731,8 +731,8 @@ impl Solver {
     /// request the next datatype field or deliver the finished value.
     ///
     /// Field semantics are identical to the recursive version: a field whose
-    /// value cannot be determined falls back to [`ground_default_term`] — a
-    /// legitimate witness for an unconstrained field — and only when that
+    /// value cannot be determined falls back to [`ground_default_term`] – a
+    /// legitimate witness for an unconstrained field – and only when that
     /// fails too does the whole application fail.
     fn resume_build(
         &self,
@@ -811,7 +811,7 @@ impl Solver {
 
     /// The constructor index the search decided for the opaque datatype term
     /// `term`, or a deterministic choice when it decided none, plus whether the
-    /// decision was *informed* — whether any tester literal of `term` (true
+    /// decision was *informed* – whether any tester literal of `term` (true
     /// *or* false) was decided at all, as opposed to the pure sort-default
     /// fallback.
     ///
@@ -909,8 +909,8 @@ impl Solver {
     /// Decide whether the `BvSolver`'s bit-blasted model is authoritative for
     /// BV terms in the current problem.
     ///
-    /// It is authoritative when the problem contains genuine BV *structure* —
-    /// any BV arithmetic/bitwise/shift/concat/extract operation — or any BV
+    /// It is authoritative when the problem contains genuine BV *structure* –
+    /// any BV arithmetic/bitwise/shift/concat/extract operation – or any BV
     /// (dis)equality or comparison constraint.  All of those paths bit-blast
     /// their operands with constant bits pinned to concrete values, so
     /// `BvSolver::get_value` is a faithful witness.
@@ -919,7 +919,7 @@ impl Solver {
     /// bit-blasts their operands through `encode_bv_term_recursive` (pinning
     /// `BitVecConst` bits) instead of allocating free bits via `new_bv`.  While
     /// they were unpinned the BV model was arbitrary for a comparison-only
-    /// problem and the linear relaxation had to be trusted instead — but that
+    /// problem and the linear relaxation had to be trusted instead – but that
     /// relaxation carries no `0 <= x < 2^width` bound and, for signed
     /// comparisons, is deliberately never populated at all, so it produced
     /// values that violate the very atom that made the query SAT (`x = 0` for
@@ -962,7 +962,7 @@ impl Solver {
     }
 
     /// Whether a `TermKind` is a structural BV operation (arithmetic, bitwise,
-    /// shift, concat, or extract) — as opposed to a comparison, constant, or
+    /// shift, concat, or extract) – as opposed to a comparison, constant, or
     /// variable.  Structural ops are the ones the BV solver genuinely
     /// bit-blasts, making its model authoritative.
     fn is_structural_bv_op(kind: &TermKind) -> bool {
@@ -1029,19 +1029,19 @@ impl Solver {
     /// Build the initial (conservative) unsat core after `check()` returned
     /// `Unsat`.
     ///
-    /// This records every tracked assertion — a *valid* unsatisfiable set (a
+    /// This records every tracked assertion – a *valid* unsatisfiable set (a
     /// superset of any minimal core is still unsatisfiable), but not minimal on
     /// its own.  Minimization is deliberately left to query time: the SMT-LIB
     /// `(get-unsat-core)` path drives greedy deletion-based minimization via
     /// [`Solver::minimize_unsat_core`], which needs the `TermManager` to
     /// re-solve subsets (unavailable here).  Doing it eagerly for every `Unsat`
-    /// solve — including the many that never issue `(get-unsat-core)` — would
+    /// solve – including the many that never issue `(get-unsat-core)` – would
     /// pay the re-solve cost unconditionally, so the split is intentional.
     ///
     /// True assumption-literal-based extraction (one selector per assertion,
     /// reading the SAT layer's failed-assumption set) would make this minimal
     /// without re-solving, but requires the encoder to gate each assertion
-    /// behind a fresh selector variable — a larger change than this method.
+    /// behind a fresh selector variable – a larger change than this method.
     pub(super) fn build_unsat_core(&mut self) {
         if !self.produce_unsat_cores {
             self.unsat_core = None;
@@ -1101,7 +1101,7 @@ struct DtBuildFrame {
     child_blind: SmallVec<[SortId; 4]>,
 }
 
-/// Whether `term` is a ground *value* term — something that can stand as a
+/// Whether `term` is a ground *value* term – something that can stand as a
 /// model assignment on its own rather than an expression still to be evaluated.
 fn is_value_term(term: TermId, manager: &TermManager) -> bool {
     manager.get(term).is_some_and(|node| {
@@ -1183,7 +1183,7 @@ fn debug_verify_dt_model(_assertions: &[TermId], _model: &Model, _manager: &Term
 /// Debug-only model-validity net for the datatype reconstruction.
 ///
 /// Substitutes the reconstructed values back into the original assertions and
-/// evaluates their *datatype fragment* — testers and datatype equalities, under
+/// evaluates their *datatype fragment* – testers and datatype equalities, under
 /// the Boolean structure that connects them.  An assertion that comes out
 /// definitively `false` means the printed model does not satisfy the formula,
 /// which is precisely the defect this pass exists to remove: before it,
@@ -1191,8 +1191,8 @@ fn debug_verify_dt_model(_assertions: &[TermId], _model: &Model, _manager: &Term
 /// `l = nil`, and the tester evaluates to `false` under exactly that witness.
 ///
 /// Deliberately three-valued and tolerant.  Anything outside the datatype
-/// fragment — arithmetic, bit-vectors, uninterpreted applications, a term with
-/// no reconstructed value — is *inconclusive*, and inconclusive poisons every
+/// fragment – arithmetic, bit-vectors, uninterpreted applications, a term with
+/// no reconstructed value – is *inconclusive*, and inconclusive poisons every
 /// enclosing connective, so only a violation the reconstruction is genuinely
 /// responsible for can fire.  A datatype equality follows the same asymmetry
 /// [`Solver::eval_in_model`] uses for numbers: two *different* values falsify
@@ -1213,8 +1213,8 @@ fn debug_verify_dt_model(assertions: &[TermId], model: &Model, manager: &TermMan
 /// Three-valued evaluation of `term`'s datatype fragment under `model`;
 /// `None` means inconclusive.  See [`debug_verify_dt_model`].
 ///
-/// Iterative (explicit frame stack), so the net keeps working — instead of
-/// overflowing the stack or silently going inconclusive past a depth cap — on
+/// Iterative (explicit frame stack), so the net keeps working – instead of
+/// overflowing the stack or silently going inconclusive past a depth cap – on
 /// arbitrarily deep Boolean structure.  Short-circuiting matches the
 /// recursive original: `and` stops at the first definite `false`, `or` at the
 /// first definite `true`, while an inconclusive operand only taints the
@@ -1396,7 +1396,7 @@ fn dt_fragment_value(term: TermId, model: &Model, manager: &TermManager) -> Opti
 /// the first one, among those `allowed`, with no datatype-sorted field.
 ///
 /// Preferring a field-free ("base") constructor is what makes a default
-/// construction bottom out immediately — `nil` rather than `cons`, matching
+/// construction bottom out immediately – `nil` rather than `cons`, matching
 /// what Z3 prints for an unconstrained list.  Shared between the solver's
 /// reconstruction and `Context`'s sort defaults so both agree on which
 /// constructor an underdetermined datatype value uses.
@@ -1413,8 +1413,8 @@ pub(super) fn base_constructor(
 /// The index of the constructor a ground default value of the datatype `def`
 /// uses, expressed directly over a [`oxiz_core::sort::DataTypeDef`].
 ///
-/// The same policy as [`base_constructor`] — first constructor with no
-/// datatype-sorted field, else the first constructor — for callers that hold a
+/// The same policy as [`base_constructor`] – first constructor with no
+/// datatype-sorted field, else the first constructor – for callers that hold a
 /// raw declaration rather than the solver's resolved [`DeclInfo`].  Keeping the
 /// choice in one place is what lets `(get-model)` and `(get-value ..)` report
 /// the same value for a datatype constant nothing constrains.
@@ -1451,7 +1451,7 @@ pub(crate) fn default_constructor_index(
 /// depth.  Termination is structural: the default expansion of a sort is a
 /// pure function of the sort, so a sort recurring on the current expansion
 /// path proves an ill-founded declaration (`(declare-datatype T ((c (f
-/// T))))`) whose regress would never bottom out — reported honestly as
+/// T))))`) whose regress would never bottom out – reported honestly as
 /// `None`.  A per-call memo keyed on the sort both bounds the work on
 /// DAG-shaped declarations and reuses the (deterministic) result.
 pub(crate) fn ground_default_term(manager: &mut TermManager, sort: SortId) -> Option<TermId> {
@@ -1467,7 +1467,7 @@ pub(crate) fn ground_default_term(manager: &mut TermManager, sort: SortId) -> Op
 
     let mut memo: FxHashMap<SortId, Option<TermId>> = FxHashMap::default();
     // Sorts of the datatype defaults currently being assembled (the frames'
-    // sorts, innermost last) — the cycle-detection path.
+    // sorts, innermost last) – the cycle-detection path.
     let mut path: Vec<SortId> = Vec::new();
     let mut frames: Vec<DefaultFrame> = Vec::new();
     let mut current = sort;
@@ -1549,8 +1549,8 @@ pub(crate) fn ground_default_term(manager: &mut TermManager, sort: SortId) -> Op
                 return value;
             };
             let Some(field_value) = value else {
-                // A field with no ground default: the whole constructor —
-                // and with it this sort — has none either.
+                // A field with no ground default: the whole constructor –
+                // and with it this sort – has none either.
                 path.pop();
                 memo.insert(frame.sort, None);
                 value = None;

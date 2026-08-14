@@ -5,7 +5,7 @@
 //!
 //! [`certify`] answers `true` only when it has constructed a concrete, total
 //! interpretation of every symbol the assertion set mentions and checked that
-//! **every assertion — ground and quantified alike — evaluates to `true`**
+//! **every assertion – ground and quantified alike – evaluates to `true`**
 //! under it.  That is a model in the ordinary semantic sense, so `sat` follows
 //! without any appeal to the ground solver's verdict, to a saturation
 //! argument, or to "no counterexample was found".  A `false` answer says
@@ -17,16 +17,16 @@
 //! Each uninterpreted function is interpreted as the finite pin table the
 //! ground model already fixed (`f(0, 0) := 1`, ...) extended by one default
 //! value everywhere else.  The default is **not** zero and is not guessed
-//! once: it is searched over the values the goal itself makes plausible — the
+//! once: it is searched over the values the goal itself makes plausible – the
 //! function's own pinned results first, then `0`, then the goal's integer
-//! literals — and each candidate is *checked*, not assumed.  That search is
+//! literals – and each candidate is *checked*, not assumed.  That search is
 //! what decides
 //!
 //! ```text
 //! (assert (forall ((x Int)) (= (f (f x)) (f x))))   with  f(0)=5, f(5)=5, f(3)=3
 //! ```
 //!
-//! — no constant default of `0` satisfies it, `f := pins + 5` does, and the
+//! – no constant default of `0` satisfies it, `f := pins + 5` does, and the
 //! certifier finds that by trying and verifying.
 //!
 //! # Why a finite check decides an infinite domain
@@ -35,20 +35,20 @@
 //! distinguish are the *critical* ones: the goal's literals, the pinned
 //! arguments and results, the constants' values, the defaults, and the values
 //! already given to enclosing bound variables.  Those cut `Int` into finitely
-//! many regions — one singleton per critical value, one gap between and beyond
-//! them — and, for the fragment
+//! many regions – one singleton per critical value, one gap between and beyond
+//! them – and, for the fragment
 //! [`harvest::region_stable`] accepts, the body's truth value is constant
 //! across each region:
 //!
 //! * a bound variable drawn from a gap is not a pinned argument, so every
-//!   application over it returns the default — the same value at every point
+//!   application over it returns the default – the same value at every point
 //!   of the gap, and hence the same value for everything built on top;
 //! * a bound variable is otherwise only ever *compared*, and only against
 //!   critical values or other bound variables, whose own values join the
 //!   critical set before their domains are built.
 //!
-//! So enumerating one representative per region — which is exactly what
-//! [`eval::evaluate`] does — decides `∀`/`∃` over the whole of `Int`.  Outside
+//! So enumerating one representative per region – which is exactly what
+//! [`eval::evaluate`] does – decides `∀`/`∃` over the whole of `Int`.  Outside
 //! that fragment the module declines; it never trades the argument for a
 //! sample.
 //!
@@ -56,7 +56,7 @@
 //!
 //! Because the same enumeration decides `∃`, a `forall`-`exists` alternation
 //! is certified by *finding* the witness for every representative of the outer
-//! variable — the Skolem function is realised pointwise by the search rather
+//! variable – the Skolem function is realised pointwise by the search rather
 //! than instantiated with candidate ground terms.
 //!
 //! Reference: Ge & de Moura, "Complete instantiation for quantified formulas in
@@ -105,7 +105,7 @@ pub(crate) fn certify(
 ) -> bool {
     // The real engine ([`real`]) declines a goal that mentions an
     // integer-sorted symbol and the integer engine below declines one that
-    // mentions a real, so exactly one of them can ever certify a given goal —
+    // mentions a real, so exactly one of them can ever certify a given goal –
     // and each does so under the completeness argument written for its own
     // domain.
     if real::certify(assertions, assignments, manager) {
@@ -166,7 +166,7 @@ struct Preparation {
 }
 
 /// Harvest the goal, check it is inside the certifiable fragment, and read the
-/// ground model — or decline.
+/// ground model – or decline.
 fn prepare(
     assertions: &[TermId],
     assignments: &FxHashMap<TermId, TermId>,
@@ -302,7 +302,7 @@ fn build_interpretation(
 /// The integers atoms can distinguish under `interpretation`.
 ///
 /// This is `base_ints` (the goal's literals and everything the model fixes)
-/// plus the chosen defaults — a default is a function *result*, so a
+/// plus the chosen defaults – a default is a function *result*, so a
 /// comparison can see it and the enumeration must be able to straddle it.
 fn critical_set(base_ints: &[BigInt], interpretation: &Interpretation) -> Vec<BigInt> {
     let mut out = base_ints.to_vec();

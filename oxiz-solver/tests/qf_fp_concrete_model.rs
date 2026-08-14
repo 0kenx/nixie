@@ -4,7 +4,7 @@
 //! the CDCL(T) core has no complete FP theory: every FP atom fell through to the
 //! honesty gate. `Solver::try_fp_model_sat` now constructs and *verifies* a
 //! concrete IEEE-754 model for the concrete-evaluation fragment, so these
-//! satisfiable formulas are reported `Sat` — while the soundness tests at the
+//! satisfiable formulas are reported `Sat` – while the soundness tests at the
 //! bottom confirm that unsatisfiable concrete formulas are never reported `Sat`.
 //!
 //! The shapes below mirror `bench/z3_parity/benchmarks/qf_fp/fp_0*.smt2`.
@@ -223,8 +223,8 @@ fn float32_to_float64_widening_is_sat() {
     assert_eq!(solver.check(&mut m), SolverResult::Sat);
 }
 
-/// fp_09: exact integer arithmetic over Float64 — `5 + 7 = 12` and `5 * 3 = 15`
-/// with round-to-nearest — is satisfiable and equals the expected constants.
+/// fp_09: exact integer arithmetic over Float64 – `5 + 7 = 12` and `5 * 3 = 15`
+/// with round-to-nearest – is satisfiable and equals the expected constants.
 #[test]
 fn exact_integer_add_mul_float64_is_sat() {
     let mut solver = Solver::new();
@@ -263,11 +263,11 @@ fn exact_integer_add_mul_float64_is_sat() {
     assert_eq!(solver.check(&mut m), SolverResult::Sat);
 }
 
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 // Soundness: the model finder must never report `Sat` for a concrete
 // formula that is actually unsatisfiable. The honest fallback is `Unknown`
 // (never a wrong `Sat`, and never a wrong `Unsat`).
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `10 / 3` is not equal to `3`, so `(fp.eq (fp.div RNE 10 3) 3)` is
 /// unsatisfiable. The constructed model fails verification, so the solver must

@@ -47,7 +47,7 @@ pub fn detect_theory_bits(smtlib_source: &str) -> TheoryBits {
 }
 /// Extract the argument of a `(set-logic X)` directive when one is present.
 ///
-/// The scanner examines the first 200 tokens of the source — large enough to
+/// The scanner examines the first 200 tokens of the source – large enough to
 /// skip through leading `(set-info ...)` blocks on real-world benchmarks but
 /// small enough to bail quickly on inputs without a logic header.
 fn extract_set_logic(source: &str) -> Option<String> {

@@ -417,7 +417,7 @@ impl SortManager {
         }
     }
 
-    // ========================== Parametric Sorts ==========================
+    // ======== Parametric Sorts ========
 
     /// Declare a parametric sort
     ///
@@ -579,8 +579,8 @@ impl SortManager {
     ///
     /// Driven by an explicit stack rather than recursion: this is public API,
     /// so the nesting depth of `sort_id` is not bounded by any parser limit.
-    /// The traversal is two-phase — a DFS that records a post-order over the
-    /// reachable sorts, then a single linear rebuild pass — so a shared
+    /// The traversal is two-phase – a DFS that records a post-order over the
+    /// reachable sorts, then a single linear rebuild pass – so a shared
     /// sub-sort is visited once instead of once per path through the DAG.
     pub fn substitute_sort(
         &mut self,
@@ -588,7 +588,7 @@ impl SortManager {
         subst: &FxHashMap<SortId, SortId>,
     ) -> SortId {
         // Phase 1: post-order over the reachable sorts. A sort that is
-        // directly substituted is a leaf — its structure is discarded.
+        // directly substituted is a leaf – its structure is discarded.
         let mut visited: FxHashSet<SortId> = FxHashSet::default();
         let mut post_order: Vec<SortId> = Vec::new();
         let mut stack: Vec<(SortId, bool)> = vec![(sort_id, false)];
@@ -722,7 +722,7 @@ impl SortManager {
         }
     }
 
-    // ========================== Datatype Support ==========================
+    // ======== Datatype Support ========
 
     /// Declare a datatype
     ///
@@ -958,7 +958,7 @@ mod tests {
         );
     }
 
-    // ========================== Parametric Sort Tests ==========================
+    // ======== Parametric Sort Tests ========
 
     #[test]
     fn test_declare_parametric_sort() {
@@ -1145,7 +1145,7 @@ mod tests {
         assert_ne!(list_int_1, list_bool);
     }
 
-    // ========================== Datatype Tests ==========================
+    // ======== Datatype Tests ========
 
     #[test]
     fn test_simple_datatype() {

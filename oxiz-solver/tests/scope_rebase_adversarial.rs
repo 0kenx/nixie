@@ -7,9 +7,9 @@
 //!
 //! Two failure directions are probed, because the fix can break either way:
 //!
-//! * **false `unsat`** — a retracted branch's facts survive into a later round
+//! * **false `unsat`** – a retracted branch's facts survive into a later round
 //!   or a later `check-sat` (the original hazard);
-//! * **false `sat`** — the rebase throws away a fact that the SAT trail replay
+//! * **false `sat`** – the rebase throws away a fact that the SAT trail replay
 //!   does *not* re-derive, so a genuinely unsatisfiable goal is answered `sat`.
 //!
 //! Every script below states its own model or refutation in the doc comment, so
@@ -35,15 +35,15 @@ fn lines(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------------
-// Direction 1: false `unsat` — leaked branch facts.
-// ---------------------------------------------------------------------------
+// ========  ========
+// Direction 1: false `unsat` – leaked branch facts.
+// ========  ========
 
 /// Bit-vectors: branch, observe, then pin the *other* branch.
 ///
 /// Model of the final set: `x = #b0101`, `y = #b0111`.  `check_core` reset the
 /// BV solver even before the fix, so this is the arm that must stay green
-/// rather than one that used to fail — a regression here would mean the rebase
+/// rather than one that used to fail – a regression here would mean the rebase
 /// broke BV's own reset.
 #[test]
 fn bv_branch_then_pin_stays_sat() {
@@ -88,8 +88,8 @@ fn pure_euf_branch_then_pin_stays_sat() {
 }
 
 /// Five interleaved checks, each narrowing the set by one branch.  A leak that
-/// only shows up after the *second* rebase — e.g. a seam that is crossed once
-/// correctly and then desynchronises — would surface here and not in the
+/// only shows up after the *second* rebase – e.g. a seam that is crossed once
+/// correctly and then desynchronises – would surface here and not in the
 /// two-check reproductions.
 ///
 /// Final model: `x = 5`, `y = 7`, `z = 9`, `w = 11`.
@@ -222,9 +222,9 @@ fn strict_real_bounds_multicheck_stays_sat() {
     assert_eq!(verdicts(script), vec!["sat", "sat", "sat"]);
 }
 
-// ---------------------------------------------------------------------------
-// Direction 2: false `sat` — facts the rebase must not throw away.
-// ---------------------------------------------------------------------------
+// ========  ========
+// Direction 2: false `sat` – facts the rebase must not throw away.
+// ========  ========
 
 /// The rebase drops every theory-solver fact and re-derives it from the SAT
 /// trail.  If a root-level fact is *not* re-derived, an unsatisfiable goal
@@ -335,13 +335,13 @@ fn unsat_stays_unsat_across_further_checks() {
     assert_eq!(verdicts(script), vec!["unsat", "unsat"]);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Direction 3: the model must survive the rebase, not just the verdict.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The rebase resets the arithmetic solver, which drops the variable interning
-/// that `encode` performed once and — because the Tseitin memo is *not*
-/// cleared — will never perform again.  If the trail replay does not re-intern
+/// that `encode` performed once and – because the Tseitin memo is *not*
+/// cleared – will never perform again.  If the trail replay does not re-intern
 /// a variable, its model value silently degrades to a default.  Here every
 /// value is forced, so a default is observable.
 #[test]
@@ -388,9 +388,9 @@ fn quantified_model_values_survive_mbqi_rounds() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Direction 4: seams the rebase does *not* cover.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `rebase_theory_state` resets EUF / arithmetic / bit-vector but deliberately
 /// not the nonlinear solver, which is scoped by `Solver::push` / `pop` instead.
@@ -414,7 +414,7 @@ fn nonlinear_reals_multicheck_stays_sat() {
     let v = verdicts(script);
     assert!(
         v.iter().all(|r| r == "sat" || r == "unknown"),
-        "no `unsat` is admissible here — x = 3, y = 9 is a model; got {v:?}"
+        "no `unsat` is admissible here – x = 3, y = 9 is a model; got {v:?}"
     );
     assert_eq!(v.len(), 3);
 }
@@ -506,7 +506,7 @@ fn repeated_quantified_checks_stay_sat() {
 }
 
 /// `check-sat` under assumptions goes through `Solver::push` / `assert` /
-/// `check` / `Solver::pop` — the path whose EUF / arithmetic push was deleted
+/// `check` / `Solver::pop` – the path whose EUF / arithmetic push was deleted
 /// as part of this fix.  Repeating it must not accumulate state.
 #[test]
 fn repeated_assumption_checks_do_not_accumulate() {

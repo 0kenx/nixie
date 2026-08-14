@@ -115,9 +115,9 @@ pub fn generate_script(logic: Logic, seed: u64) -> String {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // QF_LIA / QF_LRA: shared linear-arithmetic generator
-// ---------------------------------------------------------------------
+// ========  ========
 
 fn fmt_arith_const(rng: &mut Rng, is_real: bool) -> String {
     let magnitude = rng.range_i64(0, 9);
@@ -237,9 +237,9 @@ fn generate_linear_arith(rng: &mut Rng, is_real: bool) -> String {
     out
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // QF_BV
-// ---------------------------------------------------------------------
+// ========  ========
 
 const BV_BINOPS: [&str; 6] = ["bvadd", "bvsub", "bvmul", "bvand", "bvor", "bvxor"];
 const BV_REL_OPS: [&str; 6] = ["=", "bvult", "bvule", "bvugt", "bvuge", "distinct"];
@@ -305,9 +305,9 @@ fn generate_bv(rng: &mut Rng) -> String {
     out
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // QF_UF
-// ---------------------------------------------------------------------
+// ========  ========
 
 fn gen_uf_term(rng: &mut Rng, consts: &[String], depth: u32) -> String {
     if depth == 0 || rng.chance(1, 3) {

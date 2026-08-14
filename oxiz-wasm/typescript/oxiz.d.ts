@@ -1,4 +1,4 @@
-// OxiZ WASM — TypeScript type definitions
+// OxiZ WASM – TypeScript type definitions
 // Mirrors oxiz-wasm::js_api::typescript::generate_typescript_dts()
 // See also: oxiz-wasm/src/js_api/typescript.rs
 
@@ -14,7 +14,7 @@ export interface SolverResult {
   model?: Record<string, string | number | boolean>;
 
   /**
-   * Unsatisfiable core — a minimal set of named assertions that are jointly
+   * Unsatisfiable core – a minimal set of named assertions that are jointly
    * unsatisfiable.  Present only when `status === "unsat"` and unsat-core
    * production is enabled.
    */

@@ -7,8 +7,8 @@
 //! equality / disequality / comparison is bit-blasted and asserted.
 //!
 //! Coverage is bidirectional:
-//!   * MUST be UNSAT — the unsoundness fixes (no false SAT).
-//!   * MUST stay SAT — proves the fix does not over-correct into false UNSAT.
+//!   * MUST be UNSAT – the unsoundness fixes (no false SAT).
+//!   * MUST stay SAT – proves the fix does not over-correct into false UNSAT.
 //!
 //! Bit widths are kept small (4 or 8) so the embedded SAT solver stays fast.
 //!
@@ -55,9 +55,9 @@ fn run_script(script: &str) -> SolverResult {
     SolverResult::Unknown
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// MUST be UNSAT — the unsoundness fixes (previously returned false SAT)
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// MUST be UNSAT – the unsoundness fixes (previously returned false SAT)
+// ========  ========
 
 /// Primary bug: a variable forced to two distinct constants.
 #[test]
@@ -223,9 +223,9 @@ fn bv_sge_with_slt_is_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// MUST stay SAT — proves no over-correction into false UNSAT
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// MUST stay SAT – proves no over-correction into false UNSAT
+// ========  ========
 
 /// Distinct variables bound to distinct constants is satisfiable.
 #[test]
@@ -254,7 +254,7 @@ fn bv_add_equals_const_is_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-/// Two distinct (free) variables can differ — SAT.
+/// Two distinct (free) variables can differ – SAT.
 #[test]
 fn bv_not_eq_distinct_vars_is_sat() {
     let script = r#"
@@ -280,7 +280,7 @@ fn bv_ult_alone_is_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-/// Reflexive non-strict order: x<=x holds — SAT.
+/// Reflexive non-strict order: x<=x holds – SAT.
 #[test]
 fn bv_ule_reflexive_is_sat() {
     let script = r#"
@@ -306,7 +306,7 @@ fn bv_ule_both_directions_is_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-/// A non-zero sum is achievable — SAT.
+/// A non-zero sum is achievable – SAT.
 #[test]
 fn bv_add_not_zero_is_sat() {
     let script = r#"
@@ -319,9 +319,9 @@ fn bv_add_not_zero_is_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Mixed EUF + BV congruence (Defect C): distinct BV constants must be unequal
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// `g(a)=#x00 ∧ g(b)=#x01 ∧ a=b` is UNSAT: congruence forces `g(a)=g(b)`, but
 /// the BV constants `#x00` and `#x01` are distinct.  Requires the EUF layer to
@@ -372,7 +372,7 @@ fn bv_const_congruence_same_value_is_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Multiplier + auxiliary-variable false-UNSAT regression
 //
 // Second soundness bug in the same area: the embedded BV SAT solver kept its
@@ -384,13 +384,13 @@ fn bv_const_congruence_same_value_is_sat() {
 //
 // The trigger needs (a) an aux equality binding a fresh var to a `bvmul`
 // result, (b) a disequality probe, and (c) a later constant constraint on the
-// aux that the first probe's leaked model contradicts — e.g. a disjunction with
+// aux that the first probe's leaked model contradicts – e.g. a disjunction with
 // a constant disjunct.  The fix rolls the embedded trail back to the committed
 // (asserted) prefix after every probe, so each probe re-derives soundly.
 //
 // All cases below MUST be SAT; the companions further down MUST stay UNSAT to
 // prove the fix does not over-correct.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Script A: `aux = x*3 ∧ aux ≠ x`.  SAT (e.g. x=1 → aux=3 ≠ 1).
 #[test]
@@ -455,7 +455,7 @@ fn bv_two_mul_aux_diseq_is_sat() {
 /// The minimal *reproducer* of the leaked-model false UNSAT (4-bit, fast):
 /// `a = x*3 ∧ a ≠ x ∧ (a = x ∨ a = 7)`.  The disequality probe used to leave an
 /// arbitrary model for `a` pinned at level 0; the constant disjunct `a = 7`
-/// then clashed with it.  SAT — e.g. x=13: 13*3 = 39 ≡ 7 (mod 16), and 7 ≠ 13.
+/// then clashed with it.  SAT – e.g. x=13: 13*3 = 39 ≡ 7 (mod 16), and 7 ≠ 13.
 #[test]
 fn bv_mul_aux_disjunction_const_is_sat_4bit() {
     let script = r#"
@@ -501,7 +501,7 @@ fn bv_mul_aux_diseq_then_const_is_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// — companions that MUST stay UNSAT (no false SAT from the trail-rollback) —
+// – companions that MUST stay UNSAT (no false SAT from the trail-rollback) –
 
 /// Two aux vars bound to the *same* product, asserted distinct: UNSAT.
 #[test]
@@ -577,8 +577,8 @@ fn bv_two_mul_equals_double_add_is_unsat() {
     assert_eq!(run_script(script), SolverResult::Unsat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Issue #17 — always-false / always-true strict bit-vector comparisons
+// ========  ========
+// Issue #17 – always-false / always-true strict bit-vector comparisons
 //
 // `(bvult t #b0)` is false for every `t` (nothing is unsigned-less-than
 // zero), and likewise `(bvslt t MIN_SIGNED)`, `(bvugt t MAX_UNSIGNED)` and
@@ -587,9 +587,9 @@ fn bv_two_mul_equals_double_add_is_unsat() {
 //
 // Dually `(bvule #b0 t)`, `(bvuge MAX t)`, `(bvsle MIN t)` and
 // `(bvsge MAX_SIGNED t)` are tautologies, while `(bvule t #b0)` and
-// `(bvsle t MIN)` remain genuinely satisfiable (only by `0` / `MIN`) — the
+// `(bvsle t MIN)` remain genuinely satisfiable (only by `0` / `MIN`) – the
 // tests below pin both directions so the fix cannot over-correct.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Run a script and return its raw responses (for `get-value` inspection).
 fn run_script_outputs(script: &str) -> Vec<String> {
@@ -640,7 +640,7 @@ fn model_literal(outputs: &[String]) -> Option<String> {
 
 /// Parse a well-formed SMT-LIB bit-vector literal of exactly `width` bits.
 ///
-/// Returns `None` for anything that is not a literal of that exact width —
+/// Returns `None` for anything that is not a literal of that exact width –
 /// which is what `#x-1` (the value reported in issue #17) hits.
 fn parse_bv_literal(literal: &str, width: u32) -> Option<u128> {
     if let Some(digits) = literal.strip_prefix("#x") {
@@ -658,7 +658,7 @@ fn parse_bv_literal(literal: &str, width: u32) -> Option<u128> {
     None
 }
 
-/// `(bvult x 0)` — unsigned-less-than zero — is UNSAT at every width.
+/// `(bvult x 0)` – unsigned-less-than zero – is UNSAT at every width.
 #[test]
 fn test_issue_17_bvult_zero_unsat() {
     for width in ISSUE_17_WIDTHS {
@@ -742,7 +742,7 @@ fn test_issue_17_tautological_bounds() {
     }
 }
 
-/// `(bvule x 0)` stays SAT — satisfied only by `x = 0`.  Guards against
+/// `(bvule x 0)` stays SAT – satisfied only by `x = 0`.  Guards against
 /// over-correcting the strict-comparison fix into the non-strict family.
 #[test]
 fn test_issue_17_bvule_zero_sat() {
@@ -761,7 +761,7 @@ fn test_issue_17_bvule_zero_sat() {
     }
 }
 
-/// `(bvsle x MIN_SIGNED)` stays SAT — satisfied only by `x = MIN_SIGNED`.
+/// `(bvsle x MIN_SIGNED)` stays SAT – satisfied only by `x = MIN_SIGNED`.
 #[test]
 fn test_issue_17_bvsle_signed_min_sat() {
     for width in ISSUE_17_WIDTHS {
@@ -867,7 +867,7 @@ fn test_issue_17_conditional_bv_fact_not_unconditional() {
 /// A bit-vector fact nested inside a *Boolean* equality is conditional too.
 ///
 /// This AST has no `Iff`: `(= p q)` over two Bool-sorted terms builds a
-/// `TermKind::Eq`, so `(= (= r (bvor x y)) p)` is a polarity boundary — it is
+/// `TermKind::Eq`, so `(= (= r (bvor x y)) p)` is a polarity boundary – it is
 /// satisfied just as well with both sides false, and `r = (bvor x y)` need not
 /// hold.  `check_bv.rs`'s collector used to recurse into an equality's operands
 /// and record the inner bit-vector fact unconditionally, which let the
@@ -937,7 +937,7 @@ fn test_issue_17_wide_comparison_conflict_is_fast() {
     );
 }
 
-/// `x <=u (x bvxor x)` is satisfiable — `x bvxor x` is zero, so every `x` with
+/// `x <=u (x bvxor x)` is satisfiable – `x bvxor x` is zero, so every `x` with
 /// `x <=u 0` works, i.e. `x = 0`.
 ///
 /// This is a false-`Unsat` regression guard for the embedded SAT solver's
@@ -959,7 +959,7 @@ fn test_issue_17_bitblasted_xor_bound_is_sat() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Structural bit-vector constant folding.
 //
 // Issue #17's comparison folding only fires once a bound has actually become
@@ -968,12 +968,12 @@ fn test_issue_17_bitblasted_xor_bound_is_sat() {
 // variable at all, so nothing bit-blasts it: an unfolded compound term used to
 // survive as an unconstrained Boolean atom and the solver answered a spurious
 // `sat`.  Every expected value below was cross-checked against z3 4.15.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// A ground (variable-free) BV equality is decided by folding alone.
 #[test]
 fn test_ground_bv_equalities_are_decided_by_folding() {
-    // (script, expected) — each left-hand side folds to the literal quoted in
+    // (script, expected) – each left-hand side folds to the literal quoted in
     // the comment, so the equality is decided outright.
     let cases: [(&str, SolverResult); 10] = [
         // bvlshr by 14 >= width 4 -> #x0; bvadd #xe #x7 -> #x5.
@@ -1050,8 +1050,8 @@ fn test_folded_bounds_decide_comparisons() {
     }
 }
 
-/// `((_ extract i j) x)` — the standard SMT-LIB spelling, where the indexed
-/// identifier is its own S-expression — must be lowered to a real bit-vector
+/// `((_ extract i j) x)` – the standard SMT-LIB spelling, where the indexed
+/// identifier is its own S-expression – must be lowered to a real bit-vector
 /// extraction.  It used to degrade to a `Bool`-sorted uninterpreted
 /// application, so `(= ((_ extract 3 0) #xab) #xc)` answered `sat` and a
 /// `concat` over it could not even determine an operand width.
@@ -1087,14 +1087,14 @@ fn test_indexed_extract_application_is_a_bitvector_extraction() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Symbolic operands under the operations the BV dispatch used to drop.
 //
 // `TheoryManager::process_constraint`'s positive-`Eq` branch dispatched on a
 // whitelist of "BV operation" `TermKind`s that named only the arithmetic and
 // bitwise ops.  A BV equality whose head was `concat`, `extract`, a shift, or
-// a BV-sorted `ite` — which is what `bvsmod`, `bvcomp`, `rotate_*` and
-// `zero_extend`/`sign_extend` lower to — matched no case, was never asserted
+// a BV-sorted `ite` – which is what `bvsmod`, `bvcomp`, `rotate_*` and
+// `zero_extend`/`sign_extend` lower to – matched no case, was never asserted
 // into the embedded SAT solver, and survived as a *free boolean*: the solver
 // answered `sat` with a model that does not satisfy the formula.  Constant
 // folding hides this whenever every operand is a literal, so each test below
@@ -1106,7 +1106,7 @@ fn test_indexed_extract_application_is_a_bitvector_extraction() {
 // false `unsat` verdicts, and only ever with a symbolic dividend.
 //
 // Every expected verdict below was cross-checked against z3 4.15.4.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// Assert a list of `(script-body, expected)` QF_BV cases.
 fn assert_bv_cases(cases: &[(&str, SolverResult)]) {
@@ -1358,7 +1358,7 @@ fn test_bvsmod_symbolic_divisor_range() {
 }
 
 /// The mirrored `bvsmod` shape, with the dividend a literal and the divisor
-/// symbolic — the second reported repro.
+/// symbolic – the second reported repro.
 #[test]
 fn test_bvsmod_symbolic_divisor_operand_unsat() {
     assert_bv_cases(&[
@@ -1398,7 +1398,7 @@ fn test_bvsmod_controls_stay_sat() {
     ]);
 }
 
-/// `(bvsdiv s 0)` is `-1` for a non-negative `s` and `1` for a negative one —
+/// `(bvsdiv s 0)` is `-1` for a non-negative `s` and `1` for a negative one –
 /// the circuit used to answer all-ones for both, which is a *wrong value*
 /// rather than a missing constraint, so it produced false `sat` and false
 /// `unsat` alike.
@@ -1544,7 +1544,7 @@ fn test_bv_ite_comp_extend_rotate_controls_stay_sat() {
 }
 
 /// A BV-sorted `ite` whose selector is a bare boolean *variable* has no
-/// circuit of its own inside the embedded BV solver — it gets a fresh, free
+/// circuit of its own inside the embedded BV solver – it gets a fresh, free
 /// SAT variable.  Unless that variable is tied to the enclosing search's
 /// assignment of the same atom, the embedded solver may take the branch the
 /// outer solver has ruled out and both halves look consistent, which is a
@@ -1614,16 +1614,16 @@ fn test_bv_ite_bool_variable_controls_stay_sat() {
     ]);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // `let`-expansion regressions (audit: QF_BV soundness, 2025-08).
 //
 // The Tseitin encoder used to encode the *body* of a `(let ((x e)) body)` and
 // silently discard the bindings, so a `let`-bound bit-vector (`?v` bound to
 // `(extract … a)`) became an unconstrained free variable.  Formulas whose only
-// `let`-free reading is UNSAT were answered `sat` — `bench_679.smt2` and
+// `let`-free reading is UNSAT were answered `sat` – `bench_679.smt2` and
 // `ext_con_064_002_0512.smt2` (both `:status unsat`).  These pin the
 // `expand_lets` preprocessing pass in `Solver::assert`.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// A `let`-bound bit-vector that loses its definition reads as free, so the
 /// conjunction becomes satisfiable.  With `let` expansion it is UNSAT: `?v`
@@ -1656,7 +1656,7 @@ fn bv_nested_let_bindings_propagate_unsat() {
 }
 
 /// A `let`-bound variable shadowed inside a nested `let` must not leak the
-/// outer binding into the inner scope.  Satisfiable — pins capture-avoidance.
+/// outer binding into the inner scope.  Satisfiable – pins capture-avoidance.
 #[test]
 fn bv_let_shadowing_stays_sat() {
     let script = r#"
@@ -1668,7 +1668,7 @@ fn bv_let_shadowing_stays_sat() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 // Model-verification gate regressions (audit: QF_BV soundness, 2025-08).
 //
 // When the SAT core commits an inconsistent Boolean trail over abstracted
@@ -1676,7 +1676,7 @@ fn bv_let_shadowing_stays_sat() {
 // (`model_refutes_assertions`) must refute a model that concretely violates a
 // bit-vector assertion.  These pin the bit-vector evaluation added to
 // `eval_in_model_outcome` / `eval_bv_value`.
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 /// A disjunction of bit-vector (dis)equalities whose unsatisfiability is only
 /// exposed by concretely evaluating the bit-vector atoms against the candidate

@@ -1,6 +1,6 @@
 # oxiz-math TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 Reference: Z3's `math/` directory
 

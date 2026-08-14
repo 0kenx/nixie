@@ -17,7 +17,7 @@ pub struct SelectStoreElimTactic {
     cache: FxHashMap<TermId, TermId>,
     /// Store terms reachable from a formula handed to [`SelectStoreElimTactic::apply`].
     ///
-    /// Membership — not the chain itself — is what decides whether
+    /// Membership – not the chain itself – is what decides whether
     /// extensionality may fire, so the scan phase only has to record the set.
     store_terms: FxHashSet<TermId>,
     /// Store chains, materialized on demand and shared by [`Rc`].
@@ -78,8 +78,8 @@ impl SelectStoreElimTactic {
     /// Record every store term reachable from `tid`.
     ///
     /// Iterative (explicit heap stack plus a `visited` set): the term DAG's
-    /// depth follows the input formula — a chain of `store`s is exactly the
-    /// shape this tactic exists for — so a recursive walk could overflow the
+    /// depth follows the input formula – a chain of `store`s is exactly the
+    /// shape this tactic exists for – so a recursive walk could overflow the
     /// native stack on a deep formula, and would re-walk shared sub-DAGs once
     /// per incoming edge.
     ///
@@ -163,9 +163,9 @@ impl SelectStoreElimTactic {
 
     /// Rewrite a term applying select-store simplifications.
     ///
-    /// Iterative (explicit heap stack): the walk is bottom-up — a node is
+    /// Iterative (explicit heap stack): the walk is bottom-up – a node is
     /// rewritten only once its children have been, exactly as the recursive
-    /// version did — but the pending work lives on the heap, so a deeply
+    /// version did – but the pending work lives on the heap, so a deeply
     /// nested formula can no longer exhaust the native stack. The rewrite
     /// cache is consulted on entry and filled on completion, as before.
     fn rewrite(&mut self, tid: TermId, tm: &mut TermManager) -> Result<TermId, String> {

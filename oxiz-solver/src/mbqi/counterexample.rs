@@ -124,8 +124,8 @@ impl CounterExample {
     ///
     /// Iterative with an explicit heap stack: the previous helper recursed
     /// once per nesting level and returned a plain `usize` with no error
-    /// channel, so a deeply nested witness — witnesses come straight from
-    /// user input on the default `check_sat` path — could abort the process
+    /// channel, so a deeply nested witness – witnesses come straight from
+    /// user input on the default `check_sat` path – could abort the process
     /// by exhausting the native stack, and a depth cap could only have
     /// reported a silently wrong size (skewing the counterexample quality
     /// score).  `visited` keeps re-expansion of the shared, hash-consed DAG
@@ -134,7 +134,7 @@ impl CounterExample {
     /// Semantics are preserved exactly: every newly visited term
     /// contributes 1 (including an unresolvable id, whose children are not
     /// explored), repeat visits contribute 0, and only `And`/`Or`/`Not`/
-    /// `Neg`/`Eq`/`Lt` descend — the sum is order-independent, so the
+    /// `Neg`/`Eq`/`Lt` descend – the sum is order-independent, so the
     /// traversal order is immaterial.
     fn term_size(&self, term: TermId, manager: &TermManager) -> usize {
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -511,15 +511,15 @@ impl CounterExampleGenerator {
     /// evaluator, and an inline `Exists` witness search
     /// (`evaluate_exists_inline`) that re-entered the evaluator on every
     /// substituted candidate body.  Evaluation depth therefore consumed
-    /// native call stack, and a deeply nested quantifier body — or a chain
-    /// of nested existentials — aborted the whole process by stack overflow.
+    /// native call stack, and a deeply nested quantifier body – or a chain
+    /// of nested existentials – aborted the whole process by stack overflow.
     /// MBQI runs on the default `check_sat` path for any quantified input,
     /// so that was reachable from plain SMT-LIB scripts.  The memo cache
     /// bounds *work* on the shared, hash-consed term DAG (each `TermId` is
     /// resolved at most once per outer call), but it never bounded *stack*.
     ///
-    /// The return type has no error channel — a symbolic residual is a
-    /// legitimate answer — so a depth cap could only have fabricated a wrong
+    /// The return type has no error channel – a symbolic residual is a
+    /// legitimate answer – so a depth cap could only have fabricated a wrong
     /// evaluation.  Instead, both halves of the old recursion now run in one
     /// frame machine: `stack` owns every suspended step as an `EvalFrame`,
     /// the most recently completed subresult travels in `value`, and the
@@ -542,30 +542,30 @@ impl CounterExampleGenerator {
         /// A binary operator whose operands are both evaluated (left, then
         /// right) before folding.
         enum BinOp {
-            /// `=` — folds via `eval_eq`.
+            /// `=` – folds via `eval_eq`.
             Eq,
-            /// `<` — folds via `eval_lt`.
+            /// `<` – folds via `eval_lt`.
             Lt,
-            /// `<=` — folds via `eval_le`.
+            /// `<=` – folds via `eval_le`.
             Le,
-            /// `>` — folds via `eval_gt`.
+            /// `>` – folds via `eval_gt`.
             Gt,
-            /// `>=` — folds via `eval_ge`.
+            /// `>=` – folds via `eval_ge`.
             Ge,
-            /// `-` — folds via `eval_sub`.
+            /// `-` – folds via `eval_sub`.
             Sub,
-            /// `div` — folds via `eval_div`.
+            /// `div` – folds via `eval_div`.
             Div,
-            /// `mod` — folds via `eval_modulo`.
+            /// `mod` – folds via `eval_modulo`.
             Mod,
         }
 
         /// An n-ary arithmetic operator; every operand is evaluated before
         /// folding.
         enum NaryOp {
-            /// `+` — folds via `eval_add`.
+            /// `+` – folds via `eval_add`.
             Add,
-            /// `*` — folds via `eval_mul`.
+            /// `*` – folds via `eval_mul`.
             Mul,
         }
 
@@ -616,7 +616,7 @@ impl CounterExampleGenerator {
                 term: TermId,
             },
             /// `And(args)`: classify the conjunct just evaluated, then
-            /// evaluate `args[next..]` — unless a `False` ends it early.
+            /// evaluate `args[next..]` – unless a `False` ends it early.
             AndArgs {
                 /// The `And` term (cache key).
                 term: TermId,
@@ -1370,7 +1370,7 @@ impl CounterExampleGenerator {
                 }
                 EvalFrame::SelectIndex { term, array } => {
                     let eval_index = value;
-                    // Try 1: select(original_array, evaluated_index) — this
+                    // Try 1: select(original_array, evaluated_index) – this
                     // matches the term graph created during MBQI
                     // instantiation encoding.
                     let select_with_orig_array = manager.mk_select(array, eval_index);

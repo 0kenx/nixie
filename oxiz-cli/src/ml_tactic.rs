@@ -29,7 +29,7 @@ const MODEL_PATH_ENV: &str = "OXIZ_ML_MODEL";
 /// Resolve the on-disk model path (best-effort). Uses `OXIZ_ML_MODEL` when set,
 /// otherwise the platform config dir under `oxiz/`. Returns `None` when neither
 /// is available, in which case learning still works within a single run but is
-/// not persisted. Never hardcodes an absolute path — it is derived from the
+/// not persisted. Never hardcodes an absolute path – it is derived from the
 /// environment or the platform config dir.
 fn model_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(MODEL_PATH_ENV) {

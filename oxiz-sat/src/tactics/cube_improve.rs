@@ -61,7 +61,7 @@ impl<'a> CubeImproveTactic<'a> {
 }
 
 /// Push the sub-terms of `term` onto `stack` in reverse order, so that a
-/// LIFO `Vec` work-stack pops them left-to-right — reproducing exactly the
+/// LIFO `Vec` work-stack pops them left-to-right – reproducing exactly the
 /// pre-order, left-to-right traversal of the former recursive walks.
 ///
 /// Leaves and term kinds this tactic does not descend into (numerals,
@@ -112,7 +112,7 @@ fn collect_boolean_vars(manager: &TermManager, assertions: &[TermId]) -> Vec<Ter
 ///
 /// Uses an explicit heap work-stack rather than recursion: assertion terms
 /// come from user input, so nesting depth is attacker-controlled and this
-/// function returns `()` — there is no channel through which a depth cap
+/// function returns `()` – there is no channel through which a depth cap
 /// could report that it gave up, so a cap could only silently drop
 /// variables and corrupt the cube split.
 ///
@@ -170,7 +170,7 @@ fn collect_activity(
 /// Each *distinct* sub-term of the hash-consed DAG is visited once per
 /// assertion. The recursive form instead walked the term's tree unfolding,
 /// so a variable under a shared node was counted once per path reaching it
-/// — exponentially many times for a DAG with sharing. Counting DAG
+/// – exponentially many times for a DAG with sharing. Counting DAG
 /// occurrences is both the intended "how many places does this variable
 /// appear" measure and the only one computable in polynomial time.
 fn bump_activity(
@@ -211,7 +211,7 @@ mod tests {
     }
 
     /// A term nested 100_000 levels deep, walked on a 1 MiB stack. The
-    /// assertion is that the walk *returns* — a stack overflow aborts the
+    /// assertion is that the walk *returns* – a stack overflow aborts the
     /// whole process, so returning at all proves it no longer recurses.
     ///
     /// `Sub` is used for the spine because `mk_and`/`mk_or` flatten nested

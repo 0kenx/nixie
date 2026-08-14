@@ -76,9 +76,9 @@ impl BoundsRefinerTactic {
     /// discharge provably-true constraints (or report UNSAT).
     ///
     /// This is the real, term-aware entry point: it needs `TermManager`
-    /// access that the registry-dispatched [`Tactic::apply`] — whose signature
+    /// access that the registry-dispatched [`Tactic::apply`] – whose signature
     /// is `fn apply(&self, goal: &Goal) -> Result<TacticResult>`, with no
-    /// manager parameter — structurally cannot provide. `Tactic::apply` on
+    /// manager parameter – structurally cannot provide. `Tactic::apply` on
     /// this type therefore honestly reports [`TacticResult::NotApplicable`]
     /// rather than guessing.
     pub fn refine(&mut self, goal: &Goal, manager: &mut TermManager) -> Result<TacticResult> {
@@ -95,7 +95,7 @@ impl BoundsRefinerTactic {
 
         // Dropping an assertion re-derives the bounds from the *surviving*
         // assertions only. Deciding an assertion against bounds it helped
-        // derive would let it justify its own removal — two equivalent
+        // derive would let it justify its own removal – two equivalent
         // constraints would then discharge each other and the goal would lose
         // the bound entirely, which is unsound. This is quadratic in the
         // number of assertions, hence the cap.
@@ -333,7 +333,7 @@ impl BoundsRefinerTactic {
     /// For `lhs <= rhs` (or `lhs < rhs`): if one side is a bare variable and
     /// the other side evaluates to an interval under the current bounds, the
     /// variable's bound is tightened against that interval's endpoint. This is
-    /// what makes the pass iterative — a tightened bound can make the next
+    /// what makes the pass iterative – a tightened bound can make the next
     /// interval evaluation sharper.
     fn refine_bounds_from_constraint(
         &mut self,

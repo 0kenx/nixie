@@ -6,9 +6,9 @@
 //! walking `+`, `-`, `*`, unary negation, integer/rational constants,
 //! variables, and integer powers (expressed as repeated multiplication).
 //!
-//! Terms that are not polynomial — division by a non-constant, modulo,
+//! Terms that are not polynomial – division by a non-constant, modulo,
 //! transcendental/uninterpreted applications, bit-vector or string operators,
-//! and so on — are rejected with an explicit [`CadError`] rather than being
+//! and so on – are rejected with an explicit [`CadError`] rather than being
 //! silently coerced into a bogus placeholder polynomial. This means a caller
 //! can trust that a successfully extracted polynomial faithfully represents
 //! `lhs - rhs` for the atom it came from.

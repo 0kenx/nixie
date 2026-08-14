@@ -13,7 +13,7 @@
 //! (assert (= (head l) 11))
 //! ```
 //!
-//! was answered `sat` — `(head l)` is one ground term and cannot hold two
+//! was answered `sat` – `(head l)` is one ground term and cannot hold two
 //! values, so the reported model satisfies neither assertion.
 //!
 //! This module restores the missing meaning the same way
@@ -35,7 +35,7 @@
 //! Constructor **distinctness** (`Ci(a⃗) ≠ Cj(b⃗)` for `i ≠ j`) follows from
 //! tester correctness plus mutual exclusivity, and **injectivity**
 //! (`Ci(a⃗) = Ci(b⃗) ⇒ ⋀ aj = bj`) follows from selector-over-constructor plus
-//! selector congruence — neither needs a rule of its own.
+//! selector congruence – neither needs a rule of its own.
 //!
 //! Deliberately *absent*: any constraint on a selector applied to the wrong
 //! constructor.  `(head nil)` is underspecified in SMT-LIB and may take any
@@ -46,7 +46,7 @@
 //!
 //! A datatype value is a *finite* tree, so no term may be a proper sub-term of
 //! itself: `l = (cons 1 l)` is unsatisfiable.  Congruence alone never sees this
-//! — it happily merges `l` with `(cons 1 l)` — which is why the property is so
+//! – it happily merges `l` with `(cons 1 l)` – which is why the property is so
 //! often missing and yields a false `sat`.
 //!
 //! Rather than an occurs-check over the E-graph (Z3's approach), the measure is
@@ -68,7 +68,7 @@
 //! The reconstruction axiom introduces `sel_ij(t)`, which is itself a datatype
 //! term for a recursive datatype.  Those introduced terms are deliberately
 //! *not* re-axiomatised, so the expansion stops one level below the assertion
-//! set — exactly the bound Z3 gets from only expanding a term whose tester the
+//! set – exactly the bound Z3 gets from only expanding a term whose tester the
 //! search has already decided.  Omitting an axiom instance is always sound; it
 //! can only cost completeness, and the honesty gate below covers the case where
 //! the lemma budget itself runs out.
@@ -99,7 +99,7 @@ const DT_SIZE_MEASURE: &str = "dt.size!";
 /// square of the number of datatype terms of a single sort; the cap keeps a
 /// pathological input from exhausting memory.  Passing it sets
 /// [`Solver::dt_axioms_incomplete`], which downgrades a subsequent `Sat` to
-/// `Unknown` — the axiomatisation is then a strict subset of the theory, so
+/// `Unknown` – the axiomatisation is then a strict subset of the theory, so
 /// `Unsat` stays trustworthy but `Sat` does not.
 const MAX_DT_AXIOM_LEMMAS: usize = 200_000;
 
@@ -113,7 +113,7 @@ pub(super) struct FieldInfo {
     pub(super) selector: String,
     /// Sort of the field.
     pub(super) sort: SortId,
-    /// Whether the field's sort is itself a datatype — the fields that can
+    /// Whether the field's sort is itself a datatype – the fields that can
     /// close a structural cycle and therefore need the size ordering.
     pub(super) is_datatype: bool,
 }
@@ -146,7 +146,7 @@ pub(super) struct DtScan {
 /// which terms exist, never which facts hold, and every lemma emitted for a
 /// discovered term is a theorem of the datatype theory.  Polarity is therefore
 /// irrelevant here and the walk deliberately traverses `Or` / `Not` / `Ite` and
-/// both operands of an equality — unlike [`super::term_walk::asserted_children`],
+/// both operands of an equality – unlike [`super::term_walk::asserted_children`],
 /// which exists for the opposite kind of pass.
 ///
 /// Quantifier bodies are *not* entered: a selector applied to a bound variable
@@ -284,7 +284,7 @@ impl Solver {
     /// Scope: the lemmas enter the SAT core at the *current* assertion level and
     /// each one's dedup entry is journalled on the trail, so a `pop` retracts
     /// the clause and the "already asserted" mark together and a later scope
-    /// re-derives whatever it still needs.  Idempotent — re-running it inside
+    /// re-derives whatever it still needs.  Idempotent – re-running it inside
     /// the refinement loop of [`Solver::check`] adds nothing new.
     pub(super) fn instantiate_dt_axioms(&mut self, manager: &mut TermManager) {
         let Some(scan) = scan_datatype_terms(&self.assertions, manager) else {
@@ -383,7 +383,7 @@ impl Solver {
             self.assert_dt_lemma(lemma, manager);
             if is_datatype {
                 // A constructor node is strictly larger than each of its
-                // datatype-sorted children — the ordering acyclicity rests on.
+                // datatype-sorted children – the ordering acyclicity rests on.
                 self.assert_size_nonneg(arg, manager);
                 self.assert_size_nonneg(applied, manager);
                 let outer = dt_size(term, manager);
@@ -549,8 +549,8 @@ impl Solver {
     /// `⋀ aj = bj ⇒ Ci(a⃗) = Ci(b⃗)` over every pair of applications of the same
     /// constructor: equal arguments build equal values.
     ///
-    /// This is the converse of injectivity — which needs no rule of its own,
-    /// following from selector-over-constructor plus selector congruence — and
+    /// This is the converse of injectivity – which needs no rule of its own,
+    /// following from selector-over-constructor plus selector congruence – and
     /// it is what closes a reconstructed `Ci(sel(t)…)` against a literal
     /// constructor application appearing in the formula.
     fn assert_constructor_congruence(&mut self, pool: &[Vec<TermId>], manager: &mut TermManager) {

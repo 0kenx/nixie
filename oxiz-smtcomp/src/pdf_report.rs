@@ -123,7 +123,7 @@ impl PdfReportConfig {
     }
 }
 
-// --- A4 page geometry (PostScript points) ----------------------------------
+// ======== A4 page geometry (PostScript points) ========
 //
 // PDF coordinates put the origin at the bottom-left; Y grows upward. We keep
 // generous margins so that long paths/logic strings do not overflow off the
@@ -225,7 +225,7 @@ impl PdfReportGenerator {
         Ok(())
     }
 
-    // ----- content assembly -------------------------------------------------
+    // ======== content assembly ========
 
     fn build_lines(&self, analysis: &FullAnalysis, results: &[SingleResult]) -> Vec<Line> {
         let mut lines: Vec<Line> = Vec::new();
@@ -342,7 +342,7 @@ impl PdfReportGenerator {
         }
     }
 
-    // ----- rendering --------------------------------------------------------
+    // ======== rendering ========
 
     fn render_pdf(&self, lines: &[Line]) -> Vec<u8> {
         let mut allocator = RefAllocator::new();
@@ -383,7 +383,7 @@ impl PdfReportGenerator {
             contents.push((content_id, content_bytes));
         }
 
-        // --- write document structure --------------------------------------
+        // ======== write document structure ========
         let mut pdf = Pdf::new();
         pdf.catalog(catalog_id).pages(page_tree_id);
 
@@ -419,7 +419,7 @@ impl PdfReportGenerator {
     }
 }
 
-// --- helpers ---------------------------------------------------------------
+// ======== helpers ========
 
 fn format_logic_row(
     logic: &str,

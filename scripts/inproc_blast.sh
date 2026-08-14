@@ -5,7 +5,7 @@
 # Method: debug build (debug_assertions ON), so the propagation-fixpoint
 # invariant ("hanging unit") is the oracle. A wrong-Sat unsoundness fires
 # that invariant as a panic (exit 101) rather than silently returning the
-# wrong verdict — which is exactly what we want to catch.
+# wrong verdict – which is exactly what we want to catch.
 #
 # For each .cnf we run cnf_solve twice under a conflict budget:
 #   baseline : PRESET=default   (enable_inprocessing: false)

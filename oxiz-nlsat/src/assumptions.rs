@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. Scaffolding for
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. Scaffolding for
 // an incremental push/pop + assumption-based solve() public API that does not
 // exist yet (the solver has only a coarse reset_search_state incremental path).
 // Wire only if assumption-based UNSAT cores / scoped constraints become a product

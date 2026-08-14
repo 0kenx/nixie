@@ -21,7 +21,7 @@ impl Solver {
     /// sub-expression shared by several parent constraints is walked once
     /// instead of once per parent (an O(depth) re-walk each time).
     ///
-    /// The claim is journalled so a `pop` un-claims it — a term claimed inside
+    /// The claim is journalled so a `pop` un-claims it – a term claimed inside
     /// a scope that is later retracted must be walkable again, otherwise the
     /// next assertion mentioning it would silently skip registering its
     /// variables.
@@ -54,7 +54,7 @@ impl Solver {
     /// than get an answer.  Measured on a 1 MiB thread before this conversion,
     /// the recursive version survived a chain of ~4370 levels at `opt-level =
     /// 1` (~240 bytes per native frame) but only ~1556 at `opt-level = 0`
-    /// (~671 bytes per frame) — the latter *below* the depth gate's value at
+    /// (~671 bytes per frame) – the latter *below* the depth gate's value at
     /// the time (2000; see [`super::super::ENCODE_DEPTH_LIMIT`], since
     /// lowered), so an assertion that passed
     /// `Solver::term_exceeds_encode_depth` could still abort here.  The walk is
@@ -62,13 +62,13 @@ impl Solver {
     /// (MBQI instantiation and the axiom passes call [`Solver::encode`]
     /// directly), so the gate was never a stack bound in the first place.
     ///
-    /// A plain worklist suffices — no resume-state frame enum is needed, unlike
+    /// A plain worklist suffices – no resume-state frame enum is needed, unlike
     /// [`oxiz_core::ast::TermManager::rebuild_substituted`]'s
     /// `Expand`/`Combine` frames: every arm below performs its whole effect
     /// (memo claim, trail push, interning, flag set) *before* descending, and
     /// no arm has work to do after its children or consumes anything the
-    /// children produced.  Child order is still preserved exactly — children
-    /// are pushed in reverse so they pop left-to-right — because the trail this
+    /// children produced.  Child order is still preserved exactly – children
+    /// are pushed in reverse so they pop left-to-right – because the trail this
     /// walk appends to is observable (`pop` replays it) and
     /// `ArithSolver::intern` hands out `VarId`s in call order.
     ///
@@ -199,7 +199,7 @@ impl Solver {
                 // supplied by the defining axioms in `arith_axioms`.
                 // Registering them here is what makes the axiom pass see them
                 // at all, and descending is what gives the dividend a theory
-                // variable — without it, `(>= (mod i0 7) 7)` left `i0`
+                // variable – without it, `(>= (mod i0 7) 7)` left `i0`
                 // completely untracked.
                 TermKind::Div(lhs, rhs) | TermKind::Mod(lhs, rhs) => {
                     if !self.claim_tracked_compound(current) {
@@ -233,8 +233,8 @@ impl Solver {
                 // came from `TheoryManager::model_based_combination` reporting a
                 // mere *model disagreement* as a refutation, and from conflict
                 // clauses that dropped the congruence-derived equality's
-                // justification.  Both are fixed — a disagreement is now
-                // resolved by handing the explained equality to the tableau —
+                // justification.  Both are fixed – a disagreement is now
+                // resolved by handing the explained equality to the tableau –
                 // so skipping the term buys nothing and costs correctness: an
                 // unregistered term leaves its atom a free boolean, and
                 // `(> (f a) (f b)) ∧ (> (f b) (f (f a))) ∧ (> (f (f a)) (f a))`
@@ -277,7 +277,7 @@ impl Solver {
                     self.register_arith_atom(current, term.sort, manager);
                 }
 
-                // ---------------------------------------------------------
+                // ========  ========
                 // Deliberate no-ops.  Listed explicitly (rather than left to a
                 // `_` catch-all) so that adding a `TermKind` variant is a
                 // compile error here instead of a silent new gap.  Nothing
@@ -286,9 +286,9 @@ impl Solver {
                 // is why revisiting one through a second parent edge is
                 // harmless.
                 //
-                // * Leaves — `True`/`False`, the numeric and bitvector
+                // * Leaves – `True`/`False`, the numeric and bitvector
                 //   constants, string literals and the floating-point literal
-                //   forms — have no children and no theory *variable* to
+                //   forms – have no children and no theory *variable* to
                 //   register: a constant needs no model value, it *is* one.
                 //   (`extract_linear_terms` folds `IntConst`/`RealConst`/
                 //   `BitVecConst` straight into a constraint's constant term.)
@@ -303,8 +303,8 @@ impl Solver {
                 //   built from it and the `encode_guards` honesty gate is what
                 //   reports the resulting incompleteness (`Unknown`) rather than
                 //   a model.  Registering theory variables underneath such an
-                //   operand would therefore not make any atom decidable — the
-                //   parse would still fail — so the walk stops here.  The
+                //   operand would therefore not make any atom decidable – the
+                //   parse would still fail – so the walk stops here.  The
                 //   Boolean structure of `Xor`/`Implies`/`Distinct`/`Let` is
                 //   reached anyway, by `Solver::encode_depth`'s own descent,
                 //   which calls this walk again on each theory atom it finds

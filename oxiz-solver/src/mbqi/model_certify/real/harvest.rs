@@ -1,7 +1,7 @@
 //! Eligibility scan for the real fragment.
 //!
 //! One iterative pass decides whether a goal is something the piecewise-affine
-//! engine can interpret *totally* — and collects, while it is there, the
+//! engine can interpret *totally* – and collects, while it is there, the
 //! symbols that need an interpretation and the rational literals worth trying
 //! as defaults.
 //!

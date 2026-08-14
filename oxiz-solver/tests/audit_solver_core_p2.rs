@@ -33,14 +33,14 @@ fn run_script(script: &str) -> SolverResult {
     SolverResult::Unknown
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 1 — MBQI must not fabricate `Sat` for unverified quantifiers
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 1 – MBQI must not fabricate `Sat` for unverified quantifiers
+// ========  ========
 
 /// A genuinely UNSAT quantified formula whose refutation needs a chain of
 /// instantiations.  Previously, after 10 inconclusive MBQI rounds the solver
 /// blindly returned `Sat`; a sound solver must answer `unsat` (if it can
-/// refute) or `unknown` (if MBQI is incomplete) — but NEVER `sat`.
+/// refute) or `unknown` (if MBQI is incomplete) – but NEVER `sat`.
 #[test]
 fn mbqi_unverified_quantifier_is_not_sat() {
     let script = r#"
@@ -70,13 +70,13 @@ fn mbqi_universal_contradiction_is_not_sat() {
     assert_ne!(run_script(script), SolverResult::Sat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 2 — push/pop must not leak bit-vector facts across scopes
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 2 – push/pop must not leak bit-vector facts across scopes
+// ========  ========
 
 /// Pin `x = #x05` inside a scope, check, then `pop` and pin `x = #x06`.
 /// The stale `x = 5` must not survive the pop and spuriously clash with
-/// `x = 6` — that later check must be SAT.
+/// `x = 6` – that later check must be SAT.
 #[test]
 fn bv_fact_does_not_leak_across_pop() {
     let script = r#"
@@ -113,14 +113,14 @@ fn bv_scoped_values_are_independent() {
     assert_eq!(run_script(script), SolverResult::Sat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 3 — conflict-limit exhaustion must never masquerade as `Sat`
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 3 – conflict-limit exhaustion must never masquerade as `Sat`
+// ========  ========
 
 /// Build an UNSAT linear formula (`x > 5 ∧ x < 3`) and solve it with a
 /// conflict budget of 1.  When the budget is hit while a real theory conflict
 /// exists, the theory manager suppresses that conflict to stop the search;
-/// the solver must then answer `Unknown` — never `Sat` over a dropped
+/// the solver must then answer `Unknown` – never `Sat` over a dropped
 /// conflict.  (`Unsat` is also acceptable if refuted before the limit.)
 #[test]
 fn conflict_limit_exhaustion_is_not_sat() {
@@ -148,7 +148,7 @@ fn conflict_limit_exhaustion_is_not_sat() {
 }
 
 /// A wider UNSAT arithmetic system solved with an unlimited budget must still
-/// be correctly UNSAT — the exhaustion guard must not over-fire and turn a
+/// be correctly UNSAT – the exhaustion guard must not over-fire and turn a
 /// genuine refutation into Unknown.
 #[test]
 fn unlimited_budget_still_refutes() {
@@ -168,9 +168,9 @@ fn unlimited_budget_still_refutes() {
     assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Finding 4 — signed BV comparisons must not use unsigned arith semantics
-// ─────────────────────────────────────────────────────────────────────────
+// ========  ========
+// Finding 4 – signed BV comparisons must not use unsigned arith semantics
+// ========  ========
 
 /// `(bvslt x #b0000) ∧ (bvult #b0100 x)` is SAT (e.g. x = #b1001 = -7 signed,
 /// 9 unsigned).  The old code asserted the signed comparison into linear

@@ -301,7 +301,7 @@ impl<'a> Generalizer<'a> {
     /// a silently wrong size, which then mis-orders literal elimination.
     ///
     /// The weights are unchanged: every node counts `1`, and only the kinds
-    /// the old `match` enumerated are descended into — anything else
+    /// the old `match` enumerated are descended into – anything else
     /// (variables, constants, and operators outside that set) counts as a
     /// single node exactly as before.
     fn term_size(&self, term: TermId) -> usize {
@@ -631,7 +631,7 @@ impl<'a> Generalizer<'a> {
     ///
     /// Iterative walk with a visited set (see [`crate::walk`]). The old
     /// recursive helper passed a `HashSet` that looked like memoization but
-    /// was the *output* set — it never pruned traversal — so a shared DAG
+    /// was the *output* set – it never pruned traversal – so a shared DAG
     /// was re-expanded exponentially, and nesting depth was unbounded.
     /// It also stopped at any operator outside a short enumeration
     /// (`_ => {}`), missing variables under `Ite`, `Implies`, `Apply`,

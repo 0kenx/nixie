@@ -202,9 +202,9 @@ pub trait Tactic: Send + Sync {
 //
 // Note: `tactic::core::ctx_solver_simplify` (a dead placeholder module
 // with its own disconnected `type TermId = usize` and always-false
-// oracles — see P4-1112) and `tactic::core::goal_refinement` (an orphaned,
+// oracles – see P4-1112) and `tactic::core::goal_refinement` (an orphaned,
 // never-compiled module written against a `TermKind::Forall`/`Exists`
-// tuple shape that does not match the real struct-variant `TermKind` —
+// tuple shape that does not match the real struct-variant `TermKind` –
 // see P4-1110) were deleted rather than wired in: both were unreachable
 // dead code whose logic didn't compile against, or duplicated, the real
 // implementations (`tactic::ctx_simplify::StatelessCtxSolverSimplifyTactic`

@@ -6,9 +6,9 @@
 //! irrational root to its interval midpoint makes the zero-dimensional (root)
 //! cells lose sign-invariance: a polynomial that vanishes exactly at the true
 //! root is generally non-zero at the midpoint. This module fixes that by
-//! representing each root exactly — as a rational when the root is rational, and
+//! representing each root exactly – as a rational when the root is rational, and
 //! as a [`CadPoint::Algebraic`] carrying its defining polynomial and isolating
-//! interval otherwise — and by evaluating polynomial signs *at the root* via
+//! interval otherwise – and by evaluating polynomial signs *at the root* via
 //! interval refinement rather than by substituting a rational approximation.
 //!
 //! Only the open one-dimensional cells strictly *between* consecutive roots may
@@ -360,7 +360,7 @@ fn univariate_rational_coeffs(poly: &Polynomial, var: Var) -> Option<Vec<BigRati
     Some(coeffs)
 }
 
-/// Positive divisors of a non-negative integer (bounded by construction — the
+/// Positive divisors of a non-negative integer (bounded by construction – the
 /// caller caps the magnitude via [`MAX_RATIONAL_ROOT_MAGNITUDE`]).
 fn divisors(n: &BigInt) -> Vec<BigInt> {
     if n.is_zero() {

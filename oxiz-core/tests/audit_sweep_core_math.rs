@@ -17,9 +17,9 @@ use oxiz_core::smtlib::Printer;
 use oxiz_core::tactic::{Goal, Pb2BvTactic, Precision, TacticResult};
 use oxiz_core::{ArithRewriter, RewriteContext, Rewriter, StringRewriter, TermKind, TermManager};
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // oxiz-core/src/rewrite/arith.rs
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn arith_add_overflow_leaves_term_unrewritten_not_wrong() {
@@ -87,9 +87,9 @@ fn arith_div_euclid_overflow_does_not_panic() {
     let _ = rewriter.rewrite(div, &mut ctx, &mut manager);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // oxiz-core/src/ast/egraph.rs
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn egraph_add_term_rejects_i64_overflowing_int_const() {
@@ -115,7 +115,7 @@ fn egraph_extract_works_after_chained_merges() {
     let idb = egraph.add_term(b, &manager).expect("b representable");
     let idc = egraph.add_term(c, &manager).expect("c representable");
 
-    // Chain: merge(a, b), then merge(b, c) — id `a` now reaches its root
+    // Chain: merge(a, b), then merge(b, c) – id `a` now reaches its root
     // through two hops, which a single-level `unionfind.get` lookup used to
     // fail to resolve.
     egraph.merge(ida, idb);
@@ -125,9 +125,9 @@ fn egraph_extract_works_after_chained_merges() {
     assert!(egraph.get_class(ida).is_some());
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // oxiz-core/src/ast/congruence.rs
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn congruence_pop_undoes_diseq_assertion() {
@@ -175,7 +175,7 @@ fn congruence_close_propagates_through_non_root_class_member() {
     // tracked via `add_term`'s use-lists), and a chain merging x and y
     // *through* an intermediate term z, must still let close() discover
     // neg(x) ~ neg(y) even though neither `x` nor the class's root id is
-    // `y` itself — `y` only joins the class via the x~z, z~y chain.
+    // `y` itself – `y` only joins the class via the x~z, z~y chain.
     let mut manager = TermManager::new();
     let x = manager.mk_var("x", manager.sorts.int_sort);
     let y = manager.mk_var("y", manager.sorts.int_sort);
@@ -200,9 +200,9 @@ fn congruence_close_propagates_through_non_root_class_member() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-core/src/rewrite/string.rs — codepoint (not byte) semantics
-// ---------------------------------------------------------------------------
+// ========  ========
+// oxiz-core/src/rewrite/string.rs – codepoint (not byte) semantics
+// ========  ========
 
 #[test]
 fn string_len_counts_codepoints_not_bytes() {
@@ -285,9 +285,9 @@ fn string_to_int_accepts_value_larger_than_i64() {
     assert!(matches!(&t.kind, TermKind::IntConst(n) if n == &expected));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // oxiz-core/src/smtlib/lexer.rs
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lexer_reports_unterminated_string_literal() {
@@ -320,9 +320,9 @@ fn lexer_well_formed_input_has_no_errors() {
     assert!(!lexer.has_errors());
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-core/src/qe/bv/simplification.rs — width_mask guard
-// ---------------------------------------------------------------------------
+// ========  ========
+// oxiz-core/src/qe/bv/simplification.rs – width_mask guard
+// ========  ========
 
 #[test]
 fn bv_simplifier_and_constant_folding_at_width_64_does_not_panic() {
@@ -337,9 +337,9 @@ fn bv_simplifier_and_constant_folding_at_width_64_does_not_panic() {
     assert_eq!(result, BvTerm::Const(0x0F0F_0F0F_0F0F_0F0F, 64));
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-core/src/tactic/pb2bv.rs — constant-offset preservation
-// ---------------------------------------------------------------------------
+// ========  ========
+// oxiz-core/src/tactic/pb2bv.rs – constant-offset preservation
+// ========  ========
 
 #[test]
 fn pb2bv_preserves_constant_offset_in_linear_sum() {
@@ -363,17 +363,17 @@ fn pb2bv_preserves_constant_offset_in_linear_sum() {
 
     let mut tactic = Pb2BvTactic::new(&mut manager);
     let result = tactic.apply_mut(&goal).expect("tactic should not error");
-    // We don't need to decode the full BV encoding here — just confirm the
+    // We don't need to decode the full BV encoding here – just confirm the
     // tactic actually converted the constraint (i.e. treated the constant
     // offset as present, taking the "extract succeeded" path) rather than
-    // reporting NotApplicable (which would happen if extraction failed) —
+    // reporting NotApplicable (which would happen if extraction failed) –
     // the real assertion is the algebra above matching the fixed source.
     assert!(!matches!(result, TacticResult::NotApplicable));
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-core/src/model/completion.rs — sort-correct defaults
-// ---------------------------------------------------------------------------
+// ========  ========
+// oxiz-core/src/model/completion.rs – sort-correct defaults
+// ========  ========
 
 #[test]
 fn model_completion_assigns_bool_default_to_bool_variable() {
@@ -405,9 +405,9 @@ fn model_completion_assigns_int_default_to_int_variable() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-core/src/unsat_core.rs — real deletion-based minimize_with
-// ---------------------------------------------------------------------------
+// ========  ========
+// oxiz-core/src/unsat_core.rs – real deletion-based minimize_with
+// ========  ========
 
 #[test]
 fn unsat_core_minimize_with_drops_unneeded_assertions() {
@@ -427,9 +427,9 @@ fn unsat_core_minimize_with_drops_unneeded_assertions() {
     assert_eq!(core.term_ids(), vec![TermId::from(2)]);
 }
 
-// ---------------------------------------------------------------------------
-// oxiz-core/src/smtlib/printer/model.rs — valid function-interpretation output
-// ---------------------------------------------------------------------------
+// ========  ========
+// oxiz-core/src/smtlib/printer/model.rs – valid function-interpretation output
+// ========  ========
 
 #[test]
 fn model_printer_emits_syntactically_balanced_function_interpretation() {

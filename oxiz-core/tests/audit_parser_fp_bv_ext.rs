@@ -55,7 +55,7 @@ fn sort_kind(manager: &TermManager, t: TermId) -> SortKind {
 
 /// Return the two operand term ids of an equality (`mk_eq` canonicalizes
 /// operand order by raw `TermId`, so callers must not assume which side is
-/// which — this is the same helper pattern used by `audit_parser_terms.rs`).
+/// which – this is the same helper pattern used by `audit_parser_terms.rs`).
 fn eq_operands(m: &TermManager, t: TermId) -> (TermId, TermId) {
     match kind(m, t) {
         TermKind::Eq(a, b) => (a, b),
@@ -105,10 +105,10 @@ fn assert_round_trips(manager: &TermManager, t: TermId, decls: &[&str]) {
         .unwrap_or_else(|e| panic!("round-trip script failed to parse:\n{script}\nerror: {e:?}"));
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // FP-TOFP-01: indexed to_fp / to_fp_unsigned / fp.to_sbv / fp.to_ubv must
 // accept a rounding-mode first argument.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn to_fp_from_real_accepts_rounding_mode() {
@@ -127,7 +127,7 @@ fn to_fp_from_real_accepts_rounding_mode() {
     // Not round-tripped: the pre-existing basic printer formats whole-number
     // `Real` constants (e.g. the `10.0` above) without a decimal point
     // (`{r}` on the underlying `Rational64`, e.g. "10"), which then re-lexes
-    // as an `Int` numeral rather than a `Real` decimal — a separate,
+    // as an `Int` numeral rather than a `Real` decimal – a separate,
     // out-of-scope printer defect (any `Real`-typed round trip through this
     // printer hits it, not just this operator).
 }
@@ -201,9 +201,9 @@ fn fp_to_sbv_and_to_ubv_accept_rounding_mode() {
     assert_round_trips(&m, ubv_side, decls);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // BV-NEG-01: bvneg must be recognized.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn bvneg_is_recognized() {
@@ -230,9 +230,9 @@ fn bvneg_is_recognized() {
     assert_round_trips(&m, neg_side, &["(declare-const x (_ BitVec 8))"]);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // BV-EXT-01: bvnand, bvnor, bvxnor, bvcomp, bvsmod must be recognized.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn bvnand_lowers_to_not_and() {
@@ -342,10 +342,10 @@ fn bvsmod_is_recognized_and_correctly_typed() {
     assert_round_trips(&m, smod_side, decls);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // FP-CONV-SIB-01: fp.to_real, the (fp ...) literal, and indexed FP special
 // values must be recognized.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn fp_to_real_is_recognized() {
@@ -443,10 +443,10 @@ fn fp_special_value_constants_are_recognized() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // SORT-BUILTIN-01: RoundingMode / RegLan must not silently become ordinary
 // uninterpreted sorts.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn rounding_mode_sort_is_honestly_rejected_not_silently_uninterpreted() {
@@ -469,9 +469,9 @@ fn reglan_sort_is_honestly_rejected_not_silently_uninterpreted() {
     assert!(msg.contains("reglan"), "error should mention RegLan: {msg}");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // R1: parse_sort must not overflow the stack on deeply nested sorts.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn deeply_nested_array_sort_is_rejected_not_a_stack_overflow() {
@@ -509,10 +509,10 @@ fn moderately_nested_array_sort_still_parses() {
     parse_script(&script, &mut manager).expect("moderately nested sort should parse");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // todo-1151: mk_bv_concat must not silently fabricate a width for a
 // non-bit-vector operand.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn bv_concat_computes_exact_combined_width_for_valid_operands() {
@@ -525,7 +525,7 @@ fn bv_concat_computes_exact_combined_width_for_valid_operands() {
 
 // `mk_bv_concat` guards this with `debug_assert!`, which is compiled out in
 // release builds (where the documented `32`-width fallback takes over
-// instead). The test therefore only exists when debug assertions are on —
+// instead). The test therefore only exists when debug assertions are on –
 // gating it here rather than weakening the assertion keeps the debug-profile
 // check exactly as strict as it was.
 #[cfg(debug_assertions)]
@@ -540,9 +540,9 @@ fn bv_concat_debug_asserts_on_non_bitvector_operand() {
     let _ = m.mk_bv_concat(int_term, bv_term);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // todo-1174: lexer leading-zero numerals and arbitrary-precision (_ bvN M).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn lexer_rejects_leading_zero_numeral() {

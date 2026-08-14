@@ -4,7 +4,7 @@
 //! The MBQI / quantifier-instantiation layer builds its conflict clause from a
 //! per-atom polarity map that is not pruned on every SAT backtrack (a restart in
 //! particular). It can therefore report a "conflict" whose clause contains a
-//! variable the SAT core has since unassigned — the literal is not falsified, so
+//! variable the SAT core has since unassigned – the literal is not falsified, so
 //! the clause is really an *asserting lemma* (unit under the current assignment),
 //! not a conflict. Feeding that into the all-false 1-UIP machinery used to
 //! duplicate the asserting literal at the backtrack level, tripping the theory
@@ -19,7 +19,7 @@ use oxiz_sat::{Lit, Solver, SolverResult, TheoryCallback, TheoryCheckResult, Var
 
 /// Mock theory that, on the very first Boolean assignment, reports a "conflict"
 /// clause consisting of that (true, hence its negation false) literal plus a
-/// second literal for a variable that is still unassigned — i.e. an asserting
+/// second literal for a variable that is still unassigned – i.e. an asserting
 /// lemma with one open literal. It fires only once; every later check is `Sat`.
 struct StaleConflictTheory {
     vars: Vec<Var>,
@@ -88,7 +88,7 @@ fn theory_conflict_with_unassigned_literal_does_not_panic() {
 #[test]
 fn theory_conflict_with_unassigned_literal_model_satisfies_clause() {
     // Same reproduction, but additionally confirm the returned model satisfies
-    // the original clause — the asserting-lemma handling keeps the search sound.
+    // the original clause – the asserting-lemma handling keeps the search sound.
     let mut solver = Solver::new();
     let a = solver.new_var();
     let b = solver.new_var();

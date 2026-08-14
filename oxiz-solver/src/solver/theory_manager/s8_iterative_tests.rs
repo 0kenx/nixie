@@ -13,7 +13,7 @@ use oxiz_core::ast::TermManager;
 ///
 /// This depth and [`SMALL_STACK`] were scaled down together by a factor of 8
 /// (from 60 000 on 1 MiB).  What the test pins is the ~17 bytes of stack
-/// available per level — far under any native frame — not the absolute
+/// available per level – far under any native frame – not the absolute
 /// depth, and the smaller pair costs a fraction of the memory the interner
 /// has to keep live.  Never raise one without the other.
 const DEEP: usize = 7_500;

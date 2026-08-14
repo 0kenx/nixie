@@ -12,9 +12,7 @@ use oxiz_core::TermId;
 use oxiz_theories::string::{StringExpr, StringSolver};
 use oxiz_theories::{Theory, TheoryCheckResult as TheoryResult};
 
-// ============================================================================
-// Test 1: Basic string concatenation - satisfiable case
-// ============================================================================
+// ======== Test 1: Basic string concatenation - satisfiable case ========
 
 #[test]
 fn test_basic_concatenation_sat() {
@@ -36,9 +34,7 @@ fn test_basic_concatenation_sat() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 2: Basic string concatenation - unsatisfiable case
-// ============================================================================
+// ======== Test 2: Basic string concatenation - unsatisfiable case ========
 
 #[test]
 fn test_basic_concatenation_unsat() {
@@ -60,9 +56,7 @@ fn test_basic_concatenation_unsat() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 3: Chained string concatenation
-// ============================================================================
+// ======== Test 3: Chained string concatenation ========
 
 #[test]
 fn test_chained_concatenation() {
@@ -84,9 +78,7 @@ fn test_chained_concatenation() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 4: Empty string concatenation
-// ============================================================================
+// ======== Test 4: Empty string concatenation ========
 
 #[test]
 fn test_empty_string_concat_left() {
@@ -106,9 +98,7 @@ fn test_empty_string_concat_left() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 5: Empty string concatenation (right)
-// ============================================================================
+// ======== Test 5: Empty string concatenation (right) ========
 
 #[test]
 fn test_empty_string_concat_right() {
@@ -128,9 +118,7 @@ fn test_empty_string_concat_right() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 6: Contains operation - satisfiable
-// ============================================================================
+// ======== Test 6: Contains operation - satisfiable ========
 
 #[test]
 fn test_contains_sat() {
@@ -147,9 +135,7 @@ fn test_contains_sat() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 7: Contains operation - unsatisfiable
-// ============================================================================
+// ======== Test 7: Contains operation - unsatisfiable ========
 
 #[test]
 fn test_contains_unsat() {
@@ -166,9 +152,7 @@ fn test_contains_unsat() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 8: Prefix operation - satisfiable
-// ============================================================================
+// ======== Test 8: Prefix operation - satisfiable ========
 
 #[test]
 fn test_prefix_sat() {
@@ -185,9 +169,7 @@ fn test_prefix_sat() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 9: Prefix operation - unsatisfiable
-// ============================================================================
+// ======== Test 9: Prefix operation - unsatisfiable ========
 
 #[test]
 fn test_prefix_unsat() {
@@ -204,9 +186,7 @@ fn test_prefix_unsat() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 10: Suffix operation - satisfiable
-// ============================================================================
+// ======== Test 10: Suffix operation - satisfiable ========
 
 #[test]
 fn test_suffix_sat() {
@@ -223,9 +203,7 @@ fn test_suffix_sat() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 11: Suffix operation - unsatisfiable
-// ============================================================================
+// ======== Test 11: Suffix operation - unsatisfiable ========
 
 #[test]
 fn test_suffix_unsat() {
@@ -242,9 +220,7 @@ fn test_suffix_unsat() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 12: Disequality constraint - satisfiable
-// ============================================================================
+// ======== Test 12: Disequality constraint - satisfiable ========
 
 #[test]
 fn test_disequality_sat() {
@@ -261,9 +237,7 @@ fn test_disequality_sat() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 13: Disequality constraint - unsatisfiable
-// ============================================================================
+// ======== Test 13: Disequality constraint - unsatisfiable ========
 
 #[test]
 fn test_disequality_unsat() {
@@ -280,9 +254,7 @@ fn test_disequality_unsat() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 14: Push/pop operations - conflict isolation
-// ============================================================================
+// ======== Test 14: Push/pop operations - conflict isolation ========
 
 #[test]
 fn test_push_pop() {
@@ -313,9 +285,7 @@ fn test_push_pop() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 15: Multiple constraints combined - satisfiable
-// ============================================================================
+// ======== Test 15: Multiple constraints combined - satisfiable ========
 
 #[test]
 fn test_multiple_constraints_sat() {
@@ -339,9 +309,7 @@ fn test_multiple_constraints_sat() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 16: Conflicting constraints - unsatisfiable
-// ============================================================================
+// ======== Test 16: Conflicting constraints - unsatisfiable ========
 
 #[test]
 fn test_conflicting_constraints_unsat() {
@@ -363,9 +331,7 @@ fn test_conflicting_constraints_unsat() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 17: Complex concatenation with variables
-// ============================================================================
+// ======== Test 17: Complex concatenation with variables ========
 
 #[test]
 fn test_complex_concatenation_with_var() {
@@ -386,9 +352,7 @@ fn test_complex_concatenation_with_var() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 18: Variable concatenation both sides
-// ============================================================================
+// ======== Test 18: Variable concatenation both sides ========
 
 #[test]
 fn test_variable_concat_both_sides() {
@@ -409,9 +373,7 @@ fn test_variable_concat_both_sides() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 19: Prefix with empty string
-// ============================================================================
+// ======== Test 19: Prefix with empty string ========
 
 #[test]
 fn test_prefix_empty_string() {
@@ -428,9 +390,7 @@ fn test_prefix_empty_string() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 20: Suffix with empty string
-// ============================================================================
+// ======== Test 20: Suffix with empty string ========
 
 #[test]
 fn test_suffix_empty_string() {
@@ -447,9 +407,7 @@ fn test_suffix_empty_string() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 21: Contains with empty string
-// ============================================================================
+// ======== Test 21: Contains with empty string ========
 
 #[test]
 fn test_contains_empty_string() {
@@ -466,9 +424,7 @@ fn test_contains_empty_string() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 22: Concatenation identity: empty + empty = empty
-// ============================================================================
+// ======== Test 22: Concatenation identity: empty + empty = empty ========
 
 #[test]
 fn test_concat_empty_empty() {
@@ -488,9 +444,7 @@ fn test_concat_empty_empty() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 23: Disequality with different lengths
-// ============================================================================
+// ======== Test 23: Disequality with different lengths ========
 
 #[test]
 fn test_disequality_different_lengths() {
@@ -507,9 +461,7 @@ fn test_disequality_different_lengths() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 24: Prefix constraint with same string
-// ============================================================================
+// ======== Test 24: Prefix constraint with same string ========
 
 #[test]
 fn test_prefix_same_string() {
@@ -526,9 +478,7 @@ fn test_prefix_same_string() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 25: Suffix constraint with same string
-// ============================================================================
+// ======== Test 25: Suffix constraint with same string ========
 
 #[test]
 fn test_suffix_same_string() {
@@ -545,9 +495,7 @@ fn test_suffix_same_string() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 26: Contains with same string
-// ============================================================================
+// ======== Test 26: Contains with same string ========
 
 #[test]
 fn test_contains_same_string() {
@@ -564,9 +512,7 @@ fn test_contains_same_string() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 27: Multiple push/pop levels
-// ============================================================================
+// ======== Test 27: Multiple push/pop levels ========
 
 #[test]
 fn test_multiple_push_pop() {
@@ -600,9 +546,7 @@ fn test_multiple_push_pop() {
     assert!(matches!(result, TheoryResult::Sat));
 }
 
-// ============================================================================
-// Test 28: Conflicting prefix constraints
-// ============================================================================
+// ======== Test 28: Conflicting prefix constraints ========
 
 #[test]
 fn test_conflicting_prefix() {
@@ -621,9 +565,7 @@ fn test_conflicting_prefix() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 29: Conflicting suffix constraints
-// ============================================================================
+// ======== Test 29: Conflicting suffix constraints ========
 
 #[test]
 fn test_conflicting_suffix() {
@@ -642,9 +584,7 @@ fn test_conflicting_suffix() {
     assert!(matches!(result, TheoryResult::Unsat(_)));
 }
 
-// ============================================================================
-// Test 30: Reset solver state
-// ============================================================================
+// ======== Test 30: Reset solver state ========
 
 #[test]
 fn test_reset() {

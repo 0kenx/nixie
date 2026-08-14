@@ -444,7 +444,7 @@ impl RegexMatcher {
     ///
     /// Explicit stack, not recursion: the pattern nests as deeply as the
     /// caller builds it, this runs on every `is_match` call, and the return
-    /// type is `bool` — a depth cap could only answer "no look-around" for a
+    /// type is `bool` – a depth cap could only answer "no look-around" for a
     /// pattern that has one, which silently changes how it is matched.
     fn pattern_has_lookahead(regex: &AdvancedRegex) -> bool {
         Self::pattern_contains(regex, |node| {

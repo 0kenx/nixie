@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. An incremental
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. An incremental
 // projection/resultant cache with backtrack snapshots that requires reworking the
 // assignment/backtrack model to be truly incremental (backtrack currently resets
 // all arithmetic state and clears every cache per conflict). Cache-invalidation

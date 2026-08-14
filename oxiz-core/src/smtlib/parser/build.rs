@@ -27,14 +27,14 @@ use num_rational::Rational64;
 /// a built-in (so the parser resolves it against the declaration tables
 /// instead).
 ///
-/// The operators whose head carries extra syntax — `!`, `let`, `forall`,
+/// The operators whose head carries extra syntax – `!`, `let`, `forall`,
 /// `exists`, and the floating-point operators that take a leading rounding
-/// mode — are *not* listed here: their heads need work at open time, so
+/// mode – are *not* listed here: their heads need work at open time, so
 /// `Parser::open_compound` handles them before consulting this table.
 pub(super) fn operand_plan(op: &str) -> Option<Plan> {
     let plan =
         match op {
-            // ---- one operand ----
+            // ======== one operand ========
             "not" | "abs" | "to_real" | "to_int" | "is_int" | "bvnot" | "bvneg" | "fp.isNormal"
             | "fp.isSubnormal" | "fp.isZero" | "fp.isInfinite" | "fp.isNaN" | "fp.isNegative"
             | "fp.isPositive" | "fp.abs" | "fp.neg" | "fp.to_real" | "str.len" | "str.is_digit"
@@ -42,7 +42,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
             | "re.opt" | "re.comp" => Plan::Fixed(1),
 
-            // ---- two operands ----
+            // ======== two operands ========
             "mod" | "select" | "bvand" | "bvor" | "bvadd" | "bvsub" | "bvmul" | "bvult"
             | "bvslt" | "bvule" | "bvsle" | "bvugt" | "bvsgt" | "bvuge" | "bvsge" | "bvxor"
             | "bvnand" | "bvnor" | "bvxnor" | "bvcomp" | "bvsmod" | "bvudiv" | "bvsdiv"
@@ -51,11 +51,11 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "str.at" | "str.contains" | "str.prefixof" | "str.suffixof" | "str.in_re"
             | "str.in.re" | "re.diff" | "re.range" => Plan::Fixed(2),
 
-            // ---- three operands ----
+            // ======== three operands ========
             "ite" | "store" | "fp" | "str.substr" | "str.indexof" | "str.replace"
             | "str.replace_all" | "str.replace_re" | "str.replace_re_all" => Plan::Fixed(3),
 
-            // ---- operands until the closing paren ----
+            // ======== operands until the closing paren ========
             "and" | "or" | "=>" | "xor" | "=" | "distinct" | "+" | "-" | "*" | "div" | "/"
             | "<" | "<=" | ">" | ">=" | "str.++" | "str.<" | "str.<=" | "re.++" | "re.union"
             | "re.inter" => Plan::Variadic,
@@ -92,7 +92,7 @@ impl Parser<'_> {
     }
 
     /// Reported when [`operand_plan`] and the `build_*` methods disagree about
-    /// an operator — an internal inconsistency rather than a user error, but
+    /// an operator – an internal inconsistency rather than a user error, but
     /// surfaced as a parse error instead of panicking.
     fn plan_mismatch(&self, op: &str) -> OxizError {
         OxizError::ParseError {
@@ -115,7 +115,7 @@ impl Parser<'_> {
     /// operator except `concat`: both operands must have one and the same
     /// `(_ BitVec w)` sort. `TermManager`'s `mk_bv_*` constructors have no
     /// error channel and take the left operand's width on a mismatch, so the
-    /// parser is the layer that must reject it — exactly where Z3 does.
+    /// parser is the layer that must reject it – exactly where Z3 does.
     fn check_bv_binary_widths(&self, op: &str, x: TermId, y: TermId) -> Result<()> {
         let (xw, yw) = (self.bv_sort_width(x), self.bv_sort_width(y));
         match (xw, yw) {
@@ -275,7 +275,7 @@ impl Parser<'_> {
             // `(str.is_digit s)` holds iff `s` is a single-character string
             // whose character is a decimal digit. That is exactly the language
             // of `(re.range "0" "9")`, so it lowers to a membership constraint
-            // with no new term kind — and stays exact for symbolic operands.
+            // with no new term kind – and stays exact for symbolic operands.
             "str.is_digit" => {
                 let lo = self.manager.mk_string_lit("0");
                 let hi = self.manager.mk_string_lit("9");
@@ -428,7 +428,7 @@ impl Parser<'_> {
     /// binary chains here. A fold turns `n` operands into a chain that is
     /// *deeper* than the one node the driver counted for this frame, so each
     /// such arm first charges the chain against the term-depth budget via
-    /// [`Parser::charge_fold_depth`](super::terms) — otherwise a flat
+    /// [`Parser::charge_fold_depth`](super::terms) – otherwise a flat
     /// `(str.++ x1 … x100000)` of syntactic depth 2 would build a
     /// 100 000-deep term while `MAX_PARSE_DEPTH` reported it as depth 2.
     pub(super) fn build_variadic(&mut self, op: &str, args: &[TermId]) -> Result<TermId> {
@@ -547,7 +547,7 @@ impl Parser<'_> {
 }
 
 /// Binary operators that require both operands to share one `(_ BitVec w)`
-/// sort — every SMT-LIB binary bit-vector operator except `concat`, which
+/// sort – every SMT-LIB binary bit-vector operator except `concat`, which
 /// joins different widths by design. The comparison rewrites (`bvugt` and
 /// friends) are included because their operands face the same rule before
 /// the swap.

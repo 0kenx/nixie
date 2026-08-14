@@ -63,7 +63,7 @@ enum CtxFrame {
         else_branch: TermId,
     },
     /// Conjunction arguments are simplified left to right, each one under a
-    /// context extended by the previous ones — so they cannot be batched like
+    /// context extended by the previous ones – so they cannot be batched like
     /// the other n-ary nodes. `issued` counts the `Eval`s pushed so far;
     /// `done` collects their results.
     AndStep {
@@ -180,8 +180,8 @@ impl<'a> CtxSolverSimplifyTactic<'a> {
     /// # Explicit work stack
     ///
     /// This used to recurse natively once per level of boolean/arithmetic
-    /// nesting with no guard at all. The return type is `TermId` — there is
-    /// no error channel — so a depth cap could only have returned a term that
+    /// nesting with no guard at all. The return type is `TermId` – there is
+    /// no error channel – so a depth cap could only have returned a term that
     /// silently stopped being simplified partway down while still being
     /// presented as the simplification of the whole. The walk is therefore
     /// driven by an explicit heap [`Vec`] of [`CtxFrame`]s instead, mirroring
@@ -198,7 +198,7 @@ impl<'a> CtxSolverSimplifyTactic<'a> {
     /// helper that hashed the assignments down to a single `u64`: two
     /// different contexts that collided on that 64-bit digest would have made
     /// this function return a term simplified under the **wrong** set of
-    /// known-true facts — a genuine (if improbable) unsoundness, since the
+    /// known-true facts – a genuine (if improbable) unsoundness, since the
     /// whole point of the context is that facts in it are assumed. Interning
     /// compares the assignments themselves, so distinct contexts can never
     /// alias.
@@ -409,8 +409,8 @@ impl<'a> CtxSolverSimplifyTactic<'a> {
             // Every other node is opaque to *contextual* simplification: it
             // is handed to `TermManager::simplify` (in `finish`) but its
             // children are not re-simplified under the surrounding context.
-            // That is an incompleteness, not an unsoundness — the term is
-            // returned intact rather than replaced by a default — and it is
+            // That is an incompleteness, not an unsoundness – the term is
+            // returned intact rather than replaced by a default – and it is
             // the behaviour this tactic has always had. `None` (a dangling
             // id) lands here too and likewise yields the id unchanged.
             _ => self.finish(key, term, state, results),
@@ -499,7 +499,7 @@ impl<'a> CtxSolverSimplifyTactic<'a> {
         }
     }
 
-    /// Normalize, memoize and publish the result for one node — the tail the
+    /// Normalize, memoize and publish the result for one node – the tail the
     /// recursive version ran after every match arm.
     fn finish(
         &mut self,
@@ -703,7 +703,7 @@ fn rewrite_ite_in_context(
     depth: usize,
     manager: &mut TermManager,
 ) -> TermId {
-    // Hard cap — safe to return original (sound: we just don't simplify deeper)
+    // Hard cap – safe to return original (sound: we just don't simplify deeper)
     if depth > 32 {
         return term_id;
     }
@@ -717,10 +717,10 @@ fn rewrite_ite_in_context(
         TermKind::Ite(cond, then_branch, else_branch) => {
             let not_cond = manager.mk_not(cond);
             if ctx.contains(&cond) {
-                // Condition is known true — take then-branch
+                // Condition is known true – take then-branch
                 rewrite_ite_in_context(then_branch, ctx, depth + 1, manager)
             } else if ctx.contains(&not_cond) {
-                // Condition is known false — take else-branch
+                // Condition is known false – take else-branch
                 rewrite_ite_in_context(else_branch, ctx, depth + 1, manager)
             } else {
                 // Descend into branches with augmented, non-overlapping contexts
@@ -773,7 +773,7 @@ mod tests {
         }
     }
 
-    // ── EP-3: dead-branch ITE elimination tests ──────────────────────────────
+    // ======== EP-3: dead-branch ITE elimination tests ========
 
     /// Goal: [cond, If(cond, foo, bar)] → ITE replaced by `foo` because
     /// `cond` is present in the sibling-assertion context.
@@ -804,7 +804,7 @@ mod tests {
                 );
             }
             TacticResult::Solved(SolveResult::Sat) => {
-                // All assertions collapsed to true — also acceptable
+                // All assertions collapsed to true – also acceptable
             }
             other => panic!("unexpected result: {other:?}"),
         }

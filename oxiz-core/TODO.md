@@ -1,6 +1,6 @@
 # oxiz-core TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness sweep and hardening pass
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 soundness sweep and hardening pass
 
 Reference: Z3's `ast/`, `util/`, and `tactic/` directories
 
@@ -193,7 +193,7 @@ Reference: Z3's `ast/`, `util/`, and `tactic/` directories
   - [x] `Drop` / `Clone` / `PartialEq` on the deep public enums made iterative
 - [x] Non-ASCII-safe string handling (no slicing on byte offsets inside a code point)
 - [x] E-matching trigger inference restricted to uninterpreted heads (mirrors Z3's `pattern_inference`; removes a matching loop)
-- [x] `to_cnf_tseitin` — equisatisfiable linear-size CNF; `TseitinCnfTactic` rewired to it
+- [x] `to_cnf_tseitin` – equisatisfiable linear-size CNF; `TseitinCnfTactic` rewired to it
 - [x] Cooper quantifier elimination: Xor/Ite 4-way exponential expansion fixed
 - [x] `clippy::unwrap_used` denied crate-wide; clippy clean in dev and release profiles
 

@@ -39,9 +39,9 @@ fn step_declaration_count(output: &str, id: u64) -> usize {
     output.matches(&pattern).count()
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Behavior preservation: a small, hand-checkable shared-premise DAG.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Builds a "diamond": `root` resolves `p1` and `p2`, and both `p1` and `p2`
 /// take the *same* `shared` node as their sole premise.
@@ -134,9 +134,9 @@ fn diamond_shaped_dag_root_still_resolves_both_branches() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Deep structures: built iteratively, exercised on a 1 MiB stack.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// `depth + 1` nodes chained one premise deep: `0 <- 1 <- 2 <- ... <- depth`.
 /// Built with a plain iterative loop -- a recursive builder would overflow

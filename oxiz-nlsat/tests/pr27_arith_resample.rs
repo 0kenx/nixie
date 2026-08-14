@@ -5,13 +5,13 @@
 //!
 //! The search used to treat an arithmetic variable's empty feasible cell
 //! (`ArithDecision::GreedyEmpty`) as a proof of global `Unsat` whenever it
-//! happened at decision level 0 — on the theory that no *boolean* choice
+//! happened at decision level 0 – on the theory that no *boolean* choice
 //! remained to retract. That reasoning ignores that the *arithmetic*
 //! witnesses committed so far were themselves free choices among many valid
 //! ones. A bare, unconstrained product equality like `x·y = c` is the
 //! sharpest example: the very first witness `IntervalSet::sample` offers an
 //! unconstrained variable is `0` (its "always simplest" fallback), and
-//! `0·y = c` for nonzero `c` has no solution for `y` — so the old code
+//! `0·y = c` for nonzero `c` has no solution for `y` – so the old code
 //! answered `Unsat` for a trivially satisfiable formula.
 //!
 //! Every test below is a shape verified to reproduce a *wrong* answer on the
@@ -171,7 +171,7 @@ fn test_pr27_chained_product_equalities_is_sat() {
 /// single exact value by a linear equality, feeding a genuinely-empty
 /// quadratic constraint. `x = 4 ∧ x²+y² = 10` forces `y² = -6`, impossible.
 /// Without the forced-chain certifier, re-sampling `x` alone cannot recover
-/// this — `x`'s region really is the singleton `{4}` — so the fix must
+/// this – `x`'s region really is the singleton `{4}` – so the fix must
 /// promote the resulting dead end to a genuine lemma instead of leaving it
 /// at `Unknown`.
 #[test]
@@ -224,7 +224,7 @@ fn test_pr27_forced_value_on_curve_stays_sat() {
 /// strict lower bounds whose sum already reaches a strict upper bound on
 /// their total. `a > 10 ∧ b > 10 ∧ a+b < 15` is UNSAT since `a+b` is forced
 /// `> 20`. Neither `certify_sign_conflict` (no multiplicative coupling here)
-/// nor a single variable's own Sturm region can see this — only the additive
+/// nor a single variable's own Sturm region can see this – only the additive
 /// combination is inconsistent.
 #[test]
 fn test_pr27_additive_lower_bounds_exceed_sum_upper_bound_is_unsat() {
@@ -247,7 +247,7 @@ fn test_pr27_additive_lower_bounds_exceed_sum_upper_bound_is_unsat() {
 }
 
 /// Non-strict boundary case built from negated-`Lt` (`>=`) lower bounds:
-/// `a >= 3 ∧ b >= 4 ∧ a+b < 7` is still UNSAT — the non-strict lower bounds
+/// `a >= 3 ∧ b >= 4 ∧ a+b < 7` is still UNSAT – the non-strict lower bounds
 /// force `a+b >= 7`, contradicting the strict upper bound at exactly the
 /// same total. Exercises the `(AtomKind::Lt, false)` "not less than" lower
 /// bound parsing branch and the equal-bound tie-break in

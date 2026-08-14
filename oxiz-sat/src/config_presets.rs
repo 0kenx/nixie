@@ -20,15 +20,15 @@
 //! worktree fails the identical debug invariant, and the root cause (the
 //! "simplified approach" watch-rebuild comment at the end of `inprocess()`)
 //! is present in v0.3.2 too. A differential benchmark against z3 confirms
-//! upstream is the weaker reference here — v0.3.2 disagrees with z3 on 16
-//! of 270 sampled instances vs main's 4 — so matching upstream's
+//! upstream is the weaker reference here – v0.3.2 disagrees with z3 on 16
+//! of 270 sampled instances vs main's 4 – so matching upstream's
 //! inprocessing-on preset values is not a soundness argument. The presets
 //! therefore ship inprocessing *off*; the real fix (a correct watch rebuild
 //! in `inprocess()`) is a tracked follow-up, now well-scoped since the
 //! mechanism is named.
 //!
 //! Callers who want inprocessing and accept the known wrong-verdict path may
-//! still opt in explicitly via [`crate::solver::SolverConfig`] — but no preset
+//! still opt in explicitly via [`crate::solver::SolverConfig`] – but no preset
 //! turns it on by default. See `INTEGRATION_NOTES.md` §1 for the full
 //! blast-radius measurements.
 

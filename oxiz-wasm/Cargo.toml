@@ -19,9 +19,9 @@ namespace = "cooljapan"
 wasm-opt = false
 
 [features]
-# full: all features enabled — default for development / server-side builds
+# full: all features enabled – default for development / server-side builds
 full = ["proof", "interpolation", "spacer", "ml_branching", "wasm_bench"]
-# minimal: size-optimized build — excludes proof/interpolation/spacer/ml/benchmarks
+# minimal: size-optimized build – excludes proof/interpolation/spacer/ml/benchmarks
 # Expected size reduction: ~35–45% vs full (removes proof DAG, Spacer PDR engine,
 # Craig interpolation infrastructure, MBQI-ML heuristics, and wasm bench harness).
 # Core solver, all 19 theory solvers, and SMT-LIB2 parser are always included.

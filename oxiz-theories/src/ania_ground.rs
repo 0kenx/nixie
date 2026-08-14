@@ -2,8 +2,8 @@
 //!
 //! Handles formulas whose arrays are defined by constant `store` towers and
 //! whose free integer variables (indices and similar) lie in finite boxes.
-//! Under each concrete assignment we evaluate the full term DAG — including
-//! nested `select`, `ite`, `abs`-as-ite, and multi-factor products — via
+//! Under each concrete assignment we evaluate the full term DAG – including
+//! nested `select`, `ite`, `abs`-as-ite, and multi-factor products – via
 //! read-over-write on the store maps.
 //!
 //! Works on purified assertions (`c = select(A,i)` interfaces + pure arith)
@@ -193,7 +193,7 @@ pub fn try_decide_finite_domain_nia(
                     }
                     stack.push(*body);
                 }
-                // div / mod / apply / select / store / quantifiers / … — not
+                // div / mod / apply / select / store / quantifiers / … – not
                 // concretely evaluable here.
                 _ => return false,
             }
@@ -229,7 +229,7 @@ pub fn try_decide_finite_domain_nia(
         return None;
     }
     // Any purification interface (`c = (select A i)`) must read a *defined*
-    // array — but `arrays` is empty here (no stores), so an uninterpreted
+    // array – but `arrays` is empty here (no stores), so an uninterpreted
     // array select cannot be concretely evaluated. Refuse to decide rather
     // than report a false verdict.
     if interfaces.iter().any(|i| !arrays.contains_key(&i.array)) {
@@ -256,14 +256,14 @@ pub fn try_decide_finite_domain_nia(
     // lifted `ite`) must also be concretely decidable once the enumerated
     // integers are bound. A guard that references a free Boolean variable
     // (never enumerated here) could neither fire nor be refuted, leaving `v`
-    // unbound and the atom that reads it silently satisfied — a false `Sat`.
+    // unbound and the atom that reads it silently satisfied – a false `Sat`.
     for &(premise, _var, body) in &cond_defs {
         if !fully_evaluable(premise, manager) || !fully_evaluable(body, manager) {
             return None;
         }
     }
     // Every free integer variable must carry a small arithmetic box, else the
-    // search space is not finite (or too large) — bail to the caller.
+    // search space is not finite (or too large) – bail to the caller.
     let mut domains: Vec<(TermId, i64, i64)> = Vec::new();
     let mut total: u64 = 1;
     for &v in &free_ints {
@@ -325,7 +325,7 @@ fn realize_interfaces(
 ) -> bool {
     for iface in interfaces {
         let Some(idx_val) = eval_int(iface.index, manager, arrays, env) else {
-            continue; // index not yet bound — skip for now
+            continue; // index not yet bound – skip for now
         };
         let Some(i64v) = idx_val.to_i64() else {
             return false;
@@ -335,7 +335,7 @@ fn realize_interfaces(
         };
         // Read-over-write: a written index resolves; an unwritten index on an
         // unknown base (default = None) does not, so leave the interface
-        // unbound and let a later round / the search retry — never fabricate.
+        // unbound and let a later round / the search retry – never fabricate.
         if let Some(sel) = interp
             .entries
             .get(&i64v)
@@ -524,7 +524,7 @@ fn search_rec(
         if *leaves > MAX_LEAVES {
             return None;
         }
-        // Full assignment — atoms already checked when fully bound.
+        // Full assignment – atoms already checked when fully bound.
         return Some(true);
     }
     let (var, lo, hi) = domains[pos];
@@ -556,7 +556,7 @@ fn search_rec(
 pub(crate) struct ArrayInterp {
     /// `None` = unknown base (a declared array variable the interpretation
     /// does not constrain). Reads of unwritten indices then have no value,
-    /// which propagates as a deferred (`None`) evaluation — Sat-only: a model
+    /// which propagates as a deferred (`None`) evaluation – Sat-only: a model
     /// can be witnessed when every read hits a written index, but no `Unsat`
     /// may rest on an index the interpretation never wrote. Mirrors v0.3.2's
     /// `nl_eval::Value::Mapping` `read_root` returning `None` for an unknown
@@ -1116,7 +1116,7 @@ pub(crate) fn eval_array_def(term: TermId, manager: &TermManager) -> Option<Arra
 /// Evaluate a `select` over a store tower at a ground integer index
 /// (read-over-write) to a definite integer. Returns `None` when the read
 /// hits an unwritten index of an unknown base (a declared array var), or the
-/// term is not such a `select` — Sat-only: callers must defer rather than
+/// term is not such a `select` – Sat-only: callers must defer rather than
 /// fabricate a value. Used by `nl_model_search` to fold array reads into the
 /// arithmetic search (porting v0.3.2's `nl_eval` select handling).
 pub(crate) fn eval_select_term(select: TermId, manager: &TermManager) -> Option<BigInt> {
@@ -1231,7 +1231,7 @@ fn parse_cond_definition(q: TermId, manager: &TermManager) -> Option<(TermId, Te
 /// `true` iff `term` mentions a free Boolean-sorted variable. The finite-domain
 /// searches enumerate only integer variables, so a Boolean variable that an
 /// atom, a Boolean constraint, or an encoder-lifted-`ite` guard depends on can
-/// neither be pinned nor refuted — its dependent term stays unbound and would
+/// neither be pinned nor refuted – its dependent term stays unbound and would
 /// be silently satisfied. Callers must refuse to decide in that case.
 fn references_free_bool_var(term: TermId, manager: &TermManager) -> bool {
     let mut stack = vec![term];

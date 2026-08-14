@@ -217,7 +217,7 @@ impl Trigger {
     ///
     /// Explicit stack: pattern nesting comes from a caller-supplied
     /// `:pattern` trigger and is not bounded by anything this type controls,
-    /// and the return type is `()` — a depth cap could only drop variables
+    /// and the return type is `()` – a depth cap could only drop variables
     /// from the trigger, which silently changes which instantiations are
     /// generated.
     fn collect_vars(pattern: &Pattern, vars: &mut FxHashSet<VarId>) {
@@ -750,9 +750,9 @@ impl EMatchEngine {
         self.model.clear();
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // E-graph-aware matching methods (using EufSolver)
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// Perform E-matching over the EUF solver's E-graph.
     ///
@@ -929,7 +929,7 @@ impl EMatchEngine {
     /// choice points are needed here because the ground application is
     /// determined by the ground term, so the walk never has to backtrack.
     /// Nested operands are pushed in reverse so they are matched left to
-    /// right and before the next sibling — the order the recursive descent
+    /// right and before the next sibling – the order the recursive descent
     /// used.
     fn match_args_egraph(
         &self,

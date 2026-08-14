@@ -27,7 +27,7 @@ fn main() {
     println!("  - Int: {:?}", tm.sorts.int_sort);
     println!("  - Real: {:?}\n", tm.sorts.real_sort);
 
-    // ===== Boolean Terms =====
+    // ======== Boolean Terms ========
     println!("--- Boolean Terms ---");
     let p = tm.mk_var("p", tm.sorts.bool_sort);
     let q = tm.mk_var("q", tm.sorts.bool_sort);
@@ -54,7 +54,7 @@ fn main() {
     let complex_bool = tm.mk_or(vec![and_pq, not_r]);
     println!("Complex: (p AND q) OR (NOT r) = {:?}\n", complex_bool);
 
-    // ===== Integer Arithmetic =====
+    // ======== Integer Arithmetic ========
     println!("--- Integer Arithmetic ---");
     let x = tm.mk_var("x", tm.sorts.int_sort);
     let y = tm.mk_var("y", tm.sorts.int_sort);
@@ -112,7 +112,7 @@ fn main() {
         complex_arith
     );
 
-    // ===== Bitvector Terms =====
+    // ======== Bitvector Terms ========
     println!("--- Bitvector Terms ---");
     let bv8_sort = tm.sorts.bitvec(8); // 8-bit bitvector
     let bv32_sort = tm.sorts.bitvec(32); // 32-bit bitvector
@@ -142,7 +142,7 @@ fn main() {
     println!("  a XOR b: {:?}", bv_xor);
     println!("  a + b: {:?}\n", bv_add);
 
-    // ===== Hash Consing Demonstration =====
+    // ======== Hash Consing Demonstration ========
     println!("--- Hash Consing (Term Sharing) ---");
     let p1 = tm.mk_var("shared", tm.sorts.bool_sort);
     let p2 = tm.mk_var("shared", tm.sorts.bool_sort);
@@ -153,7 +153,7 @@ fn main() {
     println!("  Are they identical? {}", p1 == p2);
     println!("  (Hash consing ensures structural sharing)\n");
 
-    // ===== Term Inspection =====
+    // ======== Term Inspection ========
     println!("--- Term Inspection ---");
     if let Some(term) = tm.get(and_pq) {
         println!("Inspecting term {:?}:", and_pq);
@@ -164,7 +164,7 @@ fn main() {
         }
     }
 
-    // ===== ITE (If-Then-Else) =====
+    // ======== ITE (If-Then-Else) ========
     println!("\n--- ITE (If-Then-Else) ---");
     let condition = p;
     let then_val = tm.mk_int(100);
@@ -173,12 +173,12 @@ fn main() {
 
     println!("ite(p, 100, 0) = {:?}", ite);
 
-    // ===== Distinct =====
+    // ======== Distinct ========
     println!("\n--- Distinct ---");
     let distinct = tm.mk_distinct(vec![x, y, z]);
     println!("distinct(x, y, z) = {:?}", distinct);
 
-    // ===== Statistics =====
+    // ======== Statistics ========
     println!("\n--- Term Manager Statistics ---");
     println!("Total terms created: {}", tm.term_count());
     println!("  (Due to hash consing, identical terms are shared)");

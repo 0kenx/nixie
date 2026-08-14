@@ -4,7 +4,7 @@
 //! These exercise the full in-scope path: the core parser turns the SMT-LIB
 //! regex sublanguage into `RegLan`-sorted AST nodes, [`compile_regex`] lowers a
 //! ground regex operand into a Brzozowski-derivative [`Regex`], and the
-//! [`StringSolver`] decides membership — including *model construction* for
+//! [`StringSolver`] decides membership – including *model construction* for
 //! variables constrained only by regex membership (previously returned
 //! `Unknown`, matching z3's `Sat`), negated membership, empty-intersection
 //! conflicts, and length interaction.

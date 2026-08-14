@@ -45,13 +45,13 @@ use num_rational::Rational64;
 /// # Deeply nested values
 ///
 /// [`Value::Array`] and [`Value::Datatype`] own their children *by value*, so
-/// a value's nesting depth is bounded only by what built it — an array whose
+/// a value's nesting depth is bounded only by what built it – an array whose
 /// exception values are themselves arrays nests one level per `store`. Every
 /// structural trait is therefore written by hand and driven by an explicit
 /// heap worklist instead of being derived: a derived `Drop`, `Clone`,
 /// `PartialEq` or `Debug` recurses once per level and kills the *process* with
-/// `fatal runtime error: stack overflow` — an abort, not an error a caller can
-/// handle — from about 20 000 levels down on the ~1 MiB stack an embedder's
+/// `fatal runtime error: stack overflow` – an abort, not an error a caller can
+/// handle – from about 20 000 levels down on the ~1 MiB stack an embedder's
 /// worker thread typically gets. `Drop` is the sharpest edge of the four: it
 /// runs even when the value was built and walked entirely iteratively.
 ///
@@ -79,7 +79,7 @@ pub enum Value {
     Undefined,
 }
 
-// ===== Structural traits: iterative, never recursive =====
+// ======== Structural traits: iterative, never recursive ========
 //
 // Everything in this section walks a `Value` with an explicit `Vec` worklist,
 // for the reason spelled out on `Value` itself. The shared entry point is
@@ -101,7 +101,7 @@ impl Value {
     ///
     /// Used by [`Drop`]: after this returns the node owns only leaves, whose
     /// own drop cannot recurse, so dropping the node is flat. Leaf children
-    /// are deliberately left in place — pushing them would cost a worklist
+    /// are deliberately left in place – pushing them would cost a worklist
     /// allocation per node and buy nothing.
     fn take_children(&mut self, out: &mut Vec<Value>) {
         match self {
@@ -193,8 +193,8 @@ impl Clone for Value {
             match step {
                 CloneStep::Visit(Value::Array(default, excs)) => {
                     steps.push(CloneStep::FinishArray { base: out.len() });
-                    // Pushed in reverse so the children pop — and therefore
-                    // finish — in `[default, key0, value0, ...]` order.
+                    // Pushed in reverse so the children pop – and therefore
+                    // finish – in `[default, key0, value0, ...]` order.
                     for (key, value) in excs.iter().rev() {
                         steps.push(CloneStep::Visit(value));
                         steps.push(CloneStep::Visit(key));
@@ -249,7 +249,7 @@ impl PartialEq for Value {
     /// Real literal evaluates to `Rational(1/1)` while every computed Real
     /// result is funnelled through the `denom == 1 => Value::Int` normalization
     /// in the evaluator's `from_rational`, so `(= 1.0 (+ 0.5 0.5))` compared
-    /// `Rational(1/1)` against `Int(1)` and answered `false` — a wrong verdict
+    /// `Rational(1/1)` against `Int(1)` and answered `false` – a wrong verdict
     /// for `=`, and the same wrong answer for `distinct`, for `select`'s index
     /// lookup and for [`FuncInterp::evaluate`]'s argument table, all of which
     /// compare `Value`s with `==`. Nothing relies on the two shapes being
@@ -449,7 +449,7 @@ impl Value {
     /// soundly defaulted.
     ///
     /// Dispatches on `sort`'s [`SortKind`] (looked up in `sorts`), not on the
-    /// raw [`SortId`] integer — see [`crate::model::ValueFactory::default_value`]
+    /// raw [`SortId`] integer – see [`crate::model::ValueFactory::default_value`]
     /// for why that distinction matters. This associated function has no
     /// per-sort counter to draw from, so unlike `ValueFactory::default_value`
     /// it cannot mint a *fresh* uninterpreted element (two calls for the same
@@ -647,8 +647,8 @@ pub struct Model {
     /// Function interpretations for uninterpreted functions, keyed by the
     /// function *symbol* rather than any single [`TermId`].
     ///
-    /// [`crate::ast::TermKind::Apply`] — the only term shape that names an
-    /// uninterpreted function — carries the function as a `Spur` (its
+    /// [`crate::ast::TermKind::Apply`] – the only term shape that names an
+    /// uninterpreted function – carries the function as a `Spur` (its
     /// interned name), not a `TermId`: every `(f x)`, `(f y)`, ... gets its
     /// own distinct `TermId`, all sharing the same `Spur`. A `TermId` key
     /// would therefore need one `FuncInterp` per call site instead of one per
@@ -789,7 +789,7 @@ mod tests {
     }
 
     /// A string value's `Display` is SMT-LIB *source text*, so it must carry
-    /// the same escapes the printers emit — it used to carry none at all,
+    /// the same escapes the printers emit – it used to carry none at all,
     /// which turned any value containing a quote into unreadable output.
     #[test]
     fn test_value_string_display_is_a_wellformed_literal() {
@@ -938,7 +938,7 @@ mod tests {
         assert_eq!(Value::default_for_sort(SortId(9_999), &manager), None);
     }
 
-    // ── FuncInterp ────────────────────────────────────────────────────────────
+    // ======== FuncInterp ========
 
     #[test]
     fn test_func_interp_new_empty() {
@@ -980,7 +980,7 @@ mod tests {
         );
     }
 
-    // ── Model::add_func_interp / get_func_interp ──────────────────────────────
+    // ======== Model::add_func_interp / get_func_interp ========
 
     #[test]
     fn test_model_add_and_get_func_interp() {
@@ -1008,11 +1008,11 @@ mod tests {
         assert!(model.get_func_interp(g).is_none());
     }
 
-    // ── Deeply nested values ──────────────────────────────────────────────
+    // ======== Deeply nested values ========
     //
     // Regression tests for: "`Value` recurses structurally, so a deep value
     // aborts the process". Every case builds its value with an *iterative*
-    // loop — a recursive helper would overflow before the assertion ran — and
+    // loop – a recursive helper would overflow before the assertion ran – and
     // runs on a thread with an explicitly small (1 MiB) stack, the size an
     // embedder's worker thread typically gets. A stack overflow aborts the
     // whole process rather than failing a test, so "the case returned at all"
@@ -1031,7 +1031,7 @@ mod tests {
     /// Run `body` on a thread with a deliberately small stack.
     ///
     /// A stack overflow inside `body` aborts the process rather than
-    /// unwinding, so this helper cannot turn one into a test failure — that
+    /// unwinding, so this helper cannot turn one into a test failure – that
     /// is the point. The test run itself fails, loudly.
     fn on_small_stack<T, F>(body: F) -> T
     where
@@ -1239,7 +1239,7 @@ mod tests {
         );
     }
 
-    // ── Int / Real value-shape bridge ─────────────────────────────────────
+    // ======== Int / Real value-shape bridge ========
 
     #[test]
     fn test_value_eq_bridges_int_and_integral_rational() {

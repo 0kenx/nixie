@@ -76,7 +76,7 @@ impl ParallelProofChecker {
     /// - [`ProofCheckResult::Invalid`] if any step is malformed (a premise that
     ///   does not reference a strictly-earlier step id);
     /// - [`ProofCheckResult::Incomplete`] for a structurally well-formed but
-    ///   semantically unverified proof — the honest verdict, since RUP/resolution
+    ///   semantically unverified proof – the honest verdict, since RUP/resolution
     ///   checking is not implemented for this representation.
     pub fn check_proof(&self, proof_steps: &[ProofStep]) -> ProofCheckResult {
         if proof_steps.is_empty() {

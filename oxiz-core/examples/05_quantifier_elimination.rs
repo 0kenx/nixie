@@ -28,7 +28,7 @@ fn main() {
 
     let mut tm = TermManager::new();
 
-    // ===== Example 1: Building Quantified Formulas =====
+    // ======== Example 1: Building Quantified Formulas ========
     println!("--- Example 1: Building Quantified Formulas ---");
 
     let x = tm.mk_var("x", tm.sorts.int_sort);
@@ -52,7 +52,7 @@ fn main() {
     println!("Exists term: {:?}", exists_formula);
     println!();
 
-    // ===== Example 2: QE-Lite Configuration =====
+    // ======== Example 2: QE-Lite Configuration ========
     println!("--- Example 2: QE-Lite Configuration ---");
 
     let config = QeLiteConfig::default();
@@ -73,7 +73,7 @@ fn main() {
     println!("Custom config created: max_formula_size=500, divisibility_handling=false");
     println!();
 
-    // ===== Example 3: QE-Lite Solver =====
+    // ======== Example 3: QE-Lite Solver ========
     println!("--- Example 3: QE-Lite Solver ---");
 
     let mut qe_solver = QeLiteSolver::new();
@@ -84,7 +84,7 @@ fn main() {
     print_qe_lite_result("exists x. (x > 0 AND y = x + 5)", &result);
     println!();
 
-    // ===== Example 4: Universal Quantifier =====
+    // ======== Example 4: Universal Quantifier ========
     println!("--- Example 4: Universal Quantifier ---");
 
     // forall x. (x >= 0 => x >= -1)
@@ -102,7 +102,7 @@ fn main() {
     print_qe_lite_result("forall x. (x >= 0 => x >= -1)", &result2);
     println!();
 
-    // ===== Example 5: QE-Lite Statistics =====
+    // ======== Example 5: QE-Lite Statistics ========
     println!("--- Example 5: QE-Lite Statistics ---");
 
     let stats = qe_solver.stats();
@@ -114,7 +114,7 @@ fn main() {
     println!("  Bound eliminations: {}", stats.bound_elims);
     println!();
 
-    // ===== Example 6: QeLiteResult API =====
+    // ======== Example 6: QeLiteResult API ========
     println!("--- Example 6: QeLiteResult API ---");
 
     let true_term = tm.mk_true();
@@ -146,7 +146,7 @@ fn main() {
     );
     println!();
 
-    // ===== Example 7: Linear Constraints =====
+    // ======== Example 7: Linear Constraints ========
     println!("--- Example 7: Linear Constraint Bounds ---");
 
     let a = tm.mk_var("a", tm.sorts.int_sort);
@@ -170,7 +170,7 @@ fn main() {
     print_qe_lite_result("exists a. (0 < a < 10 AND b = a + 5)", &result3);
     println!();
 
-    // ===== Example 8: Reset Statistics =====
+    // ======== Example 8: Reset Statistics ========
     println!("--- Example 8: Reset Statistics ---");
 
     println!("Before reset: {} attempts", qe_solver.stats().attempts);
@@ -178,7 +178,7 @@ fn main() {
     println!("After reset: {} attempts", qe_solver.stats().attempts);
     println!();
 
-    // ===== Example 9: QE Algorithms Overview =====
+    // ======== Example 9: QE Algorithms Overview ========
     println!("--- Example 9: QE Algorithms Overview ---");
 
     println!("Quantifier Elimination Algorithms:");
@@ -196,7 +196,7 @@ fn main() {
     println!("NRA = Nonlinear Real Arithmetic");
     println!();
 
-    // ===== Example 10: Non-Linear (QE-Lite incomplete) =====
+    // ======== Example 10: Non-Linear (QE-Lite incomplete) ========
     println!("--- Example 10: Non-Linear (Beyond QE-Lite) ---");
 
     // exists x. (x * x = y) - non-linear
@@ -216,7 +216,7 @@ fn main() {
     println!("  Full QE would produce: y >= 0 AND exists k. (y = k^2)");
     println!();
 
-    // ===== Example 11: Nested Quantifiers =====
+    // ======== Example 11: Nested Quantifiers ========
     println!("--- Example 11: Nested Quantifiers ---");
 
     println!("Formula: forall x. exists y. (y > x)");

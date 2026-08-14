@@ -2,12 +2,12 @@
 //!
 //! Two classes of defect are pinned here:
 //!
-//! * **stack depth** — walks whose return type has no error channel and which
+//! * **stack depth** – walks whose return type has no error channel and which
 //!   are now explicit-stack driven (`compile_regex`, `const_string`,
 //!   `collect_atoms`, `AigCut::evaluate_node`, `compute_cuts`, the two
 //!   Plaisted-Greenbaum encoders). Reaching the assertion is the proof: an
 //!   overflow aborts the process.
-//! * **wrong or fatal answers** — a `while match(inner) {}` loop that never
+//! * **wrong or fatal answers** – a `while match(inner) {}` loop that never
 //!   terminated on an ε-matching body, `split_at` panicking off a UTF-8
 //!   boundary, `{5,2}` underflowing a repetition count, and a
 //!   `_ => Ok(true)` arm that reported every string as a member of the regex
@@ -22,7 +22,7 @@ use oxiz_theories::string::regex_solver::{Regex as SolverRegex, RegexSolver};
 /// A worker stack small enough that any surviving recursion overflows it.
 ///
 /// This constant and every nesting depth below are scaled **together**, and
-/// only their ratio — about 21 bytes of stack per nesting level — decides what
+/// only their ratio – about 21 bytes of stack per nesting level – decides what
 /// these tests detect. A recursive walk needs tens of bytes per frame at the
 /// very least, so it still overflows; an iterative one uses O(1) native stack,
 /// so it still returns. Raising a depth back to 100_000 without also restoring
@@ -40,13 +40,13 @@ fn on_worker_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static)
         .expect("worker thread must return, not abort")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 // regex_membership::compile_regex / const_string
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
 
 #[test]
 fn deep_regex_term_compiles() {
-    // `(re.* (re.* … (str.to_re "a") …))` — `re.*` is idempotent on the built
+    // `(re.* (re.* … (str.to_re "a") …))` – `re.*` is idempotent on the built
     // regex but the *term* is genuinely nested, so the compiler walks every
     // level.
     const LEVELS: usize = 12_500;
@@ -93,9 +93,9 @@ fn long_concat_regex_literal_compiles() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// advanced_regex — ε-body repetition must terminate, `{5,2}` must not underflow
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// advanced_regex – ε-body repetition must terminate, `{5,2}` must not underflow
+// ========  ========
 
 #[test]
 fn star_over_epsilon_body_terminates() {
@@ -132,9 +132,9 @@ fn inverted_repeat_range_does_not_underflow() {
     assert!(!matched, "`a{{5,2}}` must not match a two-character string");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// regex_solver — UTF-8 splitting, and no `_ => Ok(true)` blanket membership
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// regex_solver – UTF-8 splitting, and no `_ => Ok(true)` blanket membership
+// ========  ========
 
 #[test]
 fn membership_over_multibyte_subject_does_not_abort() {
@@ -216,9 +216,9 @@ fn implemented_operators_still_match_what_they_should() {
     assert_eq!(range_yes, Ok(true));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// bv::bitblast_advanced — AIG cut evaluation, cut enumeration, PG encoding
-// ─────────────────────────────────────────────────────────────────────────────
+// ========  ========
+// bv::bitblast_advanced – AIG cut evaluation, cut enumeration, PG encoding
+// ========  ========
 
 /// An AIG that is a chain of `levels` `And` nodes over two primary inputs.
 fn deep_aig(levels: usize) -> (AigCircuit, NodeId) {

@@ -552,7 +552,7 @@ impl ConflictResolver {
     /// Get reason (explanation) for a literal: the premises that imply it,
     /// as literals.
     ///
-    /// An *empty* reason is not a neutral answer here — it states that the
+    /// An *empty* reason is not a neutral answer here – it states that the
     /// literal is entailed unconditionally, which makes it resolvable away in
     /// [`Self::find_uip`] and vacuously redundant in [`Self::is_redundant`],
     /// i.e. deletable from a learned clause.  Deleting a literal that is in
@@ -569,7 +569,7 @@ impl ConflictResolver {
     ///   additionally carries `equalities`, which are premises just as much
     ///   as `support` is and are now included instead of discarded.
     /// * [`Explanation::Transitivity`] and [`Explanation::Congruence`] carry
-    ///   their premises as [`Equality`] values — the chain links and the
+    ///   their premises as [`Equality`] values – the chain links and the
     ///   argument equalities respectively.  They are named through
     ///   [`Self::register_equality_atom`]; an unregistered equality is an
     ///   error, never a dropped premise.  (The congruence head `function` is
@@ -578,8 +578,8 @@ impl ConflictResolver {
     ///   nothing, and is likewise an error rather than a licence to delete
     ///   the literal.
     /// * [`Explanation::Given`] is an input assertion. At level 0 that is
-    ///   genuinely unconditional — the standard CDCL rule that level-0
-    ///   assignments may be removed from a learned clause — so its reason is
+    ///   genuinely unconditional – the standard CDCL rule that level-0
+    ///   assignments may be removed from a learned clause – so its reason is
     ///   the empty premise set, stated deliberately and only there.  Above
     ///   level 0 the same explanation marks a *decision*: it has no premises
     ///   to resolve on and must stay in the clause, so it is an error.
@@ -594,7 +594,7 @@ impl ConflictResolver {
     /// Returns `Err` when the literal has no reason to resolve on: it is not
     /// on the trail, it is a decision, or its explanation names a premise
     /// that cannot be expressed as a literal.  Every caller must treat that
-    /// as "this literal stays" — never as "this literal is free".
+    /// as "this literal stays" – never as "this literal is free".
     fn get_reason(&self, literal: Literal) -> Result<Vec<Literal>, String> {
         let position = *self
             .literal_position
@@ -1242,7 +1242,7 @@ mod tests {
         assert!(redundant.contains(&Literal::positive(1)));
     }
 
-    // ===== get_reason: one pin per explanation kind =====================
+    // ======== get_reason: one pin per explanation kind ========
     //
     // Every kind used to fall through to `Ok(Vec::new())` unless it was a
     // theory or equality propagation. An empty reason means "entailed

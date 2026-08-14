@@ -91,7 +91,7 @@ mod inner {
             Box::new(move |progress: ParallelProgress| {
                 match serde_json::to_string(&progress) {
                     Ok(json) => {
-                        // Ignore send errors — receivers may have all disconnected.
+                        // Ignore send errors – receivers may have all disconnected.
                         let _ = sender.send(json);
                     }
                     Err(e) => {
@@ -132,7 +132,7 @@ mod inner {
         }
     }
 
-    /// Axum handler — upgrades an HTTP connection to WebSocket.
+    /// Axum handler – upgrades an HTTP connection to WebSocket.
     async fn ws_handler(
         ws: WebSocketUpgrade,
         State(state): State<Arc<ServerState>>,

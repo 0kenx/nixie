@@ -1,7 +1,7 @@
 //! Ground string decision procedure with model construction and verification.
 //!
 //! The CDCL(T) core maps every string-theory atom (`str.++`, `str.len`,
-//! `str.in_re`, `str.contains`, …) to a fresh SAT variable — there is no
+//! `str.in_re`, `str.contains`, …) to a fresh SAT variable – there is no
 //! incremental string theory wired into the propagation loop. Historically the
 //! only string reasoning was a small set of definite-conflict detectors in
 //! `oxiz-solver`, which could refute a fixed family of unsatisfiable formulas
@@ -15,7 +15,7 @@
 //!    (constant equalities, length equalities/bounds, regex memberships,
 //!    `prefixof`/`suffixof`/`contains` predicates, and concatenation
 //!    equations),
-//! 2. builds a candidate assignment for every string variable — propagating
+//! 2. builds a candidate assignment for every string variable – propagating
 //!    functional definitions, splitting concatenation equations by known
 //!    operand lengths, and reducing the remaining regular constraints on each
 //!    variable to a language-emptiness / shortest-word search over the
@@ -40,7 +40,7 @@ use oxiz_core::ast::{TermId, TermKind, TermManager, str_fold};
 
 /// Outcome of the ground string decision procedure.
 ///
-/// `Unsat` is intentionally never produced here — refutation of ground string
+/// `Unsat` is intentionally never produced here – refutation of ground string
 /// formulas is handled by the definite-conflict detectors in `oxiz-solver`,
 /// which drive the same concrete evaluator through
 /// [`eval_ground_bool`].  This procedure only ever *confirms* satisfiability
@@ -121,7 +121,7 @@ pub fn solve_ground_string_model(
 /// the very same concrete evaluator, but over an *empty* model, so a
 /// [`TermKind::Var`] never receives a value and the recursion collapses to
 /// `None` the moment anything unknown is reached. A `Some(v)` answer therefore
-/// means `v` is the term's value in **every** interpretation — a ground fact.
+/// means `v` is the term's value in **every** interpretation – a ground fact.
 ///
 /// Because the value of a closed term does not depend on where the term
 /// appears, evaluating one is safe at any polarity. What is *not* safe is
@@ -225,9 +225,9 @@ impl<'a> ModelBuilder<'a> {
             .is_some_and(oxiz_core::sort::Sort::is_string)
     }
 
-    // -------------------------------------------------------------------
+    // ========  ========
     // Constraint gathering
-    // -------------------------------------------------------------------
+    // ========  ========
 
     /// Walk every assertion, recording string variables and the atomic
     /// constraints used to guide model construction.
@@ -471,9 +471,9 @@ impl<'a> ModelBuilder<'a> {
         Some(out)
     }
 
-    // -------------------------------------------------------------------
+    // ========  ========
     // Model construction
-    // -------------------------------------------------------------------
+    // ========  ========
 
     /// Build a full assignment for every string variable. Returns `false` only
     /// when construction is impossible within scope (the caller then reports
@@ -510,7 +510,7 @@ impl<'a> ModelBuilder<'a> {
         }
 
         // Any still-unassigned variable is unconstrained: pick the empty string.
-        // Remember them — no gathered constraint mentions them, so if the whole
+        // Remember them – no gathered constraint mentions them, so if the whole
         // formula fails to verify, these are exactly the variables the repair
         // search may re-pick freely.  Sorted for a deterministic search order.
         let mut leftover: Vec<TermId> = self
@@ -534,7 +534,7 @@ impl<'a> ModelBuilder<'a> {
     /// The construction phase pins a variable only from an equality, a length
     /// bound or a regular constraint; anything left over is given the empty
     /// string purely as a default.  That default is a real answer for most
-    /// formulas but is refuted by any disequality it happens to violate — the
+    /// formulas but is refuted by any disequality it happens to violate – the
     /// smallest witness being `(distinct "b" (str.++ s0 "b"))`, satisfied by
     /// every `s0` except `""`.  Without a second attempt such a trivially
     /// satisfiable formula fell through to `Unknown`.
@@ -543,7 +543,7 @@ impl<'a> ModelBuilder<'a> {
     /// [`MAX_REPAIR_VARS`] of those variables, bounded by
     /// [`MAX_REPAIR_ASSIGNMENTS`] complete assignments.  Every candidate is put
     /// through the same full [`Self::verify`] as the primary construction, so
-    /// this only ever converts an `Unknown` into a *witnessed* `Sat` — it can
+    /// this only ever converts an `Unknown` into a *witnessed* `Sat` – it can
     /// never make an unsatisfiable formula look satisfiable.
     ///
     /// Reference: Z3's `theory_seq.cpp` likewise falls back to fresh values
@@ -618,12 +618,12 @@ impl<'a> ModelBuilder<'a> {
     /// The candidate words the repair search tries, most likely first.
     ///
     /// The pool is `""` (the default), one and two copies of a character that
-    /// occurs in no string literal of the formula — which satisfies any
-    /// disequality against a literal — and then the literals themselves, which
+    /// occurs in no string literal of the formula – which satisfies any
+    /// disequality against a literal – and then the literals themselves, which
     /// cover equations the splitter left underdetermined.
     ///
     /// Two extra families of candidates are appended for the operators whose
-    /// witnesses the literal pool cannot reach — each gated on the operator
+    /// witnesses the literal pool cannot reach – each gated on the operator
     /// actually occurring, so the pool (and therefore the odometer's search
     /// order) is byte-for-byte unchanged for every formula without one:
     ///
@@ -636,7 +636,7 @@ impl<'a> ModelBuilder<'a> {
     ///   65)` reaches `x = "A"`.
     ///
     /// Widening the pool can only ever turn `Unknown` into a *verified* `Sat`
-    /// — every candidate still goes through the same full [`Self::verify`].
+    /// – every candidate still goes through the same full [`Self::verify`].
     fn repair_candidates(&self) -> Vec<String> {
         let literals = self.formula_literals();
         let fresh = Self::fresh_char(&literals);
@@ -877,7 +877,7 @@ impl<'a> ModelBuilder<'a> {
     /// Flatten a `str.++` tree into a left-to-right operand list.
     fn flatten_concat(&self, term: TermId, ops: &mut Vec<TermId>) {
         // Explicit stack, right operand pushed first so the pops yield the
-        // operands left to right — same shape and same reason as
+        // operands left to right – same shape and same reason as
         // `Self::const_string`.
         let mut worklist = vec![term];
         while let Some(current) = worklist.pop() {
@@ -922,7 +922,7 @@ impl<'a> ModelBuilder<'a> {
             [] => {
                 let sum: i64 = lens.iter().sum();
                 if sum != total {
-                    return; // length conflict — refuted elsewhere
+                    return; // length conflict – refuted elsewhere
                 }
             }
             [only] => {
@@ -950,7 +950,7 @@ impl<'a> ModelBuilder<'a> {
             match &known_val[i] {
                 Some(existing) => {
                     if existing != &seg {
-                        return; // inconsistent placement — this split cannot hold
+                        return; // inconsistent placement – this split cannot hold
                     }
                 }
                 None => {
@@ -999,9 +999,9 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    // -------------------------------------------------------------------
+    // ========  ========
     // Verification
-    // -------------------------------------------------------------------
+    // ========  ========
 
     /// Verify the constructed model by concretely evaluating every assertion.
     fn verify(&self) -> bool {
@@ -1272,7 +1272,7 @@ mod tests {
 
     #[test]
     fn contradiction_does_not_verify() {
-        // (= s "abc") ∧ (str.contains s "xyz") is unsatisfiable — the ground
+        // (= s "abc") ∧ (str.contains s "xyz") is unsatisfiable – the ground
         // solver must not fabricate a Sat witness for it.
         let out = solve(
             r#"(declare-const s String)
@@ -1296,7 +1296,7 @@ mod tests {
 
     /// Issue #23: a disequality is the one constraint the construction phase
     /// does not gather, so an otherwise unconstrained variable defaults to `""`
-    /// — exactly the value such a formula forbids.  The repair search must
+    /// – exactly the value such a formula forbids.  The repair search must
     /// re-pick it instead of conceding `Unknown`.
     #[test]
     fn disequality_repairs_the_default_empty_witness() {
@@ -1347,9 +1347,9 @@ mod tests {
         assert!(!value.is_empty(), "witness must not be the empty string");
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // Ground evaluation (`eval_ground_bool`) — the refutation direction.
-    // ──────────────────────────────────────────────────────────────────
+    // ========  ========
+    // Ground evaluation (`eval_ground_bool`) – the refutation direction.
+    // ========  ========
 
     /// Evaluate the single assertion of `src` as a closed formula.
     fn ground(src: &str) -> Option<bool> {
@@ -1434,7 +1434,7 @@ mod tests {
 
     /// `str.indexof s t m`: smallest occurrence at or after `m`, `-1` when
     /// `m ∉ [0, |s|]` or `t` does not occur.  The empty needle occurs at every
-    /// position, so the answer is `m` itself — including `m = |s|`.
+    /// position, so the answer is `m` itself – including `m = |s|`.
     #[test]
     fn ground_eval_indexof_matches_smtlib() {
         assert_eq!(
@@ -1471,8 +1471,8 @@ mod tests {
         );
     }
 
-    /// `str.to_int` is `-1` for anything that is not a non-empty digit word —
-    /// including a leading sign — while leading zeros are fine.
+    /// `str.to_int` is `-1` for anything that is not a non-empty digit word –
+    /// including a leading sign – while leading zeros are fine.
     /// `str.from_int` is `""` for negatives and has no leading zeros.
     #[test]
     fn ground_eval_int_conversions_match_smtlib() {
@@ -1517,7 +1517,7 @@ mod tests {
         );
     }
 
-    /// A variable anywhere in the term makes the evaluation undecided — the
+    /// A variable anywhere in the term makes the evaluation undecided – the
     /// empty model must never invent a value.
     #[test]
     fn ground_eval_declines_open_terms() {

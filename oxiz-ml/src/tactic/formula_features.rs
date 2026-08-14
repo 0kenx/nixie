@@ -5,7 +5,7 @@
 //!
 //! The extractor parses an SMT-LIB2 formula (or full script) with
 //! `oxiz-core`'s real parser and walks the resulting term DAG to compute
-//! structural statistics — atom counts per theory, quantifier count and
+//! structural statistics – atom counts per theory, quantifier count and
 //! nesting depth, term size and depth, per-sort variable counts, a
 //! multiplicative-degree proxy for arithmetic non-linearity, the set of
 //! bit-vector widths in play, and a declared-symbol arity histogram. These
@@ -124,9 +124,9 @@ impl FormulaFeatures {
     ///
     /// Slots 1-13 reuse [`FormulaFeatures::extract`]'s established encoding;
     /// slots 14-20 (previously always zero) carry the richer term-level
-    /// statistics — quantifier nesting, multiplicative arithmetic degree,
+    /// statistics – quantifier nesting, multiplicative arithmetic degree,
     /// bit-vector width, uninterpreted-function / array operation density,
-    /// declared-symbol arity, and overall term size — so the extra capacity
+    /// declared-symbol arity, and overall term size – so the extra capacity
     /// of the 20-wide vector is genuinely used.
     pub fn from_stats(stats: &FormulaStats) -> Self {
         let mut feats = Self::extract(
@@ -258,7 +258,7 @@ impl FormulaStats {
 /// `(declare-const x Int) (assert (> x 0)) (check-sat)` is parsed with the
 /// full command grammar, while a bare term such as `(and p q)` is parsed via
 /// the lenient single-term path (unknown symbols become Boolean variables).
-/// An input that parses as neither yields empty stats (all-zero features) —
+/// An input that parses as neither yields empty stats (all-zero features) –
 /// an honest "nothing to measure" rather than a fabricated vector.
 pub fn extract_formula_stats(formula: &str) -> FormulaStats {
     let mut manager = TermManager::new();

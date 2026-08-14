@@ -14,7 +14,7 @@
 use oxiz_solver::{Context, SolverResult};
 
 /// `a = b` together with `f(a) = 5` must yield a SINGLE interpretation entry for
-/// the `{a, b}` argument class mapping to `5` — not two separate entries.
+/// the `{a, b}` argument class mapping to `5` – not two separate entries.
 #[test]
 fn test_func_interp_congruence_dedup() {
     let mut ctx = Context::new();

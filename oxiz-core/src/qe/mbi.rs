@@ -28,7 +28,7 @@
 //!
 //! Every returned interpolant is additionally **validated** against the
 //! interpolant conditions by exhaustive evaluation over the (finite) variable
-//! set before it is handed back — so a fabricated or otherwise incorrect
+//! set before it is handed back – so a fabricated or otherwise incorrect
 //! result can never escape this module. In particular, if `A ∧ B` is actually
 //! satisfiable (no interpolant exists) validation fails and `None` is
 //! returned. Any formula outside the supported fragment, or one with more than
@@ -482,7 +482,7 @@ impl MbiSolver {
                 // child accessor. The previous per-kind list silently
                 // dropped the children of function applications, array,
                 // string, bit-vector and floating-point operations, `let`
-                // and `match` — so variables under them were never reported,
+                // and `match` – so variables under them were never reported,
                 // and the caller (interpolant validation) then quantified
                 // over an incomplete variable set.
                 other => worklist.extend(crate::ast::traversal::get_children(other)),

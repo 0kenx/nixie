@@ -313,7 +313,7 @@ impl PortfolioSolver {
                     conflicts: stats.conflicts,
                 };
 
-                // Skip Unknown (budget exhausted / interrupted) — let others win.
+                // Skip Unknown (budget exhausted / interrupted) – let others win.
                 if !matches!(result, SolverResult::Unknown) {
                     *should_stop.lock().unwrap_or_else(|e| e.into_inner()) = true;
                     let _ = tx.send(portfolio_result);

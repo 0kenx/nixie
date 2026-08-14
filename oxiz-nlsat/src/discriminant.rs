@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. A discriminant
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. A discriminant
 // based real-root-count pre-filter usable only as an advisory accelerator (skip
 // work / size buffers); it must never replace exact Sturm isolation for
 // feasibility decisions. Nice-to-have, not yet wired.

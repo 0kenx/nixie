@@ -38,7 +38,7 @@ use smallvec::SmallVec;
 /// floating-point, datatype and `distinct` terms were invisible: pattern
 /// variables under them were never collected, and
 /// [`PatternCompiler::build_dag`] produced a node with no children for
-/// them — a pattern DAG that cannot match what the pattern says.
+/// them – a pattern DAG that cannot match what the pattern says.
 fn pattern_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
     match kind {
         TermKind::Forall { .. }
@@ -414,7 +414,7 @@ impl PatternCompiler {
     /// Iterative with a visited set: the recursive form both recursed once
     /// per level of nesting and re-expanded shared sub-terms, and its
     /// catch-all reported "no bound variable" for every kind it did not
-    /// enumerate — which classified a genuine pattern as ground and
+    /// enumerate – which classified a genuine pattern as ground and
     /// discarded it.
     fn contains_bound_var(
         &self,

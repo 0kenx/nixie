@@ -6,12 +6,12 @@
 //!
 //! The rules implemented are the standard QE-lite ones:
 //!
-//! * **Unused-variable dropping** — `∃x.φ ≡ φ` and `∀x.φ ≡ φ` when `x` does not
+//! * **Unused-variable dropping** – `∃x.φ ≡ φ` and `∀x.φ ≡ φ` when `x` does not
 //!   occur free in `φ`.
-//! * **Definitional-equality substitution** (destructive equality resolution) —
+//! * **Definitional-equality substitution** (destructive equality resolution) –
 //!   `∃x.(x = t ∧ φ) ≡ φ[x := t]` when `x ∉ t`, and dually
 //!   `∀x.(x = t → φ) ≡ φ[x := t]`.
-//! * **Distribution** — `∃x.(A ∧ B) ≡ A ∧ ∃x.B` and `∀x.(A ∨ B) ≡ A ∨ ∀x.B`
+//! * **Distribution** – `∃x.(A ∧ B) ≡ A ∧ ∃x.B` and `∀x.(A ∨ B) ≡ A ∨ ∀x.B`
 //!   when `x ∉ A`, applied to pull `x`-free operands out of the quantifier and
 //!   recurse on the `x`-dependent remainder.
 //!
@@ -205,7 +205,7 @@ impl QeLiteSolver {
     ///
     /// Rule 3 below recurses on the
     /// `x`-dependent conjuncts, so its depth is the number of conjuncts of
-    /// the body — caller-controlled and unbounded. The descent is therefore
+    /// the body – caller-controlled and unbounded. The descent is therefore
     /// written as a loop that stacks the pulled-out `x`-free operands and
     /// re-assembles them afterwards, which is exactly what the recursive
     /// unwinding did.
@@ -219,12 +219,12 @@ impl QeLiteSolver {
         let mut current = body;
 
         let innermost = loop {
-            // Rule 1: `x` does not occur — ∃x.φ ≡ φ.
+            // Rule 1: `x` does not occur – ∃x.φ ≡ φ.
             if !contains_var(current, var, manager) {
                 break current;
             }
 
-            // Rule 2: definitional equality — ∃x.(x = t ∧ φ) ≡ φ[x := t]  (DER).
+            // Rule 2: definitional equality – ∃x.(x = t ∧ φ) ≡ φ[x := t]  (DER).
             let mut substituted = None;
             if self.config.equality_substitution
                 && let Some(t) = find_equality_substitution(var, current, manager)
@@ -242,7 +242,7 @@ impl QeLiteSolver {
                 break new_body;
             }
 
-            // Rule 3: distribute over conjunction — ∃x.(A ∧ B) ≡ A ∧ ∃x.B, x ∉ A.
+            // Rule 3: distribute over conjunction – ∃x.(A ∧ B) ≡ A ∧ ∃x.B, x ∉ A.
             let (free, dep) = self.split_conjunction(var, current, manager)?;
             pulled_out.push(free);
             current = manager.mk_and(dep);
@@ -265,7 +265,7 @@ impl QeLiteSolver {
         };
         let (free, dep) = split_by_var(&args, var, manager);
         if free.is_empty() || dep.is_empty() {
-            // No `x`-free operand to pull out — no progress.
+            // No `x`-free operand to pull out – no progress.
             return None;
         }
         Some((free, dep))
@@ -290,7 +290,7 @@ impl QeLiteSolver {
         Some((free, dep))
     }
 
-    /// Re-assemble the operands pulled out on the way down, outermost last —
+    /// Re-assemble the operands pulled out on the way down, outermost last –
     /// the iterative equivalent of returning through the recursive frames.
     fn reassemble(
         &self,
@@ -324,12 +324,12 @@ impl QeLiteSolver {
         let mut current = body;
 
         let innermost = loop {
-            // Rule 1: `x` does not occur — ∀x.φ ≡ φ.
+            // Rule 1: `x` does not occur – ∀x.φ ≡ φ.
             if !contains_var(current, var, manager) {
                 break current;
             }
 
-            // Rule 2: definitional equality — ∀x.(x = t → φ) ≡ φ[x := t].
+            // Rule 2: definitional equality – ∀x.(x = t → φ) ≡ φ[x := t].
             let mut substituted = None;
             if self.config.equality_substitution
                 && let Some(t) = find_forall_equality(var, current, manager)
@@ -346,7 +346,7 @@ impl QeLiteSolver {
                 break new_body;
             }
 
-            // Rule 3: distribute over disjunction — ∀x.(A ∨ B) ≡ A ∨ ∀x.B, x ∉ A.
+            // Rule 3: distribute over disjunction – ∀x.(A ∨ B) ≡ A ∨ ∀x.B, x ∉ A.
             let (free, dep) = self.split_disjunction(var, current, manager)?;
             pulled_out.push(free);
             current = manager.mk_or(dep);
@@ -460,7 +460,7 @@ fn equality_side(a: TermId, b: TermId, var: TermId, manager: &TermManager) -> Op
 ///
 /// Complete over every `TermKind` (it walks through
 /// [`crate::ast::traversal::get_children`]), so a "does not occur" answer is
-/// trustworthy — an unsound "eliminated" result can never be produced from a
+/// trustworthy – an unsound "eliminated" result can never be produced from a
 /// missed occurrence.
 ///
 /// Uses an explicit heap stack rather than native recursion: this used to
@@ -468,15 +468,15 @@ fn equality_side(a: TermId, b: TermId, var: TermId, manager: &TermManager) -> Op
 /// pathologically deep (but valid) term could overflow the call stack. There
 /// is no error channel to bail out through either (`bool` has no "unknown"
 /// value), and a depth cap would only ever have been able to return a
-/// silently *wrong* answer past the cap — worse than the crash it replaces,
+/// silently *wrong* answer past the cap – worse than the crash it replaces,
 /// since [`QeLiteSolver`] treats "does not occur" as license to eliminate the
 /// quantifier outright. A `Vec`-backed stack has no such limit (bounded by
 /// memory, not the fixed native stack).
 ///
 /// `visited` memoizes subterms already walked without finding `var`: whether
 /// a subterm's tree contains `var` never depends on where it is reached from
-/// (unlike free-variable collection, which is binder-scope-sensitive), so —
-/// unlike `TermManager::free_vars` — memoizing globally here is always sound;
+/// (unlike free-variable collection, which is binder-scope-sensitive), so –
+/// unlike `TermManager::free_vars` – memoizing globally here is always sound;
 /// it just avoids re-walking a shared subterm once it is known not to
 /// contain `var`.
 fn contains_var(term: TermId, var: TermId, manager: &TermManager) -> bool {
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn exists_distribution_over_conjunction() {
-        // ∃x. (y > 0 ∧ x = z ∧ w < x) — x-free conjunct pulled out, DER on rest.
+        // ∃x. (y > 0 ∧ x = z ∧ w < x) – x-free conjunct pulled out, DER on rest.
         let mut tm = TermManager::new();
         let int_sort = tm.sorts.int_sort;
         let x = int_var(&mut tm, "x");
@@ -744,7 +744,7 @@ mod tests {
         // (never recursively, which would overflow before the assertion
         // runs) and run inside a thread with a deliberately small 1 MiB
         // stack: the call returning at all is part of the assertion, but the
-        // boolean answer must also be exactly correct in both directions —
+        // boolean answer must also be exactly correct in both directions –
         // `var` present at the very bottom of the chain (true), and a
         // different variable that never occurs anywhere in it (false).
         const DEPTH: usize = 100_000;

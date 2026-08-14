@@ -212,7 +212,7 @@ impl SubsetGraph {
     /// Iterative Tarjan: the recursion depth of the textbook formulation equals
     /// the longest subset chain, which is input-controlled. An explicit frame
     /// stack keeps the exact SCC semantics without a depth limit (truncating
-    /// would be unsound — `SubsetPropagator` would merge the wrong variables).
+    /// would be unsound – `SubsetPropagator` would merge the wrong variables).
     pub fn find_scc(&self) -> Vec<Vec<SetVarId>> {
         let mut index = 0usize;
         let mut tarjan_stack: Vec<SetVarId> = Vec::new();

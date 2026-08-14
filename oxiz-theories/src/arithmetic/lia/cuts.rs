@@ -7,7 +7,7 @@
 //! and [`Simplex::add_le`]).  Every emitted cut is a valid inequality of the
 //! mixed-integer hull: it never removes an integer-feasible point.  Whenever a
 //! sound cut cannot be derived the generator returns [`None`] rather than
-//! fabricating an inequality — branch-and-bound (see `branching.rs`) remains a
+//! fabricating an inequality – branch-and-bound (see `branching.rs`) remains a
 //! sound and complete decision procedure for LIA, so a missing cut only forgoes
 //! an optional strengthening.
 
@@ -42,7 +42,7 @@ impl LiaSolver {
     /// The Gomory/GMI coefficient formulas are stated for the canonical source
     /// row `x_var + Σ_j ā_j y_j = x̄_var`; since the simplex stores the row as
     /// `x_var = x̄_var + Σ_j â_j y_j`, the canonical coefficient is
-    /// `ā_j = −â_j` (this negation is essential — using `â_j` directly emits an
+    /// `ā_j = −â_j` (this negation is essential – using `â_j` directly emits an
     /// invalid inequality that removes integer-feasible points).
     ///
     /// * `pure_integer == false` produces the **Gomory Mixed-Integer (GMI)**
@@ -205,7 +205,7 @@ impl LiaSolver {
 
     /// Coefficient lifting for strengthening Gomory cuts.
     ///
-    /// Correct coefficient lifting must be *validity preserving* — it may never
+    /// Correct coefficient lifting must be *validity preserving* – it may never
     /// turn a valid cut into one that removes an integer-feasible point.  A
     /// sound lifting procedure requires per-variable bound information together
     /// with a sequence-independent lifting function; an earlier revision applied
@@ -282,7 +282,7 @@ impl LiaSolver {
     /// [`None`] when no sound cut can be derived.
     ///
     /// Reference: Marchand & Wolsey, "Aggregation and Mixed Integer Rounding to
-    /// Solve MIPs" (2001) — MIR applied to a tableau row yields the GMI cut.
+    /// Solve MIPs" (2001) – MIR applied to a tableau row yields the GMI cut.
     pub fn generate_mir_cut(&self, var: VarId, value: Rational64) -> Option<LinExpr> {
         if value.is_integer() {
             return None;
@@ -312,14 +312,14 @@ impl LiaSolver {
     /// derived from the tableau row of `var` is exactly the split cut for this
     /// disjunction, so this delegates to the tableau-derived construction (see
     /// `LiaSolver::tableau_row_cut`).  The result is a valid inequality of the
-    /// integer hull — it never removes an integer-feasible point — and separates
+    /// integer hull – it never removes an integer-feasible point – and separates
     /// the current fractional point.
     ///
     /// Returns [`None`] for an integer `value` and whenever no sound cut can be
     /// derived (e.g. `var` is non-basic, or a non-basic term of the row is not
     /// resting at a finite bound).
     ///
-    /// Reference: Balas, "Disjunctive Programming" (1979); Cornuéjols (2008) —
+    /// Reference: Balas, "Disjunctive Programming" (1979); Cornuéjols (2008) –
     /// the GMI cut is the split cut for the elementary split on the basic
     /// variable.
     pub fn generate_disjunctive_cut(&self, var: VarId, value: Rational64) -> Option<LinExpr> {

@@ -4,16 +4,16 @@
 //!
 //! # Why this is a config knob, not a default
 //!
-//! `oxiz-sat`'s `pick_branch_var` builds its candidate list — every
-//! unassigned variable, scanned in full — before it ever calls the
+//! `oxiz-sat`'s `pick_branch_var` builds its candidate list – every
+//! unassigned variable, scanned in full – before it ever calls the
 //! heuristic's `select`, whenever *any* external heuristic is installed at
 //! all (see `oxiz-sat/src/solver/decide.rs`). That scan happens on every
 //! single decision, for every solve this `Solver` instance ever runs, once
-//! it is wired in — the SAT engine has no cheaper "is there actually a
+//! it is wired in – the SAT engine has no cheaper "is there actually a
 //! pending hint right now" fast path to skip it with, and `SolverConfig`'s
 //! `external_branching` slot can only be set once, at construction (the
 //! field is `pub(super)` inside `oxiz-sat`, so a later `set_config` call on
-//! this crate's own `Solver` cannot retarget it either — matching the
+//! this crate's own `Solver` cannot retarget it either – matching the
 //! pre-existing behaviour of `restart_strategy` and friends, which also only
 //! take effect through `with_config`).
 //!
@@ -22,7 +22,7 @@
 //! never enables it pays nothing, and one that enables it anyway pays the
 //! per-decision candidate scan whether or not a table ever shows up. That
 //! asymmetry is why `Solver::flatten_lookup_spines` populates the priority
-//! list but `enable_domain_first_branching` defaults to `false` — see
+//! list but `enable_domain_first_branching` defaults to `false` – see
 //! `SolverConfig`'s doc comment.
 use std::sync::{Arc, Mutex};
 

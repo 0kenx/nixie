@@ -11,7 +11,7 @@
 //! every assertion against it using the bit-exact [`Ieee754Engine`]. A `Sat`
 //! verdict is returned **only** when a genuine, verified model witness exists:
 //! every FP-sorted variable is pinned to a concrete IEEE-754 datum and every
-//! assertion evaluates to `true`. There is no guessing — if any term cannot be
+//! assertion evaluates to `true`. There is no guessing – if any term cannot be
 //! pinned, or any assertion cannot be evaluated, or the constructed model
 //! fails to satisfy some assertion, the routine gives up (returns `false`) and
 //! the caller falls back to the honest `Unknown`.
@@ -28,13 +28,13 @@
 //! The three evaluators (`eval_real_core`, `eval_fp_core`, `eval_bool_core`)
 //! used to be plain native recursion with no depth guard and no memo: a term
 //! built through the `TermManager` builder API can nest arbitrarily deep, so
-//! a sufficiently deep formula overflowed the native stack — a fatal,
-//! `catch_unwind`-proof process abort — and a shared sub-DAG of the
+//! a sufficiently deep formula overflowed the native stack – a fatal,
+//! `catch_unwind`-proof process abort – and a shared sub-DAG of the
 //! hash-consed term graph was re-expanded once per path (`2^n` work for an
 //! `n`-level doubling DAG).  Each evaluator is now an explicit-worklist walk
 //! ([`Task`]) over a per-call `TermId`-keyed memo table.  A depth cap was
 //! never an option: these functions return `Option` where `None` means "give
-//! up on `Sat`", so a cap would be survivable — but the explicit stack makes
+//! up on `Sat`", so a cap would be survivable – but the explicit stack makes
 //! the walk total on every input, which is strictly better than refusing
 //! deep-but-legitimate models.
 //!
@@ -43,7 +43,7 @@
 //! the concrete fragment as `None` leaves), `values` is never mutated during
 //! a single evaluation (only [`FpModelFinder::try_define`] writes it, after
 //! the evaluator returned), and the engine's rounding mode cannot leak
-//! between sub-evaluations — every rounding-sensitive operation
+//! between sub-evaluations – every rounding-sensitive operation
 //! (`add`/`sub`/`mul`/`div`/`sqrt`/`fma`/`convert_format`) sets its mode from
 //! the term's own `RoundingMode` immediately before executing, and the
 //! remaining operations (`abs`/`neg`/`rem`/`min`/`max`/`classify` and the
@@ -53,8 +53,8 @@
 //!
 //! The worklist evaluates every operand of a node before combining, whereas
 //! the recursive original short-circuited (`?`, and `And`/`Or` early
-//! returns).  The produced values are identical — a definite `false`/`true`
-//! still dominates an unknown sibling, and skipped operands were pure — only
+//! returns).  The produced values are identical – a definite `false`/`true`
+//! still dominates an unknown sibling, and skipped operands were pure – only
 //! the work profile differs, and the memo keeps that linear in DAG size.
 
 #[allow(unused_imports)]
@@ -95,8 +95,8 @@ impl PredicateFlags {
 }
 
 /// One step of an explicit-worklist evaluation (see the module doc's
-/// "Recursion and memoization" section): either visit a term — resolving it
-/// immediately when it is a leaf of the walk, or scheduling its operands —
+/// "Recursion and memoization" section): either visit a term – resolving it
+/// immediately when it is a leaf of the walk, or scheduling its operands –
 /// or apply a deferred operator whose operands have all been evaluated into
 /// the memo table.
 enum Task<Op> {
@@ -119,7 +119,7 @@ enum RealOp {
 
 /// A deferred FP operator awaiting its operand values (`eval_fp_core`).
 /// Rounding-sensitive operators carry the term's own [`RoundingMode`], which
-/// is applied to the engine immediately before the operation — exactly where
+/// is applied to the engine immediately before the operation – exactly where
 /// the recursive original applied it.
 enum FpOp {
     Abs(TermId),
@@ -208,7 +208,7 @@ impl<'a> FpModelFinder<'a> {
     /// Evaluate a `Real`/`Int`-sorted term to an `f64`, following the small
     /// arithmetic shapes that appear as `(_ to_fp …)` operands.
     ///
-    /// Explicit-worklist walk over a per-call memo — see the module doc's
+    /// Explicit-worklist walk over a per-call memo – see the module doc's
     /// "Recursion and memoization" section.  Purely a function of the term
     /// (no engine, no `values`), so `TermId`-keyed memoization is trivially
     /// exact.
@@ -486,7 +486,7 @@ impl<'a> FpModelFinder<'a> {
     /// memo, setting the engine rounding mode exactly where the recursive
     /// original did: immediately before each rounding-sensitive operation.
     /// The remaining operations (`abs`/`neg`/`rem`/`min`/`max`) are exact and
-    /// mode-independent, so no mode is set for them — same as before.
+    /// mode-independent, so no mode is set for them – same as before.
     fn apply_fp_op(
         &mut self,
         op: FpOp,
@@ -955,7 +955,7 @@ impl Solver {
     /// Returns `true` **only** when a genuine model witness is found: every
     /// FP-sorted variable is pinned to a concrete IEEE-754 value and every
     /// assertion evaluates to `true` under the bit-exact engine. This is sound
-    /// — it never reports a satisfiable verdict for an unsatisfiable formula,
+    /// – it never reports a satisfiable verdict for an unsatisfiable formula,
     /// and it declines (returns `false`) whenever any assertion falls outside
     /// the concrete-evaluation fragment, letting the caller answer `Unknown`.
     pub(super) fn try_fp_model_sat(&self, manager: &TermManager) -> bool {
@@ -969,7 +969,7 @@ impl Solver {
 
 /// Regression tests for the explicit-worklist conversion of the three
 /// concrete-model evaluators (`eval_real_core` / `eval_fp_core` /
-/// `eval_bool_core`) — see the module doc's "Recursion and memoization"
+/// `eval_bool_core`) – see the module doc's "Recursion and memoization"
 /// section for the rationale.  Deep-nesting tests run on a deliberately small
 /// (128 KiB) thread stack: a native stack overflow is a fatal abort that
 /// `catch_unwind` cannot intercept, so returning at all is the proof, and the
@@ -986,9 +986,9 @@ mod tests {
         finder.eval_real_core(term, &mut memo)
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Semantic pins: small inputs with known-exact answers.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn eval_real_pins_the_arithmetic_shapes() {
@@ -1170,10 +1170,10 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Shared-DAG regressions: doubling DAGs that were exponential without the
     // per-call memo must now be linear.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn eval_real_shared_add_dag_is_linear_not_exponential() {
@@ -1234,16 +1234,16 @@ mod tests {
         assert_eq!(finder.eval_bool(term), Some(true));
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Deep-nesting regressions on a 128 KiB stack.
     //
     // Each `(STACK_SIZE, DEPTH)` pair below was scaled down from
     // (1 MiB, 100 000) by a factor of 8 on both sides.  What these tests pin
-    // is the ~10 bytes of stack available per nesting level — no native frame
-    // fits in that, so a recursive evaluator still dies — not the absolute
+    // is the ~10 bytes of stack available per nesting level – no native frame
+    // fits in that, so a recursive evaluator still dies – not the absolute
     // depth, and the smaller pair costs a 64th of the construction work.
     // Never raise one of the two without the other.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     #[test]
     fn eval_real_survives_a_deep_neg_chain_on_a_small_stack() {

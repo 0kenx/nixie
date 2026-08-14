@@ -8,7 +8,7 @@
 //! so every private-item access below still resolves exactly as before.
 use super::*;
 
-// ===== Substitution regression tests =====
+// ======== Substitution regression tests ========
 //
 // `apply_substitution` used to be a local recursive walk whose `TermKind`
 // whitelist ended in `_ => term`, so a bound variable under any unlisted
@@ -156,9 +156,9 @@ fn test_refinement_strategy() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Audit regression: Euclidean div/mod (solver-p3b, finding #3)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_audit_euclidean_div_rem_helper() {
@@ -208,7 +208,7 @@ fn test_audit_eval_div_mod_negative_euclidean() {
     );
 }
 
-// ===== Iterative-evaluator regression tests =====
+// ======== Iterative-evaluator regression tests ========
 //
 // `evaluate_under_model_cached` and the inline `Exists` search used to be a
 // pair of mutually recursive functions; they now run as one explicit-stack
@@ -365,7 +365,7 @@ fn evaluate_exists_pins_witness_no_witness_and_symbolic() {
 
 /// Deep-nesting regression: 12 500 implication levels on a 128 KiB stack.
 /// The old evaluator recursed once per level and would overflow here; the
-/// frame machine must return (returning at all is the proof — an overflow
+/// frame machine must return (returning at all is the proof – an overflow
 /// aborts the process).
 #[test]
 fn evaluate_deep_implies_chain_returns_on_small_stack() {
@@ -452,7 +452,7 @@ fn evaluate_shared_dag_add_doubling_is_memoized_and_exact() {
     assert_eq!(result, expected);
 }
 
-// ===== `CounterExample::term_size` regression tests =====
+// ======== `CounterExample::term_size` regression tests ========
 //
 // `term_size` used to recurse once per nesting level and return a plain
 // `usize` (no error channel); it is now an explicit-stack DFS.

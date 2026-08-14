@@ -453,8 +453,8 @@ impl Optimizer {
     /// Optimize an integer objective by exponential (galloping) probing
     /// followed by binary search.
     ///
-    /// 1. **Feasibility** — establish an initial feasible objective value.
-    /// 2. **Exponential probe** — starting from a modest magnitude, repeatedly
+    /// 1. **Feasibility** – establish an initial feasible objective value.
+    /// 2. **Exponential probe** – starting from a modest magnitude, repeatedly
     ///    double the probed bound in the unbounded direction while the
     ///    objective remains reachable there. This is the standard
     ///    unbounded/galloping-search technique: it finds a bracket
@@ -462,14 +462,14 @@ impl Optimizer {
     ///    optimum instead of testing a single fixed magnitude, so a
     ///    genuinely finite optimum is no longer misreported `Unbounded` just
     ///    for exceeding an arbitrary cap.
-    /// 3. **Binary search** — bisect the bracket found in step 2 to the exact
+    /// 3. **Binary search** – bisect the bracket found in step 2 to the exact
     ///    optimum.
     ///
     /// Doubling is capped at [`MAX_MAGNITUDE_EXP`] (see its doc comment for
     /// why that bound is safe against theory-solver overflow). If the
     /// objective is still reachable at every doubled magnitude up to the cap,
     /// no finite bracket exists to bisect and the objective is reported
-    /// [`OptimizationResult::Unbounded`] — a documented, honest trade-off
+    /// [`OptimizationResult::Unbounded`] – a documented, honest trade-off
     /// (nothing is ever fabricated), just one pushed astronomically higher
     /// than a naive fixed threshold. Any `Unknown` from a probe propagates as
     /// [`OptimizationResult::Unknown`].
@@ -624,7 +624,7 @@ impl Optimizer {
     ///
     /// An `Unsat` on the strict-improvement probe proves `best` is the attained
     /// optimum (returned as `Optimal`). If the objective keeps improving without a
-    /// proof of optimality within the iteration budget, `Unknown` is returned —
+    /// proof of optimality within the iteration budget, `Unknown` is returned –
     /// never a fabricated `Optimal`. Integer model values are converted exactly
     /// via [`ToPrimitive::to_i64`]; values that do not fit `i64` (and hence cannot
     /// be represented by [`Rational64`]) yield `Unknown` instead of a silent `0`.
@@ -716,7 +716,7 @@ impl Optimizer {
                     best_model = model;
                 }
                 RealProbe::Unsat => {
-                    // No strictly-better solution exists — best_value is optimal.
+                    // No strictly-better solution exists – best_value is optimal.
                     return OptimizationResult::Optimal {
                         value: term_manager.mk_real(best_value),
                         model: best_model,
@@ -819,7 +819,7 @@ impl Optimizer {
     /// after `Unknown`/a missing model (the theory solver could not decide).
     /// The return type carries no per-call "exhaustive vs. truncated" flag, so
     /// in the latter two cases the caller receives a valid, non-dominated
-    /// front that may nonetheless be *incomplete* — further Pareto points may
+    /// front that may nonetheless be *incomplete* – further Pareto points may
     /// exist beyond what was found. This mirrors [`Optimizer::optimize`]'s
     /// documented `Unknown` semantics but, unlike a single-objective query,
     /// cannot itself signal `Unknown` without changing this method's public
@@ -1070,7 +1070,7 @@ mod tests {
         }
     }
 
-    // ---- Audit regression tests (solver-p3a) ----
+    // ======== Audit regression tests (solver-p3a) ========
 
     /// `floor_half` must compute a true floor, including for negative inputs
     /// (truncating integer division would round toward zero and break the
@@ -1119,7 +1119,7 @@ mod tests {
     }
 
     /// Regression (audit finding: Pareto front contained dominated points).
-    /// Whatever solutions are returned, the front must be an antichain — no point
+    /// Whatever solutions are returned, the front must be an antichain – no point
     /// may dominate another. Holds regardless of solver completeness.
     #[test]
     fn test_pareto_front_is_antichain() {

@@ -143,7 +143,7 @@ fn test_skolemize_function_arg_uses_real_sort() {
 fn test_skolemize_plain_collides_but_shared_counter_does_not() {
     let int_sort_of = |m: &TermManager| m.sorts.int_sort;
 
-    // --- Buggy usage pattern: fresh counter per call -----------------------
+    // ======== Buggy usage pattern: fresh counter per call ========
     let mut manager = setup_manager();
     let int_sort = int_sort_of(&manager);
     let bool_sort = manager.sorts.bool_sort;
@@ -169,7 +169,7 @@ fn test_skolemize_plain_collides_but_shared_counter_does_not() {
          skolemize_with_counter, not repeated skolemize() calls"
     );
 
-    // --- Correct usage pattern: shared counter -----------------------------
+    // ======== Correct usage pattern: shared counter ========
     let mut manager2 = setup_manager();
     let int_sort2 = int_sort_of(&manager2);
     let bool_sort2 = manager2.sorts.bool_sort;

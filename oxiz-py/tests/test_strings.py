@@ -1,8 +1,8 @@
 """Tests for string theory support in OxiZ Python bindings.
 
 Covers:
-- StringSort   — the string sort object
-- StringVal    — string literal constructor
+- StringSort   – the string sort object
+- StringVal    – string literal constructor
 - mk_string_val / mk_str_concat / mk_str_length / mk_str_contains on TermManager
 - Concat / Length / Contains / PrefixOf / SuffixOf module-level combinators
 - mk_var with "String" sort

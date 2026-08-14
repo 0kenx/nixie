@@ -210,7 +210,7 @@ impl PmresSolver {
     /// This makes progress on cores of ANY size. The previous scheme only added
     /// an at-most-one constraint over the (unchanged) relaxation variables while
     /// re-asserting the SAME `¬relax` assumptions, so any core with two or more
-    /// soft clauses reproduced itself forever — a non-terminating loop that a
+    /// soft clauses reproduced itself forever – a non-terminating loop that a
     /// now-correct (complete) unsat-core extraction newly exposed. When the SAT
     /// call finally succeeds, the accumulated lower bound IS the optimum for
     /// this level.

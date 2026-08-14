@@ -868,7 +868,7 @@ impl AdvancedNelsonOppen {
     /// Largest number of shared terms for which a full arrangement enumeration
     /// (`Bell(n)` case splits) is attempted.  `Bell(8) = 4140`; beyond that the
     /// enumeration is answered `Unknown` rather than risking a combinatorial
-    /// blow-up — never a fabricated `Sat`.
+    /// blow-up – never a fabricated `Sat`.
     const MAX_ARRANGEMENT_TERMS: usize = 8;
 
     /// Handle a non-convex theory by model-based case splitting over the
@@ -1523,7 +1523,7 @@ mod tests {
 
     #[test]
     fn test_non_convex_case_split_finds_consistent_arrangement() {
-        // Theory forbids 10 = 20, so the arrangement 10 != 20 must be chosen —
+        // Theory forbids 10 = 20, so the arrangement 10 != 20 must be chosen –
         // the case split has to discover it rather than guessing SAT blindly.
         let mut no = AdvancedNelsonOppen::new();
         no.register_theory(

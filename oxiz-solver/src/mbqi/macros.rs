@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(vars.len(), 0);
     }
 
-    // ===== Regression tests for the silent-fallthrough bugs =====
+    // ======== Regression tests for the silent-fallthrough bugs ========
 
     #[test]
     fn is_ground_rejects_arithmetic_containing_a_variable() {

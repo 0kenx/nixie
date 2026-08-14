@@ -635,7 +635,7 @@ impl Clone for InterpolantTerm {
     /// Iterative clone.
     ///
     /// The derived recursive `Clone` was the last remaining native-stack walk
-    /// over this type — and it is reached from `simplify`'s depth-budget
+    /// over this type – and it is reached from `simplify`'s depth-budget
     /// bail-out, so it fired on exactly the deep terms the rest of this module
     /// was made safe for. The result is structurally identical: nodes are
     /// rebuilt with their plain variant constructors, never with the
@@ -767,7 +767,7 @@ impl Drop for InterpolantTerm {
     /// Iterative drop.
     ///
     /// An interpolant term inherits the depth of the proof it was extracted
-    /// from, and every walk over it in this module is now iterative — which
+    /// from, and every walk over it in this module is now iterative – which
     /// would leave the compiler-generated recursive `drop_in_place` as the one
     /// remaining way to abort the process, at scope exit, with no diagnostic.
     /// Each node is dismantled into a shallow shell before being released.

@@ -1,6 +1,6 @@
 # oxiz-nlsat TODO
 
-Last Updated: 2026-07-31 (v0.3.1) — all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
+Last Updated: 2026-07-31 (v0.3.1) – all tracked items complete; see root TODO.md for the workspace-wide 0.3.1 hardening pass
 
 Reference: Z3's `nlsat/` directory
 
@@ -145,10 +145,10 @@ Reference: Z3's `nlsat/` directory
 
 ## Stub completions (2026-06-08)
 
-- [x] `explain.rs::resultant` — replaced `Polynomial::zero()` stub with real `ResultantComputer{method: ResultantMethod::Sylvester}` (fraction-free Bareiss; value-exact multivariate eliminant). Returns `None` for degree-0-in-var inputs.
-- [x] `explain.rs::leading_coefficient` — replaced `poly.clone()` stub with `poly.leading_coeff_wrt(var)`.
-- [x] `evaluator.rs::find_roots` / `solver/decide.rs::find_univariate_roots` — for degree>2 cases, replaced empty `Vec::new()` stubs with `poly.isolate_roots(var)` (square-free + Descartes + Sturm bisection, arbitrary degree) converted to sorted rational representatives.
-- [x] `monotonicity.rs::estimate_derivative_sign` — filled the univariate `None` stub: uses `isolate_roots().is_empty()` for constant-sign detection plus point evaluation.
+- [x] `explain.rs::resultant` – replaced `Polynomial::zero()` stub with real `ResultantComputer{method: ResultantMethod::Sylvester}` (fraction-free Bareiss; value-exact multivariate eliminant). Returns `None` for degree-0-in-var inputs.
+- [x] `explain.rs::leading_coefficient` – replaced `poly.clone()` stub with `poly.leading_coeff_wrt(var)`.
+- [x] `evaluator.rs::find_roots` / `solver/decide.rs::find_univariate_roots` – for degree>2 cases, replaced empty `Vec::new()` stubs with `poly.isolate_roots(var)` (square-free + Descartes + Sturm bisection, arbitrary degree) converted to sorted rational representatives.
+- [x] `monotonicity.rs::estimate_derivative_sign` – filled the univariate `None` stub: uses `isolate_roots().is_empty()` for constant-sign detection plus point evaluation.
 
 ## Future Enhancements (Next Priority)
 

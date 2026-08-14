@@ -13,9 +13,7 @@ use crate::ast::{RoundingMode, TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use smallvec::{SmallVec, smallvec};
 
-// =====================================================================
-// Pre-existing behavioral tests (moved verbatim from `ast/utils.rs`).
-// =====================================================================
+// ======== Pre-existing behavioral tests (moved verbatim from `ast/utils.rs`). ========
 
 #[test]
 fn test_alpha_equivalent_simple() {
@@ -383,7 +381,7 @@ fn test_flatten_already_flat() {
     assert_eq!(flat_term, flattened);
 }
 
-// =====================================================================
+// ========  ========
 // Regression tests for the recursive -> iterative conversion.
 //
 // Every walker in this module used to recurse once per term-nesting level
@@ -398,7 +396,7 @@ fn test_flatten_already_flat() {
 // unwinding, so "the call returned at all" *is* part of the assertion; every
 // test also checks the returned value is correct, not merely that one came
 // back.
-// =====================================================================
+// ========  ========
 
 /// Stack size every deep test runs under: the ~1 MiB a non-main thread gets
 /// by default on most platforms, and far less than a libtest thread's.
@@ -576,11 +574,11 @@ fn test_deep_add_chain_flatten_associative_on_small_stack() {
     assert_eq!(arg_count, FLATTEN_DEEP + 1);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Shallow pinned-value tests: a mixed term touching binders, Ite, n-ary
 // Add, Store/Select and Match, so the conversion cannot silently change any
 // answer for the kinds a purely-Add-shaped deep chain never exercises.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// A term exercising `Add` (n-ary), `Lt`, `Store`, `Select`, `Ite`, `Forall`
 /// and `Let` in one structure.
@@ -702,7 +700,7 @@ fn test_match_term_is_handled_by_every_walker() {
     assert_eq!(flattened, term);
 }
 
-// =====================================================================
+// ========  ========
 // Pinned `structural_hash` values.
 //
 // These literals were captured by a one-time A/B comparison against the
@@ -750,7 +748,7 @@ fn test_structural_hash_is_pinned() {
     }
 }
 
-// =====================================================================
+// ========  ========
 // Regression tests for the two `equality.rs` bugs fixed alongside this
 // module split:
 //
@@ -764,7 +762,7 @@ fn test_structural_hash_is_pinned() {
 //     falling to `_ => false` -- indistinguishable from a genuine mismatch.
 //     Fixed by making both functions' outer match exhaustive over
 //     `TermKind` with no wildcard arm.
-// =====================================================================
+// ========  ========
 
 #[test]
 fn test_alpha_equivalent_quantifier_doc_example() {

@@ -176,8 +176,8 @@ impl LinearForm {
 
 /// Intermediate boolean DAG, produced before coefficient normalisation.
 ///
-/// Children are reference-counted so that the `Xor`/`Ite` expansions — which
-/// mention each operand under two different parents — *share* one sub-DAG per
+/// Children are reference-counted so that the `Xor`/`Ite` expansions – which
+/// mention each operand under two different parents – *share* one sub-DAG per
 /// `(sub-formula, polarity)` pair instead of duplicating it. With a tree the
 /// expansion doubles the node count at every nesting level, i.e. a chain of
 /// `n` nested `Xor`s builds `2ⁿ` nodes; with sharing it builds `O(n)`.
@@ -204,8 +204,8 @@ enum Raw {
 ///
 /// The derived drop glue recurses once per level, which would overflow the
 /// stack on exactly the deeply nested formulae the iterative builders above
-/// were written to support. Dismantling the DAG with an explicit stack — each
-/// uniquely owned node has its children moved out before it is released —
+/// were written to support. Dismantling the DAG with an explicit stack – each
+/// uniquely owned node has its children moved out before it is released –
 /// keeps teardown flat.
 impl Drop for Raw {
     fn drop(&mut self) {
@@ -397,7 +397,7 @@ impl CooperEliminator {
     ///
     /// Iterative, with a visited set. `bool` offers no error channel, so a
     /// depth cap could only answer "does not mention `x`" for a term it
-    /// never finished inspecting — which would silently drop a constraint
+    /// never finished inspecting – which would silently drop a constraint
     /// from the elimination. The visited set also prevents the re-walk of
     /// shared sub-terms; this predicate is called at the top of several
     /// other walks.
@@ -582,15 +582,15 @@ impl CooperEliminator {
     /// Build the polarity-resolved [`Raw`] DAG.
     ///
     /// Explicit work stack with a memo keyed on `(sub-formula, polarity)`.
-    /// The construction reads no other context — the polarity is the only
+    /// The construction reads no other context – the polarity is the only
     /// thing pushed down the walk, and the term manager is only ever asked
-    /// for hash-consed terms — so two requests for the same pair must build
+    /// for hash-consed terms – so two requests for the same pair must build
     /// the same sub-DAG, and returning the first one is exact.
     ///
     /// The memo is what makes `Xor` and `Ite` affordable: each expands into
     /// *four* sub-results (both polarities of both operands, resp. of the
     /// condition), so the recursive form had a call tree that doubled per
-    /// nesting level — a 30-deep `Xor` chain meant ~2³⁰ calls. Here each pair
+    /// nesting level – a 30-deep `Xor` chain meant ~2³⁰ calls. Here each pair
     /// is built once and shared, so the same chain is linear.
     fn build_raw(
         &self,
@@ -1122,8 +1122,8 @@ impl CooperEliminator {
 
     /// Collect all lower-bound boundary terms.
     ///
-    /// Explicit stack. `B` is a *set* of boundary terms — the elimination
-    /// takes a disjunction over it — so a repeated bound (from a shared
+    /// Explicit stack. `B` is a *set* of boundary terms – the elimination
+    /// takes a disjunction over it – so a repeated bound (from a shared
     /// sub-DAG, or from two literals with the same boundary term) is dropped:
     /// it would only add a disjunct identical to one already present.
     fn collect_lower_bounds(node: &Rc<Node>, out: &mut Vec<TermId>) {

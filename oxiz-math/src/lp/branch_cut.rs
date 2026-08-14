@@ -275,7 +275,7 @@ impl BranchCutSolver {
 
             match lp_result {
                 DualSimplexResult::Infeasible => {
-                    // This branch is infeasible — prune.
+                    // This branch is infeasible – prune.
                     continue;
                 }
                 DualSimplexResult::Optimal => {
@@ -345,7 +345,7 @@ impl BranchCutSolver {
                     self.nodes.push(right_node);
                 }
                 _ => {
-                    // Unbounded or unknown — skip this node.
+                    // Unbounded or unknown – skip this node.
                     continue;
                 }
             }

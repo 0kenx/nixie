@@ -49,7 +49,7 @@ fn x2_plus(c: i64) -> Polynomial {
     Polynomial::add(&x2, &Polynomial::constant(rat(c)))
 }
 
-// ─── Finding #1: irrational roots must not be silently dropped ───────────────
+// ======== Finding #1: irrational roots must not be silently dropped ========
 
 /// `x^2 > 2` is SAT (e.g. x = 2). Previously the irrational roots ±√2 were
 /// dropped, the feasible region collapsed to empty and the solver returned a
@@ -80,7 +80,7 @@ fn square_lt_zero_is_unsat() {
 }
 
 /// `x^2 = 2` has only the irrational solutions ±√2. The rational-model solver
-/// cannot exhibit a witness, but it must NOT return a wrong UNSAT — the honest
+/// cannot exhibit a witness, but it must NOT return a wrong UNSAT – the honest
 /// answer is `Unknown` (a full solution needs algebraic-number model support).
 #[test]
 fn irrational_eq_is_not_unsat() {
@@ -109,7 +109,7 @@ fn irrational_gt_degree_two_variant() {
     assert_eq!(solver.solve(), SolverResult::Sat, "x^2 > 3 must be SAT");
 }
 
-// ─── Finding #2: empty feasible region at level>0 must not loop forever ──────
+// ======== Finding #2: empty feasible region at level>0 must not loop forever ========
 
 /// **Primary loop regression.** `(x^2 + 1 < 0) OR (x - 3 > 0)` is SAT (the first
 /// disjunct is infeasible, so any x > 3 with the first literal false works, e.g.
@@ -119,7 +119,7 @@ fn irrational_gt_degree_two_variant() {
 /// level 1, `pick_arith_value` finds an empty feasible region (`x^2+1<0` is
 /// unsatisfiable), and `solve()` backtracks to level 0 **without learning any
 /// lemma or flipping the saved phase**, so `decide()` immediately re-picks the
-/// identical decision and reproduces the empty region — indefinitely. The fixed
+/// identical decision and reproduces the empty region – indefinitely. The fixed
 /// solver instead learns the valid single-variable lemma `¬(x^2+1<0)`, forces
 /// that atom false, and finds x = 4.
 ///
@@ -177,7 +177,7 @@ fn empty_region_double_infeasible_is_unsat() {
 /// The pre-fix solver decides both product atoms true, samples x from its own
 /// bounds while y is still unassigned (the coupling atoms are ignored for x),
 /// then finds an empty region for y and backtracks *without* undoing or negating
-/// the pinned product decisions — an infinite loop, since neither pinned choice
+/// the pinned product decisions – an infinite loop, since neither pinned choice
 /// is ever revised. Because the emptiness couples x and y it cannot be certified
 /// as a single-variable lemma, so the fixed solver honestly terminates with
 /// `Unknown` rather than a wrong answer or a hang. The property that must hold
@@ -211,7 +211,7 @@ fn multivariate_coupling_loop_terminates() {
     );
 }
 
-// ─── Finding #4: single-variable jointly-satisfiable constraints stay SAT ────
+// ======== Finding #4: single-variable jointly-satisfiable constraints stay SAT ========
 
 /// Three jointly-satisfiable constraints on one variable that an over-eager
 /// conflict explanation could wrongly exclude: `x > 0 AND x < 2 AND x > 1`
@@ -238,10 +238,10 @@ fn jointly_satisfiable_constraints_stay_sat() {
     assert!(v > rat(1) && v < rat(2), "witness x={v} in (1,2)");
 }
 
-// ─── Finding #3: solve() must reset state for incremental re-solve ───────────
+// ======== Finding #3: solve() must reset state for incremental re-solve ========
 
 /// **Stale-model regression.** First solve `x > 0`; the solver commits an
-/// arithmetic witness (x = 1). Then add `x > 5` — still jointly SAT (x = 6) —
+/// arithmetic witness (x = 1). Then add `x > 5` – still jointly SAT (x = 6) –
 /// and re-solve.
 ///
 /// On the pre-fix solver `solve()` never resets the trail or the arithmetic
@@ -296,7 +296,7 @@ fn incremental_resolve_becomes_unsat() {
     );
 }
 
-// ─── Finding #5: an explicit empty clause makes the formula UNSAT ────────────
+// ======== Finding #5: an explicit empty clause makes the formula UNSAT ========
 
 #[test]
 fn empty_clause_is_unsat() {
@@ -316,7 +316,7 @@ fn empty_clause_is_unsat() {
     );
 }
 
-// ─── Finding #6: max_conflicts must be honoured (Unknown reachable) ──────────
+// ======== Finding #6: max_conflicts must be honoured (Unknown reachable) ========
 
 /// Build the fully-enumerated 3-variable CNF (all 8 clauses) which is UNSAT and
 /// requires several decisions/conflicts to refute. With a conflict budget of 1

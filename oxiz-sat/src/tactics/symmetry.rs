@@ -93,7 +93,7 @@ fn extract_boolean_clauses(
 ///
 /// Runs on an explicit heap work-stack. The recursion this replaces was
 /// driven by `Or`-nesting depth in user-supplied assertions, and the `bool`
-/// return has no room for a "too deep" answer — capping it would silently
+/// return has no room for a "too deep" answer – capping it would silently
 /// reclassify a genuine clause as a non-clause and disable symmetry
 /// breaking (or, capping the other way, admit a non-clause).
 ///
@@ -146,7 +146,7 @@ mod tests {
 
     /// A 100_000-literal clause walked on a 1 MiB stack. `mk_or` flattens
     /// nested disjunctions, so a clause built through the public builder is
-    /// wide rather than deep — but the flattening happens at *construction*
+    /// wide rather than deep – but the flattening happens at *construction*
     /// time, and a `TermManager` populated by any other route (a different
     /// front end, a deserialized term table) can present a deep `Or` spine
     /// to this walk. The assertion is that the walk returns; a stack
@@ -325,7 +325,7 @@ mod tests {
     /// We use the same fully-symmetric 3-variable construction as
     /// `test_symmetry_break_full_3var_symmetry`.  After applying the
     /// tactic we verify that the augmented goal has strictly more
-    /// assertions than the original — which is the direct evidence that
+    /// assertions than the original – which is the direct evidence that
     /// the solver's search space has been constrained (the added lex-leader
     /// clauses eliminate symmetric assignments).
     ///

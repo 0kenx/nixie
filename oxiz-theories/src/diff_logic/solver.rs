@@ -105,7 +105,7 @@ enum IncAdd {
     Conflict(Vec<TermId>),
     /// Edge added; run the seeded SPFA from this source node.
     Ok(DiffVar),
-    /// Distances are stale or a new variable appeared — fall back to a full
+    /// Distances are stale or a new variable appeared – fall back to a full
     /// [`DiffLogicSolver::check`].
     FullCheck,
 }
@@ -507,12 +507,12 @@ impl DiffLogicSolver {
 
     /// Check if a potential constraint would cause a conflict.
     ///
-    /// **Unsound as an implication test — do not use for theory propagation.**
+    /// **Unsound as an implication test – do not use for theory propagation.**
     /// This reduces to `dist[x] - dist[y] <= c` where `dist` are the virtual-
     /// source Bellman-Ford distances. That quantity is only a *lower bound* on
     /// the true shortest path `d(y, x)`, so it over-reports: e.g. a single
     /// asserted edge `a - b <= 5` gives `dist[a] = dist[b] = 0`, which this
-    /// test accepts as implying `a - b <= 3` — false. A controlled re-de-risk
+    /// test accepts as implying `a - b <= 3` – false. A controlled re-de-risk
     /// measured the over-count at ~10x (53-69% "implied" vs 1-6% soundly
     /// implied on inequality atoms). For sound theory propagation use
     /// [`Self::entailed_reason`], which computes the actual shortest path.
@@ -572,13 +572,13 @@ impl DiffLogicSolver {
     ///
     /// Returns `(dist, pred_edge)` where `pred_edge[node]` is the constraint
     /// index whose edge last improved `dist[node]` (for path reconstruction).
-    /// Returns `None` if a negative cycle is reachable from `src` — under
+    /// Returns `None` if a negative cycle is reachable from `src` – under
     /// normal CDCL(T) use [`Self::check`] has already turned that into a
     /// `Conflict`, so `None` here only means the caller should not propagate.
     ///
     /// This is the SOUND foundation for theory propagation: the true
     /// shortest-path distance `d(src, node)` over asserted edges, not the
-    /// virtual-source distance difference (a lower bound — see
+    /// virtual-source distance difference (a lower bound – see
     /// [`Self::would_conflict`]).  Exposed so a propagation pass can compute
     /// it once per distinct source and amortize the cost over many atom
     /// queries ([`Self::entailed_from_sssp`]).
@@ -595,7 +595,7 @@ impl DiffLogicSolver {
         // SPFA (Shortest Path Faster Algorithm): a queue-driven Bellman-Ford
         // that relaxes an edge only when its source node's distance just
         // improved.  On the sparse difference-logic graphs encountered during
-        // theory propagation this is near O(E) per source — orders of
+        // theory propagation this is near O(E) per source – orders of
         // magnitude faster than the |V|-passes-over-all-edges textbook
         // Bellman-Ford (which dominated runtime and prevented convergence on
         // qlock-4-10-7).  Edges from the virtual SOURCE are skipped: they are
@@ -679,7 +679,7 @@ impl DiffLogicSolver {
     /// returns the asserted-atom origins on the path entailing `xv - yv ≤ c`
     /// (or `< c` if `strict`), requiring the ACTUAL `d(yv, xv) ≤ c_eff`, or
     /// `None`.  Integer tightening applies for `strict`.  Returns `None` for an
-    /// empty reason path (a trivial bound not derived from asserted atoms —
+    /// empty reason path (a trivial bound not derived from asserted atoms –
     /// see [`Self::entailed_reason`]).
     pub fn entailed_from_sssp(
         &self,
@@ -719,7 +719,7 @@ impl DiffLogicSolver {
     /// by the currently-asserted difference constraints.
     ///
     /// SOUNDNESS: entailment of `x - y ≤ c` requires the ACTUAL shortest-path
-    /// distance `d(y, x) ≤ c` over the asserted edges — the quantity that
+    /// distance `d(y, x) ≤ c` over the asserted edges – the quantity that
     /// determines the tightest derivable bound on `x - y`. This computes
     /// `d(y, x)` by a single-source Bellman-Ford from `y` ([`Self::sssp_from`]).
     /// It is NOT the virtual-source distance difference `dist[x] - dist[y]`,
@@ -729,9 +729,9 @@ impl DiffLogicSolver {
     /// Integer tightening: for an integer solver, `x - y < c` is equivalent to
     /// `x - y ≤ c - 1`, applied here so callers pass the raw constant.
     ///
-    /// Returns `None` (does *not* propagate) when the reason path is empty —
+    /// Returns `None` (does *not* propagate) when the reason path is empty –
     /// i.e. when the bound holds trivially (`x == y`) rather than being
-    /// derived from asserted atoms — because an empty reason is installed by
+    /// derived from asserted atoms – because an empty reason is installed by
     /// the SAT core as a level-0 unit, which is unsound for a mid-search
     /// propagated literal.
     ///
@@ -973,7 +973,7 @@ mod tests {
         assert!(matches!(result, DiffLogicResult::Ok));
     }
 
-    // ---- incremental check (add_*_check) tests ----
+    // ======== incremental check (add_*_check) tests ========
 
     #[test]
     fn incremental_check_detects_negative_cycle() {
@@ -1033,7 +1033,7 @@ mod tests {
         ));
     }
 
-    // ---- entailed_reason soundness tests ----
+    // ======== entailed_reason soundness tests ========
     //
     // These pin the SOUND behaviour that distinguishes `entailed_reason` from
     // the unsound `would_conflict` approximation (see that method's doc).

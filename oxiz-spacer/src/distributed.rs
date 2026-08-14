@@ -423,7 +423,7 @@ impl<'a> DistributedCoordinator<'a> {
 
         // Build one independent replica per worker up front (single-threaded,
         // so interning stays safe). If any replica cannot be built the fragment
-        // is unsupported for parallel copying — fall back to the sound
+        // is unsupported for parallel copying – fall back to the sound
         // sequential engine rather than risk an unfaithful copy.
         let mut replicas: Vec<(TermManager, ChcSystem)> = Vec::with_capacity(num_workers);
         for _ in 0..num_workers {

@@ -24,10 +24,10 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 1. Numeric UF-argument purification: arithmetic entailing an equality to
 //    a *constant* UF argument must reach EUF congruence.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The PR's headline soundness repro: `f(y)` and `f(3)` are asserted
 /// distinct, but arithmetic (via an unrelated chain `y = x + 1`, `x = 2`)
@@ -132,10 +132,10 @@ fn test_pr30_purification_preserves_get_value_on_original_application() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 2. Non-convex LIA case-splitting: a UF argument pinned to a small finite
 //    domain (not a single entailed value) needs an explicit case split.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `x` is bounded to `{1, 2}` by direct level-0 facts (not a single entailed
 /// value), and both `f(1)` and `f(2)` equal `a`. Equality sharing alone
@@ -185,12 +185,12 @@ fn test_pr30_noncovex_case_split_stays_sat_when_consistent() {
     assert_eq!(output, vec!["sat"]);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 3. EUF -> arithmetic: a congruence-derived equality constraining
 //    arithmetic. Already sound before this slice --
 //    `TheoryManager::propagate_euf_equalities_to_arith` (pre-existing) --
 //    kept here as an end-to-end regression pin.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `p = q` is asserted directly, so EUF's congruence closure derives
 /// `f(p) = f(q)` immediately. Arithmetic is never told this directly (no
@@ -216,11 +216,11 @@ fn test_pr30_euf_congruence_forces_arith_conflict_already_sound() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 4. Disequality exchange: an arithmetic-entailed equality between two
 //    (bare, unpurified) UF-argument variables contradicts a directly
 //    asserted EUF disequality between their images.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// `p` and `q` are each pinned to exactly `3` by a pair of one-sided bound
 /// atoms (`3 <= p /\ p <= 3`, and likewise for `q`) -- deliberately never by
@@ -279,12 +279,12 @@ fn test_pr30_arith_entailed_equality_disequality_stays_sat_when_not_entailed() {
     assert_eq!(output, vec!["sat"]);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // 5. SAT-preservation on a broader mixed QF_UFLIA instance: the combination
 //    machinery above must not turn a genuinely satisfiable, UF-heavy
 //    instance into a spurious `unsat`, and `get-value` must still report a
 //    consistent, verifiable model.
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn test_pr30_mixed_uflia_sat_preserved_with_consistent_model() {

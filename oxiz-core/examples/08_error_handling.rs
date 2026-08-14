@@ -28,7 +28,7 @@ use std::time::Duration;
 fn main() {
     println!("=== OxiZ Core: Error Handling ===\n");
 
-    // ===== Example 1: Basic Error Types =====
+    // ======== Example 1: Basic Error Types ========
     println!("--- Example 1: OxizError Variants ---");
 
     // Create different error types
@@ -48,7 +48,7 @@ fn main() {
     println!("Unsupported: {}", unsupported_err);
     println!("Internal error: {}", internal_err);
 
-    // ===== Example 2: Parse Error Handling =====
+    // ======== Example 2: Parse Error Handling ========
     println!("\n--- Example 2: Parse Error Handling ---");
 
     let mut tm = TermManager::new();
@@ -62,7 +62,7 @@ fn main() {
         }
     }
 
-    // ===== Example 3: Result Type Usage =====
+    // ======== Example 3: Result Type Usage ========
     println!("\n--- Example 3: Result Type Usage ---");
 
     fn safe_divide(a: i32, b: i32) -> Result<i32> {
@@ -83,7 +83,7 @@ fn main() {
         Err(e) => println!("10 / 0 = Error: {}", e),
     }
 
-    // ===== Example 4: Diagnostic System =====
+    // ======== Example 4: Diagnostic System ========
     println!("\n--- Example 4: Diagnostic System ---");
 
     // Error diagnostic using builder pattern
@@ -104,7 +104,7 @@ fn main() {
     println!("  [{:?}] {}", warning_diag.severity, warning_diag.message);
     println!("  [{:?}] {}", info_diag.severity, info_diag.message);
 
-    // ===== Example 5: Resource Limit Handling =====
+    // ======== Example 5: Resource Limit Handling ========
     println!("\n--- Example 5: Resource Limit Handling ---");
 
     let limits = ResourceLimits {
@@ -132,7 +132,7 @@ fn main() {
         LimitStatus::MemoryExceeded => println!("\nStatus: Memory limit exceeded"),
     }
 
-    // ===== Example 6: Error Propagation =====
+    // ======== Example 6: Error Propagation ========
     println!("\n--- Example 6: Error Propagation ---");
 
     fn inner_operation() -> Result<i32> {
@@ -152,7 +152,7 @@ fn main() {
         }
     }
 
-    // ===== Example 7: Valid Parsing =====
+    // ======== Example 7: Valid Parsing ========
     println!("\n--- Example 7: Successful Parsing ---");
 
     let valid_input = r#"
@@ -175,7 +175,7 @@ fn main() {
         }
     }
 
-    // ===== Example 8: Custom Error Handling =====
+    // ======== Example 8: Custom Error Handling ========
     println!("\n--- Example 8: Custom Error Handling ---");
 
     #[derive(Debug)]
@@ -226,7 +226,7 @@ fn main() {
         Err(e) => println!("Error: {}", e),
     }
 
-    // ===== Example 9: Source Location =====
+    // ======== Example 9: Source Location ========
     println!("\n--- Example 9: Source Location ---");
 
     let loc1 = SourceLocation::new(5, 12, 50);
@@ -236,7 +236,7 @@ fn main() {
     println!("Source location: {}", loc1);
     println!("Source span: {}", span);
 
-    // ===== Example 10: Statistics Tracking =====
+    // ======== Example 10: Statistics Tracking ========
     println!("\n--- Example 10: Statistics for Debugging ---");
 
     let mut stats = Statistics::new();

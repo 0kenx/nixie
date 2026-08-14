@@ -318,7 +318,7 @@ fn test_associative_commutative_function() {
     let fba = solver.intern_app(TermId::new(12), 0, [b, a]);
     let fba_c = solver.intern_app(TermId::new(13), 0, [fba, c]);
 
-    // Due to commutativity and associativity, they are congruent — and so are
+    // Due to commutativity and associativity, they are congruent – and so are
     // merged into one class rather than collapsed onto one node.
     assert_ne!(c_fab, fba_c, "each term gets its own node");
     assert!(
@@ -570,7 +570,7 @@ fn test_incremental_sig_trail_matches_rebuild() {
     let c = solver.intern(TermId::new(3));
     let fc = solver.intern_app(TermId::new(11), f_sym, [c]);
     solver.merge(a, c, TermId::new(20)).expect("merge a=c");
-    // Now pop — should restore to pre-push state
+    // Now pop – should restore to pre-push state
     solver.pop();
 
     let sig_after = solver.sig_table_len();
@@ -733,16 +733,16 @@ fn test_leaf_constructor_uses_sentinel() {
     assert!(node.args.is_empty(), "leaf node should have no args");
 }
 
-// ──────────────────────────────────────────────────────────────────
-// The explanation engine is complete or absent — never partial
-// ──────────────────────────────────────────────────────────────────
+// ========  ========
+// The explanation engine is complete or absent – never partial
+// ========  ========
 
 /// A congruence between two applications of a *commutative* symbol is justified
 /// by a matching of the arguments, not by their positions.
 ///
 /// `f(a, b)` and `f(d, c)` are congruent once `a = c` and `b = d`, because the
 /// canonical signature of a commutative symbol is sorted.  Zipping the argument
-/// lists positionally pairs `a` with `d` and `b` with `c` — neither pair is
+/// lists positionally pairs `a` with `d` and `b` with `c` – neither pair is
 /// equal, so both sub-goals were dropped and the conflict core came back holding
 /// only the disequality.  That core is not weaker, it is wrong: `f(a,b) ≠ f(d,c)`
 /// alone has plenty of models.
@@ -795,7 +795,7 @@ fn commutative_congruence_explanation_names_the_argument_equalities() {
 /// reproduces the conflict.
 ///
 /// `check_conflicts` falls back to `all_asserted_reasons` when congruence
-/// closure cannot produce a complete explanation — an invariant violation that
+/// closure cannot produce a complete explanation – an invariant violation that
 /// nothing is expected to trigger.  Its *correctness* is testable regardless:
 /// the set it returns is every reason EUF currently rests on, so replaying it
 /// into a fresh solver must recreate the conflict, and it must be a superset of

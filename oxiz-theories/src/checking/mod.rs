@@ -114,7 +114,7 @@ impl Literal {
 /// conjunction of its negated literals is propositionally unsatisfiable), so
 /// this is a sound theory-independent certificate. The converse does not hold:
 /// most genuine theory conflicts are *not* tautologies and cannot be certified
-/// from literal identities alone — those must be reported as `Unknown`.
+/// from literal identities alone – those must be reported as `Unknown`.
 pub(crate) fn clause_has_complementary_pair(clause: &[Literal]) -> bool {
     for (i, li) in clause.iter().enumerate() {
         for lj in &clause[i + 1..] {

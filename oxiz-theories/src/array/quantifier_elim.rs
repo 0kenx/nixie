@@ -402,7 +402,7 @@ impl ArrayQuantifierEliminator {
     ///   `array := t`;
     /// * a select equation `select(array, i) = t` (with `i`, `t` free of
     ///   `array`): introduce a fresh array `B` and substitute
-    ///   `array := store(B, i, t)` — the standard Ackermann-style reduction,
+    ///   `array := store(B, i, t)` – the standard Ackermann-style reduction,
     ///   since `select(store(B,i,t), i) = t` holds by the read-over-write axiom.
     ///
     /// When neither applies the quantifier is returned as an honest residual;
@@ -521,7 +521,7 @@ impl ArrayQuantifierEliminator {
 ///
 /// Unlike [`EliminationResult`] (an index-only structural record), this carries
 /// genuine [`TermId`]s produced through a [`TermManager`]. It is either a real
-/// eliminated formula or an honest residual — never a fabricated placeholder.
+/// eliminated formula or an honest residual – never a fabricated placeholder.
 #[derive(Debug, Clone)]
 pub enum ArrayQeOutcome {
     /// The existential array was eliminated; `formula` no longer mentions it.
@@ -1112,9 +1112,9 @@ mod tests {
         assert_eq!(fresh, 0); // Counter should be reset
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Real term-level read-over-write elimination.
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     fn array_env() -> (TermManager, TermId, TermId, TermId, TermId) {
         let mut m = TermManager::new();

@@ -83,10 +83,10 @@ impl Simplex {
     /// calling this method.
     ///
     /// Returns:
-    /// - [`SimplexOptStatus::Optimal`]`(v)` — minimum value `v` was found.
-    /// - [`SimplexOptStatus::Unbounded`] — objective can decrease without bound.
-    /// - [`SimplexOptStatus::Infeasible`] — the constraint set is infeasible.
-    /// - [`SimplexOptStatus::Unknown`] — pivot limit hit; result undetermined.
+    /// - [`SimplexOptStatus::Optimal`]`(v)` – minimum value `v` was found.
+    /// - [`SimplexOptStatus::Unbounded`] – objective can decrease without bound.
+    /// - [`SimplexOptStatus::Infeasible`] – the constraint set is infeasible.
+    /// - [`SimplexOptStatus::Unknown`] – pivot limit hit; result undetermined.
     ///
     /// Uses Bland's rule throughout to prevent cycling.
     pub fn optimize_linexpr(&mut self, obj: &LinExpr) -> SimplexOptStatus {

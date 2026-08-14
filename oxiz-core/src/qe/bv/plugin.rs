@@ -3,11 +3,11 @@
 //! Eliminates existential quantifiers over bit-vector variables using three
 //! *sound* strategies, tried in order of cost:
 //!
-//! 1. **Unused variable** — if the quantified variable does not occur free in
+//! 1. **Unused variable** – if the quantified variable does not occur free in
 //!    the body, `∃ x. φ ≡ φ`.
-//! 2. **Definitional equality** — if the body is (or conjoins) `x = t` with
+//! 2. **Definitional equality** – if the body is (or conjoins) `x = t` with
 //!    `x` not occurring in `t`, then `∃ x. (x = t ∧ ψ) ≡ ψ[x := t]`.
-//! 3. **Small-width brute force** — for a width `w` up to a configured bound
+//! 3. **Small-width brute force** – for a width `w` up to a configured bound
 //!    (default 4) and within a term-size budget,
 //!    `∃ x:bv[w]. φ ≡ ⋁_{v=0}^{2^w-1} φ[x := v]`.
 //!
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_brute_force_enumeration_constraint() {
-        // ∃ x:bv2. (x + a = 0 ∧ a = 1) — only true when a = 1.
+        // ∃ x:bv2. (x + a = 0 ∧ a = 1) – only true when a = 1.
         let mut tm = TermManager::new();
         let bv2 = tm.sorts.bitvec(2);
         let x = tm.mk_var("x", bv2);

@@ -237,7 +237,7 @@ impl NiaSolver {
                 SolverResult::Unsat
             }
             SolverResult::Unknown => {
-                // Real CAD inconclusive — still try a finite integer box.
+                // Real CAD inconclusive – still try a finite integer box.
                 self.try_bounded_integer_enum()
                     .unwrap_or(SolverResult::Unknown)
             }
@@ -270,7 +270,7 @@ impl NiaSolver {
     /// Returns `Some(Sat/Unsat)` when every integer-typed variable has finite
     /// integer bounds and the cartesian product is within the node budget;
     /// `None` when the problem is not a small pure-integer box (caller keeps
-    /// `Unknown`). Real-typed variables are not enumerated — mixed problems
+    /// `Unknown`). Real-typed variables are not enumerated – mixed problems
     /// fall through.
     fn try_bounded_integer_enum(&mut self) -> Option<SolverResult> {
         // Refuse mixed Int/Real: reals have no finite grid here.
@@ -691,7 +691,7 @@ impl NiaSolver {
             // scoped to exactly this node's own branch path.
             let Some(snapshot) = self.snapshot_problem() else {
                 // Cannot faithfully replay the problem (see
-                // `snapshot_problem` docs) — branching cannot be proven
+                // `snapshot_problem` docs) – branching cannot be proven
                 // sound, so honestly report Unknown instead of guessing.
                 return SolverResult::Unknown;
             };
@@ -1259,7 +1259,7 @@ mod tests {
     /// alternative: `(x = 3/2) OR (x = 2)`. Whether or not the solver's
     /// initial witness happens to be the fractional disjunct (routing
     /// through `branch_and_bound`) or the integer one directly, the only
-    /// answer consistent with the problem is `Sat` with `x = 2` — the
+    /// answer consistent with the problem is `Sat` with `x = 2` – the
     /// pre-fix bound-leaking bug could turn this into a wrong `Unsat`
     /// whenever branching was exercised (see
     /// `test_branch_bounds_do_not_leak_between_siblings` for a

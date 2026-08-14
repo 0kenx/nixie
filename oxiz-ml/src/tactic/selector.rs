@@ -36,7 +36,7 @@ impl Default for TacticConfig {
 const MIN_TRAIN_SAMPLES: usize = 5;
 
 /// Retrain the model after this many new successful samples have been
-/// recorded since the last fit — an amortized schedule so learning happens
+/// recorded since the last fit – an amortized schedule so learning happens
 /// periodically rather than on every single feedback event.
 const RETRAIN_INTERVAL: usize = 4;
 
@@ -199,7 +199,7 @@ impl TacticSelector {
     ///
     /// Best-effort: a fit error (e.g. a transient dimension mismatch) is
     /// swallowed rather than propagated, since tactic selection must never
-    /// fail a solve — it just means the model keeps its previous structure.
+    /// fail a solve – it just means the model keeps its previous structure.
     fn retrain(&mut self) {
         let inputs: Vec<Vec<f64>> = self.training_data.iter().map(|(f, _)| f.clone()).collect();
         let targets: Vec<Vec<f64>> = self.training_data.iter().map(|(_, t)| vec![*t]).collect();
@@ -281,7 +281,7 @@ mod tests {
     /// End-to-end learning: after consistent feedback that tactic 1 works for
     /// one family of formulas and tactic 4 for another, the trained selector
     /// must actually predict those tactics for the respective feature
-    /// vectors — proving `learn_from_feedback` really trains the model.
+    /// vectors – proving `learn_from_feedback` really trains the model.
     #[test]
     fn test_selector_learns_to_pick_successful_tactic() {
         let mut selector = TacticSelector::default_config();

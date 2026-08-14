@@ -16,7 +16,7 @@
 //!
 //! # Why this is an *equivalence*, not an approximation
 //!
-//! The rewrite emits the **whole substituted body**, guard included — never
+//! The rewrite emits the **whole substituted body**, guard included – never
 //! just the consequent.  That is what makes the two directions hold without any
 //! assumption that the extracted interval is *tight*:
 //!
@@ -47,8 +47,8 @@
 //!   therefore holds in every model of the assertion set, or
 //! * a constant-foldable combination of those (`(+ n 1)`, `(- 0 3)`, ...).
 //!
-//! Anything else — a bound that mentions another bound variable, an
-//! unconstrained symbol, a non-Int sort — makes the quantifier ineligible and
+//! Anything else – a bound that mentions another bound variable, an
+//! unconstrained symbol, a non-Int sort – makes the quantifier ineligible and
 //! it falls through to the existing MBQI path completely unchanged.  Declining
 //! costs completeness only, never soundness.
 //!
@@ -75,8 +75,8 @@ use crate::prelude::*;
 /// Default cap on the number of ground instances a single quantifier may be
 /// expanded into (the product of its bound variables' interval widths).
 ///
-/// 64 comfortably covers the shapes that occur in practice — a loop index over
-/// a small array, a pair of indices over a 8×8 window — while keeping the
+/// 64 comfortably covers the shapes that occur in practice – a loop index over
+/// a small array, a pair of indices over a 8×8 window – while keeping the
 /// ground formula small enough that the expansion is always cheaper than the
 /// MBQI round-trip it replaces.
 pub(crate) const DEFAULT_FINITE_EXPANSION_BUDGET: usize = 64;
@@ -145,15 +145,15 @@ pub(crate) fn expand_finite_quantifiers(
 /// [`TermManager::substitute`] is capture-*avoiding*: splicing a replacement
 /// whose free variables include a name some enclosing binder binds makes it
 /// alpha-rename that binder rather than let the occurrence be captured.  For an
-/// inner quantifier that genuinely reads an outer bound variable — `∀i∈[0,1].
-/// ∃j∈[0,1]. a[j] = i` — that renaming silently detaches the spliced body from
+/// inner quantifier that genuinely reads an outer bound variable – `∀i∈[0,1].
+/// ∃j∈[0,1]. a[j] = i` – that renaming silently detaches the spliced body from
 /// the `∀`, turning `i` into an unconstrained free constant and answering `sat`
 /// for an unsatisfiable goal.
 ///
 /// So a quantifier is a candidate only when its free variables are disjoint
 /// from **every** name bound by a binder (`Forall` / `Exists` / `Let` /
-/// `Match`) anywhere in `term`.  The over-approximation — "anywhere in `term`"
-/// rather than "on the path to this occurrence" — is deliberate: the term is a
+/// `Match`) anywhere in `term`.  The over-approximation – "anywhere in `term`"
+/// rather than "on the path to this occurrence" – is deliberate: the term is a
 /// hash-consed DAG, so the same sub-term can sit under several different
 /// binder paths at once, and the rewrite map is applied to all of them.
 ///
@@ -372,7 +372,7 @@ fn extract_bounds(
     } else {
         match manager.get(body).map(|t| t.kind.clone())? {
             TermKind::Implies(premise, _) => premise,
-            // `(or (not g) c)` — and its mirror `(or c (not g))` — is the same
+            // `(or (not g) c)` – and its mirror `(or c (not g))` – is the same
             // implication after normalisation.  Either negated disjunct may be
             // read as the guard: `(or (not g) x)` ≡ `g ⇒ x`, so outside the
             // interval `g` pins, the disjunction is true either way.

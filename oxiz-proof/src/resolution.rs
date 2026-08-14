@@ -245,7 +245,7 @@ impl ResolutionProof {
         // resolvent {b, ~b} is a tautology, not the empty clause: it must
         // be kept as-is. Silently deleting non-pivot complementary
         // literals would fabricate a stronger (spuriously empty) clause
-        // than the premises actually justify — see PF-03. Non-pivot
+        // than the premises actually justify – see PF-03. Non-pivot
         // literals are still deduplicated when they are exact repeats.
         let mut resolvent_lits: Vec<Literal> = Vec::new();
 

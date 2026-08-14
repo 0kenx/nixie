@@ -75,7 +75,7 @@ pub mod interner;
 pub(crate) mod lru_cache;
 mod prelude;
 
-// === Always-available modules (no_std compatible) ===
+// ======== Always-available modules (no_std compatible) ========
 pub mod ast;
 pub mod config;
 pub mod error;
@@ -93,7 +93,7 @@ pub mod theories;
 pub mod traits;
 pub mod unsat_core;
 
-// === std-only modules ===
+// ======== std-only modules ========
 #[cfg(feature = "std")]
 pub mod alloc;
 #[cfg(feature = "std")]
@@ -115,7 +115,7 @@ pub mod statistics;
 #[cfg(feature = "std")]
 pub mod tactic;
 
-// === Always-available exports ===
+// ======== Always-available exports ========
 pub use ast::{Term, TermId, TermKind, TermManager};
 pub use config::{
     ClauseDeletionStrategy, Config, GeneralParams, PhaseSaving, ResourceLimits, SatParams,
@@ -158,7 +158,7 @@ pub use traits::{
     TheoryConflict, TheoryModel, TheoryPropagationResult, WatchedPropagator,
 };
 
-// === std-only exports ===
+// ======== std-only exports ========
 #[cfg(feature = "std")]
 pub use diagnostics::{Diagnostic, DiagnosticEmitter, Fix, RelatedDiagnostic, Severity};
 #[cfg(feature = "profiling")]

@@ -2,16 +2,16 @@
 //!
 //! Three sources, in decreasing order of how much the goal commits to them:
 //!
-//! * **Pins** — points the goal states outright (`(= (f 3.14) 3.14)`) or the
+//! * **Pins** – points the goal states outright (`(= (f 3.14) 3.14)`) or the
 //!   ground model already fixed.  They are copied into the interpretation
 //!   verbatim.
-//! * **Macros** — a quantifier of the shape `∀x. guard(x) ⇒ f(x) = t(x)` with
+//! * **Macros** – a quantifier of the shape `∀x. guard(x) ⇒ f(x) = t(x)` with
 //!   `f` absent from `t` *defines* `f` on the guarded region.  When `t` is
 //!   affine, `λy. t(y)` becomes the first default tried.  (Z3 calls these
-//!   quasi-macros; the detection here is deliberately narrower — one variable,
-//!   one affine right-hand side — because the certifier still verifies whatever
+//!   quasi-macros; the detection here is deliberately narrower – one variable,
+//!   one affine right-hand side – because the certifier still verifies whatever
 //!   it produces.)
-//! * **Shapes** — the identity, an affine through two pins, the pinned values
+//! * **Shapes** – the identity, an affine through two pins, the pinned values
 //!   themselves, zero, and the goal's own literals.
 //!
 //! None of this has to be right.  Everything the synthesis proposes is checked
@@ -86,7 +86,7 @@ impl RealFacts {
 ///
 /// Both sources are heuristic: a model entry may be missing and a syntactic
 /// equation may be under a disjunction we do not inspect.  Neither can mislead
-/// the verdict — a wrong pin makes the very assertion it came from evaluate to
+/// the verdict – a wrong pin makes the very assertion it came from evaluate to
 /// `false`, and the search moves on.
 pub(crate) fn collect_facts(
     assertions: &[TermId],

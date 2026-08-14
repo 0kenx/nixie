@@ -184,7 +184,7 @@ fn test_lia_fractional_constant_in_equality() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Integer `div` / `mod` / `abs` defining axioms
 //
 // The linear solver sees `(div m n)`, `(mod m n)` and the `(ite ...)` that
@@ -196,7 +196,7 @@ fn test_lia_fractional_constant_in_equality() {
 // The `unsat` cases pin the axioms; the `sat` controls prove they do not
 // over-constrain; the zero-divisor cases pin the SMT-LIB rule that `div`/`mod`
 // by zero are *uninterpreted* and must therefore stay satisfiable.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Run an SMT-LIB script and return the verdict of its final `check-sat`.
 fn run_script(script: &str) -> SolverResult {
@@ -262,7 +262,7 @@ fn test_mod_range_bounds_unsat() {
 
 /// The remainder range is governed by `abs(n)`, so it holds unchanged for a
 /// negative divisor: `(mod i0 (- 7))` still lies in `[0, 7)`.  This is the
-/// Euclidean convention — a truncating `%` would allow `-1` here.
+/// Euclidean convention – a truncating `%` would allow `-1` here.
 #[test]
 fn test_mod_negative_divisor_range() {
     let above = r#"
@@ -464,7 +464,7 @@ fn test_abs_is_non_negative() {
 }
 
 /// The defining axioms are asserted at the scope that internalised the term, so
-/// a `pop` must retract them together with the assertion that needed them — and
+/// a `pop` must retract them together with the assertion that needed them – and
 /// a later scope must re-derive them.  Both orders are checked: axioms first
 /// then a model, and a model first then the axioms.
 #[test]
@@ -499,7 +499,7 @@ fn test_mod_axioms_are_scoped_to_their_push() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Differential test: random small Int formulas containing `div`/`mod`/`abs`,
 // checked against a brute-force oracle over a bounded domain.
 //
@@ -507,11 +507,11 @@ fn test_mod_axioms_are_scoped_to_their_push() {
 // enumeration decides exactly the same problem the solver is given.  The check
 // is one-sided in the honest direction: `Unknown` is always acceptable, but a
 // `Sat`/`Unsat` that contradicts the oracle is a hard failure.  Guarding
-// against *over*-correction is the point — an axiom that is too strong shows up
+// against *over*-correction is the point – an axiom that is too strong shows up
 // as `Unsat` where the oracle found a witness.
 //
 // Fully deterministic: fixed seed, fixed schedule, no wall-clock dependence.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Inclusive variable domain used by both the generated formula and the oracle.
 const DOMAIN: (i64, i64) = (-8, 8);
@@ -528,9 +528,9 @@ enum Expr {
     Abs(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
-    /// `(mod e d)` — `d` is a non-zero constant or the variable `y`.
+    /// `(mod e d)` – `d` is a non-zero constant or the variable `y`.
     Mod(Box<Expr>, Box<Divisor>),
-    /// `(div e d)` — same divisor discipline.
+    /// `(div e d)` – same divisor discipline.
     Div(Box<Expr>, Box<Divisor>),
 }
 
@@ -544,7 +544,7 @@ enum Divisor {
     SymbolicY,
 }
 
-/// xorshift64* — a tiny deterministic PRNG so the suite needs no dependency and
+/// xorshift64* – a tiny deterministic PRNG so the suite needs no dependency and
 /// no entropy source.
 struct Rng(u64);
 

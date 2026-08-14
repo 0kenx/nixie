@@ -348,7 +348,7 @@ impl InvariantInference {
     /// [`crate::walk`]). Descent is uniform over every `TermKind` child
     /// rather than the previous enumeration, whose `_ => {}` arm dropped
     /// variables occurring under `Apply`, `Select`/`Store`, `Xor`, `Let`,
-    /// quantifier bodies and every bitvector/string operator — an
+    /// quantifier bodies and every bitvector/string operator – an
     /// understated variable set makes an inferred invariant candidate refer
     /// to fewer variables than it actually constrains.
     fn collect_variables(
@@ -486,7 +486,7 @@ impl InvariantInference {
     /// `⋀ᵢ (current candidates of Qᵢ, renamed to aᵢ) ∧ constraint ∧ ¬c[head]`
     /// is satisfiable (or the solver cannot prove it unsatisfiable).  The
     /// process iterates to a greatest fixpoint, so the surviving set is
-    /// genuinely inductive — contradictory guesses such as `x ≥ 0` and
+    /// genuinely inductive – contradictory guesses such as `x ≥ 0` and
     /// `x ≤ 0` are eliminated instead of being reported as invariants.
     fn run_houdini(&mut self, chc: &ChcSystem, manager: &mut TermManager) -> InferenceResult {
         let mut iteration = 0;
@@ -567,7 +567,7 @@ impl InvariantInference {
     ///
     /// Returns `true` only if consecution is *provably* UNSAT for all such
     /// rules.  A SAT result (real violation) or a solver `Unknown` both yield
-    /// `false` — we never keep a candidate we could not prove inductive, which
+    /// `false` – we never keep a candidate we could not prove inductive, which
     /// keeps the returned invariant set sound.
     fn candidate_is_inductive(
         chc: &ChcSystem,

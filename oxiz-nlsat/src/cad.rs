@@ -791,7 +791,7 @@ impl SturmSequence {
     /// Implemented with an explicit heap work-stack rather than native
     /// recursion: each level owns two `BigRational` bounds plus bisection
     /// temporaries, so `MAX_ROOT_ISOLATION_DEPTH` levels of native frames
-    /// would consume on the order of a mebibyte — enough to overflow a
+    /// would consume on the order of a mebibyte – enough to overflow a
     /// small worker-thread stack *before* the depth ceiling can fire. The
     /// heap stack makes the ceiling the only thing that can stop the walk.
     ///

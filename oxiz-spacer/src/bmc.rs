@@ -78,9 +78,9 @@ pub struct BmcStats {
     pub num_unrollings: u32,
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Helper: per-predicate step variables
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Create per-step state variables for a predicate's parameters.
 ///
@@ -114,9 +114,9 @@ fn subst_from_args(app_args: &[TermId], step_vars: &[TermId]) -> FxHashMap<TermI
         .collect()
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Bounded Model Checker
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Bounded Model Checker
 pub struct Bmc<'a> {
@@ -191,9 +191,9 @@ impl<'a> Bmc<'a> {
         Ok(BmcResult::Safe(self.config.max_depth))
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // Core BMC query: Φ_k = Init(s₀) ∧ Trans(s₀,s₁) ∧ … ∧ Trans(s_{k-1},s_k) ∧ Bad(s_k)
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// Check whether a bad state is reachable at exactly depth `k`.
     ///
@@ -208,12 +208,12 @@ impl<'a> Bmc<'a> {
 
         // We only handle the *single-predicate linear* case to remain sound.
         // Non-linear CHC (multiple distinct predicates in rule body) would
-        // require a more complex encoding — we conservatively return Unknown.
+        // require a more complex encoding – we conservatively return Unknown.
         let pred_count = self.system.predicates().count();
         if pred_count > 1 {
             // Multi-predicate systems may be non-linear; return Unknown.
             debug!(
-                "BMC: {} predicates — returning Unknown for safety",
+                "BMC: {} predicates – returning Unknown for safety",
                 pred_count
             );
             return Ok(BmcResult::Unknown);
@@ -237,7 +237,7 @@ impl<'a> Bmc<'a> {
 
         let mut conjuncts: Vec<TermId> = Vec::new();
 
-        // ---- Init constraint: Init(s₀) -----------------------------------
+        // ======== Init constraint: Init(s₀) ========
         let mut init_added = false;
         for rule in self.system.entries() {
             // Entry rules have no predicates in the body; they establish s₀.
@@ -257,7 +257,7 @@ impl<'a> Bmc<'a> {
             return Err(BmcError::NoInitRule);
         }
 
-        // ---- Transition constraints: Trans(sᵢ, sᵢ₊₁) for i = 0..k-1 ----
+        // ======== Transition constraints: Trans(sᵢ, sᵢ₊₁) for i = 0..k-1 ========
         // The transition relation is the DISJUNCTION of all matching rules:
         // a nondeterministic system may advance via any one of its rules, so
         // conjoining them (which is what a naive encoding would do) makes
@@ -290,7 +290,7 @@ impl<'a> Bmc<'a> {
                 // No transition rule: no way to advance state, so no
                 // counterexample can exist beyond depth 0.
                 debug!(
-                    "BMC: no transition rule for pred {:?} — safe at depth > 0",
+                    "BMC: no transition rule for pred {:?} – safe at depth > 0",
                     pred_id
                 );
                 return Ok(BmcResult::Safe(k));
@@ -299,7 +299,7 @@ impl<'a> Bmc<'a> {
             conjuncts.push(step_trans);
         }
 
-        // ---- Bad state: Bad(sₖ) ------------------------------------------
+        // ======== Bad state: Bad(sₖ) ========
         let mut bad_added = false;
         for query in self.system.queries() {
             for body_app in &query.body.predicates {
@@ -313,11 +313,11 @@ impl<'a> Bmc<'a> {
             }
         }
         if !bad_added {
-            // No query references this predicate — trivially safe at depth k
+            // No query references this predicate – trivially safe at depth k
             return Ok(BmcResult::Safe(k));
         }
 
-        // ---- Check satisfiability ----------------------------------------
+        // ======== Check satisfiability ========
         let formula = self.terms.mk_and(conjuncts);
 
         let mut smt = SmtSolver::new(self.terms, self.system);
@@ -348,9 +348,9 @@ impl<'a> Bmc<'a> {
         }
     }
 
-    // -----------------------------------------------------------------------
+    // ========  ========
     // K-induction
-    // -----------------------------------------------------------------------
+    // ========  ========
 
     /// Run k-induction from depth 1 up to `max_depth`.
     ///
@@ -393,7 +393,7 @@ impl<'a> Bmc<'a> {
     ///    `P(s₀) ∧ … ∧ P(s_{k-1}) ∧ Trans(s₀,s₁) ∧ … ∧ Trans(s_{k-1},sₖ) ∧ Bad(sₖ)`
     ///    where `P(sᵢ) = ¬Bad(sᵢ)`.
     ///    * UNSAT  → `Safe` (k-inductive proof found)
-    ///    * SAT    → `Unknown` (NOT Unsafe — only base case can yield Unsafe)
+    ///    * SAT    → `Unknown` (NOT Unsafe – only base case can yield Unsafe)
     ///
     /// **Soundness invariant**: `Unsafe` is returned only when the base case
     /// finds a real SAT witness.  The inductive-step formula being SAT merely
@@ -405,7 +405,7 @@ impl<'a> Bmc<'a> {
             return Ok(BmcResult::Unknown);
         }
 
-        // --- Base case: check depths 0..=k ---
+        // ======== Base case: check depths 0..=k ========
         for i in 0..=k {
             match self.check_bad_at_depth(i)? {
                 BmcResult::Unsafe(d) => return Ok(BmcResult::Unsafe(d)),
@@ -414,7 +414,7 @@ impl<'a> Bmc<'a> {
             }
         }
 
-        // --- Inductive step ---
+        // ======== Inductive step ========
         // Only sound for single-predicate linear CHC
         let pred_count = self.system.predicates().count();
         if pred_count > 1 {
@@ -466,7 +466,7 @@ impl<'a> Bmc<'a> {
 
         // Trans(sᵢ, sᵢ₊₁) for i = 0 .. k-1.
         // As in the base case, the transition relation is the DISJUNCTION of the
-        // matching rules — conjoining nondeterministic rules would make the step
+        // matching rules – conjoining nondeterministic rules would make the step
         // formula spuriously UNSAT and produce an unsound k-inductive "proof".
         for i in 0..k {
             let mut disjuncts: Vec<TermId> = Vec::new();
@@ -492,7 +492,7 @@ impl<'a> Bmc<'a> {
             }
         }
 
-        // Bad(sₖ)  — the property violation at the final step
+        // Bad(sₖ)  – the property violation at the final step
         for (args, bad_constraint) in &bad_templates {
             let subst = subst_from_args(args, &step_vars[k as usize]);
             let bad_at_k = self.terms.substitute(*bad_constraint, &subst);
@@ -500,7 +500,7 @@ impl<'a> Bmc<'a> {
         }
 
         if conjuncts.is_empty() {
-            // Nothing to check — conservatively unknown
+            // Nothing to check – conservatively unknown
             return Ok(BmcResult::Unknown);
         }
 
@@ -515,12 +515,12 @@ impl<'a> Bmc<'a> {
 
         match sat_result {
             Ok(false) => {
-                // UNSAT: the inductive step holds — k-induction proves safety
+                // UNSAT: the inductive step holds – k-induction proves safety
                 debug!("K-induction: proved safety with k={}", k);
                 Ok(BmcResult::Safe(k))
             }
             Ok(true) => {
-                // SAT: k-induction failed at this k (but NOT an Unsafe result —
+                // SAT: k-induction failed at this k (but NOT an Unsafe result –
                 // SAT here only means we cannot prove safety with k steps)
                 trace!("K-induction: step formula SAT at k={}, inconclusive", k);
                 Ok(BmcResult::Unknown)
@@ -541,9 +541,9 @@ impl<'a> Bmc<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Counterexample extraction
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Build a `Counterexample` by evaluating the per-step state variables in the
 /// current SAT model held inside `smt`.
@@ -574,9 +574,9 @@ fn build_counterexample_from_model(
     cex
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Hybrid BMC + PDR solver
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Hybrid BMC + PDR solver
 ///
@@ -612,9 +612,9 @@ impl Default for HybridSolver {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Tests
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[cfg(test)]
 mod tests {
@@ -831,7 +831,7 @@ mod tests {
             .expect("k-induction should not error");
         // x starts at 0 and only increases; x < 0 is unreachable.
         // k=1 induction: base case is UNSAT, step formula checks:
-        //   ¬(x<0) ∧ x'=x+1 ∧ x'<0  — UNSAT (x'=x+1 with x≥0 → x'≥1 > 0)
+        //   ¬(x<0) ∧ x'=x+1 ∧ x'<0  – UNSAT (x'=x+1 with x≥0 → x'≥1 > 0)
         assert!(
             matches!(result, BmcResult::Safe(1) | BmcResult::Unknown),
             "Expected Safe(1) or Unknown, got {:?}",

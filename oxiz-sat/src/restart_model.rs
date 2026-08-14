@@ -125,7 +125,7 @@ impl Reluctant {
             self.countdown -= 1;
             return;
         }
-        // countdown hit zero — advance the Luby doubling (DK formulation).
+        // countdown hit zero – advance the Luby doubling (DK formulation).
         if (self.u & self.u.wrapping_neg()) == self.v {
             self.u += 1;
             self.v = 1;

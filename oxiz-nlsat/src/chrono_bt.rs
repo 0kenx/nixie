@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// NLSAT status (0.3.0): pub(crate), DEFERRED — retained-unwired. NLSAT's
+// NLSAT status (0.3.0): pub(crate), DEFERRED – retained-unwired. NLSAT's
 // backtrack already resets the entire arithmetic model on every conflict, so
 // chronological backtracking could only help the propositional layer while the
 // arithmetic layer is rebuilt regardless; low value until incremental
