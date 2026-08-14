@@ -186,8 +186,22 @@ fn collect_array_structure(
     visited: &mut FxHashSet<TermId>,
     out: &mut ArrayStructure,
 ) {
-    let mut stack: Vec<TermId> = vec![term];
-    while let Some(term) = stack.pop() {
+    // The stack carries a polarity flag (`true` = positive).  It flips under
+    // `Not`, so a top-level disequality `(not (= var store))` reaches its
+    // inner `Eq` at *negative* polarity.  That matters for `record_alias`:
+    // an alias is a *positive* `var = store` fact, and recording one from a
+    // disequality's inner equality would (a) make `is_self_alias` skip the
+    // fresh-witness extensionality that a disequality *needs*, and (b) feed
+    // alias-aware read-over-write a `var = store` premise that is actually
+    // false — both producing a spurious `sat` on an UNSAT goal (e.g.
+    // `store_noop_disequality_is_unsat`: `select(a,i) = v` with
+    // `a != store(a,i,v)` is UNSAT, but a phantom `a = store(a,i,v)` alias
+    // suppresses the witness and the contradiction is never derived).
+    // `eq_pairs` is recorded for either polarity: the extensionality /
+    // congruence lemmas are valid regardless, and a disequality *requires*
+    // the witness lemma.
+    let mut stack: Vec<(TermId, bool)> = vec![(term, true)];
+    while let Some((term, positive)) = stack.pop() {
         if !visited.insert(term) {
             continue;
         }
@@ -195,14 +209,17 @@ fn collect_array_structure(
             continue;
         };
         match &data.kind {
+            TermKind::Not(inner) => {
+                stack.push((*inner, !positive));
+            }
             TermKind::Select(array, index) => {
                 out.selects.push((term, *array, *index));
                 let entry = out.read_indices.entry(*array).or_default();
                 if !entry.contains(index) {
                     entry.push(*index);
                 }
-                stack.push(*index);
-                stack.push(*array);
+                stack.push((*index, positive));
+                stack.push((*array, positive));
             }
             TermKind::Store(base, index, value) => {
                 // Record the (base, store_result) pair for every store so
@@ -218,9 +235,9 @@ fn collect_array_structure(
                 if *base != term {
                     out.store_base_pairs.push((*base, term));
                 }
-                stack.push(*value);
-                stack.push(*index);
-                stack.push(*base);
+                stack.push((*value, positive));
+                stack.push((*index, positive));
+                stack.push((*base, positive));
             }
             TermKind::Eq(lhs, rhs) => {
                 // Record an array-sorted equality atom (either polarity: the
@@ -229,14 +246,20 @@ fn collect_array_structure(
                     out.eq_pairs.push((*lhs, *rhs));
                 }
                 // Record a `var = store(...)` alias for alias-aware
-                // read-over-write.
-                record_alias(*lhs, *rhs, manager, &mut out.aliases);
-                record_alias(*rhs, *lhs, manager, &mut out.aliases);
-                stack.push(*rhs);
-                stack.push(*lhs);
+                // read-over-write — POSITIVE equalities only.  A disequality
+                // `(not (= var store))` is not an alias; its inner `Eq` reaches
+                // here at `positive == false`.
+                if positive {
+                    record_alias(*lhs, *rhs, manager, &mut out.aliases);
+                    record_alias(*rhs, *lhs, manager, &mut out.aliases);
+                }
+                stack.push((*rhs, positive));
+                stack.push((*lhs, positive));
             }
             _ => {
-                stack.extend(get_children(&data.kind).into_iter().rev());
+                for child in get_children(&data.kind).into_iter().rev() {
+                    stack.push((child, positive));
+                }
             }
         }
     }
@@ -881,7 +904,7 @@ mod s8_iterative_tests {
 
         // `b = store(a, i, v)` is recorded as an alias and as an array-sorted
         // equality pair; the two selects are recorded left to right.
-        assert_eq!(out.aliases.get(&b), Some(&store_a));
+        assert_eq!(out.aliases.get(&b), Some(&vec![store_a]));
         assert_eq!(out.eq_pairs, vec![(b, store_a)]);
         assert_eq!(
             out.selects,
