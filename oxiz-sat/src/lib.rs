@@ -280,7 +280,8 @@ pub use profiling::{
 };
 #[cfg(feature = "std")]
 pub use proof::{
-    ConclusionType, DratTracer, DratWriter, LratTracer, LratWriter, Proof, ProofTrimmer, Tracer,
+    ConclusionType, DratTracer, DratWriter, LratTracer, LratTranscript, LratTranscriptHandle,
+    LratWriter, MemoryLratTracer, Proof, ProofTrimmer, Tracer,
 };
 #[cfg(feature = "std")]
 pub use stats_dashboard::{StatsAggregator, StatsDashboard};

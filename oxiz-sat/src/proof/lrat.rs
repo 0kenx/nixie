@@ -23,9 +23,196 @@
 
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use super::tracer::Tracer;
+
+/// A complete in-memory LRAT transcript.
+///
+/// Original clauses are kept separately because LRAT numbers them implicitly
+/// as `1..=N`; the textual proof contains only derived clauses and deletions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LratTranscript {
+    /// Original clauses, in clause-id order.
+    pub original_clauses: Vec<Vec<i32>>,
+    /// Text LRAT proof body.
+    pub proof: String,
+}
+
+/// Read handle for an in-memory LRAT tracer attached to a solver.
+///
+/// The handle is deliberately separate from the tracer owned by the proof
+/// dispatcher.  A caller can retain it across `solve` and snapshot the exact
+/// transcript at the result gate without reaching into the solver's internals.
+#[derive(Debug, Clone)]
+pub struct LratTranscriptHandle {
+    inner: Arc<Mutex<LratTranscriptState>>,
+}
+
+impl LratTranscriptHandle {
+    /// Clone the transcript accumulated so far.
+    ///
+    /// A poisoned lock is reported as an error.  Certification callers must
+    /// turn that error into an untrusted/unknown verdict, never accept a
+    /// partial transcript.
+    pub fn snapshot(&self) -> Result<LratTranscript, String> {
+        let state = self
+            .inner
+            .lock()
+            .map_err(|_| "in-memory LRAT transcript lock was poisoned".to_string())?;
+        match &state.error {
+            Some(error) => Err(error.clone()),
+            None => Ok(state.transcript.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct LratTranscriptState {
+    transcript: LratTranscript,
+    error: Option<String>,
+}
+
+/// LRAT tracer that retains both the original clause set and the proof body in
+/// memory for an in-process exit-gate checker.
+pub struct MemoryLratTracer {
+    inner: Arc<Mutex<LratTranscriptState>>,
+    latest_id: i64,
+    delete_ids: Vec<i64>,
+    closed: bool,
+}
+
+impl MemoryLratTracer {
+    /// Create a tracer and the independent handle used to read its transcript.
+    #[must_use]
+    pub fn new() -> (Self, LratTranscriptHandle) {
+        let inner = Arc::new(Mutex::new(LratTranscriptState::default()));
+        (
+            Self {
+                inner: Arc::clone(&inner),
+                latest_id: 0,
+                delete_ids: Vec::new(),
+                closed: false,
+            },
+            LratTranscriptHandle { inner },
+        )
+    }
+
+    fn with_state(&self, f: impl FnOnce(&mut LratTranscriptState)) {
+        // Tracer callbacks cannot return errors.  If the lock is poisoned we
+        // leave the transcript incomplete; `snapshot` then fails closed at the
+        // certification gate.
+        if let Ok(mut state) = self.inner.lock() {
+            f(&mut state);
+        }
+    }
+
+    fn flush_deletes(&mut self) {
+        if self.delete_ids.is_empty() {
+            return;
+        }
+        let latest_id = self.latest_id;
+        let ids = core::mem::take(&mut self.delete_ids);
+        self.with_state(|state| {
+            use core::fmt::Write as _;
+            let _ = write!(state.transcript.proof, "{latest_id} d ");
+            for id in ids {
+                let _ = write!(state.transcript.proof, "{id} ");
+            }
+            state.transcript.proof.push_str("0\n");
+        });
+    }
+}
+
+impl Tracer for MemoryLratTracer {
+    fn add_original_clause(
+        &mut self,
+        id: i64,
+        _redundant: bool,
+        clause: &[i32],
+        restored: bool,
+    ) {
+        if self.closed {
+            return;
+        }
+        self.with_state(|state| {
+            if restored {
+                state.error.get_or_insert_with(|| {
+                    "in-memory LRAT certification does not support restored clauses".to_string()
+                });
+                return;
+            }
+            // A gap or reorder makes the implicit LRAT numbering ambiguous.
+            // Preserve an explicit failure instead of fabricating a marker
+            // literal that a permissive checker might accidentally accept.
+            if id != state.transcript.original_clauses.len() as i64 + 1 {
+                state.error.get_or_insert_with(|| {
+                    format!(
+                        "in-memory LRAT original clause id {id} is not the next sequential id"
+                    )
+                });
+            } else {
+                state.transcript.original_clauses.push(clause.to_vec());
+            }
+        });
+    }
+
+    fn add_derived_clause(
+        &mut self,
+        id: i64,
+        _redundant: bool,
+        _witness: i32,
+        clause: &[i32],
+        chain: &[i64],
+    ) {
+        if self.closed {
+            return;
+        }
+        self.flush_deletes();
+        self.latest_id = id;
+        self.with_state(|state| {
+            use core::fmt::Write as _;
+            let _ = write!(state.transcript.proof, "{id} ");
+            for lit in clause {
+                let _ = write!(state.transcript.proof, "{lit} ");
+            }
+            state.transcript.proof.push_str("0 ");
+            for hint in chain {
+                let _ = write!(state.transcript.proof, "{hint} ");
+            }
+            state.transcript.proof.push_str("0\n");
+        });
+    }
+
+    fn delete_clause(&mut self, id: i64, _redundant: bool, _clause: &[i32]) {
+        if !self.closed {
+            self.delete_ids.push(id);
+        }
+    }
+
+    fn begin_proof(&mut self, id: i64) {
+        if !self.closed {
+            self.latest_id = id;
+        }
+    }
+
+    fn flush(&mut self, _print: bool) {
+        if !self.closed {
+            self.flush_deletes();
+        }
+    }
+
+    fn close(&mut self, _print: bool) {
+        if !self.closed {
+            self.flush_deletes();
+            self.closed = true;
+        }
+    }
+
+    fn closed(&self) -> bool {
+        self.closed
+    }
+}
 
 /// Streaming LRAT proof writer (text or binary).
 pub struct LratTracer {
@@ -361,5 +548,41 @@ mod tests {
         assert_eq!(decode_id(read_varint(&b, &mut i)), 1);
         assert_eq!(decode_lit(read_varint(&b, &mut i)), 100);
         assert_eq!(decode_lit(read_varint(&b, &mut i)), -100);
+    }
+
+    #[test]
+    fn memory_tracer_captures_originals_and_proof() {
+        let (mut tracer, handle) = MemoryLratTracer::new();
+        tracer.add_original_clause(1, false, &[1], false);
+        tracer.add_original_clause(2, false, &[-1], false);
+        tracer.add_derived_clause(3, false, 0, &[], &[1, 2]);
+
+        let transcript = handle.snapshot().expect("transcript lock");
+        assert_eq!(transcript.original_clauses, vec![vec![1], vec![-1]]);
+        assert_eq!(transcript.proof, "3 0 1 2 0\n");
+    }
+
+    #[test]
+    fn memory_tracer_rejects_non_sequential_original_ids() {
+        let (mut tracer, handle) = MemoryLratTracer::new();
+        tracer.add_original_clause(2, false, &[1], false);
+
+        assert!(
+            handle
+                .snapshot()
+                .is_err_and(|error| error.contains("not the next sequential id"))
+        );
+    }
+
+    #[test]
+    fn memory_tracer_rejects_restored_originals() {
+        let (mut tracer, handle) = MemoryLratTracer::new();
+        tracer.add_original_clause(1, false, &[1], true);
+
+        assert!(
+            handle
+                .snapshot()
+                .is_err_and(|error| error.contains("restored clauses"))
+        );
     }
 }

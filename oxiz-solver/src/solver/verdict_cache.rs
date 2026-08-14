@@ -169,6 +169,7 @@ impl Solver {
     ///   verdict about the old stack in exactly the way `model` is, so it is
     ///   cleared through exactly the same hook.
     pub(super) fn invalidate_results(&mut self) {
+        self.certification_failure = None;
         self.model = None;
         self.unsat_core = None;
         self.last_check = None;

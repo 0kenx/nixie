@@ -440,6 +440,10 @@ struct Args {
     #[arg(long)]
     validate_model: bool,
 
+    /// Return sat/unsat only after independent model/LRAT certification
+    #[arg(long)]
+    certified_mode: bool,
+
     /// Enable incremental solving mode (supports push/pop)
     #[arg(long)]
     incremental: bool,
@@ -886,6 +890,12 @@ pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) {
     // Apply preset first if specified
     if let Some(ref preset) = args.preset {
         apply_preset(ctx, preset);
+    }
+    if args.certified_mode {
+        // This is an embedding-level policy, not merely an initial SMT-LIB
+        // option: input scripts must not be able to turn off a guarantee the
+        // caller requested on the command line.
+        ctx.require_certified_mode();
     }
     // Apply resource limits.
     //

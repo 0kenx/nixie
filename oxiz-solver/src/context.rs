@@ -133,6 +133,8 @@ pub struct Context {
     last_assumptions: Vec<TermId>,
     /// Options
     options: crate::prelude::HashMap<String, String>,
+    /// An embedding-level requirement that SMT-LIB input cannot turn off.
+    certified_mode_required: bool,
     /// Sorts declared via `(declare-sort name arity)`, keyed by name.
     ///
     /// The `SortId` itself lives in `self.terms.sorts` (interned lazily,
@@ -174,6 +176,7 @@ impl Context {
             last_result: None,
             last_assumptions: Vec::new(),
             options: crate::prelude::HashMap::new(),
+            certified_mode_required: false,
             declared_sorts: crate::prelude::HashMap::new(),
             #[cfg(feature = "std")]
             proof_log_path: None,
@@ -521,6 +524,13 @@ impl Context {
     /// Reset the context
     pub fn reset(&mut self) {
         self.solver.reset();
+        let mut config = self.solver.config().clone();
+        config.certification_mode = if self.certified_mode_required {
+            crate::solver::CertificationMode::Certified
+        } else {
+            crate::solver::CertificationMode::Uncertified
+        };
+        self.solver.set_config(config);
         self.assertions.clear();
         self.assertion_stack.clear();
         self.declared_consts.clear();
@@ -531,6 +541,10 @@ impl Context {
         self.fun_name_to_index.clear();
         self.logic = None;
         self.options.clear();
+        if self.certified_mode_required {
+            self.options
+                .insert("certified-mode".to_string(), "true".to_string());
+        }
         self.invalidate_last_check();
     }
 
@@ -607,6 +621,8 @@ impl Context {
     /// changes behaviour):
     ///
     /// - `produce-proofs` (`true`/`false`) — enable proof generation.
+    /// - `certified-mode` (`true`/`false`) — require an independently checked
+    ///   model or LRAT-backed refutation before returning `sat`/`unsat`.
     /// - `produce-unsat-cores` (`true`/`false`) — enable unsat-core tracking.
     /// - `timeout` (milliseconds) — wall-clock budget for the search; `0`
     ///   disables it.  Maps to [`crate::SolverConfig::timeout_ms`], enforced between
@@ -630,10 +646,27 @@ impl Context {
     /// than silently pretending to take effect.
     pub fn set_option(&mut self, key: &str, value: &str) {
         let key = key.trim_start_matches(':');
-        self.options.insert(key.to_string(), value.to_string());
+        let effective_value = if matches!(key, "certified-mode" | "certified_mode")
+            && self.certified_mode_required
+        {
+            "true"
+        } else {
+            value
+        };
+        self.options
+            .insert(key.to_string(), effective_value.to_string());
 
         // Handle special options that affect the solver.
         match key {
+            "certified-mode" | "certified_mode" => {
+                let mut config = self.solver.config().clone();
+                config.certification_mode = if effective_value == "true" {
+                    crate::solver::CertificationMode::Certified
+                } else {
+                    crate::solver::CertificationMode::Uncertified
+                };
+                self.solver.set_config(config);
+            }
             "produce-proofs" => {
                 let mut config = self.solver.config().clone();
                 config.proof = value == "true";
@@ -694,6 +727,17 @@ impl Context {
         }
     }
 
+    /// Require certified mode for this context until it is dropped.
+    ///
+    /// Unlike the SMT-LIB option, this embedding-level policy cannot be
+    /// disabled by `(set-option :certified-mode false)` or `(reset)`. It is
+    /// used by the CLI flag so an input script cannot weaken a guarantee the
+    /// caller selected outside that script.
+    pub fn require_certified_mode(&mut self) {
+        self.certified_mode_required = true;
+        self.set_option("certified-mode", "true");
+    }
+
     /// Get an option
     #[must_use]
     pub fn get_option(&self, key: &str) -> Option<&str> {
@@ -719,6 +763,7 @@ impl Context {
                     "produce-models" => "false".to_string(),
                     "produce-unsat-cores" => "false".to_string(),
                     "produce-proofs" => "false".to_string(),
+                    "certified-mode" => "false".to_string(),
                     "produce-assignments" => "false".to_string(),
                     // print-success is honored by `execute_script` (a `success`
                     // line is emitted after each silently-succeeding command
@@ -756,7 +801,13 @@ impl Context {
                 // Report why the last check returned `unknown`, or `unsupported`
                 // when the last result was decided (sat/unsat) or absent.
                 match self.last_result {
-                    Some(SolverResult::Unknown) => "(:reason-unknown incomplete)".to_string(),
+                    Some(SolverResult::Unknown) => match self.certification_failure() {
+                        Some(reason) => format!(
+                            "(:reason-unknown {})",
+                            oxiz_core::smtlib::format_string_literal(reason)
+                        ),
+                        None => "(:reason-unknown incomplete)".to_string(),
+                    },
                     _ => "(:reason-unknown \"not applicable\")".to_string(),
                 }
             }
@@ -902,6 +953,12 @@ impl Context {
     #[must_use]
     pub fn solver_config(&self) -> &crate::solver::SolverConfig {
         self.solver.config()
+    }
+
+    /// Why certified mode declined the most recent candidate verdict.
+    #[must_use]
+    pub fn certification_failure(&self) -> Option<&str> {
+        self.solver.certification_failure()
     }
 
     /// Replace the entire solver configuration.
@@ -1949,5 +2006,92 @@ mod tests {
         assert_eq!(output.len(), 2);
         assert_eq!(output[0], "unsat");
         assert!(output[1].contains("error") || output[1].contains("No model"));
+    }
+
+    #[test]
+    fn certified_mode_option_checks_boolean_results() {
+        let mut ctx = Context::new();
+        let output = ctx
+            .execute_script(
+                r#"
+                (set-option :certified-mode true)
+                (declare-const p Bool)
+                (assert p)
+                (assert (not p))
+                (check-sat)
+                (get-option :certified-mode)
+                "#,
+            )
+            .expect("certified Boolean script should execute");
+
+        assert_eq!(output, vec!["unsat", "true"]);
+        assert_eq!(
+            ctx.solver_config().certification_mode,
+            crate::solver::CertificationMode::Certified
+        );
+        assert_eq!(ctx.certification_failure(), None);
+    }
+
+    #[test]
+    fn certified_mode_theory_unsat_fails_closed() {
+        let mut ctx = Context::new();
+        let output = ctx
+            .execute_script(
+                r#"
+                (set-option :certified-mode true)
+                (declare-const x Int)
+                (assert (< x 0))
+                (assert (>= x 0))
+                (check-sat)
+                (get-info :reason-unknown)
+                "#,
+            )
+            .expect("certified theory script should execute");
+
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0], "unknown");
+        assert!(output[1].contains("propositional checker found the asserted formula satisfiable"));
+        assert!(
+            ctx.certification_failure()
+                .is_some_and(|reason| reason.contains("satisfiable"))
+        );
+    }
+
+    #[test]
+    fn required_certified_mode_cannot_be_disabled_by_input() {
+        let mut ctx = Context::new();
+        ctx.require_certified_mode();
+        let output = ctx
+            .execute_script(
+                r#"
+                (set-option :certified-mode false)
+                (reset)
+                (get-option :certified-mode)
+                (declare-const p Bool)
+                (assert p)
+                (assert (not p))
+                (check-sat)
+                "#,
+            )
+            .expect("required certified script should execute");
+
+        assert_eq!(output, vec!["true", "unsat"]);
+        assert_eq!(
+            ctx.solver_config().certification_mode,
+            crate::solver::CertificationMode::Certified
+        );
+    }
+
+    #[test]
+    fn ordinary_reset_restores_certified_option_default() {
+        let mut ctx = Context::new();
+        ctx.set_option("certified-mode", "true");
+        ctx.reset();
+
+        assert_eq!(ctx.format_option("certified-mode"), "false");
+        assert_eq!(
+            ctx.solver_config().certification_mode,
+            crate::solver::CertificationMode::Uncertified
+        );
     }
 }
