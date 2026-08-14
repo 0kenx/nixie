@@ -80,24 +80,6 @@ use oxiz_core::sort::{SortId, SortKind};
 
 use super::term_walk::collect_structural_children;
 
-/// Whether a declared logic string names a difference-logic family.
-///
-/// Z3's `CFG_AUTO` uses the declared logic to *select the setup family*
-/// (`setup_QF_IDL(st)` vs `setup_QF_UFLIA(st)` …) and then lets features refine
-/// the knobs *within* that family.  So a difference-logic knob (bound-prop,
-/// VSIDS) applies when the formula is difference-logic-shaped **and** the logic
-/// is itself a DL logic — or there is no logic, which routes through
-/// `setup_unknown(st)` and is classified purely from features.  A benchmark
-/// that declares `UFLIA` but happens to be diff-shaped is therefore left on
-/// the `setup_QF_UFLIA(st)` path and is not handed the DL-specific knobs,
-/// mirroring Z3 exactly.
-pub(super) fn is_dl_logic(logic: &str) -> bool {
-    matches!(
-        logic,
-        "QF_IDL" | "QF_RDL" | "QF_UFIDL" | "QF_UFRDL" | "IDL" | "RDL" | "UFIDL" | "UFRDL"
-    )
-}
-
 /// Mirror of Z3's `smt::config_mode` (the three entry points into `setup`).
 ///
 /// Only [`ConfigMode::Logic`] is logic-string-driven; the other two collect
@@ -609,11 +591,9 @@ impl StaticFeatures {
                     self.num_non_linear += 1;
                 }
             }
-            TermKind::Div(_, b) | TermKind::Mod(_, b) => {
-                // Z3: div/mod by a non-constant (or zero) ⇒ non-linear + UF.
-                if !is_numeric_const_term(manager, *b) {
-                    self.num_non_linear += 1;
-                }
+            // Z3: div/mod by a non-constant (or zero) ⇒ non-linear + UF.
+            TermKind::Div(_, b) | TermKind::Mod(_, b) if !is_numeric_const_term(manager, *b) => {
+                self.num_non_linear += 1;
             }
             _ => {}
         }
@@ -741,10 +721,9 @@ fn is_arith_head(kind: &TermKind) -> bool {
 /// Operands of a comparison atom (`Lt`/`Le`/`Gt`/`Ge`), else `None`.
 fn comparison_operands(kind: &TermKind) -> Option<(TermId, TermId)> {
     match kind {
-        TermKind::Lt(a, b)
-        | TermKind::Le(a, b)
-        | TermKind::Gt(a, b)
-        | TermKind::Ge(a, b) => Some((*a, *b)),
+        TermKind::Lt(a, b) | TermKind::Le(a, b) | TermKind::Gt(a, b) | TermKind::Ge(a, b) => {
+            Some((*a, *b))
+        }
         _ => None,
     }
 }
@@ -760,9 +739,9 @@ fn is_zero_arity_uninterp(kind: &TermKind) -> bool {
 
 /// `true` if `t` is a numeric constant term (`IntConst` / `RealConst`).
 fn is_numeric_const_term(manager: &TermManager, t: TermId) -> bool {
-    manager.get(t).is_some_and(|td| {
-        matches!(td.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
-    })
+    manager
+        .get(t)
+        .is_some_and(|td| matches!(td.kind, TermKind::IntConst(_) | TermKind::RealConst(_)))
 }
 
 /// A numeric constant extracted from a term kind, preserving sign and
@@ -941,10 +920,7 @@ impl LinearForm {
     /// `is_diff_term`: at most one variable, with coefficient `+1`.
     /// (Z3 accepts `k`, `x`, `k + x`; a negated variable is not a diff term.)
     fn is_diff_term(&self) -> bool {
-        self.linear
-            && !self.saw_ite
-            && self.vars.len() <= 1
-            && self.vars.values().all(|c| *c == 1)
+        self.linear && !self.saw_ite && self.vars.len() <= 1 && self.vars.values().all(|c| *c == 1)
     }
 
     /// `is_diff_atom`: at most one `+1` and one `-1` coefficient, no others —

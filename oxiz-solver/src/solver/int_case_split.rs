@@ -65,13 +65,13 @@
 
 use num_rational::Rational64;
 use num_traits::ToPrimitive;
-use oxiz_core::ast::{collect_subterms, TermId, TermKind, TermManager};
+use oxiz_core::ast::{TermId, TermKind, TermManager, collect_subterms};
 use oxiz_sat::Lit;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
-use super::types::{ArithConstraintType, Constraint};
 use super::Solver;
+use super::types::{ArithConstraintType, Constraint};
 
 /// Maximum integer range `hi - lo` for which we emit an explicit case split.
 /// Kept modest: a wider disjunction both enlarges the CDCL search and (for the
@@ -161,7 +161,7 @@ impl Solver {
         // superset of the true integer range, so the case-split never excludes
         // a reachable value (this is the QF_UFLIA false-SAT fix).
         for &t in &uf_args {
-            if bounds.get(&t).is_none() {
+            if let std::collections::hash_map::Entry::Vacant(entry) = bounds.entry(t) {
                 if let Some((lo, hi)) = self.arith.lp_int_bounds(t) {
                     // A single-value LP range `[v, v]` would make the case-split
                     // a permanent unit `(t = v)`.  That is only sound when `t` is
@@ -175,7 +175,7 @@ impl Solver {
                     // arithmetic solver directly, so dropping the degenerate
                     // single-value LP split costs no completeness.
                     if lo != hi {
-                        bounds.insert(t, (Some(lo), Some(hi)));
+                        entry.insert((Some(lo), Some(hi)));
                     }
                 }
             }
@@ -213,7 +213,7 @@ impl Solver {
         for &(term, lo, hi) in &candidates {
             let mut lits: Vec<Lit> = Vec::new();
             for k in lo..=hi {
-                let int_k = manager.mk_int(i64::from(k));
+                let int_k = manager.mk_int(k);
                 let eq = manager.mk_eq(term, int_k);
                 lits.push(self.encode_depth(eq, manager, 0));
             }
@@ -235,7 +235,6 @@ impl Solver {
     /// to split.
     fn collect_int_uf_args(&self, manager: &TermManager) -> Vec<TermId> {
         let int_sort = manager.sorts.int_sort;
-        let real_sort = manager.sorts.real_sort;
         let mut seen: FxHashSet<TermId> = FxHashSet::default();
         let mut out: Vec<TermId> = Vec::new();
         for &assertion in &self.assertions {

@@ -6,9 +6,10 @@ use oxiz_sat::{DimacsParser, Solver, SolverConfig};
 fn main() {
     let path = std::env::args().nth(1).unwrap();
     let cfg = if std::env::var("NOSTABLE").is_ok() {
-        let mut c = SolverConfig::default();
-        c.enable_stabilize = false;
-        c
+        SolverConfig {
+            enable_stabilize: false,
+            ..SolverConfig::default()
+        }
     } else {
         SolverConfig::default()
     };

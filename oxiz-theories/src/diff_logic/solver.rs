@@ -279,8 +279,7 @@ impl DiffLogicSolver {
         let x = self.graph.get_or_create_var(x_term);
         let y = self.graph.get_or_create_var(y_term);
         // A brand-new variable has no cached distance: must recompute fully.
-        let new_var = !self.distances.contains_key(&x)
-            || !self.distances.contains_key(&y);
+        let new_var = !self.distances.contains_key(&x) || !self.distances.contains_key(&y);
         let mut constraint = match constraint_type {
             ConstraintType::LeqConst => DiffConstraint::new_leq(x, y, c, origin),
             ConstraintType::LtConst => DiffConstraint::new_lt(x, y, c, origin),
@@ -309,7 +308,7 @@ impl DiffLogicSolver {
     /// to [`Self::check`] to extract the conflict terms (rare path).
     fn check_incremental_from(&mut self, src: DiffVar) -> DiffLogicResult {
         let inf = Rational64::from_integer(i64::MAX);
-        let n = self.graph.num_vars() as u32 + 1;
+        let n = self.graph.num_vars() + 1;
         let mut queue: VecDeque<DiffVar> = VecDeque::new();
         let mut in_queue: HashMap<DiffVar, bool> = HashMap::new();
         let mut count: HashMap<DiffVar, u32> = HashMap::new();
@@ -355,7 +354,7 @@ impl DiffLogicSolver {
     }
 
     /// Add `x - y ≤ c` and incrementally check for a negative cycle
-    /// (seeded SPFA, O(affected)).  See [`Self::check_incremental_from`].
+    /// (seeded SPFA, O(affected)). See `check_incremental_from`.
     pub fn add_leq_check(
         &mut self,
         x: TermId,
@@ -601,7 +600,7 @@ impl DiffLogicSolver {
         // Bellman-Ford (which dominated runtime and prevented convergence on
         // qlock-4-10-7).  Edges from the virtual SOURCE are skipped: they are
         // not asserted constraints and are unreachable from a real `src`.
-        let n = self.graph.num_vars() as u32 + 1;
+        let n = self.graph.num_vars() + 1;
         let mut queue: VecDeque<DiffVar> = VecDeque::new();
         let mut in_queue: HashMap<DiffVar, bool> = HashMap::new();
         let mut count: HashMap<DiffVar, u32> = HashMap::new();
@@ -697,9 +696,7 @@ impl DiffLogicSolver {
             c
         };
         let inf = Rational64::from_integer(i64::MAX);
-        let Some(&dx) = dist_from_y.get(&xv) else {
-            return None;
-        };
+        let &dx = dist_from_y.get(&xv)?;
         if dx == inf {
             return None;
         }
@@ -712,11 +709,7 @@ impl DiffLogicSolver {
             return None;
         }
         let path = self.reason_path(yv, xv, pred_from_y);
-        if path.is_empty() {
-            None
-        } else {
-            Some(path)
-        }
+        if path.is_empty() { None } else { Some(path) }
     }
 
     /// **Sound** theory-propagation reason.
@@ -988,11 +981,20 @@ mod tests {
         // API; the third edge must report Conflict (same as full `check`).
         let mut s = DiffLogicSolver::new(true);
         let (a, b, c) = (term(1), term(2), term(3));
-        assert!(matches!(s.add_leq_check(a, b, Rational64::from_integer(-1), term(10)), DiffLogicResult::Ok));
-        assert!(matches!(s.add_leq_check(b, c, Rational64::from_integer(-1), term(11)), DiffLogicResult::Ok));
+        assert!(matches!(
+            s.add_leq_check(a, b, Rational64::from_integer(-1), term(10)),
+            DiffLogicResult::Ok
+        ));
+        assert!(matches!(
+            s.add_leq_check(b, c, Rational64::from_integer(-1), term(11)),
+            DiffLogicResult::Ok
+        ));
         // a-b<=-1, b-c<=-1, c-a<=-1  =>  cycle sum -3 < 0
         assert!(
-            matches!(s.add_leq_check(c, a, Rational64::from_integer(-1), term(12)), DiffLogicResult::Conflict(_)),
+            matches!(
+                s.add_leq_check(c, a, Rational64::from_integer(-1), term(12)),
+                DiffLogicResult::Conflict(_)
+            ),
             "incremental check must detect the negative cycle"
         );
     }
@@ -1002,9 +1004,18 @@ mod tests {
         let mut s = DiffLogicSolver::new(true);
         let (a, b, c) = (term(1), term(2), term(3));
         // a-b<=3, b-c<=2, c-a<=1  =>  cycle sum 6 >= 0, consistent
-        assert!(matches!(s.add_leq_check(a, b, Rational64::from_integer(3), term(10)), DiffLogicResult::Ok));
-        assert!(matches!(s.add_leq_check(b, c, Rational64::from_integer(2), term(11)), DiffLogicResult::Ok));
-        assert!(matches!(s.add_leq_check(c, a, Rational64::from_integer(1), term(12)), DiffLogicResult::Ok));
+        assert!(matches!(
+            s.add_leq_check(a, b, Rational64::from_integer(3), term(10)),
+            DiffLogicResult::Ok
+        ));
+        assert!(matches!(
+            s.add_leq_check(b, c, Rational64::from_integer(2), term(11)),
+            DiffLogicResult::Ok
+        ));
+        assert!(matches!(
+            s.add_leq_check(c, a, Rational64::from_integer(1), term(12)),
+            DiffLogicResult::Ok
+        ));
     }
 
     #[test]
@@ -1016,7 +1027,10 @@ mod tests {
         s.add_leq_check(a, b, Rational64::from_integer(0), term(10));
         s.push();
         // b-a<=-1 + a-b<=0  => cycle -1
-        assert!(matches!(s.add_leq_check(b, a, Rational64::from_integer(-1), term(11)), DiffLogicResult::Conflict(_)));
+        assert!(matches!(
+            s.add_leq_check(b, a, Rational64::from_integer(-1), term(11)),
+            DiffLogicResult::Conflict(_)
+        ));
     }
 
     // ---- entailed_reason soundness tests ----
@@ -1082,7 +1096,8 @@ mod tests {
         s.add_leq(a, b, Rational64::from_integer(2), term(10));
         s.check();
         assert!(
-            s.entailed_reason(a, b, Rational64::from_integer(3), true).is_some(),
+            s.entailed_reason(a, b, Rational64::from_integer(3), true)
+                .is_some(),
             "a-b<3 == a-b<=2 entailed"
         );
         assert_eq!(
@@ -1118,12 +1133,14 @@ mod tests {
         s.add_leq(a, b, Rational64::from_integer(0), term(10));
         s.add_leq(b, a, Rational64::from_integer(0), term(11));
         s.check();
-        assert!(s
-            .entailed_reason(a, b, Rational64::from_integer(0), false)
-            .is_some());
-        assert!(s
-            .entailed_reason(b, a, Rational64::from_integer(0), false)
-            .is_some());
+        assert!(
+            s.entailed_reason(a, b, Rational64::from_integer(0), false)
+                .is_some()
+        );
+        assert!(
+            s.entailed_reason(b, a, Rational64::from_integer(0), false)
+                .is_some()
+        );
         assert_eq!(
             s.entailed_reason(a, b, Rational64::from_integer(-1), false),
             None

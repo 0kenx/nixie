@@ -1370,18 +1370,6 @@ impl Solver {
     /// `true` (`try_true_first`) makes CDCL prefer merging shared terms, so the
     /// arithmetic solver's consistency check (`check`) — not fragile reason
     /// extraction — drives theory combination.
-    /// Theory-aware decision hint: bump the activity of these variables so
-    /// the branching heuristic prefers deciding them early.  Mirrors the
-    /// per-conflict bump in conflict.rs so it works under every strategy.
-    pub fn bump_decision_hint(&mut self, vars: &[Var]) {
-        if vars.is_empty() { return; }
-        self.vsids.bump_batch(vars);
-        if self.config.use_chb_branching { self.chb.bump_batch(vars); }
-        if self.config.use_vmtf {
-            for &v in vars { self.vmtf.bump(v, |v| self.trail.is_assigned(v)); }
-        }
-    }
-
     pub fn set_preferred_phase(&mut self, var: Var, phase: bool) {
         let idx = var.index();
         if idx < self.phase.len() {
@@ -1389,6 +1377,24 @@ impl Solver {
         }
         if idx < self.best_phase.len() {
             self.best_phase[idx] = phase;
+        }
+    }
+
+    /// Theory-aware decision hint: bump the activity of these variables so
+    /// the branching heuristic prefers deciding them early.  Mirrors the
+    /// per-conflict bump in conflict.rs so it works under every strategy.
+    pub fn bump_decision_hint(&mut self, vars: &[Var]) {
+        if vars.is_empty() {
+            return;
+        }
+        self.vsids.bump_batch(vars);
+        if self.config.use_chb_branching {
+            self.chb.bump_batch(vars);
+        }
+        if self.config.use_vmtf {
+            for &v in vars {
+                self.vmtf.bump(v, |v| self.trail.is_assigned(v));
+            }
         }
     }
 
@@ -1957,7 +1963,6 @@ impl Solver {
         }
     }
 
-    /// Solve the SAT problem
     /// The fatal soundness error set by a prior `add_clause`/assumption that
     /// reintroduced a BVE-eliminated variable (`None` when none has). When
     /// `Some`, `solve*` returns `Unknown` rather than guess.
@@ -1966,6 +1971,7 @@ impl Solver {
         self.fatal_error.as_ref()
     }
 
+    /// Solve the SAT problem.
     pub fn solve(&mut self) -> SolverResult {
         // A prior `add_clause` reintroduced a BVE-eliminated variable with no
         // sound way to honor it: refuse rather than risk a wrong verdict.

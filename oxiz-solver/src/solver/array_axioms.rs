@@ -39,7 +39,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use oxiz_core::SortKind;
-use oxiz_core::ast::{get_children, TermId, TermKind, TermManager};
+use oxiz_core::ast::{TermId, TermKind, TermManager, get_children};
 use oxiz_core::sort::SortId;
 
 use super::{EvalVal, Solver};
@@ -376,9 +376,15 @@ fn build_read_over_write(
                 let guard_term: Option<TermId> = if guard_pairs.is_empty() {
                     None
                 } else {
-                    let conj: Vec<TermId> =
-                        guard_pairs.iter().map(|(v, s)| manager.mk_eq(*v, *s)).collect();
-                    Some(if conj.len() == 1 { conj[0] } else { manager.mk_and(conj) })
+                    let conj: Vec<TermId> = guard_pairs
+                        .iter()
+                        .map(|(v, s)| manager.mk_eq(*v, *s))
+                        .collect();
+                    Some(if conj.len() == 1 {
+                        conj[0]
+                    } else {
+                        manager.mk_and(conj)
+                    })
                 };
                 let mut idx_eqs: Vec<TermId> = Vec::with_capacity(entries.len());
                 for (ki, vi) in &entries {
@@ -459,16 +465,22 @@ fn build_read_over_write(
 ///
 /// Free-variable / non-store equalities contribute no write index, so they are
 /// left to the witness extensionality (`build_extensionality_and_congruence`).
-/// Unconditional `var = store(...)` aliases are also skipped: alias-aware RoW
-/// already unfolds every observed read through the entire asserted chain, so
-/// manufacturing reads at otherwise-unobserved write indices is redundant.
+/// An unconditional `var = store(...)` alias is skipped only when the variable
+/// has one unambiguous store definition: alias-aware RoW already unfolds every
+/// observed read through that chain, so manufacturing otherwise-unobserved
+/// reads is redundant.  A variable equated to *multiple* stores is different:
+/// the stores must be reconciled at one another's write indices even when the
+/// input contains no read.  Those congruence instances are the propagation
+/// bridge required by the Stump-Barrett-Dill-Levitt array-incompleteness case.
 fn build_equality_read_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
     candidates: &mut Vec<TermId>,
 ) {
     for &(a, b) in &collected.eq_pairs {
-        if is_alias_pair(a, b, &collected.aliases) || is_alias_pair(b, a, &collected.aliases) {
+        if is_unambiguous_alias_pair(a, b, &collected.aliases)
+            || is_unambiguous_alias_pair(b, a, &collected.aliases)
+        {
             continue;
         }
         // Gather the write indices exposed by either side's store chain.
@@ -490,7 +502,7 @@ fn build_equality_read_congruence(
         for (pos, &idx) in idx_terms.iter().enumerate() {
             // Dedup (small vec -> linear scan): a shared index on both sides
             // needs only one congruence clause.
-            if idx_terms[..pos].iter().any(|prev| *prev == idx) {
+            if idx_terms[..pos].contains(&idx) {
                 continue;
             }
             let sa = manager.mk_select(a, idx);
@@ -555,8 +567,7 @@ fn build_extensionality_and_congruence(
     // goal; a store that is NOT named (e.g. an internal link of a deep
     // `storecomm` chain) is already decided by the extensionality lemma on its
     // asserted (dis)equality atom and needs no base-extensionality.
-    let aliased_stores: FxHashSet<TermId> =
-        collected.aliases.values().flatten().copied().collect();
+    let aliased_stores: FxHashSet<TermId> = collected.aliases.values().flatten().copied().collect();
     let mut pairs: Vec<(TermId, TermId)> = collected.eq_pairs.clone();
     for &(base, result) in &collected.store_base_pairs {
         if aliased_stores.contains(&result)
@@ -602,8 +613,8 @@ fn build_extensionality_and_congruence(
         // level-0 alias, and the witness could never fire (`a ≠ b` is
         // impossible while the alias holds); the lemmas are retracted on `pop`
         // with the alias.
-        let is_self_alias = is_alias_pair(a, b, &collected.aliases)
-            || is_alias_pair(b, a, &collected.aliases);
+        let is_self_alias =
+            is_alias_pair(a, b, &collected.aliases) || is_alias_pair(b, a, &collected.aliases);
         // A complete finite-disjunction clause also makes the witness redundant
         // (see [`finite_disjunction_extensionality`]: the flat value-disjunction
         // already decides `a = b`, and a fresh witness outside both store sets
@@ -706,6 +717,21 @@ fn is_alias_pair(a: TermId, b: TermId, aliases: &FxHashMap<TermId, Vec<TermId>>)
     aliases.get(&a).is_some_and(|stores| stores.contains(&b))
 }
 
+/// Whether `(a, b)` is the sole asserted store definition of `a`.
+///
+/// Only this unambiguous form may omit synthetic write-index congruence: with
+/// two definitions `a = store(..i..)` and `a = store(..j..)`, each definition
+/// has to be observed at the other definition's index to reconcile them.
+fn is_unambiguous_alias_pair(
+    a: TermId,
+    b: TermId,
+    aliases: &FxHashMap<TermId, Vec<TermId>>,
+) -> bool {
+    aliases
+        .get(&a)
+        .is_some_and(|stores| stores.len() == 1 && stores[0] == b)
+}
+
 /// If `term` is an array-sorted `ite`, return `(cond, then, else)`.
 fn as_array_ite(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, TermId)> {
     match manager.get(term)?.kind {
@@ -759,7 +785,11 @@ fn aliased_store_map(
             return None;
         }
         let Some(data) = manager.get(cur) else {
-            return if entries.is_empty() { None } else { Some((cur, entries, guard)) };
+            return if entries.is_empty() {
+                None
+            } else {
+                Some((cur, entries, guard))
+            };
         };
         match data.kind {
             TermKind::Store(base, idx, val) => {
@@ -780,9 +810,19 @@ fn aliased_store_map(
                     cur = base2;
                     continue;
                 }
-                return if entries.is_empty() { None } else { Some((cur, entries, guard)) };
+                return if entries.is_empty() {
+                    None
+                } else {
+                    Some((cur, entries, guard))
+                };
             }
-            _ => return if entries.is_empty() { None } else { Some((cur, entries, guard)) },
+            _ => {
+                return if entries.is_empty() {
+                    None
+                } else {
+                    Some((cur, entries, guard))
+                };
+            }
         }
     }
 }
@@ -838,9 +878,11 @@ fn finite_disjunction_extensionality(
     // (3) the SAME index set on both sides — a differing index set forces a
     // one-sided `select(base, idx)` disjunct whose opaque read the SAT core
     // cannot settle instantly, so the eager chain unfold is still needed there.
-    let is_complete =
-        matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
-            && ma.iter().chain(mb.iter()).all(|&(_, v)| is_scalar_value(v, manager));
+    let is_complete = matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
+        && ma
+            .iter()
+            .chain(mb.iter())
+            .all(|&(_, v)| is_scalar_value(v, manager));
     // Over a common base the two arrays can differ only at K = idx_a ∪ idx_b.
     // At a shared index they compare value-term to value-term; at a one-sided
     // index the writer's value compares to `select(base, idx)` (the unwritten
@@ -898,7 +940,6 @@ fn array_domain(term: TermId, manager: &TermManager) -> Option<SortId> {
         _ => None,
     }
 }
-
 
 #[cfg(test)]
 mod s8_iterative_tests {

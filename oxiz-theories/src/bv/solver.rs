@@ -1511,10 +1511,13 @@ impl BvSolver {
             self.last_sat_model
                 .get(v.index())
                 .is_some_and(|l| l.is_defined())
-                || self.sat.model().get(v.index()).is_some_and(|l| l.is_defined())
+                || self
+                    .sat
+                    .model()
+                    .get(v.index())
+                    .is_some_and(|l| l.is_defined())
         })
     }
-
 }
 
 impl Theory for BvSolver {

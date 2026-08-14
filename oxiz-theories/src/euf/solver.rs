@@ -625,9 +625,7 @@ impl EufSolver {
     pub fn live_diseq_pairs(&self) -> Vec<(TermId, TermId)> {
         self.diseqs
             .iter()
-            .filter_map(|d| {
-                Some((self.node_term(d.lhs)?, self.node_term(d.rhs)?))
-            })
+            .filter_map(|d| Some((self.node_term(d.lhs)?, self.node_term(d.rhs)?)))
             .collect()
     }
 

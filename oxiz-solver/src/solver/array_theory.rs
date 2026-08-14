@@ -43,8 +43,6 @@ pub(crate) struct ArrayTheory {
     /// (proven disequal) while `select(a, k) = select(b, k)` (proven equal via
     /// read-over-write / congruence) — which forces `a = b`, a contradiction.
     ext_witnesses: Vec<(TermId, TermId, TermId, TermId, TermId)>,
-    /// `ext_witnesses` length snapshot for LIFO undo on `pop`.
-    ext_witnesses_journal_len_snapshots: Vec<usize>,
     /// One `base` per `maps` insertion, in insertion order, for LIFO undo.
     maps_journal: Vec<TermId>,
     /// One `array` per `parents` insertion, in insertion order, for LIFO undo.
@@ -128,10 +126,7 @@ impl ArrayTheory {
     /// The `select` terms reading `array` (`select(array, _)`).
     #[allow(dead_code)] // consumed by Stage 5 steps 3–6
     pub(crate) fn selects_of(&self, array: TermId) -> &[TermId] {
-        self.parents
-            .get(&array)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+        self.parents.get(&array).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Iterator over every `(array, select_term)` pair in the index.
@@ -223,7 +218,7 @@ mod tests {
         let mut t = ArrayTheory::new();
         let (a, b) = (TermId::new(1), TermId::new(2));
         let (s1, s2) = (TermId::new(10), TermId::new(11));
-        let (r1, r2) = (TermId::new(20), TermId::new(21));
+        let (r1, _r2) = (TermId::new(20), TermId::new(21));
 
         let snap = t.snapshot();
         t.add_store(a, s1);

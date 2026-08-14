@@ -103,7 +103,7 @@ impl ConfigPreset {
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
-            use_lrb_branching: true, // LRB for structured problems
+            use_lrb_branching: true,    // LRB for structured problems
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
@@ -411,7 +411,7 @@ impl ConfigPreset {
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
             use_chb_branching: false,
-            use_lrb_branching: false, // VMTF in real CaDiCaL
+            use_lrb_branching: false,   // VMTF in real CaDiCaL
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
@@ -510,7 +510,10 @@ mod tests {
         let config = ConfigPreset::Industrial.config();
         assert_eq!(config.restart_strategy, RestartStrategy::Glucose);
         assert!(config.use_lrb_branching);
-        assert!(!config.enable_inprocessing, "inprocessing is disabled in all presets (see module doc: inprocess() watch-rebuild unsoundness)");
+        assert!(
+            !config.enable_inprocessing,
+            "inprocessing is disabled in all presets (see module doc: inprocess() watch-rebuild unsoundness)"
+        );
     }
 
     #[test]

@@ -22,5 +22,5 @@ pub use optimize::{
 };
 pub use simplex::{LinExpr, Simplex, VarId};
 pub use simplex_opt::SimplexOptStatus;
-pub use solver::ArithSolver;
 pub use solver::ArithEqualityStatus;
+pub use solver::ArithSolver;

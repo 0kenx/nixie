@@ -127,7 +127,7 @@ impl super::Solver {
         let super::Solver {
             config: _,          // INVARIANT: user configuration
             sat: _,             // SCOPED: SatSolver::push/pop
-            branch_priority: _,  // NOT trailed: empty queue is sound
+            branch_priority: _, // NOT trailed: empty queue is sound
             euf: _,             // SCOPED: reset by `rebase_theory_state`
             arith: _,           // SCOPED: reset by `rebase_theory_state`
             bv: _,              // SCOPED: reset by `rebase_theory_state`
@@ -158,11 +158,11 @@ impl super::Solver {
             theory_aware_branching: _, // INVARIANT: user option
             proof: _,           // RESULT: emptied in place by `invalidate_results` (the
             // `Option` carries the `:produce-proofs` setting, so it is not taken)
-            simplifier: _,               // INVARIANT: term -> simplified term
-            statistics: _,               // INVARIANT: cumulative counters
-            bv_terms: _,                 // TRAIL: BvTermAdded
-            has_bv_arith_ops: _,         // SNAPSHOT
-            arith_terms: _,              // TRAIL: ArithTermAdded
+            simplifier: _,       // INVARIANT: term -> simplified term
+            statistics: _,       // INVARIANT: cumulative counters
+            bv_terms: _,         // TRAIL: BvTermAdded
+            has_bv_arith_ops: _, // SNAPSHOT
+            arith_terms: _,      // TRAIL: ArithTermAdded
             ite_result_terms: _, // accumulates ite-result vars across `assert`s;
             // a stale entry after `pop` only makes `axiomatize_arith_constant_
             // equalities` re-emit a *valid* (redundant) triangle axiom, so it is
@@ -202,30 +202,30 @@ impl super::Solver {
             // across `assert`s; a stale entry only re-emits *valid* (redundant)
             // result splits / comparison links, so it is sound to leave it
             // (cleared only by `reset`).
-            dt_var_constructors: _,      // TRAIL: DtVarConstructorAdded
-            arith_parse_cache: _,        // INVARIANT: keyed by term structure
-            tracked_compound_terms: _,   // TRAIL: TrackedCompoundAdded
+            dt_var_constructors: _,    // TRAIL: DtVarConstructorAdded
+            arith_parse_cache: _,      // INVARIANT: keyed by term structure
+            tracked_compound_terms: _, // TRAIL: TrackedCompoundAdded
             encoded_terms: _, // TRAIL: EncodedTermAdded (carries the displaced entry, so a polarity widened inside the scope is restored rather than dropped)
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
             has_array_ops: _, // SNAPSHOT
-            array_theory: _, // SCOPED: snapshot/`pop` via `array_theory_scope`
+            array_theory: _,  // SCOPED: snapshot/`pop` via `array_theory_scope`
             // in `ContextState` (entries are encoded at `assert` time, not as
             // individual `TrailOp`s).
             array_select_terms: _, // Stage-1 bookkeeping: accumulates across
             // `assert`s; no consumer yet (Stages 2–5 of ARRAY_THEORY_PLAN),
             // so a stale entry after `pop` is harmless; cleared by `reset`.
-            array_store_terms: _, // same as `array_select_terms`
-            array_axiom_instances: _, // TRAIL: ArrayAxiomInstanceAdded
-            arith_purify: _,  // rebuilt from assertions each check
-            arith_defined_terms: _, // TRAIL: ArithDefinedTermAdded
+            array_store_terms: _,       // same as `array_select_terms`
+            array_axiom_instances: _,   // TRAIL: ArrayAxiomInstanceAdded
+            arith_purify: _,            // rebuilt from assertions each check
+            arith_defined_terms: _,     // TRAIL: ArithDefinedTermAdded
             arith_const_axiom_pairs: _, // TRAIL: ArithConstAxiomAdded
-            care_split_pairs: _, // TRAIL: CareSplitAdded
-            numeric_eq_split_pairs: _, // dedup across `check`s; SAT base
+            care_split_pairs: _,        // TRAIL: CareSplitAdded
+            numeric_eq_split_pairs: _,  // dedup across `check`s; SAT base
             // clauses survive `pop`, so a stale entry only suppresses re-emitting
             // a clause that is still present (sound).
-            dt_axiom_instances: _, // TRAIL: DtAxiomInstanceAdded
-            dt_axioms_incomplete: _, // SNAPSHOT
+            dt_axiom_instances: _,       // TRAIL: DtAxiomInstanceAdded
+            dt_axioms_incomplete: _,     // SNAPSHOT
             entailed_int_consts: _, // cleared wholesale by `pop` (see the field doc); empty = re-fold, never stale
             entailed_int_consts_upto: _, // reset to 0 with the map above
             #[cfg(test)]
@@ -240,16 +240,16 @@ impl super::Solver {
             // let a cached verdict from before a `set-option` be matched again
             // after the pop.
             next_skolem_id: _, // INVARIANT: monotone — a popped scope's Skolem
-                               // names must never be handed out again, so this counter deliberately
-                               // survives `pop` (re-using an id would alias two distinct witnesses).
+            // names must never be handed out again, so this counter deliberately
+            // survives `pop` (re-using an id would alias two distinct witnesses).
             case_split_terms: _, // PER-SEARCH: cleared at `check_core` entry, so a
             // value left by a popped scope's `check` is overwritten before the
             // next search reads it (the case-split lemmas are SAT-scoped and
             // retracted by `pop`; the dedup set must not outlive them).
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
-            last_features: _, // SNAPSHOT: recomputed in `check_core`; dropped
-            // wholesale by `invalidate_results` on any stack move, so a value
-            // left by a popped scope is stale and overwritten before reuse.
+            last_features: _,     // SNAPSHOT: recomputed in `check_core`; dropped
+                                  // wholesale by `invalidate_results` on any stack move, so a value
+                                  // left by a popped scope is stale and overwritten before reuse.
         } = self;
 
         debug_assert_eq!(self.trail.len(), state.trail_position);

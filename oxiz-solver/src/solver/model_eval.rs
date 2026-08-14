@@ -630,10 +630,7 @@ impl Solver {
     /// contain no quantifier are tested: a quantified assertion's truth can
     /// depend on the very instantiation the search is still building, so a
     /// `false` evaluation there is not yet a contradiction.
-    pub(super) fn ground_assertion_false_in_model(
-        &self,
-        manager: &TermManager,
-    ) -> bool {
+    pub(super) fn ground_assertion_false_in_model(&self, manager: &TermManager) -> bool {
         let Some(model) = self.model.as_ref() else {
             return false;
         };
@@ -813,13 +810,22 @@ impl Solver {
                 // rationals, so without this arm a BV equality atom is always
                 // inconclusive and a spurious `Sat` whose model violates it
                 // sails through the soundness gate.
-                let a_bv = manager.get(*a).is_some_and(|t| manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec()));
-                let b_bv = manager.get(*b).is_some_and(|t| manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec()));
+                let a_bv = manager
+                    .get(*a)
+                    .is_some_and(|t| manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec()));
+                let b_bv = manager
+                    .get(*b)
+                    .is_some_and(|t| manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec()));
                 if a_bv || b_bv {
-                    Opened::Done(match (eval_bv_value(self, *a, model, manager), eval_bv_value(self, *b, model, manager)) {
-                        (Some(va), Some(vb)) => EvalOutcome::boolean(va == vb),
-                        _ => EvalOutcome::UNDETERMINED,
-                    })
+                    Opened::Done(
+                        match (
+                            eval_bv_value(self, *a, model, manager),
+                            eval_bv_value(self, *b, model, manager),
+                        ) {
+                            (Some(va), Some(vb)) => EvalOutcome::boolean(va == vb),
+                            _ => EvalOutcome::UNDETERMINED,
+                        },
+                    )
                 } else {
                     Opened::Frame(Frame::binary(*a, *b, EagerKind::Eq, depth))
                 }
@@ -828,10 +834,18 @@ impl Solver {
             // evaluate both operands concretely and fold, for the same reason
             // as the BV equality arm above.  These are Bool-sorted terms whose
             // operands are BV-sorted, so `eval_bv_value` handles the operands.
-            TermKind::BvUlt(a, b) => Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Ult)),
-            TermKind::BvUle(a, b) => Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Ule)),
-            TermKind::BvSlt(a, b) => Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Slt)),
-            TermKind::BvSle(a, b) => Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Sle)),
+            TermKind::BvUlt(a, b) => {
+                Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Ult))
+            }
+            TermKind::BvUle(a, b) => {
+                Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Ule))
+            }
+            TermKind::BvSlt(a, b) => {
+                Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Slt))
+            }
+            TermKind::BvSle(a, b) => {
+                Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Sle))
+            }
             // `distinct` is deliberately INCONCLUSIVE for the gate.  A model in
             // which two operands share a value does NOT reliably indicate a real
             // violation: the linear-arithmetic solver enforces disequalities by
@@ -903,7 +917,6 @@ impl Solver {
 /// *formula*, present before any model existed, and the recursive version has
 /// always reported it inconclusive.  Treating it as a reason to downgrade would
 /// make every formula that merely mentions a wide literal answer `Unknown`.
-
 /// Which bit-vector comparison a Bool-sorted BV atom encodes.
 enum BvCmp {
     Ult,
@@ -927,10 +940,16 @@ fn bv_cmp_outcome(
 ) -> EvalOutcome {
     use num_bigint::{BigInt, BigUint};
     use num_traits::{One, Zero as _};
-    let Some(width) = manager.get(a).and_then(|t| manager.sorts.get(t.sort).and_then(|s| s.bitvec_width())) else {
+    let Some(width) = manager
+        .get(a)
+        .and_then(|t| manager.sorts.get(t.sort).and_then(|s| s.bitvec_width()))
+    else {
         return EvalOutcome::UNDETERMINED;
     };
-    let (Some(va), Some(vb)) = (eval_bv_value(solver, a, model, manager), eval_bv_value(solver, b, model, manager)) else {
+    let (Some(va), Some(vb)) = (
+        eval_bv_value(solver, a, model, manager),
+        eval_bv_value(solver, b, model, manager),
+    ) else {
         return EvalOutcome::UNDETERMINED;
     };
     let result = match cmp {
@@ -1048,7 +1067,9 @@ fn eval_bv_value(
             return BigUint::zero();
         }
         let m = BigInt::from(BigUint::one() << width);
-        (((v % &m) + &m) % &m).to_biguint().unwrap_or_else(BigUint::zero)
+        (((v % &m) + &m) % &m)
+            .to_biguint()
+            .unwrap_or_else(BigUint::zero)
     }
 
     /// Two's-complement signed reading of the low `width` bits of `v`.
@@ -1065,7 +1086,9 @@ fn eval_bv_value(
     }
 
     let bv_width = |tid: TermId| -> Option<u32> {
-        manager.get(tid).and_then(|t| manager.sorts.get(t.sort)?.bitvec_width())
+        manager
+            .get(tid)
+            .and_then(|t| manager.sorts.get(t.sort)?.bitvec_width())
     };
 
     // Post-order explicit stack; `done` memoises hashconsed sub-terms.
@@ -1081,7 +1104,11 @@ fn eval_bv_value(
             stack.pop();
             continue;
         }
-        let width = manager.sorts.get(t.sort).and_then(|s| s.bitvec_width()).unwrap_or(0);
+        let width = manager
+            .sorts
+            .get(t.sort)
+            .and_then(|s| s.bitvec_width())
+            .unwrap_or(0);
         // Leaves first (no children to push).
         match &t.kind {
             TermKind::BitVecConst { value, .. } => {
@@ -1129,7 +1156,9 @@ fn eval_bv_value(
             | TermKind::BvShl(a, b)
             | TermKind::BvLshr(a, b)
             | TermKind::BvAshr(a, b)
-            | TermKind::BvConcat(a, b) => (&[*a, *b][..], done.contains_key(a) && done.contains_key(b)),
+            | TermKind::BvConcat(a, b) => {
+                (&[*a, *b][..], done.contains_key(a) && done.contains_key(b))
+            }
             TermKind::Ite(_, t, e) => (&[*t, *e][..], done.contains_key(t) && done.contains_key(e)),
             _ => {
                 // Unmodelled bit-vector term (e.g. an uninterpreted
@@ -1175,11 +1204,19 @@ fn eval_bv_value(
             }
             TermKind::BvShl(a, b) => {
                 let s = take(*b)?.to_u64().unwrap_or(u64::MAX);
-                Some(if s >= u64::from(width) { BigUint::zero() } else { mask(take(*a)? << s, width) })
+                Some(if s >= u64::from(width) {
+                    BigUint::zero()
+                } else {
+                    mask(take(*a)? << s, width)
+                })
             }
             TermKind::BvLshr(a, b) => {
                 let s = take(*b)?.to_u64().unwrap_or(u64::MAX);
-                Some(if s >= u64::from(width) { BigUint::zero() } else { take(*a)? >> s })
+                Some(if s >= u64::from(width) {
+                    BigUint::zero()
+                } else {
+                    take(*a)? >> s
+                })
             }
             TermKind::BvAshr(a, b) => {
                 let av = take(*a)?;
@@ -1189,17 +1226,36 @@ fn eval_bv_value(
                     Some(if neg { ones(width) } else { BigUint::zero() })
                 } else {
                     let shifted = av >> s;
-                    Some(mask(if neg { &shifted | (ones(s as u32) << (width - s as u32)) } else { shifted }, width))
+                    Some(mask(
+                        if neg {
+                            &shifted | (ones(s as u32) << (width - s as u32))
+                        } else {
+                            shifted
+                        },
+                        width,
+                    ))
                 }
             }
             // SMT-LIB: `bvudiv(_,_:0)` = all-ones, `bvurem(_,_:0)` = dividend.
-            TermKind::BvUdiv(a, b) => Some(if take(*b)?.is_zero() { ones(width) } else { take(*a)? / take(*b)? }),
-            TermKind::BvUrem(a, b) => Some(if take(*b)?.is_zero() { take(*a)? } else { take(*a)? % take(*b)? }),
+            TermKind::BvUdiv(a, b) => Some(if take(*b)?.is_zero() {
+                ones(width)
+            } else {
+                take(*a)? / take(*b)?
+            }),
+            TermKind::BvUrem(a, b) => Some(if take(*b)?.is_zero() {
+                take(*a)?
+            } else {
+                take(*a)? % take(*b)?
+            }),
             TermKind::BvSdiv(a, b) => {
                 use num_traits::Signed;
                 let (sa, sb) = (to_signed(&take(*a)?, width), to_signed(&take(*b)?, width));
                 Some(if sb.is_zero() {
-                    if sa.is_negative() { BigUint::one() } else { ones(width) }
+                    if sa.is_negative() {
+                        BigUint::one()
+                    } else {
+                        ones(width)
+                    }
                 } else {
                     mask_bigint(&(sa / sb), width)
                 })

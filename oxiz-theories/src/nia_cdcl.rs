@@ -1222,12 +1222,11 @@ fn analyze_1uip(
 mod tests {
     use super::*;
 
+    type CdclState = (Vec<i8>, Vec<u32>, Vec<Option<usize>>, Vec<i32>, u32);
+
     /// Helper: build CDCL state arrays. `trail_lits` are assigned in order;
     /// `(var, lvl, reason)` triples give each variable's level and reason.
-    fn state(
-        trail_lits: &[i32],
-        info: &[(i32, u32, Option<usize>)],
-    ) -> (Vec<i8>, Vec<u32>, Vec<Option<usize>>, Vec<i32>, u32) {
+    fn state(trail_lits: &[i32], info: &[(i32, u32, Option<usize>)]) -> CdclState {
         let n = info
             .iter()
             .map(|(v, _, _)| (*v).unsigned_abs() as usize)

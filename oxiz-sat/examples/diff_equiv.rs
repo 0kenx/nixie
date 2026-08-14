@@ -45,9 +45,11 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize) -> Vec<Vec<i32>> {
     out
 }
 fn solve(prep: bool, cnf: &str) -> (oxiz_sat::SolverResult, Vec<u8>) {
-    let mut cfg = SolverConfig::default();
-    cfg.enable_equiv_substitution = prep;
-    cfg.enable_bve = prep;
+    let cfg = SolverConfig {
+        enable_equiv_substitution: prep,
+        enable_bve: prep,
+        ..SolverConfig::default()
+    };
     let mut s = Solver::with_config(cfg);
     let mut p = DimacsParser::new();
     p.parse_reader(Cursor::new(cnf.as_bytes()), &mut s).unwrap();

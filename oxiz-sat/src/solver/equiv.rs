@@ -126,12 +126,12 @@ impl Solver {
                         // fabricating equivalences (and spurious pos(v)≡neg(v)
                         // contradictions) that proved satisfiable formulas UNSAT.
                         let scc_members = stack.split_off(scc_start);
-                        if scc_members.len() > 1 {
-                            if let Some(&min_c) = scc_members.iter().min() {
-                                let rep = Lit::from_code(min_c as u32);
-                                for &c in &scc_members {
-                                    sub[c] = rep;
-                                }
+                        if scc_members.len() > 1
+                            && let Some(&min_c) = scc_members.iter().min()
+                        {
+                            let rep = Lit::from_code(min_c as u32);
+                            for &c in &scc_members {
+                                sub[c] = rep;
                             }
                         }
                     }

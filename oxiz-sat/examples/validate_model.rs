@@ -7,8 +7,10 @@ use oxiz_sat::{DimacsParser, Lit, Solver, SolverConfig};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap();
-    let mut cfg = SolverConfig::default();
-    cfg.enable_equiv_substitution = std::env::var("EQUIV").map_or(true, |v| v != "0");
+    let cfg = SolverConfig {
+        enable_equiv_substitution: std::env::var("EQUIV").map_or(true, |v| v != "0"),
+        ..SolverConfig::default()
+    };
     let mut p = DimacsParser::new();
     let mut s = Solver::with_config(cfg);
     if let Err(e) = p.parse_file(&path, &mut s) {

@@ -13,13 +13,16 @@ use smallvec::SmallVec;
 /// Variable index
 pub type VarId = u32;
 
+/// Tableau rows and basic-variable flags captured at one decision scope.
+type TableauSnapshot = (FxHashMap<VarId, LinExpr>, Vec<bool>);
+
 /// Throwaway diagnostic counters for the theory-combination probe-cost
 /// investigation (gated on `std`; print on `OXIZ_DIAG`).
 #[cfg(feature = "std")]
 pub mod diag {
     use std::cell::Cell;
     use std::sync::atomic::{AtomicU64, Ordering};
-    std::thread_local! { static PROBE: Cell<bool> = Cell::new(false); }
+    std::thread_local! { static PROBE: Cell<bool> = const { Cell::new(false) }; }
     pub static CHECKS_TOTAL: AtomicU64 = AtomicU64::new(0);
     pub static CHECKS_PROBE: AtomicU64 = AtomicU64::new(0);
     pub static CRASH_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -36,12 +39,16 @@ pub mod diag {
     }
     impl Timer {
         pub fn new(target: &'static AtomicU64) -> Self {
-            Self { start: std::time::Instant::now(), target }
+            Self {
+                start: std::time::Instant::now(),
+                target,
+            }
         }
     }
     impl Drop for Timer {
         fn drop(&mut self) {
-            self.target.fetch_add(self.start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.target
+                .fetch_add(self.start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
     }
     #[inline]
@@ -50,49 +57,69 @@ pub mod diag {
     }
     pub fn reset() {
         for c in [
-            &CHECKS_TOTAL, &CHECKS_PROBE, &CRASH_TOTAL, &CRASH_PROBE, &PIVOTS_TOTAL, &PIVOTS_PROBE,
+            &CHECKS_TOTAL,
+            &CHECKS_PROBE,
+            &CRASH_TOTAL,
+            &CRASH_PROBE,
+            &PIVOTS_TOTAL,
+            &PIVOTS_PROBE,
         ] {
             c.store(0, Ordering::Relaxed);
         }
         CRASH_NS.store(0, Ordering::Relaxed);
         FEASIBLE_NS.store(0, Ordering::Relaxed);
     }
-    pub fn set_probe(on: bool) {
-        PROBE.with(|p| p.set(on));
-    }
-    /// RAII guard: clears the probe flag on drop, so `?` early returns in
-    /// `entailed_equal_reason` can't leak it onto subsequent non-probe checks.
-    pub struct ProbeFlagGuard;
-    impl Drop for ProbeFlagGuard {
-        fn drop(&mut self) {
-            set_probe(false);
-        }
-    }
     pub(crate) fn inc_check() {
         CHECKS_TOTAL.fetch_add(1, Ordering::Relaxed);
-        if probe() { CHECKS_PROBE.fetch_add(1, Ordering::Relaxed); }
+        if probe() {
+            CHECKS_PROBE.fetch_add(1, Ordering::Relaxed);
+        }
     }
     pub(crate) fn inc_crash() {
         CRASH_TOTAL.fetch_add(1, Ordering::Relaxed);
-        if probe() { CRASH_PROBE.fetch_add(1, Ordering::Relaxed); }
+        if probe() {
+            CRASH_PROBE.fetch_add(1, Ordering::Relaxed);
+        }
     }
     pub(crate) fn inc_pivot() {
         PIVOTS_TOTAL.fetch_add(1, Ordering::Relaxed);
-        if probe() { PIVOTS_PROBE.fetch_add(1, Ordering::Relaxed); }
+        if probe() {
+            PIVOTS_PROBE.fetch_add(1, Ordering::Relaxed);
+        }
     }
     pub fn print() {
         let (ct, cp, krt, krp, pt, pp, cns, fns) = (
-            CHECKS_TOTAL.load(Ordering::Relaxed), CHECKS_PROBE.load(Ordering::Relaxed),
-            CRASH_TOTAL.load(Ordering::Relaxed), CRASH_PROBE.load(Ordering::Relaxed),
-            PIVOTS_TOTAL.load(Ordering::Relaxed), PIVOTS_PROBE.load(Ordering::Relaxed),
-            CRASH_NS.load(Ordering::Relaxed), FEASIBLE_NS.load(Ordering::Relaxed),
+            CHECKS_TOTAL.load(Ordering::Relaxed),
+            CHECKS_PROBE.load(Ordering::Relaxed),
+            CRASH_TOTAL.load(Ordering::Relaxed),
+            CRASH_PROBE.load(Ordering::Relaxed),
+            PIVOTS_TOTAL.load(Ordering::Relaxed),
+            PIVOTS_PROBE.load(Ordering::Relaxed),
+            CRASH_NS.load(Ordering::Relaxed),
+            FEASIBLE_NS.load(Ordering::Relaxed),
         );
         let npc = ct.saturating_sub(cp);
         let npp = pt.saturating_sub(pp);
-        let per_probe = if cp > 0 { pp as f64 / cp as f64 } else { f64::NAN };
-        let per_solve = if npc > 0 { npp as f64 / npc as f64 } else { f64::NAN };
-        let ratio = if per_solve > 0.0 { per_probe / per_solve } else { f64::NAN };
-        let crash_per = if krt > 0 { cns as f64 / krt as f64 } else { 0.0 };
+        let per_probe = if cp > 0 {
+            pp as f64 / cp as f64
+        } else {
+            f64::NAN
+        };
+        let per_solve = if npc > 0 {
+            npp as f64 / npc as f64
+        } else {
+            f64::NAN
+        };
+        let ratio = if per_solve > 0.0 {
+            per_probe / per_solve
+        } else {
+            f64::NAN
+        };
+        let crash_per = if krt > 0 {
+            cns as f64 / krt as f64
+        } else {
+            0.0
+        };
         let feas_per = if ct > 0 { fns as f64 / ct as f64 } else { 0.0 };
         eprintln!(
             "[diag] checks total={} probe={} | crash_basis total={} probe={} | pivots total={} probe={}",
@@ -432,7 +459,7 @@ pub struct Simplex {
     /// Pivoting during `check()` modifies rows in-place, so the first operation
     /// that can mutate a scoped basis snapshots it.  A decision level that only
     /// accumulates trailed bounds/rows needs no full-tableau clone.
-    saved_tableaux: Vec<Option<(FxHashMap<VarId, LinExpr>, Vec<bool>)>>,
+    saved_tableaux: Vec<Option<TableauSnapshot>>,
     /// Pivoting rule to use
     pivoting_rule: PivotingRule,
     /// Maximum number of pivot operations before giving up
@@ -1391,23 +1418,28 @@ impl Simplex {
                 .get(leaving)
                 .and_then(|o| o.as_ref())
                 .map(|b| b.value)
-                .or_else(|| self.upper.get(leaving).and_then(|o| o.as_ref()).map(|b| b.value));
+                .or_else(|| {
+                    self.upper
+                        .get(leaving)
+                        .and_then(|o| o.as_ref())
+                        .map(|b| b.value)
+                });
             if let Some(v) = snapped {
                 self.assignment[leaving] = v;
             }
         }
         let entering = nonbasic_var as usize;
-        if entering < self.assignment.len() {
-            if let Some(v) = self.eval_expr(&new_expr) {
-                self.assignment[entering] = v;
-            }
+        if entering < self.assignment.len()
+            && let Some(v) = self.eval_expr(&new_expr)
+        {
+            self.assignment[entering] = v;
         }
         for (var, new_row) in &row_updates {
             let vi = *var as usize;
-            if vi < self.assignment.len() {
-                if let Some(v) = self.eval_expr(new_row) {
-                    self.assignment[vi] = v;
-                }
+            if vi < self.assignment.len()
+                && let Some(v) = self.eval_expr(new_row)
+            {
+                self.assignment[vi] = v;
             }
         }
         self.tableau.remove(&basic_var);

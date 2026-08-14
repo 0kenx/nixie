@@ -1126,7 +1126,11 @@ pub(crate) fn eval_select_term(select: TermId, manager: &TermManager) -> Option<
     };
     let i = eval_ground_int(idx, manager)?;
     let interp = eval_array_def(arr, manager)?;
-    interp.entries.get(&i).cloned().or_else(|| interp.default.clone())
+    interp
+        .entries
+        .get(&i)
+        .cloned()
+        .or_else(|| interp.default.clone())
 }
 
 pub(crate) fn eval_ground_int(term: TermId, manager: &TermManager) -> Option<i64> {
@@ -1141,9 +1145,9 @@ pub(crate) fn eval_ground_int(term: TermId, manager: &TermManager) -> Option<i64
             }
             Some(sum)
         }
-        TermKind::Sub(a, b) => Some(
-            eval_ground_int(*a, manager)?.checked_sub(eval_ground_int(*b, manager)?)?,
-        ),
+        TermKind::Sub(a, b) => {
+            Some(eval_ground_int(*a, manager)?.checked_sub(eval_ground_int(*b, manager)?)?)
+        }
         TermKind::Mul(terms) => {
             let mut prod = 1_i64;
             for t in terms {

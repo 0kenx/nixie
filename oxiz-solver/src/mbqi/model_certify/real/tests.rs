@@ -119,6 +119,56 @@ fn affine_macro_is_detected_and_certified() {
     assert!(certify(&assertions, &FxHashMap::default(), &goal.manager));
 }
 
+/// Two independently synthesised functions can share guarded constraints:
+/// `g(x) = 2x+1` and the line through `f(0)=1/2`, `f(5)=8` jointly satisfy
+/// `0 <= f(x) <= g(x)` throughout `[0,10]`.
+#[test]
+fn interacting_affine_functions_are_certified() {
+    let mut goal = Goal::new();
+    let real = goal.real_sort();
+    let x = goal.var("x");
+    let zero = goal.lit(0, 1);
+    let ten = goal.lit(10, 1);
+    let two = goal.lit(2, 1);
+    let one = goal.lit(1, 1);
+    let half = goal.lit(1, 2);
+    let five = goal.lit(5, 1);
+    let eight = goal.lit(8, 1);
+    let eleven = goal.lit(11, 1);
+
+    let fx = goal.app("f", x);
+    let gx = goal.app("g", x);
+    let nonnegative = goal.manager.mk_ge(fx, zero);
+    let nonnegative_guard = goal.manager.mk_ge(x, zero);
+    let f_nonnegative = goal.manager.mk_implies(nonnegative_guard, nonnegative);
+
+    let lower = goal.manager.mk_ge(x, zero);
+    let upper = goal.manager.mk_le(x, ten);
+    let guard = goal.manager.mk_and([lower, upper]);
+    let ordered = goal.manager.mk_le(fx, gx);
+    let f_below_g = goal.manager.mk_implies(guard, ordered);
+
+    let twice = goal.manager.mk_mul([two, x]);
+    let rhs = goal.manager.mk_add([twice, one]);
+    let g_defined = goal.manager.mk_eq(gx, rhs);
+    let g_macro = goal.manager.mk_implies(guard, g_defined);
+
+    let q1 = goal.manager.mk_forall([("x", real)], f_nonnegative);
+    let q2 = goal.manager.mk_forall([("x", real)], f_below_g);
+    let q3 = goal.manager.mk_forall([("x", real)], g_macro);
+    let f_zero = goal.app("f", zero);
+    let f_five = goal.app("f", five);
+    let g_zero = goal.app("g", zero);
+    let g_five = goal.app("g", five);
+    let p1 = goal.manager.mk_eq(f_zero, half);
+    let p2 = goal.manager.mk_eq(f_five, eight);
+    let p3 = goal.manager.mk_eq(g_zero, one);
+    let p4 = goal.manager.mk_eq(g_five, eleven);
+
+    let assertions = vec![q1, q2, q3, p1, p2, p3, p4];
+    assert!(certify(&assertions, &FxHashMap::default(), &goal.manager));
+}
+
 /// A macro whose pin disagrees with the definition has no model, and the
 /// certifier must say so rather than trust the macro.
 #[test]

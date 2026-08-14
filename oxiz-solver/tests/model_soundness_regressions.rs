@@ -83,11 +83,11 @@ fn solve_get_model(script_body: &str) -> (SolverResult, Option<String>) {
             _ => {}
         }
     }
-    if verdict == SolverResult::Sat {
-        if let Some(idx) = last_sat_idx {
-            // Everything after the final `sat` line is the model response.
-            model = Some(outputs[idx + 1..].join("\n"));
-        }
+    if verdict == SolverResult::Sat
+        && let Some(idx) = last_sat_idx
+    {
+        // Everything after the final `sat` line is the model response.
+        model = Some(outputs[idx + 1..].join("\n"));
     }
     (verdict, model)
 }
@@ -177,8 +177,7 @@ fn model_validates(orig: &str, model: &str) -> Option<bool> {
     }
     let mut head = strip_trailing_checksat(orig).to_string();
     let decl = declared_nullary_tokens(orig);
-    let declared: std::collections::HashSet<&str> =
-        decl.values().map(String::as_str).collect();
+    let declared: std::collections::HashSet<&str> = decl.values().map(String::as_str).collect();
     let mut extra_decl: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut pins = Vec::new();
     for (name, sort, value) in nullary_defines(model) {
@@ -201,7 +200,7 @@ fn model_validates(orig: &str, model: &str) -> Option<bool> {
         }
         pins.push(format!("(assert (= {tok} {value}))"));
     }
-    head.push_str("\n");
+    head.push('\n');
     head.push_str(&pins.join("\n"));
     head.push_str("\n(check-sat)\n");
     let out = std::process::Command::new("z3")

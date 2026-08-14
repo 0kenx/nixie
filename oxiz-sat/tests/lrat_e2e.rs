@@ -109,15 +109,14 @@ fn assert_verified(nvars: usize, clauses: &[Vec<i32>], binary: bool) {
 
     // `lrat-check` is text-only; for binary proofs, decode to text first (this
     // also validates the binary varint encoding end-to-end).
-    let check_path;
-    if binary {
+    let check_path = if binary {
         let text = dir.join("out.lrat");
         let bytes = fs::read(&lrat).expect("read clrat");
         fs::write(&text, decode_binary_lrat(&bytes)).expect("write decoded lrat");
-        check_path = text;
+        text
     } else {
-        check_path = lrat.clone();
-    }
+        lrat.clone()
+    };
 
     let output = Command::new(&checker)
         .arg(&cnf)

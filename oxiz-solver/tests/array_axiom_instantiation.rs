@@ -7,11 +7,16 @@
 //! either return a spurious `Sat` (an unsound result) or an over-cautious
 //! `Unknown`.
 
-use oxiz_solver::{Context, SolverResult};
+use oxiz_solver::{Context, SolverResult, TheoryMode};
 
 /// Run an SMT-LIB script and return the verdict of the final `check-sat`.
 fn run_script(script: &str) -> SolverResult {
     let mut ctx = Context::new();
+    run_script_in_context(&mut ctx, script)
+}
+
+/// Run a script using a caller-configured context.
+fn run_script_in_context(ctx: &mut Context, script: &str) -> SolverResult {
     let outputs = ctx.execute_script(script).unwrap_or_default();
     for tok in outputs.iter().rev() {
         match tok.trim() {
@@ -22,6 +27,46 @@ fn run_script(script: &str) -> SolverResult {
         }
     }
     SolverResult::Unknown
+}
+
+/// Stump-Barrett-Dill-Levitt array incompleteness example.  The two aliases
+/// force the stores to agree; `f(x) != f(y)` entails `x != y`, so reading the
+/// second store at `x` yields `select(a,x)`, while the first yields `v`.
+/// Because `g(a) != g(b)` entails `a != b`, the first store also forces those
+/// two values apart: contradiction.
+///
+/// Two independent regressions made this return `Sat`: the single-alias
+/// performance shortcut also suppressed write-index congruence for a
+/// *multi*-defined `b`, and lazy theory checking asserted every batched atom in
+/// the deepest scope, then lost surviving lower-level facts on backtrack.  Pin
+/// both modes so neither route can silently accept the incomplete assignment.
+#[test]
+fn multiple_store_aliases_reconcile_in_eager_and_lazy_modes() {
+    let script = r#"
+(set-logic QF_AUFLIA)
+(declare-const a (Array Int Int))
+(declare-const b (Array Int Int))
+(declare-const v Int)
+(declare-const w Int)
+(declare-const x Int)
+(declare-const y Int)
+(declare-fun g ((Array Int Int)) Int)
+(declare-fun f (Int) Int)
+(assert (and (= (store a x v) b)
+             (= (store a y w) b)
+             (not (= (f x) (f y)))
+             (not (= (g a) (g b)))))
+(check-sat)
+"#;
+
+    assert_eq!(run_script(script), SolverResult::Unsat);
+
+    let mut lazy = Context::new();
+    lazy.set_theory_mode(TheoryMode::Lazy);
+    assert_eq!(
+        run_script_in_context(&mut lazy, script),
+        SolverResult::Unsat
+    );
 }
 
 /// Read-over-write case 2 (different index) drives a conflict: with `i != j`,

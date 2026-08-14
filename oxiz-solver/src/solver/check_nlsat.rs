@@ -96,7 +96,12 @@ impl Solver {
         let backend = self.nl_backend(manager)?;
 
         let result = match backend {
-            NlBackend::Nia => dispatch_nia_constraints(&self.assertions, manager, true, self.config.nonlinear_model_search),
+            NlBackend::Nia => dispatch_nia_constraints(
+                &self.assertions,
+                manager,
+                true,
+                self.config.nonlinear_model_search,
+            ),
             NlBackend::Nra => dispatch_nra_constraints(&self.assertions, manager),
         }?;
 

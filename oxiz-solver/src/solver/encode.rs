@@ -4,7 +4,7 @@
 use crate::prelude::*;
 use num_rational::Rational64;
 use num_traits::{One, ToPrimitive, Zero};
-use oxiz_core::ast::{collect_subterms, get_children, TermId, TermKind, TermManager};
+use oxiz_core::ast::{TermId, TermKind, TermManager, collect_subterms, get_children};
 use oxiz_core::sort::{SortId, SortKind};
 use oxiz_sat::{Lit, Var};
 use smallvec::SmallVec;
@@ -49,12 +49,12 @@ pub(super) fn needs_ite_elimination(sort: SortId, manager: &TermManager) -> bool
         return false;
     }
     match manager.sorts.get(sort) {
-        Some(s) => !(
-            s.is_bitvec()
+        Some(s) => {
+            !(s.is_bitvec()
                 || s.is_string()
                 || s.is_float()
-                || matches!(s.kind, SortKind::Array { .. })
-        ),
+                || matches!(s.kind, SortKind::Array { .. }))
+        }
         None => false,
     }
 }
@@ -363,7 +363,7 @@ impl Solver {
             Visit(TermId, Rational64),
             /// Classify the factor that just finished (when `next > 0`) and
             /// either evaluate the next factor or finalize the product.
-            Mul(MulFrame),
+            Mul(Box<MulFrame>),
         }
 
         let mut cur = Level::new();
@@ -485,14 +485,14 @@ impl Solver {
                         // into a fresh one (matching the recursive version's
                         // per-factor `sub_terms`/`sub_constant` buffers).
                         TermKind::Mul(args) => {
-                            work.push(Work::Mul(MulFrame {
+                            work.push(Work::Mul(Box::new(MulFrame {
                                 args: args.iter().copied().collect(),
                                 next: 0,
                                 const_product: Rational64::one(),
                                 non_const_factor: None,
                                 scale: sc,
                                 parent: core::mem::replace(&mut cur, Level::new()),
-                            }));
+                            })));
                         }
 
                         // Integer `div`/`mod` and Int/Real-sorted `ite`: opaque arithmetic
@@ -681,7 +681,10 @@ impl Solver {
         let purified = if purify {
             super::purify_arith::purify_assertion(term, manager, &mut self.arith_purify)
         } else {
-            super::purify_arith::PurifyResult { term, interface: Vec::new() }
+            super::purify_arith::PurifyResult {
+                term,
+                interface: Vec::new(),
+            }
         };
         let term = purified.term;
 
@@ -840,10 +843,7 @@ impl Solver {
     /// them keeps the added boolean structure tiny so CDCL is not disrupted on
     /// other benchmark families (e.g. WiSA), which would otherwise time out
     /// from the clause blow-up of axiomatizing every arith term.
-    pub(super) fn axiomatize_arith_constant_equalities(
-        &mut self,
-        manager: &mut TermManager,
-    ) {
+    pub(super) fn axiomatize_arith_constant_equalities(&mut self, manager: &mut TermManager) {
         use rustc_hash::FxHashSet;
 
         // The triangle axiomatization is a *quantifier-free* theory-combination
@@ -932,8 +932,10 @@ impl Solver {
                 // Record the pair so a later `check` does not re-emit these
                 // clauses, and a retracting `pop` drops the mark so they are
                 // re-axiomatized when needed again.
-                self.trail
-                    .push(TrailOp::ArithConstAxiomAdded { term: t, const_val: c });
+                self.trail.push(TrailOp::ArithConstAxiomAdded {
+                    term: t,
+                    const_val: c,
+                });
                 // No phase bias on `eq`: the z3-style theory propagation in
                 // `final_check` deterministically forces the correct `le`/`ge`
                 // (and thus `eq`) once arithmetic fixes the ite-result to a
@@ -963,16 +965,25 @@ impl Solver {
     /// atoms never actually surfaced the hidden conflict -- CDCL still returned
     /// `sat` even with every pair encoded).
     pub(super) fn pre_encode_care_graph_atoms(&mut self, manager: &mut TermManager) {
-        if self.has_quantifiers { return; }
+        if self.has_quantifiers {
+            return;
+        }
         const MAX_CARE_ATOMS: usize = 1024;
         // Shared interface = terms visible to BOTH EUF (as an application
         // argument) and arithmetic.  cvc5 builds its care graph from the
         // shared-terms set; oxiz has no purification so the interface is the
         // arith-interned terms that also appear under a function symbol.
         let interface = self.euf.app_argument_terms();
-        let shared: Vec<TermId> = self.arith.interface_terms().iter().copied()
-            .filter(|t| interface.contains(t)).collect();
-        if shared.len() < 2 { return; }
+        let shared: Vec<TermId> = self
+            .arith
+            .interface_terms()
+            .iter()
+            .copied()
+            .filter(|t| interface.contains(t))
+            .collect();
+        if shared.len() < 2 {
+            return;
+        }
         // cvc5's care graph is small (~10-50) thanks to tight purification.
         // oxiz has none, so a large shared interface yields O(n^2) care atoms
         // that bloat CDCL without helping (the equality arrangements that
@@ -989,25 +1000,45 @@ impl Solver {
         'outer: for i in 0..shared.len() {
             let a = shared[i];
             let sa = manager.get(a).map(|t| t.sort);
-            let na = match self.euf.term_to_node(a) { Some(n) => n, None => continue };
+            let na = match self.euf.term_to_node(a) {
+                Some(n) => n,
+                None => continue,
+            };
             let ra = self.euf.find(na);
-            for j in (i + 1)..shared.len() {
-                if added >= MAX_CARE_ATOMS { break 'outer; }
-                let b = shared[j];
-                if manager.get(b).map(|t| t.sort) != sa { continue; }
-                let nb = match self.euf.term_to_node(b) { Some(n) => n, None => continue };
-                if ra == self.euf.find(nb) { continue; }          // already EUF-equal
+            for &b in shared.iter().skip(i + 1) {
+                if added >= MAX_CARE_ATOMS {
+                    break 'outer;
+                }
+                if manager.get(b).map(|t| t.sort) != sa {
+                    continue;
+                }
+                let nb = match self.euf.term_to_node(b) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if ra == self.euf.find(nb) {
+                    continue;
+                } // already EUF-equal
                 // Cheap pre-filter: skip pairs already pinned by level-0 bounds.
-                if !matches!(self.arith.equality_status(a, b),
-                    oxiz_theories::arithmetic::ArithEqualityStatus::Unknown) { continue; }
+                if !matches!(
+                    self.arith.equality_status(a, b),
+                    oxiz_theories::arithmetic::ArithEqualityStatus::Unknown
+                ) {
+                    continue;
+                }
                 let pair = if a < b { (a, b) } else { (b, a) };
-                if !self.care_split_pairs.insert(pair) { continue; }
+                if !self.care_split_pairs.insert(pair) {
+                    continue;
+                }
                 // ensureLiteral: create the equality atom so CDCL can decide it.
                 let eq_term = manager.mk_eq(a, b);
                 let eq_lit = self.encode_depth(eq_term, manager, 0);
                 // cvc5 prefers the positive phase (try `a = b` first).
                 self.sat.set_preferred_phase(eq_lit.var(), true);
-                self.trail.push(TrailOp::CareSplitAdded { a: pair.0, b: pair.1 });
+                self.trail.push(TrailOp::CareSplitAdded {
+                    a: pair.0,
+                    b: pair.1,
+                });
                 added += 1;
             }
         }
@@ -1022,36 +1053,59 @@ impl Solver {
         for &assertion in &self.assertions {
             for st in collect_subterms(assertion, manager) {
                 let Some(t) = manager.get(st) else { continue };
-                if !matches!(t.kind, TermKind::Or(_)) { continue; }
-                if !seen_or.insert(st) { continue; }
+                if !matches!(t.kind, TermKind::Or(_)) {
+                    continue;
+                }
+                if !seen_or.insert(st) {
+                    continue;
+                }
                 let mut leaves: Vec<TermId> = Vec::new();
                 let mut stack: Vec<TermId> = vec![st];
                 let mut the_var: Option<TermId> = None;
                 let mut ok = true;
                 while let Some(n) = stack.pop() {
-                    let Some(nt) = manager.get(n) else { ok = false; break };
+                    let Some(nt) = manager.get(n) else {
+                        ok = false;
+                        break;
+                    };
                     match &nt.kind {
                         TermKind::Or(args) => {
-                            if leaves.len() + stack.len() + args.len() > 256 { ok = false; break; }
-                            for &a in args { stack.push(a); }
+                            if leaves.len() + stack.len() + args.len() > 256 {
+                                ok = false;
+                                break;
+                            }
+                            for &a in args {
+                                stack.push(a);
+                            }
                         }
                         TermKind::Eq(l, r) => {
                             let v = match (manager.get(*l), manager.get(*r)) {
                                 (Some(lt), _) if matches!(lt.kind, TermKind::Var(_)) => *l,
                                 (_, Some(rt)) if matches!(rt.kind, TermKind::Var(_)) => *r,
-                                _ => { ok = false; break }
+                                _ => {
+                                    ok = false;
+                                    break;
+                                }
                             };
                             match the_var {
                                 None => the_var = Some(v),
                                 Some(p) if p == v => {}
-                                _ => { ok = false; break }
+                                _ => {
+                                    ok = false;
+                                    break;
+                                }
                             }
                             leaves.push(n);
                         }
-                        _ => { ok = false; break }
+                        _ => {
+                            ok = false;
+                            break;
+                        }
                     }
                 }
-                if !ok || !(2..=64).contains(&leaves.len()) { continue; }
+                if !ok || !(2..=64).contains(&leaves.len()) {
+                    continue;
+                }
                 for &eq_term in &leaves {
                     if let Some(&v) = self.term_to_var.get(&eq_term) {
                         atoms.push(v);
@@ -1060,7 +1114,9 @@ impl Solver {
                 }
             }
         }
-        if !atoms.is_empty() { self.sat.bump_decision_hint(&atoms); }
+        if !atoms.is_empty() {
+            self.sat.bump_decision_hint(&atoms);
+        }
     }
 
     /// Assert a named term (for unsat core tracking)
@@ -1087,7 +1143,9 @@ impl Solver {
                 let Some(t) = manager.get(st) else { continue };
                 let (a, b) = match &t.kind {
                     TermKind::Not(inner) => {
-                        let Some(it) = manager.get(*inner) else { continue };
+                        let Some(it) = manager.get(*inner) else {
+                            continue;
+                        };
                         match &it.kind {
                             TermKind::Eq(a, b) => (*a, *b),
                             _ => continue,
@@ -1096,9 +1154,15 @@ impl Solver {
                     TermKind::Eq(a, b) => (*a, *b),
                     _ => continue,
                 };
-                let na = manager.get(a).is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
-                let nb = manager.get(b).is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
-                if !na || !nb { continue; }
+                let na = manager
+                    .get(a)
+                    .is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
+                let nb = manager
+                    .get(b)
+                    .is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
+                if !na || !nb {
+                    continue;
+                }
                 let pair = if a < b { (a, b) } else { (b, a) };
                 // Dedup across `check`s: the trichotomy clause persists in the
                 // SAT core (it only backtracks to root, never removes base
@@ -1206,6 +1270,7 @@ impl Solver {
         current
     }
 
+    /// Assert a term and associate it with an SMT-LIB assertion name.
     pub fn assert_named(&mut self, term: TermId, name: &str, manager: &mut TermManager) {
         let index = self.assertions.len();
         self.assertions.push(term);
@@ -1762,7 +1827,11 @@ impl Solver {
     /// Kinds already interned as shared arith terms by `track_theory_vars`
     /// (Var, Apply, Select, Ite, Div, Mod, DtSelector) are left in place; only
     /// constants and arithmetic compounds are abstracted.
-    pub(super) fn purify_numeric_uf_args(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
+    pub(super) fn purify_numeric_uf_args(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+    ) -> TermId {
         use oxiz_core::ast::collect_subterms;
         use rustc_hash::FxHashMap;
         let int_sort = manager.sorts.int_sort;
@@ -1770,7 +1839,8 @@ impl Solver {
         // Collect numeric constants that appear as a `Mul` factor: proxying one
         // of these would (via the global `substitute`) rewrite the coefficient
         // too, manufacturing spurious nonlinearity.  See the arg-scan note.
-        let mut coefficient_consts: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut coefficient_consts: rustc_hash::FxHashSet<TermId> =
+            rustc_hash::FxHashSet::default();
         for st in collect_subterms(term, manager) {
             let Some(t) = manager.get(st) else { continue };
             if let TermKind::Mul(args) = &t.kind {
@@ -1828,8 +1898,12 @@ impl Solver {
                     // honesty gate.  Such a constant is the same `TermId` in
                     // both roles (the interner dedups literals), so it cannot
                     // be substituted in only one position via the global map.
-                    let is_const = matches!(at.kind, TermKind::IntConst(_) | TermKind::RealConst(_));
-                    if numeric && !already_shared && !(is_const && coefficient_consts.contains(&arg)) {
+                    let is_const =
+                        matches!(at.kind, TermKind::IntConst(_) | TermKind::RealConst(_));
+                    if numeric
+                        && !already_shared
+                        && !(is_const && coefficient_consts.contains(&arg))
+                    {
                         to_abstract.push(arg);
                     }
                 }
@@ -2502,10 +2576,8 @@ impl Solver {
                                 let read_idx = *index;
                                 let mut cur_array = *array;
                                 let mut cur_select = term;
-                                loop {
-                                    let Some(ad) = manager.get(cur_array) else { break };
-                                    let TermKind::Store(base, store_idx, store_val) =
-                                        &ad.kind
+                                while let Some(ad) = manager.get(cur_array) {
+                                    let TermKind::Store(base, store_idx, store_val) = &ad.kind
                                     else {
                                         break;
                                     };
@@ -2513,11 +2585,7 @@ impl Solver {
                                         (*base, *store_idx, *store_val);
                                     let base_read = manager.mk_select(base, read_idx);
                                     self.array_theory.add_row_target(
-                                        cur_select,
-                                        store_idx,
-                                        read_idx,
-                                        store_val,
-                                        base_read,
+                                        cur_select, store_idx, read_idx, store_val, base_read,
                                     );
                                     // Index `base_read` so the propagation
                                     // pass visits it and fires its own RoW too.

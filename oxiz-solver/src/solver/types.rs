@@ -668,7 +668,10 @@ impl Model {
                         let mut substituted = body;
                         for (name, value) in bindings.iter().rev() {
                             substituted = oxiz_core::tactic::quantifier::substitute_single_var(
-                                manager, substituted, *name, *value,
+                                manager,
+                                substituted,
+                                *name,
+                                *value,
                             );
                         }
                         current = substituted;

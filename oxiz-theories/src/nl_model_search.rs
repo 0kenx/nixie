@@ -79,20 +79,18 @@ const REASON: u32 = 0;
 /// more than a handful after grounding.)
 const MAX_FREE_BOOL_CASESPLIT: usize = 8;
 
-/// Entry point. Returns `Some(Sat)` on a concretely-verified integer model,
-/// `Some(Unsat)` when the linear relaxation is infeasible (or, when free
-/// Boolean variables are case-split, when every case is provably unsat), or
-/// `None` to fall through to the CAD-based dispatch.
 /// Whether any `div`/`mod` subterm across `assertions` has a symbolic
 /// (non-constant) divisor — the case [`try_model_based_nia_search`] must
 /// defer to CDCL(T) rather than guess on.
-pub(crate) fn assertions_have_symbolic_divmod(assertions: &[TermId], manager: &TermManager) -> bool {
-    use oxiz_core::ast::{collect_subterms, TermKind};
+pub(crate) fn assertions_have_symbolic_divmod(
+    assertions: &[TermId],
+    manager: &TermManager,
+) -> bool {
+    use oxiz_core::ast::{TermKind, collect_subterms};
     // A divisor is "constant" iff it evaluates to a definite integer, so a
     // folded expression like `(2*3)-1` or `-4` counts (matches v0.3.2's
     // `resolve_int_divisor`); a variable or any non-ground term does not.
-    let divisor_is_constant =
-        |d: TermId| crate::ania_ground::eval_ground_int(d, manager).is_some();
+    let divisor_is_constant = |d: TermId| crate::ania_ground::eval_ground_int(d, manager).is_some();
     for &a in assertions {
         for st in collect_subterms(a, manager) {
             if let Some(t) = manager.get(st) {
@@ -150,6 +148,10 @@ fn fold_array_reads(assertions: Vec<TermId>, manager: &mut TermManager) -> Vec<T
         .collect()
 }
 
+/// Search for a concretely verified nonlinear-integer model.
+///
+/// Returns `Some(Sat)` only with a verified witness. Unsupported or exhausted
+/// searches return `None` so the caller can fall through to another procedure.
 pub fn try_model_based_nia_search(
     assertions: &[TermId],
     manager: &mut TermManager,
@@ -217,14 +219,12 @@ pub fn try_model_based_nia_search(
             .iter()
             .map(|&a| manager.substitute(a, &sub))
             .collect();
-        match nia_search_core(&cased, manager, &mut nodes) {
-            // `nia_search_core` is sat-only (see the relaxation note there):
-            // it never returns `Unsat`.  A `None` means "no certified
-            // verdict"; keep the whole Boolean split honest by declining to
-            // decide rather than aggregating relaxation-infeasibility into an
-            // uncertified `Unsat`.
-            r @ Some(NlDispatchResult::Sat(_)) => return r,
-            _ => {}
+        // `nia_search_core` is sat-only (see the relaxation note there): it
+        // never returns `Unsat`. A `None` means "no certified verdict"; keep
+        // the whole Boolean split honest rather than aggregating relaxation
+        // infeasibility into an uncertified `Unsat`.
+        if let r @ Some(NlDispatchResult::Sat(_)) = nia_search_core(&cased, manager, &mut nodes) {
+            return r;
         }
     }
     None
@@ -236,6 +236,31 @@ pub fn try_model_based_nia_search(
 /// and integer branch-and-bound with monomial repair — each returning `Sat`
 /// only on a concretely verified witness.
 fn nia_search_core(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+    nodes: &mut usize,
+) -> Option<NlDispatchResult> {
+    // Give the worker exclusive access to the manager. `TermManager` is
+    // `Send` but deliberately not `Sync` because its bump arena contains
+    // interior bookkeeping cells. Building `Relaxation` on the caller and
+    // then sharing its `&TermManager` with the worker therefore both failed
+    // all-features builds and misstated the ownership model. Moving this
+    // unique borrow into the scoped worker guarantees there is no concurrent
+    // arena access while retaining the large stack required by bounded B&B.
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn_scoped(scope, move || {
+                nia_search_core_on_worker(assertions, manager, nodes)
+            })
+            .ok()?;
+        handle.join().ok().flatten()
+    })
+}
+
+/// Execute one nonlinear search after its unique `TermManager` borrow has
+/// moved onto the large-stack worker thread.
+fn nia_search_core_on_worker(
     assertions: &[TermId],
     manager: &TermManager,
     nodes: &mut usize,
@@ -286,23 +311,13 @@ fn nia_search_core(
                 .collect(),
         ));
     }
-    // Run the (potentially deep) branch-and-bound search on a worker thread
-    // with a large stack. Value-exclusion of *unbounded* monomial factors
+    // Value-exclusion of *unbounded* monomial factors
     // (see `pick_branch`) is productive on VeryMax SAT instances but ascends
     // on UNSAT ones (e.g. `x*x = 2`), recursing up to `MAX_BB_NODES` deep; that
-    // overflows the default (test-)thread stack. A dedicated large stack makes
-    // the recursion safe regardless of caller stack size, while `MAX_BB_NODES`
-    // bounds total work so a doomed ascent still terminates quickly (a tiny
+    // is safe on this worker's dedicated large stack. `MAX_BB_NODES` bounds
+    // total work so a doomed ascent still terminates quickly (a tiny
     // relaxation turns over thousands of nodes in milliseconds).
-
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(512 * 1024 * 1024)
-            .spawn_scoped(scope, move || s.search(assertions, manager, nodes, 0))
-            .expect("spawn nia search thread")
-            .join()
-            .expect("nia search thread panicked")
-    })
+    s.search(assertions, manager, nodes, 0)
 }
 
 /// Free Boolean-sorted variables referenced anywhere in `assertions`.

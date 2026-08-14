@@ -451,8 +451,7 @@ impl Solver {
         // `Solver::push_branch_priority` populates it (e.g. from flattened
         // lookup tables); with the heuristic installed the engine consults it
         // on every decision, with the heuristic absent it never does.
-        let (branch_priority, priority_heuristic) =
-            branch_priority::new_priority_branching();
+        let (branch_priority, priority_heuristic) = branch_priority::new_priority_branching();
 
         // Build SAT solver configuration from our config
         let sat_config = SatConfig {
@@ -983,10 +982,7 @@ impl Solver {
             // input loses the heuristic to a purification artifact.
             features.has_uf()
                 && (features.is_diff_logic()
-                    || matches!(
-                        self.logic.as_deref(),
-                        Some("QF_UFIDL") | Some("UFIDL")
-                    ))
+                    || matches!(self.logic.as_deref(), Some("QF_UFIDL") | Some("UFIDL")))
         };
         self.apply_feature_routing(ufidl_shape);
 
@@ -1318,7 +1314,7 @@ impl Solver {
                                 self.arith.reset();
                                 self.bv.reset();
                                 self.diff.reset();
-        let zero_term = manager.mk_int(0);
+                                let zero_term = manager.mk_int(0);
                                 theory_manager = TheoryManager::new(
                                     manager,
                                     &mut self.euf,
@@ -1331,8 +1327,8 @@ impl Solver {
                                     &self.var_to_parsed_arith,
                                     &self.term_to_var,
                                     &self.var_to_term,
-            &self.numarg_proxies,
-            zero_term,
+                                    &self.numarg_proxies,
+                                    zero_term,
                                     &self.ite_result_terms,
                                     &mut self.derived_reasons,
                                     self.config.theory_mode,
@@ -1341,7 +1337,7 @@ impl Solver {
                                     self.config.max_decisions,
                                     self.has_bv_arith_ops,
                                     self.config.timeout_ms,
-            self.logic.as_deref(),
+                                    self.logic.as_deref(),
                                 );
                                 continue;
                             }
@@ -1380,7 +1376,7 @@ impl Solver {
                             self.arith.reset();
                             self.bv.reset();
                             self.diff.reset();
-        let zero_term = manager.mk_int(0);
+                            let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
                                 manager,
                                 &mut self.euf,
@@ -1393,8 +1389,8 @@ impl Solver {
                                 &self.var_to_parsed_arith,
                                 &self.term_to_var,
                                 &self.var_to_term,
-            &self.numarg_proxies,
-            zero_term,
+                                &self.numarg_proxies,
+                                zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
@@ -1403,7 +1399,7 @@ impl Solver {
                                 self.config.max_decisions,
                                 self.has_bv_arith_ops,
                                 self.config.timeout_ms,
-            self.logic.as_deref(),
+                                self.logic.as_deref(),
                             );
                             continue;
                         }
@@ -1445,7 +1441,7 @@ impl Solver {
                             // replayed search will re-derive.
                             self.debug_check_invariants("check_core: after array-lemma backtrack");
                             // Re-solve with the freshly asserted array lemmas.
-        let zero_term = manager.mk_int(0);
+                            let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
                                 manager,
                                 &mut self.euf,
@@ -1458,8 +1454,8 @@ impl Solver {
                                 &self.var_to_parsed_arith,
                                 &self.term_to_var,
                                 &self.var_to_term,
-            &self.numarg_proxies,
-            zero_term,
+                                &self.numarg_proxies,
+                                zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
@@ -1468,7 +1464,7 @@ impl Solver {
                                 self.config.max_decisions,
                                 self.has_bv_arith_ops,
                                 self.config.timeout_ms,
-            self.logic.as_deref(),
+                                self.logic.as_deref(),
                             );
                             continue;
                         }
@@ -1783,7 +1779,7 @@ impl Solver {
                     // re-derives the theory state from exactly those.  Nothing is
                     // re-encoded, so no clause is duplicated.
                     self.rebase_theory_state();
-        let zero_term = manager.mk_int(0);
+                    let zero_term = manager.mk_int(0);
                     theory_manager = TheoryManager::new(
                         manager,
                         &mut self.euf,
@@ -1796,8 +1792,8 @@ impl Solver {
                         &self.var_to_parsed_arith,
                         &self.term_to_var,
                         &self.var_to_term,
-            &self.numarg_proxies,
-            zero_term,
+                        &self.numarg_proxies,
+                        zero_term,
                         &self.ite_result_terms,
                         &mut self.derived_reasons,
                         self.config.theory_mode,
@@ -1806,7 +1802,7 @@ impl Solver {
                         self.config.max_decisions,
                         self.has_bv_arith_ops,
                         self.config.timeout_ms,
-            self.logic.as_deref(),
+                        self.logic.as_deref(),
                     );
                 }
             }
@@ -1910,13 +1906,26 @@ impl Solver {
     /// Returns `true` iff some function has two applications whose arguments
     /// all map to equal model values but whose results differ.
     fn model_violates_euf_congruence(&self, manager: &TermManager) -> bool {
+        use num_bigint::BigInt;
+        use num_rational::BigRational;
         use rustc_hash::FxHashMap;
+
+        /// Exact scalar model value used as a congruence key.
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum GroundValue {
+            Bool(bool),
+            Number(BigRational),
+            BitVec { value: BigInt, width: u32 },
+            String(String),
+        }
+
         let Some(model) = self.model.as_ref() else {
             return false;
         };
         let asg = model.assignments();
         let chase = |mut t: TermId| -> TermId {
-            for _ in 0..16 {
+            let mut seen: FxHashSet<TermId> = FxHashSet::default();
+            while seen.insert(t) {
                 match asg.get(&t) {
                     Some(&w) if w != t => t = w,
                     _ => break,
@@ -1924,36 +1933,64 @@ impl Solver {
             }
             t
         };
-        let mut groups: FxHashMap<(u32, Vec<TermId>), TermId> = FxHashMap::default();
-        let is_const = |t: TermId| -> bool {
-            manager.get(t).is_some_and(|n| {
-                matches!(
-                    n.kind,
-                    TermKind::IntConst(_)
-                        | TermKind::RealConst(_)
-                        | TermKind::BitVecConst { .. }
-                )
-            })
+        let exact_value = |t: TermId| -> Option<GroundValue> {
+            match &manager.get(t)?.kind {
+                TermKind::True => Some(GroundValue::Bool(true)),
+                TermKind::False => Some(GroundValue::Bool(false)),
+                TermKind::IntConst(value) => Some(GroundValue::Number(BigRational::from_integer(
+                    value.clone(),
+                ))),
+                TermKind::RealConst(value) => Some(GroundValue::Number(BigRational::new(
+                    BigInt::from(*value.numer()),
+                    BigInt::from(*value.denom()),
+                ))),
+                TermKind::BitVecConst { value, width } => Some(GroundValue::BitVec {
+                    value: value.clone(),
+                    width: *width,
+                }),
+                TermKind::StringLit(value) => Some(GroundValue::String(value.clone())),
+                _ => None,
+            }
         };
+        let mut groups: FxHashMap<(u32, Vec<GroundValue>), GroundValue> = FxHashMap::default();
         for &assertion in &self.assertions {
-            for st in oxiz_core::ast::collect_subterms(assertion, manager) {
+            let mut stack = vec![assertion];
+            while let Some(st) = stack.pop() {
                 let Some(t) = manager.get(st) else { continue };
-                let TermKind::Apply { func, args } = &t.kind else { continue };
+                // A candidate ground model does not assign quantified bound
+                // variables. Values left on their arena terms are encoding
+                // artefacts, not a semantic environment for the binder, so
+                // comparing applications below a quantifier fabricates
+                // congruence violations. The quantified body is checked by
+                // MBQI/model certification instead.
+                if matches!(t.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+                    continue;
+                }
+                stack.extend(oxiz_core::ast::get_children(&t.kind));
+                let TermKind::Apply { func, args } = &t.kind else {
+                    continue;
+                };
                 // Only consider applications whose arguments AND result the
                 // model resolves to concrete constants. Applications whose
                 // result is not in the model (chase does not move) would
                 // otherwise compare the app term to itself and flag every pair.
-                let key_args: Vec<TermId> = args.iter().map(|&a| chase(a)).collect();
-                if !key_args.iter().all(|&a| is_const(a)) {
+                let Some(key_args) = args
+                    .iter()
+                    .map(|&arg| exact_value(chase(arg)))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    continue;
+                };
+                let chased_result = chase(st);
+                if chased_result == st {
                     continue;
                 }
-                let result = chase(st);
-                if result == st || !is_const(result) {
+                let Some(result) = exact_value(chased_result) else {
                     continue;
-                }
+                };
                 let key = (func.into_inner().get(), key_args);
                 if let Some(existing) = groups.get(&key) {
-                    if *existing != result {
+                    if existing != &result {
                         return true;
                     }
                 } else {
@@ -2541,8 +2578,8 @@ impl Solver {
     }
 }
 
+mod branch_priority;
 #[cfg(test)]
 mod scope_rebase_tests;
-mod branch_priority;
 #[cfg(test)]
 mod tests;

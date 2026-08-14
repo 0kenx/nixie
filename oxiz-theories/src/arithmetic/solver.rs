@@ -2,7 +2,6 @@
 
 use super::delta::DeltaRational;
 use super::simplex::{LinExpr, Simplex, SimplexOptStatus, VarId};
-use smallvec::SmallVec;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
@@ -10,6 +9,7 @@ use num_rational::Rational64;
 use num_traits::{One, Signed, Zero};
 use oxiz_core::ast::TermId;
 use oxiz_core::error::Result;
+use smallvec::SmallVec;
 
 /// Arithmetic equality solver's verdict on `a = b` from the current bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,8 +143,8 @@ struct PropBoundEntry {
 enum PropBoundUndo {
     Lower(VarId, Option<PropBoundEntry>),
     Upper(VarId, Option<PropBoundEntry>),
-    /// Scope marker: the index in `prop_undo` at the matching `push()`.
-    Scope(usize),
+    /// Scope marker inserted by the matching `push()`.
+    Scope,
 }
 
 /// Comparison flavour for [`ArithSolver::record_prop_bound`].
@@ -154,8 +154,10 @@ enum PropCmp {
     Ge,
     Lt,
     Gt,
-    Eq,
 }
+
+/// One directional expression bound paired with the atoms that justify it.
+type ExplainedBound = Option<(DeltaRational, Vec<TermId>)>;
 
 /// Outcome of exploring a single branch-and-bound child node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,12 +441,6 @@ impl ArithSolver {
                     // x > ratio  ⇒  lower (ratio, +δ)
                     self.prop_set_lower(var, DeltaRational::new(ratio, Rational64::one()), reason);
                 }
-            }
-            PropCmp::Eq => {
-                // coef·x = rhs  ⇒  both bounds.
-                let dr = DeltaRational::from_rational(ratio);
-                self.prop_set_lower(var, dr, reason);
-                self.prop_set_upper(var, dr, reason);
             }
         }
     }
@@ -788,8 +784,6 @@ impl ArithSolver {
         })
     }
 
-    
-    
     /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
     /// current feasible region, by minimizing then maximizing the term with the
     /// primal simplex (`optimize_linexpr`).  Returns `None` if `term` is not a
@@ -843,9 +837,12 @@ impl ArithSolver {
     /// point-fixed), but may compound on the chain as a cheap pre-filter
     /// for the care graph.
     pub fn equality_status(&self, a: TermId, b: TermId) -> ArithEqualityStatus {
-        let (Some(va), Some(vb)) =
-            (self.term_to_var.get(&a).copied(), self.term_to_var.get(&b).copied())
-        else { return ArithEqualityStatus::Unknown; };
+        let (Some(va), Some(vb)) = (
+            self.term_to_var.get(&a).copied(),
+            self.term_to_var.get(&b).copied(),
+        ) else {
+            return ArithEqualityStatus::Unknown;
+        };
         let fa = fixed_value(self.simplex.get_lower(va), self.simplex.get_upper(va));
         let fb = fixed_value(self.simplex.get_lower(vb), self.simplex.get_upper(vb));
         match (fa, fb) {
@@ -854,11 +851,11 @@ impl ArithSolver {
             _ => ArithEqualityStatus::Unknown,
         }
     }
-/// Every term the arithmetic solver has internalised (interface / shared).
+    /// Every term the arithmetic solver has internalised (interface / shared).
     pub fn interface_terms(&self) -> &[TermId] {
         &self.var_to_term
     }
-/// Soundly determine whether `term = const_value` is *entailed* by the
+    /// Soundly determine whether `term = const_value` is *entailed* by the
     /// current arithmetic assignment, and if so return an all-atom reason
     /// (the SAT atoms whose assertion forces the equality).
     ///
@@ -873,9 +870,7 @@ impl ArithSolver {
     /// Used by the z3-style `final_check` theory propagation to justify the
     /// triangle `le`/`ge` atoms deterministically.
     pub fn fixed_to_const_reason(&mut self, term: TermId, const_value: i64) -> Option<Vec<TermId>> {
-        let Some(&var) = self.term_to_var.get(&term) else {
-            return None;
-        };
+        let &var = self.term_to_var.get(&term)?;
         let cv = Rational64::from_integer(const_value);
         let base = self.reasons.len();
         let mut collected: Vec<TermId> = Vec::new();
@@ -891,10 +886,10 @@ impl ArithSolver {
                 Ok(()) => false,
                 Err(reasons) => {
                     for &rid in &reasons {
-                        if rid != marker {
-                            if let Some(&t) = self.reasons.get(rid as usize) {
-                                collected.push(t);
-                            }
+                        if rid != marker
+                            && let Some(&t) = self.reasons.get(rid as usize)
+                        {
+                            collected.push(t);
                         }
                     }
                     true
@@ -920,10 +915,10 @@ impl ArithSolver {
                 Ok(()) => false,
                 Err(reasons) => {
                     for &rid in &reasons {
-                        if rid != marker {
-                            if let Some(&t) = self.reasons.get(rid as usize) {
-                                collected.push(t);
-                            }
+                        if rid != marker
+                            && let Some(&t) = self.reasons.get(rid as usize)
+                        {
+                            collected.push(t);
                         }
                     }
                     true
@@ -1391,7 +1386,7 @@ impl Theory for ArithSolver {
         self.simplex.push();
         // Propagation-bound scope marker: `pop` replays `prop_undo` back to
         // this index, undoing every bound recorded inside this scope.
-        self.prop_undo.push(PropBoundUndo::Scope(self.prop_undo.len()));
+        self.prop_undo.push(PropBoundUndo::Scope);
     }
 
     fn pop(&mut self) {
@@ -1436,7 +1431,7 @@ impl Theory for ArithSolver {
             // Replay the propagation-bound undo trail back to the scope marker.
             while let Some(entry) = self.prop_undo.pop() {
                 match entry {
-                    PropBoundUndo::Scope(_) => break,
+                    PropBoundUndo::Scope => break,
                     PropBoundUndo::Lower(var, prev) => {
                         let idx = var as usize;
                         if idx < self.prop_lower.len() {
@@ -1674,7 +1669,7 @@ impl ArithSolver {
         if candidates.len() < 2 {
             return Vec::new();
         }
-        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        candidates.sort_by_key(|a| a.0);
         let mut buckets: Vec<Vec<TermId>> = Vec::new();
         let mut i = 0;
         while i < candidates.len() {
@@ -1689,19 +1684,6 @@ impl ArithSolver {
         buckets
     }
 
-    /// Sound single-pair equality-entailment probe with Farkas reason.
-    ///
-    /// Returns `Some(reason)` iff arithmetic *entails* `x = y` -- both `x < y`
-    /// and `x > y` are infeasible in the current simplex state -- where `reason`
-    /// is the set of already-asserted comparison atoms whose conjunction forces
-    /// the equality (the union of the two infeasibility certificates).  The
-    /// equality is therefore a *deduction*: propagating it to another theory
-    /// (merging in EUF) is sound as long as `reason` is carried into any
-    /// conflict explanation.  `None` means arithmetic does not entail the
-    /// equality (the model merely happened to assign the same value).
-    ///
-    /// Two `push`/probe/`pop` rounds so the solver's incremental state is
-    /// untouched regardless of the outcome.
     /// Sound comparison-entailment probe (bound propagation core).
     ///
     /// For a comparison atom `sum(coef_i·x_i) <op> constant`, returns
@@ -1723,7 +1705,7 @@ impl ArithSolver {
     ) -> Option<(bool, Vec<TermId>)> {
         let mut e = LinExpr::constant(-constant);
         for &(term, coef) in terms {
-            let Some(&var) = self.term_to_var.get(&term) else { return None; };
+            let &var = self.term_to_var.get(&term)?;
             e.add_term(var, coef);
         }
         let mut neg_e = LinExpr::constant(constant);
@@ -1735,7 +1717,11 @@ impl ArithSolver {
         let base = self.reasons.len();
         let probe = |simplex: &mut Simplex, expr: LinExpr, is_strict: bool| -> Option<Vec<u32>> {
             simplex.push();
-            if is_strict { simplex.add_strict_lt(expr, 0); } else { simplex.add_le(expr, 0); }
+            if is_strict {
+                simplex.add_strict_lt(expr, 0);
+            } else {
+                simplex.add_le(expr, 0);
+            }
             let r = simplex.check().err();
             simplex.pop();
             r
@@ -1759,13 +1745,17 @@ impl ArithSolver {
     fn reasons_from_ids(&mut self, ids: &[u32], base: usize) -> Vec<TermId> {
         let mut out: Vec<TermId> = Vec::new();
         for &rid in ids {
-            if let Some(&t) = self.reasons.get(rid as usize) { out.push(t); }
+            if let Some(&t) = self.reasons.get(rid as usize) {
+                out.push(t);
+            }
         }
         self.reasons.truncate(base);
         self.reason_counter = base as u32;
         out.sort_unstable();
         out.dedup();
-        if out.is_empty() { out = self.full_unsat_core(); }
+        if out.is_empty() {
+            out = self.full_unsat_core();
+        }
         out
     }
 
@@ -1788,10 +1778,7 @@ impl ArithSolver {
         terms: &[(TermId, Rational64)],
         constant: Rational64,
         tighten: bool,
-    ) -> (
-        Option<(DeltaRational, Vec<TermId>)>,
-        Option<(DeltaRational, Vec<TermId>)>,
-    ) {
+    ) -> (ExplainedBound, ExplainedBound) {
         // NOTE: `tighten` is accepted for API stability but the tableau
         // tightening is now done ONCE per assertion by the caller
         // ([`Self::tighten_tableau_bounds`]) rather than per-atom here —
@@ -1833,10 +1820,12 @@ impl ArithSolver {
             }
             let bound = if coef.is_positive() {
                 // needs lower(var): tracker first, then simplex
-                self.prop_get_lower(var).map(|e| (e.value, e.reason))
+                self.prop_get_lower(var)
+                    .map(|e| (e.value, e.reason))
                     .or_else(|| self.simplex.get_lower(var).map(|b| (b.value, b.reason)))
             } else {
-                self.prop_get_upper(var).map(|e| (e.value, e.reason))
+                self.prop_get_upper(var)
+                    .map(|e| (e.value, e.reason))
                     .or_else(|| self.simplex.get_upper(var).map(|b| (b.value, b.reason)))
             };
             let Some((bv, br)) = bound else {
@@ -1861,10 +1850,12 @@ impl ArithSolver {
                 continue;
             }
             let bound = if coef.is_positive() {
-                self.prop_get_upper(var).map(|e| (e.value, e.reason))
+                self.prop_get_upper(var)
+                    .map(|e| (e.value, e.reason))
                     .or_else(|| self.simplex.get_upper(var).map(|b| (b.value, b.reason)))
             } else {
-                self.prop_get_lower(var).map(|e| (e.value, e.reason))
+                self.prop_get_lower(var)
+                    .map(|e| (e.value, e.reason))
                     .or_else(|| self.simplex.get_lower(var).map(|b| (b.value, b.reason)))
             };
             let Some((bv, br)) = bound else {
@@ -1893,9 +1884,12 @@ impl ArithSolver {
     /// arithmetic forces `x ≠ y` (i.e. `x = y` is infeasible).  cvc5's
     /// `watchedVariableCannotBeZero` analogue.
     pub fn entailed_disequal_reason(&mut self, x: TermId, y: TermId) -> Option<Vec<TermId>> {
-        let (Some(var_x), Some(var_y)) =
-            (self.term_to_var.get(&x).copied(), self.term_to_var.get(&y).copied())
-        else { return None; };
+        let (Some(var_x), Some(var_y)) = (
+            self.term_to_var.get(&x).copied(),
+            self.term_to_var.get(&y).copied(),
+        ) else {
+            return None;
+        };
         let base = self.reasons.len();
         self.simplex.push();
         let mut e1 = LinExpr::new();
@@ -1912,14 +1906,16 @@ impl ArithSolver {
         Some(self.reasons_from_ids(&reasons, base))
     }
 
-    pub fn entailed_equal_reason(
-        &mut self,
-        x: TermId,
-        y: TermId,
-    ) -> Option<Vec<TermId>> {
-        let (Some(var_x), Some(var_y)) =
-            (self.term_to_var.get(&x).copied(), self.term_to_var.get(&y).copied())
-        else {
+    /// Sound single-pair equality-entailment probe with a Farkas reason.
+    ///
+    /// Returns `Some(reason)` exactly when both `x < y` and `x > y` are
+    /// infeasible in the current simplex state. The two scratch scopes are
+    /// always popped, so probing does not alter incremental solver state.
+    pub fn entailed_equal_reason(&mut self, x: TermId, y: TermId) -> Option<Vec<TermId>> {
+        let (Some(var_x), Some(var_y)) = (
+            self.term_to_var.get(&x).copied(),
+            self.term_to_var.get(&y).copied(),
+        ) else {
             return None;
         };
         let base = self.reasons.len();
@@ -1964,7 +1960,6 @@ impl ArithSolver {
         }
         Some(reason_terms)
     }
-
 }
 
 #[cfg(test)]

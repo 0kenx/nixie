@@ -1,4 +1,6 @@
 //! QF_ANIA fixtures: nonlinear products over array `select` terms.
+#![allow(clippy::unwrap_used)]
+
 use oxiz_solver::{Context, SolverResult};
 use std::path::{Path, PathBuf};
 

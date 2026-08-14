@@ -1640,7 +1640,9 @@ impl Solver {
         // shape (3): scan positive `(= var (select arr idx))`.
         let mut int_select_def: FxHashMap<TermId, (TermId, TermId)> = FxHashMap::default();
         for &assertion in &self.assertions {
-            let Some(d) = manager.get(assertion) else { continue };
+            let Some(d) = manager.get(assertion) else {
+                continue;
+            };
             if let TermKind::Eq(lhs, rhs) = &d.kind {
                 for (var, sel) in [(*lhs, *rhs), (*rhs, *lhs)] {
                     if matches!(manager.get(var).map(|t| &t.kind), Some(TermKind::Var(_)))
@@ -1654,7 +1656,8 @@ impl Solver {
         // Resolve an operand of a disequality to a `(array, index)` read, via
         // either a direct `select` or an int variable's select definition.
         let read_of = |t: TermId| -> Option<(TermId, TermId)> {
-            self.extract_select(t, manager).or_else(|| int_select_def.get(&t).copied())
+            self.extract_select(t, manager)
+                .or_else(|| int_select_def.get(&t).copied())
         };
 
         let mut worklist: Vec<(TermId, bool)> =
@@ -1664,7 +1667,9 @@ impl Solver {
             if !visited.insert((term, positive)) {
                 continue;
             }
-            let Some(data) = manager.get(term) else { continue };
+            let Some(data) = manager.get(term) else {
+                continue;
+            };
             match &data.kind {
                 TermKind::And(_) | TermKind::Or(_) | TermKind::Not(_) => {
                     let children = super::term_walk::asserted_children(&data.kind, positive);
@@ -1672,9 +1677,7 @@ impl Solver {
                 }
                 // An asserted-true `Eq` at NEGATIVE polarity is a disequality.
                 TermKind::Eq(lhs, rhs) if !positive && *lhs != *rhs => {
-                    if let (Some((la, li)), Some((ra, ri))) =
-                        (read_of(*lhs), read_of(*rhs))
-                    {
+                    if let (Some((la, li)), Some((ra, ri))) = (read_of(*lhs), read_of(*rhs)) {
                         // Shapes (2) and (3): two reads at the same index of
                         // concretely-equal arrays must be equal.
                         if li == ri

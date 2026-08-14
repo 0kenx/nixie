@@ -52,7 +52,8 @@ pub struct Clause {
     /// The literals in this clause — SmallVec placed FIRST for optimal struct
     /// layout: 7 inline lits (28B) + len/cap (16B) = 44B, leaving 20B for
     /// metadata in the same 64-byte cache line. Eliminates heap spills for
-    /// 5-7 literal clauses (the previous SmallVec<[Lit;4]> spilled at 5).
+    /// 5-7 literal clauses (the previous four-element inline capacity spilled
+    /// at 5).
     pub lits: SmallVec<[Lit; 8]>,
     /// LBD (Literal Block Distance) for quality metric
     pub lbd: u32,

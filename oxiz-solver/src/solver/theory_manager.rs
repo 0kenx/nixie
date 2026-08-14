@@ -9,7 +9,7 @@ use oxiz_sat::{Lit, TheoryCallback, TheoryCheckResult, Var};
 use oxiz_theories::arithmetic::ArithSolver;
 use oxiz_theories::bv::BvSolver;
 use oxiz_theories::euf::EufSolver;
-use oxiz_theories::{EqualityNotification, Theory, TheoryCombination};
+use oxiz_theories::{DiffVar, EqualityNotification, Theory, TheoryCombination};
 use smallvec::SmallVec;
 
 use super::theory_bv_encode::{debug_verify_bv_circuits, encode_bv_term_recursive};
@@ -58,9 +58,7 @@ pub(crate) fn arith_bound_prop_mode() -> BoundPropMode {
     *FLAG.get_or_init(|| {
         match std::env::var("OXIZ_BOUND_PROP") {
             Ok(v)
-                if v.eq_ignore_ascii_case("off")
-                    || v == "0"
-                    || v.eq_ignore_ascii_case("false") =>
+                if v.eq_ignore_ascii_case("off") || v == "0" || v.eq_ignore_ascii_case("false") =>
             {
                 BoundPropMode::Off
             }
@@ -116,6 +114,13 @@ struct DlAtom {
     ctype: ArithConstraintType,
 }
 
+/// Parsed arithmetic atom considered for SAT-level bound propagation.
+type ArithPropCandidate = (Var, Vec<(TermId, Rational64)>, Rational64, bool, bool);
+
+/// Cached shortest-path distances and predecessor edges for one DL source.
+type SsspResult = (HashMap<DiffVar, Rational64>, HashMap<DiffVar, usize>);
+type SsspCache = FxHashMap<DiffVar, Option<SsspResult>>;
+
 /// Outcome of feeding one arithmetic atom to the incremental difference-logic
 /// checker.  `Consistent` means the atom was exactly representable as DL and
 /// the updated graph has no negative cycle; it is therefore safe to defer the
@@ -139,8 +144,8 @@ fn feed_dl_atom_inc(
     pol: bool,
     origin: TermId,
 ) -> oxiz_theories::DiffLogicResult {
-    use oxiz_theories::DiffLogicResult;
     use ArithConstraintType::*;
+    use oxiz_theories::DiffLogicResult;
     let (x, y, c) = (dla.x, dla.y, dla.c);
     if dla.is_eq {
         if pol {
@@ -197,11 +202,7 @@ fn direct_const_value(manager: &oxiz_core::ast::TermManager, t: TermId) -> Optio
 /// a term whose linear parse folded to a constant) record no bound — their
 /// real justification may be an EUF/tableau chain the prop tracker cannot
 /// summarize.
-fn genuine_fixed_var(
-    lhs: TermId,
-    rhs: TermId,
-    manager: &TermManager,
-) -> Option<Rational64> {
+fn genuine_fixed_var(lhs: TermId, rhs: TermId, manager: &TermManager) -> Option<Rational64> {
     let rhs_td = manager.get(rhs)?;
     let value = match &rhs_td.kind {
         TermKind::IntConst(n) => Rational64::from_integer(n.to_i64()?),
@@ -326,8 +327,6 @@ pub(crate) struct TheoryManager<'a> {
     dl_prop_fragment: Option<bool>,
     /// Theory checking mode
     theory_mode: TheoryMode,
-    /// Pending assignments for lazy theory checking
-    pending_assignments: Vec<(Lit, bool)>,
     /// Pending equality notifications for Nelson-Oppen
     pending_equalities: Vec<EqualityNotification>,
     /// Processed equalities (to avoid duplicates)
@@ -544,7 +543,6 @@ impl<'a> TheoryManager<'a> {
             dl_prop_counter: 0,
             dl_prop_fragment: None,
             theory_mode,
-            pending_assignments: Vec::new(),
             pending_equalities: Vec::new(),
             processed_equalities: FxHashMap::default(),
             statistics,
@@ -599,8 +597,7 @@ impl<'a> TheoryManager<'a> {
                 _ => None,
             })
         };
-        let mut map: FxHashMap<(TermId, i64), (Option<Var>, Option<Var>)> =
-            FxHashMap::default();
+        let mut map: FxHashMap<(TermId, i64), (Option<Var>, Option<Var>)> = FxHashMap::default();
         for (&var, constraint) in var_to_constraint {
             let (lhs, rhs, is_le) = match constraint {
                 Constraint::Le(l, r) => (*l, *r, true),
@@ -719,6 +716,7 @@ impl<'a> TheoryManager<'a> {
     ///     axiom forces `select = select(b, j)` (the `select(b, j)` term is
     ///     pre-created at encode time — see `ArrayTheory::add_row_target` —
     ///     because this pass holds `&TermManager` and cannot `mk_select`).
+    ///
     /// Merge the consequence in EUF; if that exposes a contradiction with an
     /// asserted disequality, return the conflict.  SOUND: it only ever merges
     /// a term with the value the array axiom *proves* it equals, so it can
@@ -733,9 +731,10 @@ impl<'a> TheoryManager<'a> {
             else {
                 continue;
             };
-            let (Some(ni), Some(nj)) =
-                (self.euf.term_to_node(store_idx), self.euf.term_to_node(read_idx))
-            else {
+            let (Some(ni), Some(nj)) = (
+                self.euf.term_to_node(store_idx),
+                self.euf.term_to_node(read_idx),
+            ) else {
                 continue;
             };
             if self.euf.are_equal_immutable(ni, nj) {
@@ -745,8 +744,7 @@ impl<'a> TheoryManager<'a> {
             }
         }
         for (lhs, rhs) in to_merge {
-            let (Some(nl), Some(nr)) =
-                (self.euf.term_to_node(lhs), self.euf.term_to_node(rhs))
+            let (Some(nl), Some(nr)) = (self.euf.term_to_node(lhs), self.euf.term_to_node(rhs))
             else {
                 continue;
             };
@@ -769,16 +767,13 @@ impl<'a> TheoryManager<'a> {
     /// witness) contradicting an asserted `a ≠ b`.
     fn check_array_extensionality(&mut self) -> Option<TheoryCheckResult> {
         for &(a, b, _k, sa, sb) in self.array_theory.ext_witnesses() {
-            let (Some(na), Some(nb)) =
-                (self.euf.term_to_node(a), self.euf.term_to_node(b))
-            else {
+            let (Some(na), Some(nb)) = (self.euf.term_to_node(a), self.euf.term_to_node(b)) else {
                 continue;
             };
             if !self.euf.are_proven_disequal(na, nb) {
                 continue;
             }
-            let (Some(nsa), Some(nsb)) =
-                (self.euf.term_to_node(sa), self.euf.term_to_node(sb))
+            let (Some(nsa), Some(nsb)) = (self.euf.term_to_node(sa), self.euf.term_to_node(sb))
             else {
                 continue;
             };
@@ -834,7 +829,7 @@ impl<'a> TheoryManager<'a> {
     /// incremental EUF / arith / BV solvers still reflect the stale polarity and,
     /// because they support only level-scoped `pop` (not point removal of a
     /// single mid-level assertion), the stale fact cannot be surgically undone.
-    /// We therefore `reset` the three theory solvers and replay the corrected
+    /// We therefore reset the theory solvers and replay the corrected
     /// trail level by level, re-establishing exactly one push scope per decision
     /// level so subsequent `on_backtrack` pops stay aligned with `level_stack`.
     ///
@@ -876,6 +871,13 @@ impl<'a> TheoryManager<'a> {
                 self.push_theory_scope();
             }
             for atom in trail.iter().filter(|a| a.level == lvl) {
+                // `reset()` also clears the BV solver's mirror of outer
+                // Boolean assignments.  Lazy-mode shadow trails contain every
+                // SAT variable (not only theory atoms), so restore that mirror
+                // before replaying the associated theory constraint.
+                if let Some(term) = self.var_to_term.get(atom.var.index()).copied() {
+                    self.bv.assert_bool_value(term, atom.is_positive);
+                }
                 let Some(constraint) = self.var_to_constraint.get(&atom.var).cloned() else {
                     continue;
                 };
@@ -1204,11 +1206,17 @@ impl<'a> TheoryManager<'a> {
             }
             let mut added_pairs = 0usize;
             for terms in by_val.values() {
-                if added_pairs >= MAX_MODEL_EQ_PAIRS { break; }
-                if terms.len() < 2 { continue; }
+                if added_pairs >= MAX_MODEL_EQ_PAIRS {
+                    break;
+                }
+                if terms.len() < 2 {
+                    continue;
+                }
                 'pair: for i in 0..terms.len() {
                     for j in (i + 1)..terms.len() {
-                        if added_pairs >= MAX_MODEL_EQ_PAIRS { break 'pair; }
+                        if added_pairs >= MAX_MODEL_EQ_PAIRS {
+                            break 'pair;
+                        }
                         let (a, b) = (terms[i], terms[j]);
                         candidates.insert(if a < b { (a, b) } else { (b, a) });
                         added_pairs += 1;
@@ -1219,7 +1227,9 @@ impl<'a> TheoryManager<'a> {
             for &(x, y) in &candidates {
                 let l_node = self.euf.intern(x);
                 let r_node = self.euf.intern(y);
-                if self.euf.are_equal(l_node, r_node) { continue; }
+                if self.euf.are_equal(l_node, r_node) {
+                    continue;
+                }
                 // Cheap sound pre-filter: if the current arithmetic model
                 // assigns x and y *different* values, then arithmetic does NOT
                 // entail x = y -- a satisfying model exists with x != y, so the
@@ -1229,9 +1239,13 @@ impl<'a> TheoryManager<'a> {
                 // has distinct model values, so this prunes the hundreds of
                 // wasted probes per call to the handful that are model-equal.
                 if let (Some(a), Some(b)) = (self.arith.value(x), self.arith.value(y)) {
-                    if a != b { continue; }
+                    if a != b {
+                        continue;
+                    }
                 }
-                let Some(reason) = self.arith.entailed_equal_reason(x, y) else { continue; };
+                let Some(reason) = self.arith.entailed_equal_reason(x, y) else {
+                    continue;
+                };
                 self.derived_reasons.record(x, reason);
                 let _ = self.euf.merge(l_node, r_node, x);
                 merged_any = true;
@@ -1243,8 +1257,12 @@ impl<'a> TheoryManager<'a> {
             for &(x, y) in &candidates {
                 let lx = self.euf.intern(x);
                 let ly = self.euf.intern(y);
-                if !self.euf.are_equal(lx, ly) { continue; }
-                let Some(reason) = self.arith.entailed_disequal_reason(x, y) else { continue; };
+                if !self.euf.are_equal(lx, ly) {
+                    continue;
+                }
+                let Some(reason) = self.arith.entailed_disequal_reason(x, y) else {
+                    continue;
+                };
                 self.derived_reasons.record(x, reason);
                 self.euf.assert_diseq(lx, ly, x);
                 if let Some(conflict_terms) = self.euf.check_conflicts() {
@@ -1262,9 +1280,7 @@ impl<'a> TheoryManager<'a> {
                 if let Some(conflict_terms) = self.euf.check_conflicts() {
                     self.statistics.theory_conflicts += 1;
                     self.statistics.conflicts += 1;
-                    if self.max_conflicts > 0
-                        && self.statistics.conflicts >= self.max_conflicts
-                    {
+                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
                         self.resource_exhausted = true;
                         return TheoryCheckResult::Sat;
                     }
@@ -1283,9 +1299,7 @@ impl<'a> TheoryManager<'a> {
             if let TheoryCheckResult::Conflict(_) = eu {
                 self.statistics.theory_conflicts += 1;
                 self.statistics.conflicts += 1;
-                if self.max_conflicts > 0
-                    && self.statistics.conflicts >= self.max_conflicts
-                {
+                if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
                     self.resource_exhausted = true;
                     return TheoryCheckResult::Sat;
                 }
@@ -1303,9 +1317,7 @@ impl<'a> TheoryManager<'a> {
                 Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) => {
                     self.statistics.theory_conflicts += 1;
                     self.statistics.conflicts += 1;
-                    if self.max_conflicts > 0
-                        && self.statistics.conflicts >= self.max_conflicts
-                    {
+                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
                         self.resource_exhausted = true;
                         return TheoryCheckResult::Sat;
                     }
@@ -1338,9 +1350,13 @@ impl<'a> TheoryManager<'a> {
         if self.var_to_constraint.len() > MAX_ATOMS {
             return None;
         }
-        let candidates: Vec<(Var, Vec<(TermId, Rational64)>, Rational64, bool, bool)> =
-            self.var_to_constraint.iter().filter_map(|(&var, _)| {
-                if self.assigned_pol_of(var).is_some() { return None; }
+        let candidates: Vec<ArithPropCandidate> = self
+            .var_to_constraint
+            .iter()
+            .filter_map(|(&var, _)| {
+                if self.assigned_pol_of(var).is_some() {
+                    return None;
+                }
                 // Skip equality-constrained atoms: `var_to_parsed_arith` carries
                 // an `Le` placeholder for them, so probing `x <= y` and
                 // propagating the equality `x = y` would be unsound (`x <= y`
@@ -1357,12 +1373,16 @@ impl<'a> TheoryManager<'a> {
                     ArithConstraintType::Ge => (false, false),
                 };
                 Some((var, parsed.terms.to_vec(), parsed.constant, less, strict))
-            }).collect();
+            })
+            .collect();
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
         for (var, terms, constant, less, strict) in candidates {
-            let Some((truth, reasons)) = self.arith.comparison_entailed_reason(
-                &terms, constant, less, strict,
-            ) else { continue; };
+            let Some((truth, reasons)) = self
+                .arith
+                .comparison_entailed_reason(&terms, constant, less, strict)
+            else {
+                continue;
+            };
             let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
             let mut ok = true;
             for &r in &reasons {
@@ -1370,18 +1390,20 @@ impl<'a> TheoryManager<'a> {
                     Some(&rv) if self.assigned_pol_of(rv) == Some(true) => {
                         reason_lits.push(Lit::pos(rv));
                     }
-                    _ => { ok = false; break; }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
                 }
             }
             if ok {
-                props.push((if truth { Lit::pos(var) } else { Lit::neg(var) }, reason_lits));
+                props.push((
+                    if truth { Lit::pos(var) } else { Lit::neg(var) },
+                    reason_lits,
+                ));
             }
         }
-        if props.is_empty() {
-            None
-        } else {
-            Some(props)
-        }
+        if props.is_empty() { None } else { Some(props) }
     }
 
     /// Incremental bound propagation: forward-propagate arithmetic atoms
@@ -1475,29 +1497,25 @@ impl<'a> TheoryManager<'a> {
             // here would fold the threshold into the expression and make the
             // check read `e + c ◦ c` ≡ `e ◦ 0` — a soundness bug for any atom
             // with a non-zero threshold.)
-            let (lo, hi) = self.arith.derive_expr_bound_reasons(&terms_buf, Rational64::from_integer(0), tighten);
+            let (lo, hi) = self.arith.derive_expr_bound_reasons(
+                &terms_buf,
+                Rational64::from_integer(0),
+                tighten,
+            );
             // Determine whether the atom `e ◦ c` is forced TRUE or FALSE.
             //
             //   less (e ≤ c / e < c): TRUE ⇔ upper(e) ≤/< c ;  FALSE ⇔ lower(e) >/≥ c
             //   !less (e ≥ c / e > c): TRUE ⇔ lower(e) ≥/> c ;  FALSE ⇔ upper(e) </≤ c
             let forced: Option<(bool, Vec<TermId>)> = if less {
-                let true_forced = hi.as_ref().map(|(v, _)| {
-                    if strict {
-                        *v < c_dr
-                    } else {
-                        *v <= c_dr
-                    }
-                });
+                let true_forced = hi
+                    .as_ref()
+                    .map(|(v, _)| if strict { *v < c_dr } else { *v <= c_dr });
                 if true_forced == Some(true) {
                     hi.map(|(_, r)| (true, r))
                 } else {
-                    let false_forced = lo.as_ref().map(|(v, _)| {
-                        if strict {
-                            *v >= c_dr
-                        } else {
-                            *v > c_dr
-                        }
-                    });
+                    let false_forced = lo
+                        .as_ref()
+                        .map(|(v, _)| if strict { *v >= c_dr } else { *v > c_dr });
                     if false_forced == Some(true) {
                         lo.map(|(_, r)| (false, r))
                     } else {
@@ -1505,23 +1523,15 @@ impl<'a> TheoryManager<'a> {
                     }
                 }
             } else {
-                let true_forced = lo.as_ref().map(|(v, _)| {
-                    if strict {
-                        *v > c_dr
-                    } else {
-                        *v >= c_dr
-                    }
-                });
+                let true_forced = lo
+                    .as_ref()
+                    .map(|(v, _)| if strict { *v > c_dr } else { *v >= c_dr });
                 if true_forced == Some(true) {
                     lo.map(|(_, r)| (true, r))
                 } else {
-                    let false_forced = hi.as_ref().map(|(v, _)| {
-                        if strict {
-                            *v <= c_dr
-                        } else {
-                            *v < c_dr
-                        }
-                    });
+                    let false_forced = hi
+                        .as_ref()
+                        .map(|(v, _)| if strict { *v <= c_dr } else { *v < c_dr });
                     if false_forced == Some(true) {
                         hi.map(|(_, r)| (false, r))
                     } else {
@@ -1562,14 +1572,13 @@ impl<'a> TheoryManager<'a> {
                 }
             }
             if ok && !reason_lits.is_empty() {
-                props.push((if truth { Lit::pos(var) } else { Lit::neg(var) }, reason_lits));
+                props.push((
+                    if truth { Lit::pos(var) } else { Lit::neg(var) },
+                    reason_lits,
+                ));
             }
         }
-        if props.is_empty() {
-            None
-        } else {
-            Some(props)
-        }
+        if props.is_empty() { None } else { Some(props) }
     }
 
     /// If `t` is a `__oxiz_numarg` proxy (a fresh variable that
@@ -1617,7 +1626,7 @@ impl<'a> TheoryManager<'a> {
                 .proxy_const_value(t)
                 .or_else(|| direct_const_value(self.manager, t));
             if let Some(v) = folded {
-                adj_constant = adj_constant - c * v;
+                adj_constant -= c * v;
             } else {
                 real_terms.push((t, c));
             }
@@ -1644,8 +1653,7 @@ impl<'a> TheoryManager<'a> {
                     && *cb == Rational64::from_integer(-1)
                 {
                     (*a, *b)
-                } else if *cb == Rational64::from_integer(1)
-                    && *ca == Rational64::from_integer(-1)
+                } else if *cb == Rational64::from_integer(1) && *ca == Rational64::from_integer(-1)
                 {
                     (*b, *a)
                 } else {
@@ -1669,7 +1677,14 @@ impl<'a> TheoryManager<'a> {
                 return DlPrimaryResult::NotApplicable;
             }
         }
-        let dla = DlAtom { var, x: xt, y: yt, c, is_eq, ctype };
+        let dla = DlAtom {
+            var,
+            x: xt,
+            y: yt,
+            c,
+            is_eq,
+            ctype,
+        };
         let origin = self.term_for_var(var);
         if let DiffLogicResult::Conflict(cycle_terms) =
             feed_dl_atom_inc(&mut *self.diff, &dla, is_positive, origin)
@@ -1690,7 +1705,6 @@ impl<'a> TheoryManager<'a> {
     /// graph (per-source SSSP, amortised via a per-call cache).  SOUND only
     /// for pure-DL formulas (defect 3); the caller gates on that.
     fn derive_diff_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
-        use oxiz_theories::DiffVar;
         if self.dl_prop_fragment == Some(false) {
             return None;
         }
@@ -1715,16 +1729,34 @@ impl<'a> TheoryManager<'a> {
             if !ok {
                 continue;
             }
-            let (Some(xt), Some(yt)) = (x, y) else { continue; };
+            let (Some(xt), Some(yt)) = (x, y) else {
+                continue;
+            };
             let mut plain = true;
             for t in [xt, yt] {
-                let Some(td) = self.manager.get(t) else { plain = false; break; };
-                if !is_plain_numeric_term(td) { plain = false; break; }
-                let Some(sort) = self.manager.sorts.get(td.sort) else { plain = false; break; };
-                if !sort.is_int() && !sort.is_real() { plain = false; break; }
+                let Some(td) = self.manager.get(t) else {
+                    plain = false;
+                    break;
+                };
+                if !is_plain_numeric_term(td) {
+                    plain = false;
+                    break;
+                }
+                let Some(sort) = self.manager.sorts.get(td.sort) else {
+                    plain = false;
+                    break;
+                };
+                if !sort.is_int() && !sort.is_real() {
+                    plain = false;
+                    break;
+                }
             }
-            if !plain { continue; }
-            let Some(constraint) = self.var_to_constraint.get(&var) else { continue; };
+            if !plain {
+                continue;
+            }
+            let Some(constraint) = self.var_to_constraint.get(&var) else {
+                continue;
+            };
             let (is_eq, ctype) = match constraint {
                 Constraint::Eq(_, _) => (true, parsed.constraint_type),
                 Constraint::Le(_, _) => (false, ArithConstraintType::Le),
@@ -1733,16 +1765,21 @@ impl<'a> TheoryManager<'a> {
                 Constraint::Gt(_, _) => (false, ArithConstraintType::Gt),
                 _ => continue,
             };
-            dl_atoms.push(DlAtom { var, x: xt, y: yt, c: parsed.constant, is_eq, ctype });
+            dl_atoms.push(DlAtom {
+                var,
+                x: xt,
+                y: yt,
+                c: parsed.constant,
+                is_eq,
+                ctype,
+            });
         }
         if dl_atoms.is_empty() || dl_atoms.len() != self.var_to_parsed_arith.len() {
             self.dl_prop_fragment = Some(false);
             return None; // no DL atoms, or not pure-DL (defect 3)
         }
         self.dl_prop_fragment = Some(true);
-        let mut sssp_cache:
-            FxHashMap<DiffVar, Option<(HashMap<DiffVar, Rational64>, HashMap<DiffVar, usize>)>> =
-            FxHashMap::default();
+        let mut sssp_cache: SsspCache = FxHashMap::default();
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
         'next_atom: for dla in &dl_atoms {
             if self.trail_index.contains_key(&dla.var) {
@@ -1752,25 +1789,54 @@ impl<'a> TheoryManager<'a> {
             for &pol in polarities {
                 let reason_terms = if dla.is_eq {
                     let c = dla.c;
-                    let Some(xv) = self.diff.get_diff_var(dla.x) else { continue; };
-                    let Some(yv) = self.diff.get_diff_var(dla.y) else { continue; };
-                    let cached_xy = sssp_cache.entry(yv).or_insert_with(|| self.diff.sssp_from(yv));
-                    let Some((dist, pred)) = cached_xy else { continue; };
+                    let Some(xv) = self.diff.get_diff_var(dla.x) else {
+                        continue;
+                    };
+                    let Some(yv) = self.diff.get_diff_var(dla.y) else {
+                        continue;
+                    };
+                    let cached_xy = sssp_cache
+                        .entry(yv)
+                        .or_insert_with(|| self.diff.sssp_from(yv));
+                    let Some((dist, pred)) = cached_xy else {
+                        continue;
+                    };
                     let Some(mut r1) = self.diff.entailed_from_sssp(xv, yv, c, false, dist, pred)
-                    else { continue; };
-                    let cached_yx = sssp_cache.entry(xv).or_insert_with(|| self.diff.sssp_from(xv));
-                    let Some((dist2, pred2)) = cached_yx else { continue; };
-                    let Some(mut r2) = self.diff.entailed_from_sssp(yv, xv, -c, false, dist2, pred2)
-                    else { continue; };
+                    else {
+                        continue;
+                    };
+                    let cached_yx = sssp_cache
+                        .entry(xv)
+                        .or_insert_with(|| self.diff.sssp_from(xv));
+                    let Some((dist2, pred2)) = cached_yx else {
+                        continue;
+                    };
+                    let Some(mut r2) = self
+                        .diff
+                        .entailed_from_sssp(yv, xv, -c, false, dist2, pred2)
+                    else {
+                        continue;
+                    };
                     r1.append(&mut r2);
                     r1
                 } else {
-                    let Some((xt, yt, c, strict)) = diff_test_bound(dla, pol) else { continue; };
-                    let Some(xv) = self.diff.get_diff_var(xt) else { continue; };
-                    let Some(yv) = self.diff.get_diff_var(yt) else { continue; };
-                    let cached = sssp_cache.entry(yv).or_insert_with(|| self.diff.sssp_from(yv));
-                    let Some((dist, pred)) = cached else { continue; };
-                    let Some(r) = self.diff.entailed_from_sssp(xv, yv, c, strict, dist, pred) else {
+                    let Some((xt, yt, c, strict)) = diff_test_bound(dla, pol) else {
+                        continue;
+                    };
+                    let Some(xv) = self.diff.get_diff_var(xt) else {
+                        continue;
+                    };
+                    let Some(yv) = self.diff.get_diff_var(yt) else {
+                        continue;
+                    };
+                    let cached = sssp_cache
+                        .entry(yv)
+                        .or_insert_with(|| self.diff.sssp_from(yv));
+                    let Some((dist, pred)) = cached else {
+                        continue;
+                    };
+                    let Some(r) = self.diff.entailed_from_sssp(xv, yv, c, strict, dist, pred)
+                    else {
                         continue;
                     };
                     r
@@ -1778,20 +1844,32 @@ impl<'a> TheoryManager<'a> {
                 let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
                 let mut ok = true;
                 for &r in &reason_terms {
-                    let Some(&rv) = self.term_to_var.get(&r) else { ok = false; break; };
-                    let Some(&idx) = self.trail_index.get(&rv) else { ok = false; break; };
+                    let Some(&rv) = self.term_to_var.get(&r) else {
+                        ok = false;
+                        break;
+                    };
+                    let Some(&idx) = self.trail_index.get(&rv) else {
+                        ok = false;
+                        break;
+                    };
                     let pol_r = self.assignment_trail[idx].is_positive;
                     reason_lits.push(if pol_r { Lit::pos(rv) } else { Lit::neg(rv) });
                 }
                 if ok {
-                    props.push((if pol { Lit::pos(dla.var) } else { Lit::neg(dla.var) }, reason_lits));
+                    props.push((
+                        if pol {
+                            Lit::pos(dla.var)
+                        } else {
+                            Lit::neg(dla.var)
+                        },
+                        reason_lits,
+                    ));
                     continue 'next_atom;
                 }
             }
         }
         if props.is_empty() { None } else { Some(props) }
     }
-
 
     /// Add an equality to be shared between theories
     #[allow(dead_code)]
@@ -2278,7 +2356,11 @@ impl<'a> TheoryManager<'a> {
                     // For arithmetic equalities, also send to ArithSolver
                     self.intern_arith_shared_terms(var, manager);
                     if let Some(parsed) = self.var_to_parsed_arith.get(&var).cloned() {
-                        self.arith.assert_eq(&parsed.terms.iter().copied().collect::<Vec<_>>(), parsed.constant, parsed.reason_term);
+                        self.arith.assert_eq(
+                            &parsed.terms.iter().copied().collect::<Vec<_>>(),
+                            parsed.constant,
+                            parsed.reason_term,
+                        );
                         // Record a propagation bound ONLY for a GENUINE
                         // `var = constant` equality (plain variable directly
                         // equated to a numeric constant).  Such a bound's
@@ -2713,11 +2795,32 @@ impl TheoryCallback for TheoryManager<'_> {
         // Track propagation
         self.statistics.propagations += 1;
 
-        // In lazy mode, just collect assignments for batch processing
+        // Lazy mode keeps a deduplicated, level-stamped shadow of the complete
+        // SAT trail and rebuilds the theory solvers from it in `final_check`.
+        // Merely queueing atoms and asserting them at the *current* (deepest)
+        // scope is unsound: after a theory conflict, a backtrack pops that
+        // scope and loses even the queued facts whose SAT assignments survived
+        // at lower levels.  The next candidate can then be accepted against a
+        // strict subset of its theory atoms (the array-incompleteness false-SAT
+        // was one such case).
         if self.theory_mode == TheoryMode::Lazy {
-            // Check if this variable has a theory constraint
-            if self.var_to_constraint.contains_key(&var) {
-                self.pending_assignments.push((lit, is_positive));
+            match self.trail_index.get(&var).copied() {
+                Some(idx) => {
+                    self.assignment_trail[idx] = TrailAtom {
+                        var,
+                        is_positive,
+                        level: self.current_level,
+                    };
+                }
+                None => {
+                    let idx = self.assignment_trail.len();
+                    self.assignment_trail.push(TrailAtom {
+                        var,
+                        is_positive,
+                        level: self.current_level,
+                    });
+                    self.trail_index.insert(var, idx);
+                }
             }
             return TheoryCheckResult::Sat;
         }
@@ -2836,9 +2939,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // `x ◦ c` ite condition at the current decision level — the mechanism
         // that shallows conflicts on finite-domain QF_UFIDL from ~96 to ~2.
         #[cfg(feature = "std")]
-        if matches!(result, TheoryCheckResult::Sat)
-            && self.var_to_parsed_arith.contains_key(&var)
-        {
+        if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
             let mode = arith_bound_prop_mode();
             if mode != BoundPropMode::Off
                 && self.is_dl_family
@@ -2852,11 +2953,9 @@ impl TheoryCallback for TheoryManager<'_> {
 
         // Throttled difference-logic theory propagation using the incrementally-
         // maintained `self.diff` (no per-call rebuild).  Pure-DL only (sound).
-        if matches!(result, TheoryCheckResult::Sat)
-            && self.var_to_parsed_arith.contains_key(&var)
-        {
+        if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
             self.dl_prop_counter = self.dl_prop_counter.wrapping_add(1);
-            if self.dl_prop_counter % DL_PROP_PERIOD == 0
+            if self.dl_prop_counter.is_multiple_of(DL_PROP_PERIOD)
                 && let Some(props) = self.derive_diff_propagations()
             {
                 self.statistics.theory_propagations += props.len() as u64;
@@ -2872,43 +2971,32 @@ impl TheoryCallback for TheoryManager<'_> {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
         }
+
+        // Lazy checking is a from-scratch check of the *current* complete SAT
+        // assignment.  Replay each shadow-trail atom at its original decision
+        // level so a conflict-driven backtrack can pop exactly the facts that
+        // ceased to hold, while retaining every surviving lower-level fact.
+        // This also ensures the DL check below sees the current assignment,
+        // rather than the stale/empty graph that existed before the old pending
+        // batch was processed.
+        if self.theory_mode == TheoryMode::Lazy {
+            let replay = self.resync_theory_state();
+            if let TheoryCheckResult::Conflict(conflict) = replay {
+                self.statistics.theory_conflicts += 1;
+                self.statistics.conflicts += 1;
+                if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                    self.resource_exhausted = true;
+                    return TheoryCheckResult::Sat;
+                }
+                return TheoryCheckResult::Conflict(conflict);
+            }
+        }
+
         // DL conflict backstop at full assignment using the incrementally-
         // maintained solver (one full `check()` here is cheap — once per final
         // check, not per atom).  A negative cycle is a sound refutation.
         if let oxiz_theories::DiffLogicResult::Conflict(cycle_terms) = self.diff.check() {
             return self.conflict_from_terms(&cycle_terms);
-        }
-
-        // In lazy mode, process all pending assignments now
-        if self.theory_mode == TheoryMode::Lazy {
-            for &(lit, is_positive) in &self.pending_assignments.clone() {
-                let var = lit.var();
-                self.set_assigned_polarity(var, is_positive);
-                let Some(constraint) = self.var_to_constraint.get(&var).cloned() else {
-                    continue;
-                };
-
-                self.statistics.theory_propagations += 1;
-
-                // Process the constraint (same logic as eager mode)
-                let result = self.process_constraint(var, constraint, is_positive, self.manager);
-                if let TheoryCheckResult::Conflict(conflict) = result {
-                    self.statistics.theory_conflicts += 1;
-                    self.statistics.conflicts += 1;
-
-                    // Check conflict limit
-                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
-                        // Dropping a real conflict at the limit: flag it so the
-                        // solver reports Unknown rather than trusting Sat.
-                        self.resource_exhausted = true;
-                        return TheoryCheckResult::Sat; // Signal resource exhaustion
-                    }
-
-                    return TheoryCheckResult::Conflict(conflict);
-                }
-            }
-            // Clear pending assignments after processing
-            self.pending_assignments.clear();
         }
 
         // Check EUF for conflicts
@@ -2970,17 +3058,9 @@ impl TheoryCallback for TheoryManager<'_> {
         // state missed. Gated on `has_app_nodes` because the divergence is
         // specific to function-bearing EUF, and pure-equality problems would be
         // unfairly penalized by the per-final_check rebuild cost.
-        // Eager mode only: this backstop rebuilds the incremental EUF state
-        // (which can lose a congruence/disequality across CDCL push/pop) from
-        // the deduplicated shadow `assignment_trail`. In *lazy* mode that trail
-        // is permanently empty (on_assignment queues `pending_assignments`
-        // instead, drained just above), so a replay here would reset EUF/arith
-        // and rebuild nothing -- wiping the freshly-drained shared terms
-        // (`app_argument_terms` / `interface_terms`) that the theory
-        // combination below needs, turning an entailed-congruence `unsat` into
-        // a spurious `sat` (pr28). Lazy mode has no incremental divergence to
-        // backstop (the state is rebuilt from pending every final_check), so
-        // skip it there.
+        // Eager mode only: lazy mode has already rebuilt all theory state from
+        // this shadow trail at the start of `final_check`, so replaying it a
+        // second time here would be redundant.
         if self.theory_mode != TheoryMode::Lazy && self.euf.has_app_nodes() {
             let replay = self.resync_theory_state();
             if let TheoryCheckResult::Conflict(conflict_lits) = replay {
@@ -3026,15 +3106,11 @@ impl TheoryCallback for TheoryManager<'_> {
                             let Some(val) = self.arith.value(term) else {
                                 continue;
                             };
-                            let Some(v) = (if val.is_integer() {
-                                val.to_i64()
-                            } else {
-                                None
-                            }) else {
+                            let Some(v) = (if val.is_integer() { val.to_i64() } else { None })
+                            else {
                                 continue;
                             };
-                            let Some(&(le_var, ge_var)) =
-                                self.ite_const_axioms.get(&(term, v))
+                            let Some(&(le_var, ge_var)) = self.ite_const_axioms.get(&(term, v))
                             else {
                                 continue;
                             };
@@ -3045,8 +3121,7 @@ impl TheoryCallback for TheoryManager<'_> {
                             {
                                 continue;
                             }
-                            let Some(reasons) = self.arith.fixed_to_const_reason(term, v)
-                            else {
+                            let Some(reasons) = self.arith.fixed_to_const_reason(term, v) else {
                                 continue;
                             };
                             let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
@@ -3182,11 +3257,6 @@ impl TheoryCallback for TheoryManager<'_> {
             if (f as usize) >= live_nodes {
                 self.bool_false_node = None;
             }
-        }
-
-        // Clear pending assignments on backtrack (in lazy mode)
-        if self.theory_mode == TheoryMode::Lazy {
-            self.pending_assignments.clear();
         }
     }
 }

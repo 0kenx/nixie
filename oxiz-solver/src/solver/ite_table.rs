@@ -519,6 +519,9 @@ impl Solver {
                 .into_iter()
                 .map(|(_, _, v)| v)
                 .collect();
+            if self.config.enable_domain_first_branching {
+                self.push_branch_priority(&vars);
+            }
             self.sat.set_domain_priority(vars);
         }
     }

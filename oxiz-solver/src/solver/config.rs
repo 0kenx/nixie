@@ -160,8 +160,7 @@ impl Solver {
     /// collected.  Each decision here mirrors a knob a Z3
     /// `setup_QF_X(static_features & st)` routine sets from the formula rather
     /// than the file name; the declared logic remains the coarse router (it
-    /// picked the arithmetic solver in [`Self::set_logic`], and
-    /// [`crate::solver::static_features::is_dl_logic`] gates the DL family).
+    /// picked the arithmetic solver in [`Self::set_logic`]).
     ///
     /// `ufidl_shape` is `is_diff_logic(st) && has_uf(st) && logic-allows-DL` —
     /// the shape `setup_QF_UFIDL(st)` fires on.
@@ -188,7 +187,7 @@ impl Solver {
     /// that declares no logic but is UFIDL-shaped still does.
     #[cfg(feature = "std")]
     fn route_branching_from_features(&mut self, ufidl_shape: bool) {
-        use crate::solver::theory_manager::{arith_bound_prop_mode, BoundPropMode};
+        use crate::solver::theory_manager::{BoundPropMode, arith_bound_prop_mode};
         if arith_bound_prop_mode() != BoundPropMode::Off && ufidl_shape {
             self.sat.set_branching_vsids();
         }

@@ -85,7 +85,7 @@ impl NlDispatchResult {
 /// Integer `div`/`mod` are encoded with fresh quotient/remainder variables and
 /// the Euclidean identities `a = q·b + r`, `0 ≤ r < |b|` (constant positive
 /// divisors only for the strict upper bound; otherwise extraction is marked
-/// incomplete). Side-constraint atoms are buffered in [`Self::pending_atoms`].
+/// incomplete). Side-constraint atoms are buffered in `pending_atoms`.
 pub struct TermPolyTranslator<'a> {
     manager: &'a TermManager,
     nlsat: &'a mut NiaSolver,
@@ -872,7 +872,7 @@ fn select_congruence_holds(
     model: &std::collections::HashMap<TermId, num_rational::BigRational>,
     manager: &TermManager,
 ) -> Option<std::collections::HashMap<TermId, num_rational::BigRational>> {
-    use oxiz_core::ast::{collect_subterms, TermKind};
+    use oxiz_core::ast::{TermKind, collect_subterms};
     use rustc_hash::FxHashMap;
     // The relaxation's model pins the purified interface variable `c`, not the
     // `select(A,i)` term itself, so map each select to its defining variable
@@ -886,7 +886,9 @@ fn select_congruence_holds(
             let Some(n) = manager.get(st) else { continue };
             if let TermKind::Eq(l, r) = n.kind {
                 for (v, sel) in [(l, r), (r, l)] {
-                    if manager.get(v).is_some_and(|vn| matches!(vn.kind, TermKind::Var(_)))
+                    if manager
+                        .get(v)
+                        .is_some_and(|vn| matches!(vn.kind, TermKind::Var(_)))
                         && manager
                             .get(sel)
                             .is_some_and(|sn| matches!(sn.kind, TermKind::Select(..)))
@@ -904,9 +906,13 @@ fn select_congruence_holds(
     for &a in assertions {
         for st in collect_subterms(a, manager) {
             let Some(t) = manager.get(st) else { continue };
-            let TermKind::Select(arr, idx) = t.kind else { continue };
+            let TermKind::Select(arr, idx) = t.kind else {
+                continue;
+            };
             let value_term = select_to_var.get(&st).copied().unwrap_or(st);
-            let Some(sel_val) = model.get(&value_term).cloned() else { continue };
+            let Some(sel_val) = model.get(&value_term).cloned() else {
+                continue;
+            };
             // Augment the model with the read's value (read via its spur) so a
             // caller's get-value resolves `select(A,i)` even when the index `i`
             // is unconstrained and absent from the relaxation's model.
@@ -928,6 +934,11 @@ fn select_congruence_holds(
     Some(select_values)
 }
 
+/// Dispatch nonlinear integer constraints to the configured exact or
+/// model-based procedure.
+///
+/// Returns `None` when the input is outside the supported fragment or the
+/// selected procedures cannot produce a certified result.
 pub fn dispatch_nia_constraints(
     assertions: &[TermId],
     manager: &mut TermManager,

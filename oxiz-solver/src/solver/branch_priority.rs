@@ -26,7 +26,7 @@
 //! `SolverConfig`'s doc comment.
 use std::sync::{Arc, Mutex};
 
-use oxiz_sat::{BoxedBranchingHeuristic, BranchingHeuristic, Lit, Var};
+use oxiz_sat::{BoxedBranchingHeuristic, BranchingHeuristic, Var};
 use rustc_hash::FxHashSet;
 
 use super::Solver;
@@ -68,17 +68,16 @@ pub(super) fn new_priority_branching() -> (PriorityQueue, BoxedBranchingHeuristi
 }
 
 impl Solver {
-    /// Append `lits`' variables to the branch-priority queue, in order,
+    /// Append variables to the branch-priority queue, in order,
     /// skipping any already present. No-op (cheap: one lock, no allocation
     /// beyond what is pushed) when [`super::types::SolverConfig::enable_domain_first_branching`]
     /// was never turned on, since then the queue was never wired into the
     /// SAT engine at all and nothing ever reads it.
-    pub(super) fn push_branch_priority(&self, lits: &[Lit]) {
+    pub(super) fn push_branch_priority(&self, vars: &[Var]) {
         let Ok(mut queue) = self.branch_priority.lock() else {
             return;
         };
-        for &lit in lits {
-            let var = lit.var();
+        for &var in vars {
             if !queue.contains(&var) {
                 queue.push(var);
             }
