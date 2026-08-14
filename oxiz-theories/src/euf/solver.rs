@@ -579,15 +579,23 @@ impl EufSolver {
 
     /// Whether an *asserted* disequality has both endpoints in the equivalence
     /// classes of `a` and `b` (i.e. `a` and `b` are PROVEN disequal, not merely
-    /// "not currently known equal").  For the array theory's
-    /// read-over-write-DIFFERENT propagation (deferred until that pass gains
-    /// `&mut` manager access – see `TheoryManager::propagate_array_read_over_write`).
-    /// O(#asserted-disequalities); a watch index can speed it up later.
-    #[allow(dead_code)]
+    /// "not currently known equal").
+    ///
+    /// Uses the per-representative `diseq_watch` so this is O(#diseqs on the
+    /// class), not O(#all asserted disequalities).
     pub fn are_proven_disequal(&self, a: u32, b: u32) -> bool {
         let ra = self.uf.find_no_compress(a);
         let rb = self.uf.find_no_compress(b);
-        self.diseqs.iter().any(|d| {
+        if ra == rb {
+            return false;
+        }
+        let Some(watches) = self.diseq_watch.get(ra as usize) else {
+            return false;
+        };
+        watches.iter().any(|&idx| {
+            let Some(d) = self.diseqs.get(idx as usize) else {
+                return false;
+            };
             let dl = self.uf.find_no_compress(d.lhs);
             let dr = self.uf.find_no_compress(d.rhs);
             (dl == ra && dr == rb) || (dl == rb && dr == ra)

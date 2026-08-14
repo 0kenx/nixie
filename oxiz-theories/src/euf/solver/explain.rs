@@ -119,6 +119,39 @@ impl EufSolver {
         self.try_explain_equality(a, b)
     }
 
+    /// Explain why `a` and `b` are proven disequal, or `None` if they are not
+    /// (or the justifying disequality cannot be fully explained).
+    pub fn try_explain_diseq(&mut self, a: u32, b: u32) -> Option<Vec<TermId>> {
+        let ra = self.uf.find(a);
+        let rb = self.uf.find(b);
+        if ra == rb {
+            return None;
+        }
+        let watches = self.diseq_watch.get(ra as usize)?.clone();
+        for idx in watches {
+            let (lhs, rhs, reason) = {
+                let d = self.diseqs.get(idx as usize)?;
+                (d.lhs, d.rhs, d.reason)
+            };
+            let dl = self.uf.find(lhs);
+            let dr = self.uf.find(rhs);
+            let (side_a, side_b) = if dl == ra && dr == rb {
+                (lhs, rhs)
+            } else if dl == rb && dr == ra {
+                (rhs, lhs)
+            } else {
+                continue;
+            };
+            let mut expl = self.try_explain_equality(a, side_a)?;
+            if reason.raw() != 0 {
+                expl.push(reason);
+            }
+            expl.extend(self.try_explain_equality(b, side_b)?);
+            return Some(expl);
+        }
+        None
+    }
+
     /// Explain why two nodes are equal, or report that it cannot be done.
     ///
     /// Searches the proof forest for a path from `a` to `b` and collects the

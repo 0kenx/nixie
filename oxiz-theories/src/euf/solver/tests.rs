@@ -883,3 +883,19 @@ fn conflict_core_always_names_the_violated_disequality() {
     assert!(core.contains(&TermId::new(70)));
     assert!(core.contains(&TermId::new(71)));
 }
+
+#[test]
+fn proven_disequal_uses_watch_after_merge() {
+    let mut solver = EufSolver::new();
+    let a = solver.intern(TermId::new(1));
+    let b = solver.intern(TermId::new(2));
+    let c = solver.intern(TermId::new(3));
+    solver.assert_diseq(a, b, TermId::new(80));
+    assert!(solver.are_proven_disequal(a, b));
+    assert!(!solver.are_proven_disequal(a, c));
+    solver.merge(b, c, TermId::new(81)).expect("merge b=c");
+    assert!(solver.are_proven_disequal(a, c));
+    let expl = solver.try_explain_diseq(a, c).expect("explain a≠c");
+    assert!(expl.contains(&TermId::new(80)));
+    assert!(expl.contains(&TermId::new(81)));
+}

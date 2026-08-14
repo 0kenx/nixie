@@ -136,6 +136,10 @@ impl ArrayTheory {
             .flat_map(|(&array, sels)| sels.iter().map(move |&s| (array, s)))
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.maps.is_empty() && self.parents.is_empty() && self.ext_witnesses.is_empty()
+    }
+
     /// Snapshot of the journal lengths, for [`Self::pop].
     pub(crate) fn snapshot(&self) -> ArrayTheoryScope {
         ArrayTheoryScope {

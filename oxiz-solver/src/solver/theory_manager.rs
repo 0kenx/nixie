@@ -78,6 +78,7 @@ pub(crate) enum BoundPropMode {
 
 mod conflict_clause;
 mod derived_reasons;
+mod euf_propagate;
 pub(crate) use derived_reasons::DerivedReasons;
 
 /// One entry of the theory manager's own deduplicated assignment trail.
@@ -487,6 +488,9 @@ pub(crate) struct TheoryManager<'a> {
     /// across the per-round `TheoryManager` rebuilds; the event-driven stages
     /// query it to react to reads/writes during search.
     array_theory: &'a mut super::array_theory::ArrayTheory,
+    euf_eq_atoms: Vec<(Var, TermId, TermId, bool)>,
+    euf_bool_atoms: Vec<(Var, TermId)>,
+    eager_interned: bool,
 }
 
 impl<'a> TheoryManager<'a> {
@@ -523,7 +527,7 @@ impl<'a> TheoryManager<'a> {
         };
         #[cfg(not(feature = "std"))]
         let _ = timeout_ms;
-        Self {
+        let mut this = Self {
             manager,
             euf,
             arith,
@@ -574,7 +578,28 @@ impl<'a> TheoryManager<'a> {
             trail_index: FxHashMap::default(),
             assigned_level: FxHashMap::default(),
             tautological_reasons: FxHashSet::default(),
+            euf_eq_atoms: var_to_constraint
+                .iter()
+                .filter_map(|(&v, c)| match c {
+                    Constraint::Eq(l, r) => Some((v, *l, *r, true)),
+                    Constraint::Diseq(l, r) => Some((v, *l, *r, false)),
+                    _ => None,
+                })
+                .collect(),
+            euf_bool_atoms: var_to_constraint
+                .iter()
+                .filter_map(|(&v, c)| match c {
+                    Constraint::BoolApp(t) => Some((v, *t)),
+                    _ => None,
+                })
+                .collect(),
+            eager_interned: false,
+        };
+        if this.unique_uf_func_count() <= 32 {
+            this.intern_all_euf_terms();
+            this.eager_interned = true;
         }
+        this
     }
 
     /// Build the `(ite-result, const) → (le_var, ge_var)` map for the z3-style
@@ -856,6 +881,9 @@ impl<'a> TheoryManager<'a> {
         // The proof forest these explanations were read out of is gone; the
         // equalities they justified are gone from the tableau with it.
         self.derived_reasons.clear();
+        if self.eager_interned {
+            self.intern_all_euf_terms();
+        }
 
         // Rebuild the level-scope bookkeeping to match the current level.
         self.level_stack = vec![0];
@@ -2765,31 +2793,22 @@ impl TheoryCallback for TheoryManager<'_> {
         let var = lit.var();
         let is_positive = !lit.is_neg();
 
-        // Record the atom's current polarity so conflict clauses can emit the
-        // correct (currently-false) literal for this variable, and the level it
-        // holds at so `full_assignment_conflict_clause` never names a literal
-        // the SAT core has since unassigned.
-        self.set_assigned_polarity(var, is_positive);
-        self.assigned_level.insert(var, self.current_level);
-
-        // Mirror the assignment into the embedded BV solver's boolean-node
-        // cache.  A BV-sorted `ite` whose selector is a bare boolean variable
-        // gets a *free* variable inside that solver, so without this link the
-        // embedded search can take the branch the outer search has ruled out
-        // and both halves look consistent – a false `sat` for
-        // `(= (ite c #x01 #x02) x) ∧ ¬c ∧ (= x #x01)`.  Only variables that
-        // actually carry a term are replayed: `term_for_var`'s `TermId::new(0)`
-        // fallback would otherwise pin an unrelated term.
-        if let Some(term) = self.var_to_term.get(var.index()).copied() {
-            self.bv.assert_bool_value(term, is_positive);
-        }
-
-        // Enforce the wall-clock timeout mid-search.  Suppressing conflicts
-        // (returning Sat) drives the search to a full assignment quickly; the
-        // `resource_exhausted` flag makes the owning solver answer `Unknown`.
         if self.timed_out() {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
+        }
+
+        if !self.var_to_constraint.contains_key(&var) {
+            return TheoryCheckResult::Sat;
+        }
+
+        self.set_assigned_polarity(var, is_positive);
+        self.assigned_level.insert(var, self.current_level);
+
+        if !self.bv_terms.is_empty()
+            && let Some(term) = self.var_to_term.get(var.index()).copied()
+        {
+            self.bv.assert_bool_value(term, is_positive);
         }
 
         // Track propagation
@@ -2916,6 +2935,8 @@ impl TheoryCallback for TheoryManager<'_> {
         self.processed_count += 1;
         self.statistics.theory_propagations += 1;
 
+        let euf_news = self.euf_assignment_is_news(&constraint, is_positive);
+        let touch = self.euf_constraint_nodes(&constraint);
         let result = self.process_constraint(var, constraint, is_positive, self.manager);
 
         // Track theory conflicts
@@ -2963,6 +2984,16 @@ impl TheoryCallback for TheoryManager<'_> {
             }
         }
 
+        if matches!(result, TheoryCheckResult::Sat)
+            && euf_news
+            && self.eager_interned
+            && self.euf_eq_atoms.len() <= 6000
+            && let Some(props) = self.propagate_euf_eq_atoms(touch)
+        {
+            self.statistics.theory_propagations += props.len() as u64;
+            return TheoryCheckResult::Propagated(props);
+        }
+
         result
     }
 
@@ -2995,7 +3026,9 @@ impl TheoryCallback for TheoryManager<'_> {
         // DL conflict backstop at full assignment using the incrementally-
         // maintained solver (one full `check()` here is cheap – once per final
         // check, not per atom).  A negative cycle is a sound refutation.
-        if let oxiz_theories::DiffLogicResult::Conflict(cycle_terms) = self.diff.check() {
+        if !self.var_to_parsed_arith.is_empty()
+            && let oxiz_theories::DiffLogicResult::Conflict(cycle_terms) = self.diff.check()
+        {
             return self.conflict_from_terms(&cycle_terms);
         }
 
@@ -3015,6 +3048,28 @@ impl TheoryCallback for TheoryManager<'_> {
             }
 
             return conflict;
+        }
+
+        if self.array_theory.is_empty()
+            && self.var_to_parsed_arith.is_empty()
+            && self.bv_terms.is_empty()
+        {
+            if !self.eager_interned
+                && self.theory_mode != TheoryMode::Lazy
+                && self.euf.has_app_nodes()
+            {
+                let replay = self.resync_theory_state();
+                if let TheoryCheckResult::Conflict(conflict_lits) = replay {
+                    self.statistics.theory_conflicts += 1;
+                    self.statistics.conflicts += 1;
+                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                        self.resource_exhausted = true;
+                        return TheoryCheckResult::Sat;
+                    }
+                    return TheoryCheckResult::Conflict(conflict_lits);
+                }
+            }
+            return TheoryCheckResult::Sat;
         }
 
         // Array-theory read-over-write propagation (Stage 5 of

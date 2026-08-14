@@ -180,7 +180,7 @@ impl TheoryManager<'_> {
     /// so an entry means the assignment still holds.  The polarity map is
     /// deliberately *not* pruned and therefore outlives the assignment it
     /// describes; reading it would call a retracted literal live.
-    fn reason_literal_is_live(&self, term: TermId) -> bool {
+    pub(super) fn reason_literal_is_live(&self, term: TermId) -> bool {
         match self.term_to_var.get(&term) {
             Some(var) => self.assigned_level.contains_key(var),
             None => true,
