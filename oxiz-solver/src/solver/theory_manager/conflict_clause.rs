@@ -259,6 +259,7 @@ impl TheoryManager<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solver::array_theory::ArrayTheory;
     use crate::solver::theory_manager::DerivedReasons;
     use crate::solver::types::{Constraint, ParsedArithConstraint, Statistics, TheoryMode};
     use oxiz_core::ast::TermManager;
@@ -275,12 +276,14 @@ mod tests {
         arith: ArithSolver,
         bv: BvSolver,
         diff: oxiz_theories::DiffLogicSolver,
+        array_theory: ArrayTheory,
         bv_terms: FxHashSet<TermId>,
         ite_result_terms: FxHashSet<TermId>,
         var_to_constraint: FxHashMap<Var, Constraint>,
         var_to_parsed_arith: FxHashMap<Var, ParsedArithConstraint>,
         term_to_var: FxHashMap<TermId, Var>,
         var_to_term: Vec<TermId>,
+        numarg_proxies: FxHashMap<TermId, TermId>,
         derived_reasons: DerivedReasons,
         statistics: Statistics,
     }
@@ -293,29 +296,35 @@ mod tests {
                 arith: ArithSolver::lra(),
                 bv: BvSolver::new(),
                 diff: oxiz_theories::DiffLogicSolver::new(true),
+                array_theory: ArrayTheory::new(),
                 bv_terms: FxHashSet::default(),
                 ite_result_terms: FxHashSet::default(),
                 var_to_constraint: FxHashMap::default(),
                 var_to_parsed_arith: FxHashMap::default(),
                 term_to_var: FxHashMap::default(),
                 var_to_term: Vec::new(),
+                numarg_proxies: FxHashMap::default(),
                 derived_reasons: DerivedReasons::default(),
                 statistics: Statistics::new(),
             }
         }
 
         fn manager(&mut self) -> TheoryManager<'_> {
+            let zero_term = self.terms.mk_int(0);
             TheoryManager::new(
                 &self.terms,
                 &mut self.euf,
                 &mut self.arith,
                 &mut self.bv,
                 &mut self.diff,
+                &mut self.array_theory,
                 &self.bv_terms,
                 &self.var_to_constraint,
                 &self.var_to_parsed_arith,
                 &self.term_to_var,
                 &self.var_to_term,
+                &self.numarg_proxies,
+                zero_term,
                 &self.ite_result_terms,
                 &mut self.derived_reasons,
                 TheoryMode::Eager,

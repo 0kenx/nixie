@@ -4,6 +4,7 @@
 //! Kept in its own file so `theory_manager.rs` stays under the workspace
 //! 2000-line limit.
 
+use super::super::array_theory::ArrayTheory;
 use super::*;
 use oxiz_core::ast::TermManager;
 
@@ -27,29 +28,34 @@ struct Scratch {
     arith: ArithSolver,
     bv: BvSolver,
     diff: oxiz_theories::DiffLogicSolver,
+    array_theory: ArrayTheory,
     bv_terms: FxHashSet<TermId>,
     ite_result_terms: FxHashSet<TermId>,
     var_to_constraint: FxHashMap<Var, Constraint>,
     var_to_parsed_arith: FxHashMap<Var, ParsedArithConstraint>,
     term_to_var: FxHashMap<TermId, Var>,
     var_to_term: Vec<TermId>,
+    numarg_proxies: FxHashMap<TermId, TermId>,
     derived_reasons: DerivedReasons,
     statistics: Statistics,
 }
 
 impl Scratch {
-    fn manager<'a>(&'a mut self, tm: &'a TermManager) -> TheoryManager<'a> {
+    fn manager<'a>(&'a mut self, tm: &'a TermManager, zero_term: TermId) -> TheoryManager<'a> {
         TheoryManager::new(
             tm,
             &mut self.euf,
             &mut self.arith,
             &mut self.bv,
             &mut self.diff,
+            &mut self.array_theory,
             &self.bv_terms,
             &self.var_to_constraint,
             &self.var_to_parsed_arith,
             &self.term_to_var,
             &self.var_to_term,
+            &self.numarg_proxies,
+            zero_term,
             &self.ite_result_terms,
             &mut self.derived_reasons,
             TheoryMode::Lazy,
@@ -81,7 +87,8 @@ fn s8_intern_term_for_congruence_deep_apply_returns() {
             let mut tm = TermManager::new();
             let deep = deep_apply_chain(&mut tm, DEEP);
             let mut scratch = Scratch::default();
-            let mut tmgr = scratch.manager(&tm);
+            let zero_term = tm.mk_int(0);
+            let mut tmgr = scratch.manager(&tm, zero_term);
             tmgr.intern_term_for_congruence(deep, &tm);
         })
         .expect("spawn deep-nesting worker");
@@ -102,7 +109,8 @@ fn s8_intern_term_for_congruence_shared_dag_completes() {
         current = tm.mk_apply("g", vec![current, current], int_sort);
     }
     let mut scratch = Scratch::default();
-    let mut tmgr = scratch.manager(&tm);
+    let zero_term = tm.mk_int(0);
+    let mut tmgr = scratch.manager(&tm, zero_term);
     let node = tmgr.intern_term_for_congruence(current, &tm);
     // Re-interning the same term is the memo hit, not a second walk.
     assert_eq!(tmgr.intern_term_for_congruence(current, &tm), node);
@@ -122,7 +130,8 @@ fn s8_intern_term_for_congruence_node_identity_preserved() {
     let ffa = tm.mk_apply("f", vec![fa], int_sort);
 
     let mut scratch = Scratch::default();
-    let mut tmgr = scratch.manager(&tm);
+    let zero_term = tm.mk_int(0);
+    let mut tmgr = scratch.manager(&tm, zero_term);
     let n_fa = tmgr.intern_term_for_congruence(fa, &tm);
     let n_fb = tmgr.intern_term_for_congruence(fb, &tm);
     let n_ffa = tmgr.intern_term_for_congruence(ffa, &tm);

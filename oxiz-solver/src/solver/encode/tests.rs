@@ -832,14 +832,27 @@ fn extract_linear_terms_semantic_pins() {
     let one_plus_x = manager.mk_add([one, x]);
     let offset_prod = manager.mk_mul([one_plus_x, y]);
     assert_eq!(run(&manager, offset_prod).0, None, "(1+x)*y is nonlinear");
-    // and a multi-variable factor.
+    // A multi-variable factor times a constant is genuinely linear
+    // (`2*(x+y) = 2x + 2y`), so the iterative extractor accepts it and
+    // distributes the constant coefficient.  The old recursive version
+    // rejected it outright, which silently dropped the atom's theory
+    // meaning and reported a false `sat` on the `20170829-Rodin` family;
+    // accepting it is the fix (see the `MulFrame` doc on
+    // [`Solver::extract_linear_terms`]).  Two genuinely non-constant
+    // factors (the `x*y` and `(1+x)*y` cases above) are still rejected.
     let x_plus_y = manager.mk_add([x, y]);
     let multi_prod = manager.mk_mul([x_plus_y, two]);
+    let (ok, terms, constant) = run(&manager, multi_prod);
+    assert_eq!(ok, Some(()), "(x+y)*2 is linear: 2x + 2y");
     assert_eq!(
-        run(&manager, multi_prod).0,
-        None,
-        "(x+y)*2 has a multi-variable factor and was always rejected"
+        terms.as_slice(),
+        &[
+            (x, Rational64::from_integer(2)),
+            (y, Rational64::from_integer(2)),
+        ],
+        "the constant factor scales every variable term of the multi-variable factor"
     );
+    assert_eq!(constant, Rational64::from_integer(0));
 
     // Failure leaves the caller's buffers untouched (the recursive version
     // left partial writes; the only caller discards them on None, so the
