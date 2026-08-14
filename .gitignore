@@ -63,7 +63,8 @@ fuzz/artifacts/
 # Rustc ICE dumps
 rustc-ice-*.txt
 
-# Nix / direnv
-/.direnv/
+# Nix / direnv (generated shell cache; .envrc stays tracked)
+.direnv/
 /result
 /result-*
+/outputs/
