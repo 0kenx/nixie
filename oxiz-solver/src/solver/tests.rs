@@ -724,6 +724,24 @@ fn test_config_default_is_balanced() {
         balanced.enable_symmetry_breaking
     );
     assert_eq!(default.restart_strategy, balanced.restart_strategy);
+    assert_eq!(default.certification_mode, CertificationMode::Uncertified);
+    for config in [
+        SolverConfig::default(),
+        SolverConfig::fast(),
+        SolverConfig::balanced(),
+        SolverConfig::thorough(),
+        SolverConfig::minimal(),
+    ] {
+        assert_eq!(
+            config.certification_mode,
+            CertificationMode::Uncertified,
+            "certified mode is opt-in; presets must leave it off"
+        );
+    }
+    assert_eq!(
+        SolverConfig::default().certified().certification_mode,
+        CertificationMode::Certified
+    );
 }
 
 #[test]

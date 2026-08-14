@@ -2008,6 +2008,34 @@ mod tests {
     }
 
     #[test]
+    fn certified_mode_is_off_by_default() {
+        let mut ctx = Context::new();
+        assert!(
+            !ctx.certified_mode_required,
+            "Context::new must not require certified mode"
+        );
+        assert_eq!(ctx.format_option("certified-mode"), "false");
+        assert_eq!(
+            ctx.solver_config().certification_mode,
+            crate::solver::CertificationMode::Uncertified
+        );
+
+        let output = ctx
+            .execute_script(
+                r#"
+                (get-option :certified-mode)
+                (declare-const x Int)
+                (assert (< x 0))
+                (assert (>= x 0))
+                (check-sat)
+                "#,
+            )
+            .expect("default theory script should execute");
+        assert_eq!(output, vec!["false", "unsat"]);
+        assert_eq!(ctx.certification_failure(), None);
+    }
+
+    #[test]
     fn certified_mode_option_checks_boolean_results() {
         let mut ctx = Context::new();
         let output = ctx

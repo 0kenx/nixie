@@ -10,6 +10,27 @@ fn oxiz_bin() -> PathBuf {
 }
 
 #[test]
+fn certified_mode_is_off_by_default() {
+    let script = common::TempPath::write(
+        "certified_default_off",
+        "smt2",
+        "(get-option :certified-mode)\n(declare-const x Int)\n(assert (< x 0))\n(assert (>= x 0))\n(check-sat)\n",
+    );
+    let output = Command::new(oxiz_bin())
+        .args(["--quiet", script.to_str().unwrap_or("")])
+        .output()
+        .expect("run oxiz without certified mode");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["false", "unsat"]
+    );
+}
+
+#[test]
 fn certified_mode_verifies_a_boolean_unsat_result() {
     let script = common::TempPath::write(
         "certified_boolean_unsat",

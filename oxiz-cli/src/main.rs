@@ -441,7 +441,7 @@ struct Args {
     validate_model: bool,
 
     /// Return sat/unsat only after independent model/LRAT certification
-    #[arg(long)]
+    #[arg(long, default_value_t = false)]
     certified_mode: bool,
 
     /// Enable incremental solving mode (supports push/pop)
