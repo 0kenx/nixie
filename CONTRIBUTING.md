@@ -38,6 +38,9 @@ Before you begin, ensure you have the following tools installed:
    cd oxiz
    ```
 
+   With Nix + direnv, `direnv allow` loads `flake.nix` (Rust 1.96.0, nextest,
+   clippy, wasm-pack, maturin, just). Then `just --list` for workflows.
+
 2. **Verify your Rust installation:**
    ```bash
    rustc --version   # Should be 1.88 or higher (the declared `rust-version`)
