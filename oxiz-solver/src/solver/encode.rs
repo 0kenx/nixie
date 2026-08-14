@@ -2216,6 +2216,19 @@ impl Solver {
                         t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort
                     });
                     if is_arith {
+                        // Array read-over-write and extensionality introduce
+                        // families of numeric equality guards.  Their natural
+                        // first candidate is the non-aliasing branch (distinct
+                        // indices); letting random polarity/rephasing flip a
+                        // few guards creates mutually inconsistent partial
+                        // tableaux that are expensive to repair.  Preserve the
+                        // ordinary negative phase deterministically once array
+                        // structure is present.  This is not an assignment:
+                        // asserted equalities and lemma propagation still force
+                        // `var` true in the usual way.
+                        if self.has_array_ops {
+                            self.sat.set_deterministic_phase(var, false);
+                        }
                         // We use Le type as placeholder since equality will be asserted
                         // as both Le and Ge
                         if let Some(parsed) = self.parse_arith_comparison(
@@ -2724,6 +2737,34 @@ impl Solver {
         let lt_lit = self.encode(lt_term, manager);
         let gt_lit = self.encode(gt_term, manager);
         self.sat.add_clause([eq_lit, lt_lit, gt_lit]);
+
+        // A clique of asserted disequalities between otherwise-free integer
+        // variables (the `*_ai_*` SMT-LIB array families) leaves CDCL with one
+        // `<`/`>` choice per edge.  Independent default phases describe an
+        // arbitrary tournament, which usually contains many directed cycles;
+        // the arithmetic solver then has to reject those cycles one conflict
+        // at a time.  Prefer the single acyclic orientation induced by the
+        // interned term order instead.  This is only a phase hint -- both
+        // literals remain in the valid trichotomy clause -- so constraints
+        // requiring the opposite order can still flip either atom normally.
+        //
+        // Restrict the hint to plain variables.  For compound arithmetic
+        // terms, term-id order has no relationship to their forced numeric
+        // order and would be noise rather than a useful symmetry-breaking
+        // posture.
+        let plain_vars = manager
+            .get(lhs)
+            .is_some_and(|t| matches!(t.kind, TermKind::Var(_)))
+            && manager
+                .get(rhs)
+                .is_some_and(|t| matches!(t.kind, TermKind::Var(_)));
+        if self.has_array_ops && plain_vars {
+            let lhs_before_rhs = lhs.raw() < rhs.raw();
+            self.sat
+                .set_deterministic_phase(lt_lit.var(), lhs_before_rhs);
+            self.sat
+                .set_deterministic_phase(gt_lit.var(), !lhs_before_rhs);
+        }
     }
 
     /// Walk a term and give every arithmetic disequality source —

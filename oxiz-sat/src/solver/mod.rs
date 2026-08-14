@@ -593,6 +593,13 @@ pub struct Solver {
     pub(super) last_branch_source: BranchSource,
     /// Phase saving: last polarity assigned to each variable
     pub(super) phase: Vec<bool>,
+    /// Theory-supplied deterministic initial phases.  Unlike ordinary saved
+    /// phases these are not randomized or globally inverted; they are used for
+    /// atoms where a theory can provide a mutually coherent candidate model
+    /// (for example, an acyclic orientation of arithmetic disequalities).
+    /// They remain decision preferences only: clauses may propagate the
+    /// opposite value and conflict analysis remains unchanged.
+    pub(super) deterministic_phase: Vec<Option<bool>>,
     /// Global polarity flip applied on top of saved phases (rephasing). Toggled
     /// periodically on restart so a restart explores the complementary phase
     /// region instead of re-deriving the same trail — without it, frequent
@@ -813,6 +820,7 @@ impl Solver {
             propagate_aborted: false,
             last_branch_source: BranchSource::Fallback,
             phase: Vec::new(),
+            deterministic_phase: Vec::new(),
             phase_inverted: false,
             best_phase: Vec::new(),
             best_trail_size: 0,
@@ -1384,6 +1392,30 @@ impl Solver {
         }
     }
 
+    /// Set a theory-derived deterministic decision phase for `var`.
+    ///
+    /// This is stronger than [`Self::set_preferred_phase`] only as a search
+    /// heuristic: random polarity and global rephasing do not replace it.
+    /// It does not assign the variable or constrain the Boolean problem.
+    pub fn set_deterministic_phase(&mut self, var: Var, phase: bool) {
+        if let Some(slot) = self.deterministic_phase.get_mut(var.index()) {
+            *slot = Some(phase);
+        }
+        self.set_preferred_phase(var, phase);
+    }
+
+    /// Choose a decision polarity, honoring a coherent theory posture before
+    /// the generic randomized phase-saving heuristic.
+    fn decision_polarity(&mut self, var: Var) -> bool {
+        if let Some(phase) = self.deterministic_phase.get(var.index()).copied().flatten() {
+            phase
+        } else if self.rand_bool(self.config.random_polarity_prob) {
+            self.rand_bool(0.5)
+        } else {
+            self.phase.get(var.index()).copied().unwrap_or(false) ^ self.phase_inverted
+        }
+    }
+
     /// Raise VSIDS activity so `var` is decided early.
     ///
     /// Used after finite-domain case-splits on table indices: once those
@@ -1442,6 +1474,7 @@ impl Solver {
         self.seen.resize(self.num_vars, false);
         self.model.resize(self.num_vars, LBool::Undef);
         self.phase.resize(self.num_vars, false); // Default phase: negative
+        self.deterministic_phase.resize(self.num_vars, None);
         self.best_phase.resize(self.num_vars, false);
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
@@ -2250,16 +2283,7 @@ impl Solver {
                     self.stats.decisions += 1;
                     self.trail.new_decision_level();
 
-                    // Use phase saving with random polarity, XORed with the
-                    // global rephase flip so a restart can explore the complementary
-                    // phase region instead of re-deriving the same trail.
-                    let polarity = if self.rand_bool(self.config.random_polarity_prob) {
-                        // Random polarity
-                        self.rand_bool(0.5)
-                    } else {
-                        // Saved phase, optionally inverted by rephasing
-                        self.phase[var.index()] ^ self.phase_inverted
-                    };
+                    let polarity = self.decision_polarity(var);
                     let lit = if polarity {
                         Lit::pos(var)
                     } else {
@@ -2417,11 +2441,7 @@ impl Solver {
                     self.stats.decisions += 1;
                     self.trail.new_decision_level();
 
-                    let polarity = if self.rand_bool(self.config.random_polarity_prob) {
-                        self.rand_bool(0.5)
-                    } else {
-                        self.phase.get(var.index()).copied().unwrap_or(false) ^ self.phase_inverted
-                    };
+                    let polarity = self.decision_polarity(var);
                     let lit = if polarity {
                         Lit::pos(var)
                     } else {
@@ -2707,6 +2727,7 @@ impl Solver {
         self.restart_threshold = self.config.restart_interval;
         self.trivially_unsat = false;
         self.phase.clear();
+        self.deterministic_phase.clear();
         self.luby_index = 0;
         self.level_marks.clear();
         self.lbd_mark = 0;

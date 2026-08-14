@@ -104,6 +104,26 @@ fn test_phase_saving() {
 }
 
 #[test]
+fn deterministic_theory_phase_ignores_randomization_and_rephasing() {
+    let mut solver = Solver::with_config(SolverConfig {
+        random_polarity_prob: 1.0,
+        ..SolverConfig::default()
+    });
+    let positive = solver.new_var();
+    let negative = solver.new_var();
+    solver.set_deterministic_phase(positive, true);
+    solver.set_deterministic_phase(negative, false);
+    solver.phase_inverted = true;
+
+    // Repeated calls also advance the PRNG in the generic path.  A theory's
+    // coherent candidate phases must remain stable regardless.
+    for _ in 0..64 {
+        assert!(solver.decision_polarity(positive));
+        assert!(!solver.decision_polarity(negative));
+    }
+}
+
+#[test]
 fn test_lbd_computation() {
     // Test that clause deletion can handle a problem that generates learned clauses.
     // Lucky is disabled: it can refute small pigeonhole formulas (PHP(3,2))
