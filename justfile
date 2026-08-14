@@ -110,6 +110,17 @@ fuzz-nightly:
 fuzz-list:
     @echo "Available fuzz targets: {{_fuzz_targets}}"
 
+# ======== Perf ========
+
+flamegraph *args="":
+    ./scripts/flamegraph.sh {{args}}
+
+perf-check *args="":
+    ./scripts/perf_check.sh {{args}}
+
+perf-vs-z3 *args="":
+    ./scripts/perf_vs_z3.sh {{args}}
+
 # ======== Parity / Bindings / CLI ========
 
 # Honest Z3 differential suite. Needs z3 4.15.4 on PATH. See bench/z3_parity/METHODOLOGY.md.

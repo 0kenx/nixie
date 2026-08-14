@@ -203,6 +203,15 @@
           pkgs.ripgrep
           pkgs.coreutils
           pkgs.llvmPackages.llvm
+          pkgs.cargo-flamegraph
+          pkgs.flamegraph
+          pkgs.inferno
+          pkgs.time
+          pkgs.hyperfine
+        ]
+        ++ lib.optionals pkgs.stdenv.isLinux [
+          pkgs.perf
+          pkgs.heaptrack
         ];
       };
     });
