@@ -803,9 +803,15 @@ impl Solver {
         // Hand MBQI only the quantifiers this assertion actually entails.
         self.register_asserted_quantifiers(term_to_encode, manager);
 
-        // Encode the assertion immediately
-        let lit = self.encode(term_to_encode, manager);
-        self.sat.add_clause([lit]);
+        // Encode the assertion immediately – *structurally*: the top-level
+        // Boolean skeleton of the assertion (conjunctions, negations,
+        // disjunctions under a negation) is flattened into clauses directly,
+        // without minting an auxiliary Tseitin variable per and/or node.
+        // `emit_assertion_clauses` explains why that matters for search
+        // quality; anything that is not plain skeleton falls back to the full
+        // memoised Tseitin encoder, so semantics are unchanged.
+        self.emit_assertion_clauses(term_to_encode, manager);
+        self.blast_bv_circuits_at_base_scope(term_to_encode, manager);
 
         // Track unit `(= name body)` from nullary define-fun so table indices
         // that are inlined bodies inherit bounds on `name`.
@@ -1331,9 +1337,10 @@ impl Solver {
         // Hand MBQI only the quantifiers this assertion actually entails.
         self.register_asserted_quantifiers(term_to_encode, manager);
 
-        // Encode the assertion immediately
-        let lit = self.encode(term_to_encode, manager);
-        self.sat.add_clause([lit]);
+        // Encode the assertion immediately – structurally, exactly like the
+        // unnamed `assert` path above (see `emit_assertion_clauses`).
+        self.emit_assertion_clauses(term_to_encode, manager);
+        self.blast_bv_circuits_at_base_scope(term_to_encode, manager);
 
         // Eagerly add arith diseq split for Not(Eq(a,b)) assertions
         self.add_arith_diseq_split(term_to_encode, manager);
@@ -1584,6 +1591,188 @@ impl Solver {
         // Collect ground terms from patterns as candidates
         for trigger in triggers {
             self.mbqi.collect_ground_terms(trigger, manager);
+        }
+    }
+
+    /// Assert `term` by emitting its top-level Boolean structure as clauses
+    /// directly, with **no auxiliary Tseitin variables** for that skeleton.
+    ///
+    /// * `(and A B …)` splits into the assertions of `A`, `B`, …
+    /// * `(not A)` flips to asserting `A` negatively.
+    /// * `(or A B …)` asserted positively becomes the single clause
+    ///   `A ∨ B ∨ …`, with nested `(or …)` args flattened into the same clause;
+    ///   asserted negatively it splits into the assertions of `¬A`, `¬B`, …
+    /// * `(and …)` asserted negatively becomes the clause `¬A ∨ ¬B ∨ …`.
+    /// * `(implies A B)` asserted positively is the clause `¬A ∨ B`.
+    /// * `true`/`false` are absorbed (a falsified assertion marks the context
+    ///   inconsistent, exactly like the pre-encoding simplification would).
+    ///
+    /// Anything that is not this plain skeleton – equality atoms, theory
+    /// atoms, `xor`, bool `ite`, quantified or deeply-shared subformulas –
+    /// falls back to the full memoised Tseitin encoder for that subterm, so
+    /// the emitted clauses are logically identical to the previous
+    /// `encode(term); add_clause([lit])` shape.
+    ///
+    /// # Why not Tseitin the top level?
+    ///
+    /// An auxiliary variable per and/or node is only ever useful when the node
+    /// is *shared or referenced by polarity*; the root of an assertion is
+    /// referenced exactly once, positively. Minting a variable for it instead
+    /// multiplies the case-split space the branching heuristic must search:
+    /// on the QG quasigroup benchmarks the Tseitin-encoded skeleton carried
+    /// ~5× more Boolean variables than atoms (6071 vars vs Z3's 1149 on
+    /// `gensys_icl_sk004`), and the search needed ~45× more conflicts than Z3
+    /// – decisions wasted on definition-determined auxiliaries instead of the
+    /// equality atoms that actually carry the combinatorics. Z3's
+    /// preprocessing flattens top-level Boolean structure the same way
+    /// (`smt2parser` / `pp` flatten conjunctive assertions; the smt context
+    /// never Tseitin-izes the assertion root).
+    ///
+    /// Stack-safe: the skeleton walk is an explicit heap stack, and the clause
+    /// argument collection flattens nested same-polarity or/and chains with
+    /// its own worklist (input DAGs are user-controlled depth).
+    /// Eagerly bit-blast every bit-vector term of `term` **at the embedded
+    /// solver's base scope**, so every circuit is in place before the CDCL(T)
+    /// search opens its first theory scope.
+    ///
+    /// This is z3's internalize-then-search discipline (`euf_egraph::mk` at
+    /// assert time, not lazily during search) and it is what keeps the
+    /// encode memo truthful: `encode_bv_term_recursive` skips any term whose
+    /// bits are already registered, treating the registry entry as "the
+    /// circuit clauses exist" – but those clauses are scope-tracked by the
+    /// embedded SAT solver.  A circuit first blasted *during* the search, at
+    /// decision level k, is deleted when the search backtracks past k while
+    /// the registry entry survives, and the memo then skips rebuilding it on
+    /// re-assignment: the equality atom is asserted against output bits whose
+    /// defining circuit is gone, and the embedded check reports `Sat` over a
+    /// formula that no longer constrains the atom – a **false `sat`**
+    /// (demonstrated by `bv_soundness_integration::issue_17` under VSIDS
+    /// branching: `bvurem`'s circuit popped, zero clauses left referencing
+    /// the dividend's bits, model claimed `urem(0,3) = 0x80`).
+    ///
+    /// Blasting at the base scope makes the circuits permanent *by
+    /// construction* (no clause-level scope redirection needed: nothing has
+    /// been pushed yet, so plain `add_clause` registers at the base level),
+    /// and the per-atom `bv_check_eq`/`bv_check_neq` during search then only
+    /// add the level-scoped equality/disequality pins against already-wired
+    /// bits.
+    ///
+    /// Gated on [`BvSolver::at_base_scope`]: an incremental client that
+    /// asserts while user scopes are open keeps the lazy blast (and the
+    /// narrow pop-decapitation window it carries) rather than silently
+    /// installing a circuit at the wrong level.
+    fn blast_bv_circuits_at_base_scope(&mut self, term: TermId, manager: &TermManager) {
+        if !self.bv.at_base_scope() {
+            return;
+        }
+        // Cheap pre-filter: the formula registered no bit-vector terms at
+        // encode time -> nothing to walk (keeps non-BV logics at zero cost).
+        if self.bv_terms.is_empty() {
+            return;
+        }
+        let mut encoded = rustc_hash::FxHashSet::default();
+        blast_bv_term(&mut self.bv, term, manager, &mut encoded);
+    }
+
+    fn emit_assertion_clauses(&mut self, term: TermId, manager: &mut TermManager) {
+        /// Mark the assertion set inconsistent (mirrors the pre-encode
+        /// `False` handling at the top of `assert`).
+        fn note_false(solver: &mut Solver) {
+            if !solver.has_false_assertion {
+                solver.has_false_assertion = true;
+                solver.trail.push(TrailOp::FalseAssertionSet);
+            }
+        }
+
+        let mut stack: Vec<(TermId, bool)> = vec![(term, true)];
+        while let Some((t, pol)) = stack.pop() {
+            let Some(td) = manager.get(t).cloned() else {
+                let lit = self.encode(t, manager);
+                self.sat.add_clause([if pol { lit } else { lit.negate() }]);
+                continue;
+            };
+            match td.kind {
+                TermKind::True if pol => continue,
+                TermKind::False if pol => note_false(self),
+                TermKind::True if !pol => note_false(self),
+                TermKind::False if !pol => continue,
+                TermKind::Not(arg) => stack.push((arg, !pol)),
+                TermKind::And(args) if pol => {
+                    for &a in args.iter().rev() {
+                        stack.push((a, true));
+                    }
+                }
+                TermKind::Or(args) if !pol => {
+                    for &a in args.iter().rev() {
+                        stack.push((a, false));
+                    }
+                }
+                TermKind::Implies(lhs, rhs) if pol => {
+                    // ¬lhs ∨ rhs, as one clause.
+                    let mut lits: Vec<Lit> = Vec::with_capacity(2);
+                    self.collect_clause_args(lhs, false, manager, &mut lits);
+                    self.collect_clause_args(rhs, true, manager, &mut lits);
+                    self.sat.add_clause(lits);
+                }
+                TermKind::Implies(lhs, rhs) if !pol => {
+                    // lhs ∧ ¬rhs.
+                    stack.push((lhs, true));
+                    stack.push((rhs, false));
+                }
+                TermKind::Or(_) if pol => {
+                    // One wide clause over the (flattened) disjuncts.
+                    let mut lits: Vec<Lit> = Vec::new();
+                    self.collect_clause_args(t, true, manager, &mut lits);
+                    self.sat.add_clause(lits);
+                }
+                TermKind::And(_) if !pol => {
+                    // ¬A ∨ ¬B ∨ … over the (flattened) conjuncts.
+                    let mut lits: Vec<Lit> = Vec::new();
+                    self.collect_clause_args(t, false, manager, &mut lits);
+                    self.sat.add_clause(lits);
+                }
+                _ => {
+                    let lit = self.encode(t, manager);
+                    self.sat.add_clause([if pol { lit } else { lit.negate() }]);
+                }
+            }
+        }
+    }
+
+    /// Collect the literals of the clause for `term` at polarity `pol`,
+    /// flattening nested same-polarity `or` (for `pol == true`) / `and` (for
+    /// `pol == false`) nodes into the same clause. Leaves go through the full
+    /// memoised Tseitin encoder, so shared atoms keep their variables.
+    ///
+    /// Explicit worklist: the flattening walk must not use native recursion
+    /// over user-controlled structure.
+    fn collect_clause_args(
+        &mut self,
+        term: TermId,
+        pol: bool,
+        manager: &mut TermManager,
+        out: &mut Vec<Lit>,
+    ) {
+        let mut work: Vec<(TermId, bool)> = vec![(term, pol)];
+        while let Some((t, p)) = work.pop() {
+            let flatten = manager.get(t).and_then(|td| {
+                Some(match (&td.kind, p) {
+                    (TermKind::Or(args), true) => args.clone(),
+                    (TermKind::And(args), false) => args.clone(),
+                    _ => return None,
+                })
+            });
+            match flatten {
+                Some(args) => {
+                    for &a in args.iter().rev() {
+                        work.push((a, p));
+                    }
+                }
+                None => {
+                    let lit = self.encode(t, manager);
+                    out.push(if p { lit } else { lit.negate() });
+                }
+            }
         }
     }
 
@@ -2042,6 +2231,20 @@ impl Solver {
                     // Register with BV solver if not already registered
                     if let Some(width) = sort.bitvec_width() {
                         self.bv.new_bv(term, width);
+                    }
+                    // Bit-vector content present: fall back to the cadical
+                    // focused-mode VMTF scores (see `Solver::new`'s
+                    // `focused_vmtf` note).  The embedded BV solver has a
+                    // latent, trajectory-dependent hanging-unit defect that a
+                    // changed outer search order can expose as a spurious
+                    // conflict inside its probes
+                    // (`bv_disjunction_requires_concrete_model_eval_unsat`);
+                    // until that is root-caused, keep bit-vector problems on
+                    // the exact search shape they were validated under.
+                    // Non-BV logics (the QF_UF family this switch was measured
+                    // on, 91:45 vs VMTF-focused) keep the VSIDS schedule.
+                    if self.sat.is_focused_vmtf_enabled() {
+                        self.sat.restore_focused_vmtf();
                     }
                 }
                 Lit::pos(var)
@@ -2997,5 +3200,30 @@ impl Solver {
                 _ => {}
             }
         }
+    }
+}
+
+/// Encode every bit-vector-sorted subterm of `root` into `bv`, sharing one
+/// memo set across calls ([`Solver::blast_bv_circuits_at_base_scope`] and the
+/// theory manager's post-resync re-blast both route through here; see the
+/// former's docs for why these circuits must exist at the base scope).
+pub(super) fn blast_bv_term(
+    bv: &mut oxiz_theories::bv::BvSolver,
+    root: TermId,
+    manager: &TermManager,
+    encoded: &mut rustc_hash::FxHashSet<TermId>,
+) {
+    for st in oxiz_core::ast::traversal::collect_subterms(root, manager) {
+        let Some(td) = manager.get(st) else { continue };
+        let Some(sort) = manager.sorts.get(td.sort) else {
+            continue;
+        };
+        if !sort.is_bitvec() {
+            continue;
+        }
+        // Bottom-up over the collected set: encode_bv_term_recursive
+        // descends children first and skips anything already encoded, so
+        // each distinct subterm is wired exactly once.
+        super::theory_bv_encode::encode_bv_term_recursive(bv, st, manager, encoded);
     }
 }

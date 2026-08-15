@@ -102,6 +102,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,    // LRB for structured problems
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
@@ -142,6 +143,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Geometric,
             enable_lazy_hyper_binary: false,
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false,   // VSIDS for random
             enable_inprocessing: false, // Less helpful for random
@@ -182,6 +184,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: true, // CHB good for crypto
             use_lrb_branching: false,
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
@@ -222,6 +225,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
@@ -262,6 +266,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Geometric,
             enable_lazy_hyper_binary: false,
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false,
             enable_inprocessing: false,
@@ -302,6 +307,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
@@ -338,6 +344,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false, // VSIDS like Glucose
             enable_inprocessing: false,
@@ -374,6 +381,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false,
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false, // Classic VSIDS
             enable_inprocessing: false,
@@ -410,6 +418,7 @@ impl ConfigPreset {
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
+            focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false,   // VMTF in real CaDiCaL
             enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)

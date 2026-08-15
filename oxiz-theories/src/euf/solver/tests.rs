@@ -899,3 +899,156 @@ fn proven_disequal_uses_watch_after_merge() {
     assert!(expl.contains(&TermId::new(80)));
     assert!(expl.contains(&TermId::new(81)));
 }
+
+/// The O(1) proven-disequality index must survive the exact pattern that broke
+/// the naive "rewrite the cached pair on merge" design: a disequality asserted
+/// at an *outer* scope, followed by a merge inside an *inner* scope that
+/// rewrites the cached key onto the surviving root.  Popping the inner scope
+/// must restore the original key, or `are_proven_disequal` silently answers
+/// `false` for a still-asserted disequality (a missed propagation source and,
+/// through `eq_news`, a changed search trajectory).
+#[test]
+fn proven_diseq_pair_survives_merge_and_pop_round_trip() {
+    use crate::theory::Theory;
+    let mut s = EufSolver::new();
+    let a = s.intern(TermId::new(1));
+    let b = s.intern(TermId::new(2));
+    let c = s.intern(TermId::new(3));
+
+    s.assert_diseq(a, b, TermId::new(10));
+    assert!(s.are_proven_disequal(a, b));
+
+    s.push();
+    s.merge(b, c, TermId::new(11)).expect("merge b=c");
+    // The disequality now applies to the merged class: (a, c) must read as
+    // proven disequal through the rewritten key.
+    assert!(s.are_proven_disequal(a, c));
+    assert!(s.are_proven_disequal(a, b));
+    s.pop();
+
+    // Back at the outer scope: b and c are separate again, but `a ≠ b` is
+    // still asserted, so the *original* key must be restored exactly.
+    assert!(s.are_proven_disequal(a, b), "a≠b survives the popped merge");
+    assert!(
+        !s.are_proven_disequal(a, c),
+        "c left b's class with the pop"
+    );
+}
+
+/// A chain of merges nested across several scopes rewrites one cached pair
+/// multiple times; the LIFO pop replay must unwind every rewrite in order.
+#[test]
+fn proven_diseq_pair_survives_nested_merge_chain_pop() {
+    use crate::theory::Theory;
+    let mut s = EufSolver::new();
+    let a = s.intern(TermId::new(1));
+    let b = s.intern(TermId::new(2));
+    let c = s.intern(TermId::new(3));
+    let d = s.intern(TermId::new(4));
+
+    s.assert_diseq(a, b, TermId::new(10));
+    s.push();
+    s.merge(b, c, TermId::new(11)).expect("b=c");
+    s.push();
+    s.merge(c, d, TermId::new(12)).expect("c=d");
+    assert!(s.are_proven_disequal(a, d));
+    s.pop();
+    assert!(s.are_proven_disequal(a, c), "still proven one scope down");
+    assert!(
+        !s.are_proven_disequal(a, d),
+        "d left the class with the pop"
+    );
+    s.pop();
+    assert!(s.are_proven_disequal(a, b));
+    assert!(!s.are_proven_disequal(a, c));
+}
+
+/// A disequality asserted *inside* a popped scope must vanish from the index
+/// with the scope, even though the scope's merges rewrote other entries.
+#[test]
+fn scoped_diseq_vanishes_from_pair_index_on_pop() {
+    use crate::theory::Theory;
+    let mut s = EufSolver::new();
+    let a = s.intern(TermId::new(1));
+    let b = s.intern(TermId::new(2));
+    let c = s.intern(TermId::new(3));
+
+    s.push();
+    s.assert_diseq(a, b, TermId::new(10));
+    s.merge(b, c, TermId::new(11)).expect("b=c");
+    assert!(s.are_proven_disequal(a, c));
+    s.pop();
+
+    assert!(
+        !s.are_proven_disequal(a, b),
+        "the scoped disequality is gone with the scope"
+    );
+    assert!(!s.are_proven_disequal(a, c));
+    assert!(!s.are_proven_disequal(b, c), "the merge is gone too");
+}
+
+/// The equality-atom watch queue fires exactly when a merge (or a fresh
+/// disequality) forces the atom, and a pop makes the atom eligible again by
+/// bumping the epoch.
+#[test]
+fn eq_atom_watch_fires_on_merge_and_re_arms_after_pop() {
+    use crate::theory::Theory;
+    let mut s = EufSolver::new();
+    let x1 = s.intern(TermId::new(1));
+    let x2 = s.intern(TermId::new(2));
+    let y1 = s.intern(TermId::new(3));
+    let y2 = s.intern(TermId::new(4));
+
+    let var = oxiz_sat::Var::new(0);
+    s.watch_eq_atom(x1, y1, var, true);
+    assert!(
+        s.drain_forced_eq_atoms().is_empty(),
+        "registration alone must not fire an unforced atom"
+    );
+
+    // Merging x1~x2 and y1~y2 does not yet force (x1 = y1): the atom's
+    // endpoints sit in different classes.
+    s.merge(x1, x2, TermId::new(10)).expect("x1=x2");
+    s.merge(y1, y2, TermId::new(11)).expect("y1=y2");
+    assert!(s.drain_forced_eq_atoms().is_empty());
+
+    // A merge joining the two classes forces the watched atom.
+    s.push();
+    s.merge(x1, y1, TermId::new(12)).expect("x1=y1");
+    let forced = s.drain_forced_eq_atoms();
+    assert_eq!(forced.len(), 1, "exactly the watched atom fires");
+    assert_eq!(forced[0].var, var);
+    assert!(forced[0].is_eq);
+
+    // The same merge repeated in the same epoch does not re-deliver.
+    s.merge(x2, y2, TermId::new(13))
+        .expect("x2=y2 (idempotent)");
+    assert!(s.drain_forced_eq_atoms().is_empty());
+
+    // After a pop the classes separate; a fresh merge re-arms delivery.
+    s.pop();
+    assert!(s.drain_forced_eq_atoms().is_empty());
+    s.push();
+    s.merge(x1, y1, TermId::new(14))
+        .expect("re-merge after pop");
+    let forced = s.drain_forced_eq_atoms();
+    assert_eq!(forced.len(), 1, "the epoch bump re-armed the atom");
+}
+
+/// A freshly asserted disequality between two classes must wake the atoms
+/// whose endpoints span exactly those classes (the `assert_diseq` trigger).
+#[test]
+fn eq_atom_watch_fires_on_fresh_disequality() {
+    let mut s = EufSolver::new();
+    let x = s.intern(TermId::new(1));
+    let y = s.intern(TermId::new(2));
+
+    let var = oxiz_sat::Var::new(7);
+    s.watch_eq_atom(x, y, var, true);
+    assert!(s.drain_forced_eq_atoms().is_empty());
+
+    s.assert_diseq(x, y, TermId::new(20));
+    let forced = s.drain_forced_eq_atoms();
+    assert_eq!(forced.len(), 1, "the diseq-forced atom wakes");
+    assert_eq!(forced[0].var, var);
+}

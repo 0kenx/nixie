@@ -182,7 +182,7 @@ impl TheoryManager<'_> {
     /// describes; reading it would call a retracted literal live.
     pub(super) fn reason_literal_is_live(&self, term: TermId) -> bool {
         match self.term_to_var.get(&term) {
-            Some(var) => self.assigned_level.contains_key(var),
+            Some(var) => self.is_level_assigned(*var),
             None => true,
         }
     }
@@ -238,10 +238,15 @@ impl TheoryManager<'_> {
     /// `None` is therefore the honest answer: no literal can be blamed, so no
     /// lemma exists, and the caller must abort the conflict rather than refute.
     fn full_assignment_conflict_clause(&self) -> Option<SmallVec<[Lit; 8]>> {
-        if self.assigned_level.is_empty() {
+        let mut vars: Vec<Var> = self
+            .assigned_level
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, &lvl)| (lvl != 0).then_some(Var::new(idx as u32)))
+            .collect();
+        if vars.is_empty() {
             return None;
         }
-        let mut vars: Vec<Var> = self.assigned_level.keys().copied().collect();
         vars.sort_unstable_by_key(|v| v.index());
         Some(vars.into_iter().map(|v| self.false_literal_of(v)).collect())
     }
@@ -347,7 +352,7 @@ mod tests {
         let manager = fixture.manager();
 
         assert!(
-            manager.assigned_level.is_empty(),
+            manager.assigned_level.iter().all(|&l| l == 0),
             "fixture precondition: a fresh manager has seen no assignment"
         );
         assert_eq!(
@@ -368,9 +373,9 @@ mod tests {
 
         let true_var = Var::new(0);
         let false_var = Var::new(1);
-        manager.assigned_level.insert(true_var, 0);
+        manager.set_assigned_level(true_var, 0);
         manager.set_assigned_polarity(true_var, true);
-        manager.assigned_level.insert(false_var, 0);
+        manager.set_assigned_level(false_var, 0);
         manager.set_assigned_polarity(false_var, false);
 
         let clause = manager

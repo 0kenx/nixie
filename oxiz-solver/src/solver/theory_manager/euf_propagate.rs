@@ -6,21 +6,21 @@
 //! atom was assigned, so `a = b` could not force `(= (f a) (f b))` until SAT
 //! branched on that atom.
 //!
-//! After a merge that changes the e-graph, unassigned `(= (f s) (f t))` atoms
-//! whose sides now share a class are propagated to SAT.  Only application-
-//! application pairs are considered: hardware encodings have thousands of
-//! boolean/ITE equalities, and explaining those dominates runtime.  An
-//! unexplainable fact is skipped, never fabricated.
+//! Propagation is *watch-based* (see `EufSolver::watch_eq_atom`): every
+//! equality atom is registered on the e-graph classes of its two endpoints, so
+//! a merge (or a fresh asserted disequality between the classes) revisits only
+//! the atoms whose sides' classes actually changed – the OxiZ analogue of Z3
+//! keeping `=`-applications as e-graph parents, where a merge re-inserts the
+//! parents and `add_literal` propagates the equality atom's value.  The
+//! previous implementation cloned and rescanned the *entire* atom list after
+//! every merge, which dominated QF_UF runtime on all-different-heavy inputs.
+//! An unexplainable fact is skipped, never fabricated.
 
 use super::TheoryManager;
 use crate::prelude::*;
 use oxiz_core::ast::TermId;
 use oxiz_sat::{Lit, Var};
 use smallvec::SmallVec;
-
-use super::super::types::Constraint;
-
-const MAX_EUF_PROPS: usize = 16;
 
 impl TheoryManager<'_> {
     pub(super) fn unique_uf_func_count(&self) -> usize {
@@ -63,86 +63,46 @@ impl TheoryManager<'_> {
         }
     }
 
-    pub(super) fn euf_assignment_is_news(
-        &self,
-        constraint: &Constraint,
-        is_positive: bool,
-    ) -> bool {
-        match *constraint {
-            Constraint::Eq(l, r) => self.eq_news(l, r, is_positive),
-            Constraint::Diseq(l, r) => self.eq_news(l, r, !is_positive),
-            Constraint::BoolApp(t) => {
-                let Some(n) = self.euf.term_to_node(t) else {
-                    return true;
-                };
-                let (Some(tn), Some(fn_)) = (self.bool_true_node, self.bool_false_node) else {
-                    return true;
-                };
-                if is_positive {
-                    !self.euf.are_equal_immutable(n, tn)
-                } else {
-                    !self.euf.are_equal_immutable(n, fn_)
-                }
-            }
-            _ => false,
-        }
-    }
-
-    fn eq_news(&self, l: TermId, r: TermId, want_eq: bool) -> bool {
-        let (Some(a), Some(b)) = (self.euf.term_to_node(l), self.euf.term_to_node(r)) else {
-            return true;
-        };
-        if want_eq {
-            !self.euf.are_equal_immutable(a, b)
-        } else {
-            !self.euf.are_proven_disequal(a, b)
-        }
-    }
-
-    pub(super) fn euf_constraint_nodes(&self, constraint: &Constraint) -> Option<(u32, u32)> {
-        match *constraint {
-            Constraint::Eq(l, r) | Constraint::Diseq(l, r) => {
-                Some((self.euf.term_to_node(l)?, self.euf.term_to_node(r)?))
-            }
-            Constraint::BoolApp(t) => {
-                let n = self.euf.term_to_node(t)?;
-                Some((n, n))
-            }
-            _ => None,
-        }
-    }
-
-    pub(super) fn propagate_euf_eq_atoms(
-        &mut self,
-        touch: Option<(u32, u32)>,
-    ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
-        let (ta, tb) = touch?;
-        let ra = self.euf.find_immutable(ta);
-        let rb = self.euf.find_immutable(tb);
-        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
-        let atoms = self.euf_eq_atoms.clone();
-        for (var, lhs, rhs, is_eq) in atoms {
-            if props.len() >= MAX_EUF_PROPS {
-                break;
-            }
-            if self.assigned_level.contains_key(&var) {
-                continue;
-            }
+    /// Register an e-graph watch for every equality/disequality atom, on the
+    /// classes of its two endpoints.  After this, merges and fresh disequality
+    /// assertions enqueue exactly the atoms whose forced value may have
+    /// changed; see [`Self::drain_forced_eq_atoms`].
+    pub(super) fn register_eq_atom_watches(&mut self) {
+        for &(var, lhs, rhs, is_eq) in &self.euf_eq_atoms {
             let (Some(nl), Some(nr)) = (self.euf.term_to_node(lhs), self.euf.term_to_node(rhs))
             else {
                 continue;
             };
-            let sl = self.euf.find_immutable(nl);
-            let sr = self.euf.find_immutable(nr);
-            if sl != ra && sl != rb && sr != ra && sr != rb {
+            self.euf.watch_eq_atom(nl, nr, var, is_eq);
+        }
+    }
+
+    /// Convert the atoms whose endpoints the e-graph just made equal or proven
+    /// disequal into SAT propagations with explanations.
+    ///
+    /// Drains the watch-triggered queue (see `EufSolver::drain_forced_eq_atoms`).
+    /// Each entry is re-validated at conversion time – `forced_eq_lit` recomputes
+    /// the equal/disequal status from the live e-graph – so an entry that went
+    /// stale across a backtrack is dropped rather than propagated.  The whole
+    /// drain is converted: the EUF-side per-epoch stamp already deduplicates
+    /// re-delivery, so every entry the queue hands over is a genuinely new
+    /// forced atom (equality-atom propagation is search guidance only, so a
+    /// queue overflow drop just delays the atom to the decision machinery –
+    /// it never changes the verdict).
+    pub(super) fn drain_forced_eq_atoms(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
+        let forced = self.euf.drain_forced_eq_atoms();
+        if forced.is_empty() {
+            return None;
+        }
+        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        for w in forced {
+            if self.is_level_assigned(w.var) {
                 continue;
             }
-            let Some((lit, reasons)) = self.forced_eq_lit(var, nl, nr, is_eq) else {
-                continue;
-            };
-            props.push((lit, reasons));
+            if let Some((lit, reasons)) = self.forced_eq_lit(w.var, w.a, w.b, w.is_eq) {
+                props.push((lit, reasons));
+            }
         }
-
         if props.is_empty() { None } else { Some(props) }
     }
 
@@ -177,8 +137,8 @@ impl TheoryManager<'_> {
         if let (Some(fa), Some(fb)) = (self.euf.node_func(a), self.euf.node_func(b))
             && fa == fb
             && let (Some(aa), Some(ab)) = (
-                self.euf.node_args(a).map(|v| v.clone()),
-                self.euf.node_args(b).map(|v| v.clone()),
+                self.euf.node_args(a).cloned(),
+                self.euf.node_args(b).cloned(),
             )
             && aa.len() == ab.len()
         {

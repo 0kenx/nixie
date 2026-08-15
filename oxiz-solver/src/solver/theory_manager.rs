@@ -449,13 +449,24 @@ pub(crate) struct TheoryManager<'a> {
     assignment_trail: Vec<TrailAtom>,
     /// Map from a theory variable to its index in `assignment_trail`, for O(1)
     /// flip detection.  Rebuilt whenever the trail is truncated on backtrack.
-    trail_index: FxHashMap<Var, usize>,
+    ///
+    /// Stored as a dense `Vec<u32>` indexed by `Var::index()` (sentinel
+    /// `u32::MAX` = absent) rather than a `HashMap`: `on_assignment` fires per
+    /// atom-assignment during SAT propagation and the per-access hashing was a
+    /// measurable cost on QF_UF.  Grown lazily to cover the variable seen.
+    trail_index: Vec<u32>,
     /// Decision level at which each entry of the polarity map currently
     /// holds, pruned on backtrack.  Unlike `assignment_trail` this is
     /// maintained in *both* eager and lazy theory modes, because it backs
     /// [`Self::full_assignment_conflict_clause`] – the sound fallback used
     /// when a theory reason cannot be justified.
-    assigned_level: FxHashMap<Var, u32>,
+    ///
+    /// Dense `Vec<u32>` indexed by `Var::index()` storing `level + 1` (so `0`
+    /// means "unassigned"): same rationale as [`Self::trail_index`].  Pruned
+    /// on backtrack by walking only the shadow-trail entries above the
+    /// rollback level (its key set is exactly the set of trail vars), which is
+    /// O(pruned) instead of a full `HashMap::retain`.
+    assigned_level: Vec<u32>,
     /// Reason terms that are theory *tautologies*: facts the theory layer
     /// injects itself, true in every model and justified by no literal.
     ///
@@ -491,6 +502,10 @@ pub(crate) struct TheoryManager<'a> {
     euf_eq_atoms: Vec<(Var, TermId, TermId, bool)>,
     euf_bool_atoms: Vec<(Var, TermId)>,
     eager_interned: bool,
+    /// Whether e-graph watches were registered for the equality atoms (the
+    /// watch-based successor of the old `euf_eq_atoms.len() <= 6000` rescan
+    /// gate: above that size, equality-atom propagation is disabled).
+    eq_atom_watches: bool,
 }
 
 impl<'a> TheoryManager<'a> {
@@ -575,8 +590,8 @@ impl<'a> TheoryManager<'a> {
             assigned_pol_cur: 1,
             current_level: 0,
             assignment_trail: Vec::new(),
-            trail_index: FxHashMap::default(),
-            assigned_level: FxHashMap::default(),
+            trail_index: Vec::new(),
+            assigned_level: Vec::new(),
             tautological_reasons: FxHashSet::default(),
             euf_eq_atoms: var_to_constraint
                 .iter()
@@ -594,11 +609,25 @@ impl<'a> TheoryManager<'a> {
                 })
                 .collect(),
             eager_interned: false,
+            eq_atom_watches: false,
         };
         if this.unique_uf_func_count() <= 32 {
             this.intern_all_euf_terms();
             this.eager_interned = true;
         }
+        // Register the watch-based equality-atom propagation index once all
+        // endpoints are interned.  The cap mirrors the old rescan gate: past
+        // it, propagation is off (search guidance only, never required for a
+        // verdict).
+        if this.eager_interned && this.euf_eq_atoms.len() <= 6000 {
+            this.register_eq_atom_watches();
+            this.eq_atom_watches = true;
+        }
+        // Every TheoryManager construction follows (or starts) a search round;
+        // if the BV solver was reset for the round, re-blast its vocabulary at
+        // the base scope before any scoped assertion happens (memo no-op when
+        // the circuits are already there).
+        this.blast_bv_vocabulary_at_base_scope();
         this
     }
 
@@ -673,6 +702,44 @@ impl<'a> TheoryManager<'a> {
         }
         self.assigned_pol_gen[idx] = self.assigned_pol_cur;
         self.assigned_pol_val[idx] = polarity;
+    }
+
+    /// Index of `var` in `assignment_trail`, or `None` if it is not on it.
+    #[inline]
+    fn trail_idx_of(&self, var: Var) -> Option<usize> {
+        match self.trail_index.get(var.index()) {
+            Some(&idx) if idx != u32::MAX => Some(idx as usize),
+            _ => None,
+        }
+    }
+
+    /// Record `var -> idx` in the shadow-trail index (direct-indexed).
+    #[inline]
+    fn trail_idx_set(&mut self, var: Var, idx: usize) {
+        let slot = var.index();
+        if slot >= self.trail_index.len() {
+            self.trail_index.resize(slot + 1, u32::MAX);
+        }
+        self.trail_index[slot] = idx as u32;
+    }
+
+    /// Whether `var` is currently assigned at some decision level (the
+    /// liveness authority for shadow-trail entries and propagations).
+    #[inline]
+    fn is_level_assigned(&self, var: Var) -> bool {
+        self.assigned_level
+            .get(var.index())
+            .is_some_and(|&l| l != 0)
+    }
+
+    /// Record `var` as assigned at `level` (direct-indexed, `level + 1`).
+    #[inline]
+    fn set_assigned_level(&mut self, var: Var, level: u32) {
+        let slot = var.index();
+        if slot >= self.assigned_level.len() {
+            self.assigned_level.resize(slot + 1, 0);
+        }
+        self.assigned_level[slot] = level + 1;
     }
 
     /// Returns `true` once the configured wall-clock deadline has passed.
@@ -864,8 +931,49 @@ impl<'a> TheoryManager<'a> {
     /// The first conflict encountered is remembered and returned; a returned
     /// `Conflict` triggers the SAT core to backtrack, which the now-consistent
     /// scope stack handles correctly.
+    /// Re-run the assert-time eager bit-blasting after the embedded BV solver
+    /// was reset (see [`Self::resync_theory_state`] and
+    /// [`crate::solver::Solver::blast_bv_circuits_at_base_scope`]).  A reset
+    /// wipes the clause database *and* the term→bits registry together –
+    /// consistent – but the replay that follows re-interns atoms at scoped
+    /// levels, and any circuit first wired there is popped by the next
+    /// backtrack while its registry entry survives: the encode memo then skips
+    /// rebuilding it and the atom is asserted against unwired bits (false
+    /// `sat`, see `bv_soundness_integration::issue_17`).  Blasting the whole
+    /// constraint vocabulary right after the reset, while no scope is open,
+    /// makes the circuits permanent before the replay touches anything.
+    fn blast_bv_vocabulary_at_base_scope(&mut self) {
+        if !self.bv.at_base_scope() {
+            return;
+        }
+        let mut roots: Vec<TermId> = Vec::new();
+        for c in self.var_to_constraint.values() {
+            match c {
+                Constraint::Eq(l, r)
+                | Constraint::Diseq(l, r)
+                | Constraint::Lt(l, r)
+                | Constraint::Le(l, r)
+                | Constraint::Gt(l, r)
+                | Constraint::Ge(l, r) => {
+                    roots.push(*l);
+                    roots.push(*r);
+                }
+                Constraint::BoolApp(t) => roots.push(*t),
+            }
+        }
+        let mut encoded = rustc_hash::FxHashSet::default();
+        for root in roots {
+            super::encode::blast_bv_term(self.bv, root, self.manager, &mut encoded);
+        }
+    }
+
     fn resync_theory_state(&mut self) -> TheoryCheckResult {
         use oxiz_theories::Theory;
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static RESYNC: AtomicU64 = AtomicU64::new(0);
+            RESYNC.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Drop all incremental theory state and derived caches.
         self.euf.reset();
@@ -884,6 +992,9 @@ impl<'a> TheoryManager<'a> {
         if self.eager_interned {
             self.intern_all_euf_terms();
         }
+        // Make the bit-vector circuits permanent again before the level-by-level
+        // replay re-interns anything (see the method's docs).
+        self.blast_bv_vocabulary_at_base_scope();
 
         // Rebuild the level-scope bookkeeping to match the current level.
         self.level_stack = vec![0];
@@ -1810,7 +1921,7 @@ impl<'a> TheoryManager<'a> {
         let mut sssp_cache: SsspCache = FxHashMap::default();
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
         'next_atom: for dla in &dl_atoms {
-            if self.trail_index.contains_key(&dla.var) {
+            if self.trail_idx_of(dla.var).is_some() {
                 continue;
             }
             let polarities: &[bool] = if dla.is_eq { &[true] } else { &[true, false] };
@@ -1876,7 +1987,7 @@ impl<'a> TheoryManager<'a> {
                         ok = false;
                         break;
                     };
-                    let Some(&idx) = self.trail_index.get(&rv) else {
+                    let Some(idx) = self.trail_idx_of(rv) else {
                         ok = false;
                         break;
                     };
@@ -2803,7 +2914,7 @@ impl TheoryCallback for TheoryManager<'_> {
         }
 
         self.set_assigned_polarity(var, is_positive);
-        self.assigned_level.insert(var, self.current_level);
+        self.set_assigned_level(var, self.current_level);
 
         if !self.bv_terms.is_empty()
             && let Some(term) = self.var_to_term.get(var.index()).copied()
@@ -2823,7 +2934,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // strict subset of its theory atoms (the array-incompleteness false-SAT
         // was one such case).
         if self.theory_mode == TheoryMode::Lazy {
-            match self.trail_index.get(&var).copied() {
+            match self.trail_idx_of(var) {
                 Some(idx) => {
                     self.assignment_trail[idx] = TrailAtom {
                         var,
@@ -2838,7 +2949,7 @@ impl TheoryCallback for TheoryManager<'_> {
                         is_positive,
                         level: self.current_level,
                     });
-                    self.trail_index.insert(var, idx);
+                    self.trail_idx_set(var, idx);
                 }
             }
             return TheoryCheckResult::Sat;
@@ -2860,7 +2971,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // theory state from the corrected trail.  A re-assignment with the SAME
         // polarity is an idempotent re-send after a backtrack; it falls through
         // to the normal (re)processing path, preserving pre-existing behaviour.
-        match self.trail_index.get(&var).copied() {
+        match self.trail_idx_of(var) {
             // In-place polarity flip by the SAT core (a wrong assertion-level
             // result from its conflict analysis).  Rebuild theory state from the
             // corrected, deduplicated trail so no stale over-constraint from the
@@ -2928,15 +3039,13 @@ impl TheoryCallback for TheoryManager<'_> {
                     is_positive,
                     level: self.current_level,
                 });
-                self.trail_index.insert(var, idx);
+                self.trail_idx_set(var, idx);
             }
         }
 
         self.processed_count += 1;
         self.statistics.theory_propagations += 1;
 
-        let euf_news = self.euf_assignment_is_news(&constraint, is_positive);
-        let touch = self.euf_constraint_nodes(&constraint);
         let result = self.process_constraint(var, constraint, is_positive, self.manager);
 
         // Track theory conflicts
@@ -2985,10 +3094,8 @@ impl TheoryCallback for TheoryManager<'_> {
         }
 
         if matches!(result, TheoryCheckResult::Sat)
-            && euf_news
-            && self.eager_interned
-            && self.euf_eq_atoms.len() <= 6000
-            && let Some(props) = self.propagate_euf_eq_atoms(touch)
+            && self.eq_atom_watches
+            && let Some(props) = self.drain_forced_eq_atoms()
         {
             self.statistics.theory_propagations += props.len() as u64;
             return TheoryCheckResult::Propagated(props);
@@ -3266,16 +3373,38 @@ impl TheoryCallback for TheoryManager<'_> {
     fn on_backtrack(&mut self, level: u32) {
         // Track the current SAT decision level and prune the shadow trail of
         // every assignment made above `level` (they have been undone by the SAT
-        // core's backtrack).  Rebuild the var -> trail-index map afterwards.
+        // core's backtrack).  Prune with swap-removal so both the trail and its
+        // dense var->index map stay exact without re-hashing anything, and
+        // clear the corresponding `assigned_level` slots in the same pass
+        // (their key set is exactly the set of shadow-trail vars).
         self.current_level = level;
         if self.assignment_trail.iter().any(|a| a.level > level) {
-            self.assignment_trail.retain(|a| a.level <= level);
-            self.trail_index.clear();
-            for (i, atom) in self.assignment_trail.iter().enumerate() {
-                self.trail_index.insert(atom.var, i);
+            let mut i = 0;
+            while i < self.assignment_trail.len() {
+                if self.assignment_trail[i].level > level {
+                    let removed_var = self.assignment_trail[i].var;
+                    let last = self.assignment_trail.pop();
+                    if let Some(t) = last
+                        && i < self.assignment_trail.len()
+                    {
+                        // The popped tail entry moved into slot `i`; fix its index.
+                        self.assignment_trail[i] = t;
+                        self.trail_idx_set(t.var, i);
+                    }
+                    // Invalidate the removed var's own index unconditionally –
+                    // it is stale whether the removed entry was the tail (slot
+                    // gone) or was backfilled (slot now belongs to `t`).
+                    if let Some(slot) = self.trail_index.get_mut(removed_var.index()) {
+                        *slot = u32::MAX;
+                    }
+                    if let Some(slot) = self.assigned_level.get_mut(removed_var.index()) {
+                        *slot = 0;
+                    }
+                } else {
+                    i += 1;
+                }
             }
         }
-        self.assigned_level.retain(|_var, &mut lvl| lvl <= level);
 
         // Pop EUF, Arith, and BV states if needed.  Each pop also drops the
         // derived-equality explanations recorded in the scope it retracts –

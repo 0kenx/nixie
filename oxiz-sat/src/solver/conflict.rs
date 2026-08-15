@@ -32,6 +32,75 @@ fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
 
 impl Solver {
     /// Analyze conflict and learn clause
+    /// Mark one antecedent literal during 1-UIP resolution in [`Self::analyze`].
+    ///
+    /// Unseen above-level-0 literals are marked seen, queued for activity
+    /// bumping, and either counted (conflict level) or appended to the learned
+    /// clause (lower level). Level-0 literals are recorded as LRAT unit
+    /// antecedents instead. Shared by the stored-clause path and the lazy
+    /// theory-explanation path so both resolve with identical semantics.
+    #[inline]
+    fn analyze_mark_antecedent(
+        &mut self,
+        lit: Lit,
+        current_level: u32,
+        counter: &mut i32,
+        vars_to_bump: &mut SmallVec<[Var; 32]>,
+    ) {
+        let var = lit.var();
+        let level = self.trail.level(var);
+
+        if !self.seen[var.index()] && level > 0 {
+            self.seen[var.index()] = true;
+            vars_to_bump.push(var);
+            if level == current_level {
+                *counter += 1;
+            } else {
+                // The conflict clause has all literals FALSE; keeping the
+                // literal as-is means the learned clause demands it TRUE.
+                self.learnt.push(lit);
+            }
+        } else if self.lrat && level == 0 && !self.seen[var.index()] {
+            // LRAT: a level-0 (fixed) antecedent. With the level-0 flush every
+            // level-0 literal is a unit with an id, so reference it directly
+            // (cadical's `analyze_literal` level-0 branch). `lit` is FALSE; its
+            // true form `¬lit` is the unit.
+            self.seen[var.index()] = true;
+            self.unit_chain
+                .push(self.proof_unit_id(lit.negate().to_dimacs()));
+        }
+    }
+
+    /// Walk the trail backwards for the most recent still-unresolved (`seen`)
+    /// literal at `current_level` – the next 1-UIP pivot. Returns `None` when
+    /// the trail is exhausted (degenerate conflict state). Shared by
+    /// [`Self::analyze`]'s clause and lazy-theory paths.
+    ///
+    /// Static + immutable on purpose: it borrows neither the clause database
+    /// nor any mutable solver state, so callers may invoke it between `&mut
+    /// self` steps of the resolution loop.
+    fn analyze_scan_pivot(
+        seen: &[bool],
+        trail: &Trail,
+        index: &mut usize,
+        current_level: u32,
+    ) -> Option<Lit> {
+        loop {
+            if *index == 0 {
+                // Trail exhausted: no unresolved conflict-level literal left
+                // (degenerate theory-conflict state). Mirrors the original
+                // inline walk's underflow guard.
+                return None;
+            }
+            *index -= 1;
+            let lit = trail.assignments()[*index];
+            let var = lit.var();
+            if seen[var.index()] && trail.level(var) == current_level {
+                return Some(lit);
+            }
+        }
+    }
+
     pub(super) fn analyze(&mut self, conflict: ClauseId) -> (u32, SmallVec<[Lit; 16]>) {
         // Debug: print conflict info (only with analyze-debug feature)
         #[cfg(feature = "analyze-debug")]
@@ -131,7 +200,7 @@ impl Solver {
 
         let mut reason_clause = conflict;
 
-        while let Some(clause) = self.clauses.get(reason_clause) {
+        'resolve: while let Some(clause) = self.clauses.get(reason_clause) {
             // Process reason clause (must exist, as it's either conflict or a propagation reason)
             let is_learned = clause.learned;
 
@@ -157,7 +226,10 @@ impl Solver {
             let Some(clause) = self.clauses.get(reason_clause) else {
                 break;
             };
-            for &lit in &clause.lits {
+            // Snapshot the literals so the shared marking helper may take
+            // `&mut self` (reason clauses are short – inline SmallVec copy).
+            let antecedent_lits: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
+            for lit in antecedent_lits {
                 // When resolving a *reason* clause (`p` is Some), the propagated
                 // literal `p` is the one being resolved out: it is TRUE on the trail
                 // and must NOT be added to the learned clause. We skip it BY VALUE
@@ -171,79 +243,82 @@ impl Solver {
                 if p == Some(lit) {
                     continue;
                 }
-                let var = lit.var();
-                let level = self.trail.level(var);
-
-                if !self.seen[var.index()] && level > 0 {
-                    self.seen[var.index()] = true;
-                    // Collect variable for batch bumping instead of individual bumps
-                    vars_to_bump.push(var);
-
-                    if level == current_level {
-                        counter += 1;
-                    } else {
-                        // Add the literal itself (not negated) to the learned clause.
-                        // The conflict clause has all literals FALSE. To prevent this
-                        // conflict, we need at least one of these literals to become TRUE.
-                        self.learnt.push(lit);
-                    }
-                } else if self.lrat && level == 0 && !self.seen[var.index()] {
-                    // LRAT: a level-0 (fixed) antecedent. With the level-0 flush
-                    // every level-0 literal is a unit with an id, so reference it
-                    // directly (cadical's `analyze_literal` level-0 branch). `lit`
-                    // is FALSE; its true form `¬lit` is the unit.
-                    self.seen[var.index()] = true;
-                    self.unit_chain
-                        .push(self.proof_unit_id(lit.negate().to_dimacs()));
-                }
+                self.analyze_mark_antecedent(lit, current_level, &mut counter, &mut vars_to_bump);
             }
 
             // Find next literal to resolve on: the most recently assigned
             // still-unresolved literal AT THE CONFLICT LEVEL.
             //
-            // The level check is what makes this walk correct under
-            // chronological backtracking. The trail is no longer sorted by
-            // decision level – a literal implied at a low level can sit near the
-            // top of the trail – so "the last `seen` literal" is not necessarily
-            // a conflict-level literal any more. Resolving on a lower-level one
-            // would decrement the conflict-level counter for a literal that was
-            // never counted in it, terminating the 1-UIP loop early and emitting
-            // a clause that is missing literals, i.e. stronger than what
-            // resolution actually derives. Reference: Z3's `sat_solver.cpp`,
-            // whose 1-UIP loop skips marked literals with
-            // `lvl(c_var) != m_conflict_lvl` for exactly this reason.
-            let mut current_lit = Lit::from_code(0); // sentinel default
-            let mut found_next = false;
-            loop {
-                if index == 0 {
-                    // Guard against underflow: this should not happen in a
-                    // well-formed conflict, but theory-conflict injection can
-                    // occasionally produce a degenerate state.  Break out to
-                    // avoid a usize overflow panic.
-                    break;
-                }
-                index -= 1;
-                current_lit = self.trail.assignments()[index];
-                let var = current_lit.var();
-                if self.seen[var.index()] && self.trail.level(var) == current_level {
-                    p = Some(current_lit);
-                    found_next = true;
-                    break;
-                }
-            }
-            if !found_next {
-                break;
-            }
+            // The level check (inside `analyze_scan_pivot`) is what makes this
+            // walk correct under chronological backtracking. The trail is no
+            // longer sorted by decision level – a literal implied at a low
+            // level can sit near the top of the trail – so "the last `seen`
+            // literal" is not necessarily a conflict-level literal any more.
+            // Resolving on a lower-level one would decrement the conflict-level
+            // counter for a literal that was never counted in it, terminating
+            // the 1-UIP loop early and emitting a clause that is missing
+            // literals, i.e. stronger than what resolution actually derives.
+            // Reference: Z3's `sat_solver.cpp`, whose 1-UIP loop skips marked
+            // literals with `lvl(c_var) != m_conflict_lvl` for the same reason.
+            let Some(next_lit) =
+                Self::analyze_scan_pivot(&self.seen, &self.trail, &mut index, current_level)
+            else {
+                break 'resolve;
+            };
+            p = Some(next_lit);
 
             counter -= 1;
             if counter == 0 {
-                break;
+                break 'resolve;
             }
 
-            let var = current_lit.var();
-            match self.trail.reason(var) {
-                Reason::Propagation(c) => reason_clause = c,
-                _ => break,
+            // Dispatch on the pivot's reason. A stored clause re-enters the
+            // outer loop. A **lazily explained** theory propagation is
+            // resolved through inline: its stored tail is exactly what a
+            // materialized reason clause would have carried after its head
+            // (the head itself – the pivot, TRUE on the trail – is resolved
+            // out and, unlike the clause path, needs no by-value skip because
+            // the tail never contains it). Several consecutive theory
+            // antecedents can chain before the next clause (or the UIP).
+            let mut pivot = next_lit.var();
+            loop {
+                match self.trail.reason(pivot) {
+                    Reason::Propagation(c) => {
+                        reason_clause = c;
+                        break;
+                    }
+                    Reason::Theory => {
+                        let Some(tail) = self.theory_reason_tail(pivot).cloned() else {
+                            // No lazy explanation available (proof connected
+                            // mid-search, or a stale entry): treat like a
+                            // decision and stop resolving, mirroring `_ =>`.
+                            break 'resolve;
+                        };
+                        for &lit in &tail {
+                            self.analyze_mark_antecedent(
+                                lit,
+                                current_level,
+                                &mut counter,
+                                &mut vars_to_bump,
+                            );
+                        }
+                        let Some(next) = Self::analyze_scan_pivot(
+                            &self.seen,
+                            &self.trail,
+                            &mut index,
+                            current_level,
+                        ) else {
+                            break 'resolve;
+                        };
+                        p = Some(next);
+                        counter -= 1;
+                        if counter == 0 {
+                            break 'resolve;
+                        }
+                        pivot = next.var();
+                    }
+                    _ => break 'resolve,
+                }
             }
         }
 
@@ -809,6 +884,18 @@ impl Solver {
                     // Skip this literal (strengthened)
                     continue;
                 }
+            } else if let Reason::Theory = self.trail.reason(var)
+                && let Some(other_lit) = self
+                    .theory_reason_tail(var)
+                    .and_then(|t| (t.len() == 1).then(|| t[0]))
+            {
+                // Lazy theory reason with a single antecedent: the exact
+                // analogue of the binary-clause case above (the materialized
+                // clause would be `(¬lit ∨ other_lit)`).
+                if self.trail.level(other_lit.var()) == 0 && self.seen[other_lit.var().index()] {
+                    // Skip this literal (strengthened)
+                    continue;
+                }
             }
 
             // Keep this literal
@@ -846,23 +933,47 @@ impl Solver {
 
         let mut redundant = true;
         while let Some(cur) = stack.pop() {
-            let cid = match self.trail.reason(cur.var()) {
-                Reason::Propagation(c) => c,
-                // Decision / theory: not implied by other literals.
+            // The antecedent literal list: a stored reason clause (skipping the
+            // propagated literal's FALSE occurrence `¬cur` by value), or the
+            // lazily stored tail of a theory propagation (which never contains
+            // `¬cur`, so nothing to skip).
+            enum Antecedent {
+                Clause(ClauseId),
+                Theory(SmallVec<[Lit; 8]>),
+            }
+            let antecedent = match self.trail.reason(cur.var()) {
+                Reason::Propagation(c) => Antecedent::Clause(c),
+                Reason::Theory => match self.theory_reason_tail(cur.var()).cloned() {
+                    Some(tail) => Antecedent::Theory(tail),
+                    // Decision / unexplained theory: not implied by other
+                    // literals.
+                    None => {
+                        redundant = false;
+                        break;
+                    }
+                },
                 _ => {
                     redundant = false;
                     break;
                 }
             };
-            let Some(clause) = self.clauses.get(cid) else {
-                redundant = false;
-                break;
-            };
 
-            for &rlit in &clause.lits {
-                if rlit == cur.negate() {
-                    continue; // the propagated literal itself (true on the trail)
+            // One pass over the antecedent's literals. `others` is emptied by
+            // the match below so the immutable clause borrow is released
+            // before the `&mut self` removability probes.
+            let mut others: SmallVec<[Lit; 8]> = SmallVec::new();
+            match antecedent {
+                Antecedent::Clause(cid) => {
+                    let Some(clause) = self.clauses.get(cid) else {
+                        redundant = false;
+                        break;
+                    };
+                    others.extend(clause.lits.iter().copied().filter(|&l| l != cur.negate()));
                 }
+                Antecedent::Theory(tail) => others = tail,
+            }
+
+            for rlit in others {
                 let rvar = rlit.var();
                 if self.trail.level(rvar) == 0 {
                     continue; // unconditional root fact – always removable
@@ -870,9 +981,15 @@ impl Solver {
                 if self.seen[rvar.index()] {
                     continue; // already in the learned clause, or already visited
                 }
-                // Must be implied by its own reason to be removable; a decision
-                // (or theory) literal at level > 0 blocks removal.
-                if !matches!(self.trail.reason(rvar), Reason::Propagation(_)) {
+                // Must be implied by its own reason (a stored clause or a lazy
+                // theory explanation) to be removable; a decision (or an
+                // unexplained theory) literal at level > 0 blocks removal.
+                let implied = match self.trail.reason(rvar) {
+                    Reason::Propagation(_) => true,
+                    Reason::Theory => self.theory_reason_tail(rvar).is_some(),
+                    Reason::Decision => false,
+                };
+                if !implied {
                     redundant = false;
                     break;
                 }
@@ -1035,6 +1152,29 @@ impl Solver {
                                 counter += 1;
                             } else {
                                 // Add the literal itself to the learned clause
+                                self.learnt.push(lit);
+                            }
+                        }
+                    }
+                } else if counter > 0
+                    && let Reason::Theory = self.trail.reason(var)
+                    && let Some(tail) = self.theory_reason_tail(var).cloned()
+                {
+                    // Lazily explained theory propagation: resolve through the
+                    // stored tail (exactly the literals a materialized reason
+                    // clause would carry after its head; the head – the TRUE
+                    // literal `current_lit` – is absent, so no skip is needed).
+                    for &lit in &tail {
+                        let reason_var = lit.var();
+                        let level = self.trail.level(reason_var);
+
+                        if !self.seen[reason_var.index()] && level > 0 {
+                            self.seen[reason_var.index()] = true;
+                            vars_to_bump.push(reason_var);
+
+                            if level == current_level {
+                                counter += 1;
+                            } else {
                                 self.learnt.push(lit);
                             }
                         }

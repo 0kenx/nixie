@@ -4,6 +4,17 @@ use super::*;
 use smallvec::SmallVec;
 use std::time::Instant;
 
+/// How many materialized theory-reason clauses mark a "propagation storm"
+/// workload, after which further theory propagations keep lazy explanations
+/// (see [`Solver::theory_lazy_reasons_enabled`]).  Calibrated against the QF_UF
+/// quasigroup family: medium inputs fire up to ~0.4M equality-atom propagations
+/// and run fastest with every reason materialized (BCP re-derives them for
+/// free after backtracks); the storm outlier fires 7.68M and loses ~1.5× to
+/// the clause-database bloat.  1M sits an order of magnitude above the medium
+/// files' entire workload and ~13% into the storm, so it flips only the inputs
+/// that are actually drowning.
+pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
+
 impl Solver {
     /// Install the consequence of a freshly learned clause on the trail.
     ///
@@ -99,6 +110,33 @@ impl Solver {
     /// Learn a clause and set up watches
     /// Includes on-the-fly subsumption check
     /// Tracks allocation via memory optimizer for size-class pool accounting
+    /// Feed one learned clause's LBD into the restart machinery: the cadical
+    /// per-mode glue EMAs (which drive the focused-mode restart condition) and
+    /// the reluctant-doubling tick (which drives stable-mode restarts).
+    ///
+    /// Called from **every** clause-learning path – `learn_clause` here and the
+    /// plain `solve()` loop's inline learner in `solver/mod.rs` – so both the
+    /// plain SAT search and the CDCL(T) search (`solve_with_theory`) restart on
+    /// the same signal.  Previously only `solve()` updated these, so
+    /// `solve_with_theory`'s Glucose restarts fired unconditionally every
+    /// `restart_interval` conflicts (the EMA gate read eternally-fresh zeros):
+    /// on the QF_UF quasigroup benchmarks that wiped the trail every 100
+    /// conflicts and the search needed ~45× more conflicts than Z3.
+    pub(super) fn note_learned_lbd(&mut self, lbd: u32) {
+        let l = f64::from(lbd);
+        self.glue_current.fast.update(l);
+        self.glue_current.slow.update(l);
+        self.reluctant.tick();
+        self.recent_lbd_sum += u64::from(lbd);
+        self.recent_lbd_count += 1;
+        self.global_lbd_sum += u64::from(lbd);
+        self.global_lbd_count += 1;
+        if self.recent_lbd_count >= 5000 {
+            self.recent_lbd_sum /= 2;
+            self.recent_lbd_count /= 2;
+        }
+    }
+
     pub(super) fn learn_clause(&mut self, learnt_clause: SmallVec<[Lit; 16]>) {
         // Track allocation in memory optimizer for pool accounting
         let _pool_buf = self.memory_optimizer.allocate(learnt_clause.len());
@@ -120,6 +158,7 @@ impl Solver {
         } else if learnt_clause.len() == 2 {
             // Binary learned clause - add to binary implication graph
             let lbd = self.compute_lbd(&learnt_clause);
+            self.note_learned_lbd(lbd);
             let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
             self.proof_set_clause_id(clause_id, proof_id);
             self.stats.learned_clauses += 1;
@@ -149,6 +188,7 @@ impl Solver {
             self.assert_learned_clause(&learnt_clause, clause_id);
         } else {
             let lbd = self.compute_lbd(&learnt_clause);
+            self.note_learned_lbd(lbd);
             self.stats.total_lbd += lbd as u64;
             let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
             self.proof_set_clause_id(clause_id, proof_id);
@@ -246,6 +286,77 @@ impl Solver {
         }
     }
 
+    /// Whether theory propagations may keep **lazy** explanations (stored in
+    /// [`Solver::theory_prop_reasons`]) instead of materialized reason clauses.
+    ///
+    /// Adaptive: a materialized reason clause is a *BCP cache* – after any
+    /// backtrack the two watches re-derive the propagation nearly for free,
+    /// which beats re-explaining it through the theory – so small/medium
+    /// workloads want them materialized.  But a propagation-*storm* input
+    /// (all-different-heavy QF_UF: 7.68M propagations on
+    /// `QG-classification/qg7/gensys_icl_sk004`) buries BCP under millions of
+    /// reason clauses – on that file lazy explanations are 1.5× faster – so
+    /// once [`THEORY_LAZY_SWITCH_AFTER`] reason clauses have been materialized
+    /// the remainder keep lazy explanations.  The switch is one-way within a
+    /// solve (a storm does not un-prove itself) and both policies are sound at
+    /// any point, so the flip changes only performance.
+    ///
+    /// Always materializes while a proof tracer is connected: a DRAT/LRAT
+    /// proof must be verifiable from the clause database alone.
+    pub(super) fn theory_lazy_reasons_enabled(&self) -> bool {
+        self.proof.is_none() && self.theory_reason_clauses >= THEORY_LAZY_SWITCH_AFTER
+    }
+
+    /// Assign `lit` as a theory propagation whose explanation is kept
+    /// **lazy**: the antecedent literals a materialized reason clause would
+    /// have carried (`(lit ∨ ¬r0 ∨ …)`) are stored in
+    /// the `theory_prop_reasons` table instead of being added to the clause
+    /// database.  Conflict analysis and clause minimization resolve *through*
+    /// the stored tail exactly as through a reason clause, so the learned
+    /// clauses are identical to the materialized design – without the
+    /// per-propagation clause that made equality-atom propagation
+    /// counterproductive on propagation-dense CDCL(T) inputs (7.68M reason
+    /// clauses on `QG-classification/qg7/gensys_icl_sk004`, 2.7× slower than
+    /// not propagating at all; z3 keeps theory justifications lazy the same
+    /// way – `th_propagate` records the literal, `explain` is only consulted
+    /// when conflict resolution actually resolves through it).
+    ///
+    /// The caller must pass the reason literals in **true** form (each
+    /// currently TRUE on the trail, debug-asserted); the false forms ¬r_i are
+    /// what resolution iterates, so they are stored pre-negated.  Must not be
+    /// called while a proof is connected (see
+    /// `theory_lazy_reasons_enabled`).
+    pub fn assign_theory_propagation(&mut self, lit: Lit, reason_lits: SmallVec<[Lit; 8]>) {
+        debug_assert!(
+            self.theory_lazy_reasons_enabled(),
+            "theory reasons must be materialized while a proof is connected"
+        );
+        debug_assert!(
+            reason_lits
+                .iter()
+                .all(|&r| self.trail.lit_value(r).is_true()),
+            "every theory reason must be TRUE on the trail at assignment time"
+        );
+        let tail: SmallVec<[Lit; 8]> = reason_lits.iter().map(|l| l.negate()).collect();
+        self.theory_prop_reasons.insert(lit.var(), tail);
+        self.trail.assign_theory(lit);
+    }
+
+    /// The lazy antecedent tail of a theory-propagated variable, if it has
+    /// one.  Returns the literals in **false** form (¬r_i), i.e. exactly the
+    /// literals a materialized reason clause would carry after its head.
+    ///
+    /// Gated on the proof only (not on the adaptive switch): an entry exists
+    /// iff its variable was assigned lazily, and resolving through it stays
+    /// valid for as long as that assignment is live – the switch state is
+    /// irrelevant to the reader.
+    pub(super) fn theory_reason_tail(&self, var: Var) -> Option<&SmallVec<[Lit; 8]>> {
+        if self.proof.is_some() {
+            return None;
+        }
+        self.theory_prop_reasons.get(&var)
+    }
+
     /// Add a *reasoned* theory explanation clause for a propagation.
     ///
     /// The clause is `(propagated_lit ∨ ¬r0 ∨ … ∨ ¬r_{n-1})`, sound because the
@@ -333,13 +444,28 @@ impl Solver {
         let lbd = self.compute_lbd(&clause_lits);
         let clause_id = self.clauses.add_learned(clause_lits.iter().copied());
 
-        // Track as a Core-tier learned clause so it is accounted for (clause-db
-        // reduction, compaction, DRAT-minimality) and never aggressively
-        // deleted: a theory lemma is entailed for as long as the formula stands.
+        // Track as a deletable Local-tier learned clause. Two invariants make
+        // demotion sound:
+        //
+        // * The clause is a *theory lemma* – entailed by the formula – so
+        //   deleting it can only lose propagation strength, never soundness;
+        //   the CDCL(T) loop re-derives the fact through the theory on demand.
+        // * While the propagated literal sits on the trail, the clause is its
+        //   `Reason::Propagation`, and `reduce_clause_database` never deletes a
+        //   clause that is the current reason of its asserting literal – so
+        //   conflict analysis can never dereference a deleted reason.
+        //
+        // Keeping these clauses in Core (the previous behaviour) materialized
+        // *every* equality-atom propagation as a permanent clause: hundreds of
+        // thousands of them on all-different-heavy QF_UF inputs, bloating the
+        // watch lists BCP scans and erasing the benefit of the propagation
+        // itself. Z3 attaches theory explanations as lazy justifications and
+        // only learns a clause when conflict resolution actually resolves
+        // through it; deletable reasons approximate that laziness while keeping
+        // the `Reason::Propagation(ClauseId)` architecture.
         self.learned_clause_ids.push(clause_id);
         if let Some(clause) = self.clauses.get_mut(clause_id) {
             clause.lbd = lbd;
-            clause.promote_to_core();
         }
 
         // Proof: the explanation clause is a valid theory lemma (recorded with an
@@ -528,13 +654,48 @@ impl Solver {
             self.conflicts_since_deletion = 0;
         }
 
-        if self.stats.conflicts >= self.restart_threshold {
+        // Restart decision, mirroring the plain `solve()` loop's cadical-style
+        // logic exactly (see `Solver::solve` in `solver/mod.rs`): focused mode
+        // restarts only when the fast glue EMA degrades past the slow one
+        // (checked at most every 2 conflicts), stable mode uses the
+        // reluctant-doubling trigger, and the legacy strategies keep their
+        // interval semantics.  The previous body restarted whenever
+        // `conflicts >= restart_threshold` – and with the default Glucose
+        // strategy `restart()` extends that threshold by only the bare
+        // `restart_interval` (its min-gap), because the *degradation* decision
+        // was never evaluated here.  The CDCL(T) search therefore restarted
+        // unconditionally every 100 conflicts, which on structured QF_UF inputs
+        // (quasigroup existence) prevented any deep proof effort: ~45× more
+        // conflicts than Z3 on `gensys_icl_sk004`, with an average learned
+        // clause length of 34.
+        self.check_stabilize();
+        let do_restart = if self.config.enable_stabilize {
+            if self.stable {
+                self.reluctant.activated()
+            } else {
+                // Focused Glucose: check every 2 conflicts.
+                if self.stats.conflicts < self.lim_restart {
+                    false
+                } else {
+                    self.lim_restart = self.stats.conflicts.saturating_add(2);
+                    let slow = self.glue_current.slow.value();
+                    let fast = self.glue_current.fast.value();
+                    // 10% margin (cadical restartmarginfocused); guard against
+                    // the all-zero initial state.
+                    slow > 0.0 && fast >= 1.10 * slow
+                }
+            }
+        } else {
+            let past_threshold = self.stats.conflicts >= self.restart_threshold;
+            let is_glucose = matches!(self.config.restart_strategy, RestartStrategy::Glucose);
+            past_threshold && (!is_glucose || self.lbd_ema_fast >= 1.1 * self.lbd_ema_slow)
+        };
+        if do_restart {
             self.restart();
             // `restart()` lands at decision level 0 only when reuse-trail is
             // off; with reuse-trail on (the default) it backtracks only as far
-            // as `reuse_trail()`, so the level-0
-            // `debug_check_restart_consistency` invariant does not apply (same
-            // reasoning as the `_limited` variant below).
+            // as `reuse_trail()`, so the level-0 consistency invariant does not
+            // apply (same reasoning as in `Solver::solve`).
             if !self.config.reuse_trail {
                 self.debug_check_restart_consistency();
             }

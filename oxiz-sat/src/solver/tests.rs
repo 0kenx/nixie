@@ -797,3 +797,154 @@ fn add_clause_general_all_false_at_level_zero_is_a_genuine_conflict() {
     assert!(!solver.add_clause([Lit::pos(a), Lit::pos(b), Lit::pos(c)]));
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
+
+/// The CDCL(T) restart gate: every clause-learning path must feed the cadical
+/// glue EMAs (`note_learned_lbd`), so that `handle_clause_deletion_and_restart`
+/// can consult them for the Glucose strategy instead of restarting on the bare
+/// conflict-count threshold.  The previous wiring left the EMAs at zero in
+/// `solve_with_theory` (whose learning goes through `learn_clause`), so the
+/// Glucose arm there only ever enforced the `restart_interval` minimum gap – an
+/// unconditional restart every 100 conflicts, which wiped the trail on
+/// structured inputs and cost ~45× more conflicts than Z3 on QF_UF quasigroup
+/// problems.
+#[test]
+fn learned_clauses_feed_glue_emas_and_gate_restarts() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    let _ = (a, b);
+
+    assert_eq!(solver.glue_current.fast.value(), 0.0);
+    solver.note_learned_lbd(3);
+    assert!(
+        (solver.glue_current.fast.value() - 3.0).abs() < 1e-9,
+        "one LBD-3 clause moves the (freshly-initialised, unbiased) fast EMA to 3"
+    );
+    assert!((solver.glue_current.slow.value() - 3.0).abs() < 1e-9);
+}
+
+/// With a *healthy* (non-degrading) glue signal, the conflict handler must not
+/// restart merely because the bare conflict count crossed the interval: the
+/// Glucose decision belongs to the EMA comparison, not the threshold.
+#[test]
+fn healthy_glue_ema_suppresses_glucose_restart() {
+    let mut solver = Solver::with_config(SolverConfig {
+        restart_strategy: RestartStrategy::Glucose,
+        restart_interval: 1,
+        ..SolverConfig::default()
+    });
+    let a = solver.new_var();
+    assert!(solver.add_clause([Lit::pos(a), Lit::neg(a)]));
+
+    // Simulate a stable learning history: fast EMA strictly below the slow
+    // EMA's 10% margin, so the degradation condition is false.  The EMAs are
+    // moved to their target by repeated samples (an EMA converges towards its
+    // input, it is not assigned by one update).
+    for _ in 0..1000 {
+        solver.glue_current.fast.update(1.0);
+        solver.glue_current.slow.update(10.0);
+    }
+    solver.stats.conflicts = solver.restart_threshold + 5;
+
+    let restarts_before = solver.stats.restarts;
+    solver.handle_clause_deletion_and_restart();
+    assert_eq!(
+        solver.stats.restarts, restarts_before,
+        "fast=1.0 < 1.1*slow=11.0 must not restart past the bare threshold"
+    );
+
+    // A degraded signal (fast 20% above slow) restarts.  Advance the conflict
+    // count past the every-2-conflicts check gate first.
+    solver.stats.conflicts += 2;
+    for _ in 0..1000 {
+        solver.glue_current.fast.update(12.0);
+    }
+    solver.handle_clause_deletion_and_restart();
+    assert_eq!(
+        solver.stats.restarts,
+        restarts_before + 1,
+        "fast=12.0 >= 1.1*slow=11.0 must restart"
+    );
+}
+
+/// A theory propagation explained **lazily** (`assign_theory_propagation`)
+/// must produce the *same* learned clause as the materialized design when a
+/// conflict resolves *through* it: the stored tail is exactly the literal
+/// tail of the reason clause `add_theory_reason_clause` would have added.
+///
+/// Setup: x@1, y@2 decided; at level 3, w is decided and then z is
+/// theory-propagated from x ∧ y.  The clause (¬x ∨ ¬y ∨ ¬z ∨ ¬w) conflicts
+/// with two level-3 literals (z, w), so 1-UIP must resolve through z's
+/// antecedents and learn over x, y, w only – in either design.
+#[test]
+fn lazy_theory_reason_resolves_like_a_materialized_clause() {
+    let build = |lazy: bool| -> SmallVec<[Lit; 16]> {
+        let mut solver = Solver::new();
+        let x = solver.new_var();
+        let y = solver.new_var();
+        let z = solver.new_var();
+        let w = solver.new_var();
+        // Original clause: (¬x ∨ ¬y ∨ ¬z ∨ ¬w) – falsified once all are true.
+        assert!(solver.add_clause([Lit::neg(x), Lit::neg(y), Lit::neg(z), Lit::neg(w),]));
+
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(x));
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(y));
+        assert!(solver.propagate().is_none());
+
+        solver.trail.new_decision_level();
+        solver.trail.assign_decision(Lit::pos(w));
+        let reasons: SmallVec<[Lit; 8]> = SmallVec::from_iter([Lit::pos(x), Lit::pos(y)]);
+        if lazy {
+            // Arm the adaptive switch so the lazy path is taken.
+            solver.theory_reason_clauses = super::learn::THEORY_LAZY_SWITCH_AFTER;
+            assert!(solver.theory_lazy_reasons_enabled());
+            solver.assign_theory_propagation(Lit::pos(z), reasons);
+        } else {
+            let cid = solver.add_theory_reason_clause(&reasons, Lit::pos(z));
+            solver.trail.assign_propagation(Lit::pos(z), cid);
+        }
+        assert!(solver.trail.lit_value(Lit::pos(z)).is_true());
+
+        // Propagation visits z's watch, finds the clause falsified, and
+        // returns the conflict id – exactly the flow the search uses.
+        let conflict = solver.propagate().expect("clause must be falsified");
+        let (level, learnt) = solver.analyze(conflict);
+        // Backtrack level = highest level among the non-asserting literals
+        // (x@1, y@2), not the asserting literal's own level.
+        assert_eq!(level, 2);
+        learnt
+    };
+
+    let materialized = build(false);
+    let lazy = build(true);
+    assert_eq!(
+        materialized, lazy,
+        "lazy and materialized theory reasons must learn the same clause"
+    );
+    // z was resolved out through its antecedents; x, y (the reasons) and w
+    // (the asserting literal) are what remain.
+    let vars: std::collections::HashSet<u32> = lazy.iter().map(|l| l.var().0).collect();
+    assert!(
+        vars.contains(&0) && vars.contains(&1) && vars.contains(&3),
+        "learnt = {lazy:?}"
+    );
+    assert!(
+        !vars.contains(&2),
+        "the theory-propagated literal must be resolved out"
+    );
+}
+
+/// The adaptive switch: below [`THEORY_LAZY_SWITCH_AFTER`] materialized
+/// reason clauses, propagations are materialized; at or above it, lazy.
+#[test]
+fn theory_lazy_switch_flips_at_the_configured_count() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    assert!(solver.add_clause([Lit::pos(a), Lit::neg(a)]));
+    assert!(!solver.theory_lazy_reasons_enabled());
+
+    solver.theory_reason_clauses = super::learn::THEORY_LAZY_SWITCH_AFTER;
+    assert!(solver.theory_lazy_reasons_enabled());
+}

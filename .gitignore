@@ -60,6 +60,12 @@ fuzz/artifacts/
 /satcomp2024/
 /satcomp2025/
 
+# Local bench / profiling artifacts (not the harness itself)
+perf.data
+perf.data.old
+/target-baseline/
+/target-bench/
+
 # Rustc ICE dumps
 rustc-ice-*.txt
 

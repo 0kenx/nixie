@@ -197,10 +197,30 @@ impl Solver {
                 let mut made_propagation = false;
                 for (lit, reason_lits) in theory_propagations {
                     if !self.trail.is_assigned(lit.var()) {
-                        // Add the two-watched reason clause and propagate at the
-                        // current level.
-                        let clause_id = self.add_theory_reason_clause(&reason_lits, lit);
-                        self.trail.assign_propagation(lit, clause_id);
+                        if self.theory_lazy_reasons_enabled() && !reason_lits.is_empty() {
+                            // Lazy explanation: no clause is materialized; the
+                            // antecedents live in `theory_prop_reasons` and are
+                            // resolved through only when conflict analysis
+                            // actually reaches this literal. (With a proof
+                            // connected, `add_theory_reason_clause` below keeps
+                            // the reason in the database where the checker can
+                            // see it.)
+                            self.assign_theory_propagation(lit, reason_lits);
+                        } else {
+                            // Materialize the two-watched reason clause and
+                            // propagate at the current level.  Each fire adds a
+                            // fresh clause by design: they are Local-tier (75%
+                            // deleted per reduction cycle), so the database
+                            // self-limits, and the surviving duplicates act as
+                            // deletion redundancy for hot lemmas – measured
+                            // dedup-with-reuse against this showed a single
+                            // reused clause gets deleted between fires and the
+                            // search loses the lemma (+30% conflicts on
+                            // propagation-storm inputs).
+                            let clause_id = self.add_theory_reason_clause(&reason_lits, lit);
+                            self.theory_reason_clauses += 1;
+                            self.trail.assign_propagation(lit, clause_id);
+                        }
                         made_propagation = true;
                     }
                 }
@@ -338,9 +358,15 @@ impl Solver {
                         } else {
                             for (lit, reason_lits) in props {
                                 if !self.trail.is_assigned(lit.var()) {
-                                    let clause_id =
-                                        self.add_theory_reason_clause(&reason_lits, lit);
-                                    self.trail.assign_propagation(lit, clause_id);
+                                    if self.theory_lazy_reasons_enabled() && !reason_lits.is_empty()
+                                    {
+                                        self.assign_theory_propagation(lit, reason_lits);
+                                    } else {
+                                        let clause_id =
+                                            self.add_theory_reason_clause(&reason_lits, lit);
+                                        self.theory_reason_clauses += 1;
+                                        self.trail.assign_propagation(lit, clause_id);
+                                    }
                                 }
                             }
                         }

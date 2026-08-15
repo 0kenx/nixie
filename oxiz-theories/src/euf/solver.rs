@@ -32,6 +32,13 @@ mod tests;
 /// congruence closure without consuming significant memory.
 const EUF_EXPL_CACHE_CAPACITY: usize = 1024;
 
+/// Bound on the pending forced-equality-atom queue.  Equality-atom propagation
+/// is *search guidance*: a dropped notification only delays the propagation
+/// until the decision machinery assigns the atom (at which point the theory
+/// refutes the wrong polarity), it never changes the verdict.  The bound keeps
+/// a long theory-replay (resync) from growing the queue without limit.
+const FORCED_EQ_QUEUE_CAP: usize = 1024;
+
 /// Records an insertion into sig_table or fingerprint_table for undo on pop().
 #[derive(Debug, Clone)]
 enum SigTrailEntry {
@@ -176,6 +183,46 @@ struct Diseq {
     rhs: u32,
     /// Reason for the disequality
     reason: TermId,
+    /// `ordered_pair(find(lhs), find(rhs))` as of the last `assert_diseq` or
+    /// pair-rewrite in `propagate`.  Kept in lockstep with the union-find so
+    /// [`EufSolver::are_proven_disequal`] can answer from the
+    /// `diseq_pair_counts` map in O(1) instead of re-walking the watch list
+    /// and re-finding both endpoints of every watched disequality per query.
+    cached_pair: (u32, u32),
+}
+
+/// Undo entry for mutations of the `diseq_pair_counts` map, replayed in LIFO
+/// order by `pop()`.
+#[derive(Debug, Clone, Copy)]
+enum DiseqPairTrailEntry {
+    /// `diseqs[idx]` was appended and its `cached_pair` key counted into the map.
+    /// Undo: decrement the count for `diseqs[idx].cached_pair` (the disequality
+    /// itself is truncated by the same pop).
+    Asserted { idx: u32 },
+    /// `diseqs[idx].cached_pair` was rewritten from `old` to its current value
+    /// by a merge.  Undo: decrement the current key, restore `old`, count it.
+    Rewrote { idx: u32, old: (u32, u32) },
+}
+
+/// A watch registered by the theory manager on a pair of nodes, fired when the
+/// pair becomes equal or proven disequal in the e-graph.
+///
+/// This is OxiZ's analogue of Z3 keeping `=`-applications as parents in the
+/// e-graph (`euf_egraph.cpp`: `reinsert_parents` → congruence merge of two
+/// equality enodes → `add_literal`): instead of rescanning every equality atom
+/// after each merge, the atoms are indexed on the *classes of their endpoints*
+/// and only the ones whose classes actually changed are revisited.
+#[derive(Debug, Clone, Copy)]
+pub struct EqAtomWatch {
+    /// First watched node.
+    pub a: u32,
+    /// Second watched node.
+    pub b: u32,
+    /// The SAT variable of the equality/disequality atom (opaque to EUF).
+    pub var: oxiz_sat::Var,
+    /// Whether the atom is an equality atom (`(= a b)`) as opposed to a
+    /// disequality atom (`(distinct a b)` / `(not (= a b))`).
+    pub is_eq: bool,
 }
 
 /// A merge reason: why two nodes became equal
@@ -267,6 +314,53 @@ pub struct EufSolver {
     diseq_watch_trail: Vec<u32>,
     /// Scope checkpoints into `diseq_watch_trail`, parallel to `sig_trail_limits`.
     diseq_watch_trail_limits: Vec<usize>,
+    /// Refcounted map from `ordered_pair(find(lhs), find(rhs))` of every *live*
+    /// asserted disequality to how many disequalities currently share that key.
+    /// Maintained incrementally: `assert_diseq` counts its key in, and every
+    /// merge rewrites the cached keys of the disequalities watched on either
+    /// merged class (a key can only change when one of its endpoint classes
+    /// merges, and the watch lists cover exactly those disequalities).  Lets
+    /// [`Self::are_proven_disequal`] answer with two root lookups + one hash
+    /// probe instead of walking (and re-finding) the whole per-class watch list.
+    diseq_pair_counts: FxHashMap<(u32, u32), u32>,
+    /// Undo trail for `diseq_pair_counts` mutations, replayed LIFO by `pop()`.
+    diseq_pair_trail: Vec<DiseqPairTrailEntry>,
+    /// Scope checkpoints into `diseq_pair_trail`, parallel to `sig_trail_limits`.
+    diseq_pair_trail_limits: Vec<usize>,
+    /// Per-disequality generation stamps used to deduplicate the walk of both
+    /// merged classes' watch lists during a merge event.
+    diseq_stamp: Vec<u64>,
+    /// Generation counter for `diseq_stamp`.  u64: the wrap case is not merely
+    /// unlikely but physically unreachable (each stamped merge costs at least a
+    /// few cycles, so 2^64 stamped merges exceeds any machine's lifetime), and
+    /// a wrap would make a stale stamp collide with the live generation and
+    /// silently skip a cached-pair rewrite.
+    diseq_stamp_gen: u64,
+    /// Watch lists for equality atoms, indexed by node id: every registered
+    /// [`EqAtomWatch`] whose endpoint `a` or `b` is currently in this node's
+    /// class.  Migrated on merge exactly like `use_list`, so a merge only
+    /// revisits the atoms whose classes changed – never the whole atom set.
+    atom_watch: Vec<Vec<EqAtomWatch>>,
+    /// Undo trail for `atom_watch` appends: the node whose list was extended.
+    atom_watch_trail: Vec<u32>,
+    /// Scope checkpoints into `atom_watch_trail`, parallel to `sig_trail_limits`.
+    atom_watch_trail_limits: Vec<usize>,
+    /// Atoms whose two endpoints just became equal or proven disequal, awaiting
+    /// the theory manager to turn them into SAT propagations.  Bounded: the
+    /// propagation is search guidance only (any dropped notification is later
+    /// rediscovered by the decision machinery), so a bound costs completeness
+    /// of *propagation*, never of the verdict.
+    forced_eq_queue: Vec<EqAtomWatch>,
+    /// Monotonic epoch, bumped on every `pop()`.  An atom is enqueued at most
+    /// once per epoch (see `atom_enqueued_epoch`): within one epoch – i.e.
+    /// between two backtracks – a delivered notification cannot become more
+    /// true, so re-triggering merges would only rebuild the same entry.  A pop
+    /// changes the epoch, making every atom re-eligible exactly when the SAT
+    /// core may have unassigned it.
+    atom_epoch: u64,
+    /// Epoch at which each variable's atom was last enqueued (indexed by
+    /// `Var::index()`), suppressing duplicate queue churn.
+    atom_enqueued_epoch: Vec<u64>,
     /// Index (into `diseqs`) of a disequality detected violated during a merge or
     /// at `assert_diseq`, awaiting `check_conflicts` to surface it. None = none.
     pending_diseq_conflict: Option<u32>,
@@ -391,6 +485,17 @@ impl EufSolver {
             diseq_watch: Vec::new(),
             diseq_watch_trail: Vec::new(),
             diseq_watch_trail_limits: Vec::new(),
+            diseq_pair_counts: FxHashMap::default(),
+            diseq_pair_trail: Vec::new(),
+            diseq_pair_trail_limits: Vec::new(),
+            diseq_stamp: Vec::new(),
+            diseq_stamp_gen: 0,
+            atom_watch: Vec::new(),
+            atom_watch_trail: Vec::new(),
+            atom_watch_trail_limits: Vec::new(),
+            forced_eq_queue: Vec::new(),
+            atom_epoch: 1,
+            atom_enqueued_epoch: Vec::new(),
             pending_diseq_conflict: None,
             pending_trail: Vec::new(),
             pending_trail_limits: Vec::new(),
@@ -533,17 +638,27 @@ impl EufSolver {
     /// Assert a disequality
     pub fn assert_diseq(&mut self, a: u32, b: u32, reason: TermId) {
         let idx = self.diseqs.len() as u32;
-        self.diseqs.push(Diseq {
-            lhs: a,
-            rhs: b,
-            reason,
-        });
         // Watch the disequality on each endpoint's current representative.
         // When either class later merges, `propagate` tests it for violation.
         // find_no_compress (read-only): the watch key is the current rep, and
         // migration on merge keeps it current, so we never need to mutate here.
         let ra = self.uf.find_no_compress(a);
         let rb = self.uf.find_no_compress(b);
+        let cached_pair = ordered_pair(ra, rb);
+        // Count the pair into the O(1) proven-disequality index (trailed).
+        let e = self.diseq_pair_counts.entry(cached_pair).or_insert(0);
+        *e = e.saturating_add(1);
+        if !self.diseq_pair_trail_limits.is_empty() {
+            self.diseq_pair_trail
+                .push(DiseqPairTrailEntry::Asserted { idx });
+        }
+        self.diseqs.push(Diseq {
+            lhs: a,
+            rhs: b,
+            reason,
+            cached_pair,
+        });
+        self.diseq_stamp.push(0);
         self.diseq_watch_push(ra, idx);
         if ra != rb {
             self.diseq_watch_push(rb, idx);
@@ -551,6 +666,96 @@ impl EufSolver {
             // Already equal: the new disequality is violated right now.
             self.pending_diseq_conflict = Some(idx);
         }
+        // The new disequality may make equality atoms between these two
+        // classes *proven disequal* right away: wake the atoms watched on
+        // either endpoint class so the manager can propagate them.
+        if ra != rb {
+            self.wake_atom_watch_on_diseq(ra, rb);
+        }
+    }
+
+    /// Test every equality atom watched between the two freshly
+    /// disequality-connected classes, enqueueing the forced ones.  An atom is
+    /// forced exactly when its near endpoint sits in one class and its far
+    /// endpoint in the other; such an atom is registered on **both** classes'
+    /// lists (side-ordered), so walking the shorter list alone finds them all –
+    /// entries whose far endpoint lies elsewhere cost one root lookup each and
+    /// are dropped.  The near endpoint's root is the list owner by the
+    /// side-ordering invariant of [`Self::watch_eq_atom`].
+    fn wake_atom_watch_on_diseq(&mut self, r1: u32, r2: u32) {
+        let (root, other) = {
+            let l1 = self.atom_watch.get(r1 as usize).map_or(0, Vec::len);
+            let l2 = self.atom_watch.get(r2 as usize).map_or(0, Vec::len);
+            if l1 <= l2 { (r1, r2) } else { (r2, r1) }
+        };
+        let len = self.atom_watch.get(root as usize).map_or(0, Vec::len);
+        for i in 0..len {
+            let w = self.atom_watch[root as usize][i];
+            if self.uf.find_no_compress(w.b) == other {
+                self.enqueue_forced_atom(w);
+            }
+        }
+    }
+
+    /// Enqueue `w` for SAT-side propagation, deduplicated per epoch: within one
+    /// epoch (between backtracks) an atom is delivered at most once, so
+    /// re-triggering merges cannot churn the queue with copies of entries the
+    /// manager has already consumed (or that are already assigned).
+    fn enqueue_forced_atom(&mut self, w: EqAtomWatch) {
+        if self.forced_eq_queue.len() >= FORCED_EQ_QUEUE_CAP {
+            return;
+        }
+        let slot = w.var.index();
+        if slot >= self.atom_enqueued_epoch.len() {
+            self.atom_enqueued_epoch.resize(slot + 1, 0);
+        }
+        if self.atom_enqueued_epoch[slot] == self.atom_epoch {
+            return;
+        }
+        self.atom_enqueued_epoch[slot] = self.atom_epoch;
+        self.forced_eq_queue.push(w);
+    }
+
+    /// Register an equality-atom watch on the classes of `a` and `b`.
+    ///
+    /// See the `EqAtomWatch` payload type.  Registration does not enqueue an already-forced
+    /// atom: triggers fire on the merges and disequality assertions that make
+    /// atoms forced, mirroring the previous rescan-based propagation's
+    /// behaviour (which likewise only observed state *changes*).
+    ///
+    /// Each list copy is stored *side-ordered*: the entry's `a` endpoint is the
+    /// one whose class owns the list it sits on (`find(a) == list owner`), and
+    /// `b` is the far endpoint.  The watch lists migrate with their classes on
+    /// every merge (exactly like `use_list`/`diseq_watch`), so the invariant
+    /// holds for as long as the entry lives.  It is what lets the trigger and
+    /// wake walks find only the far endpoint's root – one union-find walk per
+    /// entry instead of two.  A hypothetical invariant violation can only miss
+    /// or add a queue entry, and every queued entry is re-validated against
+    /// the live e-graph before it becomes a propagation, so trusting the
+    /// invariant never affects the verdict.
+    pub fn watch_eq_atom(&mut self, a: u32, b: u32, var: oxiz_sat::Var, is_eq: bool) {
+        let ra = self.uf.find_no_compress(a);
+        let rb = self.uf.find_no_compress(b);
+        self.atom_watch_push(ra, EqAtomWatch { a, b, var, is_eq });
+        if ra != rb {
+            self.atom_watch_push(
+                rb,
+                EqAtomWatch {
+                    a: b,
+                    b: a,
+                    var,
+                    is_eq,
+                },
+            );
+        }
+    }
+
+    /// Drain the queue of atoms whose endpoints became equal or proven
+    /// disequal.  The theory manager converts each into a SAT propagation with
+    /// an explanation; anything it does not consume is simply dropped (the
+    /// atoms stay registered, so a later merge of their classes re-triggers).
+    pub fn drain_forced_eq_atoms(&mut self) -> Vec<EqAtomWatch> {
+        core::mem::take(&mut self.forced_eq_queue)
     }
 
     /// Check if two terms are equivalent
@@ -581,25 +786,17 @@ impl EufSolver {
     /// classes of `a` and `b` (i.e. `a` and `b` are PROVEN disequal, not merely
     /// "not currently known equal").
     ///
-    /// Uses the per-representative `diseq_watch` so this is O(#diseqs on the
-    /// class), not O(#all asserted disequalities).
+    /// O(1): two root lookups plus one probe of `diseq_pair_counts`, whose keys
+    /// are exactly the `ordered_pair` of current roots of every live asserted
+    /// disequality (maintained by `assert_diseq` and rewritten on merge – see
+    /// `Diseq::cached_pair`).  The previous implementation walked the whole
+    /// per-class `diseq_watch` list and re-found both endpoints of every entry
+    /// per query, which dominated QF_UF runtime on all-different-heavy
+    /// benchmarks (quasigroup existence problems).
     pub fn are_proven_disequal(&self, a: u32, b: u32) -> bool {
         let ra = self.uf.find_no_compress(a);
         let rb = self.uf.find_no_compress(b);
-        if ra == rb {
-            return false;
-        }
-        let Some(watches) = self.diseq_watch.get(ra as usize) else {
-            return false;
-        };
-        watches.iter().any(|&idx| {
-            let Some(d) = self.diseqs.get(idx as usize) else {
-                return false;
-            };
-            let dl = self.uf.find_no_compress(d.lhs);
-            let dr = self.uf.find_no_compress(d.rhs);
-            (dl == ra && dr == rb) || (dl == rb && dr == ra)
-        })
+        ra != rb && self.diseq_pair_counts.contains_key(&ordered_pair(ra, rb))
     }
 
     /// Get the number of E-graph nodes
@@ -867,6 +1064,10 @@ impl Theory for EufSolver {
         // Disequality watch-list + pending-conflict checkpoints for pop().
         self.diseq_watch_trail_limits
             .push(self.diseq_watch_trail.len());
+        self.diseq_pair_trail_limits
+            .push(self.diseq_pair_trail.len());
+        self.atom_watch_trail_limits
+            .push(self.atom_watch_trail.len());
         self.pending_trail_limits.push(self.pending_trail.len());
         self.pending_trail.push(self.pending_diseq_conflict);
     }
@@ -875,14 +1076,52 @@ impl Theory for EufSolver {
         if let Some(state) = self.context_stack.pop() {
             let num_nodes = state.num_nodes;
 
+            // A new epoch begins: every equality atom becomes eligible for
+            // enqueue again (the SAT core may have unassigned it above the
+            // rollback point).  Cleared rather than stamped so a pop never has
+            // to touch the per-variable vector.
+            self.atom_epoch = self.atom_epoch.wrapping_add(1);
+
             // Every merge is applied to a fixed point before control leaves the
             // e-graph, so this queue is normally empty; clearing it makes that a
             // guarantee rather than an assumption, so no merge scheduled inside
             // the popped scope can be applied after it is gone.
             self.pending.clear();
 
+            // Rewind the proven-disequality index to the scope-entry state,
+            // BEFORE the disequality vector itself is truncated: every undo
+            // step reads `diseqs[idx].cached_pair`, including the
+            // `Asserted` entries whose disequality is about to vanish.
+            // LIFO replay of the rewrites restores both the pair counts and
+            // each disequality's cached key exactly (a key rewritten twice in
+            // the scope is unwound twice, ending at its scope-entry value).
+            if let Some(pair_limit) = self.diseq_pair_trail_limits.pop() {
+                while self.diseq_pair_trail.len() > pair_limit {
+                    match self.diseq_pair_trail.pop() {
+                        Some(DiseqPairTrailEntry::Asserted { idx }) => {
+                            if let Some(d) = self.diseqs.get(idx as usize) {
+                                let key = d.cached_pair;
+                                self.dec_diseq_pair(key);
+                            }
+                        }
+                        Some(DiseqPairTrailEntry::Rewrote { idx, old }) => {
+                            let cur = self
+                                .diseqs
+                                .get_mut(idx as usize)
+                                .map(|d| core::mem::replace(&mut d.cached_pair, old));
+                            if let Some(cur) = cur {
+                                self.dec_diseq_pair(cur);
+                                self.inc_diseq_pair(old);
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+
             self.nodes.truncate(num_nodes);
             self.diseqs.truncate(state.num_diseqs);
+            self.diseq_stamp.truncate(state.num_diseqs);
             self.uf.pop();
 
             // Also truncate related structures. Truncation removes the adjacency
@@ -892,6 +1131,7 @@ impl Theory for EufSolver {
             self.proof_forest.truncate(num_nodes);
             self.node_sig_key.truncate(num_nodes);
             self.diseq_watch.truncate(num_nodes);
+            self.atom_watch.truncate(num_nodes);
 
             // Rewind use_list_trail: for each append recorded during the popped
             // scope, pop exactly one entry off the recorded node's use-list.
@@ -936,6 +1176,18 @@ impl Theory for EufSolver {
                     };
                     if (rep as usize) < self.diseq_watch.len() {
                         self.diseq_watch[rep as usize].pop();
+                    }
+                }
+            }
+            // Rewind atom_watch_trail: same LIFO one-append-one-pop discipline
+            // for the equality-atom watch lists.
+            if let Some(aw_limit) = self.atom_watch_trail_limits.pop() {
+                while self.atom_watch_trail.len() > aw_limit {
+                    let Some(node) = self.atom_watch_trail.pop() else {
+                        break;
+                    };
+                    if (node as usize) < self.atom_watch.len() {
+                        self.atom_watch[node as usize].pop();
                     }
                 }
             }
@@ -1006,6 +1258,17 @@ impl Theory for EufSolver {
         self.diseq_watch.clear();
         self.diseq_watch_trail.clear();
         self.diseq_watch_trail_limits.clear();
+        self.diseq_pair_counts.clear();
+        self.diseq_pair_trail.clear();
+        self.diseq_pair_trail_limits.clear();
+        self.diseq_stamp.clear();
+        self.diseq_stamp_gen = 0;
+        self.atom_watch.clear();
+        self.atom_watch_trail.clear();
+        self.atom_watch_trail_limits.clear();
+        self.forced_eq_queue.clear();
+        self.atom_epoch = self.atom_epoch.wrapping_add(1);
+        self.atom_enqueued_epoch.clear();
         self.pending_diseq_conflict = None;
         self.pending_trail.clear();
         self.pending_trail_limits.clear();

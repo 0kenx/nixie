@@ -7,7 +7,8 @@
 //! bookkeeping in the parent module.
 
 use super::{
-    ENode, ENodeFingerprint, EufSolver, FunctionProperties, MergeEdge, MergeReason, SigTrailEntry,
+    DiseqPairTrailEntry, ENode, ENodeFingerprint, EqAtomWatch, EufSolver, FunctionProperties,
+    MergeEdge, MergeReason, SigTrailEntry, ordered_pair,
 };
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -144,6 +145,39 @@ impl EufSolver {
         self.diseq_watch[r].push(diseq_idx);
         if !self.diseq_watch_trail_limits.is_empty() {
             self.diseq_watch_trail.push(rep);
+        }
+    }
+
+    /// Append `w` to `node`'s equality-atom watch list, recording the append on
+    /// `atom_watch_trail` when a scope is active so `pop()` removes it.
+    /// Auto-sizes `atom_watch` to cover `node` (the vector parallels `nodes`).
+    #[inline]
+    pub(super) fn atom_watch_push(&mut self, node: u32, w: EqAtomWatch) {
+        let n = node as usize;
+        if n >= self.atom_watch.len() {
+            self.atom_watch.resize_with(n + 1, Vec::new);
+        }
+        self.atom_watch[n].push(w);
+        if !self.atom_watch_trail_limits.is_empty() {
+            self.atom_watch_trail.push(node);
+        }
+    }
+
+    /// Count `key` into the proven-disequality index.
+    #[inline]
+    pub(super) fn inc_diseq_pair(&mut self, key: (u32, u32)) {
+        let e = self.diseq_pair_counts.entry(key).or_insert(0);
+        *e = e.saturating_add(1);
+    }
+
+    /// Drop one count of `key` from the proven-disequality index.
+    #[inline]
+    pub(super) fn dec_diseq_pair(&mut self, key: (u32, u32)) {
+        if let Some(e) = self.diseq_pair_counts.get_mut(&key) {
+            *e = e.saturating_sub(1);
+            if *e == 0 {
+                self.diseq_pair_counts.remove(&key);
+            }
         }
     }
 
@@ -322,12 +356,63 @@ impl EufSolver {
             // Congruence closure: check for new merges
             let other_root = if new_root == root_a { root_b } else { root_a };
 
+            // ======== O(1) proven-disequality index maintenance ========
+            //
+            // Every live disequality watched on *either* merged class has a
+            // `cached_pair` naming `root_a` or `root_b`; rewrite those keys to
+            // `new_root` so `are_proven_disequal` stays an exact O(1) map
+            // probe.  A disequality can sit on both lists (one endpoint per
+            // class), so stamp-dedupe the walk of the two lists.  Walking only
+            // the loser's list (as the violation scan below does) would miss
+            // `(winner, elsewhere)` pairs, whose key also just changed.
+            self.diseq_stamp_gen = self.diseq_stamp_gen.wrapping_add(1);
+            for list_root in [new_root, other_root] {
+                let dw_len = self.diseq_watch.get(list_root as usize).map_or(0, Vec::len);
+                for i in 0..dw_len {
+                    let didx = self.diseq_watch[list_root as usize][i] as usize;
+                    if self.diseq_stamp.get(didx).copied() == Some(self.diseq_stamp_gen)
+                        || didx >= self.diseqs.len()
+                    {
+                        continue;
+                    }
+                    if let Some(s) = self.diseq_stamp.get_mut(didx) {
+                        *s = self.diseq_stamp_gen;
+                    }
+                    let old = self.diseqs[didx].cached_pair;
+                    let new = (
+                        if old.0 == root_a || old.0 == root_b {
+                            new_root
+                        } else {
+                            old.0
+                        },
+                        if old.1 == root_a || old.1 == root_b {
+                            new_root
+                        } else {
+                            old.1
+                        },
+                    );
+                    if new != old {
+                        self.dec_diseq_pair(old);
+                        self.inc_diseq_pair(new);
+                        self.diseqs[didx].cached_pair = new;
+                        if !self.diseq_pair_trail_limits.is_empty() {
+                            self.diseq_pair_trail.push(DiseqPairTrailEntry::Rewrote {
+                                idx: didx as u32,
+                                old,
+                            });
+                        }
+                    }
+                }
+            }
+
             // Eager disequality check: every disequality watched on the loser
             // class (`other_root`) has an endpoint whose class just merged into
             // `new_root`. Test each for violation (both endpoints now equal),
             // then copy it onto `new_root`'s watch list so future merges keep
             // testing it. This replaces check_conflicts' O(diseqs) full scan –
             // the dominant EUF cost – with O(watched-by-this-class) per merge.
+            // Violation now reads the freshly-rewritten `cached_pair`: both
+            // endpoints in one class ⟺ the pair collapsed to `(R, R)`.
             let dw_len = self
                 .diseq_watch
                 .get(other_root as usize)
@@ -335,12 +420,46 @@ impl EufSolver {
             for i in 0..dw_len {
                 let didx = self.diseq_watch[other_root as usize][i];
                 let d = &self.diseqs[didx as usize];
-                if self.pending_diseq_conflict.is_none()
-                    && self.uf.find_no_compress(d.lhs) == self.uf.find_no_compress(d.rhs)
-                {
+                if self.pending_diseq_conflict.is_none() && d.cached_pair.0 == d.cached_pair.1 {
                     self.pending_diseq_conflict = Some(didx);
                 }
                 self.diseq_watch_push(new_root, didx);
+            }
+
+            // ======== Equality-atom watch trigger + migration ========
+            // Atoms watched on *either* merged class may have had an endpoint's
+            // class change under it: re-test each for a forced value (equal or
+            // proven disequal) and enqueue it for the theory manager.  Walking
+            // only the loser's list would miss the atoms whose endpoint sits in
+            // the surviving class but whose *other* endpoint just became its
+            // disequality partner (the loser class carried a matching
+            // disequality) – the old rescan observed those via its touch test,
+            // so the walk covers both lists.  Duplicate delivery is suppressed
+            // by the per-epoch stamp inside `enqueue_forced_atom`.
+            //
+            // Both lists' entries have their near endpoint in what is now the
+            // merged class (root `new_root`) by the side-ordering invariant of
+            // `watch_eq_atom`, so one root lookup of the far endpoint decides:
+            // equal iff it also lands in `new_root`, proven-disequal iff the
+            // pair index holds `(new_root, far)`.
+            for list_root in [new_root, other_root] {
+                let aw_len = self.atom_watch.get(list_root as usize).map_or(0, Vec::len);
+                for i in 0..aw_len {
+                    let w = self.atom_watch[list_root as usize][i];
+                    let far = self.uf.find_no_compress(w.b);
+                    if far == new_root
+                        || self
+                            .diseq_pair_counts
+                            .contains_key(&ordered_pair(new_root, far))
+                    {
+                        self.enqueue_forced_atom(w);
+                    }
+                }
+            }
+            let aw_len = self.atom_watch.get(other_root as usize).map_or(0, Vec::len);
+            for i in 0..aw_len {
+                let w = self.atom_watch[other_root as usize][i];
+                self.atom_watch_push(new_root, w);
             }
 
             // ======== Optimization 1: Index-based use-list iteration ========

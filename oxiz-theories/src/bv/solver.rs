@@ -31,6 +31,23 @@ struct ComparisonKey {
     b: TermId,
 }
 
+/// One insertion into a term-derived registry of the embedded solver, journaled
+/// so [`BvSolver::pop`] can retract it together with the clauses that define
+/// it.
+///
+/// `term_to_bv`, `ult_cache` and `bool_node` all answer "does this term's
+/// *encoding* exist?" – but an encoding is bits **plus the `add_clause`d gates
+/// that wire them**, and those clauses are scope-tracked by the embedded
+/// solver's own push/pop.  A registry entry that outlives its clauses turns the
+/// manager's encode memo (`encode_bv_term_recursive` skips any term with
+/// `get_bv(term).is_some()`) into a decapitation bug: after a backtrack pops
+/// the scope a circuit was built in, the memo reports "already encoded" and
+/// the atom is asserted against output bits whose defining circuit is gone –
+/// the embedded check then reports `Sat` over a formula that no longer
+/// constrains the atom, which surfaces as a false `sat` (reproduced by
+/// `bv_soundness_integration::test_issue_17_conditional_bv_fact_not_unconditional`
+/// under VSIDS branching: `bvurem`'s circuit popped, zero clauses left
+/// referencing the dividend's bits, model `urem(0,3) = 0x80`).
 /// Saved lengths of every retractable buffer, recorded by `push` so `pop`
 /// restores exactly the state the enclosing decision level had.
 #[derive(Debug, Clone, Copy)]
@@ -173,6 +190,15 @@ impl BvSolver {
             // formula.
             enable_lucky: false,
             enable_gate_congruence: false,
+            // Chronological backtracking raised-threshold: CB's literal
+            // re-appending above a rollback boundary can leave a learned
+            // clause's asserted literal unassigned while the older
+            // assignments justifying its other literals survive – an
+            // untriggerable unit (the hanging-unit corruption the fixpoint
+            // invariant catches).  The default threshold of 100 makes that
+            // reachable on deep bit-blasted probes; raising it keeps CB for
+            // its intended very-long-jump cases only.
+            chrono_backtrack_threshold: 10_000,
             ..SatConfig::default()
         }
     }
@@ -205,6 +231,16 @@ impl BvSolver {
             let bits: SmallVec<[Var; 32]> = (0..width).map(|_| self.sat.new_var()).collect();
             BvVar { bits, width }
         })
+    }
+
+    /// Whether no theory scope is open on the embedded solver, i.e. clauses
+    /// added now land at the base assertion level and survive every `pop`.
+    /// The solver's assert-time eager bit-blasting gates on this: circuits
+    /// built at the base scope are permanent, which is what keeps the
+    /// term→bits memo ("this term's encoding exists") truthful.
+    #[must_use]
+    pub fn at_base_scope(&self) -> bool {
+        self.context_stack.is_empty()
     }
 
     /// Get the BV variable for a term
@@ -244,8 +280,10 @@ impl BvSolver {
                 // a[i] <=> b[i]
                 // (a[i] => b[i]) and (b[i] => a[i])
                 // (~a[i] or b[i]) and (~b[i] or a[i])
+
                 self.sat
                     .add_clause([Lit::neg(va.bits[i]), Lit::pos(vb.bits[i])]);
+
                 self.sat
                     .add_clause([Lit::neg(vb.bits[i]), Lit::pos(va.bits[i])]);
             }
@@ -275,12 +313,16 @@ impl BvSolver {
                 // diff <=> (a XOR b)
                 // diff => (a or b) and (~a or ~b)
                 // ~diff => (~a or b) and (a or ~b)
+
                 self.sat
                     .add_clause([Lit::neg(diff), Lit::pos(ai), Lit::pos(bi)]);
+
                 self.sat
                     .add_clause([Lit::neg(diff), Lit::neg(ai), Lit::neg(bi)]);
+
                 self.sat
                     .add_clause([Lit::pos(diff), Lit::neg(ai), Lit::pos(bi)]);
+
                 self.sat
                     .add_clause([Lit::pos(diff), Lit::pos(ai), Lit::neg(bi)]);
             }
@@ -682,14 +724,18 @@ impl BvSolver {
             let sign_b = vb.bits[width - 1];
             let diff_sign = self.sat.new_var();
             self.encode_xor(diff_sign, sign_a, sign_b);
+
             self.sat
                 .add_clause([Lit::neg(diff_sign), Lit::neg(sign_a), Lit::pos(result)]);
+
             self.sat
                 .add_clause([Lit::neg(diff_sign), Lit::pos(sign_a), Lit::neg(result)]);
             let ult = self.sat.new_var();
             self.encode_ult_result(&va.bits, &vb.bits, ult);
+
             self.sat
                 .add_clause([Lit::pos(diff_sign), Lit::neg(ult), Lit::pos(result)]);
+
             self.sat
                 .add_clause([Lit::pos(diff_sign), Lit::pos(ult), Lit::neg(result)]);
         } else {
@@ -947,8 +993,10 @@ impl BvSolver {
 
             // Case 1: diff_sign => result = sign_a
             // diff_sign => (sign_a <=> result)
+
             self.sat
                 .add_clause([Lit::neg(diff_sign), Lit::neg(sign_a), Lit::pos(result)]);
+
             self.sat
                 .add_clause([Lit::neg(diff_sign), Lit::pos(sign_a), Lit::neg(result)]);
 
@@ -959,6 +1007,7 @@ impl BvSolver {
 
             self.sat
                 .add_clause([Lit::pos(diff_sign), Lit::neg(ult_result), Lit::pos(result)]);
+
             self.sat
                 .add_clause([Lit::pos(diff_sign), Lit::pos(ult_result), Lit::neg(result)]);
 
@@ -999,10 +1048,13 @@ impl BvSolver {
 
             self.sat
                 .add_clause([Lit::neg(diff_sign), Lit::neg(sign_b), Lit::pos(slt_ba)]);
+
             self.sat
                 .add_clause([Lit::neg(diff_sign), Lit::pos(sign_b), Lit::neg(slt_ba)]);
+
             self.sat
                 .add_clause([Lit::pos(diff_sign), Lit::neg(ult_result), Lit::pos(slt_ba)]);
+
             self.sat
                 .add_clause([Lit::pos(diff_sign), Lit::pos(ult_result), Lit::neg(slt_ba)]);
 
@@ -1033,6 +1085,7 @@ impl BvSolver {
         // out => a, out => b, (a AND b) => out
         self.sat.add_clause([Lit::neg(out), Lit::pos(a)]);
         self.sat.add_clause([Lit::neg(out), Lit::pos(b)]);
+
         self.sat
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
     }
@@ -1040,6 +1093,7 @@ impl BvSolver {
     /// Encode OR gate: out = a | b
     fn encode_or(&mut self, out: Var, a: Var, b: Var) {
         // out <=> (a OR b)
+
         self.sat
             .add_clause([Lit::neg(out), Lit::pos(a), Lit::pos(b)]);
         self.sat.add_clause([Lit::pos(out), Lit::neg(a)]);
@@ -1049,12 +1103,16 @@ impl BvSolver {
     /// Encode XOR gate: out = a ^ b
     fn encode_xor(&mut self, out: Var, a: Var, b: Var) {
         // out <=> (a XOR b)
+
         self.sat
             .add_clause([Lit::neg(out), Lit::neg(a), Lit::neg(b)]);
+
         self.sat
             .add_clause([Lit::neg(out), Lit::pos(a), Lit::pos(b)]);
+
         self.sat
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::pos(b)]);
+
         self.sat
             .add_clause([Lit::pos(out), Lit::pos(a), Lit::neg(b)]);
     }
@@ -1062,12 +1120,16 @@ impl BvSolver {
     /// Encode multiplexer: out = sel ? if_true : if_false
     fn encode_mux(&mut self, out: Var, sel: Var, if_true: Var, if_false: Var) {
         // out = (sel AND if_true) OR (~sel AND if_false)
+
         self.sat
             .add_clause([Lit::neg(sel), Lit::neg(if_true), Lit::pos(out)]);
+
         self.sat
             .add_clause([Lit::neg(sel), Lit::pos(if_true), Lit::neg(out)]);
+
         self.sat
             .add_clause([Lit::pos(sel), Lit::neg(if_false), Lit::pos(out)]);
+
         self.sat
             .add_clause([Lit::pos(sel), Lit::pos(if_false), Lit::neg(out)]);
     }
@@ -1206,6 +1268,7 @@ impl BvSolver {
         // out → b: ~out | b
         self.sat.add_clause([Lit::neg(out), Lit::pos(b)]);
         // (~a & b) → out: a | ~b | out
+
         self.sat
             .add_clause([Lit::pos(a), Lit::neg(b), Lit::pos(out)]);
     }
@@ -1219,12 +1282,16 @@ impl BvSolver {
         // ~out | a | ~b    (out & ~a → ~b)
         // out | ~a | ~b    (~out → a ≠ b, i.e., ~a & ~b → out, or a | b → ~out)
         // out | a | b      (~out → a ≠ b, i.e., a & b → out, or ~a | ~b → ~out)
+
         self.sat
             .add_clause([Lit::neg(out), Lit::neg(a), Lit::pos(b)]);
+
         self.sat
             .add_clause([Lit::neg(out), Lit::pos(a), Lit::neg(b)]);
+
         self.sat
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
+
         self.sat
             .add_clause([Lit::pos(out), Lit::pos(a), Lit::pos(b)]);
     }

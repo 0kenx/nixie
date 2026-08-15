@@ -228,6 +228,13 @@ pub struct SolverConfig {
     /// Use VMTF (variable move-to-front) as the decision heuristic instead
     /// of VSIDS – cadical's default focused-mode branching.
     pub use_vmtf: bool,
+    /// Use the cadical focused-mode VMTF scores under the stable/focused
+    /// schedule (VMTF while focused, VSIDS while stable).  `false` runs VSIDS
+    /// in both modes – the z3 `smt_context` behaviour, which suits CDCL(T):
+    /// theory-aware branching benefit accumulates across mode switches, and
+    /// VMTF's move-to-front bursts lose focus on theory-propagated variables.
+    /// Pure-SAT callers keep the default `true` (cadical parity).
+    pub focused_vmtf: bool,
     /// Use VMTF (variable move-to-front) as the decision heuristic instead of
     /// VSIDS – cadical's default focused-mode branching. Conflict-involved
     /// variables are moved to the tail of a list; the next decision is the
@@ -342,6 +349,7 @@ impl Default for SolverConfig {
             stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
+            focused_vmtf: true,
             rephase_interval: 0,
             reuse_trail: true,
             enable_failed_literal_probing: true,
@@ -731,6 +739,26 @@ pub struct Solver {
     /// `unit_clauses_idx`) and RUP-chain assembly in conflict analysis. DRAT-only
     /// proofs leave this `false` – DRAT needs neither ids nor chains.
     pub(super) lrat: bool,
+    /// Lazy explanations for theory-propagated assignments: for each variable
+    /// assigned via [`Solver::assign_theory_propagation`], the antecedent
+    /// literal tail a materialized reason clause would have carried (every
+    /// literal FALSE on the trail at assignment time). Consulted by conflict
+    /// analysis and clause minimization to resolve *through* a theory
+    /// propagation without materializing its explanation as a clause – z3's
+    /// `th_propagate`/`explain` design. Only populated while
+    /// [`Solver::theory_lazy_reasons_enabled`] (a proof run materializes
+    /// reason clauses instead, because the proof needs them in the database).
+    ///
+    /// Entries are written immediately before the trail assignment and are
+    /// therefore exactly as current as the assignment they justify; an entry
+    /// whose variable has been unassigned is dead (nothing consults it, since
+    /// `Reason::Theory` is only observable while assigned) and is simply
+    /// overwritten by the next theory propagation of that variable. Bounded by
+    /// the variable count.
+    pub(super) theory_prop_reasons: rustc_hash::FxHashMap<Var, SmallVec<[Lit; 8]>>,
+    /// Materialized theory-reason clauses so far this solve.  Drives the
+    /// one-way lazy switch ([`Solver::theory_lazy_reasons_enabled`]).
+    pub(super) theory_reason_clauses: u64,
     /// True once drat_emit_empty has concluded the proof with the empty
     /// clause. Guards against double finalization (a second UNSAT solve
     /// emitting a second empty clause). Ported from v0.3.2's
@@ -864,6 +892,8 @@ impl Solver {
             max_conflicts: None,
             proof: None,
             lrat: false,
+            theory_prop_reasons: rustc_hash::FxHashMap::default(),
+            theory_reason_clauses: 0,
             clause_id: 0,
             clause_lrat_id: Vec::new(),
             unit_clauses_idx: Vec::new(),
@@ -1731,6 +1761,7 @@ impl Solver {
                 // Unit clauses must be assigned at level 0 to survive backtracking.
                 // After solve(), current_level may be > 0, so we must backtrack first.
                 let lit = clause_lits[0];
+
                 // Record the unit clause's LRAT id against its true literal so it
                 // can be referenced as an antecedent in RUP chains (`assign_original_unit`).
                 self.proof_set_unit_id(lit.to_dimacs(), proof_oid);
@@ -2527,6 +2558,22 @@ impl Solver {
     /// VMTF/LRB/CHB heaps stale, but `pick_branch_var` re-checks the flags on
     /// every decision so the VSIDS heap (kept warm by conflict bumping
     /// regardless of mode) is always current.
+    /// Whether focused-mode VMTF scores are active (see `focused_vmtf`).
+    #[must_use]
+    pub fn is_focused_vmtf_enabled(&self) -> bool {
+        self.config.focused_vmtf
+    }
+
+    /// Restore cadical focused-mode VMTF scores (undoing a CDCL(T)-level
+    /// `focused_vmtf = false` posture) mid-setup, before any search starts.
+    /// See the `focused_vmtf` field's docs.
+    pub fn restore_focused_vmtf(&mut self) {
+        self.config.focused_vmtf = true;
+    }
+
+    /// Force pure-VSIDS branching with no stable/focused schedule (legacy
+    /// posture used by the difference-logic routing; see
+    /// `route_branching_from_features`).
     pub fn set_branching_vsids(&mut self) {
         self.config.use_vmtf = false;
         self.config.use_lrb_branching = false;
@@ -2568,6 +2615,7 @@ impl Solver {
 
     /// Total number of clauses currently in the database (original + learned).
     #[must_use]
+    /// Total number of live clauses (original plus learned) in the database.
     pub fn num_clauses(&self) -> usize {
         self.clauses.len()
     }
@@ -2718,6 +2766,10 @@ impl Solver {
     pub fn reset(&mut self) {
         self.clauses = ClauseDatabase::new();
         self.trail.clear();
+        // The trail is empty now, so no `Reason::Theory` assignment is
+        // observable; drop the lazy explanations with it.
+        self.theory_prop_reasons.clear();
+        self.theory_reason_clauses = 0;
         self.watches.clear();
         self.vsids.clear();
         self.domain_priority.clear();

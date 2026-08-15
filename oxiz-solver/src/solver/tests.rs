@@ -2013,3 +2013,174 @@ fn test_random_push_pop_differential() {
         );
     }
 }
+
+/// The structural assertion encoder (`emit_assertion_clauses`) flattens the
+/// top-level Boolean skeleton of an assertion into clauses without auxiliary
+/// Tseitin variables.  These tests pin its semantics against the previous
+/// Tseitin-rooted shape: every combination of and/or/not/implies/true/false at
+/// an assertion root must yield exactly the same verdict, including roots that
+/// mix a flattenable skeleton with subformulas that still need encoding.
+#[test]
+fn structural_assertion_encoding_verdicts() {
+    /// Builder for one structural-encoding test case.
+    type CaseBuilder = Box<dyn Fn(&mut TermManager) -> TermId>;
+    let cases: Vec<(&str, CaseBuilder, SolverResult)> = vec![
+        (
+            "and of complementary literals",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let na = m.mk_not(a);
+                m.mk_and([a, na])
+            }),
+            SolverResult::Unsat,
+        ),
+        (
+            "or of a literal with its negation",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let na = m.mk_not(a);
+                m.mk_or([a, na])
+            }),
+            SolverResult::Sat,
+        ),
+        (
+            "negated conjunction = clause",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let b = m.mk_var("b", m.sorts.bool_sort);
+                let c = m.mk_var("c", m.sorts.bool_sort);
+                // ¬(a ∧ b ∧ c) plus a, b, c themselves: unsat.
+                let and = m.mk_and([a, b, c]);
+                let nand = m.mk_not(and);
+                m.mk_and([nand, a, b, c])
+            }),
+            SolverResult::Unsat,
+        ),
+        (
+            "nested or flattens into one clause",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let b = m.mk_var("b", m.sorts.bool_sort);
+                let c = m.mk_var("c", m.sorts.bool_sort);
+                // (a ∨ ((b ∨ c))) with all three forced false.
+                let inner = m.mk_or([b, c]);
+                let na = m.mk_not(a);
+                let nb = m.mk_not(b);
+                let nc = m.mk_not(c);
+                let outer = m.mk_or([a, inner]);
+                m.mk_and([na, nb, nc, outer])
+            }),
+            SolverResult::Unsat,
+        ),
+        (
+            "implies at the root",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let b = m.mk_var("b", m.sorts.bool_sort);
+                // (a → b) ∧ a ∧ ¬b.
+                let imp = m.mk_implies(a, b);
+                let nb = m.mk_not(b);
+                m.mk_and([imp, a, nb])
+            }),
+            SolverResult::Unsat,
+        ),
+        (
+            "negated implies splits",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let b = m.mk_var("b", m.sorts.bool_sort);
+                // ¬(a → b) = a ∧ ¬b, plus b: unsat.
+                let impl_term = m.mk_implies(a, b);
+                let nimpl = m.mk_not(impl_term);
+                m.mk_and([nimpl, b])
+            }),
+            SolverResult::Unsat,
+        ),
+        (
+            "true absorbs, false refutes",
+            Box::new(|m| {
+                let a = m.mk_var("a", m.sorts.bool_sort);
+                let t = m.mk_true();
+                let or_a_f = m.mk_or([a, m.mk_false()]);
+                m.mk_and([t, a, or_a_f])
+            }),
+            SolverResult::Sat,
+        ),
+        (
+            "not(true) at the root refutes",
+            Box::new(|m| m.mk_not(m.mk_true())),
+            SolverResult::Unsat,
+        ),
+        (
+            "deeply nested and/or skeleton over an unsat core",
+            Box::new(|m| {
+                let xs: Vec<_> = (0..4)
+                    .map(|i| m.mk_var(&format!("x{i}"), m.sorts.bool_sort))
+                    .collect();
+                // Every pairwise implication (xi → xj) plus x0 ∧ ¬x3.
+                let mut conj: Vec<TermId> = Vec::new();
+                for i in 0..4 {
+                    for j in 0..4 {
+                        if i < j {
+                            conj.push(m.mk_implies(xs[i], xs[j]));
+                        }
+                    }
+                }
+                let nx3 = m.mk_not(xs[3]);
+                conj.push(xs[0]);
+                conj.push(nx3);
+                m.mk_and(conj)
+            }),
+            SolverResult::Unsat,
+        ),
+    ];
+
+    for (name, build, expected) in cases {
+        let mut solver = Solver::new();
+        let mut manager = TermManager::new();
+        let t = build(&mut manager);
+        solver.assert(t, &mut manager);
+        let got = solver.check(&mut manager);
+        assert_eq!(got, expected, "case `{name}`");
+    }
+}
+
+/// The structural encoder must not mint an auxiliary variable for the
+/// assertion root itself: the top-level skeleton is pure clause structure.
+/// (Regression guard for the QF_UF quasigroup search-quality fix – the
+/// Tseitin-encoded skeleton carried ~5× the Boolean variables of the atoms.)
+#[test]
+fn structural_assertion_encoding_mints_no_root_variable() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let a = manager.mk_var("a", manager.sorts.bool_sort);
+    let b = manager.mk_var("b", manager.sorts.bool_sort);
+    let na = manager.mk_not(a);
+    let nb = manager.mk_not(b);
+    let or = manager.mk_or([a, b]);
+    let root = manager.mk_and([or, na, nb]);
+    solver.assert(root, &mut manager);
+    // Only the two atom variables exist: the `or` and the `and` roots were
+    // emitted structurally.
+    assert_eq!(solver.sat.num_vars(), 2, "atom vars only, no Tseitin roots");
+    assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
+}
+
+/// A theory-equality atom inside the flattened skeleton keeps its theory
+/// constraint (the watch-based propagation and EUF conflict paths depend on
+/// `Constraint::Eq` being recorded for it).
+#[test]
+fn structural_assertion_keeps_theory_atoms_in_skeleton() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let sort = manager.sorts.int_sort;
+    let x = manager.mk_var("x", sort);
+    let y = manager.mk_var("y", sort);
+    let x_eq_y = manager.mk_eq(x, y);
+    // (x = y ∧ ¬(x = y)) asserted as a conjunction: unsat, and the equality
+    // atom inside the skeleton must still be a theory atom.
+    let nx_eq_y = manager.mk_not(x_eq_y);
+    let root = manager.mk_and([x_eq_y, nx_eq_y]);
+    solver.assert(root, &mut manager);
+    assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
+}

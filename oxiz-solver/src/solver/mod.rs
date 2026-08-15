@@ -463,6 +463,12 @@ impl Solver {
             restart_strategy: config.restart_strategy,
             enable_inprocessing: config.enable_inprocessing,
             inprocessing_interval: config.inprocessing_interval,
+            // CDCL(T) branching: VSIDS in both stable and focused modes (z3's
+            // `smt_context` runs EVSIDS throughout).  cadical's
+            // focused-mode VMTF bursts lose focus on theory-propagated
+            // variables; measured 91:45 for VSIDS-everywhere vs
+            // VMTF-focused on a 150-file QF_UF sample.
+            focused_vmtf: false,
             external_branching: if config.enable_domain_first_branching {
                 Some(priority_heuristic)
             } else {
