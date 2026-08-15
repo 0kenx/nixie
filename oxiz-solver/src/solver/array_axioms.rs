@@ -10,31 +10,55 @@
 //! This module supplies the missing decision power as a *lazy* refinement loop
 //! driven from [`super::Solver::check`]: whenever the CDCL(T) core proposes a
 //! candidate model, [`Solver::instantiate_array_axioms`] inspects the array
-//! terms in that model and, for every array axiom instance the candidate does
-//! not already satisfy, asserts the corresponding ground lemma and asks the
-//! core to re-solve.  The three axiom families are:
+//! terms in that model and asserts every axiom instance the candidate needs,
+//! then asks the core to re-solve.  The families and – crucially – *when each
+//! fires* (mirroring Z3's `theory_array` / `theory_array_full`):
 //!
-//!   * **Read-over-write** – for every `select(store(b,i,v), j)` (directly or
-//!     through an asserted `B = store(b,i,v)` alias):
-//!     `select(store(b,i,v),j) = ite(i = j, v, select(b,j))`.
-//!   * **Extensionality** – for every array-sorted equality atom `a = b`, a
-//!     witness index `k` (fresh but *deterministic* per unordered pair) with
-//!     `a = b  ∨  select(a,k) != select(b,k)`.  When `a != b` is asserted this
-//!     forces a concrete differing index.
-//!   * **Select congruence** – for every array-sorted equality atom `a = b`
-//!     and every index `j` read on either side:
-//!     `a = b  ⇒  select(a,j) = select(b,j)`.
+//!   * **Read-over-write** – for every observed `select(store(b,i,v), j)`
+//!     (directly or through an asserted `B = store(b,i,v)` alias):
+//!     `select(store(b,i,v),j) = ite(i = j, v, select(b,j))`, flat-encoded.
+//!     Observed reads are instantiated eagerly (bounded by the input);
+//!     synthetic reads of the upward closure below are model-filtered.
+//!   * **Upward read-over-write** (Z3 `set_prop_upward` + `instantiate_axiom2b`)
+//!     – for a *connected* store chain (one an input array equality compares),
+//!     every index read anywhere below a link is lifted one level at a time
+//!     through the whole chain, as unguarded facts where the alias is a
+//!     level-0 unit.  This is what refutes the `storeinv` family: the asserted
+//!     chain equality must agree with the base reads pointwise.
+//!   * **Extensionality** – a witness index `k` (fresh but *deterministic* per
+//!     unordered pair) with `a = b ∨ select(a,k) != select(b,k)`, minted ONLY
+//!     for a *separated* pair (Z3 `new_diseq_eh`): an input-asserted array
+//!     disequality, a pair the finished search proved disequal in EUF, or a
+//!     pair whose equality atom the candidate model assigned false.  A pair
+//!     nothing separates is free to be equal in the model; minting its
+//!     witness anyway used to unfold whole store chains per chain link per
+//!     round (the deep `swap` / `storecomm` timeouts).
+//!   * **Interface equality atoms** (Z3 `mk_interface_eqs`) – for arrays that
+//!     appear in a cross-theory position (arguments of uninterpreted
+//!     applications like `g(a)` / `sk(a1,a2)`, or `select` indices), the pair's
+//!     equality atom is encoded so CDCL must decide the arrangement; a false
+//!     decision lands the pair in the separation set above next round.  This
+//!     is how a disequality derived through congruence (`g(a) != g(b)` forcing
+//!     `a != b` with no equality atom in the input) reaches its witness – the
+//!     Stump-Barrett-Dill-Levitt `array_incompleteness1` case.
+//!   * **Select congruence / write-index congruence** – `a = b ⇒
+//!     select(a,j) = select(b,j)` for INPUT equality atoms only: lemmas this
+//!     module asserts re-contain the same `Eq` atoms, and re-firing off those
+//!     copies multiplies reads without bound.  EUF congruence closure already
+//!     carries the consequence for every asserted equality whose select terms
+//!     exist; these clauses exist to materialise the reads that do not.
 //!
 //! Every asserted instance is a theorem of the (extensional) array theory, so
 //! adding it never changes satisfiability – it only removes models that violate
 //! array semantics.  Instances are deduplicated by their interned lemma term
-//! id, and the reachable instance set is finite (bounded by the store-subterm ×
-//! index-set product plus one witness per array pair), so the refinement loop
-//! in `check` terminates: each round either asserts a strictly new instance or
-//! reports that the candidate model is a genuine array model.
+//! id and each family's candidate set is finite, so the refinement loop in
+//! `check` terminates: each round either asserts/encodes something new or
+//! reports that the candidate model is a genuine array model (recorded as
+//! [`Solver::array_axioms_saturated`] for the Context-level honesty gate).
 //!
-//! Reference: Z3's `smt/theory_array.cpp` semantics (read-over-write and
-//! extensionality axiom instantiation).
+//! Reference: Z3's `src/smt/theory_array.cpp`, `theory_array_full.cpp`, and
+//! `theory_array_base.cpp` (`mk_interface_eqs`, `new_diseq_eh`,
+//! `set_prop_upward`).
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -61,6 +85,9 @@ impl Solver {
     /// atoms).
     pub(super) fn instantiate_array_axioms(&mut self, manager: &mut TermManager) -> bool {
         if self.array_axiom_instances.len() >= MAX_ARRAY_AXIOM_INSTANCES {
+            // Budget exhausted: NOT a fixpoint.  The caller must not mark the
+            // refinement saturated (`array_axioms_saturated` stays `false` so
+            // the Context honesty gate keeps guarding a `Sat` verdict).
             return false;
         }
 
@@ -68,21 +95,68 @@ impl Solver {
         // Walk both the user assertions and every axiom instance asserted so
         // far, so selects introduced by earlier read-over-write / extensionality
         // lemmas seed further instantiation (saturation).
-        let roots: Vec<TermId> = self
-            .assertions
-            .iter()
-            .copied()
-            .chain(self.array_axiom_instances.iter().copied())
-            .collect();
-
         let mut collected = ArrayStructure::default();
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
-        for &root in &roots {
-            collect_array_structure(root, manager, &mut visited, &mut collected);
+        for &root in &self.assertions {
+            collect_array_structure(root, true, manager, &mut visited, &mut collected);
+        }
+        for &root in self.array_axiom_instances.iter() {
+            collect_array_structure(root, false, manager, &mut visited, &mut collected);
         }
 
         if collected.selects.is_empty() && collected.eq_pairs.is_empty() {
             return false;
+        }
+
+        // ======== Phase 1.5: array-pair separation (the Z3 `new_diseq_eh`
+        // analogue) ========
+        // A pair of arrays needs an extensionality witness exactly when they
+        // are *separated* – asserted disequal by the input, proven disequal in
+        // the live EUF state of the search that just finished, or assigned a
+        // `false` equality atom by the candidate model.  This MUST be computed
+        // before any `encode` / `add_clause` below: asserting clauses
+        // backtracks the SAT core to root, which invalidates the saved model
+        // the query reads.
+        //
+        // The separation universe is the `Eq` atoms seen anywhere (input or
+        // lemma – a lemma-borne atom the model falsified still names a pair
+        // the search cares about) PLUS the interface pairs.  Base `(array,
+        // store-of-that-array)` pairs are deliberately NOT queried: the
+        // select-congruence clauses over those pairs re-contain their `Eq`
+        // atom, SAT satisfies the implication by deciding the atom false, and
+        // reading that free decision back as a *demanded* separation mints
+        // witnesses for every chain link of every store chain – the cascade
+        // this rework exists to kill.
+        let mut interface_pairs: Vec<(TermId, TermId)> = Vec::new();
+        {
+            let mut interface_arrays = collected.interface_arrays.clone();
+            interface_arrays.sort_by_key(|t| t.raw());
+            interface_arrays.dedup();
+            let mut i = 0;
+            while i < interface_arrays.len() {
+                let mut j = i + 1;
+                while j < interface_arrays.len() {
+                    let (a, b) = (interface_arrays[i], interface_arrays[j]);
+                    j += 1;
+                    if let (Some(da), Some(db)) = (manager.get(a), manager.get(b))
+                        && da.sort == db.sort
+                    {
+                        interface_pairs.push((a, b));
+                    }
+                }
+                i += 1;
+            }
+        }
+        let mut separated_pairs: FxHashSet<(TermId, TermId)> =
+            collected.asserted_diseq_pairs.clone();
+        for &(a, b) in collected.eq_pairs.iter().chain(interface_pairs.iter()) {
+            let key = unordered_pair(a, b);
+            if separated_pairs.contains(&key) {
+                continue;
+            }
+            if self.array_pair_separation(a, b, manager) != PairSeparation::None {
+                separated_pairs.insert(key);
+            }
         }
 
         // ======== Phase 2: build candidate ground axiom instances ========
@@ -90,25 +164,93 @@ impl Solver {
         // clauses can tell `build_read_over_write` which arrays need no eager
         // chain unfolding (the lever for deep `storecomm` chains).
         let mut candidates: Vec<TermId> = Vec::new();
-        let no_eager = build_extensionality_and_congruence(manager, &collected, &mut candidates);
-        build_read_over_write(manager, &collected, &no_eager, &mut candidates);
+        let no_eager = build_extensionality_and_congruence(
+            manager,
+            &collected,
+            &separated_pairs,
+            &interface_pairs,
+            &mut candidates,
+        );
+        // The upward closure runs FIRST: it defines synthetic reads one
+        // chain level at a time, and the reads it defines must not also pay a
+        // full flat chain-unfold in `build_read_over_write` (that duplication
+        // is what made deep `storeinv` sat goals re-solve a formula several
+        // times the size of the input).  Its candidates are a SEPARATE list:
+        // they are model-filtered in Phase 3 (see the note there), unlike the
+        // observed-read families.
+        let mut upward_candidates: Vec<TermId> = Vec::new();
+        let upward_defined =
+            build_connected_upward_read_over_write(manager, &collected, &mut upward_candidates);
+        build_read_over_write(
+            manager,
+            &collected,
+            &no_eager,
+            &upward_defined,
+            &mut candidates,
+        );
         // Array-congruence at store-chain write indices: for an inline array
         // equality `(= A B)` whose store chain exposes write indices, assert
-        // the theorem `(= A B) ⇒ (= (select A i) (select B i))` per write index.
+        // the theorem `(= A B) => (= (select A i) (select B i))` per write index.
         // This is entailed by the array theory (it can change no verdict), but
         // it materialises `select(var, store_idx)` atoms the lazy
-        // read-over-write pass never creates when the variable is unread at the
-        // store index -- the ingredient a conditional `(= (store…) var)` inside
-        // an `ite` needs to propagate its read-over-write consequences (the
-        // `cvc/read8` shape).
+        // read-over-write pass never creates when the array variable is
+        // unread at the store index -- the ingredient a conditional
+        // `(= (store...) var)` inside an `ite` needs to propagate its
+        // read-over-write consequences (the `cvc/read8` shape).  Gated to
+        // INPUT atoms only: lemmas this module asserted (an extensionality
+        // witness clause, a congruence implication) carry the same `Eq`
+        // syntactically, and re-firing write-index congruence off those
+        // copies multiplies reads without bound -- the closure growth that
+        // stalled the refinement loop on deep `swap` / `storecomm` chains.
         build_equality_read_congruence(manager, &collected, &mut candidates);
 
-        // ======== Phase 3: filter (dedup + model) and assert ========
-        // Only instances the candidate model does not already *definitely*
-        // satisfy are added.  A `None` evaluation (opaque/undetermined) is
-        // treated as unsatisfied so completeness never depends on the model
-        // being able to evaluate a select – worst case this degenerates to
-        // eager instantiation, which is still sound and complete.
+        // ======== Phase 2.5: interface-equality atoms (Z3
+        // `mk_interface_eqs`) ========
+        // For every pair of *interface* arrays (cross-theory arguments, ite
+        // operands, select indices) whose equality atom is not yet encoded,
+        // encode it so the next search must decide the pair's arrangement.  A
+        // `true` decision merges the arrays in EUF (congruence then
+        // propagates / conflicts as usual); a `false` decision records the
+        // disequality, and the *next* refinement round's separation query
+        // mints the extensionality witness the pair then requires.  Encoding
+        // an atom adds no clause of its own, so this phase reports progress
+        // through `interface_atoms_encoded` and forces the re-solve from
+        // there -- without it the loop would accept a candidate model built
+        // while the fresh atoms sat unassigned.
+        let mut interface_atoms_encoded: usize = 0;
+        for &(a, b) in &interface_pairs {
+            let key = unordered_pair(a, b);
+            if separated_pairs.contains(&key) {
+                // Already separated: the witness clause covers the atom, and
+                // Z3 skips `is_diseq` pairs here too.
+                continue;
+            }
+            let atom = manager.mk_eq(a, b);
+            if self.term_to_var.contains_key(&atom) {
+                continue;
+            }
+            let _ = self.encode(atom, manager);
+            debug_assert!(self.term_to_var.contains_key(&atom));
+            interface_atoms_encoded += 1;
+        }
+
+        // ======== Phase 3: filter (dedup) and assert ========
+        // Deduplication (by interned lemma term) is the real limiter: every
+        // candidate below is a *theorem* of the array theory, so asserting it
+        // never changes satisfiability, and the candidate set is bounded by
+        // the input structure (observed reads × their store chains, plus the
+        // gated families above).
+        //
+        // The previous per-candidate model-satisfaction filter ("skip an
+        // instance the candidate model already evaluates to true") drip-fed
+        // read-over-write clauses into the core: a flat clause whose guard
+        // the model currently falsifies is `true` in the model, gets skipped,
+        // and only re-appears – one or two at a time – in later rounds after
+        // the search moves the offending index.  Deep chains paid one full
+        // re-solve per store level (the depth-60 `storecomm` family needed 60
+        // rounds and timed out); Z3 pays one *assertion* per level inside a
+        // single search. Asserting the whole bounded batch at once matches
+        // that cost shape.
         let mut to_add: Vec<TermId> = Vec::new();
         {
             let model = self.model.as_ref();
@@ -116,21 +258,47 @@ impl Solver {
                 if self.array_axiom_instances.contains(&inst) {
                     continue;
                 }
-                let already_satisfied = match model {
-                    Some(m) => matches!(
+                // Upward-closure instances keep the model filter: they are
+                // SYNTHETIC reads (no input atom mentions them), their count
+                // grows with chain depth x closed index set rather than with
+                // the input, and on satisfiable deep-chain goals almost every
+                // `i = j` guard is falsified by the model that eventually
+                // survives – asserting them all up front costs a re-solve
+                // over a formula many times the input (the depth-10
+                // `storeinv` sat side went from milliseconds to 16 s).  The
+                // drip-feeding risk that motivated removing the filter for
+                // observed reads does not apply the same way here: a skipped
+                // upward instance only re-appears when the model actually
+                // puts `i = j`, which is exactly when it is needed.
+                to_add.push(inst);
+            }
+            for &inst in &upward_candidates {
+                if self.array_axiom_instances.contains(&inst) {
+                    continue;
+                }
+                // Upward-closure instances keep the model filter: they are
+                // SYNTHETIC reads (no input atom mentions them), their count
+                // grows with chain depth x closed index set rather than with
+                // the input, and on satisfiable deep-chain goals almost every
+                // `i = j` guard is falsified by the model that eventually
+                // survives – asserting them all up front costs a re-solve
+                // over a formula many times the input (the depth-10
+                // `storeinv` sat side went from milliseconds to 16 s).  A
+                // skipped upward instance only re-appears when the model
+                // actually commits `i = j` – exactly when it is needed.
+                if let Some(m) = model
+                    && matches!(
                         self.eval_in_model(inst, m, manager, 0),
                         Some(EvalVal::Bool(true))
-                    ),
-                    None => false,
-                };
-                if already_satisfied {
+                    )
+                {
                     continue;
                 }
                 to_add.push(inst);
             }
         }
 
-        let mut added = false;
+        let mut added = interface_atoms_encoded > 0;
         for inst in to_add {
             if self.array_axiom_instances.len() >= MAX_ARRAY_AXIOM_INSTANCES {
                 break;
@@ -152,6 +320,38 @@ impl Solver {
 
         added
     }
+
+    /// Whether the two array terms are separated in the search that just
+    /// finished: PROVEN disequal in the live EUF state (an asserted-atom
+    /// disequality or a congruence-derived one – Z3's `new_diseq_eh`), or
+    /// assigned a `false` equality atom by the candidate model.  This is the
+    /// demand signal for the extensionality witness: a pair that is separated
+    /// *needs* a concrete differing index, which is exactly what the witness
+    /// clause supplies.  A pair that is not separated is free to be equal in
+    /// the model, so the witness adds nothing but cost.
+    ///
+    /// Must be called before this round asserts anything: `add_clause`
+    /// backtracks the SAT core to root, which drops the saved model the
+    /// atom-value query reads.
+    fn array_pair_separation(
+        &self,
+        a: TermId,
+        b: TermId,
+        manager: &mut TermManager,
+    ) -> PairSeparation {
+        if let (Some(na), Some(nb)) = (self.euf.term_to_node(a), self.euf.term_to_node(b))
+            && self.euf.are_proven_disequal(na, nb)
+        {
+            return PairSeparation::Euf;
+        }
+        let atom = manager.mk_eq(a, b);
+        if let Some(&var) = self.term_to_var.get(&atom)
+            && self.sat.model_value(var).is_false()
+        {
+            return PairSeparation::AtomFalse;
+        }
+        PairSeparation::None
+    }
 }
 
 /// A resolved (direct- or alias-chain) store write map: `(base_array,
@@ -169,11 +369,42 @@ struct ArrayStructure {
     selects: Vec<(TermId, TermId, TermId)>,
     /// Unordered array-sorted equality atoms `(a, b)` (`a != b` syntactically).
     eq_pairs: Vec<(TermId, TermId)>,
+    /// The subset of [`ArrayStructure::eq_pairs`] whose `Eq` atom occurs in
+    /// the *user assertions* (as opposed to inside a lemma this module
+    /// asserted earlier).  Instantiation families that exist to make a
+    /// specific input shape decidable – write-index read congruence for
+    /// conditional inline equalities – must not re-fire off lemma-borne
+    /// copies of the same `Eq`, which only re-seeds the closure.
+    input_eq_pairs: FxHashSet<(TermId, TermId)>,
+    /// Unordered array pairs `(a, b)` for which a DISEQUALITY `a ≠ b` is a
+    /// conjunct of the user assertions (`Not(Eq(a, b))` reached at negative
+    /// polarity through a chain of `and`s from an assertion root).  These are
+    /// the Z3 `new_diseq_eh` pairs: an extensionality witness is *required*
+    /// for them unconditionally.
+    asserted_diseq_pairs: FxHashSet<(TermId, TermId)>,
+    /// Array-sorted terms that appear in a *cross-theory* position: as an
+    /// argument of an uninterpreted application (`g(a)`, `sk(a1, a2)`), as an
+    /// operand of an array-valued `ite`, or as a `select` index (nested
+    /// arrays).  Mirrors Z3's `collect_shared_vars` (`is_shared` /
+    /// `is_select_arg`): the equality arrangement of exactly these arrays can
+    /// be forced apart by congruence without any read witnessing it, so their
+    /// pairwise equality atoms must be decided and, when decided false, be
+    /// given an extensionality witness.  Arrays NOT in this set never need a
+    /// witness: any separation between them is forced by reads on them, and
+    /// those reads' own axioms already carry it.
+    interface_arrays: Vec<TermId>,
     /// `array_variable -> store_term`s for every asserted `var = store(...)`.
     /// A variable may appear in several such assertions, so this is a list per
     /// variable – see [`record_alias`] for why dropping the second alias is
     /// unsound.
     aliases: FxHashMap<TermId, Vec<TermId>>,
+    /// The subset of [`ArrayStructure::aliases`] whose `var = store`
+    /// equality is a *level-0 conjunct* of the user assertions (positive
+    /// polarity under an `and`-spine from an assertion root).  Only these may
+    /// carry UNGUARDED upward read-over-write facts: a conditional alias
+    /// (inside an `ite` / `or` / `=>`) is not a fact, and reasoning as if it
+    /// were would fabricate lemmas.
+    asserted_aliases: FxHashSet<(TermId, TermId)>,
     /// `(base, store_result)` for every `store` term, used to seed
     /// base↔store extensionality (see [`collect_array_structure`]).
     store_base_pairs: Vec<(TermId, TermId)>,
@@ -192,26 +423,49 @@ struct ArrayStructure {
 /// exactly and with it the order of `selects`, `eq_pairs` and `read_indices`.
 fn collect_array_structure(
     term: TermId,
+    from_input: bool,
     manager: &TermManager,
     visited: &mut FxHashSet<TermId>,
     out: &mut ArrayStructure,
 ) {
-    // The stack carries a polarity flag (`true` = positive).  It flips under
-    // `Not`, so a top-level disequality `(not (= var store))` reaches its
-    // inner `Eq` at *negative* polarity.  That matters for `record_alias`:
-    // an alias is a *positive* `var = store` fact, and recording one from a
-    // disequality's inner equality would (a) make `is_self_alias` skip the
-    // fresh-witness extensionality that a disequality *needs*, and (b) feed
-    // alias-aware read-over-write a `var = store` premise that is actually
-    // false – both producing a spurious `sat` on an UNSAT goal (e.g.
-    // `store_noop_disequality_is_unsat`: `select(a,i) = v` with
-    // `a != store(a,i,v)` is UNSAT, but a phantom `a = store(a,i,v)` alias
-    // suppresses the witness and the contradiction is never derived).
+    // The stack carries three flags alongside the term:
+    //
+    // * `positive` (polarity, `true` = positive).  It flips under `Not`, so a
+    //   top-level disequality `(not (= var store))` reaches its inner `Eq` at
+    //   *negative* polarity.  That matters for `record_alias`: an alias is a
+    //   *positive* `var = store` fact, and recording one from a disequality's
+    //   inner equality would (a) make `is_self_alias` skip the fresh-witness
+    //   extensionality that a disequality *needs*, and (b) feed alias-aware
+    //   read-over-write a `var = store` premise that is actually false – both
+    //   producing a spurious `sat` on an UNSAT goal (e.g.
+    //   `store_noop_disequality_is_unsat`: `select(a,i) = v` with
+    //   `a != store(a,i,v)` is UNSAT, but a phantom `a = store(a,i,v)` alias
+    //   suppresses the witness and the contradiction is never derived).
+    // * `asserted`: the term is a conjunct of the walked root at this
+    //   polarity (`root` itself, and `and`-spines descending from it, keep the
+    //   flag; everything else – `or`, `=>`, `ite`, `not`-of-or, … – clears
+    //   it).  Only `(not (= a b))` at *asserted* negative polarity is a real
+    //   disequality fact; the same shape under an `or` is conditional and
+    //   certifies nothing.
+    // * `from_input`: the sub-term is reachable from a user assertion rather
+    //   than from a lemma this module asserted earlier.
+    //
     // `eq_pairs` is recorded for either polarity: the extensionality /
     // congruence lemmas are valid regardless, and a disequality *requires*
     // the witness lemma.
-    let mut stack: Vec<(TermId, bool)> = vec![(term, true)];
-    while let Some((term, positive)) = stack.pop() {
+    let mut stack: Vec<WalkFrame> = vec![WalkFrame {
+        term,
+        positive: true,
+        asserted: true,
+        from_input,
+    }];
+    while let Some(WalkFrame {
+        term,
+        positive,
+        asserted,
+        from_input,
+    }) = stack.pop()
+    {
         if !visited.insert(term) {
             continue;
         }
@@ -220,7 +474,22 @@ fn collect_array_structure(
         };
         match &data.kind {
             TermKind::Not(inner) => {
-                stack.push((*inner, !positive));
+                stack.push(WalkFrame {
+                    term: *inner,
+                    positive: !positive,
+                    asserted,
+                    from_input,
+                });
+            }
+            TermKind::And(args) => {
+                for &arg in args.iter().rev() {
+                    stack.push(WalkFrame {
+                        term: arg,
+                        positive,
+                        asserted,
+                        from_input,
+                    });
+                }
             }
             TermKind::Select(array, index) => {
                 out.selects.push((term, *array, *index));
@@ -228,8 +497,24 @@ fn collect_array_structure(
                 if !entry.contains(index) {
                     entry.push(*index);
                 }
-                stack.push((*index, positive));
-                stack.push((*array, positive));
+                // An array used as a `select` INDEX is a shared (interface)
+                // array in Z3's sense (`is_select_arg`): nested arrays whose
+                // equality arrangement cross-theory code can observe.
+                if is_array_sorted(*index, manager) {
+                    out.interface_arrays.push(*index);
+                }
+                stack.push(WalkFrame {
+                    term: *index,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
+                stack.push(WalkFrame {
+                    term: *array,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
             }
             TermKind::Store(base, index, value) => {
                 // Record the (base, store_result) pair for every store so
@@ -245,15 +530,39 @@ fn collect_array_structure(
                 if *base != term {
                     out.store_base_pairs.push((*base, term));
                 }
-                stack.push((*value, positive));
-                stack.push((*index, positive));
-                stack.push((*base, positive));
+                stack.push(WalkFrame {
+                    term: *value,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
+                stack.push(WalkFrame {
+                    term: *index,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
+                stack.push(WalkFrame {
+                    term: *base,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
             }
             TermKind::Eq(lhs, rhs) => {
                 // Record an array-sorted equality atom (either polarity: the
                 // extensionality / congruence lemmas are valid regardless).
                 if lhs != rhs && is_array_sorted(*lhs, manager) && is_array_sorted(*rhs, manager) {
                     out.eq_pairs.push((*lhs, *rhs));
+                    let key = unordered_pair(*lhs, *rhs);
+                    if from_input {
+                        out.input_eq_pairs.insert(key);
+                    }
+                    // A conjunct-level `(not (= a b))` is an asserted array
+                    // disequality – the Z3 `new_diseq_eh` trigger.
+                    if asserted && !positive {
+                        out.asserted_diseq_pairs.insert(key);
+                    }
                 }
                 // Record a `var = store(...)` alias for alias-aware
                 // read-over-write – POSITIVE equalities only.  A disequality
@@ -262,17 +571,113 @@ fn collect_array_structure(
                 if positive {
                     record_alias(*lhs, *rhs, manager, &mut out.aliases);
                     record_alias(*rhs, *lhs, manager, &mut out.aliases);
+                    // A level-0 `var = store(...)` conjunct is a fact: the
+                    // unguarded upward read-over-write pass below may rely on
+                    // it.  Conditional equalities record the alias (for
+                    // guarded reasoning) but not this flag.
+                    if asserted {
+                        mark_asserted_alias(*lhs, *rhs, manager, &mut out.asserted_aliases);
+                        mark_asserted_alias(*rhs, *lhs, manager, &mut out.asserted_aliases);
+                    }
                 }
-                stack.push((*rhs, positive));
-                stack.push((*lhs, positive));
+                stack.push(WalkFrame {
+                    term: *rhs,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
+                stack.push(WalkFrame {
+                    term: *lhs,
+                    positive,
+                    asserted: false,
+                    from_input,
+                });
+            }
+            TermKind::Ite(_, _, _) => {
+                // NOTE: array-valued `ite` operands are deliberately NOT
+                // recorded as interface arrays.  The `ite` encoding already
+                // ties the mux result to the selected branch
+                // (`cond => ite = then` / `~cond => ite = else`), so an
+                // arrangement between the operands becomes observable only
+                // through an equality atom mentioning the mux or a branch –
+                // and those atoms reach the separation query through
+                // `eq_pairs`.  Pre-emptively encoding every operand pair's
+                // atom (the read6 shape: dozens of nested array `ite`s)
+                // floods the search with arrangement decisions before it has
+                // any structure to decide them with, and stalls the
+                // refinement loop.
+                for child in get_children(&data.kind).into_iter().rev() {
+                    stack.push(WalkFrame {
+                        term: child,
+                        positive,
+                        asserted: false,
+                        from_input,
+                    });
+                }
+            }
+            TermKind::Apply { args, .. } => {
+                // An array-sorted argument of an uninterpreted application
+                // (`g(a)`, `sk(a1, a2)`) is a shared (interface) array: a
+                // disequality between the applications forces the arguments
+                // apart by congruence, with no array read witnessing it –
+                // exactly the separation for which an extensionality witness
+                // exists.  Z3's `is_shared` (parent of another theory's
+                // family).
+                for &arg in args.iter() {
+                    if is_array_sorted(arg, manager) {
+                        out.interface_arrays.push(arg);
+                    }
+                }
+                for child in get_children(&data.kind).into_iter().rev() {
+                    stack.push(WalkFrame {
+                        term: child,
+                        positive,
+                        asserted: false,
+                        from_input,
+                    });
+                }
             }
             _ => {
                 for child in get_children(&data.kind).into_iter().rev() {
-                    stack.push((child, positive));
+                    stack.push(WalkFrame {
+                        term: child,
+                        positive,
+                        asserted: false,
+                        from_input,
+                    });
                 }
             }
         }
     }
+}
+
+/// One work-list frame of [`collect_array_structure`].
+struct WalkFrame {
+    term: TermId,
+    positive: bool,
+    asserted: bool,
+    from_input: bool,
+}
+
+/// Canonical unordered pair key.
+fn unordered_pair(a: TermId, b: TermId) -> (TermId, TermId) {
+    if a.raw() <= b.raw() { (a, b) } else { (b, a) }
+}
+
+/// How a pair of arrays came to be separated in the search that just finished
+/// (see [`Solver::array_pair_separation`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PairSeparation {
+    /// Nothing separates the pair.
+    None,
+    /// PROVEN disequal in the live EUF state (asserted or congruence-derived)
+    /// – the Z3 `new_diseq_eh` case.
+    Euf,
+    /// The equality atom exists and the candidate model assigned it false.
+    /// Weaker than [`PairSeparation::Euf`]: the atom's value may still be a
+    /// free CDCL decision rather than a forced fact, but the search has
+    /// committed to the separation in the model being refined.
+    AtomFalse,
 }
 
 /// If `var_term` is a plain variable and `store_term` is a `store` expression,
@@ -285,6 +690,23 @@ fn collect_array_structure(
 /// get reconciled – a spurious `sat` for an UNSAT goal (Stump-Barrett-Dill-
 /// Levitt `array_incompleteness1` shape).  De-duplicate by `store_term` so a
 /// repeated identical assertion does not double-instantiate.
+/// If `(var_term, store_term)` is a `var = store(...)` pair, record it in the
+/// asserted-alias set (see [`ArrayStructure::asserted_aliases`]).
+fn mark_asserted_alias(
+    var_term: TermId,
+    store_term: TermId,
+    manager: &TermManager,
+    asserted: &mut FxHashSet<(TermId, TermId)>,
+) {
+    let (Some(var_data), Some(store_data)) = (manager.get(var_term), manager.get(store_term))
+    else {
+        return;
+    };
+    if matches!(var_data.kind, TermKind::Var(_)) && matches!(store_data.kind, TermKind::Store(..)) {
+        asserted.insert((var_term, store_term));
+    }
+}
+
 fn record_alias(
     var_term: TermId,
     store_term: TermId,
@@ -316,9 +738,17 @@ fn build_read_over_write(
     manager: &mut TermManager,
     collected: &ArrayStructure,
     no_eager: &FxHashSet<TermId>,
+    upward_defined: &FxHashSet<(TermId, TermId)>,
     candidates: &mut Vec<TermId>,
 ) {
     for &(select_term, array, index) in &collected.selects {
+        // A read whose (array, index) the upward closure already defined gets
+        // its read-over-write content ONE level at a time from those clauses
+        // (each level links to the next); re-flattening the whole chain here
+        // would duplicate that content depth-many times.
+        if upward_defined.contains(&(array, index)) {
+            continue;
+        }
         if let Some((base, store_idx, stored_val)) = as_store(array, manager) {
             // Direct read over a syntactic store chain.  Two paths:
             //
@@ -478,6 +908,14 @@ fn build_equality_read_congruence(
     candidates: &mut Vec<TermId>,
 ) {
     for &(a, b) in &collected.eq_pairs {
+        // INPUT atoms only.  Lemmas this module asserts (witness clauses,
+        // congruence implications) re-contain the same `Eq` atoms, and firing
+        // write-index congruence off those copies manufactures a fresh
+        // `select(var, store_idx)` pair per copy per round – the closure
+        // growth that stalled the refinement loop on deep chains.
+        if !collected.input_eq_pairs.contains(&unordered_pair(a, b)) {
+            continue;
+        }
         if is_unambiguous_alias_pair(a, b, &collected.aliases)
             || is_unambiguous_alias_pair(b, a, &collected.aliases)
         {
@@ -513,6 +951,203 @@ fn build_equality_read_congruence(
     }
 }
 
+/// Upward read-over-write through a LEVEL-0 alias (Z3
+/// `theory_array_full::set_prop_upward` + `instantiate_axiom2b`).
+///
+/// For every asserted `c = store(a, i, v)` and every index `j` the base `a` is
+/// read at, the read of the WRITE at `j` is exactly
+/// `ite(i = j, v, select(a, j))`.  Materialising `select(c, j)` with those two
+/// case-split facts (UNGUARDED – the alias is a level-0 unit) is what lets an
+/// asserted array equality between two aliased chains refute through the base
+/// reads: e.g. the `storeinv` family, where `a_1 = store(a1,i1,e_0)` and
+/// `a_1 = a_3` must force `select(a1, sk) = select(a2, sk)` – impossible with
+/// `e_5 != e_6`.  Without this pass `select(a_1, j)` never exists as a term,
+/// EUF congruence on `a_1 = a_3` has nothing to close over, and the goal goes
+/// through as a false `sat`.
+///
+/// This is also the *replacement* for the old base-pair select-congruence
+/// clauses (`a1 = store(a1,i1,e_0) => select(a1,j) = select(store(...),j)`):
+/// those guarded clauses mostly sat vacuously (the antecedent is a free `false`
+/// decision), and re-reading that free decision as a demanded separation
+/// minted witnesses for every chain link – the closure growth this rework
+/// exists to kill.  The upward facts carry the useful content without creating
+/// the separating atoms at all.
+///
+/// Conditional aliases (a `var = store` equality under an `ite` / `or` / `=>`)
+/// are NOT facts and are skipped here; the guarded per-alias lemmas of
+/// [`build_read_over_write`] remain their path.
+fn build_connected_upward_read_over_write(
+    manager: &mut TermManager,
+    collected: &ArrayStructure,
+    candidates: &mut Vec<TermId>,
+) -> FxHashSet<(TermId, TermId)> {
+    let mut upward_defined: FxHashSet<(TermId, TermId)> = FxHashSet::default();
+    let connected = connected_array_set(collected, manager);
+    if connected.is_empty() {
+        return upward_defined;
+    }
+    // Flow the observed read indices UP through the store/alias graph to a
+    // fixpoint BEFORE minting axioms, so a depth-N chain whose bottom link is
+    // read at `j` gets `select(link_k, j)` for EVERY level k in this single
+    // round.  Minting one level per refinement round instead costs one full
+    // re-solve per level (the depth-60 `storecomm` chains timed out exactly
+    // there), and the dataflow is finite: each iteration adds an index to
+    // some array's set, and both sets are bounded by the collected structure.
+    let mut idx_closure: FxHashMap<TermId, Vec<TermId>> = collected.read_indices.clone();
+    loop {
+        let mut changed = false;
+        // Store edge: `store(base, ...)`'s reads at `j` include the base's.
+        for &(base, store_term) in &collected.store_base_pairs {
+            flow_indices(&mut idx_closure, base, store_term, &mut changed);
+        }
+        // Alias edge: an asserted `var = store(base, ...)` makes the var and
+        // the store term the same array, so the var inherits the base's
+        // indices (and a chain through alias vars continues past the store
+        // edge's result).
+        for (&var, store_terms) in &collected.aliases {
+            for &store_term in store_terms {
+                let Some((base, _, _)) = as_store(store_term, manager) else {
+                    continue;
+                };
+                flow_indices(&mut idx_closure, base, var, &mut changed);
+                flow_indices(&mut idx_closure, base, store_term, &mut changed);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // Mint the upward read-over-write axioms.  Unlike the guarded congruence
+    // clauses these are UNCONDITIONAL theorems: `select(store(a,i,v), j) =
+    // ite(i = j, v, select(a, j))` needs no antecedent.  They are limited to
+    // CONNECTED chains – chains an input array equality compares – because a
+    // chain with no equality partner never needs its lower reads lifted, and
+    // lifting them anyway cascades a read per link per level.
+    for &(base, store_term) in &collected.store_base_pairs {
+        if !connected.contains(&base) {
+            continue;
+        }
+        let Some((_, store_idx, stored_val)) = as_store(store_term, manager) else {
+            continue;
+        };
+        let Some(indices) = idx_closure.get(&base) else {
+            continue;
+        };
+        for &j in indices {
+            let read_s = manager.mk_select(store_term, j);
+            let idx_eq = manager.mk_eq(store_idx, j);
+            let hit = manager.mk_eq(read_s, stored_val);
+            candidates.push(manager.mk_implies(idx_eq, hit));
+            let idx_neq = manager.mk_not(idx_eq);
+            let base_read = manager.mk_select(base, j);
+            let miss = manager.mk_eq(read_s, base_read);
+            candidates.push(manager.mk_implies(idx_neq, miss));
+            upward_defined.insert((store_term, j));
+        }
+    }
+    // Aliased form: an asserted `var = store(base, i, v)` also carries the
+    // read on the VAR itself (same axiom, and the var is what other input
+    // atoms mention).
+    for (&var, store_terms) in &collected.aliases {
+        if !connected.contains(&var) {
+            continue;
+        }
+        for &store_term in store_terms {
+            let Some((base, store_idx, stored_val)) = as_store(store_term, manager) else {
+                continue;
+            };
+            let Some(indices) = idx_closure.get(&base) else {
+                continue;
+            };
+            for &j in indices {
+                let read_v = manager.mk_select(var, j);
+                let idx_eq = manager.mk_eq(store_idx, j);
+                let hit = manager.mk_eq(read_v, stored_val);
+                candidates.push(manager.mk_implies(idx_eq, hit));
+                let idx_neq = manager.mk_not(idx_eq);
+                let base_read = manager.mk_select(base, j);
+                let miss = manager.mk_eq(read_v, base_read);
+                candidates.push(manager.mk_implies(idx_neq, miss));
+                upward_defined.insert((var, j));
+            }
+        }
+    }
+    upward_defined
+}
+
+/// Flow `from`'s closed read-index set into `to`'s (one dataflow step of the
+/// upward closure in [`build_connected_upward_read_over_write`]).
+fn flow_indices(
+    idx_closure: &mut FxHashMap<TermId, Vec<TermId>>,
+    from: TermId,
+    to: TermId,
+    changed: &mut bool,
+) {
+    let Some(src) = idx_closure.get(&from).cloned() else {
+        return;
+    };
+    let entry = idx_closure.entry(to).or_default();
+    for j in src {
+        if !entry.contains(&j) {
+            entry.push(j);
+            *changed = true;
+        }
+    }
+}
+
+/// The set of array terms whose store chains are *connected through an input
+/// array equality* – an `Eq` atom from the user assertions that is not itself
+/// a `var = store` alias definition.  Comparing two such chains pointwise
+/// (which is what the upward read pass materialises) is only ever needed
+/// between arrays the input actually equates; a chain with no equality
+/// partner never needs its lower reads lifted, and lifting them anyway
+/// cascades one read per link per level – the closure growth that stalls
+/// deep `swap` / `storecomm` chains.
+///
+/// Seeded from the operands of non-alias input `Eq` atoms (either polarity: a
+/// asserted disequality between two differently-based store chains is refuted
+/// by the very same pointwise comparison) and closed DOWN each operand's alias
+/// / store chain to the ultimate base, so every link that a compared read must
+/// traverse is a member.
+fn connected_array_set(collected: &ArrayStructure, manager: &TermManager) -> FxHashSet<TermId> {
+    let mut connected: FxHashSet<TermId> = FxHashSet::default();
+    let mut work: Vec<TermId> = Vec::new();
+    for &(a, b) in &collected.eq_pairs {
+        if !collected.input_eq_pairs.contains(&unordered_pair(a, b)) {
+            continue;
+        }
+        if is_alias_pair(a, b, &collected.aliases) || is_alias_pair(b, a, &collected.aliases) {
+            continue;
+        }
+        work.push(a);
+        work.push(b);
+    }
+    while let Some(t) = work.pop() {
+        if !connected.insert(t) {
+            continue;
+        }
+        // Follow the term's own store chain down, and any asserted alias
+        // definitions of it down their bases.
+        let mut cur = t;
+        while let Some((base, _, _)) = as_store(cur, manager) {
+            if !connected.insert(base) {
+                break;
+            }
+            cur = base;
+        }
+        if let Some(stores) = collected.aliases.get(&t) {
+            for &store_term in stores {
+                if let Some((base, _, _)) = as_store(store_term, manager)
+                    && !connected.contains(&base)
+                {
+                    work.push(base);
+                }
+            }
+        }
+    }
+    connected
+}
+
 /// Build the two read-over-write case-split implications for a
 /// `select(store(base, store_idx, stored_val), index)` read.
 fn row_implications(
@@ -544,6 +1179,8 @@ fn row_implications(
 fn build_extensionality_and_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
+    separated_pairs: &FxHashSet<(TermId, TermId)>,
+    interface_pairs: &[(TermId, TermId)],
     candidates: &mut Vec<TermId>,
 ) -> FxHashSet<TermId> {
     let mut finite_decided: FxHashSet<TermId> = FxHashSet::default();
@@ -569,12 +1206,24 @@ fn build_extensionality_and_congruence(
     // asserted (dis)equality atom and needs no base-extensionality.
     let aliased_stores: FxHashSet<TermId> = collected.aliases.values().flatten().copied().collect();
     let mut pairs: Vec<(TermId, TermId)> = collected.eq_pairs.clone();
+    // Base `(array, store-of-that-array)` pairs feed finite-disjunction; they
+    // are NOT eligible for a fresh-witness clause and no longer feed select
+    // congruence (`build_connected_upward_read_over_write` carries the alias-shape
+    // bridge as level-0 facts instead – see its doc comment).
     for &(base, result) in &collected.store_base_pairs {
         if aliased_stores.contains(&result)
             && !pairs.contains(&(base, result))
             && !pairs.contains(&(result, base))
         {
             pairs.push((base, result));
+        }
+    }
+    // Interface pairs take part in extensionality (witness) decisions only;
+    // finite-disjunction / congruence over them is covered by their own atoms.
+    for &(a, b) in interface_pairs {
+        let key = unordered_pair(a, b);
+        if !pairs.iter().any(|&(x, y)| unordered_pair(x, y) == key) {
+            pairs.push((a, b));
         }
     }
     for &(a, b) in &pairs {
@@ -602,14 +1251,26 @@ fn build_extensionality_and_congruence(
             }
         }
         // Extensionality: a = b ∨ select(a,k) != select(b,k), with a fresh but
-        // deterministic witness index per unordered pair.  SKIPPED for a
-        // *self-alias* pair – one whose `a = b` IS an asserted alias equality
-        // (`(= var store...)` collected in [`ArrayStructure::aliases`]).  There
-        // `a = b` is a level-0 fact, so the witness clause `a = b ∨ ...` is
-        // trivially satisfied and adds nothing; its only effect was to create
-        // the fresh-witness reads `select(a,k)` / `select(b,k)`, whose
-        // read-over-write unfolding drove the ~10-round cascade on `swap` /
-        // `storeinv` goals.  SOUND: the skipped clause is a tautology under the
+        // deterministic witness index per unordered pair.  Minted ONLY for a
+        // SEPARATED pair (`separated_pairs` – Z3's `new_diseq_eh` semantics):
+        // an asserted input disequality, a pair the finished search proved
+        // disequal in EUF, or a pair whose equality atom the candidate model
+        // assigned false.  Extensionality exists to give a *demanded*
+        // separation a concrete differing index; a pair nothing separates is
+        // free to be equal in the model, and minting its witness anyway used
+        // to unfold `select(a,k)` / `select(b,k)` through whole store chains
+        // for every (base, store-of-it) pair of every chain link – the ~10-round
+        // cascade that stalled deep `swap` / `storecomm` goals.  The demand
+        // signal is made available by the interface-equality phase (Z3
+        // `mk_interface_eqs`): cross-theory array pairs get their `a = b` atom
+        // encoded so CDCL decides it, and a false decision lands the pair in
+        // `separated_pairs` next round.
+        //
+        // Also skipped for a *self-alias* pair – one whose `a = b` IS an
+        // asserted alias equality (`(= var store...)` collected in
+        // [`ArrayStructure::aliases`]).  There `a = b` is a level-0 fact, so
+        // the witness clause `a = b ∨ ...` is trivially satisfied and adds
+        // nothing.  SOUND: the skipped clause is a tautology under the
         // level-0 alias, and the witness could never fire (`a ≠ b` is
         // impossible while the alias holds); the lemmas are retracted on `pop`
         // with the alias.
@@ -618,8 +1279,9 @@ fn build_extensionality_and_congruence(
         // A complete finite-disjunction clause also makes the witness redundant
         // (see [`finite_disjunction_extensionality`]: the flat value-disjunction
         // already decides `a = b`, and a fresh witness outside both store sets
-        // can never witness `a \u{2260} b` over a shared base).
+        // can never witness `a ≠ b` over a shared base).
         if !(is_self_alias || pair_complete)
+            && separated_pairs.contains(&unordered_pair(a, b))
             && let Some(domain) = array_domain(a, manager)
         {
             let witness = extensionality_witness(manager, a, b, domain);
@@ -652,7 +1314,19 @@ fn build_extensionality_and_congruence(
         }
 
         // Select congruence: a = b ⇒ select(a,j) = select(b,j) for every index
-        // read on either side.
+        // read on either side.  INPUT pairs only, and never for a base
+        // `(array, store-of-that-array)` pair: those `Eq` atoms do not occur
+        // in the input, so materialising them here hands SAT a free `false`
+        // decision (the implication is satisfied vacuously), which the next
+        // round's separation query then misreads as a *demanded* array
+        // separation – minting witnesses and unfolding whole chains for pairs
+        // nothing separates.  EUF congruence closure already carries the
+        // `a = b ⇒ select(a,j) = select(b,j)` consequence for every asserted
+        // equality; this clause only has to cover input atoms whose reads the
+        // lazy RoW pass would not otherwise connect.
+        if !collected.input_eq_pairs.contains(&unordered_pair(a, b)) {
+            continue;
+        }
         let mut indices: Vec<TermId> = Vec::new();
         if let Some(idxs) = collected.read_indices.get(&a) {
             for &idx in idxs {
@@ -985,7 +1659,7 @@ mod s8_iterative_tests {
                 let select = tm.mk_select(deep, idx);
                 let mut visited = FxHashSet::default();
                 let mut out = ArrayStructure::default();
-                collect_array_structure(select, &tm, &mut visited, &mut out);
+                collect_array_structure(select, true, &tm, &mut visited, &mut out);
                 out.selects.len()
             })
             .expect("spawn deep-nesting worker");
@@ -1004,7 +1678,7 @@ mod s8_iterative_tests {
         }
         let mut visited = FxHashSet::default();
         let mut out = ArrayStructure::default();
-        collect_array_structure(current, &tm, &mut visited, &mut out);
+        collect_array_structure(current, true, &tm, &mut visited, &mut out);
         assert!(out.selects.is_empty());
     }
 
@@ -1029,7 +1703,7 @@ mod s8_iterative_tests {
 
         let mut visited = FxHashSet::default();
         let mut out = ArrayStructure::default();
-        collect_array_structure(both, &tm, &mut visited, &mut out);
+        collect_array_structure(both, true, &tm, &mut visited, &mut out);
 
         // `b = store(a, i, v)` is recorded as an alias and as an array-sorted
         // equality pair; the two selects are recorded left to right.
@@ -1041,5 +1715,79 @@ mod s8_iterative_tests {
             "select order must match the recursive pre-order"
         );
         assert_eq!(out.read_indices.get(&a), Some(&vec![i, j]));
+        // The alias equality is a positive conjunct of the walked root, so it
+        // is recorded as an input pair AND as a level-0 (asserted) alias; the
+        // `select` equality is Int-sorted, so no pair is recorded for it.
+        assert!(out.input_eq_pairs.contains(&(b, store_a)));
+        assert!(out.asserted_aliases.contains(&(b, store_a)));
+        assert!(out.asserted_diseq_pairs.is_empty());
+    }
+
+    /// The asserted-context/polarity bookkeeping: only a `not(= a b)` that is
+    /// a conjunct of the walked root counts as an asserted array
+    /// disequality; the same shape under an `or` is conditional and must not
+    /// be recorded (it would mint an unconditional extensionality witness).
+    #[test]
+    fn s8_collect_array_structure_asserted_diseq_context() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let a = tm.mk_var("a", array_sort);
+        let b = tm.mk_var("b", array_sort);
+        let t = tm.mk_var("t", tm.sorts.bool_sort);
+        let eq_ab = tm.mk_eq(a, b);
+        let diseq = tm.mk_not(eq_ab);
+
+        // Conjunct of the root: an asserted disequality.
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        let root = tm.mk_and(vec![diseq, t]);
+        collect_array_structure(root, true, &tm, &mut visited, &mut out);
+        assert_eq!(
+            out.asserted_diseq_pairs,
+            FxHashSet::from_iter([(unordered_pair(a, b))])
+        );
+
+        // Under an `or`: conditional, not asserted.
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        let root = tm.mk_or(vec![diseq, t]);
+        collect_array_structure(root, true, &tm, &mut visited, &mut out);
+        assert!(out.asserted_diseq_pairs.is_empty());
+        // ... but it is still an `eq_pair` (valid congruence material).
+        assert_eq!(out.eq_pairs, vec![(a, b)]);
+    }
+
+    /// Cross-theory arguments are interface arrays; plain `select` array
+    /// operands are not (their arrangement is witnessed by the reads
+    /// themselves), and neither are array `ite` operands (see the walk's
+    /// `Ite` arm for why).
+    #[test]
+    fn s8_collect_array_structure_interface_arrays() {
+        let mut tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        let array_sort = tm.sorts.array(int_sort, int_sort);
+        let a = tm.mk_var("a", array_sort);
+        let b = tm.mk_var("b", array_sort);
+        let i = tm.mk_int(num_bigint::BigInt::from(1));
+
+        // g(a) with g uninterpreted: `a` is an interface array.
+        let ga = tm.mk_apply("g", vec![a], array_sort);
+        let _ = tm.mk_eq(ga, b);
+        let sel = tm.mk_select(a, i);
+        let _ = tm.mk_eq(sel, i);
+
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        collect_array_structure(sel, true, &tm, &mut visited, &mut out);
+        assert!(
+            out.interface_arrays.is_empty(),
+            "a select's array operand is not an interface array"
+        );
+
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        collect_array_structure(ga, true, &tm, &mut visited, &mut out);
+        assert_eq!(out.interface_arrays, vec![a]);
     }
 }

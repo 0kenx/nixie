@@ -183,5 +183,10 @@ strip = "symbols"
 inherits = "release"
 debug = true
 
+[profile.perf]
+inherits = "release"
+debug = true
+strip = "none"
+
 [profile.dev]
 opt-level = 1

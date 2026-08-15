@@ -374,3 +374,228 @@ fn a_cyclic_alias_returns_through_the_public_api() {
         "the cyclic alias is satisfiable (b = a)"
     );
 }
+
+// ===========================================================================
+// Array-axiom instantiation policy regressions (the QF_AUFLIA parity work).
+//
+// The lazy refinement loop used to mint an extensionality witness for every
+// (base, store-of-it) pair of every chain link and re-fire congruence off
+// lemma-borne `Eq` atoms, so deep `swap` / `storecomm` chains saturated the
+// simplex with thousands of witness-driven rows and timed out.  The fix
+// gates witnesses on *separation* (Z3's `new_diseq_eh` analogue) and carries
+// the alias-chain bridging as level-0 upward read-over-write facts instead.
+// Every test below is a shape that was wrong (false `sat`, `unknown`, or a
+// timeout) under some intermediate policy during that rework; z3's verdict
+// is noted for each.
+// ===========================================================================
+
+/// Two aliased store chains over a common base with distinct indices, values
+/// that let the chains differ, and the pre-skolemized extensionality
+/// disequality `select(A, sk A B) != select(B, sk A B)`.  `sat` (z3: sat).
+/// The `swap_invalid_*_sf_*` family: unconditional witnesses used to unfold
+/// both chains per link per round until timeout.
+#[test]
+fn swap_sf_two_skolem_chains_is_sat() {
+    let script = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a1 () (Array Int Int))\n",
+        "(declare-fun i1 () Int) (declare-fun i2 () Int) (declare-fun i3 () Int)\n",
+        "(declare-fun e1 () Int) (declare-fun e2 () Int) (declare-fun e3 () Int)\n",
+        "(declare-fun f1 () Int) (declare-fun f2 () Int)\n",
+        "(declare-fun a2 () (Array Int Int)) (declare-fun a3 () (Array Int Int))\n",
+        "(declare-fun a4 () (Array Int Int))\n",
+        "(declare-fun b2 () (Array Int Int)) (declare-fun b3 () (Array Int Int))\n",
+        "(declare-fun b4 () (Array Int Int))\n",
+        "(declare-fun sk ((Array Int Int) (Array Int Int)) Int)\n",
+        "(assert (not (= i1 i2))) (assert (not (= i1 i3))) (assert (not (= i2 i3)))\n",
+        "(assert (= a2 (store a1 i1 e1)))\n",
+        "(assert (= a3 (store a2 i2 e2)))\n",
+        "(assert (= a4 (store a3 i3 e3)))\n",
+        "(assert (= b2 (store a1 i2 f1)))\n",
+        "(assert (= b3 (store b2 i3 f2)))\n",
+        "(assert (= b4 (store b3 i1 e1)))\n",
+        "(assert (not (= (select a4 (sk a4 b4)) (select b4 (sk a4 b4)))))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(script), crate::SolverResult::Sat);
+}
+
+/// Depth-8 aliased chains whose write sets differ at every index, distinct
+/// indices, sk-disequality on the chain heads.  `sat` (z3: sat).  The
+/// `storecomm_invalid_*_sf_*` shape: the refinement loop used to grow the
+// select closure one level per round and time out on the depth-60 instances.
+#[test]
+fn storecomm_sf_deep_chains_is_sat() {
+    let mut script = String::from("(set-logic QF_AUFLIA)\n(declare-fun a1 () (Array Int Int))\n");
+    const N: usize = 8;
+    for k in 1..=N {
+        script.push_str(&format!(
+            "(declare-fun i{k} () Int)\n(declare-fun e{k} () Int)\n"
+        ));
+    }
+    script.push_str("(declare-fun sk ((Array Int Int) (Array Int Int)) Int)\n");
+    for a in 1..=N {
+        for b in (a + 1)..=N {
+            script.push_str(&format!("(assert (not (= i{a} i{b})))\n"));
+        }
+    }
+    let mut prev = "a1".to_string();
+    for k in 1..=N {
+        script.push_str(&format!("(declare-fun A{k} () (Array Int Int))\n"));
+        script.push_str(&format!("(assert (= A{k} (store {prev} i{k} e{k})))\n"));
+        prev = format!("A{k}");
+    }
+    let head_a = prev.clone();
+    let mut prev = "a1".to_string();
+    for k in 1..=N {
+        let reverse = N + 1 - k;
+        script.push_str(&format!("(declare-fun B{k} () (Array Int Int))\n"));
+        script.push_str(&format!(
+            "(assert (= B{k} (store {prev} i{k} e{reverse})))\n"
+        ));
+        prev = format!("B{k}");
+    }
+    let head_b = prev;
+    script.push_str(&format!(
+        "(assert (not (= (select {head_a} (sk {head_a} {head_b})) (select {head_b} (sk {head_a} {head_b})))))\n(check-sat)\n"
+    ));
+    assert_eq!(script_result(&script), crate::SolverResult::Sat);
+}
+
+/// The `storeinv` swap-invariant shape: two ALIASED chains that the input
+/// equates (`a_5 = a_7`) while a skolem-witnessed read disequality forces the
+/// bases apart.  `unsat` (z3: unsat).  Naive witness-only gating reported a
+/// false `sat` here: the refutation needs the upward read-over-write facts
+/// (`select(store(a1,i1,e_0), sk)` bridging the base reads through the
+/// asserted alias) plus EUF congruence on the asserted chain equality, not an
+/// extensionality witness.
+#[test]
+fn storeinv_sf_two_level_invariant_is_unsat() {
+    let script = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a1 () (Array Int Int))\n",
+        "(declare-fun a2 () (Array Int Int))\n",
+        "(declare-fun i1 () Int)\n(declare-fun i2 () Int)\n",
+        "(declare-fun a_1 () (Array Int Int))\n(declare-fun a_3 () (Array Int Int))\n",
+        "(declare-fun a_5 () (Array Int Int))\n(declare-fun a_7 () (Array Int Int))\n",
+        "(declare-fun e_0 () Int)\n(declare-fun e_2 () Int)\n",
+        "(declare-fun e_4 () Int)\n(declare-fun e_6 () Int)\n",
+        "(declare-fun e_9 () Int)\n(declare-fun e_10 () Int)\n(declare-fun i_8 () Int)\n",
+        "(declare-fun sk ((Array Int Int) (Array Int Int)) Int)\n",
+        "(assert (= a_1 (store a1 i1 e_0)))\n",
+        "(assert (= a_3 (store a2 i1 e_2)))\n",
+        "(assert (= a_5 (store a_1 i2 e_4)))\n",
+        "(assert (= a_7 (store a_3 i2 e_6)))\n",
+        "(assert (= e_0 (select a2 i1)))\n",
+        "(assert (= e_2 (select a1 i1)))\n",
+        "(assert (= e_4 (select a_3 i2)))\n",
+        "(assert (= e_6 (select a_1 i2)))\n",
+        "(assert (= e_9 (select a1 i_8)))\n",
+        "(assert (= e_10 (select a2 i_8)))\n",
+        "(assert (= i_8 (sk a1 a2)))\n",
+        "(assert (= a_5 a_7))\n",
+        "(assert (not (= e_9 e_10)))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(script), crate::SolverResult::Unsat);
+}
+
+/// The non-flattened `storeinv` shape: INLINE (unaliased) store chains
+/// equated by the input, sk-disequality on the bases.  `unsat` (z3: unsat).
+/// The upward pass must fire through stores with no alias variable at all –
+/// this and the sat-side variant below were honest `unknown`s before the
+/// generalised upward closure and the saturation-aware Context gate.
+#[test]
+fn storeinv_nf_inline_chains_is_unsat() {
+    let script = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a1 () (Array Int Int))\n",
+        "(declare-fun a2 () (Array Int Int))\n",
+        "(declare-fun i1 () Int)\n",
+        "(declare-fun sk ((Array Int Int) (Array Int Int)) Int)\n",
+        "(assert (= (store a1 i1 (select a2 i1)) (store a2 i1 (select a1 i1))))\n",
+        "(assert (let ((?v_0 (sk a1 a2)))\n",
+        "  (not (= (select a1 ?v_0) (select a2 ?v_0)))))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(script), crate::SolverResult::Unsat);
+}
+
+/// The satisfiable non-flattened `storeinv` variant (the invariant CAN hold
+/// while the bases differ outside both write sets).  `sat` (z3: sat).  The
+/// Context-level array honesty gate used to downgrade this to `unknown`
+/// even after the refinement loop certified the model; it must now trust a
+/// fixpoint (`array_axioms_saturated`).
+#[test]
+fn storeinv_nf_inline_chains_sat_side_stays_sat() {
+    let script = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a1 () (Array Int Int))\n",
+        "(declare-fun a2 () (Array Int Int))\n",
+        "(declare-fun i1 () Int)\n(declare-fun i2 () Int)\n",
+        "(declare-fun sk ((Array Int Int) (Array Int Int)) Int)\n",
+        "(assert (let ((?v_0 (store a2 i1 (select a1 i1)))\n",
+        "              (?v_1 (store a1 i1 (select a2 i1))))\n",
+        "  (= (store ?v_1 i1 (select ?v_0 i2))\n",
+        "     (store ?v_0 i2 (select ?v_1 i2)))))\n",
+        "(assert (let ((?v_0 (sk a1 a2)))\n",
+        "  (not (= (select a1 ?v_0) (select a2 ?v_0)))))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(script), crate::SolverResult::Sat);
+}
+
+/// Stump-Barrett-Dill-Levitt `array_incompleteness1`: two stores equated to
+/// one variable, `f(x) != f(y)` and `g(a) != g(b)`.  `unsat` (z3: unsat).
+/// The refutation needs an extensionality witness for `(a, b)` – a pair with
+/// NO equality atom in the input.  Demand for it arrives through the
+/// interface-equality machinery (both arrays are `g` arguments, so their
+/// equality atom gets encoded and decided false by the congruence conflict),
+/// which is exactly Z3's `mk_interface_eqs` + `new_diseq_eh` flow.
+#[test]
+fn array_incompleteness1_needs_interface_witness() {
+    let script = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a () (Array Int Int))\n",
+        "(declare-fun b () (Array Int Int))\n",
+        "(declare-fun v () Int)\n(declare-fun w () Int)\n",
+        "(declare-fun x () Int)\n(declare-fun y () Int)\n",
+        "(declare-fun g ((Array Int Int)) Int)\n",
+        "(declare-fun f (Int) Int)\n",
+        "(assert (and (= (store a x v) b)\n",
+        "             (= (store a y w) b)\n",
+        "             (not (= (f x) (f y)))\n",
+        "             (not (= (g a) (g b)))))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(script), crate::SolverResult::Unsat);
+}
+
+/// A conditional (ite-embedded) equality between a store and a variable,
+/// with `select(a, j)` and `select(b, j)` pinned to different values on the
+/// branch that makes the equality hold – the `cvc/read8` shape.  `unsat`
+/// (z3: unsat).  Guards the input-atom gating of write-index congruence: no
+/// input atom reads `select(store(a,i,v), j)`, so only the congruence clause
+/// `(= b (store a i v)) => (= (select b j) (select (store a i v) j))`
+/// materialises that read, whose read-over-write (with `i != j`) forces
+/// `select(b, j) = select(a, j)` against the two pins.  Firing congruence
+/// off lemma-borne copies instead flooded the loop; not firing it at all
+/// loses this refutation.
+#[test]
+fn conditional_store_equality_read_congruence_is_unsat() {
+    let script = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a () (Array Int Int))\n",
+        "(declare-fun b () (Array Int Int))\n",
+        "(declare-fun i () Int)\n(declare-fun j () Int)\n",
+        "(declare-fun v () Int)\n",
+        "(declare-fun c () Bool)\n",
+        "(assert (not (= i j)))\n",
+        "(assert (ite c (= b (store a i v)) (= b a)))\n",
+        "(assert (= (select b j) 5))\n",
+        "(assert (= (select a j) 7))\n",
+        "(assert c)\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(script), crate::SolverResult::Unsat);
+}

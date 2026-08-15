@@ -218,6 +218,7 @@ impl super::Solver {
             // so a stale entry after `pop` is harmless; cleared by `reset`.
             array_store_terms: _,       // same as `array_select_terms`
             array_axiom_instances: _,   // TRAIL: ArrayAxiomInstanceAdded
+            array_axioms_saturated: _,  // recomputed by every check's loop
             arith_purify: _,            // rebuilt from assertions each check
             arith_defined_terms: _,     // TRAIL: ArithDefinedTermAdded
             arith_const_axiom_pairs: _, // TRAIL: ArithConstAxiomAdded

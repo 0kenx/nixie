@@ -46,9 +46,13 @@ fn store_store_conflict_symbolic_index_is_unsat() {
 
 #[test]
 fn store_store_consistent_is_not_spurious_sat() {
-    // (store a 0 1) = (store b 0 1) is genuinely satisfiable, but the syntactic
-    // checks + EUF core cannot certify it, so the honesty gate reports unknown
-    // (never a possibly-spurious sat).
+    // (store a 0 1) = (store b 0 1) is genuinely satisfiable (a = b is a
+    // model; z3 agrees).  Before the array-axiom refinement loop could
+    // certify such a model (`array_axioms_saturated`), the Context honesty
+    // gate had to downgrade every unrefuted store=store to `unknown`; now
+    // the fixpoint IS the certification, so the honest verdict is `sat`.
+    // A spurious `sat` would still be caught by the gate when saturation
+    // was not reached (e.g. instance budget exhausted).
     let r = run_last(
         r#"(set-logic QF_AUFLIA)
         (declare-const a (Array Int Int))
@@ -56,10 +60,7 @@ fn store_store_consistent_is_not_spurious_sat() {
         (assert (= (store a 0 1) (store b 0 1)))
         (check-sat)"#,
     );
-    assert_eq!(
-        r, "unknown",
-        "unrefuted store=store must be honest unknown, not sat"
-    );
+    assert_eq!(r, "sat", "a certified store=store model must be sat");
 }
 
 #[test]

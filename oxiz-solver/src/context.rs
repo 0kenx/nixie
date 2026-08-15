@@ -337,7 +337,10 @@ impl Context {
         // the core may have merged the two store terms into one class without
         // enforcing element-wise agreement of their bases.  Answer `Unknown`
         // rather than a possibly-spurious `Sat` (never a silent wrong result).
-        if result == SolverResult::Sat && self.solver.array_atoms_need_theory(&self.terms) {
+        if result == SolverResult::Sat
+            && self.solver.array_atoms_need_theory(&self.terms)
+            && !self.solver.array_axioms_saturated
+        {
             result = SolverResult::Unknown;
         }
 
@@ -1273,6 +1276,7 @@ impl Context {
                     // Same array soundness honesty gate as `check_sat`.
                     if result == SolverResult::Sat
                         && self.solver.array_atoms_need_theory(&self.terms)
+                        && !self.solver.array_axioms_saturated
                     {
                         result = SolverResult::Unknown;
                     }

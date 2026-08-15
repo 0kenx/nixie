@@ -302,6 +302,15 @@ pub struct Solver {
     /// most once, which makes the in-loop refinement in `check` terminate: every
     /// refinement round either adds a strictly new instance or reports `Sat`.
     pub(super) array_axiom_instances: FxHashSet<TermId>,
+    /// Whether the lazy array-axiom refinement loop reached its fixpoint in
+    /// the last `check` (every applicable instance asserted, candidate model
+    /// violating none).  `Context`'s array honesty gate consults this: a
+    /// positive `store = store` equality that survived to `Sat` used to be
+    /// downgraded to `Unknown` unconditionally, but a fixpoint of the
+    /// refinement loop *is* the element-wise agreement check that gate was
+    /// waiting for.  Left `false` when the instance budget ran out – that
+    /// exit is not a fixpoint, and certifying it would fabricate `Sat`.
+    pub(super) array_axioms_saturated: bool,
     /// `div` / `mod` / numeric-`ite` terms whose defining axioms have already
     /// been asserted (see [`Solver::instantiate_arith_axioms`]).  The linear
     /// solver treats those terms as opaque atoms, so this set is what tells the
@@ -555,6 +564,7 @@ impl Solver {
             array_store_terms: Vec::new(),
             array_theory: array_theory::ArrayTheory::new(),
             array_axiom_instances: FxHashSet::default(),
+            array_axioms_saturated: false,
             arith_defined_terms: FxHashSet::default(),
             arith_const_axiom_pairs: FxHashSet::default(),
             dt_axiom_instances: FxHashSet::default(),
@@ -934,6 +944,7 @@ impl Solver {
     }
 
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
+        self.array_axioms_saturated = false;
         // Per-search case-split bookkeeping: each CDCL search starts with a
         // fresh dedup set and round counter.  The case-split lemmas are added
         // at the current SAT assertion scope, so they are retracted by `pop`;
@@ -1430,7 +1441,16 @@ impl Solver {
                         // array terms in this candidate model and assert every
                         // axiom instance it does not already satisfy as a lemma,
                         // then re-solve.  Only genuine array models survive.
-                        if self.has_array_ops && self.instantiate_array_axioms(manager) {
+                        let array_refined =
+                            self.has_array_ops && self.instantiate_array_axioms(manager);
+                        // The refinement loop reported "no instance the
+                        // candidate model violates" (or there are no array
+                        // operations at all): the element-wise agreement the
+                        // Context-level array honesty gate asks for has been
+                        // checked axiom by axiom.  Only the budget-exhausted
+                        // exit keeps this `false` (see the field's doc).
+                        self.array_axioms_saturated = !array_refined;
+                        if array_refined {
                             array_refinement_rounds += 1;
                             if array_refinement_rounds >= max_array_refinement_rounds {
                                 // Could not saturate the array axioms within the

@@ -2935,10 +2935,6 @@ impl<'a> TheoryManager<'a> {
                             }
                             ArithConstraintType::Gt => {
                                 // lhs - rhs > 0, i.e., sum of terms > constant
-                                eprintln!(
-                                    "[pdiag2] assert_gt terms={:?} const={:?}",
-                                    terms, constant
-                                );
                                 self.arith.assert_gt(&terms, constant, reason);
                             }
                             ArithConstraintType::Ge => {
