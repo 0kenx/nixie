@@ -10,11 +10,29 @@ use num_traits::{One, Signed, Zero};
 #[cfg(feature = "profiling")]
 use oxiz_core::profiling::{ProfilingCategory, ScopedTimer};
 use smallvec::SmallVec;
+use std::sync::Arc;
 /// Variable index
 pub type VarId = u32;
 
 /// Tableau rows and basic-variable flags captured at one decision scope.
-type TableauSnapshot = (FxHashMap<VarId, LinExpr>, Vec<bool>);
+///
+/// Rows are `Arc`-shared so a snapshot is a *shallow* map clone and a pivot
+/// only deep-copies the rows it actually edits (copy-on-write via
+/// `Arc::make_mut`): snapshotting the full tableau per decision level used
+/// to deep-clone thousands of rows, which dominated QF_AUFLIA runtimes.
+type TableauSnapshot = (
+    FxHashMap<VarId, Arc<LinExpr>>,
+    Vec<bool>,
+    FxHashMap<VarId, Arc<SmallVec<[VarId; 4]>>>,
+);
+
+/// Canonical identity of a linear form: terms sorted by VarId with merged
+/// coefficients and zero coefficients dropped, plus the constant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LinKey {
+    terms: Vec<(VarId, Rational64)>,
+    constant: Rational64,
+}
 
 /// Throwaway diagnostic counters for the theory-combination probe-cost
 /// investigation (gated on `std`; print on `OXIZ_DIAG`).
@@ -422,10 +440,6 @@ enum BoundUndo {
     UpperWasNone(VarId),
     /// Upper bound was Some, save old value
     UpperWasSome(VarId, Bound),
-    /// A new variable was added
-    NewVar,
-    /// A new slack variable was added
-    NewSlack(VarId),
 }
 /// Simplex tableau state
 #[derive(Debug)]
@@ -441,7 +455,38 @@ pub struct Simplex {
     /// Upper bounds
     upper: Vec<Option<Bound>>,
     /// Tableau rows: basic variable -> linear combination of non-basic
-    tableau: FxHashMap<VarId, LinExpr>,
+    tableau: FxHashMap<VarId, Arc<LinExpr>>,
+    /// Column index: non-basic variable -> basic variables whose rows
+    /// reference it.  Lets a bound change on one variable update exactly the
+    /// rows that depend on it (O(column)) instead of re-deriving the whole
+    /// tableau (`update_assignment`, O(tableau·terms)) after every pop or
+    /// bound assertion – the Dutertre–de Moura incremental-assignment
+    /// maintenance structure.  Kept in lockstep with `tableau` by
+    /// `intern_row` and `pivot`.
+    columns: FxHashMap<VarId, Arc<SmallVec<[VarId; 4]>>>,
+    /// Content-addressed row identities: canonical linear form (over stable
+    /// VarIds) -> the slack whose row defines it.  Every `add_*` constraint
+    /// API routes through [`Self::intern_row_cached`], so repeated assertions
+    /// of the same form – from either polarity of an atom, SAT re-sends, or
+    /// scratch scopes like the entailed-equality probes – share ONE row and
+    /// differ only in the (scoped, trailed) bounds they set on it.  Without
+    /// this, every call allocated a permanent row, and the probe paths alone
+    /// grew the tableau without bound.
+    ///
+    /// Entries are validated against the tableau on every lookup
+    /// ([`Self::intern_row_cached`]): rows interned inside a decision scope
+    /// are REMOVED by that scope's `pop` (see `row_scope_trail`), and a cache
+    /// entry naming a removed row simply misses and re-interns.
+    row_ids: FxHashMap<LinKey, VarId>,
+    /// Rows (slack ids) interned inside the current decision scope, in
+    /// insertion order; `pop` removes them (and, transitively, any surviving
+    /// row that references them) from the tableau, mirroring the old
+    /// `NewSlack` structural undo.  Unlike that undo, VarIds themselves are
+    /// never recycled – only the ROWS die – so term interning, the parallel
+    /// arrays and every cached VarId stay valid forever.
+    row_scope_trail: Vec<VarId>,
+    /// Marks into `row_scope_trail`, parallel to `trail_limits`.
+    row_scope_marks: Vec<usize>,
     /// Basic variables
     basic: Vec<bool>,
     /// Infeasible basic variable (if any)
@@ -502,6 +547,10 @@ impl Simplex {
             lower: Vec::new(),
             upper: Vec::new(),
             tableau: FxHashMap::default(),
+            columns: FxHashMap::default(),
+            row_ids: FxHashMap::default(),
+            row_scope_trail: Vec::new(),
+            row_scope_marks: vec![0],
             basic: Vec::new(),
             infeasible: None,
             propagated: Vec::new(),
@@ -515,6 +564,115 @@ impl Simplex {
             assignment_current: true,
         }
     }
+    /// Record that `row`'s tableau row now references `var`.
+    ///
+    /// Column lists are `Arc`-shared with scope snapshots (copy-on-write):
+    /// an edit clones exactly the one list it touches, so the snapshot a
+    /// Unchecked variants for call sites that PROVE membership (or its
+    /// absence) from the column-exactness invariant: skip the linear scan.
+    fn column_drop_known(&mut self, var: VarId, row: VarId) {
+        if let Some(col_arc) = self.columns.get_mut(&var) {
+            let col = Arc::make_mut(col_arc);
+            if let Some(pos) = col.iter().position(|&r| r == row) {
+                col.swap_remove(pos);
+            }
+        }
+    }
+
+    fn column_push_known(&mut self, var: VarId, row: VarId) {
+        match self.columns.get_mut(&var) {
+            Some(col_arc) => Arc::make_mut(col_arc).push(row),
+            None => {
+                self.columns
+                    .insert(var, Arc::new(SmallVec::from_slice(&[row])));
+            }
+        }
+    }
+
+    /// Snap the non-basic variable at `idx` into its (possibly just changed)
+    /// bound window and propagate the resulting value delta through every
+    /// row that references it, keeping basic assignments consistent with the
+    /// tableau.  O(column of `idx`).
+    ///
+    /// This is the Dutertre–de Moura incremental assignment update for a
+    /// non-basic bound change; it replaces the previous "mark the whole
+    /// assignment stale and re-derive the tableau on the next `check`"
+    /// behaviour, which cost O(tableau·terms) on every pop/assert.
+    fn on_nonbasic_bound_change(&mut self, idx: usize) {
+        if idx >= self.assignment.len() || self.is_basic(idx) {
+            return;
+        }
+        let var = idx as VarId;
+        let old = self.assignment[idx];
+        let mut new = old;
+        if let Some(lo) = &self.lower[idx]
+            && new < lo.value
+        {
+            new = lo.value;
+        }
+        if let Some(hi) = &self.upper[idx]
+            && new > hi.value
+        {
+            new = hi.value;
+        }
+        if new == old {
+            return;
+        }
+        self.assignment[idx] = new;
+        let delta = new - old;
+        // Deep-copy the column list: updating assignments mutates nothing in
+        // `columns`, but the borrow checker needs the split.
+        let dependents: SmallVec<[VarId; 4]> = self
+            .columns
+            .get(&var)
+            .map(|c| (**c).clone())
+            .unwrap_or_default();
+        for b in dependents {
+            let bi = b as usize;
+            if bi >= self.assignment.len() {
+                continue;
+            }
+            let coef = self
+                .tableau
+                .get(&b)
+                .and_then(|row| row.terms.iter().find(|(v, _)| *v == var).map(|(_, c)| *c));
+            if let Some(c) = coef {
+                self.assignment[bi] += delta * c;
+            }
+        }
+    }
+
+    /// TEMP debug: dump the tableau rows.
+    /// TEMP DIAG helper reused by tests.
+    pub fn dbg_tableau(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        let _ = writeln!(out, "rows={}", self.tableau.len());
+        let mut rows: Vec<_> = self.tableau.iter().collect();
+        rows.sort_by_key(|(v, _)| **v);
+        for (v, row) in rows {
+            let _ = writeln!(
+                out,
+                "  s{} = {:?} + {:?}  [val={:?} lo={:?} hi={:?} basic={}]",
+                v,
+                row.constant,
+                row.terms
+                    .iter()
+                    .map(|(t, c)| (t.to_string(), c.to_string()))
+                    .collect::<Vec<_>>(),
+                self.assignment.get(*v as usize),
+                self.lower
+                    .get(*v as usize)
+                    .and_then(|b| b.as_ref().map(|b| b.value)),
+                self.upper
+                    .get(*v as usize)
+                    .and_then(|b| b.as_ref().map(|b| b.value)),
+                self.basic.get(*v as usize).copied().unwrap_or(false),
+            );
+        }
+        out
+    }
+
     /// Whether the most recent feasibility run (`check` / `dual_simplex`) gave up
     /// after exhausting the pivot budget without a definitive answer.
     ///
@@ -550,7 +708,12 @@ impl Simplex {
         self.lower.push(None);
         self.upper.push(None);
         self.basic.push(false);
-        self.trail.push(BoundUndo::NewVar);
+        // Variables are search-global (Z3 `lar_solver` / Dutertre–de Moura):
+        // a VarId, once allocated, is never recycled, so a tableau row may
+        // reference it at any decision level.  Only BOUNDS are scoped and
+        // trailed.  (Recycling VarIds on pop forced rows to be scoped too,
+        // which re-created every atom's row at each level that re-asserted
+        // it – thousands of duplicate rows on QF_AUFLIA.)
         id
     }
     /// Ensure every per-variable array covers index `idx`, materializing any
@@ -580,7 +743,10 @@ impl Simplex {
         self.lower.push(None);
         self.upper.push(None);
         self.basic.push(true);
-        self.trail.push(BoundUndo::NewSlack(id));
+        // See `register_var`: slack rows are search-global definitions
+        // (`slack = <linear form>`); they constrain nothing until a bound
+        // is set on them, so keeping them across backtracks is sound and
+        // makes one row serve every level that asserts its atom.
         id
     }
     /// Get the current value of a variable (returns the real part)
@@ -676,24 +842,22 @@ impl Simplex {
         }
         delta
     }
-    /// Set a lower bound (x >= value)
+    /// Set a lower bound (x >= value).
+    ///
+    /// Monotone: a lower bound only ever *tightens*.  With interned rows,
+    /// both polarities of an atom and every re-assertion set bounds on the
+    /// SAME slack, so a weaker re-assertion (e.g. replaying `x >= 0` from a
+    /// resync) must never relax the strict `x >= 0 + δ` a `x > 0` atom set
+    /// earlier at a still-live scope – bounds are consequences of asserted
+    /// literals, and keeping the tighter of the two can only exclude points
+    /// some live atom forbids.  A no-op tightening records nothing, so the
+    /// scope pop of the tighter bound still restores correctly (LIFO).
     pub fn set_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
-        let idx = var as usize;
-        self.ensure_var(idx);
-        match &self.lower[idx] {
-            None => self.trail.push(BoundUndo::LowerWasNone(var)),
-            Some(old) => {
-                let old = old.clone();
-                self.trail.push(BoundUndo::LowerWasSome(var, old));
-            }
-        }
-        self.lower[idx] = Some(Bound {
-            kind: BoundType::Lower,
-            value: DeltaRational::from_rational(value),
-            reason,
-            aux_reasons: SmallVec::new(),
-        });
-        self.note_bound_change(idx);
+        self.set_lower_delta(
+            var,
+            DeltaRational::from_rational(value),
+            smallvec::smallvec![reason],
+        );
     }
     /// Set a lower bound directly from a `DeltaRational` (supports strict
     /// bounds carrying an infinitesimal `δ` component), pushing an undo
@@ -749,65 +913,89 @@ impl Simplex {
         });
         self.note_bound_change(idx);
     }
-    /// Set a strict lower bound (x > value), represented as x >= value + δ
+    /// Set a strict lower bound (x > value), represented as x >= value + δ.
     pub fn set_strict_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
-        let idx = var as usize;
-        self.ensure_var(idx);
-        match &self.lower[idx] {
-            None => self.trail.push(BoundUndo::LowerWasNone(var)),
-            Some(old) => {
-                let old = old.clone();
-                self.trail.push(BoundUndo::LowerWasSome(var, old));
-            }
-        }
-        self.lower[idx] = Some(Bound {
-            kind: BoundType::Lower,
-            value: DeltaRational::new(value, Rational64::one()),
-            reason,
-            aux_reasons: SmallVec::new(),
-        });
-        self.note_bound_change(idx);
+        self.set_lower_delta(
+            var,
+            DeltaRational::new(value, Rational64::one()),
+            smallvec::smallvec![reason],
+        );
     }
-    /// Set an upper bound (x <= value)
+    /// Set an upper bound (x <= value).  Monotone: see [`Self::set_lower`].
     pub fn set_upper(&mut self, var: VarId, value: Rational64, reason: u32) {
-        let idx = var as usize;
-        self.ensure_var(idx);
-        match &self.upper[idx] {
-            None => self.trail.push(BoundUndo::UpperWasNone(var)),
-            Some(old) => {
-                let old = old.clone();
-                self.trail.push(BoundUndo::UpperWasSome(var, old));
-            }
-        }
-        self.upper[idx] = Some(Bound {
-            kind: BoundType::Upper,
-            value: DeltaRational::from_rational(value),
-            reason,
-            aux_reasons: SmallVec::new(),
-        });
-        self.note_bound_change(idx);
+        self.set_upper_delta(
+            var,
+            DeltaRational::from_rational(value),
+            smallvec::smallvec![reason],
+        );
     }
-    /// Set a strict upper bound (x < value), represented as x <= value - δ
+    /// Set a strict upper bound (x < value), represented as x <= value - δ.
     pub fn set_strict_upper(&mut self, var: VarId, value: Rational64, reason: u32) {
-        let idx = var as usize;
-        self.ensure_var(idx);
-        match &self.upper[idx] {
-            None => self.trail.push(BoundUndo::UpperWasNone(var)),
-            Some(old) => {
-                let old = old.clone();
-                self.trail.push(BoundUndo::UpperWasSome(var, old));
-            }
-        }
-        self.upper[idx] = Some(Bound {
-            kind: BoundType::Upper,
-            value: DeltaRational::new(value, -Rational64::one()),
-            reason,
-            aux_reasons: SmallVec::new(),
-        });
-        self.note_bound_change(idx);
+        self.set_upper_delta(
+            var,
+            DeltaRational::new(value, -Rational64::one()),
+            smallvec::smallvec![reason],
+        );
     }
     /// Add a constraint: expr <= 0
-    pub fn add_le(&mut self, mut expr: LinExpr, reason: u32) {
+    pub fn add_le(&mut self, expr: LinExpr, reason: u32) {
+        // Content-addressed slack (`slack = expr`); the constraint is the
+        // bound `slack <= 0`.
+        let slack = self.intern_row_cached(&expr);
+        self.set_upper(slack, Rational64::zero(), reason);
+    }
+
+    /// [`Self::intern_row`] with content addressing: two calls with the same
+    /// canonical linear form return the SAME slack.  See `row_ids`.
+    pub(crate) fn intern_row_cached(&mut self, expr: &LinExpr) -> VarId {
+        let mut key_terms: Vec<(VarId, Rational64)> = Vec::with_capacity(expr.terms.len());
+        for &(var, coef) in &expr.terms {
+            if coef.is_zero() {
+                continue;
+            }
+            match key_terms.binary_search_by_key(&var, |(v, _)| *v) {
+                Ok(i) => key_terms[i].1 += coef,
+                Err(i) => key_terms.insert(i, (var, coef)),
+            }
+        }
+        key_terms.retain(|(_, c)| !c.is_zero());
+        let key = LinKey {
+            terms: key_terms,
+            constant: expr.constant,
+        };
+        if let Some(&slack) = self.row_ids.get(&key)
+            && self.tableau.contains_key(&slack)
+        {
+            return slack;
+        }
+        let slack = self.intern_row(LinExpr {
+            terms: key.terms.iter().copied().collect(),
+            constant: key.constant,
+        });
+        self.row_ids.insert(key, slack);
+        slack
+    }
+
+    /// Intern a slack variable whose tableau row defines it as exactly
+    /// `expr` (i.e. a row `slack - expr = 0` in reduced form), with no
+    /// constraint attached, and return its id.
+    ///
+    /// This is the Dutertre–de Moura / Z3 `lar_solver` constraint
+    /// representation: one stable row per distinct linear form, and every
+    /// assertion of an atom over that form – at any polarity, at any
+    /// decision level, however often the SAT core re-sends it – is just a
+    /// *bound update* on the shared slack (O(1), trailed, popped with the
+    /// scope that set it).  The pre-existing alternative (a fresh
+    /// slack+row per assertion event) made the tableau grow with the number
+    /// of literal assignments rather than with the number of distinct
+    /// constraints: QF_AUFLIA/swap pushed it past 100k rows for a problem
+    /// with ~90 atoms.
+    ///
+    /// Basic variables are substituted out so the new row references only
+    /// non-basic variables, and the slack's assignment is computed
+    /// incrementally from its row (Dutertre–de-Ma) instead of forcing the
+    /// next `check()` into a full `crash_basis` re-derivation.
+    pub fn intern_row(&mut self, expr: LinExpr) -> VarId {
         let mut substituted_expr = LinExpr::constant(expr.constant);
         for (var, coef) in &expr.terms {
             if let Some(basic_expr) = self.tableau.get(var).cloned() {
@@ -819,28 +1007,35 @@ impl Simplex {
                 substituted_expr.add_term(*var, *coef);
             }
         }
-        expr = substituted_expr;
         // Register every variable the (substituted) expression references
         // BEFORE allocating the slack, so (a) no tableau row can reference an
         // index past the bounds arrays and (b) the slack's id is guaranteed
         // fresh rather than colliding with an as-yet-unregistered variable.
-        if let Some(max_var) = expr.terms.iter().map(|(v, _)| *v).max() {
+        if let Some(max_var) = substituted_expr.terms.iter().map(|(v, _)| *v).max() {
             self.ensure_var(max_var as usize);
         }
         let slack = self.new_slack();
-        expr.add_term(slack, Rational64::one());
-        let mut slack_expr = LinExpr::constant(-expr.constant);
-        for (var, coef) in &expr.terms {
-            if *var != slack {
-                slack_expr.add_term(*var, -*coef);
-            }
+        // Row: `slack = expr`.  The tableau row for the basic variable
+        // `slack` holds the *right-hand side* it equals, so it must not
+        // reference `slack` itself; the substituted expression already
+        // excludes every other basic variable, which keeps the row reduced.
+        let mut slack_expr = LinExpr::constant(substituted_expr.constant);
+        for (var, coef) in &substituted_expr.terms {
+            slack_expr.add_term(*var, *coef);
         }
-        self.tableau.insert(slack, slack_expr);
+        self.tableau.insert(slack, Arc::new(slack_expr));
         if slack as usize >= self.basic.len() {
             self.basic.resize(slack as usize + 1, false);
         }
         self.basic[slack as usize] = true;
-        self.set_lower(slack, Rational64::zero(), reason);
+        // Column index bookkeeping for the new row.
+        let terms: SmallVec<[(VarId, Rational64); 4]> = {
+            let row = self.tableau.get(&slack).expect("slack row just inserted");
+            row.terms.iter().copied().collect()
+        };
+        for (v, _) in terms {
+            self.column_push_known(v, slack);
+        }
         // Dutertre–de-Ma incremental assignment: the new basic slack's row
         // references only non-basic variables (basic vars were substituted
         // out above), whose assignments are current, so compute the slack's
@@ -860,57 +1055,36 @@ impl Simplex {
             };
             self.assignment[slack as usize] = val;
         }
+        slack
     }
     /// Add a constraint: expr >= 0
-    pub fn add_ge(&mut self, mut expr: LinExpr, reason: u32) {
-        expr.negate();
-        self.add_le(expr, reason);
+    pub fn add_ge(&mut self, expr: LinExpr, reason: u32) {
+        // expr >= 0  <=>  slack(expr) >= 0.
+        let slack = self.intern_row_cached(&expr);
+        self.set_lower(slack, Rational64::zero(), reason);
     }
     /// Add a constraint: expr = 0
     pub fn add_eq(&mut self, expr: LinExpr, reason: u32) {
-        self.add_le(expr.clone(), reason);
-        self.add_ge(expr, reason);
+        // expr = 0 as TWO bounds on ONE shared row (not two rows): the row
+        // is keyed by the linear form, so both polarities and every
+        // re-assertion reuse it.
+        let slack = self.intern_row_cached(&expr);
+        self.set_lower(slack, Rational64::zero(), reason);
+        self.set_upper(slack, Rational64::zero(), reason);
     }
     /// Add a strict constraint: expr < 0
     /// Uses infinitesimals: expr + s = 0 with s > 0
-    pub fn add_strict_lt(&mut self, mut expr: LinExpr, reason: u32) {
-        let mut substituted_expr = LinExpr::constant(expr.constant);
-        for (var, coef) in &expr.terms {
-            if let Some(basic_expr) = self.tableau.get(var).cloned() {
-                substituted_expr.add_constant(coef * basic_expr.constant);
-                for (inner_var, inner_coef) in &basic_expr.terms {
-                    substituted_expr.add_term(*inner_var, coef * inner_coef);
-                }
-            } else {
-                substituted_expr.add_term(*var, *coef);
-            }
-        }
-        expr = substituted_expr;
-        // See `add_le`: register the expression's variables before allocating
-        // the slack so no tableau row can reference an index past the bounds
-        // arrays and the slack id cannot collide with an unregistered variable.
-        if let Some(max_var) = expr.terms.iter().map(|(v, _)| *v).max() {
-            self.ensure_var(max_var as usize);
-        }
-        let slack = self.new_slack();
-        expr.add_term(slack, Rational64::one());
-        let mut slack_expr = LinExpr::constant(-expr.constant);
-        for (var, coef) in &expr.terms {
-            if *var != slack {
-                slack_expr.add_term(*var, -*coef);
-            }
-        }
-        self.tableau.insert(slack, slack_expr);
-        self.set_strict_lower(slack, Rational64::zero(), reason);
-        // The new slack's assignment is not computed here (strict-bound slack);
-        // conservatively mark stale so `check()` re-derives via `crash_basis`.
-        self.assignment_current = false;
+    pub fn add_strict_lt(&mut self, expr: LinExpr, reason: u32) {
+        // expr < 0  <=>  slack(expr) < 0 (delta-strict upper bound).
+        let slack = self.intern_row_cached(&expr);
+        self.set_strict_upper(slack, Rational64::zero(), reason);
     }
     /// Add a strict constraint: expr > 0
     /// Uses infinitesimals: -expr < 0
-    pub fn add_strict_gt(&mut self, mut expr: LinExpr, reason: u32) {
-        expr.negate();
-        self.add_strict_lt(expr, reason);
+    pub fn add_strict_gt(&mut self, expr: LinExpr, reason: u32) {
+        // expr > 0  <=>  slack(expr) > 0 (delta-strict lower bound).
+        let slack = self.intern_row_cached(&expr);
+        self.set_strict_lower(slack, Rational64::zero(), reason);
     }
     /// Snapshot the entry assignment and basis for the current decision level
     /// immediately before an operation that may mutate them.  Bounds, fresh
@@ -919,16 +1093,54 @@ impl Simplex {
     /// full snapshot, at most once.
     fn ensure_scope_snapshot(&mut self) {
         let Some(index) = self.saved_tableaux.len().checked_sub(1) else {
-            return; // assertion/base level is never popped
+            return;
         };
         if self.saved_tableaux[index].is_none() {
-            self.saved_tableaux[index] = Some((self.tableau.clone(), self.basic.clone()));
+            self.saved_tableaux[index] = Some((
+                self.tableau.clone(),
+                self.basic.clone(),
+                self.columns.clone(),
+            ));
         }
+        let Some(index) = self.cached_assignments.len().checked_sub(1) else {
+            return;
+        };
         if self.cached_assignments[index].is_none() {
             self.cached_assignments[index] = Some(self.assignment.clone());
         }
     }
-    /// Check if bounds are consistent
+    /// Eager bound-crossing conflict probe: O(variables), no pivoting.
+    ///
+    /// Detects a variable whose lower bound exceeds its upper bound
+    /// (`x >= a` asserted together with `x <= b`, `a > b`) and returns every
+    /// reason backing both bounds.  This is the cheap eager-conflict class
+    /// Z3/cvc5 detect at literal-assertion time (asserted-bounds conflict);
+    /// the full LP feasibility solve (pivot-based) stays deferred to the
+    /// theory `check` at final-check time.  A `Some` result is a sound
+    /// refutation of the current bound set; `None` proves nothing (the LP
+    /// may still be infeasible – only `check` can tell).
+    pub fn bound_crossing_conflict(&self) -> Option<Vec<u32>> {
+        for i in 0..self.assignment.len() {
+            if let (Some(lo), Some(hi)) = (&self.lower[i], &self.upper[i])
+                && lo.value > hi.value
+            {
+                // Emit ALL antecedents of both crossing bounds, not just their
+                // primary reasons: a propagated bound is implied by every
+                // reason that fed its derivation, and dropping them yields an
+                // incomplete (unsound) conflict explanation.
+                let mut conflict: Vec<u32> = Vec::new();
+                for r in lo.all_reasons().chain(hi.all_reasons()) {
+                    if !conflict.contains(&r) {
+                        conflict.push(r);
+                    }
+                }
+                return Some(conflict);
+            }
+        }
+        None
+    }
+
+    /// Check if bounds are consistent and restore primal feasibility.
     pub fn check(&mut self) -> Result<(), Vec<u32>> {
         #[cfg(feature = "std")]
         diag::inc_check();
@@ -1365,39 +1577,50 @@ impl Simplex {
                 }
             }
         }
+        // Collect the rows that reference the entering column – in O(column)
+        // via the column index rather than a full-tableau scan – and compute
+        // their substituted content into `row_updates` WITHOUT mutating the
+        // tableau: every coefficient goes through the checked rational
+        // helpers, and an overflow anywhere aborts the pivot with NO partial
+        // mutation (the transactional validate-then-commit contract callers
+        // and the overflow regression test rely on).
         let mut row_updates: Vec<(VarId, LinExpr)> = Vec::new();
-        for (var, row) in &self.tableau {
-            if *var == basic_var {
-                continue;
-            }
-            let sub_coef = row
-                .terms
-                .iter()
-                .find(|(v, _)| *v == nonbasic_var)
-                .map(|(_, c)| *c);
-            let Some(sc) = sub_coef else { continue };
-            let mut new_row = row.clone();
-            new_row.terms.retain(|(v, _)| *v != nonbasic_var);
-            let Some(delta_c) = checked_mul_r64(sc, new_expr.constant) else {
-                self.resource_limit = true;
-                return false;
-            };
-            let Some(sum) = checked_add_r64(new_row.constant, delta_c) else {
-                self.resource_limit = true;
-                return false;
-            };
-            new_row.constant = sum;
-            for (v, c) in &new_expr.terms {
-                let Some(term_c) = checked_mul_r64(sc, *c) else {
+        if let Some(col) = self.columns.get(&nonbasic_var).cloned() {
+            for &var in col.iter() {
+                if var == basic_var {
+                    continue;
+                }
+                let Some((sc, row)) = self.tableau.get(&var).and_then(|row| {
+                    row.terms
+                        .iter()
+                        .find(|(v, _)| *v == nonbasic_var)
+                        .map(|(_, c)| (*c, row.clone()))
+                }) else {
+                    continue;
+                };
+                let mut new_row = (*row).clone();
+                new_row.terms.retain(|(v, _)| *v != nonbasic_var);
+                let Some(delta_c) = checked_mul_r64(sc, new_expr.constant) else {
                     self.resource_limit = true;
                     return false;
                 };
-                if !new_row.try_add_term(*v, term_c) {
+                let Some(sum) = checked_add_r64(new_row.constant, delta_c) else {
                     self.resource_limit = true;
                     return false;
+                };
+                new_row.constant = sum;
+                for (v, c) in &new_expr.terms {
+                    let Some(term_c) = checked_mul_r64(sc, *c) else {
+                        self.resource_limit = true;
+                        return false;
+                    };
+                    if !new_row.try_add_term(*v, term_c) {
+                        self.resource_limit = true;
+                        return false;
+                    }
                 }
+                row_updates.push((var, new_row));
             }
-            row_updates.push((*var, new_row));
         }
         // Targeted assignment update.  After a pivot the *only* variable
         // whose value changes is `basic_var` (it leaves the basis and is
@@ -1434,6 +1657,8 @@ impl Simplex {
         {
             self.assignment[entering] = v;
         }
+        // Recompute assignments for the edited rows' basic variables (the
+        // entering variable's own row is handled by `new_expr` below).
         for (var, new_row) in &row_updates {
             let vi = *var as usize;
             if vi < self.assignment.len()
@@ -1442,14 +1667,100 @@ impl Simplex {
                 self.assignment[vi] = v;
             }
         }
-        self.tableau.remove(&basic_var);
-        for (var, new_row) in row_updates {
-            self.tableau.insert(var, new_row);
+
+        // Column index maintenance: the leaving variable's row is gone, the
+        // entering variable gained a row, the edited rows dropped their
+        // reference to the entering variable and gained ones to the leaving
+        // variable (plus any other term `new_expr` substituted in).
+        if let Some(old_row) = self.tableau.get(&basic_var) {
+            let old_terms: SmallVec<[VarId; 4]> = old_row.terms.iter().map(|(v, _)| *v).collect();
+            for v in old_terms {
+                // Exact column index + basic row ⇒ `v`'s column holds
+                // `basic_var` exactly once; drop without the position scan.
+                self.column_drop_known(v, basic_var);
+            }
         }
-        self.tableau.insert(nonbasic_var, new_expr);
+        self.tableau.remove(&basic_var);
+        let entering_terms: SmallVec<[VarId; 4]> = new_expr.terms.iter().map(|(v, _)| *v).collect();
+        self.tableau.insert(nonbasic_var, Arc::new(new_expr));
+        for v in entering_terms {
+            // The entering variable had no row before, so no column listed it
+            // as a row owner; push without the membership scan.  (Terms it
+            // references may already list OTHER rows – that is a different
+            // key, untouched here.)
+            self.column_push_known(v, nonbasic_var);
+        }
+        // Commit the substituted rows and maintain their column entries.
+        // Substitution merges `new_expr` into the old row term-by-term, and a
+        // merge can CANCEL a coefficient to zero – so the new row's term set
+        // must be diffed against the old one in full, not just the entering
+        // column removed (a stale `columns[v]` entry for a cancelled term made
+        // `on_nonbasic_bound_change` skip real dependents and let later edits
+        // miss rows entirely: corrupted tableau, wrong answers).
+        for (var, new_row) in row_updates {
+            // Diff-based column maintenance: the column index is exact, so a
+            // term present in both rows needs no touch, a dropped term needs
+            // removal, and an added term is guaranteed absent from the column
+            // (direct push – `column_add`'s membership scan over dense
+            // columns was a top profiler entry here).
+            let (dropped, added): (SmallVec<[VarId; 4]>, SmallVec<[VarId; 4]>) =
+                match self.tableau.get(&var) {
+                    Some(old_row) => {
+                        let mut dropped = SmallVec::new();
+                        for (v, _) in old_row.terms.iter() {
+                            if !new_row.terms.iter().any(|(nv, _)| nv == v) {
+                                dropped.push(*v);
+                            }
+                        }
+                        let mut added = SmallVec::new();
+                        for (v, _) in new_row.terms.iter() {
+                            if !old_row.terms.iter().any(|(nv, _)| nv == v) {
+                                added.push(*v);
+                            }
+                        }
+                        (dropped, added)
+                    }
+                    None => (SmallVec::new(), SmallVec::new()),
+                };
+            for v in dropped {
+                self.column_drop_known(v, var);
+            }
+            for v in added {
+                // Exactness invariant: `v` was not in this row, so the column
+                // cannot list `var` under `v` yet.
+                self.column_push_known(v, var);
+            }
+            self.tableau.insert(var, Arc::new(new_row));
+        }
         self.basic[basic_var as usize] = false;
         self.basic[nonbasic_var as usize] = true;
+        #[cfg(debug_assertions)]
+        self.debug_verify_columns();
         true
+    }
+
+    /// Verify `columns` is an exact index of the tableau (debug builds only:
+    /// O(tableau·terms) per pivot).
+    #[cfg(debug_assertions)]
+    fn debug_verify_columns(&self) {
+        for (var, row) in &self.tableau {
+            for (t, _) in &row.terms {
+                debug_assert!(
+                    self.columns.get(t).is_some_and(|c| c.contains(var)),
+                    "columns[{t}] missing row {var} that references it"
+                );
+            }
+        }
+        for (t, col) in &self.columns {
+            for r in col.iter() {
+                debug_assert!(
+                    self.tableau
+                        .get(r)
+                        .is_some_and(|row| row.terms.iter().any(|(v, _)| v == t)),
+                    "columns[{t}] lists row {r} which does not reference it"
+                );
+            }
+        }
     }
     /// Evaluate a tableau row at the current nonbasic assignment.
     ///
@@ -1755,6 +2066,10 @@ impl Simplex {
         self.lower.clear();
         self.upper.clear();
         self.tableau.clear();
+        self.columns.clear();
+        self.row_ids.clear();
+        self.row_scope_trail.clear();
+        self.row_scope_marks = vec![0];
         self.basic.clear();
         self.infeasible = None;
         self.propagated.clear();
@@ -1789,23 +2104,31 @@ impl Simplex {
         self.cached_assignments.push(None);
         self.saved_tableaux.push(None);
     }
-    /// Pop to previous decision level
+    /// Pop to previous decision level.
+    ///
+    /// With search-global rows/variables (see `register_var`/`new_slack`),
+    /// a pop only has to replay the BOUND undo trail: rows constrain
+    /// nothing without their bounds, the basis is free to remain pivoted
+    /// (any basis spanning the row space is valid), and the assignment is
+    /// conservatively marked stale (`assignment_current = false`) so the
+    /// next `check` re-derives it via `crash_basis`.  This is the
+    /// Dutertre–de Moura backtracking contract: bounds are the only
+    /// backtrackable state.
     pub fn pop(&mut self) {
-        self.assignment_current = false;
+        // Dutertre–de-Moura backtracking contract: ONLY bounds are
+        // backtrackable.  Rows are permanent, content-addressed definitions
+        // (`intern_row_cached`) – a row without bounds constrains nothing, so
+        // its bounds dying at this pop fully retracts the scope's
+        // assertions.  The basis is free to stay pivoted (any basis spanning
+        // the row space is valid); the assignment is restored from the scope
+        // snapshot below.
         let saved_tableau = self.saved_tableaux.pop().flatten();
         let cached_assignment = self.cached_assignments.pop().flatten();
-        // A lazy snapshot includes rows introduced at the current level because
-        // it is taken immediately before the first check/pivot.  Restore that
-        // pre-pivot basis first; the structural undo records below then remove
-        // those scoped rows and variables.
-        if let Some((saved_tableau, mut saved_basic)) = saved_tableau {
-            self.tableau = saved_tableau;
-            // More scoped variables/slacks may have been allocated after the
-            // first check took this snapshot.  They are all removed by the undo
-            // loop, but `basic` must retain one placeholder slot per pending
-            // structural undo until then so the parallel arrays stay aligned.
+        if let Some((saved_tableau, mut saved_basic, saved_columns)) = saved_tableau {
             saved_basic.resize(self.basic.len(), false);
             self.basic = saved_basic;
+            self.tableau = saved_tableau;
+            self.columns = saved_columns;
         }
         if let Some(limit) = self.trail_limits.pop() {
             while self.trail.len() > limit {
@@ -1823,44 +2146,7 @@ impl Simplex {
                         BoundUndo::UpperWasSome(var, old) => {
                             self.upper[var as usize] = Some(old);
                         }
-                        BoundUndo::NewVar => {
-                            self.num_vars -= 1;
-                            self.assignment.pop();
-                            self.lower.pop();
-                            self.upper.pop();
-                            self.basic.pop();
-                        }
-                        BoundUndo::NewSlack(id) => {
-                            self.num_slack -= 1;
-                            self.tableau.remove(&id);
-                            self.assignment.pop();
-                            self.lower.pop();
-                            self.upper.pop();
-                            self.basic.pop();
-                        }
                     }
-                }
-            }
-            // Defensive sanitation for legacy/partially-built rows.  Every
-            // ordinary scoped slack is removed by `NewSlack` above; retaining
-            // this validation keeps malformed stale references from surviving
-            // a pop if a future constraint constructor exits early.
-            let num_vars = self.assignment.len();
-            self.tableau.retain(|&var, expr| {
-                if (var as usize) >= num_vars {
-                    return false;
-                }
-                for (v, _) in &expr.terms {
-                    if (*v as usize) >= num_vars {
-                        return false;
-                    }
-                }
-                true
-            });
-            for i in 0..num_vars {
-                let var_id = i as VarId;
-                if self.basic[i] && !self.tableau.contains_key(&var_id) {
-                    self.basic[i] = false;
                 }
             }
             if let Some(cached) = cached_assignment {
@@ -1868,6 +2154,15 @@ impl Simplex {
                 self.assignment[..restore_len].copy_from_slice(&cached[..restore_len]);
                 for item in self.assignment.iter_mut().skip(restore_len) {
                     *item = DeltaRational::zero();
+                }
+                // Variables created inside this scope (rows are permanent, so
+                // their slacks live on as BASIC vars with rows but no
+                // bounds) now hold zeroed assignments that do NOT satisfy
+                // their rows.  The next `check` must re-derive the basic
+                // assignments via `crash_basis` instead of trusting the
+                // incremental flag.
+                if self.assignment.len() > restore_len {
+                    self.assignment_current = false;
                 }
             }
             self.infeasible = None;
@@ -1898,19 +2193,30 @@ impl Simplex {
     pub(super) fn is_basic(&self, idx: usize) -> bool {
         idx < self.basic.len() && self.basic[idx]
     }
-    /// A non-basic variable's bound change means its assignment must snap to the
-    /// new bound and the basics in its column shift -- without a column index we
-    /// conservatively mark the assignment stale so `check()` re-derives.  Basic
-    /// bound changes don't move the assignment (it's tableau-derived), so the
-    /// flag stays and `check()` skips `crash_basis`.
+
+    /// Whether `var` currently carries a defining row in the tableau.
+    ///
+    /// A slack is basic exactly while its defining row exists: pivoting it
+    /// out REMOVES the row.  Content-addressed row caches must consult this
+    /// before reusing a slack – a cached slack that left the basis no longer
+    /// equals its linear form, and a bound set on it would constrain a
+    /// free-floating variable instead of the form (silently dropping the
+    /// constraint).
+    #[inline]
+    #[must_use]
+    pub fn row_defines_var(&self, var: VarId) -> bool {
+        self.tableau.contains_key(&var)
+    }
+    /// A bound changed.  Basic variables' assignments are tableau-derived, so
+    /// nothing moves; a non-basic variable's assignment snaps into its new
+    /// bound window and the delta propagates to exactly the rows in its
+    /// column ([`Self::on_nonbasic_bound_change`]).
     fn note_bound_change(&mut self, idx: usize) {
-        if !self.is_basic(idx) {
-            self.assignment_current = false;
-        }
+        self.on_nonbasic_bound_change(idx);
     }
     /// Iterate over `(basic_var, row)` pairs in the tableau.
     pub(super) fn tableau_iter(&self) -> impl Iterator<Item = (&VarId, &LinExpr)> {
-        self.tableau.iter()
+        self.tableau.iter().map(|(v, row)| (v, row.as_ref()))
     }
     /// Iterate over basic variable IDs in the tableau.
     pub(super) fn tableau_keys(&self) -> impl Iterator<Item = VarId> + '_ {

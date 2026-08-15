@@ -2666,6 +2666,15 @@ impl Solver {
         if self.assertion_levels.len() > 1 {
             self.assertion_levels.pop();
 
+            // `trivially_unsat` records that the empty clause was derived
+            // from LEVEL-0 facts alone.  Those facts are the current
+            // assertion level's clauses, and this pop is removing some of
+            // them, so the refutation no longer holds: keep the flag and a
+            // later `(check-sat)` after the pop answers a wrong `unsat`
+            // (the push/unsat/pop/check leak).  Clearing is always sound:
+            // the worst case is re-deriving the same empty clause.
+            self.trivially_unsat = false;
+
             // Get the trail size to backtrack to
             let trail_size = self.assertion_trail_sizes.pop().unwrap_or(0);
 
@@ -2705,6 +2714,16 @@ impl Solver {
                 for i in trail_size..current_size {
                     let lit = self.trail.assignments()[i];
                     unassigned_vars.push(lit.var());
+                }
+
+                // Drop the lazy theory-propagation explanations of every
+                // literal the pop unassigns: they justify assignments this
+                // scope introduced, and a later check re-derives fresh ones.
+                // A surviving entry for an unassigned var would resolve a
+                // FUTURE conflict against antecedents whose truth depended
+                // on the popped scope (false unsat across check/pop/check).
+                for var in &unassigned_vars {
+                    self.theory_prop_reasons.remove(var);
                 }
 
                 self.trail.backtrack_to_size(trail_size);

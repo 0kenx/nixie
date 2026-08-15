@@ -515,13 +515,14 @@ impl Solver {
             0,
             "force_theory_unit requires decision level 0 (caller backtracks first)"
         );
-        // Store the unit lemma permanently (Core tier, tracked for reduction).
+        // Store the unit lemma (Core tier, tracked for reduction).
         let clause_id = self.clauses.add_learned(std::iter::once(lit));
         self.learned_clause_ids.push(clause_id);
         if let Some(clause) = self.clauses.get_mut(clause_id) {
             clause.lbd = 1;
             clause.promote_to_core();
         }
+
         // Proof: the unit lemma (recorded as a derived unit with empty chain;
         // bound to the stored clause and the unit-id table).
         let proof_id = self.proof_theory_unit(lit.to_dimacs());

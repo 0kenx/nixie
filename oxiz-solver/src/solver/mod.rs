@@ -1315,7 +1315,8 @@ impl Solver {
                         // full assignment that falsifies a Boolean clause the
                         // theory layer cannot observe, we answer `Unknown`
                         // instead of a wrong `Sat`.
-                        if self.model_refutes_assertions(manager) {
+                        let _gate = self.model_refutes_assertions(manager);
+                        if _gate {
                             self.model = None;
                             self.unsat_core = None;
                             // Incomplete theory can accept a trail that fails

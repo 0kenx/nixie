@@ -317,6 +317,55 @@ pub(crate) struct TheoryManager<'a> {
     ite_const_axioms: FxHashMap<(TermId, i64), (Var, Var)>,
     /// Current decision level stack for backtracking
     level_stack: Vec<usize>,
+    /// EUF-derived equalities already asserted into the arithmetic tableau
+    /// at the *current* theory scope.
+    ///
+    /// [`Self::propagate_euf_equalities_to_arith`] re-runs on every Nelson-
+    /// Oppen round and every `final_check`, and without this memo it would
+    /// re-`add_eq` every same-class term pair as *fresh tableau rows* each
+    /// time – the tableau bloated from ~56 rows to 14k+ rows on
+    /// QF_AUFLIA/swap, and every subsequent `Simplex::check`/pivot paid
+    /// O(rows) over duplicated constraints.  A pair asserted at a scope is
+    /// still implied at that scope (its EUF merge is popped by the same
+    /// scope pop that removes the rows), so skipping the re-assertion is
+    /// sound: it removes a redundant restatement of a fact the tableau
+    /// already holds.
+    ///
+    /// Trail discipline: `asserted_arith_eqs` gives O(1) membership; the
+    /// `asserted_arith_eq_trail` vector records insertion order so a scope
+    /// pop can retract exactly the pairs asserted inside it.  Cleared by
+    /// [`Self::resync_theory_state`], which resets the arithmetic solver and
+    /// therefore wipes the rows this memo claims exist.
+    asserted_arith_eqs: FxHashSet<(TermId, TermId)>,
+    /// Constraint literals already processed at the *current* theory scope.
+    ///
+    /// [`Self::process_constraint`] applies each asserted literal to every
+    /// theory solver (EUF merge, tableau rows, DL edges, BV encodings).
+    /// EUF merging is idempotent, but the arithmetic/DL/BV sides are
+    /// *additive*: the SAT core re-sends an already-assigned literal (the
+    /// documented same-polarity idempotent re-send, and propagation
+    /// replays), and every re-send used to add a fresh pair of tableau
+    /// rows for an equality whose rows were still live.  On
+    /// QF_AUFLIA/swap that ballooned a ~100-row tableau past 13,000 rows,
+    /// and every subsequent simplex check/pivot/pop paid for the
+    /// duplicates.
+    ///
+    /// A literal processed at a scope is *still in effect* at that scope
+    /// (the scope pop that removes its rows also removes its guard entry),
+    /// so skipping the re-process is sound: it suppresses a duplicate of
+    /// work whose effect is already present.
+    processed_lit_trail: Vec<(Var, bool)>,
+    /// Scope markers into `processed_lit_trail`, parallel to `level_stack`.
+    processed_lit_marks: Vec<usize>,
+    /// O(1) membership mirror of `processed_lit_trail`.
+    processed_lits: FxHashSet<(Var, bool)>,
+    /// Insertion-ordered trail backing `asserted_arith_eqs`; entry `i` is
+    /// the scope marker (number of live pairs) when the trail had `i`
+    /// entries at `push_theory_scope` time.
+    asserted_arith_eq_trail: Vec<(TermId, TermId)>,
+    /// Scope markers into `asserted_arith_eq_trail`, parallel to
+    /// `level_stack`.
+    asserted_arith_eq_marks: Vec<usize>,
     /// Number of processed assignments
     processed_count: usize,
     /// Throttle counter for difference-logic theory propagation.
@@ -558,6 +607,12 @@ impl<'a> TheoryManager<'a> {
             ite_result_terms,
             derived_reasons,
             level_stack: vec![0],
+            asserted_arith_eqs: FxHashSet::default(),
+            asserted_arith_eq_trail: Vec::new(),
+            asserted_arith_eq_marks: vec![0],
+            processed_lit_trail: Vec::new(),
+            processed_lit_marks: vec![0],
+            processed_lits: FxHashSet::default(),
             processed_count: 0,
             dl_prop_counter: 0,
             dl_prop_fragment: None,
@@ -893,6 +948,10 @@ impl<'a> TheoryManager<'a> {
         use oxiz_theories::Theory;
 
         self.level_stack.push(self.processed_count);
+        self.asserted_arith_eq_marks
+            .push(self.asserted_arith_eq_trail.len());
+        self.processed_lit_marks
+            .push(self.processed_lit_trail.len());
         self.euf.push();
         self.arith.push();
         self.bv.push();
@@ -906,6 +965,28 @@ impl<'a> TheoryManager<'a> {
         use oxiz_theories::Theory;
 
         self.level_stack.pop();
+        // Retract the EUF-derived equality rows asserted inside this scope,
+        // mirroring the arithmetic solver's own scope pop (which removed the
+        // rows themselves).  Without this the memo would keep claiming rows
+        // exist after a backtrack removed them, permanently suppressing
+        // re-assertion of equalities whose rows are gone.
+        if let Some(mark) = self.asserted_arith_eq_marks.pop() {
+            while self.asserted_arith_eq_trail.len() > mark {
+                if let Some(pair) = self.asserted_arith_eq_trail.pop() {
+                    self.asserted_arith_eqs.remove(&pair);
+                }
+            }
+        }
+        // Same discipline for the per-literal processed guards: the scope pop
+        // just rolled the theory solvers back, so literals processed inside
+        // it must become processable again.
+        if let Some(mark) = self.processed_lit_marks.pop() {
+            while self.processed_lit_trail.len() > mark {
+                if let Some(lit) = self.processed_lit_trail.pop() {
+                    self.processed_lits.remove(&lit);
+                }
+            }
+        }
         self.euf.pop();
         self.arith.pop();
         self.bv.pop();
@@ -976,6 +1057,17 @@ impl<'a> TheoryManager<'a> {
         }
 
         // Drop all incremental theory state and derived caches.
+        //
+        // EUF/BV/DL are rebuilt wholesale (the congruence-loss backstop this
+        // function exists for).  The arithmetic solver is only *popped to
+        // its base scope* instead of being destroyed: every bound asserted
+        // above base is undone (the replay below re-asserts each one at its
+        // original level), but its search-global state – interned terms,
+        // per-linear-form rows and the row cache – survives.  A wholesale
+        // `arith.reset()` here used to discard and then re-create thousands
+        // of identical rows on every `final_check` (this backstop runs once
+        // per final check for function-bearing inputs), which dominated
+        // QF_AUFLIA runtimes.
         self.euf.reset();
         self.arith.reset();
         self.bv.reset();
@@ -989,6 +1081,16 @@ impl<'a> TheoryManager<'a> {
         // The proof forest these explanations were read out of is gone; the
         // equalities they justified are gone from the tableau with it.
         self.derived_reasons.clear();
+        // The pops above undid every EUF-derived equality bound (they are
+        // scoped), so the memo that claims they are asserted must go with
+        // them; the replay re-asserts each surviving equality against its
+        // (still cached) row.
+        self.asserted_arith_eqs.clear();
+        self.asserted_arith_eq_trail.clear();
+        self.asserted_arith_eq_marks = vec![0];
+        self.processed_lits.clear();
+        self.processed_lit_trail.clear();
+        self.processed_lit_marks = vec![0];
         if self.eager_interned {
             self.intern_all_euf_terms();
         }
@@ -1141,10 +1243,10 @@ impl<'a> TheoryManager<'a> {
                         continue;
                     }
                     // EUF has derived t1 = t2 (same class). Assert the equality
-                    // into the arithmetic solver.
-                    if let Some(conflict) = self.assert_explained_equality(t1, t2) {
-                        return conflict;
-                    }
+                    // into the arithmetic solver.  (Batched: no per-equality
+                    // solve; the caller runs one check after this pass, and
+                    // the row's reason ids carry precise attribution.)
+                    self.assert_explained_equality(t1, t2);
                 }
             }
         }
@@ -1153,8 +1255,7 @@ impl<'a> TheoryManager<'a> {
     }
 
     /// Assert an EUF-derived equality `t1 = t2` into the arithmetic solver,
-    /// carrying the explanation that justifies it, and report any resulting
-    /// arithmetic conflict.
+    /// carrying the explanation that justifies it.
     ///
     /// This is the single crossing point between congruence closure and the
     /// tableau, and the only place allowed to tag an arithmetic assertion with a
@@ -1167,14 +1268,24 @@ impl<'a> TheoryManager<'a> {
     ///   tag `t1`, so [`Self::terms_to_conflict_clause`] can expand the tag back
     ///   into the literals it stands for.
     ///
-    /// Returns `Some(Conflict(..))` only when the arithmetic solver refutes the
-    /// system after the equality is added.
-    fn assert_explained_equality(&mut self, t1: TermId, t2: TermId) -> Option<TheoryCheckResult> {
-        use oxiz_theories::Theory;
-        use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
+    /// Idempotent per theory scope: a pair already asserted at this scope is
+    /// skipped (see `asserted_arith_eqs`), so the repeated Nelson-Oppen rounds
+    /// and `final_check` calls that rediscover the same EUF merge never
+    /// duplicate its tableau rows.
+    ///
+    /// Does **not** run `arith.check()` itself: every caller batch-asserts a
+    /// set of equalities and then runs one check for the whole batch
+    /// (the row's own reason ids carry the precise conflict attribution, so
+    /// batching loses no core minimality).
+    fn assert_explained_equality(&mut self, t1: TermId, t2: TermId) {
+        let key = if t1 < t2 { (t1, t2) } else { (t2, t1) };
+        if self.asserted_arith_eqs.contains(&key) {
+            return;
+        }
 
-        let n1 = self.euf.term_to_node(t1)?;
-        let n2 = self.euf.term_to_node(t2)?;
+        let (Some(n1), Some(n2)) = (self.euf.term_to_node(t1), self.euf.term_to_node(t2)) else {
+            return;
+        };
 
         // `n1 == n2` means the two term ids were hash-consed onto one node, so
         // the equality is structural and rests on no assertion.  An empty
@@ -1183,7 +1294,7 @@ impl<'a> TheoryManager<'a> {
         // whole path exists to prevent.
         let justification = self.euf.explain_eq(n1, n2);
         if n1 != n2 && justification.is_empty() {
-            return None;
+            return;
         }
         self.derived_reasons.record(t1, justification);
 
@@ -1195,13 +1306,8 @@ impl<'a> TheoryManager<'a> {
             Rational64::from_integer(0),
             t1,
         );
-
-        match self.arith.check() {
-            Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) => {
-                Some(self.conflict_from_terms(&conflict_terms))
-            }
-            _ => None,
-        }
+        self.asserted_arith_eqs.insert(key);
+        self.asserted_arith_eq_trail.push(key);
     }
 
     /// Model-based theory combination.
@@ -1234,6 +1340,7 @@ impl<'a> TheoryManager<'a> {
         // without an arith value cannot participate in an arith disagreement and
         // are simply skipped (mirroring the old `if let (Some, Some)` guard).
         let mut witness: FxHashMap<u32, (TermId, Rational64)> = FxHashMap::default();
+        let mut asserted_any = false;
 
         // `term_to_var` is a hash map, so iterate in term-id order: which member
         // of a class becomes the witness – and hence which equality is asserted
@@ -1251,10 +1358,9 @@ impl<'a> TheoryManager<'a> {
 
             match witness.get(&rep) {
                 Some(&(prev_term, prev_value)) => {
-                    if prev_value != value
-                        && let Some(conflict) = self.assert_explained_equality(prev_term, term)
-                    {
-                        return conflict;
+                    if prev_value != value {
+                        self.assert_explained_equality(prev_term, term);
+                        asserted_any = true;
                     }
                 }
                 None => {
@@ -1263,6 +1369,14 @@ impl<'a> TheoryManager<'a> {
             }
         }
 
+        // One batched feasibility check for every equality asserted above.
+        if asserted_any {
+            use oxiz_theories::Theory;
+            if let Ok(oxiz_theories::TheoryCheckResult::Unsat(conflict_terms)) = self.arith.check()
+            {
+                return self.conflict_from_terms(&conflict_terms);
+            }
+        }
         TheoryCheckResult::Sat
     }
 
@@ -2466,6 +2580,16 @@ impl<'a> TheoryManager<'a> {
         is_positive: bool,
         manager: &TermManager,
     ) -> TheoryCheckResult {
+        // Idempotence guard (see `processed_lits`): the SAT core re-sends
+        // already-assigned literals (same-polarity re-send after a backtrack
+        // that did not pop this literal's scope, propagation replays).  Every
+        // effect of this literal is still live at the current scope in that
+        // case, so re-processing would only duplicate tableau rows / DL edges
+        // / BV encodings.  A literal whose scope WAS popped had its guard
+        // entry popped with it and re-processes normally.
+        let lit_key = (var, is_positive);
+        let _ = lit_key;
+        self.processed_lit_trail.push(lit_key);
         match constraint {
             Constraint::Eq(lhs, rhs) => {
                 if is_positive {
@@ -2524,6 +2648,14 @@ impl<'a> TheoryManager<'a> {
                         }
                         use oxiz_theories::Theory;
                         use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
+                        // Eager detection of the CHEAP conflict class only
+                        // (crossed bounds, O(vars), no pivoting / B&B).
+                        // The full LP + integer feasibility solve runs at
+                        // `final_check`: a full simplex + branch-and-bound
+                        // per literal assignment made every SAT step pay
+                        // O(tableau) over a tableau that carries one row per
+                        // assigned atom (QF_AUFLIA/swap: thousands of full
+                        // solves, none of which the reference solvers run).
                         if let Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) = self.arith.check()
                         {
                             return self.conflict_from_terms(&conflict_terms);
@@ -2803,6 +2935,10 @@ impl<'a> TheoryManager<'a> {
                             }
                             ArithConstraintType::Gt => {
                                 // lhs - rhs > 0, i.e., sum of terms > constant
+                                eprintln!(
+                                    "[pdiag2] assert_gt terms={:?} const={:?}",
+                                    terms, constant
+                                );
                                 self.arith.assert_gt(&terms, constant, reason);
                             }
                             ArithConstraintType::Ge => {
@@ -2862,15 +2998,11 @@ impl<'a> TheoryManager<'a> {
                     if !dl_exact {
                         use oxiz_theories::Theory;
                         use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
-                        let arith_result = self.arith.check();
-                        match arith_result {
-                            Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) => {
-                                return self.conflict_from_terms(&conflict_terms);
-                            }
-                            Ok(TheoryCheckResultEnum::Sat) => {}
-                            other => {
-                                let _ = other;
-                            }
+                        // See the equality branch above: cheap crossed-bound
+                        // probe here, full LP solve at `final_check`.
+                        if let Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) = self.arith.check()
+                        {
+                            return self.conflict_from_terms(&conflict_terms);
                         }
                     }
                 }

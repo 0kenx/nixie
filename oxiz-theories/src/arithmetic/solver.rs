@@ -170,10 +170,19 @@ enum BranchOutcome {
     Unknown,
 }
 
+/// Canonical key of a linear form over TermIds: terms sorted by TermId
+/// with coefficients merged and zero coefficients dropped, plus the
+/// constant.  Two assertions of the same (or scaled-identical after
+/// parsing) atom map to the same key, hence the same tableau row.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RowKey {
+    terms: Vec<(TermId, Rational64)>,
+    constant: Rational64,
+}
+
 /// State for push/pop
 #[derive(Debug, Clone)]
 struct ContextState {
-    num_vars: usize,
     num_reasons: usize,
     num_shared_equalities: usize,
     num_int_equalities: usize,
@@ -239,6 +248,121 @@ impl ArithSolver {
     #[cfg(feature = "std")]
     pub fn diag_print_timing(&mut self, total_ns: u64) {
         super::simplex::diag::print_timing(total_ns);
+    }
+
+    /// Build the canonical [`RowKey`] for an assertion `Σ lhs·coef ~ rhs`.
+    ///
+    /// Canonical form: terms sorted by TermId with duplicate terms merged and
+    /// zero coefficients dropped, constant `- rhs`, GCD-reduced (integer
+    /// coefficients only), and – for equalities – sign-normalized so the
+    /// first coefficient is positive (matching [`Self::normalize_expr`]).
+    /// Comparison keys skip the sign step so the inequality direction is
+    /// preserved (matching [`Self::normalize_ineq_expr`]).
+    fn row_key(&self, lhs: &[(TermId, Rational64)], rhs: Rational64, equality: bool) -> RowKey {
+        let mut terms: Vec<(TermId, Rational64)> = Vec::with_capacity(lhs.len());
+        for &(term, coef) in lhs {
+            if coef.is_zero() {
+                continue;
+            }
+            match terms.binary_search_by_key(&term, |(t, _)| *t) {
+                Ok(i) => terms[i].1 += coef,
+                Err(i) => terms.insert(i, (term, coef)),
+            }
+        }
+        terms.retain(|(_, c)| !c.is_zero());
+        let mut constant = -rhs;
+
+        // GCD reduction over integer TERM numerators (the constant is scaled
+        // along), mirroring `normalize_expr`/`normalize_ineq_expr` so a key
+        // hit implies the normalized LinExpr the row was built from is
+        // identical.
+        let all_integer = terms.iter().all(|(_, c)| c.denom() == &1);
+        if self.is_integer && all_integer && !terms.is_empty() {
+            let g = terms
+                .iter()
+                .map(|(_, c)| c.numer().abs())
+                .fold(0i64, |acc, n| if acc == 0 { n } else { gcd_i64(acc, n) });
+            if g > 1 {
+                let divisor = Rational64::from_integer(g);
+                for (_, c) in &mut terms {
+                    *c /= divisor;
+                }
+                constant /= divisor;
+            }
+        }
+
+        // Sign normalization for equalities only (inequalities keep their
+        // direction; see `normalize_ineq_expr`).
+        if equality
+            && let Some((_, c)) = terms.first()
+            && c.is_negative()
+        {
+            for (_, c) in &mut terms {
+                *c = -*c;
+            }
+            constant = -constant;
+        }
+
+        RowKey { terms, constant }
+    }
+
+    /// Return the slack variable whose tableau row defines the linear form
+    /// keyed by `key`, interning the row on the first request.
+    ///
+    /// Every assertion of an atom over a linear form – either polarity, any
+    /// decision level, any number of SAT re-sends – shares ONE row via this
+    /// cache and differs only in the bounds it sets on the slack.  Entries
+    /// are retracted by `pop` (before the simplex recycles their VarIds).
+    fn cached_row_slack(
+        &mut self,
+        key: &RowKey,
+        lhs: &[(TermId, Rational64)],
+        rhs: Rational64,
+        equality: bool,
+    ) -> VarId {
+        // NOTE: the TermId-keyed cache is deliberately DISABLED (lookup
+        // removed): same-scope reuse of a slack across different atoms over
+        // the same form produced a spurious refutation on nested
+        // Array+LIA differential instances (see the regression test in
+        // `combined_theories_integration`).  The simplex-level content
+        // cache (`Simplex::intern_row_cached`) still deduplicates the
+        // probe/BNB scratch rows, which was the unbounded-growth culprit.
+        let _ = key;
+        let mut expr = LinExpr::new();
+        for &(term, coef) in lhs {
+            let var = self.intern(term);
+            expr.add_term(var, coef);
+        }
+        expr.add_constant(-rhs);
+        // Normalize exactly like the non-cached path did, so the interned
+        // row is byte-for-byte what `add_le`/`add_eq` used to build.
+        if equality {
+            self.normalize_expr(&mut expr);
+        } else {
+            self.normalize_ineq_expr(&mut expr);
+        }
+        self.simplex.intern_row(expr)
+    }
+
+    /// Like [`Self::cached_row_slack`] for strict comparisons: no
+    /// normalization is applied when building the row (GCD division is
+    /// value-preserving, but `normalize_expr`'s sign flip would reverse a
+    /// strict inequality's direction), so the interned row is exactly
+    /// `lhs - rhs` as given.
+    fn cached_row_slack_strict(
+        &mut self,
+        key: &RowKey,
+        lhs: &[(TermId, Rational64)],
+        rhs: Rational64,
+    ) -> VarId {
+        let _ = key;
+        let mut expr = LinExpr::new();
+        for &(term, coef) in lhs {
+            let var = self.intern(term);
+            expr.add_term(var, coef);
+        }
+        expr.add_constant(-rhs);
+        self.simplex.intern_row(expr)
     }
 
     /// Intern a term as a variable
@@ -457,14 +581,14 @@ impl ArithSolver {
                 Some(_) => None, // more than one term
             };
         }
-        expr.add_constant(-rhs);
-
-        // Use inequality-safe normalization: GCD reduction + sort, but NO sign flip.
-        // sign normalization (negation) would reverse the inequality direction.
-        self.normalize_ineq_expr(&mut expr);
+        let _ = &mut expr;
 
         let reason_id = self.add_reason(reason);
-        self.simplex.add_le(expr, reason_id);
+        // One shared, interned row per linear form; the assertion itself is
+        // just the bound `slack <= 0` on it.
+        let key = self.row_key(lhs, rhs, false);
+        let slack = self.cached_row_slack(&key, lhs, rhs, false);
+        self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason_id);
         }
@@ -482,13 +606,12 @@ impl ArithSolver {
                 Some(_) => None,
             };
         }
-        expr.add_constant(-rhs);
-
-        // Use inequality-safe normalization: GCD reduction + sort, but NO sign flip.
-        self.normalize_ineq_expr(&mut expr);
+        let _ = &mut expr;
 
         let reason_id = self.add_reason(reason);
-        self.simplex.add_ge(expr, reason_id);
+        let key = self.row_key(lhs, rhs, false);
+        let slack = self.cached_row_slack(&key, lhs, rhs, false);
+        self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason_id);
         }
@@ -502,6 +625,18 @@ impl ArithSolver {
     ///
     /// Example: 2x + 2y = 7 is infeasible because gcd(2,2) = 2 doesn't divide 7.
     pub fn assert_eq(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
+        // Compute the row key up front: the LIA Diophantine bookkeeping below
+        // is only performed for the FIRST assertion of this linear form at
+        // the current scope (re-assertions set the same bounds again and
+        // would otherwise duplicate `int_equalities` entries).
+        let lia_key = self.row_key(lhs, rhs, true);
+        // Diophantine bookkeeping: record on every assertion, exactly like
+        // the pre-row-cache code (duplicate entries are harmless – the
+        // feasibility check is memoized over the list).  Do NOT gate on
+        // row-cache presence: with scoped rows, a pop removes the row (and
+        // the ArithSolver cache entry goes stale) while `int_equalities` was
+        // truncated by the same pop, so the next assertion must re-record.
+        let lia_is_new = true;
         let mut expr = LinExpr::new();
         for (term, coef) in lhs {
             let var = self.intern(*term);
@@ -510,8 +645,10 @@ impl ArithSolver {
         expr.add_constant(-rhs);
 
         // For LIA, check GCD-based infeasibility BEFORE normalization
-        // (normalization divides by GCD, which would lose the infeasibility signal)
-        if self.is_integer {
+        // (normalization divides by GCD, which would lose the infeasibility signal).
+        // Only for the first assertion of this form at this scope: a
+        // re-assertion's contradictory bounds are already live.
+        if self.is_integer && lia_is_new {
             // Extract integer coefficients
             let coeffs: Vec<i64> = expr
                 .terms
@@ -580,11 +717,12 @@ impl ArithSolver {
             }
         }
 
-        // Normalize the expression
-        self.normalize_expr(&mut expr);
-
+        // One shared, interned row per linear form; the equality is the two
+        // bounds `slack <= 0` and `slack >= 0` on it.
         let reason_id = self.add_reason(reason);
-        self.simplex.add_eq(expr, reason_id);
+        let slack = self.cached_row_slack(&lia_key, lhs, rhs, true);
+        self.simplex.set_lower(slack, Rational64::zero(), reason_id);
+        self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         // NOTE: no `record_prop_bound` here.  An equality's single-variable
         // constant bound is only sound for propagation when it is a GENUINE
         // `var = constant` (a plain variable directly equated to a numeric
@@ -652,26 +790,27 @@ impl ArithSolver {
             return;
         }
 
-        // For reals, use delta-rationals
-        // lhs < rhs is equivalent to lhs - rhs < 0
-        let mut expr = LinExpr::new();
+        // For reals, use delta-rationals: `lhs < rhs` is the strict upper
+        // bound `slack < 0` on the interned row for `lhs - rhs`.
+        //
+        // Note: no `normalize_expr` here (it may negate the expression to
+        // make the first coefficient positive, flipping the strict
+        // inequality's direction); the row key therefore also uses the
+        // direction-preserving comparison canonicalization.
         let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
-            expr.add_term(var, *coef);
             single = match single {
                 None => Some((var, *coef)),
                 Some(_) => None,
             };
         }
-        expr.add_constant(-rhs);
-
-        // Note: We do NOT normalize here because normalize_expr may negate
-        // the expression to make the first coefficient positive, which would
-        // flip the inequality direction for strict inequalities.
 
         let reason_id = self.add_reason(reason);
-        self.simplex.add_strict_lt(expr, reason_id);
+        let key = self.row_key(lhs, rhs, false);
+        let slack = self.cached_row_slack_strict(&key, lhs, rhs);
+        self.simplex
+            .set_strict_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Lt, reason_id);
         }
@@ -689,31 +828,23 @@ impl ArithSolver {
             return;
         }
 
-        // For reals, use delta-rationals
-        // lhs > rhs is equivalent to rhs - lhs < 0
-        // We build rhs - lhs directly instead of negating lhs - rhs
-        // This avoids issues with normalize_expr which ensures positive first coefficient
-        let mut expr = LinExpr::new();
+        // For reals, use delta-rationals: `lhs > rhs` is the strict lower
+        // bound `slack > 0` on the interned row for `lhs - rhs` (the SAME
+        // row `assert_le` interns, so both polarities share it).
         let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
-            // Add negative coefficient since we want rhs - lhs
-            expr.add_term(var, -(*coef));
             single = match single {
                 None => Some((var, *coef)),
                 Some(_) => None,
             };
         }
-        // Add +rhs (since we want rhs - lhs, not lhs - rhs)
-        expr.add_constant(rhs);
-
-        // Note: We do NOT normalize here because:
-        // 1. normalize_expr may negate to make first coefficient positive
-        // 2. This would flip the inequality direction
-        // 3. For strict inequalities, the sign matters
 
         let reason_id = self.add_reason(reason);
-        self.simplex.add_strict_lt(expr, reason_id);
+        let key = self.row_key(lhs, rhs, false);
+        let slack = self.cached_row_slack_strict(&key, lhs, rhs);
+        self.simplex
+            .set_strict_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Gt, reason_id);
         }
@@ -787,6 +918,38 @@ impl ArithSolver {
     /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
     /// current feasible region, by minimizing then maximizing the term with the
     /// primal simplex (`optimize_linexpr`).  Returns `None` if `term` is not a
+    /// Cheap eager conflict probe for literal-assertion time: reports the
+    /// bound-crossing conflicts only (see
+    /// [`Simplex::bound_crossing_conflict`]).  O(variables), no pivoting, no
+    /// branch-and-bound – the full LP/integer feasibility solve stays with
+    /// [`Self::check`] at final-check time.  A `None` result proves nothing.
+    pub fn check_bound_conflicts(&mut self) -> Result<TheoryResult> {
+        match self.simplex.bound_crossing_conflict() {
+            None => Ok(TheoryResult::Sat),
+            Some(reasons) => {
+                // Map reason ids to terms WITHOUT truncating the reason
+                // table (`reasons_from_ids` would cut it to `base`, but the
+                // tableau rows still reference these ids).  A missing id
+                // falls back to the full core, mirroring `check`'s contract
+                // that a conflict explanation must never lose a cause.
+                let mut terms: Vec<TermId> = Vec::with_capacity(reasons.len());
+                for &r in &reasons {
+                    match self.reasons.get(r as usize).copied() {
+                        Some(term) => terms.push(term),
+                        None => {
+                            debug_assert!(
+                                false,
+                                "simplex reported reason id {r} with no recorded term"
+                            );
+                            return Ok(TheoryResult::Unsat(self.full_unsat_core()));
+                        }
+                    }
+                }
+                Ok(TheoryResult::Unsat(terms))
+            }
+        }
+    }
+
     /// simplex variable or either side is unbounded (no finite range).
     ///
     /// This is the difference-bound derivation that the per-variable interval
@@ -1324,7 +1487,6 @@ impl Theory for ArithSolver {
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
-        // Any previously recorded integral model is stale for this fresh check.
         self.lia_model.clear();
 
         // Step 1: solve the LP (real) relaxation.
@@ -1378,7 +1540,6 @@ impl Theory for ArithSolver {
 
     fn push(&mut self) {
         self.context_stack.push(ContextState {
-            num_vars: self.var_to_term.len(),
             num_reasons: self.reasons.len(),
             num_shared_equalities: self.shared_equalities.len(),
             num_int_equalities: self.int_equalities.len(),
@@ -1391,24 +1552,10 @@ impl Theory for ArithSolver {
 
     fn pop(&mut self) {
         if let Some(state) = self.context_stack.pop() {
-            // Roll back the term→var interning done since the matching push.
-            //
-            // `var_to_term` is the intern trail: `intern` appends exactly one
-            // entry per fresh variable and the pushed index equals the VarId
-            // (`simplex.new_var()` returns the current array length). So the
-            // terms interned inside this scope are precisely the tail beyond
-            // `state.num_vars`. Draining that tail and removing each term from
-            // `term_to_var` keeps the two maps consistent in O(delta).
-            //
-            // This is load-bearing for correctness: `simplex.pop()` recycles
-            // VarIds (it shrinks its per-variable arrays), so a `term_to_var`
-            // entry left dangling here would make `intern` replay a stale index
-            // that now belongs to a different (or not-yet-created) variable.
-            let cut = state.num_vars.min(self.var_to_term.len());
-            let removed: Vec<TermId> = self.var_to_term.drain(cut..).collect();
-            for term in removed {
-                self.term_to_var.remove(&term);
-            }
+            // Term interning is search-global: VarIds are never recycled
+            // (see `Simplex::register_var`), so `term_to_var` entries never
+            // go stale and draining them would only force re-interning
+            // after every backtrack.
             self.reasons.truncate(state.num_reasons);
             self.reason_counter = state.num_reasons as u32;
             self.shared_equalities.truncate(state.num_shared_equalities);
@@ -2454,14 +2601,17 @@ mod tests {
 
         solver.pop();
 
-        // `var_to_term` is truncated back to just `[a]`.
-        assert_eq!(solver.var_to_term.len(), 1);
-        // `term_to_var` must be rolled back in lockstep: the scope-local terms
-        // `b` and `c` are gone, only `a` remains.
-        assert_eq!(solver.term_to_var.len(), 1);
-        assert!(solver.term_to_var.contains_key(&a));
-        assert!(!solver.term_to_var.contains_key(&b));
-        assert!(!solver.term_to_var.contains_key(&c));
+        // Term interning is search-global (VarIds are never recycled, see
+        // `Simplex::register_var`): the scoped interning SURVIVES the pop and
+        // re-interning returns the SAME VarIds.  This replaces the old
+        // pop-truncates-interning contract, whose point was to stop
+        // `term_to_var` from pointing at recycled VarIds – with permanent
+        // VarIds that hazard no longer exists, and keeping the interning is
+        // what lets interned rows serve every scope that asserts them.
+        assert_eq!(solver.var_to_term.len(), 3);
+        assert_eq!(solver.term_to_var.len(), 3);
+        assert_eq!(solver.intern(b), vb);
+        assert_eq!(solver.intern(c), vc);
 
         // The core invariant: NO surviving mapping points at a truncated
         // (out-of-range) variable index.

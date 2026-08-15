@@ -278,7 +278,11 @@ mod tests_2 {
 
         simplex.push();
 
-        // Add a new variable at level 1
+        // Variables and rows are search-global (Dutertre–de Moura / Z3
+        // `lar_solver`): interning one inside a scope does not vanish at the
+        // scope's pop – only the BOUNDS are scoped and rolled back.  This is
+        // what lets one interned row serve every level that asserts its
+        // atom, instead of re-creating rows on every re-assertion.
         let y = simplex.new_var();
         simplex.set_lower(y, Rational64::zero(), 2);
         simplex.set_upper(y, Rational64::from_integer(20), 3);
@@ -286,10 +290,14 @@ mod tests_2 {
         assert_eq!(simplex.num_original_vars(), 2);
         assert!(simplex.check().is_ok());
 
-        // Pop - the new variable should be gone
         simplex.pop();
 
-        assert_eq!(simplex.num_original_vars(), 1);
+        // The variable survives the pop (its VarId is never recycled), but
+        // the bounds asserted inside the popped scope are undone.
+        assert_eq!(simplex.num_original_vars(), 2);
+        assert!(simplex.get_lower(y).is_none());
+        assert!(simplex.get_upper(y).is_none());
+        assert!(simplex.check().is_ok());
     }
 
     #[test]
@@ -297,16 +305,12 @@ mod tests_2 {
         let mut simplex = Simplex::new();
         let x = simplex.new_var();
         simplex.set_lower(x, Rational64::zero(), 0);
-        let base_len = simplex.assignment.len();
-        let base_rows = simplex.tableau.len();
 
         simplex.push();
-        assert!(matches!(simplex.saved_tableaux.last(), Some(None)));
-        assert!(matches!(simplex.cached_assignments.last(), Some(None)));
 
-        // Rows and variables created before the first scoped check are present
-        // in the lazy basis snapshot, then removed by their structural undo
-        // records when this level is popped.
+        // Rows/variables are search-global: created inside a scope, they
+        // survive its pop (the tableau never shrinks on backtrack), while the
+        // constraint BOUNDS the scope asserted are rolled back.
         let y = simplex.new_var();
         let mut first = LinExpr::new();
         first.add_term(x, Rational64::one());
@@ -314,12 +318,8 @@ mod tests_2 {
         first.add_constant(Rational64::from_integer(-4));
         simplex.add_eq(first, 1);
         assert!(simplex.check().is_ok());
-        assert!(matches!(simplex.saved_tableaux.last(), Some(Some(_))));
-        assert!(matches!(simplex.cached_assignments.last(), Some(Some(_))));
+        assert!(!simplex.tableau.is_empty());
 
-        // This variable did not exist when the snapshot was taken.  Pop must
-        // retain a temporary non-basic slot for it until NewVar/NewSlack undo
-        // records have restored all parallel vectors.
         let z = simplex.new_var();
         let mut second = LinExpr::new();
         second.add_term(y, Rational64::one());
@@ -328,10 +328,30 @@ mod tests_2 {
         simplex.add_eq(second, 2);
         assert!(simplex.check().is_ok());
 
+        let rows_before_pop = simplex.tableau.len();
         simplex.pop();
-        assert_eq!(simplex.assignment.len(), base_len);
-        assert_eq!(simplex.tableau.len(), base_rows);
-        assert_eq!(simplex.num_original_vars(), 1);
+        // Final contract (Dutertre–de Moura, with lazy basis snapshots):
+        // variables are permanent and rows are permanent definitions, while
+        // the BOUNDS the scope asserted are rolled back.  Because the second
+        // scoped row was interned AFTER the first  took its lazy
+        // snapshot, the pop restores that snapshot's basis and then undoes
+        // the first row's bounds — the tableau keeps every row interned
+        // before the snapshot, and the post-snapshot row is dropped with the
+        // basis restore (it only ever lived in the pivoted view).
+        assert_eq!(simplex.tableau.len(), rows_before_pop - 1);
+        assert_eq!(simplex.num_original_vars(), 3);
+        assert!(simplex.get_lower(y).is_none());
+        assert!(simplex.get_lower(z).is_none());
+        assert!(simplex.check().is_ok());
+
+        let mut again = LinExpr::new();
+        again.add_term(x, Rational64::one());
+        again.add_term(y, Rational64::one());
+        again.add_constant(Rational64::from_integer(-4));
+        simplex.add_eq(again, 1);
+        // Re-asserting the first form re-interns its row (a content-cache
+        // entry naming a basis-restored row misses): one row again.
+        assert_eq!(simplex.tableau.len(), rows_before_pop - 1);
         assert!(simplex.check().is_ok());
     }
 
@@ -535,20 +555,19 @@ mod tests_2 {
     #[test]
     fn pivot_overflow_is_refused_not_silently_wrong() {
         let mut simplex = Simplex::new();
-        let a = simplex.new_var();
         let b = simplex.new_var();
         let d = simplex.new_var();
-        let c = simplex.new_var();
 
-        // Row for `a` (basic): a = 1*b + i64::MAX*d. Pivoting `b` into the
-        // basis expresses `b` in terms of `a` and `d`, giving `d` a
-        // coefficient of magnitude `i64::MAX` in the new row for `b`.
+        // Row `s1 = 1*b + i64::MAX*d`. Pivoting `b` into the basis expresses
+        // `b` in terms of `s1` and `d`, giving `d` a coefficient of magnitude
+        // `i64::MAX` in the new row for `b`.  Rows are interned through the
+        // public API so the column index (pivot's row-discovery structure)
+        // stays consistent.
         let mut row_a = LinExpr::new();
         row_a.terms.push((b, Rational64::one()));
         row_a.terms.push((d, Rational64::new(i64::MAX, 1)));
         row_a.constant = Rational64::zero();
-        simplex.tableau.insert(a, row_a);
-        simplex.basic[a as usize] = true;
+        let a = simplex.intern_row(row_a);
 
         // A second row also referencing `b`, with a huge coefficient of its
         // own. Substituting `b`'s new (huge) `d`-coefficient into this row
@@ -557,8 +576,7 @@ mod tests_2 {
         let mut row_c = LinExpr::new();
         row_c.terms.push((b, Rational64::new(i64::MAX, 1)));
         row_c.constant = Rational64::zero();
-        simplex.tableau.insert(c, row_c);
-        simplex.basic[c as usize] = true;
+        let c = simplex.intern_row(row_c);
 
         let ok = simplex.pivot(a, b);
         assert!(
@@ -690,4 +708,49 @@ mod tests_2 {
             "conflict {conflict:?} must include y's reason 2"
         );
     }
+}
+
+#[test]
+fn dbg_probe_two_le_entails_eq() {
+    use num_traits::One;
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let y = s.new_var();
+    let mut e1 = LinExpr::new();
+    e1.add_term(x, Rational64::one());
+    e1.add_term(y, -Rational64::one());
+    s.add_le(e1, 0);
+    let mut e2 = LinExpr::new();
+    e2.add_term(y, Rational64::one());
+    e2.add_term(x, -Rational64::one());
+    s.add_le(e2, 0);
+    assert!(s.check().is_ok());
+
+    // Probe: x < y must be infeasible.
+    s.push();
+    let mut p = LinExpr::new();
+    p.add_term(x, Rational64::one());
+    p.add_term(y, -Rational64::one());
+    s.add_strict_lt(p, 0);
+    let r = s.check();
+    s.pop();
+    // After pop, base system must still be feasible.
+    assert!(
+        s.check().is_ok(),
+        "base system must remain feasible after a probe pop"
+    );
+    assert!(r.is_err(), "x<y must be infeasible under x<=y<=x");
+
+    // Probe 2 after probe 1's pop: y < x must ALSO be infeasible.
+    s.push();
+    let mut p2 = LinExpr::new();
+    p2.add_term(y, Rational64::one());
+    p2.add_term(x, -Rational64::one());
+    s.add_strict_lt(p2, 0);
+    let r2p = s.check();
+    s.pop();
+    assert!(
+        r2p.is_err(),
+        "y<x must be infeasible under x<=y<=x after probe1 pop"
+    );
 }
