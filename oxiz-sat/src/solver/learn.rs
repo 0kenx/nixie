@@ -154,6 +154,22 @@ impl Solver {
             self.stats.unit_clauses += 1;
             self.learned_clause_ids.push(clause_id);
 
+            // Record the learned clause at the current assertion scope so a
+            // SAT-level `pop` retracts it together with the scope's original
+            // clauses.  A learned clause is entailed by the clause set *at
+            // learn time*; if the pop removes premises (user `(pop)`, the BV
+            // solver's probe scopes), a surviving clause may be unentailed and
+            // poison every later search – the push/learn/pop/check leak.  The
+            // old inlined `solve` loop did this recording; `learn_clause` (the
+            // unified path) silently dropped it, which flipped a SATISFIABLE
+            // embedded-BV probe to a false `Unsat` that even the defensive
+            // forget-and-retry could not cure (the leaked clauses sat below
+            // the retry's checkpoint).  `forget_learned_since` remains the
+            // finer-grained cleanup; this is the scope-grained backstop.
+            if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                current_level_clauses.push(clause_id);
+            }
+
             self.assert_learned_clause(&learnt_clause, clause_id);
         } else if learnt_clause.len() == 2 {
             // Binary learned clause - add to binary implication graph
@@ -172,6 +188,9 @@ impl Solver {
             self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
+            if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                current_level_clauses.push(clause_id);
+            }
 
             let lit0 = learnt_clause[0];
             let lit1 = learnt_clause[1];
@@ -201,6 +220,9 @@ impl Solver {
             self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
+            if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                current_level_clauses.push(clause_id);
+            }
 
             // Second watch: the literal that stays "watchable" longest, i.e. the
             // false one at the highest decision level (`watch_rank`), not blindly
@@ -464,6 +486,9 @@ impl Solver {
         // through it; deletable reasons approximate that laziness while keeping
         // the `Reason::Propagation(ClauseId)` architecture.
         self.learned_clause_ids.push(clause_id);
+        if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+            current_level_clauses.push(clause_id);
+        }
         if let Some(clause) = self.clauses.get_mut(clause_id) {
             clause.lbd = lbd;
         }
@@ -518,6 +543,13 @@ impl Solver {
         // Store the unit lemma (Core tier, tracked for reduction).
         let clause_id = self.clauses.add_learned(std::iter::once(lit));
         self.learned_clause_ids.push(clause_id);
+        // Scope-record like every other learned clause (see `learn_clause`):
+        // a level-0 theory fact is entailed by the current scope's atoms;
+        // `pop` rolls the trail assignment but must also retract the unit
+        // clause, else it survives as an unentailed permanent constraint.
+        if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+            current_level_clauses.push(clause_id);
+        }
         if let Some(clause) = self.clauses.get_mut(clause_id) {
             clause.lbd = 1;
             clause.promote_to_core();
@@ -648,6 +680,11 @@ impl Solver {
     /// Handle clause deletion check and restart check
     pub(super) fn handle_clause_deletion_and_restart(&mut self) {
         self.conflicts_since_deletion += 1;
+        // Per-conflict inprocessing clock: the old inlined `solve` loop bumped
+        // this next to `stats.conflicts`; the unified loop routes every
+        // conflict through this handler, so the clock ticks here instead.
+        // Without it the periodic-inprocessing schedule below never fires.
+        self.conflicts_since_inprocessing += 1;
 
         if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
             self.reduce_clause_database();
@@ -700,6 +737,21 @@ impl Solver {
             if !self.config.reuse_trail {
                 self.debug_check_restart_consistency();
             }
+        }
+
+        // Periodic inprocessing and post-reduction vivification.  This used to
+        // live only in `solve`'s (now removed) inlined CDCL loop, so the
+        // CDCL(T) path silently ignored `enable_inprocessing` during search –
+        // the SMT layer's `balanced` preset has been setting that flag with no
+        // effect.  Both search loops now share this handler, so both get the
+        // same schedule.  `inprocess` itself refuses to run above decision
+        // level 0 or while an LRAT tracer is attached, which keeps these
+        // passes exactly as safe mid-search as they were pre-search.
+        if self.config.enable_inprocessing
+            && self.conflicts_since_inprocessing >= self.config.inprocessing_interval
+        {
+            self.inprocess();
+            self.conflicts_since_inprocessing = 0;
         }
     }
 
@@ -1467,8 +1519,12 @@ impl Solver {
         // in the reconstructed model. It is also unsound across incremental
         // scopes, where a later `add_clause` could reintroduce the opposite
         // polarity after the clauses were dropped, so it is only run at the base
-        // assertion level (no active `push`).
-        if self.assertion_levels.len() <= 1 {
+        // assertion level (no active `push`). It is likewise unsound while a
+        // *real* theory callback is attached: theory lemmas and propagations can
+        // force the opposite polarity of a variable with one-sided Boolean
+        // occurrences, and `save_model` would pin the pure polarity regardless
+        // (see `TheoryCallback::is_real_theory`).
+        if self.assertion_levels.len() <= 1 && !self.real_theory_attached {
             // Variables already fixed on the level-0 trail must be excluded
             // from pure-literal elimination (see
             // `Preprocessor::pure_literal_elimination`).
@@ -1491,142 +1547,29 @@ impl Solver {
             }
         }
 
-        let _subsumption = preprocessor.subsumption_elimination(&mut self.clauses);
-
-        // Emit a DRAT deletion line for every clause the two passes above
-        // retired, identified by diffing against the pre-pass snapshot (any
-        // previously-live clause that is now deleted).
+        // Emit a DRAT deletion line for every clause the pure-literal pass
+        // above retired, identified by diffing against the pre-pass snapshot
+        // (any previously-live clause that is now deleted).
         for (id, lits) in &pre_lits {
             if self.clauses.get(*id).is_some_and(|c| c.deleted) {
                 self.drat_delete_lits(lits);
             }
         }
 
-        // On-the-fly clause strengthening
-        self.strengthen_clauses_inprocessing();
+        // Forward subsumption + self-subsuming strengthening over the *whole*
+        // live database (originals and keep-worthy learned clauses), ported
+        // from cadical `subsume.cpp`: occurrence-driven, size-ordered,
+        // budget-bounded.  The previous pairwise scan was O(N²·L²) over
+        // originals only and too slow to schedule mid-search at all, which is
+        // why cadical's 46 %-subsumed-clauses behaviour on inprocessing-heavy
+        // instances (`stable-300-0.1-20`) never materialized here.  The
+        // probe-based `strengthen_clauses_inprocessing` is subsumed by the
+        // strengthening half of this round (and was capped at 50 clauses).
+        let (_subsumed, _strengthened) = self.subsume_round();
 
         // Rebuild watch lists for any modified clauses
         // This is a simplified approach - in a full implementation,
         // we would track which clauses were removed and update watches incrementally
-    }
-
-    /// On-the-fly clause strengthening during inprocessing
-    ///
-    /// Try to remove literals from clauses by checking if they're redundant.
-    /// A literal is redundant if the clause is satisfied when it's assigned to false.
-    pub(super) fn strengthen_clauses_inprocessing(&mut self) {
-        if self.trail.decision_level() != 0 {
-            return;
-        }
-
-        let max_clauses_to_strengthen = 50; // Limit to avoid overhead
-        let mut strengthened_count = 0;
-
-        // Collect candidate clauses (learned clauses with LBD > 2)
-        let mut candidates: Vec<(ClauseId, u32)> = Vec::new();
-
-        for &clause_id in &self.learned_clause_ids {
-            if let Some(clause) = self.clauses.get(clause_id)
-                && !clause.deleted
-                && clause.lits.len() > 3
-                && clause.lbd > 2
-            {
-                candidates.push((clause_id, clause.lbd));
-            }
-        }
-
-        // Sort by LBD (prioritize higher LBD clauses for strengthening)
-        candidates.sort_by_key(|(_, lbd)| core::cmp::Reverse(*lbd));
-
-        for (clause_id, _) in candidates.iter().take(max_clauses_to_strengthen) {
-            if strengthened_count >= max_clauses_to_strengthen {
-                break;
-            }
-
-            let clause_lits = match self.clauses.get(*clause_id) {
-                Some(c) if !c.deleted && c.lits.len() > 3 => c.lits.clone(),
-                _ => continue,
-            };
-
-            // Correct self-subsumption / vivification.
-            //
-            // A literal `l_k` of clause C is redundant iff the formula F already
-            // entails C \ {l_k}. To prove that, assert the negation of every
-            // *other* literal of C and propagate: a conflict means
-            //   F ∧ ¬(C \ {l_k}) ⊨ ⊥   ⇔   F ⊨ (C \ {l_k}),
-            // so `l_k` can be dropped while the clause stays F-entailed.
-            //
-            // The previous implementation asserted only ¬l_k and, on conflict,
-            // concluded F ⊨ l_k (a backbone) – then removed l_k. That is the
-            // wrong direction: F ⊨ l_k does NOT imply F ⊨ C \ {l_k}, so the
-            // shrunken clause excluded legitimate models and could flip SAT to
-            // UNSAT whenever inprocessing was enabled. This version negates the
-            // *other* literals (matching `vivify_clauses`) and never assigns an
-            // already-assigned variable.
-            let mut removed_idx: Option<usize> = None;
-
-            for skip_idx in 0..clause_lits.len() {
-                let saved_level = self.trail.decision_level();
-                self.trail.new_decision_level();
-
-                let mut conflict = false;
-                let mut already_sat = false;
-
-                for (i, &lit) in clause_lits.iter().enumerate() {
-                    if i == skip_idx {
-                        continue;
-                    }
-                    let value = self.trail.lit_value(lit);
-                    if value.is_true() {
-                        // C \ {skip_idx} is already satisfied under F, so this
-                        // probe cannot justify removing skip_idx.
-                        already_sat = true;
-                        break;
-                    } else if value.is_false() {
-                        continue;
-                    } else {
-                        self.trail.assign_decision(lit.negate());
-                        if self.propagate().is_some() {
-                            conflict = true;
-                            break;
-                        }
-                    }
-                }
-
-                self.backtrack(saved_level);
-
-                if conflict && !already_sat && clause_lits.len() > 2 {
-                    removed_idx = Some(skip_idx);
-                    break; // Only remove one literal at a time
-                }
-            }
-
-            // Apply strengthening if we found a redundant literal.
-            if let Some(idx) = removed_idx {
-                // Remove the redundant literal and rebuild the clause's watches
-                // (removing a watched literal in place would break the
-                // two-watched invariant, causing missed propagations/conflicts).
-                let removable = self
-                    .clauses
-                    .get(*clause_id)
-                    .is_some_and(|c| !c.deleted && c.lits.len() > 2 && idx < c.lits.len());
-                if removable {
-                    self.remove_literal_and_rewatch(*clause_id, idx);
-                }
-
-                // Recompute LBD after the removal.
-                if let Some(clause) = self.clauses.get(*clause_id) {
-                    let lits_clone = clause.lits.clone();
-                    let new_lbd = self.compute_lbd(&lits_clone);
-
-                    if let Some(clause) = self.clauses.get_mut(*clause_id) {
-                        clause.lbd = new_lbd;
-                    }
-
-                    strengthened_count += 1;
-                }
-            }
-        }
     }
 }
 

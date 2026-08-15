@@ -34,12 +34,32 @@ impl Solver {
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
+        // Mark the search as theory-carrying so `inprocess` can drop its
+        // pure-literal pass (unsound when theory lemmas may later force the
+        // opposite polarity of a Boolean-pure variable – see
+        // `TheoryCallback::is_real_theory`).  Saved and restored so a nesting
+        // `solve` (which calls this with a no-op theory) does not inherit the
+        // flag.
+        let saved_theory_attached = self.real_theory_attached;
+        self.real_theory_attached = theory.is_real_theory();
+        let result = self.solve_with_theory_inner(theory);
+        self.real_theory_attached = saved_theory_attached;
+        result
+    }
+
+    /// The body of [`Self::solve_with_theory`], split out so the
+    /// `real_theory_attached` save/restore above cannot be bypassed by an
+    /// early return.
+    fn solve_with_theory_inner<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
         if self.trivially_unsat {
             return SolverResult::Unsat;
         }
 
-        // Initial propagation
-        if self.propagate().is_some() {
+        // Initial propagation.  A conflict here completes an UNSAT proof, so
+        // emit the empty clause into the proof stream (`solve`'s pre-search
+        // passes do the same); a no-op unless proof logging is attached.
+        if let Some(conflict) = self.propagate() {
+            self.drat_emit_empty(Some(conflict));
             return SolverResult::Unsat;
         }
 
@@ -60,6 +80,9 @@ impl Solver {
                 self.stats.conflicts += 1;
 
                 if self.trail.decision_level() == 0 {
+                    // Conflict under only level-0 facts: UNSAT, and the proof
+                    // stream needs the empty clause (see `Solver::solve`).
+                    self.drat_emit_empty(Some(conflict));
                     return SolverResult::Unsat;
                 }
 
@@ -72,6 +95,7 @@ impl Solver {
                 // already-falsified at the root).
                 if learnt_clause.is_empty() {
                     self.trivially_unsat = true;
+                    self.drat_emit_empty(Some(conflict));
                     return SolverResult::Unsat;
                 }
 
@@ -88,6 +112,13 @@ impl Solver {
                 self.learn_clause(learnt_clause);
 
                 self.vsids.decay();
+                if self.config.use_chb_branching {
+                    self.chb.decay();
+                }
+                if self.config.use_lrb_branching {
+                    self.lrb.decay();
+                    self.lrb.on_conflict();
+                }
                 self.decay_clause_activity();
                 self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                 continue;
@@ -133,6 +164,7 @@ impl Solver {
                     self.stats.conflicts += 1;
 
                     if self.trail.decision_level() == 0 {
+                        self.drat_emit_empty(None);
                         return SolverResult::Unsat;
                     }
 
@@ -142,6 +174,7 @@ impl Solver {
                     // Empty learned clause signals all-level-0 conflict = fundamental UNSAT
                     if learnt_clause.is_empty() {
                         self.trivially_unsat = true;
+                        self.drat_emit_empty(None);
                         return SolverResult::Unsat;
                     }
 
@@ -157,6 +190,13 @@ impl Solver {
                     self.learn_clause(learnt_clause);
 
                     self.vsids.decay();
+                    if self.config.use_chb_branching {
+                        self.chb.decay();
+                    }
+                    if self.config.use_lrb_branching {
+                        self.lrb.decay();
+                        self.lrb.on_conflict();
+                    }
                     self.decay_clause_activity();
                     self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     // Rejoin the outer loop, NOT this one: the clause just learned
@@ -231,6 +271,7 @@ impl Solver {
                         self.stats.conflicts += 1;
 
                         if self.trail.decision_level() == 0 {
+                            self.drat_emit_empty(Some(conflict));
                             return SolverResult::Unsat;
                         }
 
@@ -240,6 +281,7 @@ impl Solver {
                         // refutation → UNSAT (see the companion guard above).
                         if learnt_clause.is_empty() {
                             self.trivially_unsat = true;
+                            self.drat_emit_empty(Some(conflict));
                             return SolverResult::Unsat;
                         }
 
@@ -255,6 +297,13 @@ impl Solver {
                         self.learn_clause(learnt_clause);
 
                         self.vsids.decay();
+                        if self.config.use_chb_branching {
+                            self.chb.decay();
+                        }
+                        if self.config.use_lrb_branching {
+                            self.lrb.decay();
+                            self.lrb.on_conflict();
+                        }
                         self.decay_clause_activity();
                         self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                         // Same reason as the theory-conflict branch above: the
@@ -309,6 +358,7 @@ impl Solver {
                         self.stats.conflicts += 1;
 
                         if self.trail.decision_level() == 0 {
+                            self.drat_emit_empty(None);
                             return SolverResult::Unsat;
                         }
 
@@ -319,6 +369,7 @@ impl Solver {
                         // returns an empty learned clause as a signal of fundamental UNSAT.
                         if learnt_clause.is_empty() {
                             self.trivially_unsat = true;
+                            self.drat_emit_empty(None);
                             return SolverResult::Unsat;
                         }
 
@@ -334,6 +385,13 @@ impl Solver {
                         self.learn_clause(learnt_clause);
 
                         self.vsids.decay();
+                        if self.config.use_chb_branching {
+                            self.chb.decay();
+                        }
+                        if self.config.use_lrb_branching {
+                            self.lrb.decay();
+                            self.lrb.on_conflict();
+                        }
                         self.decay_clause_activity();
                         self.handle_deletion_restart_with_theory(theory, &mut theory_processed);
                     }

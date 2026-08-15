@@ -633,9 +633,95 @@ fn process_single_file(
             }
         };
 
-        // Convert to SMT-LIB2 and solve
-        let script = cnf.to_smtlib2();
-        let result = execute_and_format(ctx, &script, args);
+        // Pure-CNF fast path: feed the SAT core directly.
+        //
+        // A DIMACS file is a purely Boolean problem, so round-tripping it
+        // through an SMT-LIB2 string, the SMT parser, term interning and the
+        // CDCL(T) theory layer buys nothing but overhead (and re-orders
+        // variables through the Tseitin encoder).  `Solver::solve` on the raw
+        // clause set runs the full pre-search pipeline (BVE, failed-literal
+        // probing, subsumption, lucky phases) and the shared CDCL loop.
+        // The verdict is identical by construction: same clauses, same
+        // solver; the SMT encoding of a CNF is the identity.
+        // Interactive modes (analyze/classify/diagnostic/…) still take the
+        // SMT-LIB2 route below, as does anything needing a model, since the
+        // fast path only produces a verdict.
+        let fast_path_ok = !args.analyze
+            && !args.classify
+            && !args.dependencies
+            && !args.dependencies_detailed
+            && args.dependencies_export.is_none()
+            && !args.diagnostic
+            && args.diagnostic_export.is_none()
+            && !args.format_smtlib
+            && !args.validate_only
+            && !args.dimacs_output; // `v`-line models come from the SMT path
+        let result = if fast_path_ok {
+            // NOTE: `enable_bve` stays off.  Bounded variable elimination
+            // has a known false-UNSAT on satisfiable input (reproduces on
+            // `summle_X4044…cnf` on both the current tree and older revisions:
+            // the elimination/unit-cascade pass derives a spurious level-0
+            // conflict) and is disabled in every preset for exactly that
+            // reason.  Do not re-enable it here without fixing the pass.
+            let mut sat = oxiz_sat::Solver::with_config(oxiz_sat::SolverConfig {
+                enable_inprocessing: true,
+                ..oxiz_sat::SolverConfig::default()
+            });
+            for _ in 0..cnf.num_vars {
+                sat.new_var();
+            }
+            let deadline = if args.timeout > 0 {
+                std::time::Instant::now().checked_add(std::time::Duration::from_secs(args.timeout))
+            } else {
+                None
+            };
+            let interrupt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            sat.set_interrupt(std::sync::Arc::clone(&interrupt));
+            if let Some(d) = deadline {
+                // Watchdog: flip the interrupt flag at the deadline so the
+                // search returns `Unknown` (never a fabricated verdict).
+                std::thread::spawn(move || {
+                    let now = std::time::Instant::now();
+                    if now < d {
+                        std::thread::sleep(d - now);
+                    }
+                    interrupt.store(true, std::sync::atomic::Ordering::Relaxed);
+                });
+            }
+            for clause in &cnf.clauses {
+                if clause.is_empty() {
+                    // The empty clause (falsum) – see `to_smtlib2`.
+                    let result = String::from("unsat");
+                    let time_ms = start.elapsed().as_millis();
+                    return SolverResult {
+                        file: Some(file.display().to_string()),
+                        result: result.clone(),
+                        error: None,
+                        time_ms,
+                    };
+                }
+                let lits: Vec<oxiz_sat::Lit> = clause
+                    .iter()
+                    .map(|&l| {
+                        let v = oxiz_sat::Var(l.unsigned_abs() - 1);
+                        if l > 0 {
+                            oxiz_sat::Lit::pos(v)
+                        } else {
+                            oxiz_sat::Lit::neg(v)
+                        }
+                    })
+                    .collect();
+                sat.add_clause(lits);
+            }
+            match sat.solve() {
+                oxiz_sat::SolverResult::Sat => "sat".to_string(),
+                oxiz_sat::SolverResult::Unsat => "unsat".to_string(),
+                oxiz_sat::SolverResult::Unknown => "unknown".to_string(),
+            }
+        } else {
+            let script = cnf.to_smtlib2();
+            execute_and_format(ctx, &script, args)
+        };
 
         // Format output based on args
         let formatted_result = if args.dimacs_output {

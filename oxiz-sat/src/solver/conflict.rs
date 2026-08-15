@@ -622,6 +622,60 @@ impl Solver {
         }
     }
 
+    /// Plain-path removable check: the exact recursion of the guarded port
+    /// (`minimize_literal_lrat`, itself a port of cadical's
+    /// `minimize_literal`), minus the LRAT chain bookkeeping.  `lit` is the
+    /// TRUE form of a learnt literal; returns `true` if it can be resolved out.
+    fn minimize_literal_plain(&mut self, lit: Lit, depth: u32) -> bool {
+        const MINIMIZE_DEPTH_LIMIT: u32 = 100;
+        let var = lit.var();
+        let f = self.mf_get(var);
+        let level = self.trail.level(var);
+        if level == 0 || (f & MF_REMOVABLE) != 0 || (f & MF_KEEP) != 0 {
+            return true;
+        }
+        let reason = self.trail.reason(var);
+        let no_reason = !matches!(reason, Reason::Propagation(_));
+        let cur_level = self.trail.decision_level();
+        if no_reason || (f & MF_POISON) != 0 || level == cur_level {
+            return false;
+        }
+        if depth > MINIMIZE_DEPTH_LIMIT {
+            return false;
+        }
+        let Reason::Propagation(cid) = reason else {
+            return false;
+        };
+        let others: SmallVec<[Lit; 8]> = self
+            .clauses
+            .get(cid)
+            .map(|c| {
+                c.lits
+                    .iter()
+                    .filter(|&&l| l.var() != var)
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut res = true;
+        for &other in others.iter() {
+            if !self.minimize_literal_plain(other.negate(), depth + 1) {
+                res = false;
+                break;
+            }
+        }
+        if res {
+            self.mf_set(var, MF_REMOVABLE);
+        } else {
+            self.mf_set(var, MF_POISON);
+        }
+        // Record the var so `clear_minimize_flags` can reset its flags; a
+        // leaked REMOVABLE/POISON bit across conflicts would poison later
+        // decisions (same bookkeeping `minimize_literal_lrat` does).
+        self.lrat_minimized.push(var.index() as i32);
+        res
+    }
+
     /// Recursive removable check (faithful port of `minimize_literal`). `lit` is
     /// the TRUE form of a learnt literal; returns `true` if it can be resolved
     /// out (its reason graph reaches only level-0 literals, kept clause
@@ -818,195 +872,50 @@ impl Solver {
 
         let original_len = self.learnt.len();
 
-        // Mark all literals in the learned clause as "in clause"
-        // We use analyze_stack to track literals to check
-        self.analyze_stack.clear();
+        // Faithful port of cadical's `minimize_clause` (plain, proof-off
+        // path).  The previous implementation was a MiniSat-style DFS that
+        // trusted the analysis `seen` stamps as a removable shortcut; that
+        // shortcut is only sound in classic CDCL (resolved-away literals sit
+        // above the UIP, out of reach of the downward reason walk) and, with
+        // chronological backtracking enabled, it resolved through conflict-
+        // level literals whose obligation analysis never discharged –
+        // over-strengthening learned clauses into a false UNSAT on
+        // SATISFIABLE input (`summle_X4044…cnf`; the guarded LRAT port answers
+        // `sat` on the identical instance).  This port now shares the guarded
+        // port's exact semantics: flag-cached recursion with poison
+        // propagation, the `v.level == level` rejection, Don Knuth's
+        // `seen.count < 2` gate, the `v.trail <= l.seen.trail` early abort,
+        // and a depth limit.  The `seen`-stamp shortcut and the separate
+        // binary-reason "strengthening" phase are gone entirely.
+        {
+            // `learnt[0]` is the asserting literal and is always kept.
+            // Process the rest in trail order (cadical `minimize_sort_clause`)
+            // so a literal another resolves through is already decided
+            // (kept → `MF_KEEP`, dropped → `MF_REMOVABLE`) when reached.
+            let asserting = self.learnt[0];
+            let mut order: SmallVec<[Lit; 16]> = self.learnt[1..].iter().copied().collect();
+            order.sort_by_key(|&l| self.trail.trail_index(l.var()));
 
-        // Phase 1: Basic minimization - remove redundant literals
-        let mut j = 1; // Write position
-        for i in 1..self.learnt.len() {
-            let lit = self.learnt[i];
-            if self.lit_is_redundant(lit) {
-                // Skip this literal (it's redundant)
-            } else {
-                // Keep this literal
-                self.learnt[j] = lit;
-                j += 1;
+            let mut kept: SmallVec<[Lit; 16]> = SmallVec::new();
+            for &lit in &order {
+                if self.minimize_literal_plain(lit.negate(), 0) {
+                    self.stats.literals_removed += 1;
+                } else {
+                    self.mf_set(lit.var(), MF_KEEP);
+                    kept.push(lit);
+                }
             }
+            self.learnt.clear();
+            self.learnt.push(asserting);
+            self.learnt.extend(kept);
+            self.clear_minimize_flags();
         }
-        self.learnt.truncate(j);
-
-        // Phase 2: Clause strengthening - check for self-subsuming resolution
-        // If the clause contains both l and ~l' where l' is in a reason clause,
-        // we might be able to strengthen the clause
-        self.strengthen_learnt_clause();
 
         // Track minimization statistics
         let final_len = self.learnt.len();
         if final_len < original_len {
             self.stats.minimizations += 1;
-            self.stats.literals_removed += (original_len - final_len) as u64;
         }
-    }
-
-    /// Strengthen the learned clause using on-the-fly self-subsuming resolution
-    pub(super) fn strengthen_learnt_clause(&mut self) {
-        if self.learnt.len() <= 2 {
-            return;
-        }
-
-        // Check each literal to see if we can strengthen by resolution
-        let mut j = 1;
-        for i in 1..self.learnt.len() {
-            let lit = self.learnt[i];
-            let var = lit.var();
-
-            // Check if this literal can be strengthened
-            if let Reason::Propagation(reason_id) = self.trail.reason(var)
-                && let Some(reason_clause) = self.clauses.get(reason_id)
-                && reason_clause.lits.len() == 2
-            {
-                // Binary reason: one literal is lit, the other is the implied literal
-                let other_lit = if reason_clause.lits[0] == lit.negate() {
-                    reason_clause.lits[1]
-                } else if reason_clause.lits[1] == lit.negate() {
-                    reason_clause.lits[0]
-                } else {
-                    // Keep the literal
-                    self.learnt[j] = lit;
-                    j += 1;
-                    continue;
-                };
-
-                // If other_lit is already in the learned clause at level 0,
-                // we can remove lit
-                if self.trail.level(other_lit.var()) == 0 && self.seen[other_lit.var().index()] {
-                    // Skip this literal (strengthened)
-                    continue;
-                }
-            } else if let Reason::Theory = self.trail.reason(var)
-                && let Some(other_lit) = self
-                    .theory_reason_tail(var)
-                    .and_then(|t| (t.len() == 1).then(|| t[0]))
-            {
-                // Lazy theory reason with a single antecedent: the exact
-                // analogue of the binary-clause case above (the materialized
-                // clause would be `(¬lit ∨ other_lit)`).
-                if self.trail.level(other_lit.var()) == 0 && self.seen[other_lit.var().index()] {
-                    // Skip this literal (strengthened)
-                    continue;
-                }
-            }
-
-            // Keep this literal
-            self.learnt[j] = lit;
-            j += 1;
-        }
-        self.learnt.truncate(j);
-    }
-
-    /// Check if a literal is redundant in the learned clause
-    ///
-    /// A literal is redundant if its reason clause only contains:
-    /// - Literals marked as seen (in the learned clause)
-    /// - Literals at decision level 0
-    /// - Literals that are themselves redundant (recursive)
-    pub(super) fn lit_is_redundant(&mut self, lit: Lit) -> bool {
-        // Recursive (MiniSat-style) self-subsumption: a learned-clause literal
-        // `lit` is redundant iff every literal in its antecedent chain – other
-        // than level-0 facts and literals already present in the learned clause
-        // – is itself redundant, bottoming out at decisions (which are not
-        // implied by anything). The previous implementation gave up on the
-        // first literal that was neither level-0 nor already in the clause,
-        // so it only ever performed one level of resolution and left the
-        // learned clause much longer than necessary (1.7x more propagations
-        // per conflict than cadical on structured instances).
-        //
-        // `seen[var]` is true for every variable currently in `self.learnt`
-        // (set by `analyze`). We reuse it as the DFS visited/cache marker: a
-        // literal already marked seen needs no further exploration. Literals
-        // we newly mark are recorded in `touched` and restored afterwards so
-        // `seen` returns to the learned-clause-only marking for the next call.
-        let mut stack: SmallVec<[Lit; 32]> = SmallVec::new();
-        let mut touched: SmallVec<[Var; 32]> = SmallVec::new();
-        stack.push(lit);
-
-        let mut redundant = true;
-        while let Some(cur) = stack.pop() {
-            // The antecedent literal list: a stored reason clause (skipping the
-            // propagated literal's FALSE occurrence `¬cur` by value), or the
-            // lazily stored tail of a theory propagation (which never contains
-            // `¬cur`, so nothing to skip).
-            enum Antecedent {
-                Clause(ClauseId),
-                Theory(SmallVec<[Lit; 8]>),
-            }
-            let antecedent = match self.trail.reason(cur.var()) {
-                Reason::Propagation(c) => Antecedent::Clause(c),
-                Reason::Theory => match self.theory_reason_tail(cur.var()).cloned() {
-                    Some(tail) => Antecedent::Theory(tail),
-                    // Decision / unexplained theory: not implied by other
-                    // literals.
-                    None => {
-                        redundant = false;
-                        break;
-                    }
-                },
-                _ => {
-                    redundant = false;
-                    break;
-                }
-            };
-
-            // One pass over the antecedent's literals. `others` is emptied by
-            // the match below so the immutable clause borrow is released
-            // before the `&mut self` removability probes.
-            let mut others: SmallVec<[Lit; 8]> = SmallVec::new();
-            match antecedent {
-                Antecedent::Clause(cid) => {
-                    let Some(clause) = self.clauses.get(cid) else {
-                        redundant = false;
-                        break;
-                    };
-                    others.extend(clause.lits.iter().copied().filter(|&l| l != cur.negate()));
-                }
-                Antecedent::Theory(tail) => others = tail,
-            }
-
-            for rlit in others {
-                let rvar = rlit.var();
-                if self.trail.level(rvar) == 0 {
-                    continue; // unconditional root fact – always removable
-                }
-                if self.seen[rvar.index()] {
-                    continue; // already in the learned clause, or already visited
-                }
-                // Must be implied by its own reason (a stored clause or a lazy
-                // theory explanation) to be removable; a decision (or an
-                // unexplained theory) literal at level > 0 blocks removal.
-                let implied = match self.trail.reason(rvar) {
-                    Reason::Propagation(_) => true,
-                    Reason::Theory => self.theory_reason_tail(rvar).is_some(),
-                    Reason::Decision => false,
-                };
-                if !implied {
-                    redundant = false;
-                    break;
-                }
-                self.seen[rvar.index()] = true;
-                touched.push(rvar);
-                stack.push(rlit);
-            }
-            if !redundant {
-                break;
-            }
-        }
-
-        // Restore `seen` to the learned-clause-only marking.
-        for v in touched {
-            self.seen[v.index()] = false;
-        }
-        redundant
     }
 
     /// Analyze a theory conflict (given as a list of literals that are all false)

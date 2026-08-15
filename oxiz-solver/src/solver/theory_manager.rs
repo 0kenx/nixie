@@ -3028,6 +3028,13 @@ impl<'a> TheoryManager<'a> {
 }
 
 impl TheoryCallback for TheoryManager<'_> {
+    /// A real theory is attached: inprocessing must skip its pure-literal pass
+    /// (see `TheoryCallback::is_real_theory` in oxiz-sat for the soundness
+    /// argument).
+    fn is_real_theory(&self) -> bool {
+        true
+    }
+
     fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
         let var = lit.var();
         let is_positive = !lit.is_neg();

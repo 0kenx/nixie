@@ -11,6 +11,7 @@ mod learn;
 mod lucky;
 mod propagate;
 mod search_ext;
+mod subsume;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -121,6 +122,26 @@ pub trait TheoryCallback {
 
     /// Called when backtracking
     fn on_backtrack(&mut self, level: u32);
+
+    /// Whether this callback carries *theory* constraints beyond the Boolean
+    /// clause set.
+    ///
+    /// This is a soundness signal, not a capability flag.  Pure-literal
+    /// elimination inside `Solver::inprocess` deletes original clauses on
+    /// the promise that the pure variable can be pinned to one polarity
+    /// without loss.  In a pure SAT search every clause added later is
+    /// *entailed* by the current set, so the promise holds.  A real theory
+    /// callback breaks it: theory lemmas and propagations can legitimately
+    /// force the opposite polarity of a variable whose Boolean occurrences
+    /// are one-sided, and `save_model`'s pure-literal reconstruction would
+    /// then hand back a model the theory never blessed.  The default
+    /// (`false`, e.g. the no-op callback [`Solver::solve`] uses) keeps
+    /// inprocessing fully enabled; real theory callbacks return `true` and
+    /// `Solver::inprocess` skips only the pure-literal pass (subsumption
+    /// and strengthening are entailment-based and stay sound either way).
+    fn is_real_theory(&self) -> bool {
+        false
+    }
 }
 
 /// Result of SAT solving
@@ -352,8 +373,16 @@ impl Default for SolverConfig {
             focused_vmtf: true,
             rephase_interval: 0,
             reuse_trail: true,
-            enable_failed_literal_probing: true,
-            enable_hyper_binary_probing: true,
+            // Off by default: BOTH probing passes have a proven false-UNSAT on
+            // satisfiable input (`circuit_48in64out_with_700gates…cnf`, CaDiCaL
+            // model verified): running *either* pass alone (everything else
+            // disabled) answers `unsat` on that SATISFIABLE file.  Root cause
+            // not yet isolated; per the "no fabricated answer" rule they stay
+            // disabled until fixed.  The sound pre-search combination is
+            // lucky phases + inprocessing (subsumption round + vivification),
+            // which solves `mrpp_4x4#12_12` in ~5 ms / 335 conflicts.
+            enable_failed_literal_probing: false,
+            enable_hyper_binary_probing: false,
             enable_lucky: true,
             external_branching: None,
         }
@@ -681,6 +710,12 @@ pub struct Solver {
     pub(super) conflicts_since_local_restart: u64,
     /// Conflicts since last inprocessing
     pub(super) conflicts_since_inprocessing: u64,
+    /// A real (non no-op) theory callback is attached to the running search.
+    /// Set for the duration of [`Solver::solve_with_theory`] when the
+    /// callback reports [`TheoryCallback::is_real_theory`]; gates the
+    /// pure-literal pass of [`Solver::inprocess`] (see the trait method's
+    /// soundness note).
+    pub(super) real_theory_attached: bool,
     /// Chronological backtracking helper
     pub(super) chrono_backtrack: ChronoBacktrack,
     /// Clause activity bump increment (for MapleSAT-style clause bumping)
@@ -878,6 +913,7 @@ impl Solver {
             global_lbd_count: 0,
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
+            real_theory_attached: false,
             chrono_backtrack: ChronoBacktrack::new(chrono_enabled, chrono_threshold),
             clause_bump_increment: 1.0,
             memory_optimizer: MemoryOptimizer::new(),
@@ -1534,12 +1570,16 @@ impl Solver {
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
         }
-        // Grow the LRAT per-literal tables to cover the new variable. These
-        // are only non-empty while an LRAT tracer is connected.
+        // Grow the per-literal tables.  `lrat_flags` holds the
+        // KEEP/POISON/REMOVABLE minimization flags (see `conflict.rs`) and is
+        // used by BOTH the plain and the LRAT minimizers – with the table
+        // empty the plain minimizer degenerates to keeping every literal,
+        // since the flags can never persist between candidates.
+        // `unit_clauses_idx` is only needed while an LRAT tracer is connected.
         if self.lrat {
             self.unit_clauses_idx.resize(2 * self.num_vars, 0);
-            self.lrat_flags.resize(2 * self.num_vars, 0);
         }
+        self.lrat_flags.resize(2 * self.num_vars, 0);
         var
     }
 
@@ -2133,231 +2173,32 @@ impl Solver {
             }
         }
 
-        loop {
-            // Resource budget / interrupt check: honor a configured conflict
-            // limit or an external interrupt by returning Unknown rather than
-            // spinning forever on a hard instance.
-            if self.should_stop_search() {
-                return SolverResult::Unknown;
+        // ===== CDCL search =====
+        //
+        // One search loop for every caller.  Historically `solve` carried its
+        // own inlined copy of the CDCL loop while `solve_with_theory` carried
+        // another, and the two drifted: the theory loop's `learn_clause` puts
+        // binary learned clauses into the binary implication graph, picks the
+        // second watch by `watch_rank` (not blindly index 1), and runs
+        // on-the-fly subsumption on short low-glue clauses -- none of which the
+        // inlined copy did.  On pure-SAT workloads that divergence measured
+        // 5x: `mrpp_4x4#12_12` solved in 8.2s through `solve_with_theory`
+        // with a no-op theory while the inlined `solve` loop needed >40s for
+        // the identical clause set.  `solve` now runs its pre-search passes
+        // and hands the search itself to [`Self::solve_with_theory`] with a
+        // no-op callback, so the plain-SAT path can never again silently miss
+        // an improvement landed on the CDCL(T) path (or vice versa).
+        struct NoopTheory;
+        impl TheoryCallback for NoopTheory {
+            fn on_assignment(&mut self, _lit: Lit) -> TheoryCheckResult {
+                TheoryCheckResult::Sat
             }
-
-            // Propagate
-            if let Some(conflict) = self.propagate() {
-                self.debug_check_conflict_clause(conflict);
-                self.stats.conflicts += 1;
-                self.conflicts_since_inprocessing += 1;
-
-                if self.trail.decision_level() == 0 {
-                    // Conflict under only level-0 (unconditional) facts: the empty
-                    // clause is derivable, completing the proof of UNSAT. Pass the
-                    // conflict clause so the LRAT empty-clause chain can be built.
-                    self.drat_emit_empty(Some(conflict));
-                    return SolverResult::Unsat;
-                }
-
-                // Analyze conflict
-                let (backtrack_level, learnt_clause) = self.analyze(conflict);
-
-                // Empty learned clause = genuine root-level (level-0) refutation:
-                // every conflict literal is false under unconditional facts, so
-                // the instance is UNSAT and the empty clause completes the proof.
-                // `analyze` can report this even above decision level 0 when a
-                // clause is falsified purely at the root.
-                if learnt_clause.is_empty() {
-                    self.trivially_unsat = true;
-                    self.drat_emit_empty(Some(conflict));
-                    return SolverResult::Unsat;
-                }
-
-                // Backtrack with phase saving
-                self.backtrack_with_phase_saving(backtrack_level);
-                self.debug_check_invariants("after backtrack");
-
-                // Emit the learned clause as a derived-clause proof event
-                // (RUP-derivable from the current database by construction of
-                // 1-UIP learning, with the chain assembled in `analyze`). Covers
-                // both the unit and general learned-clause branches below; the
-                // returned id is bound to the stored clause once added.
-                let proof_id = self.proof_learn_clause(&learnt_clause);
-
-                // Learn clause
-                if learnt_clause.len() == 1 {
-                    // Store unit learned clause in database for persistence
-                    let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
-                    self.proof_set_clause_id(clause_id, proof_id);
-                    self.stats.learned_clauses += 1;
-                    self.stats.unit_clauses += 1;
-                    self.learned_clause_ids.push(clause_id);
-
-                    // Track for incremental solving
-                    if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
-                        current_level_clauses.push(clause_id);
-                    }
-
-                    self.assert_learned_clause(&learnt_clause, clause_id);
-                } else {
-                    // Compute LBD for the learned clause
-                    let lbd = self.compute_lbd(&learnt_clause);
-
-                    // Accumulate for the `avg_lbd` stat. (The only other writers
-                    // of `stats.total_lbd` are on a dead legacy path in
-                    // `learn.rs`, so without this the reported average was 0.)
-                    self.stats.total_lbd = self.stats.total_lbd.saturating_add(lbd as u64);
-
-                    // Track recent LBD for the local-restart strategy.
-                    self.recent_lbd_sum += u64::from(lbd);
-                    self.recent_lbd_count += 1;
-                    self.global_lbd_sum += u64::from(lbd);
-                    self.global_lbd_count += 1;
-
-                    // cadical glue EMA update (per-mode `current` averages) +
-                    // reluctant-doubling tick for stable-mode restarts.
-                    let l = f64::from(lbd);
-                    self.glue_current.fast.update(l);
-                    self.glue_current.slow.update(l);
-                    self.reluctant.tick();
-
-                    // Reset recent LBD tracking periodically
-                    if self.recent_lbd_count >= 5000 {
-                        self.recent_lbd_sum /= 2;
-                        self.recent_lbd_count /= 2;
-                    }
-
-                    let clause_id = self.clauses.add_learned(learnt_clause.iter().copied());
-                    self.proof_set_clause_id(clause_id, proof_id);
-                    self.stats.learned_clauses += 1;
-
-                    // Set LBD score for the clause
-                    if let Some(clause) = self.clauses.get_mut(clause_id) {
-                        clause.lbd = lbd;
-                        clause.assign_tier_from_lbd();
-                    }
-                    self.debug_check_learned_clause_lbd(clause_id);
-
-                    // Track learned clause for potential deletion
-                    self.learned_clause_ids.push(clause_id);
-
-                    // Track clause for incremental solving
-                    if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
-                        current_level_clauses.push(clause_id);
-                    }
-
-                    // Watch first two literals
-                    let lit0 = learnt_clause[0];
-                    let lit1 = learnt_clause[1];
-                    self.watches
-                        .add(lit0.negate(), Watcher::new(clause_id, lit1));
-                    self.watches
-                        .add(lit1.negate(), Watcher::new(clause_id, lit0));
-
-                    // Propagate the asserting literal at its true implication
-                    // level (see `Solver::assert_learned_clause`).
-                    self.assert_learned_clause(&learnt_clause, clause_id);
-                }
-
-                // Decay activities
-                self.vsids.decay();
-                if self.config.use_chb_branching {
-                    self.chb.decay();
-                }
-                if self.config.use_lrb_branching {
-                    self.lrb.decay();
-                    self.lrb.on_conflict();
-                }
-                self.decay_clause_activity();
-
-                // Track conflicts for clause deletion
-                self.conflicts_since_deletion += 1;
-
-                // Periodic clause database reduction
-                if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
-                    self.reduce_clause_database();
-                    self.debug_check_invariants("after clause database reduction");
-                    self.conflicts_since_deletion = 0;
-
-                    // Vivification after clause database reduction (at level 0 after restart)
-                    if self.stats.restarts.is_multiple_of(10) {
-                        let saved_level = self.trail.decision_level();
-                        if saved_level == 0 {
-                            self.vivify_clauses();
-                        }
-                    }
-                }
-
-                // Stable/focused mode switch (cadical-style adaptive restart
-                // schedule) – checked each conflict, before the restart decision
-                // so the mode affects this restart's interval.
-                self.check_stabilize();
-
-                // cadical restart: focused mode uses the Glucose EMA condition
-                // (fast glue >= (1+margin)*slow, checked every `restartint=2`
-                // conflicts); stable mode uses the reluctant (Luby) trigger.
-                // The legacy strategies (Luby-cap etc.) apply only when the
-                // stable/focused schedule is disabled.
-                let do_restart = if self.config.enable_stabilize {
-                    if self.stable {
-                        self.reluctant.activated()
-                    } else {
-                        // Focused Glucose: check every 2 conflicts.
-                        if self.stats.conflicts < self.lim_restart {
-                            false
-                        } else {
-                            self.lim_restart = self.stats.conflicts.saturating_add(2);
-                            let slow = self.glue_current.slow.value();
-                            let fast = self.glue_current.fast.value();
-                            // 10% margin (cadical restartmarginfocused); guard
-                            // against the all-zero initial state.
-                            slow > 0.0 && fast >= 1.10 * slow
-                        }
-                    }
-                } else {
-                    let past_threshold = self.stats.conflicts >= self.restart_threshold;
-                    let is_glucose =
-                        matches!(self.config.restart_strategy, RestartStrategy::Glucose);
-                    past_threshold && (!is_glucose || self.lbd_ema_fast >= 1.1 * self.lbd_ema_slow)
-                };
-                if do_restart {
-                    self.restart();
-                    // Reuse-trail restarts backtrack only to reuse_trail()
-                    // (>0), so the level-0 restart-consistency invariant does
-                    // not apply (see handle_clause_deletion_and_restart).
-                    if !self.config.reuse_trail {
-                        self.debug_check_restart_consistency();
-                    }
-                }
-
-                // Periodic inprocessing
-                if self.config.enable_inprocessing
-                    && self.conflicts_since_inprocessing >= self.config.inprocessing_interval
-                {
-                    self.inprocess();
-                    self.conflicts_since_inprocessing = 0;
-                }
-            } else {
-                // No conflict - try to decide. `propagate()` just returned `None`,
-                // i.e. reached a fixpoint, which is exactly where the watched-literal
-                // and unit-propagation-completeness invariants become meaningful.
-                self.debug_check_fixpoint_invariants("after propagation fixpoint");
-                if let Some(var) = self.pick_branch_var() {
-                    self.stats.decisions += 1;
-                    self.trail.new_decision_level();
-
-                    let polarity = self.decision_polarity(var);
-                    let lit = if polarity {
-                        Lit::pos(var)
-                    } else {
-                        Lit::neg(var)
-                    };
-                    self.trail.assign_decision(lit);
-                } else {
-                    // All variables assigned - SAT
-                    self.save_model();
-                    self.debug_verify_model();
-                    self.debug_check_invariants("at SAT");
-                    return SolverResult::Sat;
-                }
+            fn final_check(&mut self) -> TheoryCheckResult {
+                TheoryCheckResult::Sat
             }
+            fn on_backtrack(&mut self, _level: u32) {}
         }
+        self.solve_with_theory(&mut NoopTheory)
     }
 
     /// Solve with assumptions and return unsat core if UNSAT

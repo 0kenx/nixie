@@ -17,6 +17,7 @@ doc = false
 [dependencies]
 mimalloc = { workspace = true }
 oxiz-core = { workspace = true, features = ["std"] }
+oxiz-sat = { workspace = true, features = ["std"] }
 oxiz-solver = { workspace = true, features = ["std"] }
 oxiz-proof = { workspace = true }
 oxiz-smtcomp = { workspace = true }
