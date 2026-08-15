@@ -371,7 +371,12 @@ impl Parser<'_> {
             Exit(TermId),
         }
 
-        let mut memo: FxHashMap<TermId, u32> = FxHashMap::default();
+        // The parse-lifetime memo (see the field's doc): entries are exact
+        // depths of immutable, hash-consed terms, so every binding charge
+        // only measures the nodes no earlier charge reached.  Aborting on a
+        // node past `budget` leaves only *completed* measurements behind, so
+        // the memo is never populated with an inexact value.
+        let mut memo = self.depth_memo.borrow_mut();
         let mut stack = vec![Step::Enter(root)];
         while let Some(step) = stack.pop() {
             match step {
@@ -492,6 +497,15 @@ impl Parser<'_> {
                     position: self.lexer.position(),
                     message: "internal: let binding without a name".to_string(),
                 })?;
+                // A let binding is an *inlining* (every occurrence of the name
+                // becomes this `TermId`), so the value's DAG depth counts
+                // against the nesting budget exactly where it is built – a
+                // chain of bindings referencing earlier bindings accumulates
+                // DAG depth through the references even though each binding is
+                // syntactically shallow.  Same mechanism as the
+                // `define-fun`-inlining charge (see
+                // [`Parser::charge_binding_depth`]).
+                self.charge_binding_depth("let binding", value)?;
                 state.bindings.push((name, value));
                 if self.try_consume_rparen() {
                     // The binding list is closed; the bindings come into scope
@@ -617,9 +631,25 @@ impl Parser<'_> {
                 for (name, term) in saved {
                     self.bindings.insert(name, term);
                 }
-                let refs: Vec<(&str, TermId)> =
-                    bindings.iter().map(|(n, t)| (n.as_str(), *t)).collect();
-                Ok(self.manager.mk_let(refs, body))
+                // The let *is* its body: every reference to a bound name was
+                // resolved to the binding value's `TermId` while the body was
+                // parsed (`self.bindings`), so wrapping it in a
+                // `TermKind::Let` node added no semantics – it added one AST
+                // level per binding, so a staged-`let` script (a thousand-plus
+                // sequential bindings, each value a dozen nodes deep) asserted
+                // a thousand-deep chain of wrappers around shallow content,
+                // and the solver's `expand_lets` pass then paid a full
+                // substitution walk per wrapper to remove them again (85% of
+                // runtime on the SVC `pp-*` benchmarks).  This is Z3's design:
+                // SMT-LIB `let` is purely syntactic sugar, resolved through
+                // the parser's symbol table (`smt2parser` keeps a
+                // `let`-bindings stack and identifier lookup returns the bound
+                // expression); no `let` node ever reaches its AST.  Binding
+                // values' contribution to the nesting budget was already
+                // charged where they were built (see `accept_operand`).
+                // `TermKind::Let` remains representable for API-built terms;
+                // `Solver::expand_lets` still eliminates those.
+                Ok(body)
             }
             Frame::Annot(state) => {
                 let AnnotFrame { term, attrs, .. } = state;
@@ -1372,8 +1402,24 @@ impl Parser<'_> {
 /// The nesting contributed by the frames currently on the driver's stack,
 /// saturating rather than wrapping on the (unreachable, given
 /// [`MAX_PARSE_DEPTH`]) 4-billion-frame case.
+///
+/// Counts **`Op` frames only**.  A `let` frame and an annotation frame build
+/// no nesting of their own – `(let ((x e)) body)` *is* `body` with names
+/// resolved to the bound `TermId`s, and `(! t :…)` *is* `t` – so charging
+/// them was charging syntax the built term does not contain.  That
+/// misaccounting rejected every staged-`let` script deeper than
+/// [`MAX_PARSE_DEPTH`] bindings (industrial translated benchmarks such as the
+/// SVC `pp-*` family: ~1150 staged bindings, each value ~20 nodes deep),
+/// even though the built DAG's depth never approaches the budget.  The
+/// depth a binding's value *does* contribute – through references to
+/// earlier bindings, which chain the DAG – is charged exactly where it is
+/// built, by [`Parser::charge_binding_depth`] at binding completion (the
+/// same mechanism that closes the analogous `define-fun`-inlining hole).
 fn frame_depth(frames: &[Frame]) -> u32 {
-    u32::try_from(frames.len()).unwrap_or(u32::MAX)
+    frames
+        .iter()
+        .filter(|f| matches!(f, Frame::Op { .. }))
+        .count() as u32
 }
 
 /// Spell an indexed identifier the way it is recorded in a generic `Apply`.

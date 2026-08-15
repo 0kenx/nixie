@@ -436,11 +436,23 @@ fn deeply_nested_annotations_survive_a_one_mib_stack() {
                 s = format!("(! 0 :pattern ({s}))");
             }
             let mut manager = TermManager::new();
-            let err = oxiz_core::smtlib::parse_term(&s, &mut manager)
-                .expect_err("deeply nested annotations should hit the depth guard");
+            // An annotation builds no term nesting of its own (`(! t :…)` IS
+            // `t`), so `frame_depth` deliberately does not count `Annot`
+            // frames against `MAX_PARSE_DEPTH`: the 50 000-deep annotation
+            // nest builds the term `0` and must PARSE.  (It used to be
+            // rejected with "term nesting too deep" – the same misaccounting
+            // that rejected staged-`let` scripts – while a genuine
+            // deeply-nested term is still caught by the `Op`-frame count.)
+            // The point of running this on a pinned 1 MiB stack is unchanged:
+            // the frame stack is heap-held, so even 50 000 open annotation
+            // frames must not touch the native stack.
+            let term = oxiz_core::smtlib::parse_term(&s, &mut manager)
+                .expect("annotation nesting is not term nesting and must parse");
+            let node = manager.get(term).expect("the built term is `0`");
             assert!(
-                err.to_string().contains("term nesting too deep"),
-                "expected the nesting-limit error, got: {err}"
+                matches!(node.kind, TermKind::IntConst(_)),
+                "`(! 0 :…)` builds `0`; got {:?}",
+                node.kind
             );
         })
         .expect("spawning a 1 MiB-stack thread should succeed");
@@ -1105,4 +1117,108 @@ fn unimplemented_indexed_operators_error_rather_than_answer() {
             "unimplemented operator must be reported, got: {msg}"
         );
     }
+}
+
+// ======== staged-`let` accounting ========
+//
+// `MAX_PARSE_DEPTH` bounds the depth of the term the parser BUILDS, and a
+// `let` builds no nesting of its own: `(let ((x e)) body)` IS `body` with
+// names resolved to the bound `TermId`s (Z3's design – no `let` node ever
+// reaches the AST).  Charging the let wrappers themselves rejected every
+// staged-`let` script deeper than the budget (the SVC `pp-*` processor
+// benchmarks: ~1150 sequential bindings, each value ~20 nodes deep) even
+// though the built DAG is shallow.  The depth a binding DOES contribute –
+// through references that chain the DAG – is charged at binding completion.
+
+/// `(let ((x1 (g 1))) (let ((x2 (g x1))) ... body))` – `n` staged bindings
+/// whose values reference the previous binding, so the built term's DAG depth
+/// genuinely grows one level per binding.
+fn staged_chained_lets(n: usize, body: &str) -> String {
+    let mut s = String::new();
+    for i in 1..=n {
+        let prev = if i == 1 {
+            "1".to_string()
+        } else {
+            format!("x{}", i - 1)
+        };
+        s.push_str(&format!("(let ((x{i} (g {prev})))"));
+    }
+    s.push_str(body);
+    for _ in 0..n {
+        s.push(')');
+    }
+    s
+}
+
+/// `(let ((x1 (g 1))) (let ((x2 (g 2))) ... body))` – `n` staged bindings
+/// whose values do NOT reference each other: each value is two nodes deep, so
+/// the built term's DAG depth stays a small constant no matter how many
+/// bindings are staged.
+fn staged_flat_lets(n: usize, body: &str) -> String {
+    let mut s = String::new();
+    for i in 1..=n {
+        s.push_str(&format!("(let ((x{i} (g {i})))"));
+    }
+    s.push_str(body);
+    for _ in 0..n {
+        s.push(')');
+    }
+    s
+}
+
+#[test]
+fn staged_flat_lets_deeper_than_the_budget_parse() {
+    // 2000 staged bindings – far beyond MAX_PARSE_DEPTH syntactically – whose
+    // values do not chain: the built term is a handful of nodes deep, so the
+    // whole script must parse.  This is exactly the SVC `pp-*` shape that
+    // used to die with "term nesting too deep" at binding ~1024.
+    let script = format!(
+        "(declare-fun p (Int) Bool)\n(declare-fun g (Int) Int)\n(assert {})",
+        staged_flat_lets(2000, "(p x2000)")
+    );
+    let mut manager = TermManager::new();
+    parse_script(&script, &mut manager)
+        .expect("staged non-chaining lets must not be charged as term nesting");
+}
+
+#[test]
+fn staged_chained_lets_accumulating_real_depth_are_rejected() {
+    // The chained variant DOES build a deep DAG: each value hangs off the
+    // previous binding's term.  2000 bindings build a 2000-deep term, past
+    // MAX_PARSE_DEPTH, and must still be rejected by the binding-completion
+    // charge (the same hole `charge_binding_depth` closes for `define-fun`
+    // inlining).
+    let script = format!(
+        "(declare-fun p (Int) Bool)\n(declare-fun g (Int) Int)\n(assert {})",
+        staged_chained_lets(2000, "(p x2000)")
+    );
+    let mut manager = TermManager::new();
+    let err = parse_script(&script, &mut manager)
+        .expect_err("let chains that accumulate real DAG depth must be rejected");
+    assert!(
+        err.to_string().contains("term nesting too deep"),
+        "expected the nesting-limit error, got: {err}"
+    );
+}
+
+#[test]
+fn let_binding_depth_is_measured_not_remeasured() {
+    // The persistent depth memo makes the per-binding charge amortised: a
+    // 1500-binding staged script (every value referencing the previous one,
+    // so the charges walk ever-longer chains) parses in reasonable time.
+    // Before the memo, each charge re-measured the whole referenced DAG and
+    // this shape was quadratic in the binding count.
+    let start = std::time::Instant::now();
+    let script = format!(
+        "(declare-fun p (Int) Bool)\n(declare-fun g (Int) Int)\n(assert {})",
+        staged_chained_lets(900, "(p x900)")
+    );
+    let mut manager = TermManager::new();
+    parse_script(&script, &mut manager)
+        .expect("900 chained bindings stay under the 1024 budget and must parse");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(10),
+        "binding-depth charging must be amortised, took {:?}",
+        start.elapsed()
+    );
 }

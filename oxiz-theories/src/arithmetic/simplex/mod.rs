@@ -444,6 +444,19 @@ enum BoundUndo {
 /// Simplex tableau state
 #[derive(Debug)]
 pub struct Simplex {
+    /// A bound-crossing conflict (lower > upper on one variable) recorded by
+    /// the most recent bound assertion that completed the crossing pair, not
+    /// yet consumed by a probe (see [`Self::bound_crossing_conflict`]).
+    /// `None` when no crossing is pending.
+    ///
+    /// This is what makes the probe O(1): the crossing can only appear at
+    /// the moment the SECOND bound of the pair is set (assignments shift,
+    /// bounds do not), so recording it there – with both bounds' full reason
+    /// antecedents – turns the literal-time probe from an O(variables) scan
+    /// into a take.  Cleared on `pop`: a backtrack removes the asserting
+    /// literal, and reporting a conflict whose bounds no longer hold would
+    /// blame literals that are no longer assigned.
+    pending_crossing: Option<Vec<u32>>,
     /// Number of original variables
     num_vars: usize,
     /// Number of slack variables
@@ -543,6 +556,7 @@ impl Simplex {
         Self {
             num_vars: 0,
             num_slack: 0,
+            pending_crossing: None,
             assignment: Vec::new(),
             lower: Vec::new(),
             upper: Vec::new(),
@@ -889,6 +903,7 @@ impl Simplex {
             aux_reasons,
         });
         self.note_bound_change(idx);
+        self.record_crossing(idx);
     }
     /// Set an upper bound directly from a `DeltaRational`; see
     /// [`Self::set_lower_delta`].
@@ -912,6 +927,7 @@ impl Simplex {
             aux_reasons,
         });
         self.note_bound_change(idx);
+        self.record_crossing(idx);
     }
     /// Set a strict lower bound (x > value), represented as x >= value + δ.
     pub fn set_strict_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
@@ -1119,7 +1135,35 @@ impl Simplex {
     /// theory `check` at final-check time.  A `Some` result is a sound
     /// refutation of the current bound set; `None` proves nothing (the LP
     /// may still be infeasible – only `check` can tell).
-    pub fn bound_crossing_conflict(&self) -> Option<Vec<u32>> {
+    /// Record a lower>upper crossing on `idx` (if one exists now) with the
+    /// FULL antecedents of both bounds, for the next
+    /// [`Self::bound_crossing_conflict`] to consume.  See the
+    /// `pending_crossing` field's doc for why this is recorded here rather
+    /// than scanned for later.
+    fn record_crossing(&mut self, idx: usize) {
+        if let (Some(lo), Some(hi)) = (&self.lower[idx], &self.upper[idx])
+            && lo.value > hi.value
+        {
+            let mut conflict: Vec<u32> = Vec::new();
+            for r in lo.all_reasons().chain(hi.all_reasons()) {
+                if !conflict.contains(&r) {
+                    conflict.push(r);
+                }
+            }
+            self.pending_crossing = Some(conflict);
+        }
+    }
+
+    /// The pending bound-crossing conflict, if the most recent bound
+    /// assertions created one (see the `pending_crossing` field).  O(1).
+    pub fn bound_crossing_conflict(&mut self) -> Option<Vec<u32>> {
+        self.pending_crossing.take()
+    }
+
+    /// O(variables) scan for any crossed bound pair; the pre-pending version
+    /// of [`Self::bound_crossing_conflict`], kept for callers that want a
+    /// full sweep (debug assertions, scratch scopes with no probe cadence).
+    pub fn scan_bound_crossing_conflict(&self) -> Option<Vec<u32>> {
         for i in 0..self.assignment.len() {
             if let (Some(lo), Some(hi)) = (&self.lower[i], &self.upper[i])
                 && lo.value > hi.value
@@ -2115,6 +2159,10 @@ impl Simplex {
     /// Dutertre–de Moura backtracking contract: bounds are the only
     /// backtrackable state.
     pub fn pop(&mut self) {
+        // A pending crossing was recorded under the scope being popped: its
+        // asserting literals are gone, so blaming them in a later probe would
+        // cite literals the SAT core no longer holds assigned.
+        self.pending_crossing = None;
         // Dutertre–de-Moura backtracking contract: ONLY bounds are
         // backtrackable.  Rows are permanent, content-addressed definitions
         // (`intern_row_cached`) – a row without bounds constrains nothing, so

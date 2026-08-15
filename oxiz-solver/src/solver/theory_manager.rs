@@ -1050,24 +1050,21 @@ impl<'a> TheoryManager<'a> {
 
     fn resync_theory_state(&mut self) -> TheoryCheckResult {
         use oxiz_theories::Theory;
-        {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static RESYNC: AtomicU64 = AtomicU64::new(0);
-            RESYNC.fetch_add(1, Ordering::Relaxed);
-        }
 
         // Drop all incremental theory state and derived caches.
         //
-        // EUF/BV/DL are rebuilt wholesale (the congruence-loss backstop this
-        // function exists for).  The arithmetic solver is only *popped to
-        // its base scope* instead of being destroyed: every bound asserted
-        // above base is undone (the replay below re-asserts each one at its
-        // original level), but its search-global state – interned terms,
-        // per-linear-form rows and the row cache – survives.  A wholesale
-        // `arith.reset()` here used to discard and then re-create thousands
-        // of identical rows on every `final_check` (this backstop runs once
-        // per final check for function-bearing inputs), which dominated
-        // QF_AUFLIA runtimes.
+        // EUF/BV/DL/arith are rebuilt wholesale (the congruence-loss backstop
+        // this function exists for).
+        //
+        // NOTE: an earlier attempt replaced `arith.reset()` with a pop to the
+        // base scope (keeping the interned rows so the replay below hits the
+        // row cache) and had to be reverted: with rows surviving, the replay
+        // is NOT equivalent to a fresh assert path – measured as read6 going
+        // 0.18 s -> 22 s and fb_var_5_12 1.6 s -> timeout.  Root cause not
+        // yet isolated (candidates: the Diophantine `int_equalities`
+        // bookkeeping that `assert_eq` records per replay, or the
+        // propagation-bound undo trail).  Do not re-apply without profiling
+        // those paths.
         self.euf.reset();
         self.arith.reset();
         self.bv.reset();
@@ -2646,8 +2643,6 @@ impl<'a> TheoryManager<'a> {
                         ) {
                             return dl_conflict;
                         }
-                        use oxiz_theories::Theory;
-                        use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
                         // Eager detection of the CHEAP conflict class only
                         // (crossed bounds, O(vars), no pivoting / B&B).
                         // The full LP + integer feasibility solve runs at
@@ -2656,7 +2651,8 @@ impl<'a> TheoryManager<'a> {
                         // O(tableau) over a tableau that carries one row per
                         // assigned atom (QF_AUFLIA/swap: thousands of full
                         // solves, none of which the reference solvers run).
-                        if let Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) = self.arith.check()
+                        if let Ok(oxiz_theories::TheoryCheckResult::Unsat(conflict_terms)) =
+                            self.arith.check_bound_conflicts()
                         {
                             return self.conflict_from_terms(&conflict_terms);
                         }
@@ -2992,11 +2988,15 @@ impl<'a> TheoryManager<'a> {
                     // tableau after every edge makes dense all-different cliques
                     // quadratic checks over a quadratically growing tableau.
                     if !dl_exact {
-                        use oxiz_theories::Theory;
-                        use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
                         // See the equality branch above: cheap crossed-bound
-                        // probe here, full LP solve at `final_check`.
-                        if let Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) = self.arith.check()
+                        // probe here, full LP solve at `final_check`.  (The
+                        // probe call matters: a full `arith.check()` here
+                        // re-solved the LP from a stale assignment on every
+                        // arith literal – 50%+ of runtime on the SVC `dlx` /
+                        // `pp-*` processor-verification goals, whose searches
+                        // assign thousands of literals.)
+                        if let Ok(oxiz_theories::TheoryCheckResult::Unsat(conflict_terms)) =
+                            self.arith.check_bound_conflicts()
                         {
                             return self.conflict_from_terms(&conflict_terms);
                         }

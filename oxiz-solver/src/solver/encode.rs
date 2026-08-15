@@ -599,15 +599,34 @@ impl Solver {
         // Certified mode must not trust rewrites, purification, or auxiliary
         // definitions when checking a candidate result.
         let certificate_term = term;
-        // Depth guard FIRST.  The recursive pre-processing passes below
-        // (`fold_unit_eq_reps` / `flatten_eq_ite_tables` / `purify_arith` / …)
-        // walk the assertion term and would overflow the native call stack on a
-        // deeply-nested input *before* the later encode-depth check (which only
-        // protects the Tseitin encoder) ever runs.  `term_exceeds_encode_depth`
-        // is an explicit-stack scan, so probing here is itself stack-safe; on a
-        // too-deep term we flag the incomplete encoding, record the assertion,
-        // and return without recursing, so `check` answers `Unknown` instead of
-        // crashing the process.
+        // Let-expansion FIRST.  The parser materialises every `(let ...)` as a
+        // `TermKind::Let` node wrapping its body, so a staged-`let` script
+        // (industrial translated benchmarks: a thousand-plus sequential
+        // bindings, each value a dozen nodes deep) asserts a term that is
+        // *syntactically* one Let node deep per binding even though its
+        // content – what remains once the bindings are substituted away – is
+        // shallow.  Depth-guarding before expansion measured the wrapper
+        // chain and diverted every such script to `Unknown` (or, before the
+        // parser fix, rejected it at parse).  `expand_lets` is explicit-stack
+        // and its substitution is iterative, so it is itself stack-safe on
+        // arbitrarily deep input.
+        //
+        // This MUST also run before any theory encoder or model evaluator
+        // sees the assertion: those passes treat a `let`-bound name as an
+        // opaque free variable, so a `let`-bound bit-vector (e.g. `?v_0`
+        // bound to `(extract 255 64 a)`) loses its link to its definition and
+        // an unsatisfiable formula reads as satisfiable.  See `expand_lets`.
+        let term = self.expand_lets(term, manager);
+        // Depth guard, on the *expanded* term: the recursive pre-processing
+        // passes below (`fold_unit_eq_reps` / `flatten_eq_ite_tables` /
+        // `purify_arith` / …) walk the assertion term and would overflow the
+        // native call stack on a deeply-nested input *before* the later
+        // encode-depth check (which only protects the Tseitin encoder) ever
+        // runs.  `term_exceeds_encode_depth` is an explicit-stack scan, so
+        // probing here is itself stack-safe; on a too-deep term we flag the
+        // incomplete encoding, record the assertion, and return without
+        // recursing, so `check` answers `Unknown` instead of crashing the
+        // process.
         if self.term_exceeds_encode_depth(term, manager) {
             self.encode_depth_exceeded = true;
             let index = self.assertions.len();
@@ -619,14 +638,6 @@ impl Solver {
             self.record_assertion_identity(term, None, index);
             return;
         }
-        // Eliminate every `(let ((x e) ...) body)` node by substituting its
-        // bindings into its body, repeating to a fixpoint for nested lets.
-        // This MUST run before any theory encoder or model evaluator sees the
-        // assertion: those passes treat a `let`-bound name as an opaque free
-        // variable, so a `let`-bound bit-vector (e.g. `?v_0` bound to
-        // `(extract 255 64 a)`) loses its link to its definition and an
-        // unsatisfiable formula reads as satisfiable.  See `expand_lets`.
-        let term = self.expand_lets(term, manager);
         // Replace inlined nullary define-fun bodies with their named consts
         // (parser expands bindings at parse time).  Prevents re-flattening
         // Discord/EM/R on every later assert that mentions them.
@@ -1312,6 +1323,16 @@ impl Solver {
             }
         }
 
+        // Let-expansion FIRST, then the depth guard on the expanded content –
+        // same order and same reasons as `assert` (a staged-`let` script
+        // asserts a thousand-deep chain of `TermKind::Let` wrappers around
+        // shallow content; guarding before expansion measured the wrappers).
+        // This also closes a soundness gap unique to the named path: without
+        // it, a named assertion's `Let` nodes reached `emit_assertion_clauses`
+        // intact, and the Tseitin encoder's `Let` arm encodes the body while
+        // discarding the bindings – the exact `?v_0 = (extract ...)` false-SAT
+        // shape `expand_lets` exists to prevent (see its doc comment).
+        let term = self.expand_lets(term, manager);
         // Overflow guard (soundness): see `assert`.  Skip all deep recursive
         // passes for a pathologically deep term and flag the incomplete
         // encoding so `check` answers `Unknown` instead of overflowing.

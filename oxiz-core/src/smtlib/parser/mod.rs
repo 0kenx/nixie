@@ -185,6 +185,19 @@ pub struct Parser<'a> {
     /// which wrongly stayed lenient for a script whose symbols were all
     /// undeclared.
     pub(super) script_mode: bool,
+    /// Exact depths of previously measured terms, shared by every
+    /// [`Parser::charge_binding_depth`] call in this parse.
+    ///
+    /// Interior-mutable because the charge sites hold `&self` (the let-binding
+    /// charge runs inside `accept_operand`, whose enclosing driver loop borrows
+    /// `&mut self` only for leaf/compound reads; `define-fun` charges from
+    /// command parsing where a `&mut` is free but keeping one signature for
+    /// both is simpler).  Terms are hash-consed and immutable, so an entry
+    /// never goes stale; without a parse-lifetime memo, a staged-`let` file
+    /// (hundreds of bindings, each referencing earlier ones) would re-measure
+    /// the whole referenced DAG per binding – quadratic in the file, and parse
+    /// time would dwarf the solve.
+    pub(super) depth_memo: std::cell::RefCell<FxHashMap<TermId, u32>>,
 }
 
 impl<'a> Parser<'a> {
@@ -205,6 +218,7 @@ impl<'a> Parser<'a> {
             dt_selectors: FxHashMap::default(),
             dt_sorts: FxHashMap::default(),
             script_mode: false,
+            depth_memo: std::cell::RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -306,6 +320,7 @@ impl<'a> Parser<'a> {
             dt_selectors: FxHashMap::default(),
             dt_sorts: FxHashMap::default(),
             script_mode: false,
+            depth_memo: std::cell::RefCell::new(FxHashMap::default()),
         }
     }
 
