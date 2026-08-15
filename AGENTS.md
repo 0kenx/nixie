@@ -104,6 +104,14 @@ them; every one of them has caused a real soundness bug here.
   properly" that returns a plausible default is a soundness bug waiting to fire. If you
   encounter one, implement it properly (principle 3) or make it return `Unknown`.
 
+## Git: never stash or restore
+
+Multiple agents work in this repo **in parallel**. **Never** `git stash`,
+`git stash pop`/`apply`, `git restore`, `git checkout --`, or any other command
+that discards or overlays uncommitted work in the shared working tree — you will
+wipe another agent's in-flight changes. If you need a clean tree, create a
+**git worktree** (`git worktree add …`) and work there.
+
 ## How to verify your work
 
 Before declaring a fix done, all of the following must be clean:
