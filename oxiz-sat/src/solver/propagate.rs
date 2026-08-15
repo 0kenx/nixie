@@ -46,6 +46,7 @@ impl Solver {
                     // so put it back on the queue before bailing out – see
                     // `Trail::requeue_last_propagated` (preserves the
                     // propagation-queue contract so a later solve() re-visits it).
+                    self.note_conflict_prefix();
                     self.trail.requeue_last_propagated();
                     return Some(clause_id);
                 } else if value == 0 {
@@ -168,12 +169,35 @@ impl Solver {
                 // partially propagated. Re-queue it so the invariant "everything
                 // before the head is fully propagated" survives the abort – see
                 // `Trail::requeue_last_propagated`.
+                self.note_conflict_prefix();
                 self.trail.requeue_last_propagated();
                 return Some(conflict);
             }
         }
 
+        // Clean fixpoint: the entire trail propagated without conflict
+        // (cadical `no_conflict_until = propagated`). Not recorded when a
+        // step-limit abort stopped propagation early – the trail is *not*
+        // known to be conflict-free past the head.
+        if !self.propagate_aborted {
+            self.no_conflict_until = self.trail.size();
+        }
+
         None
+    }
+
+    /// cadical's conflict-side update of `no_conflict_until`: the trail
+    /// *before the current decision level* propagated without conflict, so
+    /// that prefix is the material `update_target_and_best` snapshots into
+    /// the target/best phase arrays at the next backtrack
+    /// (`no_conflict_until = control[level].trail`). Also counts
+    /// `stats.stable_conflicts` exactly where cadical counts
+    /// `stats.stabconflicts` (propagate.cpp).
+    fn note_conflict_prefix(&mut self) {
+        if self.stable {
+            self.stats.stable_conflicts += 1;
+        }
+        self.no_conflict_until = self.trail.level_start(self.trail.decision_level());
     }
 
     /// Check for hyper-binary resolution opportunity

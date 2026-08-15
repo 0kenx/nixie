@@ -118,9 +118,10 @@ impl Solver {
         // `backtrack_to_size` clears the values and resets the level to 0 but
         // does not re-insert the freed variables into the decision heaps.
         self.trail.backtrack_to_size(trail_size);
+        // The conflict-free prefix cannot reach past the surviving trail
+        // (same clamp every solver backtrack applies).
+        self.no_conflict_until = self.no_conflict_until.min(trail_size);
 
-        // Re-arm unit propagation over the retained prefix.
-        //
         // `backtrack_to_size` parks the propagation head at the end of the
         // surviving trail – correct for ordinary CDCL backtracking, where every
         // surviving literal has already been propagated *and its consequences

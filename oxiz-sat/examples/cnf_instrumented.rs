@@ -81,7 +81,7 @@ fn main() {
         config.enable_lucky = v;
     }
     if let Some(v) = env_u64("REPHASE") {
-        config.rephase_interval = v as u32;
+        config.rephase_interval = v;
     }
     if let Some(v) = env_bool("VMTF") {
         config.use_vmtf = v;

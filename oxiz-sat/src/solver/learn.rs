@@ -737,6 +737,17 @@ impl Solver {
             if !self.config.reuse_trail {
                 self.debug_check_restart_consistency();
             }
+        } else if self.rephasing() {
+            // cadical CDCL loop order: `restarting() → restart()` takes
+            // precedence over `rephasing() → rephase()` within one iteration;
+            // both are conflict-budgeted and rarely align. The rephase's
+            // leading root backtrack supersedes a partial reuse-trail restart,
+            // so running both would just redo the rollback.
+            self.rephase();
+            // Rephase's leading backtrack is a full root backtrack, so the
+            // level-0 restart invariant applies regardless of `reuse_trail`.
+            self.debug_check_restart_consistency();
+            self.debug_check_invariants("after rephase");
         }
 
         // Periodic inprocessing and post-reduction vivification.  This used to

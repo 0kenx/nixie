@@ -12,6 +12,7 @@ mod lucky;
 mod propagate;
 mod search_ext;
 mod subsume;
+mod walk;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -260,12 +261,35 @@ pub struct SolverConfig {
     /// VSIDS – cadical's default focused-mode branching. Conflict-involved
     /// variables are moved to the tail of a list; the next decision is the
     /// most-recently-bumped unassigned variable.
-    /// Restarts between phase inversions (rephasing). 0 disables rephase.
-    /// Periodically flipping the saved polarity lets a restart explore the
-    /// complementary phase region instead of re-deriving the previous trail –
-    /// essential for frequent (LBD) restarts to be productive rather than
-    /// counterproductive.
-    pub rephase_interval: u32,
+    ///
+    /// Rephasing (cadical `opts.rephase`): periodically overwrite the saved
+    /// phases with one of a fixed schedule of strategies (best / inverted /
+    /// flipping / random / original / walk), so a fresh restart explores a
+    /// complementary phase region instead of re-deriving the previous trail.
+    /// 0 = off, 1 = both stable and focused mode, 2 = stable mode only.
+    /// Default 1 (cadical parity).
+    pub rephase: u32,
+    /// Rephase interval base (cadical `opts.rephaseint`, in conflicts). The
+    /// next rephase fires after `rephase_interval × (rephase_count + 1)`
+    /// conflicts – an arithmetically growing schedule, matching cadical's
+    /// `lim.rephase = conflicts + rephaseint * (rephased.total + 1)`.
+    /// Default 1000 (cadical parity).
+    pub rephase_interval: u64,
+    /// Target phases (cadical `opts.target`): decision polarity falls back to
+    /// the *target* phase (a snapshot of the largest conflict-free trail
+    /// prefix, refreshed by every backtrack) instead of the saved
+    /// phase. 0 = never, 1 = stable mode only, 2 = always. Default 1
+    /// (cadical parity).
+    pub target: u32,
+    /// Enable the local-search "walk" rephase strategy (cadical `opts.walk`).
+    /// Default true (cadical parity).
+    pub walk: bool,
+    /// Allow the walk strategy in focused mode too (cadical
+    /// `opts.walknonstable`). Default true (cadical parity).
+    pub walk_nonstable: bool,
+    /// Relative walk effort in per-mille of the search ticks accumulated since
+    /// the last walk (cadical `opts.walkeffort`, default 80 = 8%).
+    pub walk_effort: u64,
     /// Whether restarts reuse the decision trail prefix (Heule/cadical
     /// reuse-trail) instead of backtracking to the root. Default true.
     pub reuse_trail: bool,
@@ -303,6 +327,10 @@ impl core::fmt::Debug for SolverConfig {
             .field("enable_lazy_hyper_binary", &self.enable_lazy_hyper_binary)
             .field("use_chb_branching", &self.use_chb_branching)
             .field("use_lrb_branching", &self.use_lrb_branching)
+            .field("rephase", &self.rephase)
+            .field("rephase_interval", &self.rephase_interval)
+            .field("target", &self.target)
+            .field("walk", &self.walk)
             .field("enable_inprocessing", &self.enable_inprocessing)
             .field("inprocessing_interval", &self.inprocessing_interval)
             .field(
@@ -335,6 +363,27 @@ pub enum RestartStrategy {
     Glucose,
     /// Local restarts based on LBD trail
     LocalLbd,
+}
+
+/// Which rephase strategy produced the current phase array (cadical's
+/// `rephased` character). Tracked so [`Solver::update_target_and_best`] can
+/// tell whether the recorded best phase predates the rephase that is about to
+/// be overwritten (a `best` rephase re-arms `best_assigned` so a fresh best can
+/// be found after it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RephaseKind {
+    /// All phases set to the initial phase (`O`).
+    Original,
+    /// All phases set to the inverted initial phase (`I`).
+    Inverted,
+    /// Every phase flipped in place (`F`).
+    Flipping,
+    /// All phases re-randomized (`#`).
+    Random,
+    /// Saved phases overwritten from the best-phase array (`B`).
+    Best,
+    /// Local search over the saved phases (`W`).
+    Walk,
 }
 
 impl Default for SolverConfig {
@@ -371,7 +420,12 @@ impl Default for SolverConfig {
             focused_luby_cap: 16,
             use_vmtf: true,
             focused_vmtf: true,
-            rephase_interval: 0,
+            rephase: 1,
+            rephase_interval: 1000,
+            target: 1,
+            walk: true,
+            walk_nonstable: true,
+            walk_effort: 80,
             reuse_trail: true,
             // Off by default: BOTH probing passes have a proven false-UNSAT on
             // satisfiable input (`circuit_48in64out_with_700gates…cnf`, CaDiCaL
@@ -430,6 +484,49 @@ pub struct SolverStats {
     pub lucky_tried: u64,
     /// Number of "lucky" attempts that produced a model without search.
     pub lucky_succeeded: u64,
+    /// Conflicts accumulated while in stable mode (cadical
+    /// `stats.stabconflicts`); drives the stable-only rephase schedule
+    /// (`rephase == 2`).
+    pub stable_conflicts: u64,
+    /// Rephasing counters (cadical `stats.rephased`).
+    pub rephased: RephaseCounters,
+    /// Local-search walk counters (cadical `stats.walk`).
+    pub walk: WalkCounters,
+}
+
+/// Per-strategy rephase counters (cadical `stats.rephased`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RephaseCounters {
+    /// Total rephases performed.
+    pub total: u64,
+    /// `original` strateg ies: all phases set to the initial phase.
+    pub original: u64,
+    /// `inverted` strategies: all phases set to the inverted initial phase.
+    pub inverted: u64,
+    /// `flipping` strategies: every phase flipped in place.
+    pub flipped: u64,
+    /// `random` strategies: all phases re-randomized.
+    pub random: u64,
+    /// `best` strategies: saved phases overwritten by the best-phase array.
+    pub best: u64,
+    /// `walk` strategies: ProbSAT local search over the saved phases.
+    pub walk: u64,
+}
+
+/// Local-search walk counters (cadical `stats.walk`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct WalkCounters {
+    /// Number of walks performed.
+    pub count: u64,
+    /// Number of variable flips across all walks.
+    pub flips: u64,
+    /// Best (smallest) number of broken clauses ever reached (global).
+    pub minimum: u64,
+    /// Broken-clause counter accumulated per flip (cadical
+    /// `stats.walk.broken`); proxy for flip quality.
+    pub broken: u64,
+    /// Ticks consumed by walks.
+    pub ticks: u64,
 }
 
 impl SolverStats {
@@ -499,6 +596,21 @@ impl SolverStats {
         println!("Literals removed:       {:>12}", self.literals_removed);
         println!("Chrono backtracks:      {:>12}", self.chrono_backtracks);
         println!("Non-chrono backtracks:  {:>12}", self.non_chrono_backtracks);
+        println!("Rephases:               {:>12}", self.rephased.total);
+        println!(
+            "  original/inverted:    {:>5}/{:<8}",
+            self.rephased.original, self.rephased.inverted
+        );
+        println!(
+            "  flipping/random:      {:>5}/{:<8}",
+            self.rephased.flipped, self.rephased.random
+        );
+        println!(
+            "  best/walk:            {:>5}/{:<8}",
+            self.rephased.best, self.rephased.walk
+        );
+        println!("Walks:                  {:>12}", self.walk.count);
+        println!("Walk flips:             {:>12}", self.walk.flips);
         println!("---------------------------------------");
         println!("Avg LBD:                {:>12.2}", self.avg_lbd());
         println!(
@@ -629,29 +741,56 @@ pub struct Solver {
     /// optional decision tracer.
     pub(super) last_branch_source: BranchSource,
     /// Phase saving: last polarity assigned to each variable
+    /// (cadical `phases.saved`).
     pub(super) phase: Vec<bool>,
     /// Theory-supplied deterministic initial phases.  Unlike ordinary saved
     /// phases these are not randomized or globally inverted; they are used for
     /// atoms where a theory can provide a mutually coherent candidate model
     /// (for example, an acyclic orientation of arithmetic disequalities).
     /// They remain decision preferences only: clauses may propagate the
-    /// opposite value and conflict analysis remains unchanged.
+    /// opposite value and conflict analysis remains unchanged.  Takes
+    /// precedence over target and saved phases exactly like cadical's
+    /// `phases.forced` (see `decision_polarity`).
     pub(super) deterministic_phase: Vec<Option<bool>>,
-    /// Global polarity flip applied on top of saved phases (rephasing). Toggled
-    /// periodically on restart so a restart explores the complementary phase
-    /// region instead of re-deriving the same trail – without it, frequent
-    /// (Glucose) restarts just redo work and inflate the conflict count.
-    pub(super) phase_inverted: bool,
-    /// Best partial assignment found so far (the phase of the longest trail
-    /// reached without conflict). Restored on some rephase rounds to refocus
-    /// the search near the best-known region – the one genuinely missing
-    /// SAT-side phase signal (cadical's "best" phase array).
+    /// Best partial assignment ever seen (cadical `phases.best`): the saved
+    /// phases copied at the moment the trail's largest conflict-free prefix
+    /// (`no_conflict_until`) exceeded every earlier one (`best_assigned`).
+    /// Restored by the `best` rephase strategy.
     pub(super) best_phase: Vec<bool>,
-    /// Length of the trail that produced `best_phase` (0 until a trail is
-    /// snappedshotted).
-    pub(super) best_trail_size: usize,
-    /// Rephase round counter (alternates restore-best vs invert).
-    pub(super) rephase_count: u64,
+    /// Target phases (cadical `phases.target`): like `best_phase` but
+    /// re-established from scratch after every rephase – the phase snapshot
+    /// the decision heuristic prefers while in stable mode
+    /// (cadical `decide_phase(idx, target)`).
+    pub(super) target_phase: Vec<bool>,
+    /// Size of the conflict-free trail prefix recorded in `target_phase`
+    /// (cadical `target_assigned`; reset to 0 after each rephase).
+    pub(super) target_assigned: usize,
+    /// Size of the conflict-free trail prefix recorded in `best_phase`
+    /// (cadical `best_assigned`; reset to 0 when the last rephase was a
+    /// `best` rephase and a conflict has happened since).
+    pub(super) best_assigned: usize,
+    /// Largest trail prefix that propagated without conflict
+    /// (cadical `no_conflict_until`): updated by `propagate` – set to the full
+    /// trail on a clean fixpoint, to the prefix before the current decision
+    /// level on a conflict – and clamped by every backtrack. Read by
+    /// [`Solver::update_target_and_best`].
+    pub(super) no_conflict_until: usize,
+    /// Type of the most recent rephase (cadical `rephased` char). Cleared by
+    /// `update_target_and_best` once a conflict has occurred since it was
+    /// set, which is also what re-arms target/best recording.
+    pub(super) rephased: Option<RephaseKind>,
+    /// Conflict count at the most recent rephase (cadical
+    /// `last.rephase.conflicts`).
+    pub(super) last_rephase_conflicts: u64,
+    /// Next conflict count at which to rephase (cadical `lim.rephase`).
+    pub(super) lim_rephase: u64,
+    /// Per-mode rephase round counters `[focused, stable]` (cadical
+    /// `lim.rephased[stable]`); reset at every solve start like cadical's
+    /// `init_search_limits`.
+    pub(super) rephase_rounds: [u64; 2],
+    /// Search ticks at the last walk (cadical `last.walk.ticks`); the walk
+    /// effort budget is a per-mille fraction of the ticks accumulated since.
+    pub(super) last_walk_ticks: u64,
     /// Luby sequence index for restarts
     pub(super) luby_index: u64,
     /// cadical-style stable/focused mode flag. Focused (false) = frequent
@@ -884,10 +1023,16 @@ impl Solver {
             last_branch_source: BranchSource::Fallback,
             phase: Vec::new(),
             deterministic_phase: Vec::new(),
-            phase_inverted: false,
             best_phase: Vec::new(),
-            best_trail_size: 0,
-            rephase_count: 0,
+            target_phase: Vec::new(),
+            target_assigned: 0,
+            best_assigned: 0,
+            no_conflict_until: 0,
+            rephased: None,
+            last_rephase_conflicts: 0,
+            lim_rephase: 0,
+            rephase_rounds: [0, 0],
+            last_walk_ticks: 0,
             luby_index: 0,
             stable: false,
             stabphases: 0,
@@ -1462,6 +1607,9 @@ impl Solver {
         if idx < self.best_phase.len() {
             self.best_phase[idx] = phase;
         }
+        if idx < self.target_phase.len() {
+            self.target_phase[idx] = phase;
+        }
     }
 
     /// Theory-aware decision hint: bump the activity of these variables so
@@ -1496,14 +1644,33 @@ impl Solver {
 
     /// Choose a decision polarity, honoring a coherent theory posture before
     /// the generic randomized phase-saving heuristic.
+    /// cadical `decide_phase (idx, target)`: forced (theory-deterministic)
+    /// phase first, then the target phase while it is active (stable mode
+    /// under the default `target = 1`, always under `target = 2`), then the
+    /// saved phase.  The random-polarity perturbation is an OxiZ extension
+    /// applied on top of the cadical source polarity, exactly where it used
+    /// to apply to the saved phase alone.
     fn decision_polarity(&mut self, var: Var) -> bool {
         if let Some(phase) = self.deterministic_phase.get(var.index()).copied().flatten() {
-            phase
-        } else if self.rand_bool(self.config.random_polarity_prob) {
+            return phase;
+        }
+        let source = if self.target_phase_active() {
+            self.target_phase.get(var.index()).copied()
+        } else {
+            None
+        };
+        if self.rand_bool(self.config.random_polarity_prob) {
             self.rand_bool(0.5)
         } else {
-            self.phase.get(var.index()).copied().unwrap_or(false) ^ self.phase_inverted
+            source
+                .or_else(|| self.phase.get(var.index()).copied())
+                .unwrap_or(false)
         }
+    }
+
+    /// cadical `const bool target = (opts.target > 1 || (stable && opts.target))`.
+    fn target_phase_active(&self) -> bool {
+        self.config.target > 1 || (self.stable && self.config.target == 1)
     }
 
     /// Raise VSIDS activity so `var` is decided early.
@@ -1566,6 +1733,7 @@ impl Solver {
         self.phase.resize(self.num_vars, false); // Default phase: negative
         self.deterministic_phase.resize(self.num_vars, None);
         self.best_phase.resize(self.num_vars, false);
+        self.target_phase.resize(self.num_vars, false);
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
@@ -2568,6 +2736,9 @@ impl Solver {
                 }
 
                 self.trail.backtrack_to_size(trail_size);
+                // The conflict-free prefix cannot reach past the surviving
+                // trail (same clamp every solver backtrack applies).
+                self.no_conflict_until = self.no_conflict_until.min(trail_size);
 
                 // Re-insert unassigned variables into decision heaps
                 for var in unassigned_vars {
@@ -2659,7 +2830,15 @@ impl Solver {
         self.vmtf = VMTF::new(0);
         self.lrb = LRB::new(0);
         self.best_phase.clear();
-        self.best_trail_size = 0;
+        self.target_phase.clear();
+        self.target_assigned = 0;
+        self.best_assigned = 0;
+        self.no_conflict_until = 0;
+        self.rephased = None;
+        self.last_rephase_conflicts = 0;
+        self.lim_rephase = 0;
+        self.rephase_rounds = [0, 0];
+        self.last_walk_ticks = 0;
         // `ever_pushed` latches once push/pop is used and permanently disables
         // the `trail_falsifies_live_clause` backstop.  It must be cleared on
         // reset so a fresh problem gets the backstop again.

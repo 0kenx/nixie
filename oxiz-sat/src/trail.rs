@@ -102,6 +102,21 @@ impl Trail {
         self.current_level
     }
 
+    /// Trail index at which decision `level` starts (the prefix length that
+    /// precedes it); `level_starts[level]`, so the trail slice of level `l`
+    /// is `level_start(l)..level_start(l+1)`.  Level 0 always maps to `0`.
+    ///
+    /// cadical's `control[level].trail`: the conflict-free prefix recorded as
+    /// `no_conflict_until` when a conflict fires on the current decision
+    /// level is exactly `level_start(decision_level())`.
+    #[must_use]
+    pub fn level_start(&self, level: u32) -> usize {
+        self.level_starts
+            .get(level as usize)
+            .copied()
+            .unwrap_or(self.assignments.len())
+    }
+
     /// Raw per-literal truth value: `+1` true, `-1` false, `0` undefined.
     /// The hottest BCP lookup – a single byte load indexed by literal code
     /// (no enum match, no sign branch). The solver maintains `values` at

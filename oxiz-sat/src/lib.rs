@@ -117,7 +117,6 @@ mod hyper_binary;
 #[cfg(any(debug_assertions, test))]
 mod invariants;
 mod literal;
-mod local_search;
 mod lookahead;
 mod lrb;
 mod maxsat;
@@ -129,7 +128,6 @@ pub mod preprocessing;
 mod preprocessing_core;
 mod recursive_minimization;
 mod reluctant;
-mod rephasing;
 mod resolution_graph;
 mod restart_model;
 mod smoothed_lbd;
@@ -139,7 +137,6 @@ mod subsumption;
 mod symmetry;
 #[cfg(feature = "std")]
 pub mod tactics;
-mod target_phase;
 mod trail;
 mod trail_saving;
 mod uip_strategies;
@@ -213,7 +210,6 @@ pub use extended_resolution::{ClauseSubstitution, ExtendedResolution, Extension,
 pub use gate::{GateDetector, GateStats, GateType};
 pub use hyper_binary::{HbrResult, HyperBinaryResolver, HyperBinaryStats};
 pub use literal::{LBool, Lit, Var};
-pub use local_search::{LocalSearch, LocalSearchConfig, LocalSearchResult, LocalSearchStats};
 pub use lookahead::{LookaheadBranching, LookaheadHeuristic, LookaheadStats};
 pub use maxsat::{MaxSatClause, MaxSatConfig, MaxSatResult, MaxSatSolver, MaxSatStats, Weight};
 pub use memory::{ClauseArena, ClauseRef, MemoryStats};
@@ -223,7 +219,6 @@ pub use occurrence::{OccurrenceList, OccurrenceStats};
 pub use preprocessing_core::Preprocessor;
 pub use recursive_minimization::{RecursiveMinStats, RecursiveMinimizer};
 pub use reluctant::{ReluctantDoubling, ReluctantStats};
-pub use rephasing::{RephasingManager, RephasingStats, RephasingStrategy};
 pub use resolution_graph::{
     GraphStats as ResolutionGraphStats, ResolutionAnalyzer, ResolutionGraph, ResolutionNode,
 };
@@ -242,7 +237,6 @@ pub use symmetry::{
 };
 #[cfg(feature = "std")]
 pub use tactics::{CubeImproveTactic, SymmetryBreakTactic};
-pub use target_phase::{PhaseMode, TargetPhaseSelector, TargetPhaseStats};
 pub use trail::{Reason, Trail};
 pub use trail_saving::{SavedTrail, TrailSavingManager, TrailSavingStats};
 pub use uip_strategies::{UipAnalysisResult, UipAnalyzer, UipConfig, UipStats, UipStrategy};

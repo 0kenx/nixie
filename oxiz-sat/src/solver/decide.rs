@@ -23,6 +23,16 @@ fn trace_decisions_enabled() -> bool {
     false
 }
 
+/// Which snapshot array [`Solver::copy_phases`] writes (`phases.target` /
+/// `phases.best` in cadical).
+#[derive(Clone, Copy)]
+pub(super) enum PhaseArray {
+    /// `phases.target`.
+    Target,
+    /// `phases.best`.
+    Best,
+}
+
 impl Solver {
     /// Pick next variable to branch on
     pub(super) fn pick_branch_var(&mut self) -> Option<Var> {
@@ -212,10 +222,20 @@ impl Solver {
     /// collecting the unassigned variables into a throwaway `Vec`. That
     /// allocation happened on every backtrack (one per conflict) and showed up
     /// as ~3% allocator time on BCP-heavy runs.
+    ///
+    /// This is cadical's `backtrack` (not `backtrack_without_updating_phases`):
+    /// before rolling the trail back it runs [`Self::update_target_and_best`]
+    /// over the largest conflict-free prefix, so every conflict backjump and
+    /// every restart keeps the target/best phase arrays current – the two
+    /// arrays the rephase strategies replay. Skipping this (e.g. updating
+    /// best only inside `restart`, as this solver once did) leaves the best
+    /// phase frozen at the longest *restarted* trail instead of the longest
+    /// conflict-free one, and gives rephase_best stale material.
     pub(super) fn backtrack_with_phase_saving(&mut self, level: u32) {
         if level >= self.trail.decision_level() {
             return;
         }
+        self.update_target_and_best();
         // Borrow disjoint Solver fields (everything except `trail`, which the
         // `backtrack_to_with_callback` call borrows mutably).
         let phase = &mut self.phase;
@@ -250,6 +270,10 @@ impl Solver {
                 vmtf.notify_unassigned(var);
             }
         });
+        // cadical `backtrack_without_updating_phases`: the conflict-free
+        // prefix can never point past the surviving trail.
+        let kept = self.trail.assignments().len();
+        self.no_conflict_until = self.no_conflict_until.min(kept);
     }
 
     /// Backtrack to a given level without saving phases.
@@ -276,6 +300,12 @@ impl Solver {
             lrb.unassign(var);
             unassigned_vars.push(var);
         });
+
+        // cadical clamps the conflict-free prefix here too
+        // (`backtrack_without_updating_phases`); target/best are *not* updated
+        // from probe/assumption unwinds (cadical reserves that for `backtrack`).
+        let kept = self.trail.assignments().len();
+        self.no_conflict_until = self.no_conflict_until.min(kept);
 
         for var in unassigned_vars {
             if !self.vsids.contains(var) {
@@ -414,49 +444,11 @@ impl Solver {
     /// Restart
     pub(super) fn restart(&mut self) {
         self.stats.restarts += 1;
-        // Best-phase tracking: snapshot the current (pre-backtrack) trail when
-        // it is the longest reached so far. The trail holds the just-explored
-        // partial assignment; remembering its polarities lets a later rephase
-        // refocus the search near the best-known region (cadical's "best"
-        // phase array – the one genuinely missing SAT-side phase signal).
-        let trail_size = self.trail.size();
-        if trail_size > self.best_trail_size {
-            self.best_trail_size = trail_size;
-            self.best_phase.resize(self.num_vars, false);
-            for &lit in self.trail.assignments() {
-                self.best_phase[lit.var().index()] = lit.is_pos();
-            }
-        }
-
+        // Target/best phase bookkeeping no longer lives here: every
+        // `backtrack_with_phase_saving` (this one included) routes through
+        // `update_target_and_best`, keyed on the conflict-free prefix –
+        // cadical's exact update point (backtrack.cpp).
         self.backtrack_with_phase_saving(self.reuse_trail());
-
-        // Rephase: periodically flip the global polarity so the next descent
-        // explores the complementary phase region instead of re-deriving the
-        // previous trail. Alternates with restoring the best-known phase to
-        // refocus near the longest trail. Without this, frequent (LBD) restarts
-        // just redo work and inflate the conflict count.
-        // Rephase fires only in stable mode (cadical-style): stable mode runs
-        // long Luby intervals where refocusing the phase has room to compound,
-        // whereas in focused mode (frequent Glucose restarts) rephasing just
-        // discards the memoized phase and the search re-derives it. Measured:
-        // ungated rephase regresses broadly; stable-gated rephase is neutral.
-        if self.config.rephase_interval > 0
-            && self.stable
-            && self
-                .stats
-                .restarts
-                .is_multiple_of(u64::from(self.config.rephase_interval))
-        {
-            self.rephase_count += 1;
-            if self.rephase_count % 2 == 1 && self.best_trail_size > 0 {
-                // Restore the best partial assignment's polarities.
-                let n = self.best_phase.len().min(self.phase.len());
-                self.phase[..n].copy_from_slice(&self.best_phase[..n]);
-                self.phase_inverted = false;
-            } else {
-                self.phase_inverted = !self.phase_inverted;
-            }
-        }
 
         // Calculate next restart threshold based on strategy
         match self.config.restart_strategy {
@@ -535,6 +527,325 @@ impl Solver {
                 self.vsids.insert(var);
             }
         }
+    }
+
+    /*---------------------------------------------------------------------
+     * Target/best phase maintenance – faithful port of cadical's
+     * `update_target_and_best` (backtrack.cpp) and the rephase machinery
+     * (rephase.cpp).
+     *
+     * `no_conflict_until` is maintained by `propagate`: the whole trail on a
+     * clean fixpoint, the prefix before the current decision level on a
+     * conflict.  Every phase-saving backtrack then records that prefix as the
+     * *target* phase (used for stable-mode decisions) and, when it is the
+     * longest conflict-free prefix ever seen, as the *best* phase (replayed by
+     * the `best` rephase strategy).  After a rephase, `rephased` stays set
+     * until the first conflict that follows it; that first post-rephase
+     * backtrack resets `target_assigned` (and `best_assigned` for a `best`
+     * rephase) so both arrays are re-established from the new phase instead of
+     * inheriting pre-rephase material.
+     *-------------------------------------------------------------------*/
+
+    /// cadical `Internal::update_target_and_best`: record the current phases
+    /// as target (and best) if the conflict-free trail prefix grew.
+    pub(super) fn update_target_and_best(&mut self) {
+        // cadical: `if (opts.rephase == 2 && !stable) return;` – under the
+        // stable-only schedule the focused phase never consults target phases,
+        // so do not spend the copies there.
+        if self.config.rephase == 2 && !self.stable {
+            return;
+        }
+        let reset = self.rephased.is_some() && self.stats.conflicts > self.last_rephase_conflicts;
+        if reset {
+            self.target_assigned = 0;
+            // A `best` rephase just replayed the old best array; re-arm it so
+            // the next conflict-free prefix can establish a fresh best.
+            if self.rephased == Some(RephaseKind::Best) {
+                self.best_assigned = 0;
+            }
+        }
+        if self.no_conflict_until > self.target_assigned {
+            self.copy_phases(PhaseArray::Target);
+            self.target_assigned = self.no_conflict_until;
+        }
+        if self.no_conflict_until > self.best_assigned {
+            self.copy_phases(PhaseArray::Best);
+            self.best_assigned = self.no_conflict_until;
+        }
+        if reset {
+            self.rephased = None;
+        }
+    }
+
+    /// cadical `copy_phases (dst)`: snapshot the saved phases into `dst`.
+    ///
+    /// cadical's `phases.saved` is written at *assignment* time, so at the
+    /// moment `update_target_and_best` runs it equals the current trail
+    /// values.  OxiZ saves phases at *unassignment* time, so the array can be
+    /// stale for variables currently on the trail; refresh those from the
+    /// trail first (one pass, same complexity class as the copy itself) and
+    /// the snapshot is bit-for-bit what cadical would have copied.
+    ///
+    /// cadical skips zero (never-assigned) entries in `dst`; a `false` bool is
+    /// the zero-equivalent here because the arrays start all-`false` and the
+    /// cadical initial phase is negative (`false`) too – writing `false` over
+    /// an unset entry produces the same decision polarity.
+    fn copy_phases(&mut self, dst: PhaseArray) {
+        // Refresh the saved phases for every variable currently on the
+        // trail first (see the doc comment on `PhaseArray`); then snapshot.
+        for &lit in self.trail.assignments() {
+            let vi = lit.var().index();
+            if vi < self.phase.len() {
+                self.phase[vi] = lit.is_pos();
+            }
+        }
+        let dst = match dst {
+            PhaseArray::Target => &mut self.target_phase,
+            PhaseArray::Best => &mut self.best_phase,
+        };
+        dst.resize(self.num_vars, false);
+        dst.copy_from_slice(&self.phase);
+    }
+
+    /// cadical `Internal::rephasing()`: whether the rephase limit was reached.
+    pub(super) fn rephasing(&self) -> bool {
+        if self.config.rephase == 0 || self.config.rephase_interval == 0 {
+            return false;
+        }
+        if self.config.rephase == 2 {
+            self.stable && self.stats.stable_conflicts > self.lim_rephase
+        } else {
+            self.stats.conflicts > self.lim_rephase
+        }
+    }
+
+    /// cadical `init_search_limits` (rephase part): fresh limit and per-mode
+    /// round counters on every solve. Called from both search drivers
+    /// (`solve`'s inlined loop and `solve_with_theory`).
+    pub(super) fn init_rephase_limits(&mut self) {
+        if self.config.rephase > 0 && self.config.rephase_interval > 0 {
+            self.lim_rephase = self
+                .stats
+                .conflicts
+                .saturating_add(self.config.rephase_interval);
+            self.rephase_rounds = [0, 0];
+        }
+    }
+
+    /// cadical `Internal::rephase()`: backtrack to the root (routing through
+    /// `update_target_and_best` one last time over the trail being discarded),
+    /// then overwrite the saved phases according to the mode-dependent
+    /// strategy schedule, and make the new phases the fresh target.
+    pub(super) fn rephase(&mut self) {
+        self.stats.rephased.total += 1;
+
+        // cadical's leading `backtrack()`: full root backtrack, which updates
+        // target/best from the outgoing trail before any strategy overwrites
+        // the phase array.
+        self.backtrack_with_phase_saving(0);
+
+        let stable = self.stable;
+        let count = self.rephase_rounds[usize::from(stable)];
+        self.rephase_rounds[usize::from(stable)] += 1;
+
+        // cadical `single = !opts.stabilize || opts.stabilizeonly`: with the
+        // stable/focused schedule active (default), the strategy cycles are
+        // per-mode; without it a single fixed cycle runs in both modes.
+        let single = !self.config.enable_stabilize;
+        let walk = self.config.walk;
+
+        let kind = if single && !walk {
+            // (inverted,best,flipping,best,random,best,original,best)^ω
+            match count % 8 {
+                0 => self.rephase_inverted(),
+                1 => self.rephase_best(),
+                2 => self.rephase_flipping(),
+                3 => self.rephase_best(),
+                4 => self.rephase_random(),
+                5 => self.rephase_best(),
+                6 => self.rephase_original(),
+                _ => self.rephase_best(),
+            }
+        } else if single && walk {
+            // (inverted,best,walk,flipping,best,walk,random,best,walk,
+            //  original,best,walk)^ω
+            match count % 12 {
+                0 => self.rephase_inverted(),
+                1 => self.rephase_best(),
+                2 => self.rephase_walk(),
+                3 => self.rephase_flipping(),
+                4 => self.rephase_best(),
+                5 => self.rephase_walk(),
+                6 => self.rephase_random(),
+                7 => self.rephase_best(),
+                8 => self.rephase_walk(),
+                9 => self.rephase_original(),
+                10 => self.rephase_best(),
+                _ => self.rephase_walk(),
+            }
+        } else if self.config.rephase == 2 && walk {
+            // same 12-cycle as `single && walk` (cadical branches 3 and 2 are
+            // literally identical)
+            match count % 12 {
+                0 => self.rephase_inverted(),
+                1 => self.rephase_best(),
+                2 => self.rephase_walk(),
+                3 => self.rephase_flipping(),
+                4 => self.rephase_best(),
+                5 => self.rephase_walk(),
+                6 => self.rephase_random(),
+                7 => self.rephase_best(),
+                8 => self.rephase_walk(),
+                9 => self.rephase_original(),
+                10 => self.rephase_best(),
+                _ => self.rephase_walk(),
+            }
+        } else if stable && !walk {
+            // original,inverted,(best,original,best,inverted)^ω
+            match count {
+                0 => self.rephase_original(),
+                1 => self.rephase_inverted(),
+                _ => match (count - 2) % 4 {
+                    0 => self.rephase_best(),
+                    1 => self.rephase_original(),
+                    2 => self.rephase_best(),
+                    _ => self.rephase_inverted(),
+                },
+            }
+        } else if stable && walk {
+            // original,inverted,(best,walk,original,best,walk,inverted)^ω
+            match count {
+                0 => self.rephase_original(),
+                1 => self.rephase_inverted(),
+                _ => match (count - 2) % 6 {
+                    0 => self.rephase_best(),
+                    1 => self.rephase_walk(),
+                    2 => self.rephase_original(),
+                    3 => self.rephase_best(),
+                    4 => self.rephase_walk(),
+                    _ => self.rephase_inverted(),
+                },
+            }
+        } else if !walk || !self.config.walk_nonstable {
+            // focused: flipping,(random,best,flipping,best)^ω
+            match count {
+                0 => self.rephase_flipping(),
+                _ => match (count - 1) % 4 {
+                    0 => self.rephase_random(),
+                    1 => self.rephase_best(),
+                    2 => self.rephase_flipping(),
+                    _ => self.rephase_best(),
+                },
+            }
+        } else {
+            // focused with walks – cadical's code (its comment says
+            // `flipping,…` but the code calls `rephase_original` first; code
+            // is ground truth):
+            // original,(random,best,walk,flipping,best,walk)^ω
+            match count {
+                0 => self.rephase_original(),
+                _ => match (count - 1) % 6 {
+                    0 => self.rephase_random(),
+                    1 => self.rephase_best(),
+                    2 => self.rephase_walk(),
+                    3 => self.rephase_flipping(),
+                    4 => self.rephase_best(),
+                    _ => self.rephase_walk(),
+                },
+            }
+        };
+
+        // The new phases become the new target (cadical: `copy_phases
+        // (phases.target); target_assigned = 0;` – the walk reads the saved
+        // phases first, hence the ordering).
+        self.target_phase.resize(self.num_vars, false);
+        self.target_phase.copy_from_slice(&self.phase);
+        self.target_assigned = 0;
+
+        // Arithmetic growth of the next interval, in the schedule's own
+        // conflict counter (stable-only schedule counts stable conflicts).
+        let conflicts = if self.config.rephase == 2 {
+            self.stats.stable_conflicts
+        } else {
+            self.stats.conflicts
+        };
+        let delta = self
+            .config
+            .rephase_interval
+            .saturating_mul(self.stats.rephased.total + 1);
+        self.lim_rephase = conflicts.saturating_add(delta);
+
+        // Arms `update_target_and_best` to reset target (and best for a `best`
+        // rephase) at the first backtrack after the next conflict.
+        self.last_rephase_conflicts = self.stats.conflicts;
+        self.rephased = Some(kind);
+    }
+
+    /// All phases to the initial phase (negative) – cadical `rephase_original`.
+    fn rephase_original(&mut self) -> RephaseKind {
+        self.stats.rephased.original += 1;
+        self.phase.clear();
+        self.phase.resize(self.num_vars, false);
+        RephaseKind::Original
+    }
+
+    /// All phases to the inverted initial phase (positive) – cadical
+    /// `rephase_inverted`.
+    fn rephase_inverted(&mut self) -> RephaseKind {
+        self.stats.rephased.inverted += 1;
+        self.phase.clear();
+        self.phase.resize(self.num_vars, true);
+        RephaseKind::Inverted
+    }
+
+    /// Flip every phase in place – cadical `rephase_flipping` (`saved *= -1`).
+    fn rephase_flipping(&mut self) -> RephaseKind {
+        self.stats.rephased.flipped += 1;
+        for p in &mut self.phase {
+            *p = !*p;
+        }
+        self.phase.resize(self.num_vars, false);
+        RephaseKind::Flipping
+    }
+
+    /// Randomize all phases – cadical `rephase_random`.
+    fn rephase_random(&mut self) -> RephaseKind {
+        self.stats.rephased.random += 1;
+        self.phase.clear();
+        self.phase.resize(self.num_vars, false);
+        let mut rng_state = self.rng_state;
+        for p in &mut self.phase {
+            // Inline xorshift (the shared `rand_bool` needs `&mut self`).
+            let mut x = rng_state;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *p = (x & 1) == 1;
+            rng_state = x;
+        }
+        self.rng_state = rng_state;
+        RephaseKind::Random
+    }
+
+    /// Overwrite saved phases with the best-phase array – cadical
+    /// `rephase_best`. Only ever replays material recorded by
+    /// [`Self::update_target_and_best`].
+    fn rephase_best(&mut self) -> RephaseKind {
+        self.stats.rephased.best += 1;
+        self.phase.resize(self.num_vars, false);
+        self.best_phase.resize(self.num_vars, false);
+        self.phase.copy_from_slice(&self.best_phase);
+        RephaseKind::Best
+    }
+
+    /// Run the ProbSAT local search (`solver/walk.rs`) seeded from the saved
+    /// phases – cadical `rephase_walk`. A zero-broken-clause walk still only
+    /// writes the phases (cadical's `walk()` discards its result too); the
+    /// subsequent descent reaches that model through ordinary search.
+    fn rephase_walk(&mut self) -> RephaseKind {
+        self.stats.rephased.walk += 1;
+        self.walk();
+        RephaseKind::Walk
     }
 
     /// Check if we should perform a local restart

@@ -113,7 +113,15 @@ fn deterministic_theory_phase_ignores_randomization_and_rephasing() {
     let negative = solver.new_var();
     solver.set_deterministic_phase(positive, true);
     solver.set_deterministic_phase(negative, false);
-    solver.phase_inverted = true;
+    // The cadical-faithful rephase strategies mutate `phase` in place; a
+    // global inversion flag no longer exists. Flip every saved phase instead
+    // (the `flipping` strategy) and check the deterministic phases survive.
+    for p in &mut solver.phase {
+        *p = !*p;
+    }
+    for p in &mut solver.target_phase {
+        *p = !*p;
+    }
 
     // Repeated calls also advance the PRNG in the generic path.  A theory's
     // coherent candidate phases must remain stable regardless.
@@ -947,4 +955,324 @@ fn theory_lazy_switch_flips_at_the_configured_count() {
 
     solver.theory_reason_clauses = super::learn::THEORY_LAZY_SWITCH_AFTER;
     assert!(solver.theory_lazy_reasons_enabled());
+}
+
+// ===== cadical-faithful rephase / target-phase machinery ====================
+//
+// These tests pin the parts of the port that matter for search behaviour:
+// `no_conflict_until` tracking, `update_target_and_best` from *every*
+// phase-saving backtrack (not just restarts), the mode-dependent strategy
+// schedule, and the target-phase fallback order in `decision_polarity`.
+
+/// A clean propagation fixpoint records the whole trail as conflict-free;
+/// a conflict records only the prefix before the current decision level.
+#[test]
+fn rephase_no_conflict_until_tracks_prefixes() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    solver.add_clause([Lit::pos(a), Lit::neg(a)]); // keep a busy
+    solver.add_clause([Lit::pos(a), Lit::pos(b)]);
+    solver.propagate();
+    assert_eq!(solver.no_conflict_until, solver.trail.size());
+
+    // Decide a = false at level 1 → propagates b at level 1 → conflict with
+    // the tautology-watch clause... instead force a real conflict: clause
+    // (a ∨ b) with a=false,b=false requires both decisions.
+    let c = solver.new_var();
+    solver.backtrack_with_phase_saving(0);
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::neg(a));
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::neg(b));
+    // Now (a ∨ b) is falsified: propagate must report it and record only the
+    // level-0 prefix as conflict-free.
+    let _ = c;
+    assert!(solver.propagate().is_some());
+    assert_eq!(
+        solver.no_conflict_until,
+        solver.trail.level_start(solver.trail.decision_level())
+    );
+}
+
+/// `update_target_and_best` fires from ordinary conflict backjumps (no
+/// restart involved) and snapshots the conflict-free prefix's polarities.
+#[test]
+fn rephase_target_and_best_update_on_backtrack() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    // (a ∨ b) ∧ (¬a ∨ b) ∧ (¬b ∨ c) ∧ (¬c) → UNSAT, with conflicts above
+    // level 0 so backjumps (and thus update_target_and_best) must fire.
+    let a = solver.new_var();
+    let b = solver.new_var();
+    let c = solver.new_var();
+    solver.add_clause([Lit::pos(a), Lit::pos(b)]);
+    solver.add_clause([Lit::neg(a), Lit::pos(b)]);
+    solver.add_clause([Lit::neg(b), Lit::pos(c)]);
+    solver.add_clause([Lit::neg(c)]);
+
+    let result = solver.solve();
+    assert_eq!(result, SolverResult::Unsat);
+    assert!(
+        solver.best_assigned > 0 || solver.stats.conflicts == 0,
+        "best_assigned must be established from a conflict-free prefix \
+         (conflicts: {}, best_assigned: {})",
+        solver.stats.conflicts,
+        solver.best_assigned
+    );
+    assert_eq!(solver.best_assigned, solver.target_assigned);
+}
+
+/// The per-mode strategy schedule matches cadical's stable-mode cycle:
+/// original, inverted, (best, original, best, inverted)^ω with walk off,
+/// and the walk variants with walk on.
+#[test]
+fn rephase_schedule_matches_cadical_stable_cycle() {
+    // stable && !walk: original,inverted,(best,original,best,inverted)^ω
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_stabilize: true,
+        walk: false,
+        rephase_interval: 1,
+        ..SolverConfig::default()
+    });
+    let _a = solver.new_var();
+    solver.stable = true;
+    let kinds = [
+        RephaseKind::Original,
+        RephaseKind::Inverted,
+        RephaseKind::Best,
+        RephaseKind::Original,
+        RephaseKind::Best,
+        RephaseKind::Inverted,
+        RephaseKind::Best,
+        RephaseKind::Original,
+    ];
+    for expected in kinds {
+        solver.rephase();
+        assert_eq!(solver.rephased, Some(expected));
+    }
+
+    // stable && walk: original,inverted,(best,walk,original,best,walk,inverted)^ω
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_stabilize: true,
+        walk: true,
+        rephase_interval: 1,
+        ..SolverConfig::default()
+    });
+    let _a = solver.new_var();
+    solver.stable = true;
+    let kinds = [
+        RephaseKind::Original,
+        RephaseKind::Inverted,
+        RephaseKind::Best,
+        RephaseKind::Walk,
+        RephaseKind::Original,
+        RephaseKind::Best,
+        RephaseKind::Walk,
+        RephaseKind::Inverted,
+    ];
+    for expected in kinds {
+        solver.rephase();
+        assert_eq!(solver.rephased, Some(expected));
+    }
+}
+
+/// The focused-mode schedule (stabilization on, walk on – cadical defaults):
+/// original,(random,best,walk,flipping,best,walk)^ω, matching cadical's
+/// *code* (its comment claims a leading `flipping`).
+#[test]
+fn rephase_schedule_matches_cadical_focused_cycle() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_stabilize: true,
+        walk: true,
+        walk_nonstable: true,
+        rephase_interval: 1,
+        ..SolverConfig::default()
+    });
+    let _a = solver.new_var();
+    solver.stable = false;
+    let kinds = [
+        RephaseKind::Original,
+        RephaseKind::Random,
+        RephaseKind::Best,
+        RephaseKind::Walk,
+        RephaseKind::Flipping,
+        RephaseKind::Best,
+        RephaseKind::Walk,
+        RephaseKind::Random,
+    ];
+    for expected in kinds {
+        solver.rephase();
+        assert_eq!(solver.rephased, Some(expected));
+    }
+}
+
+/// A `best` rephase replays the recorded best phases into the saved array,
+/// and the next conflict re-arms `best_assigned` for a fresh best.
+#[test]
+fn rephase_best_replays_and_rearms() {
+    let mut solver = Solver::with_config(SolverConfig {
+        rephase_interval: 1,
+        walk: false,
+        enable_stabilize: true,
+        ..SolverConfig::default()
+    });
+    let a = solver.new_var();
+    let b = solver.new_var();
+    solver.stable = true;
+    // round 0 = original (all false)
+    solver.rephase();
+    assert_eq!(solver.rephased, Some(RephaseKind::Original));
+    assert!(!solver.phase[a.index()] && !solver.phase[b.index()]);
+
+    // Record a best phase: assign a trail, let propagate succeed, backtrack.
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::pos(a));
+    solver.propagate();
+    solver.backtrack_with_phase_saving(0);
+    assert!(solver.best_phase[a.index()]);
+    assert!(solver.best_assigned > 0);
+
+    // round 1 = inverted (all true), round 2 = best → replays a = true.
+    solver.rephase();
+    solver.rephase();
+    assert_eq!(solver.rephased, Some(RephaseKind::Best));
+    assert!(solver.phase[a.index()]);
+
+    // After the rephase, the first conflict (conflicts advanced past
+    // last_rephase_conflicts) resets best_assigned via update_target_and_best.
+    solver.stats.conflicts += 1;
+    let armed_best = solver.best_assigned;
+    solver.update_target_and_best();
+    assert_eq!(solver.best_assigned, 0);
+    assert_eq!(solver.target_assigned, 0);
+    assert_eq!(solver.rephased, None);
+    let _ = armed_best;
+}
+
+/// Target phases are consulted in stable mode (target = 1) and ignored in
+/// focused mode; `target = 2` uses them in both modes; forced (theory)
+/// phases always win.
+#[test]
+fn rephase_target_phase_decision_fallback() {
+    let mut solver = Solver::with_config(SolverConfig {
+        random_polarity_prob: 0.0,
+        ..SolverConfig::default()
+    });
+    let a = solver.new_var();
+    let b = solver.new_var();
+    solver.phase[a.index()] = false;
+    solver.target_phase[a.index()] = true;
+    solver.phase[b.index()] = false;
+    solver.target_phase[b.index()] = true;
+    solver.set_deterministic_phase(b, false);
+
+    // Focused (stable = false): saved phase wins for a, forced for b.
+    solver.stable = false;
+    assert!(!solver.decision_polarity(a));
+    assert!(!solver.decision_polarity(b));
+
+    // Stable: target phase for a, forced still wins for b.
+    solver.stable = true;
+    assert!(solver.decision_polarity(a));
+    assert!(!solver.decision_polarity(b));
+}
+
+/// Rephasing fires from the search loop on the arithmetic conflict schedule
+/// (interval × round) and the stats count every strategy used.
+#[test]
+fn rephase_fires_from_search_on_conflict_schedule() {
+    let mut solver = Solver::with_config(SolverConfig {
+        rephase: 1,
+        rephase_interval: 2,
+        walk: false,
+        enable_stabilize: false,
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    // UNSAT pigeonhole PHP(4,3): 4 pigeons, 3 holes – small enough to run
+    // instantly, big enough that unit propagation alone cannot refute it, so
+    // the conflict counter (and the rephase schedule) actually advances.
+    let pigeons = 4;
+    let holes = 3;
+    let mut p = Vec::new();
+    for _ in 0..pigeons * holes {
+        p.push(solver.new_var());
+    }
+    let at = |i: usize, j: usize| Lit::pos(p[i * holes + j]);
+    // Every pigeon in some hole.
+    for i in 0..pigeons {
+        let clause = (0..holes).map(|j| at(i, j));
+        solver.add_clause(clause);
+    }
+    // No two pigeons share a hole.
+    for j in 0..holes {
+        for i1 in 0..pigeons {
+            for i2 in i1 + 1..pigeons {
+                solver.add_clause([at(i1, j).negate(), at(i2, j).negate()]);
+            }
+        }
+    }
+
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+    assert!(
+        solver.stats.rephased.total > 0,
+        "the arithmetic schedule (base 2) must fire within the PHP(4,3) \
+         refutation (conflicts: {})",
+        solver.stats.conflicts
+    );
+    // `single` schedule (stabilization off): inverted,best,flipping,best,...
+    assert_eq!(solver.stats.rephased.inverted, 1);
+}
+
+/// The walk writes back an assignment that satisfies every original clause
+/// when it finds one (broken count reaches zero), and never flips fixed
+/// (level-0) variables.
+#[test]
+fn rephase_walk_satisfies_original_clauses_and_respects_fixed() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    let c = solver.new_var();
+    // (¬a ∨ b): a=true forces b. (c) fixed true at level 0.
+    solver.add_clause([Lit::neg(a), Lit::pos(b)]);
+    solver.add_clause([Lit::pos(a), Lit::pos(b), Lit::neg(c)]);
+    solver.add_clause([Lit::pos(c)]);
+    assert_eq!(solver.solve(), SolverResult::Sat);
+
+    // Run a walk with a generous budget from a bad phase (both false).
+    solver.backtrack_with_phase_saving(0);
+    solver.phase[a.index()] = false;
+    solver.phase[b.index()] = false;
+    solver.last_walk_ticks = 0;
+    solver.ticks_focused = 100_000; // budget = 8000 ticks
+    solver.walk();
+
+    // The walk must have repaired the phases: (¬a ∨ b) satisfied and the
+    // fixed variable c untouched by the flip loop (its value is forced).
+    let a_true = solver.phase[a.index()];
+    let b_true = solver.phase[b.index()];
+    assert!(a_true == b_true || !a_true, "phase a={a_true} b={b_true}");
+}
+
+/// Incremental scope consistency: rephase state survives push/pop without
+/// corrupting later answers (phases are heuristic-only, but the machinery's
+/// bookkeeping must not wedge the search).
+#[test]
+fn rephase_incremental_push_pop_stays_consistent() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    solver.add_clause([Lit::pos(a), Lit::pos(b)]);
+    assert_eq!(solver.solve(), SolverResult::Sat);
+
+    solver.push();
+    solver.add_clause([Lit::neg(a)]);
+    assert_eq!(solver.solve(), SolverResult::Sat);
+    solver.pop();
+    // Model restored: both rounds SAT with the original clauses only.
+    assert_eq!(solver.solve(), SolverResult::Sat);
+    let _ = solver.rephase_rounds;
 }

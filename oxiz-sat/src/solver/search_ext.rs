@@ -68,6 +68,13 @@ impl Solver {
         // duplicate theory constraints that would cause spurious UNSAT.
         let mut theory_processed: usize = 0;
 
+        // cadical `init_search_limits`: (re-)initialize the rephase limit and
+        // reset the per-mode rephase round counters on every solve, so an
+        // incremental second `check-sat` starts the phase schedule from fresh
+        // while keeping the target/best arrays (they are only ever refined
+        // and stay the best material a rephase can replay).
+        self.init_rephase_limits();
+
         'search: loop {
             // Resource budget / interrupt check: honor a configured conflict
             // limit or an external interrupt by returning Unknown.

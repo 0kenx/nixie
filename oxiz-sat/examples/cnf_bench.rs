@@ -77,7 +77,7 @@ fn main() {
         }
     };
     if let Ok(v) = std::env::var("REPHASE")
-        && let Ok(n) = v.parse::<u32>()
+        && let Ok(n) = v.parse::<u64>()
     {
         base_config.rephase_interval = n;
     }

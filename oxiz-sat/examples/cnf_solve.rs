@@ -107,7 +107,7 @@ fn main() {
         config.enable_lucky = v != "0";
     }
     if let Some(v) = std::env::var("REPHASE").ok().filter(|s| !s.is_empty())
-        && let Ok(n) = v.parse::<u32>()
+        && let Ok(n) = v.parse::<u64>()
     {
         config.rephase_interval = n;
     }
