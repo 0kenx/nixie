@@ -127,13 +127,49 @@ honest comparator that never counts `Unknown` as a match):
 A bug fix ships with a test that reproduces the bug – ideally the exact input that *would
 have* returned the wrong answer. Add it next to the code it protects.
 
+## Heuristic changes: every comparison ships with a matched null
+
+This applies to any change that alters the *path* the search takes without altering the answer –
+branching, phase/polarity, restarts, rephasing, clause deletion, inprocessing schedules,
+stabilization, and every learned or auto-tuned variant. (Not soundness: a wrong answer is a bug
+at n=1, no statistics required.)
+
+**CDCL is chaotic.** Perturb it anywhere and the trajectory diverges, so what you measure is
+always `the idea's merit + trajectory reshuffling`. The second term is not small – measured on
+this repo's benchmarks, changing *only the RNG seed* moves aggregate cost **7.31×**, while the
+effects being hunted are 1.1–2.5×. A real improvement and a coincidence look identical.
+
+So a before/after number is not evidence. **Report `treatment / matched-null`, not
+`treatment / baseline`.** A matched null does the same physical thing as your change, with the
+same magnitude, timing, code path and number of choices – differing *only* in the semantic
+content you claim is doing the work (e.g. for a learned model: permute its weights). If that
+ratio is ≤ 1 you have nothing, however good the raw number looked.
+
+Also non-negotiable here:
+
+- **Never use wall-clock as the primary metric, or as any policy input** – it is contaminated by
+  other load and makes the solver nondeterministic, breaking `run_parity.sh`, bug reproduction
+  and differential fuzzing. Use tick counters, and verify the counter covers *all* the work your
+  change affects.
+- **≥10 seeds per cell**, baseline reported as a distribution. A deterministic policy compared
+  against a stochastic baseline at one seed is a rigged comparison – and a learned policy in
+  greedy mode is deterministic.
+- **Replay any hindsight-selected configuration at a fresh seed.** In the study below, 80% of a
+  2.56× rollout gain evaporated on reseeding.
+
+Read [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) before running the experiment – it has the
+construction recipes, the power table (a 5% effect needs ~1 800 unpaired runs), the failure
+modes, and a checklist. The worked case study in `docs/studies/` shows these controls killing
+two confident, entirely real, entirely meaningless measurements.
+
 ## When you get stuck
 
 1. Read the corresponding Z3/CVC5/CaDiCaL code ([`../temp/z3`](../temp/z3),
    [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)) – the
    procedure is almost certainly documented there.
 2. Read `docs/ARCHITECTURE.md`, `docs/PITFALLS.md`, `docs/THEORY_GUIDE.md`, and the
-   relevant crate's `README.md` / `TODO.md`.
+   relevant crate's `README.md` / `TODO.md`. For measuring a heuristic change, read
+   `docs/BENCHMARKING.md`; for past experiments and their verdicts, `docs/studies/`.
 3. Check `CHANGELOG.md` – many "new" bugs are recurrences of fixed ones; the changelog
    names the recurring patterns by name.
 4. If a fix feels too easy, it is. Go back to principle 2 and keep digging.
