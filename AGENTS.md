@@ -42,20 +42,23 @@ catastrophe. Every rule below follows from that.
    over the `unwrap()`. Prefer the explicit heap-stack walk over the recursive one.
    Prefer the real decision procedure over the heuristic that happens to pass the test.
 
-4. **When in doubt about how something should behave, read the reference implementations
+   4. **When in doubt about how something should behave, read the reference implementations
    first**, before writing or guessing:
    - **Z3** source: [`../temp/z3`](../temp/z3) (C++; mostly under `src/`)
    - **CVC5** source: [`../temp/cvc5`](../temp/cvc5) (C++; under `src/`)
+   - **CaDiCaL** source: [`../temp/cadical`](../temp/cadical) (C++; under `src/`;
+     C++ binary at `../temp/cadical/build/cadical`)
 
    These are the ground truth for theory decision procedures, SAT/NLSAT, CAD, proof
-   rules, quantifier handling, and theory combination. Before reinventing a procedure,
-   find it in Z3 and/or CVC5, understand *why* it is shaped that way, and match their
-   semantics. Do not invent new ones.
+   rules, quantifier handling, and theory combination. CaDiCaL is the ground truth
+   for the SAT core (CDCL search, restarts, VMTF/VSIDS, inprocessing, LRAT). Before
+   reinventing a procedure, find it in Z3, CVC5, and/or CaDiCaL, understand *why*
+   it is shaped that way, and match their semantics. Do not invent new ones.
 
-   **Read-only reference.** Do **not** add `z3`, `z3-sys`, or `cvc5` as dependencies –
-   they are **banned** in `deny.toml` (this project is strictly pure Rust, no FFI, no
-   C/C++). You consult their source as a specification; you never link it. `Pure Rust is
-   a fundamental requirement` (`README.md`).
+   **Read-only reference.** Do **not** add `z3`, `z3-sys`, `cvc5`, or `cadical` as
+   dependencies – they are **banned** in `deny.toml` (this project is strictly pure
+   Rust, no FFI, no C/C++). You consult their source as a specification; you never
+   link it. `Pure Rust is a fundamental requirement` (`README.md`).
 
 ## Soundness rules specific to OxiZ
 
@@ -126,8 +129,9 @@ have* returned the wrong answer. Add it next to the code it protects.
 
 ## When you get stuck
 
-1. Read the corresponding Z3/CVC5 code ([`../temp/z3`](../temp/z3),
-   [`../temp/cvc5`](../temp/cvc5)) – the procedure is almost certainly documented there.
+1. Read the corresponding Z3/CVC5/CaDiCaL code ([`../temp/z3`](../temp/z3),
+   [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)) – the
+   procedure is almost certainly documented there.
 2. Read `docs/ARCHITECTURE.md`, `docs/PITFALLS.md`, `docs/THEORY_GUIDE.md`, and the
    relevant crate's `README.md` / `TODO.md`.
 3. Check `CHANGELOG.md` – many "new" bugs are recurrences of fixed ones; the changelog
@@ -143,5 +147,6 @@ have* returned the wrong answer. Add it next to the code it protects.
   `oxiz-spacer` / `oxiz-opt` → `oxiz-cli` / `oxiz-wasm` / `oxiz-py` / `oxiz-smtcomp` /
   `oxiz-ml`. Meta-crate: `oxiz`.
 - Rust edition 2024, MSRV 1.88 (pervasive let-chains). Do not lower either casually.
-- Reference SMT solvers (read-only spec): [`../temp/z3`](../temp/z3),
-  [`../temp/cvc5`](../temp/cvc5).
+- Reference solvers (read-only spec): [`../temp/z3`](../temp/z3),
+  [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)
+  (C++ SAT core; binary `../temp/cadical/build/cadical`).
