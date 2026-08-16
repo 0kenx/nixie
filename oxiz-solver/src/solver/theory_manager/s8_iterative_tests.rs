@@ -65,6 +65,8 @@ impl Scratch {
             false,
             0,
             Some("QF_UFIDL"),
+            false,
+            true,
         )
     }
 }

@@ -9,17 +9,13 @@ use oxiz_sat::{Lit, TheoryCallback, TheoryCheckResult, Var};
 use oxiz_theories::arithmetic::ArithSolver;
 use oxiz_theories::bv::BvSolver;
 use oxiz_theories::euf::EufSolver;
-use oxiz_theories::{DiffVar, EqualityNotification, Theory, TheoryCombination};
+use oxiz_theories::{EqualityNotification, Theory, TheoryCombination};
 use smallvec::SmallVec;
 
 use super::theory_bv_encode::{debug_verify_bv_circuits, encode_bv_term_recursive};
 use super::types::{
     ArithConstraintType, Constraint, ParsedArithConstraint, Statistics, TheoryMode,
 };
-
-/// Run difference-logic theory propagation every N-th arithmetic-atom
-/// assignment (uses the incrementally-maintained `self.diff`, no rebuild).
-const DL_PROP_PERIOD: u64 = 8;
 
 /// Whether theory-conflict tracing is enabled (`OXIZ_TRACE_DECISIONS`, shared
 /// with the SAT-side decision/conflict tracer). Read once and cached. Used by
@@ -115,17 +111,30 @@ struct DlAtom {
     ctype: ArithConstraintType,
 }
 
+/// A dense-core feeding plan for one DL atom at one polarity: the atom's
+/// watch orientation (its TRUE-polarity integer reading `t − s ≤ k`) and the
+/// edges to assert for the polarity being fed.
+struct DenseFeed {
+    /// Watch edge source (the subtrahend of `t − s ≤ k`).
+    watch_s: TermId,
+    /// Watch edge target (the minuend).
+    watch_t: TermId,
+    /// Watch bound `k` (already integer-tightened for strict atoms).
+    watch_k: i64,
+    /// Whether the atom is an equality.
+    is_eq: bool,
+    /// `(src, dst, weight)` edges to assert at the fed polarity.
+    edges: Vec<(TermId, TermId, i64)>,
+}
 /// Parsed arithmetic atom considered for SAT-level bound propagation.
 type ArithPropCandidate = (Var, Vec<(TermId, Rational64)>, Rational64, bool, bool);
 
-/// Cached shortest-path distances and predecessor edges for one DL source.
-type SsspResult = (HashMap<DiffVar, Rational64>, HashMap<DiffVar, usize>);
-type SsspCache = FxHashMap<DiffVar, Option<SsspResult>>;
-
-/// Outcome of feeding one arithmetic atom to the incremental difference-logic
-/// checker.  `Consistent` means the atom was exactly representable as DL and
-/// the updated graph has no negative cycle; it is therefore safe to defer the
-/// more expensive simplex feasibility pass until a non-DL atom or final check.
+/// Outcome of feeding one arithmetic atom to the difference-logic engines.
+/// `Consistent` means the atom was exactly representable as DL and the
+/// updated graph/closure has no negative cycle; it is therefore safe to
+/// defer the more expensive simplex feasibility pass until a non-DL atom or
+/// final check.  `Propagated` additionally carries closure-derived theory
+/// propagations from the dense core (Z3 `propagate_using_cell`).
 enum DlPrimaryResult {
     /// The atom is outside the exact difference-logic fragment.
     NotApplicable,
@@ -133,6 +142,8 @@ enum DlPrimaryResult {
     Consistent,
     /// Adding the atom produced a justified negative-cycle conflict.
     Conflict(TheoryCheckResult),
+    /// The atom was added; the dense core derived new implied atoms.
+    Propagated(Vec<(Lit, SmallVec<[Lit; 8]>)>),
 }
 
 /// Feed a DL atom using the INCREMENTAL add+check API (`add_*_check`, seeded
@@ -226,24 +237,6 @@ fn genuine_fixed_var(lhs: TermId, rhs: TermId, manager: &TermManager) -> Option<
     Some(value)
 }
 
-/// The `(x, y, c, strict)` bound whose entailment is equivalent to DL atom
-/// `dla` holding at polarity `pol` (non-equality atoms).  In lock-step with
-/// `feed_dl_atom_inc`.
-fn diff_test_bound(dla: &DlAtom, pol: bool) -> Option<(TermId, TermId, Rational64, bool)> {
-    use ArithConstraintType::*;
-    let (x, y, c) = (dla.x, dla.y, dla.c);
-    Some(match (dla.ctype, pol) {
-        (Le, true) => (x, y, c, false),
-        (Lt, true) => (x, y, c, true),
-        (Ge, true) => (y, x, -c, false),
-        (Gt, true) => (y, x, -c, true),
-        (Le, false) => (y, x, -c, true),
-        (Lt, false) => (y, x, -c, false),
-        (Ge, false) => (x, y, c, true),
-        (Gt, false) => (x, y, c, false),
-    })
-}
-
 /// One pending application of an iterative EUF interning walk
 /// ([`TheoryManager::intern_term_deep`] and
 /// [`TheoryManager::intern_term_for_congruence`]).
@@ -297,12 +290,11 @@ pub(crate) struct TheoryManager<'a> {
     /// `zero → x` of weight `k`).  Registered as an ordinary DL variable; a
     /// free zero gives correct feasibility (bounds `x ≤ k`, `x ≥ k'` form a
     /// `zero→x→zero` cycle of weight `k − k'`, infeasible iff `k < k'`) and
-    /// never introduces spurious infeasibility.  Currently unused: feeding
-    /// bounds through the zero node was net-negative (the zero hub inflated
-    /// seeded-SPFA and derailed dense inputs), so bounds are deferred to the
-    /// simplex and only 2-var differences take the DL path.  Retained for a
-    /// future bound-aware DL propagation pass.
-    #[allow(dead_code)]
+    /// never introduces spurious infeasibility.  Used as the second endpoint
+    /// of single-variable bounds on the dense-core path (`x ≤ k` ≡ edge
+    /// `zero → x`, weight `k` — Z3's dense solver internalises numerals the
+    /// same way).  The sparse engine still defers 1-var bounds to the simplex
+    /// (the zero hub inflated the seeded-SPFA check; see `diff_primary_check`).
     zero_term: TermId,
     /// Fresh `ite`-result constants (`__oxiz_ite_*`) axiomatized against
     /// constants (z3-style triangle).  Used by `final_check` to theory-propagate
@@ -368,13 +360,6 @@ pub(crate) struct TheoryManager<'a> {
     asserted_arith_eq_marks: Vec<usize>,
     /// Number of processed assignments
     processed_count: usize,
-    /// Throttle counter for difference-logic theory propagation.
-    dl_prop_counter: u64,
-    /// Cached result of the whole-vocabulary DL-fragment test.  The arithmetic
-    /// vocabulary is immutable for one `TheoryManager`; rescanning thousands
-    /// of atoms every propagation period merely to rediscover one non-DL atom
-    /// is quadratic overhead on dense AUFLIA inputs.
-    dl_prop_fragment: Option<bool>,
     /// Theory checking mode
     theory_mode: TheoryMode,
     /// Pending equality notifications for Nelson-Oppen
@@ -398,6 +383,19 @@ pub(crate) struct TheoryManager<'a> {
     /// subset of the true Farkas proof, so bound propagation is gated to this
     /// family.
     is_dl_family: bool,
+    /// Pure integer difference logic end-to-end: every arithmetic atom is
+    /// difference-shaped (Z3's structural `is_in_diff_logic(st)` gate, see
+    /// `solver::static_features`) and integer-sorted without UF.  While this
+    /// holds, the dense DL core is the ONLY arithmetic engine — atoms are not
+    /// duplicated into the simplex tableau (Z3's `setup_QF_IDL` installs
+    /// `theory_dense_diff_logic` in exactly this shape).  The first atom the
+    /// DL engines reject (`NotApplicable`) breaks purity and replays every
+    /// live arith assignment into the simplex, restoring the general path.
+    dl_pure: bool,
+    /// Whether the sparse difference engine may feed at all: the declared
+    /// logic is a difference-logic family the dense core does not cover
+    /// (QF_RDL / QF_UFIDL), or the pure integer route is still active.
+    sparse_dl: bool,
     /// Canonical EUF node for each distinct integer constant value.
     ///
     /// Maps an integer literal value (i64) to the canonical EUF node that
@@ -582,6 +580,8 @@ impl<'a> TheoryManager<'a> {
         has_bv_arith_ops: bool,
         timeout_ms: u64,
         logic: Option<&str>,
+        pure_dl: bool,
+        sparse_dl: bool,
     ) -> Self {
         #[cfg(feature = "std")]
         let deadline = if timeout_ms > 0 {
@@ -614,8 +614,6 @@ impl<'a> TheoryManager<'a> {
             processed_lit_marks: vec![0],
             processed_lits: FxHashSet::default(),
             processed_count: 0,
-            dl_prop_counter: 0,
-            dl_prop_fragment: None,
             theory_mode,
             pending_equalities: Vec::new(),
             processed_equalities: FxHashMap::default(),
@@ -626,6 +624,8 @@ impl<'a> TheoryManager<'a> {
             is_dl_family: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
+            dl_pure: pure_dl,
+            sparse_dl: sparse_dl || pure_dl,
             interned_int_constants: FxHashMap::default(),
             interned_bv_constants: FxHashMap::default(),
             ite_const_axioms: Self::build_ite_const_axioms(
@@ -1881,21 +1881,24 @@ impl<'a> TheoryManager<'a> {
                 real_terms.push((t, c));
             }
         }
-        // Normalise the resolved atom to a 2-variable DL edge `(x, y, c)` with
-        // `ctype`/`is_eq`, where a single-variable bound uses the canonical
-        // zero term as `y` (`x ≤ k` ≡ edge `zero → x`, weight `k`).
-        let (xt, yt, c, ctype) = match real_terms.as_slice() {
+        // Normalise the resolved atom to a difference pair `(x, y, c)`
+        // reading `x − y ≤ c`-shaped per `ctype`, where a single-variable
+        // bound uses the canonical zero term as the other endpoint
+        // (`x ≤ k` ≡ `x − 0 ≤ k`) — Z3's dense solver internalises numerals
+        // exactly this way (`internalize_term_core`).
+        let (xt, yt, c) = match real_terms.as_slice() {
             // Pure constant atom (e.g. `0 ≤ k`): defer to the simplex path.
             [] => return DlPrimaryResult::NotApplicable,
             [(v, coef)] => {
-                // Single-variable bounds (`x ≤ k`) are deferred to the simplex.
-                // Feeding them through a DL zero-node is net-negative: the zero
-                // vertex becomes a high-degree hub that inflates the seeded-SPFA
-                // per-edge check and derails the search on dense inputs
-                // (vhard16 went 0.35s -> 50s with bounds fed; vhard7 was slower
-                // too).  The 2-variable differences below are the win.
-                let _ = (v, coef);
-                return DlPrimaryResult::NotApplicable;
+                // Single-variable bound `coef·v ≤ adj_constant`: only unit
+                // coefficients are difference-logic-shaped.
+                if *coef == Rational64::from_integer(1) {
+                    (*v, self.zero_term, adj_constant)
+                } else if *coef == Rational64::from_integer(-1) {
+                    (self.zero_term, *v, adj_constant)
+                } else {
+                    return DlPrimaryResult::NotApplicable;
+                }
             }
             [(a, ca), (b, cb)] => {
                 // Difference `x − y`: one +1 coefficient, one −1.
@@ -1909,10 +1912,51 @@ impl<'a> TheoryManager<'a> {
                 } else {
                     return DlPrimaryResult::NotApplicable; // not a unit difference
                 };
-                (x, y, adj_constant, ctype)
+                (x, y, adj_constant)
             }
             _ => return DlPrimaryResult::NotApplicable, // 3+ real variables: genuinely non-difference
         };
+        let dla = DlAtom {
+            var,
+            x: xt,
+            y: yt,
+            c,
+            is_eq,
+            ctype,
+        };
+        // Dense integer path (Z3 `theory_dense_diff_logic`): exact i64
+        // weights over integer-sorted plain numeric terms, incremental
+        // closure with occurrence-list propagation.  Serves the PURE
+        // difference-logic route only — a vocabulary that mixes in UF,
+        // `ite`s or quantifiers keeps the seeded-SPFA sparse engine below,
+        // matching Z3 (the dense solver is installed by `setup_QF_IDL`
+        // alone) and keeping mixed problems' conflict, unsat-core and
+        // clause-budget behaviour byte-identical to the general path.
+        if self.dl_pure
+            && let Some(feed) = self.dense_feed(&dla, is_positive)
+        {
+            return self.feed_dense_edges(dla.var, &feed, is_positive);
+        }
+        // Sparse path — the dedicated difference engine for the *declared*
+        // difference-logic logics that the dense integer core does not cover
+        // (QF_RDL's reals; QF_UFIDL's UF combination), mirroring Z3, which
+        // installs a difference solver per logic and never for the general
+        // LIA mix.  Feeding it from arbitrary logics interleaves a second
+        // conflict source with the simplex's explanations on shared atoms
+        // and perturbs the trail-consistency invariants the conflict-clause
+        // builder checks (`repro_disjunctive_lia`).
+        if !self.sparse_dl {
+            return DlPrimaryResult::NotApplicable;
+        }
+        // 2-var differences only — feeding single-var bounds through the
+        // sparse zero-node hub was measured net-negative (the zero vertex
+        // inflates the seeded SPFA per-edge check), so those defer to the
+        // simplex here.  Both endpoints must be plain numeric Int/Real-sorted
+        // terms (the dense eligibility above additionally requires Int and an
+        // i64 weight).
+        if yt == self.zero_term || xt == self.zero_term {
+            return DlPrimaryResult::NotApplicable;
+        }
         for t in [xt, yt] {
             let Some(td) = self.manager.get(t) else {
                 return DlPrimaryResult::NotApplicable;
@@ -1927,14 +1971,6 @@ impl<'a> TheoryManager<'a> {
                 return DlPrimaryResult::NotApplicable;
             }
         }
-        let dla = DlAtom {
-            var,
-            x: xt,
-            y: yt,
-            c,
-            is_eq,
-            ctype,
-        };
         let origin = self.term_for_var(var);
         if let DiffLogicResult::Conflict(cycle_terms) =
             feed_dl_atom_inc(&mut *self.diff, &dla, is_positive, origin)
@@ -1948,177 +1984,258 @@ impl<'a> TheoryManager<'a> {
         DlPrimaryResult::Consistent
     }
 
-    /// Difference-logic theory propagation using the incrementally-maintained
-    /// `self.diff` (no per-call rebuild – the cost that made the old on-demand
-    /// version 97% of theory time).  For each unassigned DL atom, test
-    /// entailment via `sssp_from`/`entailed_from_sssp` over `self.diff`'s
-    /// graph (per-source SSSP, amortised via a per-call cache).  SOUND only
-    /// for pure-DL formulas (defect 3); the caller gates on that.
-    fn derive_diff_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
-        if self.dl_prop_fragment == Some(false) {
+    /// Dense-core eligibility for one DL atom: the **watch orientation**
+    /// `(s, t, k)` — the exact integer reading `t − s ≤ k` of the atom's
+    /// TRUE polarity, with strict bounds tightened over ℤ — plus the edges
+    /// to assert at the given polarity (Z3 `internalize_atom`: the positive
+    /// edge is `(s→t, k)`, the negative edge is `(t→s, −k−1)`; an equality
+    /// asserts both directions when positive and nothing when negative).
+    ///
+    /// `None` when the dense integer core does not apply: non-integer solver,
+    /// an endpoint that is not a plain numeric Int-sorted term, or a derived
+    /// weight outside the exactness envelope.
+    fn dense_feed(&self, dla: &DlAtom, pol: bool) -> Option<DenseFeed> {
+        use ArithConstraintType::*;
+        if !self.diff.is_integer() {
             return None;
         }
-        // Collect DL atoms + the pure-DL flag (clone out of shared maps).
-        let mut dl_atoms: Vec<DlAtom> = Vec::new();
-        for (&var, parsed) in self.var_to_parsed_arith.iter() {
-            if parsed.terms.len() != 2 {
-                continue;
+        for t in [dla.x, dla.y] {
+            let td = self.manager.get(t)?;
+            if !is_plain_numeric_term(td) {
+                return None;
             }
-            let mut x = None;
-            let mut y = None;
-            let mut ok = true;
-            for &(t, c) in &parsed.terms {
-                if c == Rational64::from_integer(1) {
-                    x = Some(t);
-                } else if c == Rational64::from_integer(-1) {
-                    y = Some(t);
-                } else {
-                    ok = false;
-                }
+            let sort = self.manager.sorts.get(td.sort)?;
+            if !sort.is_int() {
+                return None;
             }
-            if !ok {
-                continue;
-            }
-            let (Some(xt), Some(yt)) = (x, y) else {
-                continue;
+        }
+        let (x, y, c) = (dla.x, dla.y, &dla.c);
+        let one = Rational64::from_integer(1);
+        let k_of = |r: &Rational64| oxiz_theories::DiffLogicSolver::dense_fit(r);
+        // The TRUE-polarity reading `t − s ≤ k`:
+        //   Le: x−y ≤ c       →  (s, t, k) = (y, x, c)
+        //   Lt: x−y < c       →  x−y ≤ c−1 →  (y, x, c−1)
+        //   Ge: x−y ≥ c       →  y−x ≤ −c  →  (x, y, −c)
+        //   Gt: x−y > c       →  y−x ≤ −c−1 → (x, y, −c−1)
+        //   Eq: x = y         →  both directions ≤ 0
+        let (s, t, k) = match dla.ctype {
+            Le => (y, x, k_of(c)?),
+            Lt => (y, x, k_of(&(*c - one))?),
+            Ge => (x, y, k_of(&(-*c))?),
+            Gt => (x, y, k_of(&(-*c - one))?),
+        };
+        if dla.is_eq {
+            // Equalities read `x − y = c` (both directions).
+            let ck = k_of(c)?;
+            let edges = if pol {
+                vec![(y, x, ck), (x, y, -ck)]
+            } else {
+                Vec::new() // disequality: not DL-representable
             };
-            let mut plain = true;
-            for t in [xt, yt] {
-                let Some(td) = self.manager.get(t) else {
-                    plain = false;
-                    break;
-                };
-                if !is_plain_numeric_term(td) {
-                    plain = false;
-                    break;
-                }
-                let Some(sort) = self.manager.sorts.get(td.sort) else {
-                    plain = false;
-                    break;
-                };
-                if !sort.is_int() && !sort.is_real() {
-                    plain = false;
-                    break;
-                }
-            }
-            if !plain {
-                continue;
-            }
-            let Some(constraint) = self.var_to_constraint.get(&var) else {
-                continue;
-            };
-            let (is_eq, ctype) = match constraint {
-                Constraint::Eq(_, _) => (true, parsed.constraint_type),
-                Constraint::Le(_, _) => (false, ArithConstraintType::Le),
-                Constraint::Lt(_, _) => (false, ArithConstraintType::Lt),
-                Constraint::Ge(_, _) => (false, ArithConstraintType::Ge),
-                Constraint::Gt(_, _) => (false, ArithConstraintType::Gt),
-                _ => continue,
-            };
-            dl_atoms.push(DlAtom {
-                var,
-                x: xt,
-                y: yt,
-                c: parsed.constant,
-                is_eq,
-                ctype,
+            return Some(DenseFeed {
+                watch_s: y,
+                watch_t: x,
+                watch_k: ck,
+                is_eq: true,
+                edges,
             });
         }
-        if dl_atoms.is_empty() || dl_atoms.len() != self.var_to_parsed_arith.len() {
-            self.dl_prop_fragment = Some(false);
-            return None; // no DL atoms, or not pure-DL (defect 3)
+        let edges = if pol {
+            vec![(s, t, k)]
+        } else {
+            // ¬(t − s ≤ k) ⟺ t − s ≥ k+1 ⟺ s − t ≤ −k−1
+            vec![(t, s, -k - 1)]
+        };
+        Some(DenseFeed {
+            watch_s: s,
+            watch_t: t,
+            watch_k: k,
+            is_eq: false,
+            edges,
+        })
+    }
+
+    /// Feed a dense-core plan: interns the atom into the closure's occurrence
+    /// lists (once per SAT variable), asserts the polarity's edges, and
+    /// converts conflicts / propagations back into theory results.
+    fn feed_dense_edges(&mut self, var: Var, feed: &DenseFeed, pol: bool) -> DlPrimaryResult {
+        use oxiz_theories::DlAssert;
+        let key = var.index() as u32;
+        let (s, t) = match (
+            self.diff.dense_intern_term(feed.watch_s),
+            self.diff.dense_intern_term(feed.watch_t),
+        ) {
+            (Some(s), Some(t)) => (s, t),
+            _ => {
+                // Node budget exceeded: the dense core degrades to a partial
+                // propagator; this atom defers to the sparse/simplex path.
+                return DlPrimaryResult::NotApplicable;
+            }
+        };
+        if let Some(core) = self.diff.dense() {
+            if !core.has_atom(key) {
+                core.intern_atom(key, s, t, feed.watch_k, feed.is_eq);
+            }
         }
-        self.dl_prop_fragment = Some(true);
-        let mut sssp_cache: SsspCache = FxHashMap::default();
-        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
-        'next_atom: for dla in &dl_atoms {
-            if self.trail_idx_of(dla.var).is_some() {
+        for &(src_term, dst_term, w) in &feed.edges {
+            let (Some(src), Some(dst)) = (
+                self.diff.dense_intern_term(src_term),
+                self.diff.dense_intern_term(dst_term),
+            ) else {
+                return DlPrimaryResult::NotApplicable;
+            };
+            let outcome = self
+                .diff
+                .dense()
+                .map(|core| core.assert_edge(src, dst, w, key, pol));
+            match outcome {
+                Some(DlAssert::Conflict(reason)) => {
+                    #[cfg(feature = "std")]
+                    if theory_trace_enabled() {
+                        eprintln!("oxiz-tconf\tdiff-dense");
+                    }
+                    return match self.dense_reason_to_conflict(&reason) {
+                        Some(c) => DlPrimaryResult::Conflict(c),
+                        // A reason atom without a matching live assignment
+                        // cannot form a valid conflict clause — refuse to
+                        // fabricate one and defer to the simplex.
+                        None => DlPrimaryResult::NotApplicable,
+                    };
+                }
+                Some(DlAssert::Ok) => {}
+                None => return DlPrimaryResult::NotApplicable,
+            }
+        }
+        // Drain closure-derived propagations (may be empty).  Propagating is
+        // a pure-difference-logic behaviour (Z3's occurrence lists belong to
+        // the dense solver, which `setup_QF_IDL` installs only for a
+        // difference-logic vocabulary): on the general path the closure stays
+        // a conflict engine only, so mixed problems keep their clause budget.
+        if self.dl_pure
+            && let Some(props) = self.dense_take_propagations()
+        {
+            return DlPrimaryResult::Propagated(props);
+        }
+        // Discard anything queued (unreachable when pure: drained above).
+        let _ = self.diff.dense_take_propagations();
+        DlPrimaryResult::Consistent
+    }
+
+    /// Break pure-DL routing: the DL engines rejected an atom, so the
+    /// simplex must take over arithmetic.  Every live arith assignment on
+    /// the shadow trail is replayed into the simplex (in trail order), after
+    /// which the caller asserts the rejected atom through the general path.
+    /// Idempotent: once `dl_pure` is false this is a no-op.
+    fn break_dl_purity(&mut self) {
+        if !self.dl_pure {
+            return;
+        }
+        self.dl_pure = false;
+        let trail: Vec<(Var, bool)> = self
+            .assignment_trail
+            .iter()
+            .map(|a| (a.var, a.is_positive))
+            .collect();
+        for (var, is_positive) in trail {
+            let Some(parsed) = self.var_to_parsed_arith.get(&var).cloned() else {
                 continue;
+            };
+            self.arith_assert_parsed(var, &parsed, is_positive);
+        }
+    }
+
+    /// Assert one parsed arithmetic atom into the simplex at the current
+    /// polarity (the shared body of the `process_constraint` assert arms and
+    /// the [`Self::break_dl_purity`] replay).
+    fn arith_assert_parsed(&mut self, var: Var, parsed: &ParsedArithConstraint, is_positive: bool) {
+        let terms: Vec<(TermId, Rational64)> = parsed.terms.iter().copied().collect();
+        let reason = parsed.reason_term;
+        let constant = parsed.constant;
+        use super::types::ArithConstraintType::{Ge, Gt, Le, Lt};
+        // Equalities: the positive polarity is the tableau row (`assert_eq`);
+        // the negative polarity (a disequality) never reached the simplex in
+        // `process_constraint` either (the trichotomy clauses carry the
+        // split), so the replay mirrors that.
+        if matches!(self.var_to_constraint.get(&var), Some(Constraint::Eq(_, _))) {
+            if is_positive {
+                self.arith.assert_eq(&terms, constant, reason);
             }
-            let polarities: &[bool] = if dla.is_eq { &[true] } else { &[true, false] };
-            for &pol in polarities {
-                let reason_terms = if dla.is_eq {
-                    let c = dla.c;
-                    let Some(xv) = self.diff.get_diff_var(dla.x) else {
-                        continue;
-                    };
-                    let Some(yv) = self.diff.get_diff_var(dla.y) else {
-                        continue;
-                    };
-                    let cached_xy = sssp_cache
-                        .entry(yv)
-                        .or_insert_with(|| self.diff.sssp_from(yv));
-                    let Some((dist, pred)) = cached_xy else {
-                        continue;
-                    };
-                    let Some(mut r1) = self.diff.entailed_from_sssp(xv, yv, c, false, dist, pred)
-                    else {
-                        continue;
-                    };
-                    let cached_yx = sssp_cache
-                        .entry(xv)
-                        .or_insert_with(|| self.diff.sssp_from(xv));
-                    let Some((dist2, pred2)) = cached_yx else {
-                        continue;
-                    };
-                    let Some(mut r2) = self
-                        .diff
-                        .entailed_from_sssp(yv, xv, -c, false, dist2, pred2)
-                    else {
-                        continue;
-                    };
-                    r1.append(&mut r2);
-                    r1
-                } else {
-                    let Some((xt, yt, c, strict)) = diff_test_bound(dla, pol) else {
-                        continue;
-                    };
-                    let Some(xv) = self.diff.get_diff_var(xt) else {
-                        continue;
-                    };
-                    let Some(yv) = self.diff.get_diff_var(yt) else {
-                        continue;
-                    };
-                    let cached = sssp_cache
-                        .entry(yv)
-                        .or_insert_with(|| self.diff.sssp_from(yv));
-                    let Some((dist, pred)) = cached else {
-                        continue;
-                    };
-                    let Some(r) = self.diff.entailed_from_sssp(xv, yv, c, strict, dist, pred)
-                    else {
-                        continue;
-                    };
-                    r
+            return;
+        }
+        match (parsed.constraint_type, is_positive) {
+            (Lt, true) | (Ge, false) => self.arith.assert_lt(&terms, constant, reason),
+            (Le, true) | (Gt, false) => self.arith.assert_le(&terms, constant, reason),
+            (Gt, true) | (Le, false) => self.arith.assert_gt(&terms, constant, reason),
+            (Ge, true) | (Lt, false) => self.arith.assert_ge(&terms, constant, reason),
+        }
+    }
+
+    /// Convert dense-core propagations into `(literal, reason literals)`
+    /// pairs, dropping every propagation whose head is already assigned or
+    /// whose reasons are not all currently assigned with the justifying
+    /// polarity (a stale edge from a mid-level flip).  Returns `None` when
+    /// nothing survives.
+    fn dense_take_propagations(&mut self) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
+        let pending = self.diff.dense_take_propagations();
+        if pending.is_empty() {
+            return None;
+        }
+        let mut out: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        for prop in pending {
+            let head = Var::new(prop.key);
+            if self.trail_idx_of(head).is_some() {
+                continue; // already assigned — nothing to propagate
+            }
+            let mut reason: SmallVec<[Lit; 8]> = SmallVec::new();
+            let mut ok = true;
+            for &(rkey, rpol) in &prop.reason {
+                let rvar = Var::new(rkey);
+                let Some(idx) = self.trail_idx_of(rvar) else {
+                    ok = false;
+                    break;
                 };
-                let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
-                let mut ok = true;
-                for &r in &reason_terms {
-                    let Some(&rv) = self.term_to_var.get(&r) else {
-                        ok = false;
-                        break;
-                    };
-                    let Some(idx) = self.trail_idx_of(rv) else {
-                        ok = false;
-                        break;
-                    };
-                    let pol_r = self.assignment_trail[idx].is_positive;
-                    reason_lits.push(if pol_r { Lit::pos(rv) } else { Lit::neg(rv) });
+                // Use the *currently assigned* polarity; it must match the
+                // justification's (edges pop in sync with scopes).  A
+                // mismatch means the trail diverged — drop the propagation
+                // rather than risk an invalid reason clause.
+                if self.assignment_trail[idx].is_positive != rpol {
+                    ok = false;
+                    break;
                 }
-                if ok {
-                    props.push((
-                        if pol {
-                            Lit::pos(dla.var)
-                        } else {
-                            Lit::neg(dla.var)
-                        },
-                        reason_lits,
-                    ));
-                    continue 'next_atom;
-                }
+                reason.push(if rpol { Lit::pos(rvar) } else { Lit::neg(rvar) });
+            }
+            if ok && !reason.is_empty() {
+                out.push((
+                    if prop.pol {
+                        Lit::pos(head)
+                    } else {
+                        Lit::neg(head)
+                    },
+                    reason,
+                ));
             }
         }
-        if props.is_empty() { None } else { Some(props) }
+        if out.is_empty() { None } else { Some(out) }
+    }
+
+    /// Convert a dense-core conflict reason into a `TheoryCheckResult`
+    /// conflict clause.  `None` when a reason atom has no matching live
+    /// assignment (cannot happen in a scope-consistent trail; guards
+    /// against flips).
+    fn dense_reason_to_conflict(&mut self, reason: &[(u32, bool)]) -> Option<TheoryCheckResult> {
+        let mut lits: SmallVec<[Lit; 8]> = SmallVec::new();
+        for &(rkey, rpol) in reason {
+            let rvar = Var::new(rkey);
+            let idx = self.trail_idx_of(rvar)?;
+            if self.assignment_trail[idx].is_positive != rpol {
+                return None;
+            }
+            lits.push(if rpol { Lit::pos(rvar) } else { Lit::neg(rvar) });
+        }
+        // The conflict clause refutes the conjunction of the justifying
+        // atoms: negate every reason literal.
+        let conflict: SmallVec<[Lit; 8]> = lits.iter().map(|l| l.negate()).collect();
+        Some(TheoryCheckResult::Conflict(conflict))
     }
 
     /// Add an equality to be shared between theories
@@ -2616,6 +2733,28 @@ impl<'a> TheoryManager<'a> {
                     // For arithmetic equalities, also send to ArithSolver
                     self.intern_arith_shared_terms(var, manager);
                     if let Some(parsed) = self.var_to_parsed_arith.get(&var).cloned() {
+                        // Pure-DL fast path: the dense core owns arithmetic
+                        // (conflicts + propagation); the simplex never sees
+                        // the atom (Z3 `setup_QF_IDL`'s dense solver).
+                        if self.dl_pure {
+                            match self.diff_primary_check(
+                                var,
+                                &parsed.terms,
+                                parsed.constant,
+                                ArithConstraintType::Le,
+                                true,
+                                is_positive,
+                            ) {
+                                DlPrimaryResult::Conflict(dl_conflict) => return dl_conflict,
+                                DlPrimaryResult::Propagated(props) => {
+                                    return TheoryCheckResult::Propagated(props);
+                                }
+                                DlPrimaryResult::Consistent => return TheoryCheckResult::Sat,
+                                DlPrimaryResult::NotApplicable => {
+                                    self.break_dl_purity();
+                                }
+                            }
+                        }
                         self.arith.assert_eq(
                             &parsed.terms.iter().copied().collect::<Vec<_>>(),
                             parsed.constant,
@@ -2632,7 +2771,8 @@ impl<'a> TheoryManager<'a> {
                         if let Some(fv) = genuine_fixed_var(lhs, rhs, manager) {
                             self.arith.note_fixed_var(lhs, fv, parsed.reason_term);
                         }
-                        // Incremental DL conflict check for equalities.
+                        // Incremental DL conflict check for equalities (the
+                        // pure path returned above; sparse engine, HEAD order).
                         if let DlPrimaryResult::Conflict(dl_conflict) = self.diff_primary_check(
                             var,
                             &parsed.terms,
@@ -2770,9 +2910,13 @@ impl<'a> TheoryManager<'a> {
             | Constraint::Ge(lhs, rhs) => {
                 // Intern both sides into EUF with congruence support so that
                 // Apply/Select terms are registered for congruence closure.
-                self.intern_term_for_congruence(lhs, manager);
-                self.intern_term_for_congruence(rhs, manager);
-                self.intern_arith_shared_terms(var, manager);
+                // Deferred until after the difference-engine feed below: an
+                // atom the dense core accepted wholesale (plain numeric
+                // endpoints — no Apply/Select structure congruence could
+                // close over) needs no EUF presence on the pure-DL path,
+                // while every other atom still interns (its operands may be
+                // shared function applications whose equality the comparison
+                // depends on).
 
                 // Check if this is a BV comparison.  Detect it from the operand
                 // *sorts*, exactly as the `Eq` arm above does – `bv_terms` only
@@ -2918,6 +3062,40 @@ impl<'a> TheoryManager<'a> {
                     let constant = parsed.constant;
                     let _ = (terms.as_slice(), reason, constant);
 
+                    // Pure-DL fast path: the difference engines run BEFORE
+                    // the simplex assert, and a `Consistent` verdict finishes
+                    // the atom — the simplex never sees it (Z3
+                    // `setup_QF_IDL`'s dense solver).  The general path keeps
+                    // the historical order (simplex assert first, difference
+                    // check after): the sparse conflict explanations are
+                    // validated against that interleaving, and changing it
+                    // perturbs conflict-clause bookkeeping (see
+                    // `repro_disjunctive_lia`).
+                    if self.dl_pure {
+                        let dl_res = self.diff_primary_check(
+                            var,
+                            &parsed.terms,
+                            parsed.constant,
+                            parsed.constraint_type,
+                            false,
+                            is_positive,
+                        );
+                        match dl_res {
+                            DlPrimaryResult::Conflict(dl_conflict) => return dl_conflict,
+                            DlPrimaryResult::Propagated(props) => {
+                                return TheoryCheckResult::Propagated(props);
+                            }
+                            DlPrimaryResult::Consistent => return TheoryCheckResult::Sat,
+                            DlPrimaryResult::NotApplicable => {
+                                self.break_dl_purity();
+                            }
+                        }
+                    }
+
+                    self.intern_term_for_congruence(lhs, manager);
+                    self.intern_term_for_congruence(rhs, manager);
+                    self.intern_arith_shared_terms(var, manager);
+
                     if is_positive {
                         // Positive assignment: constraint holds
                         match parsed.constraint_type {
@@ -2964,9 +3142,16 @@ impl<'a> TheoryManager<'a> {
                         }
                     }
 
-                    // Incremental DL conflict check (seeded SPFA, O(affected)).
-                    // For pure-DL this short-circuits the (slower) simplex below
-                    // with a cheaper Bellman-Ford; SOUND (neg cycle = refutation).
+                    // Incremental DL conflict check (sparse engine; the
+                    // pure path returned above).  DL-representable
+                    // comparisons were already checked by the exact
+                    // incremental graph; keep their constraints in the
+                    // simplex tableau for mixed-fragment interaction and
+                    // model construction, but defer its global feasibility
+                    // pass until a non-DL atom or `final_check`.  Running
+                    // the full tableau after every edge makes dense
+                    // all-different cliques quadratic checks over a
+                    // quadratically growing tableau.
                     let dl_exact = match self.diff_primary_check(
                         var,
                         &parsed.terms,
@@ -2976,17 +3161,12 @@ impl<'a> TheoryManager<'a> {
                         is_positive,
                     ) {
                         DlPrimaryResult::Conflict(dl_conflict) => return dl_conflict,
+                        DlPrimaryResult::Propagated(props) => {
+                            return TheoryCheckResult::Propagated(props);
+                        }
                         DlPrimaryResult::Consistent => true,
                         DlPrimaryResult::NotApplicable => false,
                     };
-
-                    // DL-representable comparisons were already checked by the
-                    // exact incremental graph above.  Keep their constraints in
-                    // the simplex tableau for mixed-fragment interaction and
-                    // model construction, but defer its global feasibility pass
-                    // until a non-DL atom or `final_check`.  Running the full
-                    // tableau after every edge makes dense all-different cliques
-                    // quadratic checks over a quadratically growing tableau.
                     if !dl_exact {
                         // See the equality branch above: cheap crossed-bound
                         // probe here, full LP solve at `final_check`.  (The
@@ -3145,12 +3325,22 @@ impl TheoryCallback for TheoryManager<'_> {
                 // backtrack level, the wrong-UNSAT cause) so we must re-derive
                 // the authoritative verdict – `Conflict` if genuinely
                 // inconsistent, `Sat` if the stale state fabricated it.
-                let direct = self.process_constraint(var, constraint, is_positive, self.manager);
-                let result = if matches!(direct, TheoryCheckResult::Conflict(_)) {
+                let direct = if self.dl_pure {
+                    // The dense closure cannot surgically remove the flipped
+                    // literal's old edges (it retracts by scope pops only), so
+                    // processing the flip directly would leave BOTH
+                    // polarities asserted and over-constrain it into bogus
+                    // conflicts.  Rebuild from the corrected trail first.
                     self.resync_theory_state()
                 } else {
-                    direct
+                    let d = self.process_constraint(var, constraint, is_positive, self.manager);
+                    if matches!(d, TheoryCheckResult::Conflict(_)) {
+                        self.resync_theory_state()
+                    } else {
+                        d
+                    }
                 };
+                let result = direct;
                 if matches!(result, TheoryCheckResult::Conflict(_)) {
                     self.statistics.theory_conflicts += 1;
                     self.statistics.conflicts += 1;
@@ -3210,18 +3400,6 @@ impl TheoryCallback for TheoryManager<'_> {
                 && self.is_dl_family
                 && let Some(props) =
                     self.derive_arith_bound_propagations(mode == BoundPropMode::Tighten)
-            {
-                self.statistics.theory_propagations += props.len() as u64;
-                return TheoryCheckResult::Propagated(props);
-            }
-        }
-
-        // Throttled difference-logic theory propagation using the incrementally-
-        // maintained `self.diff` (no per-call rebuild).  Pure-DL only (sound).
-        if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
-            self.dl_prop_counter = self.dl_prop_counter.wrapping_add(1);
-            if self.dl_prop_counter.is_multiple_of(DL_PROP_PERIOD)
-                && let Some(props) = self.derive_diff_propagations()
             {
                 self.statistics.theory_propagations += props.len() as u64;
                 return TheoryCheckResult::Propagated(props);
@@ -3375,12 +3553,21 @@ impl TheoryCallback for TheoryManager<'_> {
         // When EUF fires congruence closure and derives f(x) = f(y) because
         // x = y was asserted, the arithmetic solver is unaware of this equality.
         // We must propagate it so the arithmetic solver can detect contradictions.
-        let mut propagate_dedup: FxHashSet<(TermId, TermId)> = FxHashSet::default();
-        let eq_result = self.propagate_euf_equalities_to_arith(&mut propagate_dedup);
-        if let TheoryCheckResult::Conflict(_) = eq_result {
-            self.statistics.theory_conflicts += 1;
-            self.statistics.conflicts += 1;
-            return eq_result;
+        //
+        // Skipped on the pure-DL path: without UF the only merges come from
+        // the asserted `Eq` atoms themselves, which the dense closure already
+        // carries as edges — re-asserting them into the (otherwise empty)
+        // simplex only re-runs its integer search over rows the DL core has
+        // already decided (observed degrading SAL bakery/lpsat to Unknown
+        // through that solver's B&B budget).
+        if !self.dl_pure {
+            let mut propagate_dedup: FxHashSet<(TermId, TermId)> = FxHashSet::default();
+            let eq_result = self.propagate_euf_equalities_to_arith(&mut propagate_dedup);
+            if let TheoryCheckResult::Conflict(_) = eq_result {
+                self.statistics.theory_conflicts += 1;
+                self.statistics.conflicts += 1;
+                return eq_result;
+            }
         }
 
         // Check arithmetic

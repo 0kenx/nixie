@@ -110,7 +110,16 @@ impl Solver {
                 continue;
             }
 
-            if let Some(value) = self.arith.value(term) {
+            let arith_value = self.arith.value(term).or_else(|| {
+                // Pure-DL routing: the simplex never saw these atoms, so the
+                // dense closure is the value provider (its negated-row-minimum
+                // assignment satisfies every asserted edge — see
+                // `DenseDlCore::value`).
+                self.diff
+                    .dense_value(term)
+                    .map(num_rational::Rational64::from_integer)
+            });
+            if let Some(value) = arith_value {
                 // Determine whether the term has Int or Real sort, and create the
                 // matching constant kind.  Using the term sort (rather than the
                 // denominator of the rational value) is essential: a Real-sorted

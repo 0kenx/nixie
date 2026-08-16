@@ -169,8 +169,9 @@ pub use pb::{PbConfig, PbConstraint, PbConstraintKind, PbSolver, PbStats, Weight
 
 // Difference Logic exports
 pub use diff_logic::{
-    BellmanFord, ConstraintGraph, DenseDiffLogic, DiffConstraint, DiffEdge, DiffLogicConfig,
-    DiffLogicResult, DiffLogicSolver, DiffLogicStats, DiffVar, NegativeCycle,
+    BellmanFord, ConstraintGraph, DenseDlCore, DiffConstraint, DiffEdge, DiffLogicConfig,
+    DiffLogicResult, DiffLogicSolver, DiffLogicStats, DiffVar, DlAssert, DlPropagation,
+    NegativeCycle,
 };
 
 // UTVPI exports

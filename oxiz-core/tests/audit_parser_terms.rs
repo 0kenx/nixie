@@ -345,7 +345,12 @@ fn nested_minus(depth: usize) -> String {
 /// is at depth 1 and its operands at depth 2, so an `n`-level chain occupies
 /// depths 2..=n+1 and its innermost `0` sits at depth n+2. The deepest chain
 /// that fits is therefore n = 1022.
-const DEEPEST_ACCEPTED: usize = 1022;
+// Mirrors `smtlib::parser::terms::MAX_PARSE_DEPTH` (which this test cannot
+// import — it is private).  Updated in step with the budget: the limit is a
+// resource bound, not a semantic one, and was raised from 1024 to 65536 so
+// the deeply-nested industrial translations (Fischer n≥10, ~17k-deep
+// left-nested `and` chains) parse instead of erroring.
+const DEEPEST_ACCEPTED: usize = 65534;
 
 #[test]
 fn deeply_nested_term_errors_instead_of_overflowing() {
@@ -1184,13 +1189,13 @@ fn staged_flat_lets_deeper_than_the_budget_parse() {
 #[test]
 fn staged_chained_lets_accumulating_real_depth_are_rejected() {
     // The chained variant DOES build a deep DAG: each value hangs off the
-    // previous binding's term.  2000 bindings build a 2000-deep term, past
-    // MAX_PARSE_DEPTH, and must still be rejected by the binding-completion
-    // charge (the same hole `charge_binding_depth` closes for `define-fun`
-    // inlining).
+    // previous binding's term.  70000 bindings build a 70000-deep term, past
+    // MAX_PARSE_DEPTH (65536), and must still be rejected by the
+    // binding-completion charge (the same hole `charge_binding_depth` closes
+    // for `define-fun` inlining).
     let script = format!(
         "(declare-fun p (Int) Bool)\n(declare-fun g (Int) Int)\n(assert {})",
-        staged_chained_lets(2000, "(p x2000)")
+        staged_chained_lets(70_000, "(p x70000)")
     );
     let mut manager = TermManager::new();
     let err = parse_script(&script, &mut manager)

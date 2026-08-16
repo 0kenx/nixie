@@ -1237,6 +1237,62 @@ impl Solver {
         // `dump_var_legend_if_tracing`.
         self.dump_var_legend_if_tracing(manager);
 
+        // Pure integer difference-logic routing, gated the way Z3 gates it
+        // (`setup_QF_IDL`: the declared logic plus the structural
+        // `is_in_diff_logic(st)` check): a QF_IDL input whose arith atoms are
+        // all difference-shaped, integer-sorted, quantifier- and UF-free with
+        // no `ite` results runs the dense DL core as the ONLY arithmetic
+        // engine — atoms are not duplicated into the simplex tableau.  The
+        // first atom the DL engines reject breaks purity at runtime and
+        // replays into the simplex (see `TheoryManager::break_dl_purity`),
+        // so this is a routing hint, not a soundness assumption.  Undeclared
+        // logics keep the general path (Z3's `CFG_UNKNOWN` falls back to the
+        // generic theories too); the structural checks then keep mixed
+        // API-level inputs off the route as well.
+        let pure_dl = {
+            let features = self
+                .last_features
+                .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions));
+            self.logic.as_deref() == Some("QF_IDL")
+                && features.is_diff_logic()
+                && features.has_int
+                && !features.has_real
+                && !features.has_uf()
+                && features.num_quantifiers == 0
+                // The ite-table machinery (lookup-table collapse, domain
+                // splits, triangle axioms) creates aliased duplicate atoms
+                // and mid-search clauses whose interaction with the pure
+                // dense routing is not yet validated — it mis-answers
+                // `ite_table::tests::eq_ite_table_lookup_sat`.  Route such
+                // inputs through the general (simplex-backed) path until
+                // that is root-caused.
+                && self.ite_result_terms.is_empty()
+        };
+
+        // Sparse difference engine route: only for the declared DL logics
+        // the dense integer core does not cover (QF_RDL's reals, the
+        // QF_UFIDL combination).  General logics keep arithmetic on the
+        // simplex alone, exactly as Z3 installs difference solvers per
+        // logic.
+        let sparse_dl = self
+            .logic
+            .as_deref()
+            .is_some_and(|l| matches!(l, "QF_RDL" | "QF_UFIDL" | "UFIDL"));
+
+        // Pure-DL completeness: an arithmetic disequality the encoder's
+        // structural trichotomy walk missed (an `Eq` under `xor`/`=>`-antecedent
+        // or otherwise outside `add_arith_diseq_split`'s descent) reaches the
+        // difference engine unrepresented — the closure can then only build
+        // models that violate it, and the honest answer degrades to Unknown.
+        // Ensure every numeric equality in the assertions carries its
+        // trichotomy clause so a false `Eq` always forces a strict split the
+        // DL engines can consume.  (Idempotent across `check`s: the clause
+        // set is a tautology per equality, and `pure_dl` excludes the
+        // quantified goals whose MBQI rounds the clause budget pins.)
+        if pure_dl {
+            self.ensure_numeric_equality_splits(manager);
+        }
+
         // Run SAT solver with theory integration
         let zero_term = manager.mk_int(0);
         let mut theory_manager = TheoryManager::new(
@@ -1262,6 +1318,8 @@ impl Solver {
             self.has_bv_arith_ops,
             self.config.timeout_ms,
             self.logic.as_deref(),
+            pure_dl,
+            sparse_dl,
         );
 
         // MBQI loop for quantified formulas
@@ -1377,6 +1435,8 @@ impl Solver {
                                     self.has_bv_arith_ops,
                                     self.config.timeout_ms,
                                     self.logic.as_deref(),
+                                    pure_dl,
+                                    sparse_dl,
                                 );
                                 continue;
                             }
@@ -1439,6 +1499,8 @@ impl Solver {
                                 self.has_bv_arith_ops,
                                 self.config.timeout_ms,
                                 self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
                             );
                             continue;
                         }
@@ -1513,6 +1575,8 @@ impl Solver {
                                 self.has_bv_arith_ops,
                                 self.config.timeout_ms,
                                 self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
                             );
                             continue;
                         }
@@ -1851,6 +1915,8 @@ impl Solver {
                         self.has_bv_arith_ops,
                         self.config.timeout_ms,
                         self.logic.as_deref(),
+                        pure_dl,
+                        sparse_dl,
                     );
                 }
             }

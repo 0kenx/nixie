@@ -281,9 +281,63 @@ impl Solver {
     /// reached at an equal-or-greater depth so shared sub-terms are not
     /// re-expanded, and returns as soon as the limit is passed.
     pub(super) fn term_exceeds_encode_depth(&self, root: TermId, manager: &TermManager) -> bool {
-        let limit = super::ENCODE_DEPTH_LIMIT;
         // Deepest depth at which each node has already been scheduled.
+        //
+        // The assertion's POLARITY SKELETON (`and`/`or`/`not`/`=>` chains in
+        // the positions `emit_assertion_clauses` flattens with its own
+        // explicit worklist) does not consume depth budget here: that walk
+        // is iterative, so a 5000-deep left-nested `and` chain (the SAL /
+        // Fischer industrial translations) is encoded natively and must not
+        // be diverted to `Unknown`.  Only the non-skeleton leaves — the
+        // terms the recursive Tseitin encoder and the other native-recursive
+        // pre-processing passes actually descend into — are measured against
+        // [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT).
         let mut best: FxHashMap<TermId, u32> = FxHashMap::default();
+        let mut skeleton: Vec<(TermId, bool)> = vec![(root, true)];
+        while let Some((t, pol)) = skeleton.pop() {
+            let Some(node) = manager.get(t) else {
+                continue;
+            };
+            match &node.kind {
+                TermKind::Not(a) => skeleton.push((*a, !pol)),
+                TermKind::And(args) if pol => {
+                    for &a in args.iter().rev() {
+                        skeleton.push((a, true));
+                    }
+                }
+                TermKind::Or(args) if !pol => {
+                    for &a in args.iter().rev() {
+                        skeleton.push((a, false));
+                    }
+                }
+                // NOTE: `Implies` is deliberately NOT flattened here.
+                // `collect_clause_args` does not expand `=>` iteratively
+                // either, so an implication chain still reaches the
+                // depth-guarded recursive encoder; counting its depth keeps
+                // the small-stack contract of `deep_assertion_answers_
+                // unknown_on_a_small_stack` (deep ⇒ pre-check ⇒ Unknown,
+                // never a deep native recursion).
+                _ => {
+                    // A non-skeleton leaf: measure its structural depth
+                    // (shared-subterm-pruned, early-exit) with the same
+                    // scan the old guard used.
+                    if Self::subtree_exceeds_encode_depth(t, manager, &mut best) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Depth-limited structural scan of one non-skeleton subtree (the body
+    /// of the old `term_exceeds_encode_depth`).
+    fn subtree_exceeds_encode_depth(
+        root: TermId,
+        manager: &TermManager,
+        best: &mut FxHashMap<TermId, u32>,
+    ) -> bool {
+        let limit = super::ENCODE_DEPTH_LIMIT;
         let mut stack: Vec<(TermId, u32)> = vec![(root, 1)];
         while let Some((t, depth)) = stack.pop() {
             if depth > limit {

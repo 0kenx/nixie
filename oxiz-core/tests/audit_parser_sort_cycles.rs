@@ -222,14 +222,16 @@ fn ordinary_folded_applications_still_parse() {
 
 #[test]
 fn a_fold_just_inside_the_budget_is_accepted_and_just_outside_is_rejected() {
-    // `MAX_PARSE_DEPTH` is 1024 and a `str.++` fold costs one level per extra
-    // operand, so the boundary is observable: this pins the bound as a real
-    // contract rather than an accident of the chosen constant.
-    let accepted = flat_application("str.++", 1000, "String", "(= \"\" ");
-    parse_on_small_stack(accepted).expect("a 1000-operand str.++ stays inside the budget");
+    // `MAX_PARSE_DEPTH` is 65536 (raised from 1024 so the deeply-nested
+    // industrial QF_IDL translations parse) and a `str.++` fold costs one
+    // level per extra operand, so the boundary is observable: this pins the
+    // bound as a real contract rather than an accident of the chosen
+    // constant.
+    let accepted = flat_application("str.++", 60_000, "String", "(= \"\" ");
+    parse_on_small_stack(accepted).expect("a 60000-operand str.++ stays inside the budget");
 
-    let rejected = flat_application("str.++", 1100, "String", "(= \"\" ");
-    let err = parse_on_small_stack(rejected).expect_err("a 1100-operand str.++ exceeds it");
+    let rejected = flat_application("str.++", 70_000, "String", "(= \"\" ");
+    let err = parse_on_small_stack(rejected).expect_err("a 70000-operand str.++ exceeds it");
     assert!(
         err.contains("term nesting too deep"),
         "unexpected error: {err}"

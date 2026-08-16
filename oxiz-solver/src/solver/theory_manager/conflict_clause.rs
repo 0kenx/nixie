@@ -339,6 +339,8 @@ mod tests {
                 false,
                 0,
                 Some("QF_UFIDL"),
+                false,
+                true,
             )
         }
     }

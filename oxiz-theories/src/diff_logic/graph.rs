@@ -1,31 +1,43 @@
-//! Constraint Graph for Difference Logic
+//! Constraint graph for difference logic — array-based adjacency.
 //!
-//! Represents difference constraints as a weighted directed graph.
+//! Represents difference constraints as a weighted directed graph:
+//! - Each variable is a node (`DiffVar`, a dense `u32` index).
+//! - Constraint `x - y ≤ c` is the edge `(y → x)` with weight `c`.
+//!
+//! This is a rewrite of the original hash-map-backed graph. The adjacency
+//! lists live in a flat `Vec<Vec<DiffEdge>>` indexed by node id (Z3's
+//! `dl_graph` layout: `vector<edge_id_vector> m_out_edges`), so hot-path
+//! traversals (`BellmanFord`/`Spfa`/seeded incremental checks) index memory
+//! instead of hashing — on the QF_IDL families the removed `HashMap`
+//! operations were >50% of solver runtime.
+//!
+//! Term↔node interning stays in `FxHashMap`s (cold path: one lookup per
+//! asserted atom, not per relax step).
 
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::Rational64;
 use oxiz_core::ast::TermId;
 
-/// Variable identifier in difference logic
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Variable identifier in difference logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DiffVar(pub u32);
 
 impl DiffVar {
-    /// Virtual source node for Bellman-Ford
+    /// Virtual source node for Bellman-Ford.
     pub const SOURCE: Self = Self(u32::MAX);
 
-    /// Create a new variable
-    pub fn new(id: u32) -> Self {
+    /// Create a new variable.
+    pub const fn new(id: u32) -> Self {
         Self(id)
     }
 
-    /// Get the variable ID
-    pub fn id(self) -> u32 {
+    /// Get the variable ID.
+    pub const fn id(self) -> u32 {
         self.0
     }
 
-    /// Check if this is the source node
+    /// Check if this is the source node.
     pub fn is_source(self) -> bool {
         self == Self::SOURCE
     }
@@ -37,36 +49,36 @@ impl From<u32> for DiffVar {
     }
 }
 
-/// Type of difference constraint
+/// Type of difference constraint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConstraintType {
     /// x - y ≤ c (non-strict)
     LeqConst,
-    /// x - y < c (strict) - converted to ≤ (c - ε) for integers
+    /// x - y < c (strict) - converted to ≤ (c - ε); for integers, ≤ (c - 1)
     LtConst,
 }
 
-/// A difference constraint: x - y ≤ c or x - y < c
+/// A difference constraint: x - y ≤ c or x - y < c.
 #[derive(Debug, Clone)]
 pub struct DiffConstraint {
-    /// Left variable (x in x - y ≤ c)
+    /// Left variable (x in x - y ≤ c).
     pub x: DiffVar,
-    /// Right variable (y in x - y ≤ c)
+    /// Right variable (y in x - y ≤ c).
     pub y: DiffVar,
-    /// Constant bound (c)
+    /// Constant bound (c).
     pub bound: Rational64,
-    /// Constraint type (≤ or <)
+    /// Constraint type (≤ or <).
     pub constraint_type: ConstraintType,
-    /// Original term ID for explanations
+    /// Original term ID for explanations.
     pub origin: TermId,
-    /// Decision level when added
+    /// Decision level when added.
     pub level: u32,
-    /// Whether this is asserted (not just propagated)
+    /// Whether this is asserted (not just propagated).
     pub asserted: bool,
 }
 
 impl DiffConstraint {
-    /// Create a new constraint x - y ≤ c
+    /// Create a new constraint x - y ≤ c.
     pub fn new_leq(x: DiffVar, y: DiffVar, bound: Rational64, origin: TermId) -> Self {
         Self {
             x,
@@ -79,7 +91,7 @@ impl DiffConstraint {
         }
     }
 
-    /// Create a new constraint x - y < c
+    /// Create a new constraint x - y < c.
     pub fn new_lt(x: DiffVar, y: DiffVar, bound: Rational64, origin: TermId) -> Self {
         Self {
             x,
@@ -92,16 +104,16 @@ impl DiffConstraint {
         }
     }
 
-    /// Get the effective bound (for strict constraints, we use bound - 1 for integers)
+    /// Effective bound: strict `< c` becomes `≤ c - 1` over the integers
+    /// (the caller keeps `< c` over the reals; real strictness is tracked by
+    /// [`DiffEdge::strict`] and handled by the search algorithms).
     pub fn effective_bound(&self, is_integer: bool) -> Rational64 {
         match self.constraint_type {
             ConstraintType::LeqConst => self.bound,
             ConstraintType::LtConst => {
                 if is_integer {
-                    // For integers: x < c means x ≤ c - 1
                     self.bound - Rational64::from_integer(1)
                 } else {
-                    // For reals: keep strict bound (handled specially)
                     self.bound
                 }
             }
@@ -109,23 +121,23 @@ impl DiffConstraint {
     }
 }
 
-/// Edge in the constraint graph
+/// Edge in the constraint graph.
 #[derive(Debug, Clone)]
 pub struct DiffEdge {
-    /// Source node (y in the constraint x - y ≤ c)
+    /// Source node (`y` in the constraint `x - y ≤ c`).
     pub from: DiffVar,
-    /// Target node (x in the constraint x - y ≤ c)
+    /// Target node (`x` in the constraint `x - y ≤ c`).
     pub to: DiffVar,
-    /// Edge weight (c in the constraint x - y ≤ c)
+    /// Edge weight (effective `c`).
     pub weight: Rational64,
-    /// Constraint index for explanation
+    /// Constraint index for explanation.
     pub constraint_idx: usize,
-    /// Whether this is a strict edge (for real arithmetic)
+    /// Whether this is a strict edge (real arithmetic only).
     pub strict: bool,
 }
 
 impl DiffEdge {
-    /// Create a new edge
+    /// Create a new edge.
     pub fn new(from: DiffVar, to: DiffVar, weight: Rational64, constraint_idx: usize) -> Self {
         Self {
             from,
@@ -136,7 +148,7 @@ impl DiffEdge {
         }
     }
 
-    /// Create a new strict edge
+    /// Create a new strict edge.
     pub fn new_strict(
         from: DiffVar,
         to: DiffVar,
@@ -153,195 +165,182 @@ impl DiffEdge {
     }
 }
 
-/// Constraint graph for difference logic
-///
-/// Represents constraints as a weighted directed graph where:
-/// - Each variable is a node
-/// - Constraint x - y ≤ c is edge (y → x) with weight c
+/// Constraint graph for difference logic (array-based adjacency).
 #[derive(Debug, Clone)]
 pub struct ConstraintGraph {
-    /// Number of variables
+    /// Number of real (non-source) variables.
     num_vars: u32,
-    /// Variable to node mapping
-    var_to_node: HashMap<TermId, DiffVar>,
-    /// Node to variable mapping
-    node_to_var: HashMap<DiffVar, TermId>,
-    /// Adjacency list: edges[node] = list of outgoing edges
-    edges: HashMap<DiffVar, Vec<DiffEdge>>,
-    /// All constraints (for backtracking)
+    /// Term → node.
+    var_to_node: FxHashMap<TermId, DiffVar>,
+    /// Node → term.
+    node_to_var: Vec<TermId>,
+    /// Adjacency: `edges[node.0]` lists outgoing edges; `edges[SOURCE slot]`
+    /// is the virtual source's 0-weight edges.
+    edges: Vec<Vec<DiffEdge>>,
+    /// All constraints (append-only; popped by truncation).
     constraints: Vec<DiffConstraint>,
-    /// Active constraint indices by level (for incremental solving)
-    active_by_level: Vec<Vec<usize>>,
-    /// Current decision level
+    /// Constraint-count scope marks: `constraint_marks[level]` = number of
+    /// constraints live at `level` (the pop boundary).
+    constraint_marks: Vec<usize>,
+    /// Current decision level.
     current_level: u32,
-    /// Whether this is integer arithmetic
+    /// Whether this is integer arithmetic.
     is_integer: bool,
 }
 
 impl ConstraintGraph {
-    /// Create a new constraint graph
+    /// Create a new constraint graph.
     pub fn new(is_integer: bool) -> Self {
-        let mut edges = HashMap::new();
-        // Always add edges from source
-        edges.insert(DiffVar::SOURCE, Vec::new());
-
         Self {
             num_vars: 0,
-            var_to_node: HashMap::new(),
-            node_to_var: HashMap::new(),
-            edges,
+            var_to_node: FxHashMap::default(),
+            node_to_var: Vec::new(),
+            // Slot 0 is reserved for the virtual source; real nodes start at 1.
+            edges: vec![Vec::new()],
             constraints: Vec::new(),
-            active_by_level: vec![Vec::new()],
+            constraint_marks: vec![0],
             current_level: 0,
             is_integer,
         }
     }
 
-    /// Get or create a node for a term
+    /// Get or create a node for a term.
     pub fn get_or_create_var(&mut self, term: TermId) -> DiffVar {
         if let Some(&var) = self.var_to_node.get(&term) {
             return var;
         }
-
         let var = DiffVar::new(self.num_vars);
         self.num_vars += 1;
         self.var_to_node.insert(term, var);
-        self.node_to_var.insert(var, term);
-        self.edges.insert(var, Vec::new());
-
-        // Add edge from source to new node with weight 0
-        self.edges
-            .get_mut(&DiffVar::SOURCE)
-            .expect("Source node should exist")
-            .push(DiffEdge::new(
-                DiffVar::SOURCE,
-                var,
-                Rational64::from_integer(0),
-                0,
-            ));
-
+        self.node_to_var.push(term);
+        self.edges.push(Vec::new());
+        // Edge source → node with weight 0 anchors the virtual-source
+        // Bellman-Ford (every node reachable at 0).
+        self.edges[0].push(DiffEdge::new(
+            DiffVar::SOURCE,
+            var,
+            Rational64::from_integer(0),
+            0,
+        ));
         var
     }
 
-    /// Get the term for a variable
+    /// Get the term for a variable.
     pub fn get_term(&self, var: DiffVar) -> Option<TermId> {
-        self.node_to_var.get(&var).copied()
+        if var.is_source() {
+            return None;
+        }
+        self.node_to_var.get(var.id() as usize).copied()
     }
 
-    /// Get the variable for a term
+    /// Get the variable for a term.
     pub fn get_var(&self, term: TermId) -> Option<DiffVar> {
         self.var_to_node.get(&term).copied()
     }
 
-    /// Add a constraint x - y ≤ c
-    ///
-    /// Creates edge (y → x) with weight c
+    /// Add a constraint `x - y ≤ c`: creates the edge `(y → x)`.
     pub fn add_constraint(&mut self, constraint: DiffConstraint) -> usize {
         let idx = self.constraints.len();
-
-        // Get effective bound
         let weight = constraint.effective_bound(self.is_integer);
-
-        // Create edge from y to x with weight c
-        // This represents: x ≤ y + c, i.e., dist[x] ≤ dist[y] + c
         let edge = if constraint.constraint_type == ConstraintType::LtConst && !self.is_integer {
             DiffEdge::new_strict(constraint.y, constraint.x, weight, idx)
         } else {
             DiffEdge::new(constraint.y, constraint.x, weight, idx)
         };
+        let slot = self.edge_slot(constraint.y);
+        self.edges[slot].push(edge);
 
-        self.edges.entry(constraint.y).or_default().push(edge);
-
-        // Track constraint for backtracking
-        while self.active_by_level.len() <= self.current_level as usize {
-            self.active_by_level.push(Vec::new());
+        while self.constraint_marks.len() <= self.current_level as usize {
+            self.constraint_marks.push(self.constraints.len());
         }
-        self.active_by_level[self.current_level as usize].push(idx);
+        self.constraint_marks[self.current_level as usize] = idx + 1;
 
         self.constraints.push(constraint);
         idx
     }
 
-    /// Get all edges from a node
+    /// Adjacency slot of a node (source maps to slot 0, real nodes to `id+1`).
+    #[inline]
+    fn edge_slot(&self, v: DiffVar) -> usize {
+        if v.is_source() {
+            0
+        } else {
+            v.id() as usize + 1
+        }
+    }
+
+    /// Get all edges from a node.
+    #[inline]
     pub fn get_edges(&self, from: DiffVar) -> impl Iterator<Item = &DiffEdge> {
-        self.edges.get(&from).into_iter().flatten()
+        self.edges[self.edge_slot(from)].iter()
     }
 
-    /// Get all edges in the graph
+    /// Get all edges in the graph.
     pub fn all_edges(&self) -> impl Iterator<Item = &DiffEdge> {
-        self.edges.values().flatten()
+        self.edges.iter().flatten()
     }
 
-    /// Get a constraint by index
+    /// Get a constraint by index.
     pub fn get_constraint(&self, idx: usize) -> Option<&DiffConstraint> {
         self.constraints.get(idx)
     }
 
-    /// Get all constraints
+    /// Get all constraints.
     pub fn constraints(&self) -> &[DiffConstraint] {
         &self.constraints
     }
 
-    /// Number of variables (excluding source)
+    /// Number of variables (excluding source).
     pub fn num_vars(&self) -> u32 {
         self.num_vars
     }
 
-    /// Number of constraints
+    /// Number of constraints.
     pub fn num_constraints(&self) -> usize {
         self.constraints.len()
     }
 
-    /// All variable nodes
+    /// All variable nodes.
     pub fn vars(&self) -> impl Iterator<Item = DiffVar> + '_ {
         (0..self.num_vars).map(DiffVar::new)
     }
 
-    /// All nodes including source
+    /// All nodes including source.
     pub fn nodes(&self) -> impl Iterator<Item = DiffVar> + '_ {
         core::iter::once(DiffVar::SOURCE).chain(self.vars())
     }
 
-    /// Push a new decision level
+    /// Push a new decision level.
     pub fn push(&mut self) {
         self.current_level += 1;
-        while self.active_by_level.len() <= self.current_level as usize {
-            self.active_by_level.push(Vec::new());
-        }
+        self.constraint_marks.push(0);
     }
 
-    /// Pop to a previous decision level
+    /// Pop to a previous decision level: truncates the constraint vector
+    /// and every adjacency list back to the boundary recorded at the
+    /// surviving level. Adjacency lists are append-ordered by constraint
+    /// index and every edge carries its constraint index, so a retain pass
+    /// per touched slot is exact; the common case (only the tail slot of a
+    /// few nodes grew) costs a single `last()` probe per slot.
     pub fn pop(&mut self, levels: u32) {
         if levels == 0 {
             return;
         }
-
         let target_level = self.current_level.saturating_sub(levels);
-
-        // Remove edges for constraints at higher levels
-        for level in (target_level + 1)..=self.current_level {
-            if let Some(indices) = self.active_by_level.get(level as usize) {
-                for &idx in indices {
-                    if let Some(constraint) = self.constraints.get(idx) {
-                        // Remove the edge for this constraint
-                        if let Some(edges) = self.edges.get_mut(&constraint.y) {
-                            edges.retain(|e| e.constraint_idx != idx);
-                        }
-                    }
-                }
+        let keep = self.constraint_marks[target_level as usize];
+        self.constraints.truncate(keep);
+        for edges in &mut self.edges {
+            if let Some(last) = edges.last()
+                && last.constraint_idx >= keep
+            {
+                edges.retain(|e| e.constraint_idx < keep);
             }
         }
-
-        // Truncate active_by_level and constraints
-        self.active_by_level.truncate(target_level as usize + 1);
-
-        // Note: We keep constraints in the vector but they're effectively deactivated
-        // because their edges are removed
-
+        self.constraint_marks.truncate(target_level as usize + 1);
         self.current_level = target_level;
     }
 
-    /// Current decision level
+    /// Current decision level.
     pub fn current_level(&self) -> u32 {
         self.current_level
     }
@@ -351,43 +350,24 @@ impl ConstraintGraph {
         self.is_integer
     }
 
-    /// Clear all constraints (for reset)
+    /// Clear all constraints (keeping variables).
     pub fn clear(&mut self) {
         self.constraints.clear();
-        self.active_by_level.clear();
-        self.active_by_level.push(Vec::new());
+        self.constraint_marks = vec![0];
         self.current_level = 0;
-
-        // Clear all edges except source → variable edges
-        for (var, edges) in &mut self.edges {
-            if var.is_source() {
-                // Keep source edges but reset to weight 0
-                edges.clear();
-                for node in 0..self.num_vars {
-                    edges.push(DiffEdge::new(
-                        DiffVar::SOURCE,
-                        DiffVar::new(node),
-                        Rational64::from_integer(0),
-                        0,
-                    ));
-                }
+        // Keep only the source's anchor edges.
+        for (slot, edges) in self.edges.iter_mut().enumerate() {
+            if slot == 0 {
+                edges.truncate(self.num_vars as usize);
             } else {
                 edges.clear();
             }
         }
     }
 
-    /// Full reset including variables
+    /// Full reset including variables.
     pub fn reset(&mut self) {
-        self.num_vars = 0;
-        self.var_to_node.clear();
-        self.node_to_var.clear();
-        self.edges.clear();
-        self.edges.insert(DiffVar::SOURCE, Vec::new());
-        self.constraints.clear();
-        self.active_by_level.clear();
-        self.active_by_level.push(Vec::new());
-        self.current_level = 0;
+        *self = Self::new(self.is_integer);
     }
 }
 
@@ -485,6 +465,7 @@ mod tests {
         // Pop to level 0
         graph.pop(1);
         assert_eq!(graph.current_level(), 0);
+        assert_eq!(graph.num_constraints(), 1);
 
         // Edge for constraint2 should be removed
         let edges: Vec<_> = graph
@@ -492,5 +473,23 @@ mod tests {
             .filter(|e| e.constraint_idx == 1)
             .collect();
         assert!(edges.is_empty());
+        // Edge for constraint1 survives.
+        assert_eq!(graph.get_edges(y).count(), 1);
+    }
+
+    #[test]
+    fn source_edges_anchored() {
+        let mut graph = ConstraintGraph::new(true);
+        let t1 = TermId::from(1u32);
+        let t2 = TermId::from(2u32);
+        graph.get_or_create_var(t1);
+        graph.get_or_create_var(t2);
+        // Every node has a 0-weight anchor from SOURCE.
+        assert_eq!(graph.get_edges(DiffVar::SOURCE).count(), 2);
+        assert!(
+            graph
+                .get_edges(DiffVar::SOURCE)
+                .all(|e| e.weight == Rational64::from_integer(0))
+        );
     }
 }

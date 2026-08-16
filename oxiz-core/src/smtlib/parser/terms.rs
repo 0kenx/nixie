@@ -65,7 +65,7 @@ use std::cell::Cell;
 /// doc comment) and now accept any depth this parser can produce, with no
 /// limit at all. `model::ModelEvaluator::eval` likewise no longer constrains
 /// it: that walk is iterative too.
-const MAX_PARSE_DEPTH: u32 = 1024;
+const MAX_PARSE_DEPTH: u32 = 65536;
 
 thread_local! {
     /// Current *logical* term nesting depth on this thread.

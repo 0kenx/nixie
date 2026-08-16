@@ -3131,12 +3131,23 @@ impl Solver {
                         stack.push(arg);
                     }
                 }
-                TermKind::Implies(_, rhs) => {
-                    // Descend into the consequent -- that's where the disequality
-                    // typically lives in quantifier instantiation lemmas
+                TermKind::Implies(lhs, rhs) => {
+                    // Descend into both sides: an arithmetic disequality sits
+                    // in the antecedent of an implication just as often as in
+                    // the consequent (`(=> (distinct x y) p)` — the parity
+                    // graph family), and the trichotomy clause is a tautology
+                    // either way.
+                    stack.push(*lhs);
                     stack.push(*rhs);
                 }
-                TermKind::Ite(_, then_br, else_br) => {
+                TermKind::Xor(a, b) => {
+                    // `(xor (= x y) p)` leaves the disequality under `xor`,
+                    // which the older walk skipped entirely.
+                    stack.push(*b);
+                    stack.push(*a);
+                }
+                TermKind::Ite(cond, then_br, else_br) => {
+                    stack.push(*cond);
                     stack.push(*else_br);
                     stack.push(*then_br);
                 }
