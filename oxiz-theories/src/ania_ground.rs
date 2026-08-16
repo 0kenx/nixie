@@ -836,12 +836,56 @@ pub(crate) fn eval_int(
         TermKind::Sub(a, b) => {
             Some(eval_int(*a, manager, arrays, env)? - eval_int(*b, manager, arrays, env)?)
         }
+        TermKind::Div(a, b) | TermKind::Mod(a, b) => {
+            // SMT-LIB Ints semantics: Euclidean division – the remainder is
+            // always non-negative (`r = a − b·(a div b)`, `0 ≤ r < |b|`).
+            let (a, b) = (
+                eval_int(*a, manager, arrays, env)?,
+                eval_int(*b, manager, arrays, env)?,
+            );
+            if b.is_zero() {
+                return None; // division by zero is uninterpreted
+            }
+            let (q, r) = (a.clone() / &b, a % &b);
+            let (q, r) = if r.sign() == num_bigint::Sign::Minus {
+                if b.sign() == num_bigint::Sign::Plus {
+                    (q - 1u32, r + b.clone())
+                } else {
+                    (q + 1u32, r - b.clone())
+                }
+            } else {
+                (q, r)
+            };
+            if matches!(n.kind, TermKind::Div(_, _)) {
+                Some(q)
+            } else {
+                Some(r)
+            }
+        }
         TermKind::Select(arr, idx) => {
             let i = eval_int(*idx, manager, arrays, env)?;
             let i64v = i.to_i64()?;
-            let interp = arrays.get(arr)?;
-            // Written index -> its value; else the base default, which is None
-            // for an unknown array -> propagate None (defer, Sat-only).
+            // A `store` tower is evaluated structurally first: the read of
+            // `(store A k v)` at `k` is `v`, otherwise it recurses into `A`.
+            // Only when the array term is an opaque variable does the
+            // interpretation table get consulted (written index -> its
+            // value; else the base default, `None` for an unknown array –
+            // defer, Sat-only).
+            let mut array_term = *arr;
+            loop {
+                let a_kind = manager.get(array_term).map(|t| t.kind.clone());
+                match a_kind {
+                    Some(TermKind::Store(base, k, v)) => {
+                        let kval = eval_int(k, manager, arrays, env)?;
+                        if kval == i {
+                            return eval_int(v, manager, arrays, env);
+                        }
+                        array_term = base;
+                    }
+                    _ => break,
+                }
+            }
+            let interp = arrays.get(&array_term)?;
             interp
                 .entries
                 .get(&i64v)
@@ -1333,4 +1377,23 @@ fn term_contains_store(term: TermId, manager: &TermManager) -> bool {
         }
     }
     false
+}
+
+/// Concretely evaluate every assertion under an environment of integer
+/// values; `true` only when *all* of them evaluate to `Some(true)`.
+///
+/// Public verification helper shared by the nonlinear dispatch stages: a
+/// candidate model is a sound `Sat` witness exactly when this returns
+/// `true` (an assertion that cannot be evaluated is *not* satisfied –
+/// the caller must treat the model as unverified).
+#[must_use]
+pub fn eval_assertions_true(
+    assertions: &[TermId],
+    manager: &TermManager,
+    env: &HashMap<TermId, BigInt>,
+) -> bool {
+    let arrays: HashMap<TermId, ArrayInterp> = HashMap::new();
+    assertions
+        .iter()
+        .all(|&a| eval_bool(a, manager, &arrays, env).unwrap_or(false))
 }

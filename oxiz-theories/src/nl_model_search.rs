@@ -48,7 +48,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 
-use crate::ania_ground::{ArrayInterp, eval_bool, eval_int};
+use crate::ania_ground::{ArrayInterp, eval_assertions_true, eval_bool, eval_int};
 use crate::nlsat::NlDispatchResult;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -1472,7 +1472,6 @@ fn bounded_concrete_search(
         };
         domains.push((v, lo, hi));
     }
-    let arrays: HashMap<TermId, ArrayInterp> = HashMap::new();
     let mut idx: Vec<i64> = domains.iter().map(|(_, lo, _)| *lo).collect();
     loop {
         let env: HashMap<TermId, BigInt> = domains
@@ -1480,10 +1479,7 @@ fn bounded_concrete_search(
             .zip(idx.iter())
             .map(|((v, _, _), &val)| (*v, BigInt::from(val)))
             .collect();
-        if assertions
-            .iter()
-            .all(|a| eval_bool(*a, manager, &arrays, &env).unwrap_or(false))
-        {
+        if eval_assertions_true(assertions, manager, &env) {
             return Some(env);
         }
         // odometer increment

@@ -35,7 +35,7 @@ use num_traits::{ToPrimitive, Zero};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use rustc_hash::FxHashMap;
 
-use crate::ania_ground::{ArrayInterp, eval_bool};
+use crate::ania_ground::eval_assertions_true;
 use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
 use crate::nlsat::NlDispatchResult;
 
@@ -1448,13 +1448,7 @@ fn concrete_sat(
     assertions: &[TermId],
     manager: &TermManager,
 ) -> bool {
-    let arrays: std::collections::HashMap<TermId, ArrayInterp> = std::collections::HashMap::new();
-    for &a in assertions {
-        if !eval_bool(a, manager, &arrays, env).unwrap_or(false) {
-            return false;
-        }
-    }
-    true
+    eval_assertions_true(assertions, manager, env)
 }
 
 // ========  ========

@@ -192,11 +192,19 @@ fn test_pr27_nia_divmod_symbolic_divisor_is_not_encoded() {
     let eq_mod = tm.mk_eq(mod_x, two);
     let assertion = tm.mk_and([eq_square, eq_mod]);
 
+    // The Euclidean `mod` in the ground evaluator (added with the
+    // dispatch's verify-then-trust backstop) can now *certify* a witness
+    // for a symbolic divisor, so a `Sat` is legitimate here (e.g. x = −3,
+    // n = 5: (−3)² = 9 and (−3) mod 5 = 2) – it is no longer a guess, it is
+    // concretely verified against the original assertions.  What must never
+    // happen is an `Unsat`: a symbolic divisor has no polynomial encoding,
+    // so nothing may refute the goal either.
     let result = dispatch_nia_constraints(&[assertion], &mut tm, true, true);
-    assert_eq!(
-        result, None,
+    assert_ne!(
+        result,
+        Some(NlDispatchResult::Unsat),
         "a symbolic divisor has no polynomial encoding; the dispatcher must \
-         fall through to CDCL(T) rather than guess"
+         never refute the goal, only verify a witness or fall through"
     );
 }
 
